@@ -8,6 +8,65 @@
 
 KalamDb's data model is designed for efficient storage, querying, and streaming of chat and AI message history. The model enforces user-centric data ownership with isolation at the storage layer, supports flexible metadata, and optimizes for both real-time writes and historical queries.
 
+### Conversation Types & Storage Strategy
+
+KalamDB supports two distinct conversation types with different storage strategies:
+
+#### 1. AI Conversations (User ↔ AI)
+**Definition**: Single user conversing with AI assistant(s)
+
+**Storage Strategy**: User-owned storage only
+- Messages stored ONLY in user's partition: `{userId}/batch-*.parquet`
+- No duplication (only one participant: the user)
+- AI responses stored alongside user messages
+- Complete conversation history in user's storage
+- Easy to export, backup, or delete with user data
+
+**Example**:
+```
+userA talks to AI assistant
+→ Messages stored in: userA/batch-*.parquet only
+→ No shared storage needed
+```
+
+**Benefits**:
+- ✅ Complete user ownership of AI conversation history
+- ✅ No cross-user dependencies
+- ✅ Minimal storage overhead (single copy)
+- ✅ Fast queries (single partition)
+
+#### 2. Group Conversations (User ↔ User)
+**Definition**: Two or more human users conversing together
+
+**Storage Strategy**: Shared conversation storage
+- Messages stored ONCE in shared location: `shared/conversations/{conversationId}/`
+- Each participant maintains lightweight index/reference in their partition
+- All messages for the conversation co-located
+- Efficient for large groups (no duplication)
+
+**Example**:
+```
+userA, userB, userC in group conversation
+→ Messages stored in: shared/conversations/convABC/batch-*.parquet
+→ Each user has reference: userA/conversation-refs/{convABC}.json
+                           userB/conversation-refs/{convABC}.json
+                           userC/conversation-refs/{convABC}.json
+```
+
+**Benefits**:
+- ✅ No duplication overhead (single copy for all participants)
+- ✅ Efficient for large groups (100+ participants)
+- ✅ Shared media files naturally co-located
+- ✅ Conversation-level operations (archive, export) are simple
+
+**Large Content & Media File Optimization**:
+- When `content.length > large_message_threshold` (configurable in `config.toml`, e.g., 100KB)
+- Store actual content in conversation-specific location: `shared/conversations/{conversationId}/msg-{msgId}.bin`
+- Support for media files (images, documents, audio, video, etc.) alongside text messages
+- Store media in conversation location: `shared/conversations/{conversationId}/media-{msgId}.{ext}`
+- Replace `content` field with reference: `{"type": "ref", "uri": "s3://bucket/shared/conversations/convA/msg-123.bin"}`
+- `contentRef` can point to text content OR media files (image.jpg, document.pdf, audio.mp3, etc.)
+
 ---
 
 ## Core Entities
@@ -16,9 +75,18 @@ KalamDb's data model is designed for efficient storage, querying, and streaming 
 
 Represents a single message in a conversation (chat message, AI response, system notification).
 
-**Storage**: 
-- **RocksDB** (write buffer): Key = `{userId}:{msgId}`, Value = MessageProto (Protobuf or bincode-serialized)
-- **Parquet** (consolidated storage): Row in `<userId>/batch-<timestamp>-<index>.parquet`
+**Storage** (varies by conversation type):
+
+**AI Conversations**:
+- **RocksDB**: Key = `{userId}:{msgId}`, Value = MessageProto
+- **Parquet**: `{userId}/batch-<timestamp>-<index>.parquet`
+- **No duplication**: Single user owns all messages
+
+**Group Conversations**:
+- **RocksDB**: Key = `conv:{conversationId}:{msgId}`, Value = MessageProto
+- **Parquet**: `shared/conversations/{conversationId}/batch-<timestamp>-<index>.parquet`
+- **Shared storage**: All participants read from same location
+- **User references**: Lightweight index in `{userId}/conversation-refs/{conversationId}.json`
 
 **Schema**:
 
@@ -26,36 +94,106 @@ Represents a single message in a conversation (chat message, AI response, system
 |-------|------|-------------|-------------|-------|
 | `msgId` | i64 | Snowflake ID (time-ordered unique identifier) | NOT NULL, PRIMARY KEY | Sorted (implicit in Parquet) |
 | `conversationId` | String | Conversation this message belongs to | NOT NULL | Indexed (row group) |
+| `conversationType` | String | Type of conversation: "ai" or "group" | NOT NULL | - |
 | `from` | String | Sender userId (can be AI, user, or another user) | NOT NULL | - |
 | `timestamp` | i64 | Unix timestamp in microseconds (UTC) | NOT NULL | Sorted (via msgId) |
-| `content` | String | Message body/text | NOT NULL, MAX 1MB (configurable) | - |
-| `metadata` | String (JSON) | Flexible key-value pairs (role, model, tokens, etc.) | NULLABLE | - |
+| `content` | String | Message body/text OR content preview (for large/media messages) | NOT NULL, MAX 1MB (configurable) | - |
+| `metadata` | String (JSON) | Flexible key-value pairs (role, model, tokens, contentType, fileName, fileSize, etc.) | NULLABLE | - |
+| `contentRef` | String (optional) | Reference URI for large messages or media files (relative to conversation storage location) | NULLABLE | - |
 
 **Parquet Schema (Arrow)**:
 ```rust
 Schema::new(vec![
     Field::new("msgId", DataType::Int64, false),
     Field::new("conversationId", DataType::Utf8, false),
+    Field::new("conversationType", DataType::Utf8, false), // "ai" or "group"
     Field::new("from", DataType::Utf8, false),
     Field::new("timestamp", DataType::Int64, false),
     Field::new("content", DataType::Utf8, false),
+    Field::new("contentRef", DataType::Utf8, true), // Optional reference
     Field::new("metadata", DataType::Utf8, true), // JSON string
 ])
 ```
+
+**Content Storage Strategies**:
+
+1. **Small/Medium Text Messages** (< `large_message_threshold`):
+   - **AI conversations**: Stored inline in user's Parquet: `{userId}/batch-*.parquet`
+   - **Group conversations**: Stored inline in shared Parquet: `shared/conversations/{convId}/batch-*.parquet`
+   - Fast access, no external lookup
+   - Example: `content: "Hello, how are you?"`
+
+2. **Large Text Messages** (≥ `large_message_threshold`):
+   - **AI conversations**: Stored in user's folder: `{userId}/msg-{msgId}.bin`
+   - **Group conversations**: Stored in conversation folder: `shared/conversations/{conversationId}/msg-{msgId}.bin`
+   - `content` field contains truncated preview (first 1KB)
+   - `contentRef` field contains relative path: `msg-{msgId}.bin`
+   - `metadata` includes: `{"contentType": "text/plain", "fullSize": 500000}`
+
+3. **Media Files** (images, documents, audio, video, etc.):
+   - **AI conversations**: Stored in user's folder: `{userId}/media-{msgId}.{ext}`
+   - **Group conversations**: Stored in conversation folder: `shared/conversations/{conversationId}/media-{msgId}.{ext}`
+   - `content` field contains caption/description text or placeholder
+   - `contentRef` field contains relative path: `media-{msgId}.jpg`
+   - `metadata` includes rich information:
+     ```json
+     {
+       "contentType": "image/jpeg",
+       "fileName": "vacation-photo.jpg",
+       "fileSize": 2457600,
+       "width": 1920,
+       "height": 1080,
+       "thumbnail": "data:image/jpeg;base64,/9j/4AAQ...",
+       "duration": null
+     }
+     ```
+   - Supported media types: `image/*`, `audio/*`, `video/*`, `application/pdf`, `application/*`, etc.
 
 **Validation Rules**:
 - `msgId`: Must be valid snowflake ID (generated by server)
 - `conversationId`: Non-empty string, max 255 chars
 - `from`: Non-empty string, max 255 chars
 - `timestamp`: Must be <= current time (server validates, rejects future timestamps)
-- `content`: Non-empty, max size enforced by config (default 1MB)
+- `content`: Non-empty, max size enforced by config (default 1MB, or truncated if `contentRef` present)
+- `contentRef`: Valid URI if present (must point to accessible storage)
 - `metadata`: Valid JSON if present
 
 **Lifecycle**:
-1. **Write**: Message written to RocksDB (WAL), acknowledged in <100ms
-2. **Consolidation**: Background task reads RocksDB, writes to Parquet (every 5 min or 10k messages)
-3. **Delete from RocksDB**: After consolidation, remove from RocksDB to free memory
-4. **Query**: DataFusion reads Parquet files, filters by userId/conversationId/msgId range
+
+**AI Conversations**:
+1. **Write**: 
+   - Determine content type (text or media)
+   - If large text or media: upload to user's storage folder `{userId}/`
+   - Write message to RocksDB: `{userId}:{msgId}`
+   - Acknowledge immediately
+   
+2. **Consolidation**: 
+   - Background task reads RocksDB for user
+   - Writes to user's Parquet: `{userId}/batch-*.parquet`
+   - Large content/media remain in user's folder
+   
+3. **Query**: 
+   - DataFusion reads user's own Parquet files
+   - If `contentRef` present: fetch from user's storage folder
+
+**Group Conversations**:
+1. **Write**:
+   - Lookup conversation participants via ConversationUser table
+   - Determine content type (text or media)
+   - If large text or media: upload to conversation storage `shared/conversations/{convId}/`
+   - Write message to RocksDB: `conv:{conversationId}:{msgId}`
+   - Update each participant's conversation reference
+   - Acknowledge after write complete
+   
+2. **Consolidation**:
+   - Background task reads RocksDB for conversation
+   - Writes to shared Parquet: `shared/conversations/{convId}/batch-*.parquet`
+   - Large content/media remain in conversation folder
+   
+3. **Query**:
+   - Verify user is participant (check ConversationUser table)
+   - DataFusion reads shared Parquet: `shared/conversations/{convId}/batch-*.parquet`
+   - If `contentRef` present: fetch from conversation storage folder
 
 ---
 
@@ -97,7 +235,58 @@ Represents a conversation thread containing multiple messages. Each user has the
 
 ---
 
-### 3. Subscription
+### 3. ConversationUser
+
+Represents the relationship between users and conversations, tracking which users have access to which conversations. This enables multi-user conversations and access control.
+
+**Storage**:
+- **RocksDB** (metadata): Key = `{conversationId}:users:{userId}`, Value = ConversationUserMetadata
+- **Secondary index**: Key = `{userId}:convusers:{conversationId}` for user-centric queries
+- **Separate metadata table** (future: SQLite for relational queries)
+
+**Schema**:
+
+| Field | Type | Description | Constraints |
+|-------|------|-------------|-------------|
+| `userId` | String | User ID with access to this conversation | NOT NULL, PRIMARY KEY (composite) |
+| `conversationId` | String | Conversation identifier | NOT NULL, PRIMARY KEY (composite) |
+| `created` | i64 | Unix timestamp when user joined conversation (microseconds) | NOT NULL |
+| `updated` | i64 | Unix timestamp when user's participation last changed (microseconds) | NOT NULL |
+| `metadata` | String (JSON) | Flexible key-value pairs (role, permissions, lastRead, etc.) | NULLABLE |
+
+**Validation Rules**:
+- `userId`: Non-empty, max 255 chars
+- `conversationId`: Non-empty, max 255 chars
+- `created` <= `updated`
+- `metadata`: Valid JSON if present
+
+**Example Metadata**:
+```json
+{
+  "role": "participant",
+  "permissions": ["read", "write"],
+  "lastReadMsgId": 1234567890123456,
+  "notificationsEnabled": true,
+  "displayName": "John Doe"
+}
+```
+
+**Lifecycle**:
+1. **Create**: When user is added to a conversation (manually or via first message)
+2. **Update**: When user's permissions change or they read messages
+3. **Query**: List users in conversation via `{conversationId}:users:*` scan, or list user's conversations via `{userId}:convusers:*` scan
+4. **Delete**: When user leaves conversation or is removed
+
+**State Transitions**:
+```
+[Initial] --user joins--> [Active]
+[Active] --permissions change--> [Active] (update metadata)
+[Active] --user leaves--> [Removed]
+```
+
+---
+
+### 4. Subscription
 
 Represents an active WebSocket connection subscribing to real-time message updates.
 
@@ -130,7 +319,7 @@ Represents an active WebSocket connection subscribing to real-time message updat
 
 ---
 
-### 4. User
+### 5. User
 
 Logical entity representing a user whose messages are isolated in separate storage partitions.
 
@@ -159,19 +348,29 @@ Logical entity representing a user whose messages are isolated in separate stora
 ## Relationships
 
 ```
-User (1) ----< (N) Conversation
+User (1) ----< (N) ConversationUser (N) >---- (1) Conversation
 Conversation (1) ----< (N) Message
 User (1) ----< (N) Subscription
 ```
 
 **Cardinality**:
-- One User has many Conversations (1:N)
-- One Conversation has many Messages (1:N)
+- User to ConversationUser: One User has many ConversationUser entries (1:N)
+- ConversationUser to Conversation: Many Users can participate in many Conversations (N:M via ConversationUser join table)
+- One Conversation has many Messages (1:N) - but messages are **duplicated** across all participant users
 - One User has many active Subscriptions (1:N)
+
+**Message Duplication Model**:
+- **Physical Storage**: Each message exists in N copies (where N = number of conversation participants)
+- **Logical Model**: Each message has one canonical msgId, but stored in multiple user partitions
+- **Storage Path**: `{userId}/batch-*.parquet` contains ALL messages from conversations where userId is participant
+- **Example**: Message in conversation with 3 users → 3 copies stored in 3 separate user partitions
 
 **Referential Integrity**:
 - Messages reference Conversation via `conversationId` (soft reference, no FK constraint)
+- ConversationUser references both User and Conversation via `userId` and `conversationId` (validated on write)
 - Subscriptions reference User via `userId` (validated against JWT token)
+- Subscriptions can optionally filter by `conversationId` (validated against ConversationUser for access control)
+- Large message content stored in shared location: `shared/conversations/{conversationId}/msg-{msgId}.bin`
 
 ---
 
@@ -181,32 +380,63 @@ User (1) ----< (N) Subscription
 ```
 Client --> REST API (POST /messages)
        --> Validate JWT + message
+       --> Check ConversationUser access (userId has write permission for conversationId)
        --> Generate snowflake msgId
-       --> Write to RocksDB ({userId}:{msgId} = Message)
+       --> Query ConversationUser table for all participants
+       --> Determine if message is large (content.length >= large_message_threshold)
+       --> If large:
+           --> Upload content to shared storage: shared/conversations/{convId}/msg-{msgId}.bin
+           --> Truncate content field (keep first 1KB as preview)
+           --> Set contentRef field with S3 URI
+       --> For EACH participant user (parallel writes):
+           --> Write to RocksDB ({participantUserId}:{msgId} = Message)
+       --> Wait for all writes to complete
        --> Acknowledge (return msgId)
-       --> Broadcast to active Subscriptions (WebSocket)
+       --> Broadcast to active Subscriptions (WebSocket, filtered by ConversationUser access)
 ```
+
+**Write Path Performance**:
+- Parallel writes to RocksDB (one per participant)
+- Target latency: <100ms for conversations with ≤10 participants
+- Large message upload happens async if needed
+- Acknowledgment sent after RocksDB writes (before consolidation)
 
 ### Consolidation Path
 ```
-Background Task (every 5 min or 10k messages)
+Background Task (every 5 min or 10k messages per user)
        --> For each user exceeding threshold:
-           --> Read messages from RocksDB
-           --> Group by conversationId
+           --> Read messages from RocksDB ({userId}:*)
+           --> Group by conversationId for row group optimization
            --> Write Parquet file ({userId}/batch-{ts}-{idx}.parquet)
-           --> Delete from RocksDB
+           --> Parquet contains user's own messages + duplicated messages from shared conversations
+           --> Delete from RocksDB to free memory
            --> Update conversation metadata (lastMsgId)
 ```
+
+**Consolidation Notes**:
+- Each user's consolidation runs independently
+- Messages with `contentRef` stored with reference (not full content)
+- Large message content remains in shared storage
+- Deduplication NOT performed (duplication is intentional)
 
 ### Query Path
 ```
 Client --> REST API (GET /messages?userId=X&conversationId=Y)
-       --> Validate JWT
-       --> DataFusion: SELECT * FROM parquet_files WHERE conversationId = Y
-       --> Filter row groups via metadata
-       --> Merge with RocksDB (recent messages)
+       --> Validate JWT (extract userId from token)
+       --> Query ONLY user's own storage: {userId}/batch-*.parquet
+       --> DataFusion: SELECT * FROM user_parquet_files WHERE conversationId = Y
+       --> Filter row groups via conversationId metadata
+       --> Merge with RocksDB (recent messages from {userId}:* keys)
+       --> If message has contentRef and full content requested:
+           --> Fetch from shared storage: shared/conversations/{convId}/msg-{msgId}.bin
        --> Return paginated results
 ```
+
+**Query Path Benefits**:
+- No cross-user joins needed (all data in user's partition)
+- Fast parallel queries (each user's data independent)
+- Storage can be sharded/moved per user
+- Privacy: users can't access other users' storage
 
 ### Subscription Path
 ```
@@ -302,20 +532,66 @@ Client --> WebSocket (subscribe message)
 
 ---
 
-## Storage Estimates
+## Storage Implications of Message Duplication
+
+### Storage Multiplication Factor
+- **Duplication Factor**: Messages stored N times (where N = number of conversation participants)
+- **Example**: 3-person conversation → each message stored 3x
+- **Trade-off**: Higher storage cost for better query performance and user data ownership
+
+### Storage Cost Analysis
+
+**Scenario: 1000 users, average 3 participants per conversation**
+
+| Metric | Without Duplication | With Duplication (3x avg) | Overhead |
+|--------|---------------------|---------------------------|----------|
+| 100k messages/day | ~40MB Parquet | ~120MB Parquet | 3x |
+| Annual storage | ~14.6GB | ~43.8GB | 3x |
+| Per-user average | 14.6MB/year | 43.8MB/year | 3x |
+
+**Large Message Optimization**:
+- Messages > `large_message_threshold` (e.g., 100KB) stored once in shared storage
+- Only reference duplicated (negligible size)
+- Reduces overhead for large attachments/content
 
 ### Single Message Size
-- **RocksDB**: ~1.2KB (msgId + conversationId + from + timestamp + content + metadata + overhead)
-- **Parquet**: ~0.4KB (3x compression via columnar format + Snappy)
+- **RocksDB** (small message): ~1.2KB per copy
+- **RocksDB** (large message): ~0.5KB (reference only) + shared storage
+- **Parquet** (small message): ~0.4KB per copy (3x compression)
+- **Parquet** (large message): ~0.2KB (reference only) + shared storage
 
-### Storage Growth
-- **1M messages**: ~400MB Parquet, ~1.2GB RocksDB (before consolidation)
-- **100M messages**: ~40GB Parquet, ~120GB RocksDB (unrealistic, consolidation runs continuously)
+### Configuration Parameters (config.toml)
 
-### Typical Workload (1000 active users, 100 messages/day each)
-- **Daily writes**: 100k messages
-- **Daily Parquet growth**: ~40MB
-- **Annual storage**: ~14.6GB Parquet
+```toml
+[message]
+# Maximum inline message size before using shared storage
+large_message_threshold_bytes = 102400  # 100 KB
+
+[storage]
+# Shared storage location for large message content
+shared_storage_path = "shared/conversations"
+# or for S3:
+# shared_storage_uri = "s3://bucket/kalamdb/shared/conversations"
+
+[duplication]
+# Enable/disable message duplication (future: allow single-storage mode)
+enabled = true
+# Maximum participants before warning (high duplication cost)
+max_participants_warning = 20
+```
+
+### Storage Growth Estimates
+
+**Typical Workload (1000 users, 100 messages/day each, 3-participant conversations)**:
+- **Daily writes**: 100k logical messages → 300k physical messages (3x duplication)
+- **Daily Parquet growth**: ~120MB (with compression)
+- **Annual storage**: ~43.8GB
+- **With 10% large messages (>100KB)**: ~30GB (savings from shared storage)
+
+**High Duplication Scenario (10-participant group chats)**:
+- **Duplication factor**: 10x
+- **Annual storage**: ~146GB for same workload
+- **Mitigation**: Large message optimization critical for group chats
 
 ---
 

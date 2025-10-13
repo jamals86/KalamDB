@@ -50,6 +50,22 @@ paths:
                     role: "assistant"
                     model: "gpt-4"
                     tokens: 12
+              mediaMessage:
+                summary: Message with image attachment
+                value:
+                  conversationId: "conv_abc123"
+                  from: "user_john"
+                  timestamp: 1696800002000000
+                  content: "Check out this vacation photo!"
+                  contentRef: "s3://bucket/shared/conversations/conv_abc123/media-1234567890123456.jpg"
+                  metadata:
+                    role: "user"
+                    contentType: "image/jpeg"
+                    fileName: "vacation-photo.jpg"
+                    fileSize: 2457600
+                    width: 1920
+                    height: 1080
+                    thumbnail: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ..."
       responses:
         '201':
           description: Message accepted and stored
@@ -210,6 +226,381 @@ paths:
                 $ref: '#/components/schemas/Error'
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/messages/upload:
+    post:
+      summary: Upload media file for message
+      description: Upload a media file (image, document, audio, video) and receive a contentRef to use in message submission. Supports multipart/form-data upload.
+      operationId: uploadMedia
+      tags:
+        - Messages
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - conversationId
+                - file
+              properties:
+                conversationId:
+                  type: string
+                  description: Conversation ID where this media will be used
+                  example: "conv_abc123"
+                file:
+                  type: string
+                  format: binary
+                  description: Media file to upload
+                contentType:
+                  type: string
+                  description: MIME type of the file (auto-detected if not provided)
+                  example: "image/jpeg"
+                fileName:
+                  type: string
+                  description: Original file name
+                  example: "vacation-photo.jpg"
+      responses:
+        '201':
+          description: Media uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaUploadResponse'
+        '400':
+          description: Invalid request (missing file, unsupported content type)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: File too large (exceeds max_size_bytes config)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/messages/{msgId}/content:
+    get:
+      summary: Fetch full content for large message or media file
+      description: Retrieve the complete content for a message stored in shared storage. Returns signed URL for media files or full text content.
+      operationId: getMessageContent
+      tags:
+        - Messages
+      parameters:
+        - name: msgId
+          in: path
+          required: true
+          description: Message ID
+          schema:
+            type: integer
+            format: int64
+            example: 1234567890123456
+        - name: download
+          in: query
+          required: false
+          description: If true, force download instead of inline display
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Full message content retrieved or signed URL returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContentResponse'
+            text/plain:
+              schema:
+                type: string
+                example: "This is the full content of a large message..."
+            image/*:
+              schema:
+                type: string
+                format: binary
+            audio/*:
+              schema:
+                type: string
+                format: binary
+            video/*:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Message not found or no large content available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden (user does not have access to this message)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/conversations/{conversationId}/users:
+    get:
+      summary: List users in a conversation
+      description: Retrieve all users who have access to this conversation
+      operationId: listConversationUsers
+      tags:
+        - Conversations
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          description: Conversation identifier
+          schema:
+            type: string
+            example: "conv_abc123"
+      responses:
+        '200':
+          description: Users retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationUsersResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden (user does not have access to this conversation)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      summary: Add a user to a conversation
+      description: Grant a user access to this conversation. Requires admin or owner permissions.
+      operationId: addConversationUser
+      tags:
+        - Conversations
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          description: Conversation identifier
+          schema:
+            type: string
+            example: "conv_abc123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConversationUserRequest'
+      responses:
+        '201':
+          description: User added to conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationUser'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden (insufficient permissions)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: User already in conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/conversations/{conversationId}/users/{userId}:
+    get:
+      summary: Get user's conversation membership details
+      description: Retrieve details about a user's access to this conversation
+      operationId: getConversationUser
+      tags:
+        - Conversations
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          description: Conversation identifier
+          schema:
+            type: string
+            example: "conv_abc123"
+        - name: userId
+          in: path
+          required: true
+          description: User identifier
+          schema:
+            type: string
+            example: "user_john"
+      responses:
+        '200':
+          description: Conversation user details retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationUser'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: User not found in conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      summary: Update user's conversation membership
+      description: Update permissions or metadata for a user in this conversation
+      operationId: updateConversationUser
+      tags:
+        - Conversations
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          description: Conversation identifier
+          schema:
+            type: string
+            example: "conv_abc123"
+        - name: userId
+          in: path
+          required: true
+          description: User identifier
+          schema:
+            type: string
+            example: "user_john"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConversationUserUpdate'
+      responses:
+        '200':
+          description: User membership updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationUser'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden (insufficient permissions)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: User not found in conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      summary: Remove user from conversation
+      description: Revoke a user's access to this conversation
+      operationId: removeConversationUser
+      tags:
+        - Conversations
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          description: Conversation identifier
+          schema:
+            type: string
+            example: "conv_abc123"
+        - name: userId
+          in: path
+          required: true
+          description: User identifier
+          schema:
+            type: string
+            example: "user_john"
+      responses:
+        '204':
+          description: User removed from conversation
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden (insufficient permissions)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: User not found in conversation
           content:
             application/json:
               schema:
@@ -410,6 +801,56 @@ components:
       description: JWT token with userId in 'sub' claim
 
   schemas:
+    MediaUploadResponse:
+      type: object
+      properties:
+        contentRef:
+          type: string
+          description: Reference URI for the uploaded media file
+          example: "s3://bucket/shared/conversations/conv_abc123/media-1234567890123456.jpg"
+        contentType:
+          type: string
+          description: MIME type of the uploaded file
+          example: "image/jpeg"
+        fileSize:
+          type: integer
+          format: int64
+          description: Size of the uploaded file in bytes
+          example: 2457600
+        thumbnail:
+          type: string
+          description: Base64-encoded thumbnail (for images/videos)
+          nullable: true
+          example: "data:image/jpeg;base64,/9j/4AAQ..."
+        metadata:
+          type: object
+          description: Extracted metadata (dimensions, duration, etc.)
+          additionalProperties: true
+          example:
+            width: 1920
+            height: 1080
+
+    ContentResponse:
+      type: object
+      properties:
+        contentRef:
+          type: string
+          description: Reference URI for the content
+          example: "s3://bucket/shared/conversations/conv_abc123/media-789.jpg"
+        signedUrl:
+          type: string
+          description: Temporary signed URL for direct access (expires in 1 hour)
+          example: "https://s3.amazonaws.com/bucket/shared/conversations/conv_abc123/media-789.jpg?X-Amz-Signature=..."
+        contentType:
+          type: string
+          description: MIME type of the content
+          example: "image/jpeg"
+        expiresAt:
+          type: integer
+          format: int64
+          description: Unix timestamp when signed URL expires (microseconds)
+          example: 1696803600000000
+
     MessageRequest:
       type: object
       required:
@@ -423,6 +864,11 @@ components:
           description: Conversation identifier
           maxLength: 255
           example: "conv_abc123"
+        contentRef:
+          type: string
+          description: Optional reference to uploaded media (from /api/v1/messages/upload)
+          nullable: true
+          example: "s3://bucket/shared/conversations/conv_abc123/media-1234567890123456.jpg"
         from:
           type: string
           description: Sender user ID
@@ -435,17 +881,22 @@ components:
           example: 1696800000000000
         content:
           type: string
-          description: Message body/text
+          description: Message body/text or caption for media messages
           minLength: 1
           maxLength: 1048576
           example: "Hello, how are you?"
         metadata:
           type: object
-          description: Flexible key-value metadata (JSON)
+          description: Flexible key-value metadata (role, contentType, fileName, fileSize, dimensions, duration, etc.)
           additionalProperties: true
           example:
             role: "user"
             clientId: "web-app"
+            contentType: "image/jpeg"
+            fileName: "vacation-photo.jpg"
+            fileSize: 2457600
+            width: 1920
+            height: 1080
 
     MessageResponse:
       type: object
@@ -480,12 +931,24 @@ components:
           example: 1696800000000000
         content:
           type: string
+          description: Message content, caption for media, or truncated preview for large messages (first 1KB).
           example: "Hello, how are you?"
+        contentRef:
+          type: string
+          description: Optional reference URI for large message content or media files (images, documents, audio, video, etc.)
+          nullable: true
+          example: "s3://bucket/shared/conversations/conv_abc123/media-1234567890123456.jpg"
         metadata:
           type: object
           additionalProperties: true
           example:
             role: "user"
+            contentType: "image/jpeg"
+            fileName: "vacation-photo.jpg"
+            fileSize: 2457600
+            width: 1920
+            height: 1080
+            thumbnail: "data:image/jpeg;base64,/9j/4AAQ..."
 
     MessagesResponse:
       type: object
@@ -537,6 +1000,74 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Conversation'
+
+    ConversationUser:
+      type: object
+      properties:
+        userId:
+          type: string
+          example: "user_john"
+        conversationId:
+          type: string
+          example: "conv_abc123"
+        created:
+          type: integer
+          format: int64
+          description: Unix timestamp in microseconds when user joined
+          example: 1696800000000000
+        updated:
+          type: integer
+          format: int64
+          description: Unix timestamp in microseconds when membership last changed
+          example: 1696850000000000
+        metadata:
+          type: object
+          description: User-specific conversation metadata
+          additionalProperties: true
+          example:
+            role: "participant"
+            permissions: ["read", "write"]
+            lastReadMsgId: 1234567890123456
+            notificationsEnabled: true
+
+    ConversationUsersResponse:
+      type: object
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationUser'
+
+    ConversationUserRequest:
+      type: object
+      required:
+        - userId
+      properties:
+        userId:
+          type: string
+          description: User ID to add to the conversation
+          maxLength: 255
+          example: "user_jane"
+        metadata:
+          type: object
+          description: Initial metadata for this user
+          additionalProperties: true
+          example:
+            role: "participant"
+            permissions: ["read", "write"]
+            notificationsEnabled: true
+
+    ConversationUserUpdate:
+      type: object
+      properties:
+        metadata:
+          type: object
+          description: Updated metadata for this user
+          additionalProperties: true
+          example:
+            role: "moderator"
+            permissions: ["read", "write", "delete"]
+            lastReadMsgId: 1234567890999999
 
     QueryResponse:
       type: object
@@ -601,8 +1132,12 @@ components:
       properties:
         messageSizeLimitBytes:
           type: integer
-          description: Maximum message content size in bytes
-          example: 1048576
+          description: Maximum message content size in bytes (including large messages)
+          example: 10485760
+        largeMessageThresholdBytes:
+          type: integer
+          description: Message size threshold for shared storage (messages >= this stored in shared location)
+          example: 102400
         consolidationIntervalSeconds:
           type: integer
           description: Time interval between consolidation cycles
@@ -619,19 +1154,33 @@ components:
           type: object
           description: Backend-specific storage configuration
           additionalProperties: true
+        duplicationEnabled:
+          type: boolean
+          description: Enable message duplication across conversation participants
+          example: true
+        maxParticipantsWarning:
+          type: integer
+          description: Warn when conversation exceeds this many participants (high storage cost)
+          example: 20
 
     ConfigUpdate:
       type: object
       properties:
         messageSizeLimitBytes:
           type: integer
-          example: 2097152
+          example: 20971520
+        largeMessageThresholdBytes:
+          type: integer
+          example: 204800
         consolidationIntervalSeconds:
           type: integer
           example: 600
         consolidationMessageThreshold:
           type: integer
           example: 20000
+        maxParticipantsWarning:
+          type: integer
+          example: 50
 
     Metrics:
       type: object

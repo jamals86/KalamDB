@@ -492,6 +492,70 @@ Use **REST API for queries/commands**, **WebSocket for real-time metrics**
 
 ---
 
+## 11. Message Duplication Strategy
+
+### Decision
+Duplicate each message into all conversation participants' storage partitions
+
+### Rationale
+- **User data ownership**: Each user owns complete copy of their conversation history
+- **Query isolation**: Users query only their own partition (no cross-user joins)
+- **Independent scaling**: User storage can be moved, archived, or deleted independently
+- **Privacy compliance**: Easy GDPR compliance (delete user partition)
+- **Performance**: Parallel queries without coordination
+- **Simplicity**: No complex sharding or join logic
+
+### Storage Optimization for Large Messages
+- **Threshold**: `large_message_threshold` configurable in `config.toml` (default: 100KB)
+- **Inline storage**: Messages < threshold stored directly in `content` field (duplicated)
+- **Reference storage**: Messages ≥ threshold stored once in shared location:
+  - Path: `shared/conversations/{conversationId}/msg-{msgId}.bin`
+  - Reference in `contentRef` field: `s3://bucket/shared/conversations/conv123/msg-456.bin`
+  - All participants get the reference (not full content)
+- **Preview**: First 1KB stored inline in `content` field for fast display
+
+### Storage Cost Analysis
+- **Duplication factor**: N copies (N = number of participants)
+- **Typical**: 3-person conversations → 3x storage
+- **Large groups**: 10-person conversations → 10x storage (mitigated by large message optimization)
+- **Trade-off**: 3x storage cost for 10x query performance improvement
+
+### Write Flow
+```
+1. Validate message and sender permissions
+2. Query ConversationUser table for all participants
+3. Check if message.length >= large_message_threshold
+4. If large: upload to shared storage, create reference
+5. Write to RocksDB for EACH participant (parallel)
+6. Acknowledge after all writes complete
+7. Broadcast via WebSocket to subscribed users
+```
+
+### Alternatives Considered
+- **Single storage with references**: All messages in one partition, users query via conversationId
+  - **Rejected**: Requires complex access control, slower queries (cross-user joins), no data ownership
+- **Shard by conversationId**: All messages for conversation in one shard
+  - **Rejected**: Users can't query "all my messages" efficiently; no user data ownership
+- **Hybrid model**: Small messages duplicated, large messages referenced
+  - **Selected**: This is the chosen approach with `large_message_threshold`
+
+### Configuration
+```toml
+[message]
+# Maximum inline message size before using shared storage
+large_message_threshold_bytes = 102400  # 100 KB
+# Maximum message size (including large messages)
+max_size_bytes = 10485760  # 10 MB
+
+[duplication]
+# Enable message duplication (future: allow single-storage mode)
+enabled = true
+# Warn when conversation has many participants (high storage cost)
+max_participants_warning = 20
+```
+
+---
+
 ## Summary
 
 All technical decisions documented and "NEEDS CLARIFICATION" items resolved:
@@ -508,5 +572,6 @@ All technical decisions documented and "NEEDS CLARIFICATION" items resolved:
 | JWT Validation | HMAC-SHA256 symmetric keys | Performance, simplicity, key rotation |
 | Consolidation Strategy | Background async task with lock | Non-blocking writes, parallel per-user |
 | Admin UI Communication | REST + WebSocket | REST for commands, WebSocket for metrics |
+| **Message Duplication** | **Duplicate across participants** | **User ownership, query isolation, GDPR compliance** |
 
 **Next Phase**: Proceed to Phase 1 (Data Model, Contracts, Quickstart)
