@@ -7,7 +7,19 @@
 
 ## Summary
 
-Build KalamDb - a unified chat and AI message history storage system that combines persistent storage with real-time streaming in a single Rust-based server. The system replaces the typical database + message broker combination by buffering writes in RocksDB (<1ms latency), periodically consolidating data into Parquet files for efficient storage and SQL querying via DataFusion, and streaming real-time updates via WebSocket. User data is isolated in hierarchical partitions (`<userId>/batch-<timestamp>-<index>.parquet`), with an Admin UI (React + Vite) for system management. Messages use snowflake IDs for ordering and support flexible JSON metadata.
+Build KalamDB - a **SQL-first** chat and AI message history storage system that combines persistent storage with real-time streaming in a single Rust-based server. 
+
+**Key Innovation**: Universal SQL interface (`POST /api/v1/query`) for all data operations - no specialized CRUD endpoints needed.
+
+The system buffers writes in RocksDB (<1ms latency), consolidates to Parquet files (efficient storage + SQL querying via DataFusion), and streams real-time updates via WebSocket. 
+
+**Two Conversation Types**:
+1. **AI conversations**: User-owned storage (messages + content in `{userId}/`)
+2. **Group conversations**: Messages duplicated per user, large content (≥100KB) and media stored once in shared folder
+
+**Deletion Support**: SQL DELETE cascades to files with reference counting for shared content.
+
+Messages use snowflake IDs for ordering and support flexible JSON metadata. Admin UI (React + Vite) uses same SQL interface.
 
 ## Technical Context
 

@@ -1,10 +1,20 @@
 openapi: 3.0.3
 info:
-  title: KalamDb API
-  description: REST API for chat and AI message history storage with real-time streaming
-  version: 1.0.0
+  title: KalamDB SQL API
+  description: |
+    SQL-first REST API for chat and AI message history storage.
+    
+    **Core Philosophy**: Single SQL query endpoint for all data operations.
+    All CRUD operations (messages, conversations, users) use SQL queries.
+    
+    **Authentication**: JWT token enforces userId scope.
+    Users can only query their own data (`userId.messages`, `userId.conversations`).
+    Admin users can query across all users with special permissions.
+    
+  version: 2.0.0
   contact:
-    name: KalamDb Team
+    name: KalamDB Team
+
 servers:
   - url: http://localhost:8080
     description: Local development server
@@ -15,10 +25,135 @@ security:
   - BearerAuth: []
 
 paths:
+  /api/v1/query:
+    post:
+      summary: Execute SQL query
+      description: |
+        Universal SQL query endpoint for all data operations.
+        
+        **Supported Tables**:
+        - `userId.messages` - All messages for this user
+        - `userId.conversations` - All conversations for this user
+        - `userId.conversationUsers` - Group conversation memberships
+        
+        **Query Execution**:
+        1. Parse SQL and validate syntax
+        2. Extract userId from JWT token
+        3. Validate userId scope matches table prefix
+        4. Execute query across RocksDB (hot) + Parquet (cold)
+        5. Merge results and return JSON
+        
+        **Performance**:
+        - Hot data (RocksDB): <10ms
+        - Cold data (Parquet): 50-200ms depending on size
+        - Automatic caching for repeated queries
+        
+      operationId: executeQuery
+      tags:
+        - Query
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+            examples:
+              queryMessages:
+                summary: Query messages in a conversation
+                value:
+                  sql: "SELECT * FROM userId.messages WHERE conversationId = 'conv_123' ORDER BY timestamp DESC LIMIT 100"
+              queryConversations:
+                summary: List all conversations
+                value:
+                  sql: "SELECT * FROM userId.conversations ORDER BY updated DESC"
+              aggregateMessages:
+                summary: Count messages per conversation
+                value:
+                  sql: "SELECT conversationId, COUNT(*) as msgCount FROM userId.messages GROUP BY conversationId"
+              searchMessages:
+                summary: Full-text search in messages
+                value:
+                  sql: "SELECT * FROM userId.messages WHERE content LIKE '%search term%' LIMIT 50"
+              deleteMessage:
+                summary: Delete a single message
+                value:
+                  sql: "DELETE FROM userId.messages WHERE msgId = 123456789"
+              deleteConversation:
+                summary: Delete entire conversation
+                value:
+                  sql: "DELETE FROM userId.conversations WHERE conversationId = 'conv_123'"
+              insertConversation:
+                summary: Create new conversation
+                value:
+                  sql: "INSERT INTO userId.conversations (conversationId, conversationType, userId, firstMsgId, lastMsgId, created, updated, storagePath) VALUES ('conv_new', 'ai', 'user_john', 1, 1, 1699000000, 1699000000, 'user_john/')"
+              updateConversation:
+                summary: Update conversation metadata
+                value:
+                  sql: "UPDATE userId.conversations SET lastMsgId = 999, updated = 1699999999 WHERE conversationId = 'conv_123'"
+      responses:
+        '200':
+          description: Query executed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+              examples:
+                selectMessages:
+                  summary: SELECT query result
+                  value:
+                    columns: ["msgId", "conversationId", "from", "timestamp", "content", "metadata"]
+                    rows:
+                      - [123, "conv_123", "user_john", 1699000000, "Hello", "{}"]
+                      - [124, "conv_123", "ai", 1699000001, "Hi there!", "{}"]
+                    rowCount: 2
+                    executionTimeMs: 15
+                deleteResult:
+                  summary: DELETE query result
+                  value:
+                    rowsAffected: 1
+                    executionTimeMs: 8
+                insertResult:
+                  summary: INSERT query result
+                  value:
+                    rowsAffected: 1
+                    executionTimeMs: 5
+        '400':
+          description: Invalid SQL query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                syntaxError:
+                  value:
+                    error: "SQL syntax error"
+                    message: "Expected SELECT, INSERT, UPDATE, or DELETE at position 0"
+                scopeViolation:
+                  value:
+                    error: "Scope violation"
+                    message: "User user_john cannot access user_alice.messages"
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /api/v1/messages:
     post:
-      summary: Submit a new message
-      description: Store a message in the system. Returns immediately after writing to RocksDB.
+      summary: Submit a new message (legacy/convenience endpoint)
+      description: |
+        **Optional convenience endpoint** for submitting messages.
+        
+        Internally translates to SQL INSERT but provides:
+        - Automatic msgId generation (snowflake ID)
+        - Timestamp defaulting
+        - Content validation
+        - Parallel writes to all participants (group conversations)
+        
+        For flexibility, prefer using `/api/v1/query` with SQL INSERT.
       operationId: submitMessage
       tags:
         - Messages
@@ -29,215 +164,51 @@ paths:
             schema:
               $ref: '#/components/schemas/MessageRequest'
             examples:
-              userMessage:
-                summary: User message
+              textMessage:
                 value:
-                  conversationId: "conv_abc123"
+                  conversationId: "conv_123"
+                  conversationType: "ai"
                   from: "user_john"
-                  timestamp: 1696800000000000
-                  content: "Hello, how are you?"
+                  content: "Hello AI"
                   metadata:
                     role: "user"
-                    clientId: "web-app"
-              aiResponse:
-                summary: AI response
+              messageWithMedia:
                 value:
-                  conversationId: "conv_abc123"
-                  from: "ai_assistant"
-                  timestamp: 1696800001500000
-                  content: "I'm doing well, thank you!"
+                  conversationId: "conv_456"
+                  conversationType: "group"
+                  from: "user_alice"
+                  content: "Check out this image!"
+                  contentRef: "shared/conversations/conv_456/media-789.jpg"
                   metadata:
-                    role: "assistant"
-                    model: "gpt-4"
-                    tokens: 12
-              mediaMessage:
-                summary: Message with image attachment
-                value:
-                  conversationId: "conv_abc123"
-                  from: "user_john"
-                  timestamp: 1696800002000000
-                  content: "Check out this vacation photo!"
-                  contentRef: "s3://bucket/shared/conversations/conv_abc123/media-1234567890123456.jpg"
-                  metadata:
-                    role: "user"
-                    contentType: "image/jpeg"
-                    fileName: "vacation-photo.jpg"
-                    fileSize: 2457600
+                    mediaType: "image/jpeg"
                     width: 1920
                     height: 1080
-                    thumbnail: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ..."
       responses:
         '201':
-          description: Message accepted and stored
+          description: Message created
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
         '400':
-          description: Invalid request (missing required fields, content too large)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          $ref: '#/components/responses/BadRequestError'
         '401':
-          description: Unauthorized (invalid or missing JWT token)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '413':
-          description: Message content exceeds size limit
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          $ref: '#/components/responses/UnauthorizedError'
 
-    get:
-      summary: Query messages
-      description: Retrieve messages with filtering and pagination. Queries both RocksDB (recent) and Parquet (historical).
-      operationId: queryMessages
-      tags:
-        - Messages
-      parameters:
-        - name: userId
-          in: query
-          required: false
-          description: Filter messages by user ID (defaults to authenticated user from JWT)
-          schema:
-            type: string
-            example: "user_john"
-        - name: conversationId
-          in: query
-          required: false
-          description: Filter messages by conversation ID
-          schema:
-            type: string
-            example: "conv_abc123"
-        - name: sinceId
-          in: query
-          required: false
-          description: Return messages with msgId > sinceId (for pagination or replay)
-          schema:
-            type: integer
-            format: int64
-            example: 1234567890123456
-        - name: untilId
-          in: query
-          required: false
-          description: Return messages with msgId < untilId
-          schema:
-            type: integer
-            format: int64
-            example: 1234567899999999
-        - name: limit
-          in: query
-          required: false
-          description: Maximum number of messages to return (default 50, max 1000)
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 1000
-            default: 50
-            example: 50
-        - name: order
-          in: query
-          required: false
-          description: Sort order by msgId (default desc for latest first)
-          schema:
-            type: string
-            enum: [asc, desc]
-            default: desc
-      responses:
-        '200':
-          description: Messages retrieved successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MessagesResponse'
-        '400':
-          description: Invalid query parameters
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /api/v1/conversations:
-    get:
-      summary: List conversations
-      description: Retrieve all conversations for a user with metadata (firstMsgId, lastMsgId, timestamps)
-      operationId: listConversations
-      tags:
-        - Conversations
-      parameters:
-        - name: userId
-          in: query
-          required: false
-          description: Filter conversations by user ID (defaults to authenticated user from JWT)
-          schema:
-            type: string
-            example: "user_john"
-      responses:
-        '200':
-          description: Conversations retrieved successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ConversationsResponse'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /api/v1/conversations/{conversationId}:
-    get:
-      summary: Get conversation metadata
-      description: Retrieve metadata for a specific conversation
-      operationId: getConversation
-      tags:
-        - Conversations
-      parameters:
-        - name: conversationId
-          in: path
-          required: true
-          description: Conversation identifier
-          schema:
-            type: string
-            example: "conv_abc123"
-      responses:
-        '200':
-          description: Conversation metadata retrieved
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Conversation'
-        '404':
-          description: Conversation not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /api/v1/messages/upload:
+  /api/v1/media/upload:
     post:
-      summary: Upload media file for message
-      description: Upload a media file (image, document, audio, video) and receive a contentRef to use in message submission. Supports multipart/form-data upload.
+      summary: Upload media file
+      description: |
+        Upload media file (image, document, audio, video) for a conversation.
+        
+        **Storage Logic**:
+        - AI conversation: stored in `{userId}/media-{msgId}.{ext}`
+        - Group conversation: stored in `shared/conversations/{convId}/media-{msgId}.{ext}`
+        
+        Returns `contentRef` to use in message submission.
       operationId: uploadMedia
       tags:
-        - Messages
+        - Media
       requestBody:
         required: true
         content:
@@ -245,25 +216,21 @@ paths:
             schema:
               type: object
               required:
-                - conversationId
                 - file
+                - conversationId
+                - conversationType
               properties:
-                conversationId:
-                  type: string
-                  description: Conversation ID where this media will be used
-                  example: "conv_abc123"
                 file:
                   type: string
                   format: binary
                   description: Media file to upload
-                contentType:
+                conversationId:
                   type: string
-                  description: MIME type of the file (auto-detected if not provided)
-                  example: "image/jpeg"
-                fileName:
+                  description: Conversation this media belongs to
+                conversationType:
                   type: string
-                  description: Original file name
-                  example: "vacation-photo.jpg"
+                  enum: [ai, group]
+                  description: Type of conversation (determines storage location)
       responses:
         '201':
           description: Media uploaded successfully
@@ -272,383 +239,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/MediaUploadResponse'
         '400':
-          description: Invalid request (missing file, unsupported content type)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          $ref: '#/components/responses/BadRequestError'
         '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          $ref: '#/components/responses/UnauthorizedError'
         '413':
-          description: File too large (exceeds max_size_bytes config)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /api/v1/messages/{msgId}/content:
-    get:
-      summary: Fetch full content for large message or media file
-      description: Retrieve the complete content for a message stored in shared storage. Returns signed URL for media files or full text content.
-      operationId: getMessageContent
-      tags:
-        - Messages
-      parameters:
-        - name: msgId
-          in: path
-          required: true
-          description: Message ID
-          schema:
-            type: integer
-            format: int64
-            example: 1234567890123456
-        - name: download
-          in: query
-          required: false
-          description: If true, force download instead of inline display
-          schema:
-            type: boolean
-            default: false
-      responses:
-        '200':
-          description: Full message content retrieved or signed URL returned
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ContentResponse'
-            text/plain:
-              schema:
-                type: string
-                example: "This is the full content of a large message..."
-            image/*:
-              schema:
-                type: string
-                format: binary
-            audio/*:
-              schema:
-                type: string
-                format: binary
-            video/*:
-              schema:
-                type: string
-                format: binary
-            application/pdf:
-              schema:
-                type: string
-                format: binary
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-        '404':
-          description: Message not found or no large content available
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Forbidden (user does not have access to this message)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /api/v1/conversations/{conversationId}/users:
-    get:
-      summary: List users in a conversation
-      description: Retrieve all users who have access to this conversation
-      operationId: listConversationUsers
-      tags:
-        - Conversations
-      parameters:
-        - name: conversationId
-          in: path
-          required: true
-          description: Conversation identifier
-          schema:
-            type: string
-            example: "conv_abc123"
-      responses:
-        '200':
-          description: Users retrieved successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ConversationUsersResponse'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Forbidden (user does not have access to this conversation)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '404':
-          description: Conversation not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-    post:
-      summary: Add a user to a conversation
-      description: Grant a user access to this conversation. Requires admin or owner permissions.
-      operationId: addConversationUser
-      tags:
-        - Conversations
-      parameters:
-        - name: conversationId
-          in: path
-          required: true
-          description: Conversation identifier
-          schema:
-            type: string
-            example: "conv_abc123"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ConversationUserRequest'
-      responses:
-        '201':
-          description: User added to conversation
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ConversationUser'
-        '400':
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Forbidden (insufficient permissions)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '409':
-          description: User already in conversation
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /api/v1/conversations/{conversationId}/users/{userId}:
-    get:
-      summary: Get user's conversation membership details
-      description: Retrieve details about a user's access to this conversation
-      operationId: getConversationUser
-      tags:
-        - Conversations
-      parameters:
-        - name: conversationId
-          in: path
-          required: true
-          description: Conversation identifier
-          schema:
-            type: string
-            example: "conv_abc123"
-        - name: userId
-          in: path
-          required: true
-          description: User identifier
-          schema:
-            type: string
-            example: "user_john"
-      responses:
-        '200':
-          description: Conversation user details retrieved
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ConversationUser'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '404':
-          description: User not found in conversation
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-    put:
-      summary: Update user's conversation membership
-      description: Update permissions or metadata for a user in this conversation
-      operationId: updateConversationUser
-      tags:
-        - Conversations
-      parameters:
-        - name: conversationId
-          in: path
-          required: true
-          description: Conversation identifier
-          schema:
-            type: string
-            example: "conv_abc123"
-        - name: userId
-          in: path
-          required: true
-          description: User identifier
-          schema:
-            type: string
-            example: "user_john"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ConversationUserUpdate'
-      responses:
-        '200':
-          description: User membership updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ConversationUser'
-        '400':
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Forbidden (insufficient permissions)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '404':
-          description: User not found in conversation
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-    delete:
-      summary: Remove user from conversation
-      description: Revoke a user's access to this conversation
-      operationId: removeConversationUser
-      tags:
-        - Conversations
-      parameters:
-        - name: conversationId
-          in: path
-          required: true
-          description: Conversation identifier
-          schema:
-            type: string
-            example: "conv_abc123"
-        - name: userId
-          in: path
-          required: true
-          description: User identifier
-          schema:
-            type: string
-            example: "user_john"
-      responses:
-        '204':
-          description: User removed from conversation
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Forbidden (insufficient permissions)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '404':
-          description: User not found in conversation
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /api/v1/query:
-    post:
-      summary: Execute SQL query
-      description: Execute arbitrary SQL query against message data using DataFusion. Admin-only endpoint.
-      operationId: executeSqlQuery
-      tags:
-        - Query
-      security:
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - query
-              properties:
-                query:
-                  type: string
-                  description: SQL query string
-                  example: "SELECT conversationId, COUNT(*) as msg_count FROM messages WHERE userId = 'user_john' GROUP BY conversationId"
-                params:
-                  type: object
-                  description: Query parameters (for parameterized queries)
-                  additionalProperties: true
-                  example:
-                    userId: "user_john"
-      responses:
-        '200':
-          description: Query executed successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/QueryResponse'
-        '400':
-          description: Invalid SQL query
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Unauthorized (requires admin privileges)
+          description: File too large
           content:
             application/json:
               schema:
@@ -672,125 +267,13 @@ paths:
                 properties:
                   status:
                     type: string
-                    example: "healthy"
+                    example: "ok"
                   version:
                     type: string
                     example: "1.0.0"
                   uptime:
                     type: integer
                     description: Server uptime in seconds
-                    example: 86400
-
-  /api/admin/subscriptions:
-    get:
-      summary: List active subscriptions
-      description: Retrieve all active WebSocket subscriptions. Admin-only.
-      operationId: listSubscriptions
-      tags:
-        - Admin
-      security:
-        - BearerAuth: []
-      responses:
-        '200':
-          description: Active subscriptions retrieved
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SubscriptionsResponse'
-        '401':
-          description: Unauthorized (requires admin privileges)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /api/admin/config:
-    get:
-      summary: Get system configuration
-      description: Retrieve current system configuration. Admin-only.
-      operationId: getConfig
-      tags:
-        - Admin
-      security:
-        - BearerAuth: []
-      responses:
-        '200':
-          description: Configuration retrieved
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Config'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-    put:
-      summary: Update system configuration
-      description: Update system configuration. Some changes require server restart. Admin-only.
-      operationId: updateConfig
-      tags:
-        - Admin
-      security:
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ConfigUpdate'
-      responses:
-        '200':
-          description: Configuration updated (may require restart)
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  requiresRestart:
-                    type: boolean
-                    description: True if server restart required for changes to take effect
-                    example: true
-        '400':
-          description: Invalid configuration values
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /api/admin/metrics:
-    get:
-      summary: Get system metrics snapshot
-      description: Retrieve current system metrics (storage, throughput, performance). Admin-only.
-      operationId: getMetrics
-      tags:
-        - Admin
-      security:
-        - BearerAuth: []
-      responses:
-        '200':
-          description: Metrics retrieved
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Metrics'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
 
 components:
   securitySchemes:
@@ -798,105 +281,103 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: JWT token with userId in 'sub' claim
+      description: |
+        JWT token with claims:
+        - `userId`: User identifier (required)
+        - `role`: User role (user, admin)
+        - `exp`: Expiration timestamp
 
   schemas:
-    MediaUploadResponse:
+    QueryRequest:
       type: object
+      required:
+        - sql
       properties:
-        contentRef:
+        sql:
           type: string
-          description: Reference URI for the uploaded media file
-          example: "s3://bucket/shared/conversations/conv_abc123/media-1234567890123456.jpg"
-        contentType:
-          type: string
-          description: MIME type of the uploaded file
-          example: "image/jpeg"
-        fileSize:
-          type: integer
-          format: int64
-          description: Size of the uploaded file in bytes
-          example: 2457600
-        thumbnail:
-          type: string
-          description: Base64-encoded thumbnail (for images/videos)
-          nullable: true
-          example: "data:image/jpeg;base64,/9j/4AAQ..."
-        metadata:
+          description: SQL query to execute
+          example: "SELECT * FROM userId.messages WHERE conversationId = 'conv_123' LIMIT 100"
+        parameters:
           type: object
-          description: Extracted metadata (dimensions, duration, etc.)
+          description: Optional query parameters (for prepared statements)
           additionalProperties: true
           example:
-            width: 1920
-            height: 1080
+            conversationId: "conv_123"
+            limit: 100
 
-    ContentResponse:
+    QueryResponse:
       type: object
       properties:
-        contentRef:
-          type: string
-          description: Reference URI for the content
-          example: "s3://bucket/shared/conversations/conv_abc123/media-789.jpg"
-        signedUrl:
-          type: string
-          description: Temporary signed URL for direct access (expires in 1 hour)
-          example: "https://s3.amazonaws.com/bucket/shared/conversations/conv_abc123/media-789.jpg?X-Amz-Signature=..."
-        contentType:
-          type: string
-          description: MIME type of the content
-          example: "image/jpeg"
-        expiresAt:
+        columns:
+          type: array
+          items:
+            type: string
+          description: Column names in result set
+          example: ["msgId", "conversationId", "from", "timestamp", "content"]
+        rows:
+          type: array
+          items:
+            type: array
+            items: {}
+          description: Result rows (array of arrays)
+          example:
+            - [123, "conv_123", "user_john", 1699000000, "Hello"]
+            - [124, "conv_123", "ai", 1699000001, "Hi!"]
+        rowCount:
           type: integer
-          format: int64
-          description: Unix timestamp when signed URL expires (microseconds)
-          example: 1696803600000000
+          description: Number of rows returned
+          example: 2
+        rowsAffected:
+          type: integer
+          description: Number of rows affected (for INSERT/UPDATE/DELETE)
+          example: 1
+        executionTimeMs:
+          type: integer
+          description: Query execution time in milliseconds
+          example: 15
 
     MessageRequest:
       type: object
       required:
         - conversationId
+        - conversationType
         - from
-        - timestamp
         - content
       properties:
         conversationId:
           type: string
           description: Conversation identifier
-          maxLength: 255
           example: "conv_abc123"
-        contentRef:
+        conversationType:
           type: string
-          description: Optional reference to uploaded media (from /api/v1/messages/upload)
-          nullable: true
-          example: "s3://bucket/shared/conversations/conv_abc123/media-1234567890123456.jpg"
+          enum: [ai, group]
+          description: Type of conversation
+          example: "ai"
         from:
           type: string
-          description: Sender user ID
-          maxLength: 255
+          description: Sender identifier (userId or "ai")
           example: "user_john"
         timestamp:
           type: integer
           format: int64
-          description: Unix timestamp in microseconds (UTC)
+          description: Unix timestamp in microseconds (optional, auto-generated if not provided)
           example: 1696800000000000
         content:
           type: string
-          description: Message body/text or caption for media messages
-          minLength: 1
+          description: Message content (text or preview for large/media messages)
           maxLength: 1048576
           example: "Hello, how are you?"
+        contentRef:
+          type: string
+          description: Reference to large content or media file (optional)
+          example: "shared/conversations/conv_123/msg-456.bin"
         metadata:
           type: object
-          description: Flexible key-value metadata (role, contentType, fileName, fileSize, dimensions, duration, etc.)
+          description: Flexible key-value metadata
           additionalProperties: true
           example:
             role: "user"
             clientId: "web-app"
-            contentType: "image/jpeg"
-            fileName: "vacation-photo.jpg"
-            fileSize: 2457600
-            width: 1920
-            height: 1080
 
     MessageResponse:
       type: object
@@ -904,340 +385,94 @@ components:
         msgId:
           type: integer
           format: int64
-          description: Generated snowflake ID for this message
-          example: 1234567890123456
-        acknowledged:
-          type: boolean
-          description: True if message was accepted and stored
-          example: true
-
-    Message:
-      type: object
-      properties:
-        msgId:
-          type: integer
-          format: int64
+          description: Generated message ID (snowflake)
           example: 1234567890123456
         conversationId:
           type: string
           example: "conv_abc123"
-        from:
-          type: string
-          example: "user_john"
         timestamp:
           type: integer
           format: int64
-          description: Unix timestamp in microseconds (UTC)
           example: 1696800000000000
-        content:
+        status:
           type: string
-          description: Message content, caption for media, or truncated preview for large messages (first 1KB).
-          example: "Hello, how are you?"
+          enum: [buffered, consolidated]
+          description: Storage status
+          example: "buffered"
+
+    MediaUploadResponse:
+      type: object
+      properties:
         contentRef:
           type: string
-          description: Optional reference URI for large message content or media files (images, documents, audio, video, etc.)
-          nullable: true
-          example: "s3://bucket/shared/conversations/conv_abc123/media-1234567890123456.jpg"
+          description: Reference path to uploaded media
+          example: "shared/conversations/conv_123/media-789.jpg"
         metadata:
           type: object
-          additionalProperties: true
-          example:
-            role: "user"
-            contentType: "image/jpeg"
-            fileName: "vacation-photo.jpg"
-            fileSize: 2457600
-            width: 1920
-            height: 1080
-            thumbnail: "data:image/jpeg;base64,/9j/4AAQ..."
-
-    MessagesResponse:
-      type: object
-      properties:
-        messages:
-          type: array
-          items:
-            $ref: '#/components/schemas/Message'
-        hasMore:
-          type: boolean
-          description: True if more messages available (pagination)
-          example: false
-        nextCursor:
-          type: integer
-          format: int64
-          description: msgId to use as 'sinceId' for next page
-          example: 1234567890123456
-          nullable: true
-
-    Conversation:
-      type: object
-      properties:
-        conversationId:
-          type: string
-          example: "conv_abc123"
-        firstMsgId:
-          type: integer
-          format: int64
-          example: 1234567890000000
-        lastMsgId:
-          type: integer
-          format: int64
-          example: 1234567899999999
-        created:
-          type: integer
-          format: int64
-          description: Unix timestamp in microseconds
-          example: 1696800000000000
-        updated:
-          type: integer
-          format: int64
-          description: Unix timestamp in microseconds
-          example: 1696850000000000
-
-    ConversationsResponse:
-      type: object
-      properties:
-        conversations:
-          type: array
-          items:
-            $ref: '#/components/schemas/Conversation'
-
-    ConversationUser:
-      type: object
-      properties:
-        userId:
-          type: string
-          example: "user_john"
-        conversationId:
-          type: string
-          example: "conv_abc123"
-        created:
-          type: integer
-          format: int64
-          description: Unix timestamp in microseconds when user joined
-          example: 1696800000000000
-        updated:
-          type: integer
-          format: int64
-          description: Unix timestamp in microseconds when membership last changed
-          example: 1696850000000000
-        metadata:
-          type: object
-          description: User-specific conversation metadata
-          additionalProperties: true
-          example:
-            role: "participant"
-            permissions: ["read", "write"]
-            lastReadMsgId: 1234567890123456
-            notificationsEnabled: true
-
-    ConversationUsersResponse:
-      type: object
-      properties:
-        users:
-          type: array
-          items:
-            $ref: '#/components/schemas/ConversationUser'
-
-    ConversationUserRequest:
-      type: object
-      required:
-        - userId
-      properties:
-        userId:
-          type: string
-          description: User ID to add to the conversation
-          maxLength: 255
-          example: "user_jane"
-        metadata:
-          type: object
-          description: Initial metadata for this user
-          additionalProperties: true
-          example:
-            role: "participant"
-            permissions: ["read", "write"]
-            notificationsEnabled: true
-
-    ConversationUserUpdate:
-      type: object
-      properties:
-        metadata:
-          type: object
-          description: Updated metadata for this user
-          additionalProperties: true
-          example:
-            role: "moderator"
-            permissions: ["read", "write", "delete"]
-            lastReadMsgId: 1234567890999999
-
-    QueryResponse:
-      type: object
-      properties:
-        columns:
-          type: array
-          description: Column names
-          items:
-            type: string
-          example: ["conversationId", "msg_count"]
-        rows:
-          type: array
-          description: Query result rows
-          items:
-            type: array
-            items: {}
-          example:
-            - ["conv_abc123", 150]
-            - ["conv_xyz789", 75]
-        executionTimeMs:
-          type: integer
-          description: Query execution time in milliseconds
-          example: 245
-
-    SubscriptionsResponse:
-      type: object
-      properties:
-        subscriptions:
-          type: array
-          items:
-            type: object
-            properties:
-              connectionId:
-                type: string
-                format: uuid
-                example: "550e8400-e29b-41d4-a716-446655440000"
-              userId:
-                type: string
-                example: "user_john"
-              conversationId:
-                type: string
-                nullable: true
-                example: "conv_abc123"
-              lastMsgId:
-                type: integer
-                format: int64
-                nullable: true
-                example: 1234567890123456
-              connectedAt:
-                type: integer
-                format: int64
-                description: Unix timestamp in microseconds
-                example: 1696800000000000
-              lastHeartbeat:
-                type: integer
-                format: int64
-                description: Unix timestamp in microseconds
-                example: 1696850000000000
-
-    Config:
-      type: object
-      properties:
-        messageSizeLimitBytes:
-          type: integer
-          description: Maximum message content size in bytes (including large messages)
-          example: 10485760
-        largeMessageThresholdBytes:
-          type: integer
-          description: Message size threshold for shared storage (messages >= this stored in shared location)
-          example: 102400
-        consolidationIntervalSeconds:
-          type: integer
-          description: Time interval between consolidation cycles
-          example: 300
-        consolidationMessageThreshold:
-          type: integer
-          description: Message count threshold for consolidation
-          example: 10000
-        storageBackend:
-          type: string
-          enum: [local, s3]
-          example: "local"
-        storageConfig:
-          type: object
-          description: Backend-specific storage configuration
-          additionalProperties: true
-        duplicationEnabled:
-          type: boolean
-          description: Enable message duplication across conversation participants
-          example: true
-        maxParticipantsWarning:
-          type: integer
-          description: Warn when conversation exceeds this many participants (high storage cost)
-          example: 20
-
-    ConfigUpdate:
-      type: object
-      properties:
-        messageSizeLimitBytes:
-          type: integer
-          example: 20971520
-        largeMessageThresholdBytes:
-          type: integer
-          example: 204800
-        consolidationIntervalSeconds:
-          type: integer
-          example: 600
-        consolidationMessageThreshold:
-          type: integer
-          example: 20000
-        maxParticipantsWarning:
-          type: integer
-          example: 50
-
-    Metrics:
-      type: object
-      properties:
-        storage:
-          type: object
+          description: Extracted media metadata
           properties:
-            totalMessages:
+            mediaType:
+              type: string
+              example: "image/jpeg"
+            fileSize:
               type: integer
-              format: int64
-              example: 1000000
-            sizeBytes:
+              example: 245760
+            width:
               type: integer
-              format: int64
-              example: 500000000
-            userCount:
+              example: 1920
+            height:
               type: integer
-              example: 1000
-        throughput:
-          type: object
-          properties:
-            messagesPerSecond:
-              type: number
-              format: float
-              example: 150.5
-            queriesPerSecond:
-              type: number
-              format: float
-              example: 10.2
-        subscriptions:
-          type: object
-          properties:
-            activeConnections:
-              type: integer
-              example: 500
-        performance:
-          type: object
-          properties:
-            cpuPercent:
-              type: number
-              format: float
-              example: 45.2
-            memoryMB:
-              type: integer
-              example: 2048
-            diskIOPS:
-              type: integer
-              example: 100
+              example: 1080
+            thumbnailRef:
+              type: string
+              example: "shared/conversations/conv_123/media-789-thumb.jpg"
 
     Error:
       type: object
+      required:
+        - error
+        - message
       properties:
         error:
           type: string
-          description: Error message
-          example: "Invalid request: missing required field 'conversationId'"
-        code:
+          description: Error type
+          example: "ValidationError"
+        message:
           type: string
-          description: Error code for programmatic handling
-          example: "MISSING_FIELD"
+          description: Human-readable error message
+          example: "Invalid SQL syntax"
+        details:
+          type: object
+          description: Additional error details
+          additionalProperties: true
+
+  responses:
+    UnauthorizedError:
+      description: Authentication required or invalid token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Unauthorized"
+            message: "Invalid or missing JWT token"
+
+    BadRequestError:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "BadRequest"
+            message: "Missing required field: conversationId"
+
+tags:
+  - name: Query
+    description: SQL query operations (primary interface)
+  - name: Messages
+    description: Message operations (convenience endpoints)
+  - name: Media
+    description: Media file upload
+  - name: System
+    description: System health and status
