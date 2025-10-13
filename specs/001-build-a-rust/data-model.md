@@ -17,27 +17,47 @@ KalamDb's data model is designed for efficient storage, querying, and streaming 
 2. **Cold storage**: Parquet files (S3/local filesystem)
 3. **Unified view**: Engine automatically merges both sources
 
+**Table Architecture**:
+
+**Physical Tables** (actual stored data):
+- `conversations` - All conversations in the system (lowercase with underscores)
+- `conversation_users` - Junction table for user-conversation relationships
+- All field names use lowercase with underscores (e.g., `conversation_id`, `user_id`, `msg_id`)
+
+**Virtual Tables** (user-scoped views filtered by `userId.perms`):
+- `userId.messages` - User's messages in accessible conversations
+- `userId.conversations` - Virtual view of `conversations` table filtered by user's permissions
+- `userId.conversation_users` - Virtual view of `conversation_users` table filtered by user's permissions  
+- `userId.perms` - User's permission/access control table
+
+**Permission Model**:
+- `userId.perms` table controls access to conversations
+- When querying `userId.conversations`, only conversations with permissions in `userId.perms` are returned
+- When querying `userId.conversation_users`, only memberships for accessible conversations are returned
+- SQL engine enforces scope automatically
+
 **Supported SQL Operations**:
 ```sql
--- Read operations
+-- Read operations (virtual views)
 SELECT * FROM userId.conversations;
-SELECT * FROM userId.messages WHERE conversationId = 'conv_123';
-SELECT * FROM userId.conversationUsers;
+SELECT * FROM userId.messages WHERE conversation_id = 'conv_123';
+SELECT * FROM userId.conversation_users;
+SELECT * FROM userId.perms; -- see your permissions
 
--- Write operations
-INSERT INTO userId.conversations VALUES (...);
-UPDATE userId.conversations SET lastMsgId = 456 WHERE conversationId = 'conv_123';
-DELETE FROM userId.messages WHERE msgId = 123;
-DELETE FROM userId.conversations WHERE conversationId = 'conv_123'; -- cascades to messages
+-- Write operations (physical tables)
+INSERT INTO conversations VALUES (...);
+UPDATE conversations SET last_msg_id = 456 WHERE conversation_id = 'conv_123';
+DELETE FROM userId.messages WHERE msg_id = 123;
+DELETE FROM userId.conversations WHERE conversation_id = 'conv_123'; -- cascades to messages
 
 -- Advanced queries
 SELECT * FROM userId.messages WHERE timestamp > 1699999999 ORDER BY timestamp DESC LIMIT 100;
-SELECT conversationId, COUNT(*) as count FROM userId.messages GROUP BY conversationId;
+SELECT conversation_id, COUNT(*) as count FROM userId.messages GROUP BY conversation_id;
 ```
 
 **REST API**: Thin wrapper around SQL engine
 - Single endpoint: `POST /api/v1/query` with SQL body
-- Authentication enforces userId scope (users can only query their own data)
+- Authentication enforces userId scope (users can only query their own data via `userId.perms`)
 - Admin UI uses same SQL interface
 - No specialized REST endpoints needed for CRUD
 
@@ -133,29 +153,29 @@ Represents a single message in a conversation (chat message, AI response, system
 - **Shared storage**: All participants read from same location
 - **User references**: Lightweight index in `{userId}/conversation-refs/{conversationId}.json`
 
-**Schema**:
+**Schema** (all fields use lowercase with underscores):
 
 | Field | Type | Description | Constraints | Index |
 |-------|------|-------------|-------------|-------|
-| `msgId` | i64 | Snowflake ID (time-ordered unique identifier) | NOT NULL, PRIMARY KEY | Sorted (implicit in Parquet) |
-| `conversationId` | String | Conversation this message belongs to | NOT NULL | Indexed (row group) |
-| `conversationType` | String | Type of conversation: "ai" or "group" | NOT NULL | - |
-| `from` | String | Sender userId (can be AI, user, or another user) | NOT NULL | - |
-| `timestamp` | i64 | Unix timestamp in microseconds (UTC) | NOT NULL | Sorted (via msgId) |
+| `msg_id` | i64 | Snowflake ID (time-ordered unique identifier) | NOT NULL, PRIMARY KEY | Sorted (implicit in Parquet) |
+| `conversation_id` | String | Conversation this message belongs to | NOT NULL | Indexed (row group) |
+| `conversation_type` | String | Type of conversation: "ai" or "group" | NOT NULL | - |
+| `from` | String | Sender user_id (can be AI, user, or another user) | NOT NULL | - |
+| `timestamp` | i64 | Unix timestamp in microseconds (UTC) | NOT NULL | Sorted (via msg_id) |
 | `content` | String | Message body/text OR content preview (for large/media messages) | NOT NULL, MAX 1MB (configurable) | - |
-| `metadata` | String (JSON) | Flexible key-value pairs (role, model, tokens, contentType, fileName, fileSize, etc.) | NULLABLE | - |
-| `contentRef` | String (optional) | Reference URI for large messages or media files (relative to conversation storage location) | NULLABLE | - |
+| `metadata` | String (JSON) | Flexible key-value pairs (role, model, tokens, content_type, file_name, file_size, etc.) | NULLABLE | - |
+| `content_ref` | String (optional) | Reference URI for large messages or media files (relative to conversation storage location) | NULLABLE | - |
 
 **Parquet Schema (Arrow)**:
 ```rust
 Schema::new(vec![
-    Field::new("msgId", DataType::Int64, false),
-    Field::new("conversationId", DataType::Utf8, false),
-    Field::new("conversationType", DataType::Utf8, false), // "ai" or "group"
+    Field::new("msg_id", DataType::Int64, false),
+    Field::new("conversation_id", DataType::Utf8, false),
+    Field::new("conversation_type", DataType::Utf8, false), // "ai" or "group"
     Field::new("from", DataType::Utf8, false),
     Field::new("timestamp", DataType::Int64, false),
     Field::new("content", DataType::Utf8, false),
-    Field::new("contentRef", DataType::Utf8, true), // Optional reference
+    Field::new("content_ref", DataType::Utf8, true), // Optional reference
     Field::new("metadata", DataType::Utf8, true), // JSON string
 ])
 ```
@@ -268,37 +288,59 @@ Schema::new(vec![
 
 Represents a conversation thread containing multiple messages.
 
+**Note**: This is the physical `conversations` table. Users access it via the `userId.conversations` virtual view which filters by permissions in `userId.perms`.
+
 **Storage**:
-- **RocksDB** (metadata cache): Key = `{userId}:conversations:{conversationId}`, Value = ConversationMetadata
+- **RocksDB** (metadata cache): Key = `conversations:{conversation_id}`, Value = ConversationMetadata
 - **Separate metadata table** (future: SQLite or Parquet index file for fast lookups)
 
-**Schema**:
+**Schema** (all fields use lowercase with underscores):
 
-| Field | Type | Description | Constraints |
-|-------|------|-------------|-------------|
-| `conversationId` | String | Unique conversation identifier | NOT NULL, PRIMARY KEY |
-| `conversationType` | String | Type: "ai" or "group" | NOT NULL |
-| `userId` | String | User ID (for AI conversations only) | NULLABLE (NULL for group) |
-| `firstMsgId` | i64 | Snowflake ID of first message | NOT NULL |
-| `lastMsgId` | i64 | Snowflake ID of most recent message | NOT NULL, updated periodically |
-| `created` | i64 | Unix timestamp when conversation created (microseconds) | NOT NULL |
-| `updated` | i64 | Unix timestamp when conversation last modified (microseconds) | NOT NULL |
-| `storagePath` | String | Storage location for this conversation | NOT NULL |
+| Field | Type | Description | Constraints | Storage |
+|-------|------|-------------|-------------|---------|
+| `conversation_id` | String | Unique conversation identifier | NOT NULL, PRIMARY KEY | Parquet + RocksDB |
+| `conversation_type` | String | Type: "ai" or "group" | NOT NULL | Parquet + RocksDB |
+| `user_id` | String | User ID (for AI conversations only) | NULLABLE (NULL for group) | Parquet + RocksDB |
+| `first_msg_id` | i64 | Snowflake ID of first message | NOT NULL | Parquet + RocksDB |
+| `last_msg_id` | i64 | Snowflake ID of most recent message | NOT NULL | **Hybrid**: RocksDB (real-time) → Parquet (fallback) |
+| `created` | i64 | Unix timestamp when conversation created (microseconds) | NOT NULL | Parquet + RocksDB |
+| `updated` | i64 | Unix timestamp when conversation last modified (microseconds) | NOT NULL | **Hybrid**: RocksDB (real-time) → Parquet (fallback) |
+| `storage_path` | String | Storage location for this conversation | NOT NULL | Parquet + RocksDB |
+| `total_messages` | i64 | Total message count in conversation | Virtual (computed) | **Hybrid**: S3 counter file + RocksDB incremental counter |
+
+**Hybrid Field Resolution**:
+
+- **`last_msg_id`**: 
+  - Query checks RocksDB `conv_meta:{conversation_id}:last_msg_id` first
+  - Falls back to Parquet file if not in RocksDB (e.g., cold conversations)
+  - Updated in real-time with each new message
+  
+- **`updated`**:
+  - Query checks RocksDB `conv_meta:{conversation_id}:updated` first
+  - Falls back to Parquet file if not in RocksDB
+  - Updated in real-time with each new message
+  
+- **`total_messages`** (virtual field, not stored directly):
+  - Computed as: S3 counter file + RocksDB incremental counter
+  - S3: `{storage_path}/conversations/{conversation_id}_counter.txt` (baseline)
+  - RocksDB: `conv_meta:{conversation_id}:msg_count` (incremental since last consolidation)
+  - Background process consolidates counters every 5 minutes
+  - Always accurate, no Parquet scan needed
 
 **Storage Path Examples**:
-- AI conversation messages: `{userId}/batch-*.parquet` (e.g., `user_john/batch-001.parquet`)
-- AI conversation content: `{userId}/msg-{msgId}.bin`, `{userId}/media-{msgId}.jpg`
-- Group conversation messages: Duplicated to each user's storage: `{userId}/batch-*.parquet`
-- Group conversation large content: `shared/conversations/{conversationId}/msg-{msgId}.bin`
-- Group conversation media: `shared/conversations/{conversationId}/media-{msgId}.jpg`
+- AI conversation messages: `{user_id}/batch-*.parquet` (e.g., `user_john/batch-001.parquet`)
+- AI conversation content: `{user_id}/msg-{msg_id}.bin`, `{user_id}/media-{msg_id}.jpg`
+- Group conversation messages: Duplicated to each user's storage: `{user_id}/batch-*.parquet`
+- Group conversation large content: `shared/conversations/{conversation_id}/msg-{msg_id}.bin`
+- Group conversation media: `shared/conversations/{conversation_id}/media-{msg_id}.jpg`
 
 **Validation Rules**:
-- `conversationId`: Non-empty, max 255 chars, globally unique
-- `conversationType`: Must be "ai" or "group"
-- `userId`: Required if conversationType="ai", NULL if conversationType="group"
-- `firstMsgId` <= `lastMsgId`
+- `conversation_id`: Non-empty, max 255 chars, globally unique
+- `conversation_type`: Must be "ai" or "group"
+- `user_id`: Required if conversation_type="ai", NULL if conversation_type="group"
+- `first_msg_id` <= `last_msg_id`
 - `created` <= `updated`
-- `storagePath`: Must match conversationType pattern
+- `storage_path`: Must match conversation_type pattern
 
 **Lifecycle**:
 1. **Create**: When first message arrives, create conversation metadata
@@ -318,58 +360,117 @@ Represents a conversation thread containing multiple messages.
 
 ---
 
-### 3. ConversationUser
+### 3. conversation_users
 
-Represents the relationship between users and conversations, tracking which users have access to which conversations. This enables multi-user conversations and access control.
+Junction table representing the relationship between users and conversations.
+
+**Note**: This is the physical `conversation_users` table. Users access it via the `userId.conversation_users` virtual view which filters by permissions in `userId.perms`.
 
 **Storage**:
-- **RocksDB** (metadata): Key = `{conversationId}:users:{userId}`, Value = ConversationUserMetadata
-- **Secondary index**: Key = `{userId}:convusers:{conversationId}` for user-centric queries
+- **RocksDB** (metadata): Key = `conversation_users:{conversation_id}:{user_id}`, Value = ConversationUserMetadata
+- **Secondary index**: Key = `user_convs:{user_id}:{conversation_id}` for user-centric queries
 - **Separate metadata table** (future: SQLite for relational queries)
 
-**Schema**:
+**Schema** (all fields use lowercase with underscores):
 
 | Field | Type | Description | Constraints |
 |-------|------|-------------|-------------|
-| `userId` | String | User ID with access to this conversation | NOT NULL, PRIMARY KEY (composite) |
-| `conversationId` | String | Conversation identifier | NOT NULL, PRIMARY KEY (composite) |
+| `user_id` | String | User ID with access to this conversation | NOT NULL, PRIMARY KEY (composite) |
+| `conversation_id` | String | Conversation identifier | NOT NULL, PRIMARY KEY (composite) |
+| `role` | String | User's role: 'member', 'admin', 'owner' | NOT NULL |
 | `created` | i64 | Unix timestamp when user joined conversation (microseconds) | NOT NULL |
 | `updated` | i64 | Unix timestamp when user's participation last changed (microseconds) | NOT NULL |
-| `metadata` | String (JSON) | Flexible key-value pairs (role, permissions, lastRead, etc.) | NULLABLE |
+| `metadata` | String (JSON) | Flexible key-value pairs (permissions, last_read, etc.) | NULLABLE |
 
 **Validation Rules**:
-- `userId`: Non-empty, max 255 chars
-- `conversationId`: Non-empty, max 255 chars
+- `user_id`: Non-empty, max 255 chars
+- `conversation_id`: Non-empty, max 255 chars
+- `role`: Must be one of 'member', 'admin', 'owner'
 - `created` <= `updated`
 - `metadata`: Valid JSON if present
 
 **Example Metadata**:
 ```json
 {
-  "role": "participant",
   "permissions": ["read", "write"],
-  "lastReadMsgId": 1234567890123456,
-  "notificationsEnabled": true,
-  "displayName": "John Doe"
+  "last_read_msg_id": 1234567890123456,
+  "notifications_enabled": true,
+  "display_name": "John Doe"
 }
 ```
 
 **Lifecycle**:
 1. **Create**: When user is added to a conversation (manually or via first message)
-2. **Update**: When user's permissions change or they read messages
-3. **Query**: List users in conversation via `{conversationId}:users:*` scan, or list user's conversations via `{userId}:convusers:*` scan
+2. **Update**: When user's role changes or metadata is updated
+3. **Query**: List users in conversation via `conversation_users:{conversation_id}:*` scan, or list user's conversations via `user_convs:{user_id}:*` scan
 4. **Delete**: When user leaves conversation or is removed
 
 **State Transitions**:
 ```
 [Initial] --user joins--> [Active]
-[Active] --permissions change--> [Active] (update metadata)
+[Active] --role/metadata change--> [Active] (update)
 [Active] --user leaves--> [Removed]
 ```
 
 ---
 
-### 4. Subscription
+### 4. perms
+
+Permission table controlling user access to conversations. This table is accessed via the `userId.perms` virtual view.
+
+**Purpose**: 
+- Controls which conversations appear in `userId.conversations` view
+- Controls which conversation_users appear in `userId.conversation_users` view
+- Enforces security boundaries in SQL queries
+
+**Storage**:
+- **RocksDB**: Key = `perms:{user_id}:{conversation_id}`, Value = PermissionMetadata
+- **User index**: Key = `user_perms:{user_id}:{conversation_id}` for fast user-scoped lookups
+
+**Schema** (all fields use lowercase with underscores):
+
+| Field | Type | Description | Constraints |
+|-------|------|-------------|-------------|
+| `user_id` | String | User ID who has this permission | NOT NULL, PRIMARY KEY (composite) |
+| `conversation_id` | String | Conversation identifier | NOT NULL, PRIMARY KEY (composite) |
+| `permissions` | String (JSON Array) | Array of permissions: ["read", "write", "delete", "admin"] | NOT NULL |
+| `granted_at` | i64 | Unix timestamp when permission granted (microseconds) | NOT NULL |
+| `granted_by` | String | User ID who granted permission (or "system") | NOT NULL |
+
+**Validation Rules**:
+- `user_id`: Non-empty, max 255 chars
+- `conversation_id`: Non-empty, max 255 chars
+- `permissions`: Valid JSON array containing only valid permission strings
+- `granted_by`: Non-empty, max 255 chars
+
+**Permission Types**:
+- `"read"`: Can query messages and conversation metadata
+- `"write"`: Can insert messages
+- `"delete"`: Can delete messages and conversations
+- `"admin"`: Can add/remove users, modify permissions
+
+**Lifecycle**:
+1. **Create**: 
+   - AI conversation: Auto-created when conversation is created (user_id = conversation owner)
+   - Group conversation: Created when user is added to conversation_users table
+2. **Update**: When permissions are modified by admin
+3. **Query**: Used internally by SQL engine to filter `userId.conversations` and `userId.conversation_users` views
+4. **Delete**: When user loses all access to conversation
+
+**Example**:
+```json
+{
+  "user_id": "user_john",
+  "conversation_id": "conv_123",
+  "permissions": ["read", "write", "delete"],
+  "granted_at": 1699000000000000,
+  "granted_by": "user_alice"
+}
+```
+
+---
+
+### 5. Subscription
 
 Represents an active WebSocket connection subscribing to real-time message updates.
 
@@ -406,7 +507,7 @@ Represents an active WebSocket connection subscribing to real-time message updat
 
 ---
 
-### 5. User
+### 6. User
 
 Logical entity representing a user whose messages are isolated in separate storage partitions.
 
