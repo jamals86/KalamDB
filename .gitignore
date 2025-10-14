@@ -1,0 +1,49 @@
+# Rust build artifacts
+/target/
+**/target/
+Cargo.lock
+
+# RocksDB data files
+*.db/
+/data/
+**/data/
+
+# Log files
+/logs/
+*.log
+
+# Configuration (keep example, ignore actual config)
+config.toml
+!config.example.toml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+
+# Temporary files
+*.tmp
+*.temp
+/tmp/
+
+# Build outputs
+*.exe
+*.pdb
+*.dll
+*.so
+*.dylib
+
+# Test coverage
+*.profraw
+*.profdata
+/coverage/
+
+# Documentation build
+/target/doc/

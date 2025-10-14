@@ -33,6 +33,13 @@
 
 [Gates determined based on constitution file]
 
+**Documentation Requirements (Principle VIII - Self-Documenting Code)**:
+- [ ] Module-level rustdoc comments planned for all new modules
+- [ ] Public API documentation strategy defined (structs, enums, traits, functions)
+- [ ] Inline comment strategy for complex algorithms and architectural patterns identified
+- [ ] Architecture Decision Records (ADRs) planned for key design choices
+- [ ] Code examples planned for non-trivial public APIs
+
 ## Project Structure
 
 ### Documentation (this feature)

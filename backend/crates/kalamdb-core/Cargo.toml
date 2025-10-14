@@ -1,0 +1,29 @@
+[package]
+name = "kalamdb-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Storage
+rocksdb.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Time handling
+chrono.workspace = true
+
+# Logging
+log.workspace = true
+
+[dev-dependencies]
+# Testing utilities
+tempfile = "3.8"

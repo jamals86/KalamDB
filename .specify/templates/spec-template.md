@@ -113,3 +113,11 @@
 - **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
 - **SC-003**: [User satisfaction metric, e.g., "90% of users successfully complete primary task on first attempt"]
 - **SC-004**: [Business metric, e.g., "Reduce support tickets related to [X] by 50%"]
+
+### Documentation Success Criteria (Constitution Principle VIII)
+
+- **SC-DOC-001**: All public APIs have comprehensive rustdoc comments with real-world examples
+- **SC-DOC-002**: Module-level documentation explains purpose and architectural role
+- **SC-DOC-003**: Complex algorithms and architectural patterns have inline comments explaining rationale
+- **SC-DOC-004**: Architecture Decision Records (ADRs) document key design choices
+- **SC-DOC-005**: Code review verification confirms documentation requirements are met

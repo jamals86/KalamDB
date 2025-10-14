@@ -1,0 +1,44 @@
+[package]
+name = "kalamdb-server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Core library
+kalamdb-core = { path = "../kalamdb-core" }
+kalamdb-api = { path = "../kalamdb-api" }
+
+# Async runtime
+tokio.workspace = true
+
+# Web framework
+actix-web.workspace = true
+actix-rt.workspace = true
+
+# Configuration
+toml.workspace = true
+
+# Logging
+log.workspace = true
+env_logger.workspace = true
+colored = "2.1"
+fern = "0.6"
+
+# Time handling
+chrono.workspace = true
+
+# Serialization
+serde.workspace = true
+
+# Error handling
+anyhow.workspace = true
+
+# System
+num_cpus.workspace = true
+
+[[bin]]
+name = "kalamdb-server"
+path = "src/main.rs"

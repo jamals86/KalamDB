@@ -268,12 +268,25 @@ From [`constitution.md`](.specify/memory/constitution.md):
 
 ## 📚 Documentation
 
+### Getting Started
+
+- **[🚀 Quick Start Guide](docs/QUICK_START.md)** - Get up and running in 10 minutes
+- **[📘 Development Setup](docs/DEVELOPMENT_SETUP.md)** - Complete installation guide for Windows/macOS/Linux
+- **[Backend README](backend/README.md)** - Project structure and development workflow
+
+### Architecture & Design
+
 - **[Complete Specification](specs/001-build-a-rust/SPECIFICATION-COMPLETE.md)** - Full design overview
 - **[Data Model](specs/001-build-a-rust/data-model.md)** - Entities, schemas, lifecycle
 - **[API Architecture](specs/001-build-a-rust/API-ARCHITECTURE.md)** - SQL-first approach
 - **[SQL Examples](specs/001-build-a-rust/sql-query-examples.md)** - Query cookbook
 - **[WebSocket Protocol](specs/001-build-a-rust/contracts/websocket-protocol.md)** - Real-time streaming
 - **[REST API (OpenAPI)](specs/001-build-a-rust/contracts/rest-api.yaml)** - HTTP endpoints
+
+### Development Guidelines
+
+- **[Constitution](.specify/memory/constitution.md)** - Project principles and standards
+- **[Implementation Plan](specs/001-build-a-rust/plan.md)** - Development roadmap
 
 ---
 

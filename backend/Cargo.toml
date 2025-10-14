@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/kalamdb-core",
+    "crates/kalamdb-api",
+    "crates/kalamdb-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["KalamDB Team"]
+license = "Apache-2.0"
+repository = "https://github.com/jamals86/KalamDB"
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "2.0.17"
+anyhow = "1.0"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Async runtime
+tokio = { version = "1.48.0", features = ["full"] }
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Storage - using minimal features to avoid build issues on Windows
+rocksdb = { version = "0.24.0", default-features = false, features = ["snappy"] }
+
+# Web framework
+actix-web = "4.4"
+actix-rt = "2.9"
+
+# Configuration
+toml = "0.9.8"
+
+# System
+num_cpus = "1.16"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

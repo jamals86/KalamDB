@@ -1,21 +1,23 @@
 <!--
 Sync Impact Report:
-- Version change: 1.0.0 → 2.0.0
-- Modified principles: Complete redesign for KalamDb real-time chat/conversation database
-  - I. Database-First Design → I. Simplicity First
-  - II. Rust Performance & Safety → II. Performance by Design (specific targets: <1ms writes, Parquet compression, SQL queries)
-  - III. Test-Driven Development → III. Data Ownership (user-centric partitions, privacy, encryption)
-  - IV. API Contract Stability → IV. Zero-Copy Efficiency (Arrow IPC, Parquet optimization)
-  - V. Observability & Debugging → V. Open & Extensible (modular, embeddable architecture)
-  - Added: VI. Transparency (observable operations via structured logs/events)
-  - Added: VII. Secure by Default (JWT, tenant isolation, AEAD encryption)
-- Added sections: Mission statement defining real-time chat/AI conversation storage focus
-- Removed sections: Generic database principles replaced with KalamDb-specific requirements
+- Version change: 2.0.0 → 2.1.0
+- Modified principles: None
+- Added principles: 
+  - VIII. Self-Documenting Code (comprehensive inline documentation and architectural explanations)
+- Added sections: 
+  - New principle VIII mandating inline comments, class-level documentation, and architectural explanations
+  - Enhanced Documentation section in Technical Standards requiring inline comments and architecture documentation
+- Removed sections: None
 - Templates requiring updates: 
-  - ✅ Constitution updated to v2.0.0
-  - ⚠ Plan template may need KalamDb-specific technical context (RocksDB, DataFusion, Arrow, Parquet)
-  - ⚠ Tasks template may need KalamDb-specific task categories (streaming, partitioning, encryption)
-- Follow-up TODOs: Consider updating plan-template.md to include KalamDb technology stack
+  - ✅ Constitution updated to v2.1.0
+  - ✅ Plan template updated with documentation requirements checklist
+  - ✅ Tasks template updated with documentation tasks for each phase
+  - ✅ Spec template updated with documentation success criteria
+- Follow-up TODOs: 
+  - Review existing codebase for documentation compliance (see kalamdb-core/src/lib.rs, models/, storage/)
+  - Update code review checklist to verify documentation requirements
+  - Consider adding automated linting for missing rustdoc comments (cargo doc --no-deps)
+  - Add documentation quality checks to CI/CD pipeline
 -->
 
 # KalamDb Constitution
@@ -115,6 +117,36 @@ Security MUST be enabled by default, with opt-out requiring explicit configurati
 **Rationale**: Chat and AI conversations contain sensitive data. Security cannot be optional.
 Defense-in-depth with multiple security layers protects against various threat vectors.
 
+### VIII. Self-Documenting Code
+
+Every module, struct, enum, function, and significant code block MUST include clear documentation
+explaining its purpose, behavior, and role in the overall architecture.
+
+Code documentation requirements:
+- **Module-level documentation**: Each module MUST have a rustdoc comment explaining its purpose,
+  primary responsibilities, and how it fits into the broader system architecture
+- **Type documentation**: Every public struct, enum, and trait MUST have rustdoc comments describing:
+  - What the type represents in the domain model
+  - Its key responsibilities and invariants
+  - Usage examples for non-trivial types
+- **Function documentation**: Every public function MUST document:
+  - Purpose and behavior
+  - Parameter meanings and constraints
+  - Return value semantics
+  - Error conditions and edge cases
+  - Examples for complex APIs
+- **Inline comments**: Complex algorithms, non-obvious optimizations, architectural decisions,
+  and business logic MUST have inline comments explaining the "why" behind the implementation
+- **Architecture explanations**: Code that implements key architectural patterns
+  (table-per-user partitioning, zero-copy data flow, real-time notification, etc.)
+  MUST include comments explaining how the pattern works and why it was chosen
+
+**Rationale**: Code is read far more often than it is written. Self-documenting code with
+comprehensive comments accelerates onboarding, reduces bugs from misunderstanding, enables
+confident refactoring, and preserves architectural knowledge. In a database system where
+performance and correctness are critical, understanding the "why" behind implementation
+decisions is essential for maintainability and evolution.
+
 ## Technical Standards
 
 **Language & Runtime**: Rust 1.75+ with stable toolchain only. No nightly features in production code.
@@ -129,7 +161,14 @@ Defense-in-depth with multiple security layers protects against various threat v
 
 **Error Handling**: Use Result<T, E> types throughout. No panics in library code except for invariant violations.
 
-**Documentation**: All public APIs MUST have rustdoc comments with examples demonstrating real-world usage patterns.
+**Documentation**: 
+- All public APIs MUST have comprehensive rustdoc comments with examples demonstrating real-world usage patterns
+- Module-level documentation MUST explain the module's purpose and architectural role
+- Complex algorithms and architectural patterns MUST include inline comments explaining implementation rationale
+- Non-obvious code MUST be explained with comments focusing on "why" rather than "what"
+- Key architectural decisions (table-per-user partitioning, zero-copy flows, real-time notifications)
+  MUST be documented both in code comments and in separate Architecture Decision Records (ADRs)
+- Examples MUST be realistic and demonstrate actual use cases, not toy scenarios
 
 **Performance**: Benchmark critical paths with criterion.rs. Write latency MUST stay under 1ms target. Performance regressions >5% require explicit justification.
 
@@ -155,8 +194,10 @@ Defense-in-depth with multiple security layers protects against various threat v
 
 **Documentation**: 
 - Public API changes MUST include updated rustdoc and examples
+- All new code MUST include appropriate inline comments explaining complex logic and architectural patterns
 - Architecture decisions MUST be documented in ADRs (Architecture Decision Records)
 - Performance characteristics MUST be documented for public APIs
+- Code reviews MUST verify that documentation requirements from Principle VIII are met
 
 **Security Review**: Changes affecting authentication, tenant isolation, encryption, or data access boundaries require security review.
 
@@ -175,8 +216,9 @@ When principles conflict, the order of precedence is:
 2. Data Ownership (user data protection is paramount)
 3. Performance by Design (real-time requirements are core)
 4. Simplicity First (avoid complexity when possible)
-5. Transparency, Zero-Copy Efficiency, Open & Extensible (optimize within constraints)
+5. Self-Documenting Code (maintainability and knowledge preservation)
+6. Transparency, Zero-Copy Efficiency, Open & Extensible (optimize within constraints)
 
 For runtime development guidance, refer to project documentation and established patterns in `/docs`.
 
-**Version**: 2.0.0 | **Ratified**: 2025-10-13 | **Last Amended**: 2025-10-13
+**Version**: 2.1.0 | **Ratified**: 2025-10-13 | **Last Amended**: 2025-10-14
