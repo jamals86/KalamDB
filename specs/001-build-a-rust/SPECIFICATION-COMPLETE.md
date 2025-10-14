@@ -1,6 +1,37 @@
 # KalamDB Specification - Complete Summary
 
-**Version**: 2.0.0 (SQL-First)  
+**Versi### 2. **Table-Per-User Multi-Tenancy** ⭐
+
+**Revolutionary Scalability**: Each user has their own logical table (`userId.messages`) backed by isolated storage partitions (`{userId}/batch-*.parquet`).
+
+**Why This Matters**:
+- **Traditional databases**: All users share one massive `messages` table → complex triggers, expensive filtering, performance degrades with scale
+- **KalamDB**: Each user has isolated storage → simple file notifications, O(1) subscription complexity, millions of concurrent users
+
+**Real-World Impact**:
+```
+Listening to User Updates:
+
+❌ Traditional Shared Table:
+   CREATE TRIGGER ON messages WHERE userId = 'user_12345'
+   → Must monitor entire table with billions of rows
+   → Performance degrades as user count grows
+   
+✅ KalamDB Per-User Table:
+   watch_directory("user_12345/messages/")
+   → Only monitors one user's partition
+   → O(1) complexity regardless of total users
+   → Scales to millions of concurrent subscriptions
+```
+
+**Benefits**:
+- 🚀 **Massive Scalability**: Support millions of concurrent real-time subscriptions
+- ⚡ **Simple Implementation**: File-level monitoring replaces complex database triggers
+- 🎯 **Efficient Queries**: Direct partition access, no userId filtering overhead
+- 📦 **Horizontal Scaling**: Adding users doesn't impact existing performance
+- 🔒 **Physical Isolation**: User data separated at storage layer for privacy and compliance
+
+### 3. **Two Conversation Types**n**: 2.0.0 (SQL-First)  
 **Date**: 2025-10-13  
 **Status**: Design Complete, Ready for Implementation
 
@@ -20,7 +51,38 @@ A complete specification for **KalamDB** - a SQL-first chat and AI message histo
 - Universal interface for all operations (SELECT, INSERT, UPDATE, DELETE)
 - DataFusion-based query engine
 
-### 2. **Two Conversation Types**
+### 2. **Table-Per-User Multi-Tenancy** ⭐
+
+**Revolutionary Scalability**: Each user has their own logical table (`userId.messages`) backed by isolated storage partitions (`{userId}/batch-*.parquet`).
+
+**Why This Matters**:
+- **Traditional databases**: All users share one massive `messages` table → complex triggers, expensive filtering, performance degrades with scale
+- **KalamDB**: Each user has isolated storage → simple file notifications, O(1) subscription complexity, millions of concurrent users
+
+**Real-World Impact**:
+```
+Listening to User Updates:
+
+❌ Traditional Shared Table:
+   CREATE TRIGGER ON messages WHERE userId = 'user_12345'
+   → Must monitor entire table with billions of rows
+   → Performance degrades as user count grows
+   
+✅ KalamDB Per-User Table:
+   watch_directory("user_12345/messages/")
+   → Only monitors one user's partition
+   → O(1) complexity regardless of total users
+   → Scales to millions of concurrent subscriptions
+```
+
+**Benefits**:
+- 🚀 **Massive Scalability**: Support millions of concurrent real-time subscriptions
+- ⚡ **Simple Implementation**: File-level monitoring replaces complex database triggers
+- 🎯 **Efficient Queries**: Direct partition access, no userId filtering overhead
+- 📦 **Horizontal Scaling**: Adding users doesn't impact existing performance
+- 🔒 **Physical Isolation**: User data separated at storage layer for privacy and compliance
+
+### 3. **Two Conversation Types**
 
 **AI Conversations** (User ↔ AI):
 - Messages: `{userId}/batch-*.parquet`
@@ -33,13 +95,13 @@ A complete specification for **KalamDB** - a SQL-first chat and AI message histo
 - Large content (≥100KB): Stored **once** in `shared/conversations/{convId}/`
 - Media: Stored **once** in shared folder
 
-### 3. **Intelligent Deletion**
+### 4. **Intelligent Deletion**
 - Single message deletion with cascade to files
 - Conversation deletion with cascade to all messages
 - Reference counting for shared content
 - Soft delete option with retention policy
 
-### 4. **Hot/Cold Storage Architecture**
+### 5. **Hot/Cold Storage Architecture**
 - **Hot**: RocksDB (buffered writes, <1ms)
 - **Cold**: Parquet files (consolidated, S3/local)
 - Query engine automatically merges both sources

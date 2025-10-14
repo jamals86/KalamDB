@@ -54,12 +54,26 @@ Predictable performance is a core feature, not an optimization.
 ### III. Data Ownership
 
 Every user's data MUST live in isolated partitions with clear boundaries.
+Each user MUST have their own logical table (userId.messages) backed by dedicated storage partitions.
 Data MUST be easily replicated, exported, and migrated without vendor lock-in.
 Privacy and encryption MUST be first-class features, not afterthoughts.
 Users MUST have complete control over their data lifecycle.
 
+**Table-Per-User Architecture**: KalamDB uses a table-per-user design where each user's messages
+are stored in isolated partitions (`{userId}/batch-*.parquet`). This enables:
+- **Massive Scalability**: Millions of concurrent users can maintain real-time subscriptions to their own tables
+  without performance degradation from shared table triggers or locks
+- **Simple Real-time Notifications**: File-level monitoring per user replaces complex database triggers
+  on shared tables containing billions of rows
+- **O(1) Subscription Complexity**: Each user's subscription monitors only their partition, 
+  independent of total user count
+- **Horizontal Scaling**: Adding users doesn't impact existing user performance
+- **Efficient Queries**: Direct partition access eliminates userId filtering overhead
+
 **Rationale**: User-centric data ownership builds trust and enables compliance with privacy regulations.
-Isolated partitions enable horizontal scaling and data sovereignty.
+Isolated partitions enable horizontal scaling and data sovereignty. The table-per-user model is a 
+fundamental architectural decision that differentiates KalamDB from traditional shared-table databases,
+enabling real-time chat at unprecedented scale.
 
 ### IV. Zero-Copy Efficiency
 
