@@ -13,6 +13,11 @@ Before you begin, ensure you have:
 
 **Don't have these?** See the [Full Setup Guide](DEVELOPMENT_SETUP.md) for detailed installation instructions.
 
+**Platform-Specific Guides:**
+- 📖 [macOS Setup Guide](../backend/docs/macos.md) - Detailed instructions for macOS (Intel & Apple Silicon)
+- 📖 [Linux Setup Guide](../backend/docs/linux.md) - Covers Ubuntu, Fedora, Arch, and more
+- 📖 [Windows Setup Guide](../backend/docs/windows.md) - Complete Windows setup with troubleshooting
+
 ---
 
 ## 🚀 Platform-Specific Quick Start
@@ -57,8 +62,10 @@ xcode-select --install
 # 3. Install LLVM and Rust
 brew install llvm rust
 
-# 4. Add LLVM to PATH (add to ~/.zshrc)
+# 4. Set up library paths for RocksDB compilation
+# Add LLVM to PATH and configure dynamic linker
 echo 'export PATH="/opt/homebrew/opt/llvm/bin:$PATH"' >> ~/.zshrc
+echo 'export DYLD_FALLBACK_LIBRARY_PATH="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib:$DYLD_FALLBACK_LIBRARY_PATH"' >> ~/.zshrc
 source ~/.zshrc
 
 # 5. Verify prerequisites
@@ -224,11 +231,13 @@ curl "http://localhost:8080/api/v1/messages?userId=user123&conversationId=conv45
 
 ### Build Fails
 
-**"linker not found"**: Install C++ compiler (see [Setup Guide](DEVELOPMENT_SETUP.md))
+**"linker not found"**: Install C++ compiler (see platform-specific guides below)
 
-**"Unable to find libclang"**: Install LLVM/Clang (see [Setup Guide](DEVELOPMENT_SETUP.md))
+**"Unable to find libclang"**: Install LLVM/Clang (see platform-specific guides below)
 
 **"RocksDB build failed"**: Install CMake and C++ build tools
+
+**macOS: "Library not loaded: libclang.dylib"**: See the [macOS Setup Guide](../backend/docs/macos.md#troubleshooting) for the solution
 
 ### Compilation is Slow
 
@@ -240,12 +249,12 @@ curl "http://localhost:8080/api/v1/messages?userId=user123&conversationId=conv45
 
 ### Need More Help?
 
-See the [Full Troubleshooting Guide](DEVELOPMENT_SETUP.md#troubleshooting) with solutions for:
+See the platform-specific detailed guides:
+- **macOS:** [macOS Setup Guide](../backend/docs/macos.md)
+- **Linux:** [Linux Setup Guide](../backend/docs/linux.md)  
+- **Windows:** [Windows Setup Guide](../backend/docs/windows.md)
 
-- Platform-specific issues
-- Dependency problems
-- Memory/performance issues
-- Environment configuration
+Or see the [Full Troubleshooting Guide](DEVELOPMENT_SETUP.md#troubleshooting) for comprehensive solutions.
 
 ---
 
