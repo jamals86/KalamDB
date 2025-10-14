@@ -2,10 +2,13 @@ openapi: 3.0.3
 info:
   title: KalamDB SQL API
   description: |
-    SQL-first REST API for chat and AI message history storage.
+    SQL-only REST API for chat and AI message history storage.
     
     **Core Philosophy**: Single SQL query endpoint for all data operations.
     All CRUD operations (messages, conversations, users) use SQL queries.
+    
+    **No JSON Endpoints**: This API does NOT provide separate endpoints for message insertion.
+    All operations (INSERT, SELECT, UPDATE, DELETE) must use SQL via `/api/v1/query`.
     
     **Authentication**: JWT token enforces userId scope.
     Users can only query their own data (`userId.messages`, `userId.conversations`).
@@ -58,6 +61,10 @@ paths:
             schema:
               $ref: '#/components/schemas/QueryRequest'
             examples:
+              insertMessage:
+                summary: Insert a new message
+                value:
+                  sql: "INSERT INTO userId.messages (conversationId, from, timestamp, content, metadata) VALUES ('conv_123', 'user_john', 1699000000000000, 'Hello, world!', '{\"role\": \"user\"}')"
               queryMessages:
                 summary: Query messages in a conversation
                 value:
@@ -98,6 +105,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/QueryResponse'
               examples:
+                insertMessageResult:
+                  summary: INSERT message result
+                  value:
+                    rowsAffected: 1
+                    insertedId: 1234567890123456
+                    executionTimeMs: 5
                 selectMessages:
                   summary: SELECT query result
                   value:
@@ -112,11 +125,6 @@ paths:
                   value:
                     rowsAffected: 1
                     executionTimeMs: 8
-                insertResult:
-                  summary: INSERT query result
-                  value:
-                    rowsAffected: 1
-                    executionTimeMs: 5
         '400':
           description: Invalid SQL query
           content:
@@ -136,114 +144,6 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '429':
           description: Rate limit exceeded
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /api/v1/messages:
-    post:
-      summary: Submit a new message (legacy/convenience endpoint)
-      description: |
-        **Optional convenience endpoint** for submitting messages.
-        
-        Internally translates to SQL INSERT but provides:
-        - Automatic msgId generation (snowflake ID)
-        - Timestamp defaulting
-        - Content validation
-        - Parallel writes to all participants (group conversations)
-        
-        For flexibility, prefer using `/api/v1/query` with SQL INSERT.
-      operationId: submitMessage
-      tags:
-        - Messages
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MessageRequest'
-            examples:
-              textMessage:
-                value:
-                  conversationId: "conv_123"
-                  conversationType: "ai"
-                  from: "user_john"
-                  content: "Hello AI"
-                  metadata:
-                    role: "user"
-              messageWithMedia:
-                value:
-                  conversationId: "conv_456"
-                  conversationType: "group"
-                  from: "user_alice"
-                  content: "Check out this image!"
-                  contentRef: "shared/conversations/conv_456/media-789.jpg"
-                  metadata:
-                    mediaType: "image/jpeg"
-                    width: 1920
-                    height: 1080
-      responses:
-        '201':
-          description: Message created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MessageResponse'
-        '400':
-          $ref: '#/components/responses/BadRequestError'
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-
-  /api/v1/media/upload:
-    post:
-      summary: Upload media file
-      description: |
-        Upload media file (image, document, audio, video) for a conversation.
-        
-        **Storage Logic**:
-        - AI conversation: stored in `{userId}/media-{msgId}.{ext}`
-        - Group conversation: stored in `shared/conversations/{convId}/media-{msgId}.{ext}`
-        
-        Returns `contentRef` to use in message submission.
-      operationId: uploadMedia
-      tags:
-        - Media
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              required:
-                - file
-                - conversationId
-                - conversationType
-              properties:
-                file:
-                  type: string
-                  format: binary
-                  description: Media file to upload
-                conversationId:
-                  type: string
-                  description: Conversation this media belongs to
-                conversationType:
-                  type: string
-                  enum: [ai, group]
-                  description: Type of conversation (determines storage location)
-      responses:
-        '201':
-          description: Media uploaded successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MediaUploadResponse'
-        '400':
-          $ref: '#/components/responses/BadRequestError'
-        '401':
-          $ref: '#/components/responses/UnauthorizedError'
-        '413':
-          description: File too large
           content:
             application/json:
               schema:
@@ -331,101 +231,15 @@ components:
           type: integer
           description: Number of rows affected (for INSERT/UPDATE/DELETE)
           example: 1
+        insertedId:
+          type: integer
+          format: int64
+          description: Generated msgId for INSERT operations (snowflake ID)
+          example: 1234567890123456
         executionTimeMs:
           type: integer
           description: Query execution time in milliseconds
           example: 15
-
-    MessageRequest:
-      type: object
-      required:
-        - conversationId
-        - conversationType
-        - from
-        - content
-      properties:
-        conversationId:
-          type: string
-          description: Conversation identifier
-          example: "conv_abc123"
-        conversationType:
-          type: string
-          enum: [ai, group]
-          description: Type of conversation
-          example: "ai"
-        from:
-          type: string
-          description: Sender identifier (userId or "ai")
-          example: "user_john"
-        timestamp:
-          type: integer
-          format: int64
-          description: Unix timestamp in microseconds (optional, auto-generated if not provided)
-          example: 1696800000000000
-        content:
-          type: string
-          description: Message content (text or preview for large/media messages)
-          maxLength: 1048576
-          example: "Hello, how are you?"
-        contentRef:
-          type: string
-          description: Reference to large content or media file (optional)
-          example: "shared/conversations/conv_123/msg-456.bin"
-        metadata:
-          type: object
-          description: Flexible key-value metadata
-          additionalProperties: true
-          example:
-            role: "user"
-            clientId: "web-app"
-
-    MessageResponse:
-      type: object
-      properties:
-        msgId:
-          type: integer
-          format: int64
-          description: Generated message ID (snowflake)
-          example: 1234567890123456
-        conversationId:
-          type: string
-          example: "conv_abc123"
-        timestamp:
-          type: integer
-          format: int64
-          example: 1696800000000000
-        status:
-          type: string
-          enum: [buffered, consolidated]
-          description: Storage status
-          example: "buffered"
-
-    MediaUploadResponse:
-      type: object
-      properties:
-        contentRef:
-          type: string
-          description: Reference path to uploaded media
-          example: "shared/conversations/conv_123/media-789.jpg"
-        metadata:
-          type: object
-          description: Extracted media metadata
-          properties:
-            mediaType:
-              type: string
-              example: "image/jpeg"
-            fileSize:
-              type: integer
-              example: 245760
-            width:
-              type: integer
-              example: 1920
-            height:
-              type: integer
-              example: 1080
-            thumbnailRef:
-              type: string
-              example: "shared/conversations/conv_123/media-789-thumb.jpg"
 
     Error:
       type: object
@@ -469,10 +283,6 @@ components:
 
 tags:
   - name: Query
-    description: SQL query operations (primary interface)
-  - name: Messages
-    description: Message operations (convenience endpoints)
-  - name: Media
-    description: Media file upload
+    description: SQL query operations (primary and only data interface)
   - name: System
     description: System health and status

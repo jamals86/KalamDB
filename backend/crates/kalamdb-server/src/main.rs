@@ -1,15 +1,15 @@
 // KalamDB Server
 //
-// Main server binary for KalamDB
+// Main server binary for KalamDB - SQL-only API
 
 mod config;
 mod logging;
 
 use actix_web::{middleware, web, App, HttpServer};
 use anyhow::Result;
-use kalamdb_api::handlers::AppState;
+use kalamdb_api::handlers::query::AppState;
 use kalamdb_api::routes;
-use kalamdb_core::{ids::SnowflakeGenerator, storage::RocksDbStore};
+use kalamdb_core::{ids::SnowflakeGenerator, sql::SqlExecutor, storage::RocksDbStore};
 use log::info;
 use std::sync::Arc;
 
@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
         config.logging.log_to_console,
     )?;
 
-    info!("Starting KalamDB Server v{}", env!("CARGO_PKG_VERSION"));
+    info!("Starting KalamDB Server v{} (SQL-only API)", env!("CARGO_PKG_VERSION"));
     info!("Configuration loaded: host={}, port={}", config.server.host, config.server.port);
 
     // Open RocksDB
@@ -46,15 +46,19 @@ async fn main() -> Result<()> {
     // Create Snowflake ID generator (worker_id = 0 for single instance)
     let id_generator = Arc::new(SnowflakeGenerator::new(0));
 
-    // Create shared application state
-    let app_state = web::Data::new(AppState {
-        store: Arc::new(store),
+    // Create SQL executor
+    let sql_executor = Arc::new(SqlExecutor::new(
+        Arc::new(store),
         id_generator,
-        max_message_size: config.limits.max_message_size,
-    });
+        config.limits.max_message_size,
+    ));
+
+    // Create shared application state
+    let app_state = web::Data::new(AppState { sql_executor });
 
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     info!("Starting HTTP server on {}", bind_addr);
+    info!("API endpoint: POST /api/v1/query (SQL-only)");
 
     // Start HTTP server
     HttpServer::new(move || {
@@ -75,4 +79,3 @@ async fn main() -> Result<()> {
     info!("Server shutdown complete");
     Ok(())
 }
-

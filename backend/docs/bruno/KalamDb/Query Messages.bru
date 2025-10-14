@@ -16,8 +16,6 @@ headers {
 
 body:json {
   {
-    "conversation_id": "conv_1",
-    "limit": 200,
-    "order": "desc"
+  "sql": "SELECT * FROM messages WHERE conversation_id = 'conv_123' LIMIT 1000"
   }
 }

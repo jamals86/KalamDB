@@ -76,27 +76,27 @@ This architecture is what makes KalamDB capable of supporting millions of concur
 
 ### User Story 1 - Store Chat Messages with Immediate Confirmation (Priority: P1)
 
-Applications send chat and AI message history to the system for persistent storage. Messages are accepted quickly and confirmed, ensuring minimal latency for user-facing chat applications. Each message belongs to a specific user and conversation context.
+Applications send chat and AI message history to the system for persistent storage using SQL INSERT statements. Messages are accepted quickly and confirmed, ensuring minimal latency for user-facing chat applications. Each message belongs to a specific user and conversation context.
 
 **Why this priority**: Core value proposition - without reliable message storage, the system has no purpose. This is the foundation that all other features build upon.
 
-**Independent Test**: Can be fully tested by sending messages via the API and verifying immediate acknowledgment responses. Delivers value by ensuring messages are not lost and applications receive confirmation.
+**Independent Test**: Can be fully tested by sending SQL INSERT queries via the `/api/v1/query` endpoint and verifying immediate acknowledgment responses. Delivers value by ensuring messages are not lost and applications receive confirmation.
 
 **Acceptance Scenarios**:
 
-1. **Given** a chat application with an active conversation, **When** the application sends a message with userId, conversationId, timestamp, and content, **Then** the system accepts the message and returns a success confirmation within 100ms
-2. **Given** multiple messages arriving in rapid succession, **When** the application sends 100 messages per second, **Then** all messages are accepted without rejection or data loss
-3. **Given** a message with required fields (userId, conversationId, message content, timestamp), **When** submitted to the storage endpoint, **Then** the message is persisted and retrievable
+1. **Given** a chat application with an active conversation, **When** the application sends a SQL INSERT with userId, conversationId, timestamp, and content, **Then** the system accepts the message and returns a success confirmation within 100ms
+2. **Given** multiple messages arriving in rapid succession, **When** the application sends 100 SQL INSERT queries per second, **Then** all messages are accepted without rejection or data loss
+3. **Given** a SQL INSERT statement with required fields (userId, conversationId, message content, timestamp), **When** submitted to the `/api/v1/query` endpoint, **Then** the message is persisted and retrievable
 
 ---
 
 ### User Story 2 - Query Historical Messages by User and Conversation (Priority: P2)
 
-Applications query past messages for a specific user or conversation using flexible search criteria. Queries return results efficiently even when spanning large time ranges or multiple conversations.
+Applications query past messages for a specific user or conversation using SQL SELECT statements with flexible WHERE clauses. Queries return results efficiently even when spanning large time ranges or multiple conversations.
 
 **Why this priority**: Enables applications to display conversation history, search past interactions, and provide context to AI models. Critical for user experience but depends on P1 being functional.
 
-**Independent Test**: Can be tested independently by pre-loading messages, then executing queries with various filters (date range, user, conversation). Delivers value by enabling history retrieval without real-time updates.
+**Independent Test**: Can be tested independently by pre-loading messages via SQL INSERT, then executing SQL SELECT queries with various filters (date range, user, conversation). Delivers value by enabling history retrieval without real-time updates.
 
 **Acceptance Scenarios**:
 
@@ -225,28 +225,28 @@ System administrators access a web-based administrative interface to monitor sys
 
 ### Functional Requirements
 
-- **FR-001**: System MUST accept message submissions containing userId, conversationId, message content, timestamp, and optional metadata as key-value pairs with support for string, number, boolean, and array types
-- **FR-002**: System MUST assign a unique snowflake ID to each message upon acceptance and return it in the acknowledgment response
-- **FR-003**: System MUST return acknowledgment within 100ms of receiving a message submission
+- **FR-001**: System MUST accept SQL INSERT statements for message submissions containing userId, conversationId, message content, timestamp, and optional metadata as key-value pairs with support for string, number, boolean, and array types via `/api/v1/query` endpoint
+- **FR-002**: System MUST assign a unique snowflake ID to each message upon acceptance and return it in the query response
+- **FR-003**: System MUST return acknowledgment within 100ms of receiving a SQL INSERT statement
 - **FR-004**: System MUST persist all accepted messages without data loss, even during unexpected shutdowns
-- **FR-005**: System MUST support querying messages by userId, conversationId, date range, messageId range (since lastMsgId), and custom filters
-- **FR-006**: System MUST return query results in paginated format with configurable page sizes
+- **FR-005**: System MUST support querying messages via SQL SELECT statements with WHERE clauses for userId, conversationId, date range, messageId range (since lastMsgId), and custom filters
+- **FR-006**: System MUST return query results in JSON format with columns and rows arrays, supporting LIMIT and OFFSET clauses for pagination
 - **FR-007**: System MUST support real-time message notifications to subscribed clients
 - **FR-008**: System MUST allow subscription clients to specify optional lastMsgId parameter to receive all messages with IDs greater than the specified ID
 - **FR-009**: System MUST maintain separate storage isolation for each userId to prevent data leakage
 - **FR-010**: System MUST organize messages within each user by conversationId for efficient access
 - **FR-011**: System MUST consolidate buffered message writes into optimized storage files using a hybrid trigger: every N minutes OR M messages, whichever comes first (default: 5 minutes or 10,000 messages)
 - **FR-012**: System MUST support both local file system and cloud object storage as storage backends
-- **FR-013**: System MUST expose API endpoints for message submission and querying
+- **FR-013**: System MUST expose a single SQL query endpoint (`/api/v1/query`) for all data operations (INSERT, SELECT, UPDATE, DELETE)
 - **FR-014**: System MUST support subscription management for real-time notifications
-- **FR-015**: System MUST validate message submissions and reject invalid data with clear error messages
+- **FR-015**: System MUST validate SQL statements and reject invalid queries with clear error messages including syntax errors and scope violations
 - **FR-016**: System MUST enforce configurable maximum message body size limit (default 1MB) and reject messages exceeding this limit with descriptive error indicating the size limit
-- **FR-017**: System MUST support SQL query execution against message data
+- **FR-017**: System MUST support SQL query execution against message data including SELECT, INSERT, UPDATE, DELETE, and aggregation functions (COUNT, GROUP BY, etc.)
 - **FR-018**: System MUST run as a standalone server process that can be started, stopped, and monitored
 - **FR-019**: System MUST read configuration from a configuration file supporting settings such as message size limits, consolidation thresholds, storage backend options, and operational parameters
 - **FR-020**: System MUST log all critical operations (message storage, queries, errors) for observability
 - **FR-021**: System MUST handle concurrent requests from multiple clients safely
-- **FR-022**: System MUST enforce data access controls using OAuth/JWT token-based authentication to verify user identity; authenticated users have full read/write access to all their own conversations
+- **FR-022**: System MUST enforce data access controls using OAuth/JWT token-based authentication to verify user identity; authenticated users have full read/write access to all their own conversations via SQL queries scoped to their userId
 - **FR-023**: System MUST support graceful shutdown, completing in-flight operations before stopping
 - **FR-024**: System MUST provide health check endpoints for monitoring system status
 - **FR-025**: System MUST recover automatically from crashes, resuming operations with buffered data intact
