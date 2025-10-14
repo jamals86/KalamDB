@@ -5,6 +5,47 @@
 **Status**: Draft  
 **Input**: User description: "Simple user-based database with namespaces, user/shared/system tables, live queries with change tracking, and flush policies"
 
+## 🚀 Architectural Differentiator: Table-Per-User Multi-Tenancy
+
+**The Power of Per-User Tables**: Unlike traditional databases that store all users' messages in a shared table, KalamDB uses a **table-per-user architecture** where each user's data lives in isolated storage partitions (`{userId}/batch-*.parquet`). This fundamental design decision unlocks unprecedented scalability:
+
+**Key Advantages**:
+
+1. **Massive Scalability for Real-time Subscriptions**
+   - Traditional approach: Complex database triggers on a shared table with billions of rows
+   - KalamDB approach: Simple file-level notifications per user partition
+   - Result: **Millions of concurrent users** can maintain real-time subscriptions without performance degradation
+
+2. **O(1) Subscription Complexity**
+   - Each user's subscription monitors only their own partition
+   - Performance independent of total user count
+   - No expensive WHERE userId = ? filtering on massive shared tables
+
+3. **Horizontal Scaling**
+   - Adding new users creates new isolated partitions
+   - No impact on existing user performance
+   - Storage and query operations naturally parallelized
+
+4. **Simplified Real-time Implementation**
+   - Monitor file changes in user-specific directories
+   - Eliminates complex trigger logic on shared database tables
+   - Predictable, consistent notification latency regardless of scale
+
+**Example Comparison**:
+```
+Traditional Shared Table (Redis/Postgres):
+- 1M users × 1 subscription = 1M WHERE clauses on shared messages table
+- Performance degrades as table grows to billions of rows
+- Complex trigger management and connection pooling
+
+KalamDB Table-Per-User:
+- 1M users × 1 subscription = 1M independent file watchers
+- Each user's partition isolated (typically KB to MB in size)
+- Simple, parallel, O(1) complexity per user
+```
+
+This architecture is what makes KalamDB capable of supporting millions of concurrent real-time subscriptions while maintaining sub-millisecond write performance and efficient query execution.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Namespace Management (Priority: P1)
