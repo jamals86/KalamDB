@@ -1,6 +1,7 @@
 // Message storage trait
 use crate::error::StorageError;
 use crate::models::Message;
+use crate::storage::QueryParams;
 
 /// Trait for message storage operations
 pub trait MessageStore {
@@ -18,4 +19,7 @@ pub trait MessageStore {
 
     /// Get the total number of messages (approximate)
     fn message_count(&self) -> Result<u64, StorageError>;
+
+    /// Query messages with filtering and pagination
+    fn query_messages(&self, params: &QueryParams) -> Result<Vec<Message>, StorageError>;
 }

@@ -1,0 +1,23 @@
+meta {
+  name: Query Messages
+  type: http
+  seq: 2
+}
+
+post {
+  url: http://localhost:8080/api/v1/query
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "conversation_id": "conv_1",
+    "limit": 200,
+    "order": "desc"
+  }
+}

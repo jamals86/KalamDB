@@ -38,11 +38,14 @@ level = "info"
 # Log file path (use absolute or relative path)
 file_path = "./logs/app.log"
 
-# Also log to console
+# Also log to console (with colors)
+# Console format: [timestamp] [LEVEL] - thread - module:line - message (with colors)
+# File format:    [timestamp] [LEVEL] [thread - module:line] - message (plain text)
 log_to_console = true
 
-# Log format: "compact", "pretty", "json"
-format = "compact"
+# Note: The 'format' field is deprecated - console always uses colored format,
+# file always uses plain text format
+# format = "compact"
 
 [performance]
 # Request timeout in seconds

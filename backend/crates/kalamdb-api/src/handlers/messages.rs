@@ -1,7 +1,6 @@
 // Message handlers
 use actix_web::{web, HttpResponse, Responder};
 use kalamdb_core::{
-    error::StorageError,
     ids::SnowflakeGenerator,
     models::Message,
     storage::MessageStore,

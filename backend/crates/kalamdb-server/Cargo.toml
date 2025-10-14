@@ -24,8 +24,8 @@ toml.workspace = true
 # Logging
 log.workspace = true
 env_logger.workspace = true
-colored = "2.1"
-fern = "0.6"
+colored = "3.0.0"
+fern = "0.7.1"
 
 # Time handling
 chrono.workspace = true
@@ -42,3 +42,23 @@ num_cpus.workspace = true
 [[bin]]
 name = "kalamdb-server"
 path = "src/main.rs"
+
+[[test]]
+name = "test_message_storage"
+path = "../../tests/integration/test_message_storage.rs"
+
+[[test]]
+name = "test_api_messages"
+path = "../../tests/integration/test_api_messages.rs"
+
+[[test]]
+name = "test_query_messages"
+path = "../../tests/integration/test_query_messages.rs"
+
+[[test]]
+name = "test_api_query"
+path = "../../tests/integration/test_api_query.rs"
+
+[dev-dependencies]
+tempfile = "3"
+serde_json.workspace = true

@@ -151,6 +151,50 @@ impl MessageStore for RocksDbStore {
         let count = self.iter_prefix(b"msg:").count() as u64;
         Ok(count)
     }
+
+    fn query_messages(&self, params: &crate::storage::QueryParams) -> Result<Vec<Message>, StorageError> {
+        // Validate query parameters
+        params.validate().map_err(|e| StorageError::InvalidQuery(e))?;
+
+        let mut messages = Vec::new();
+        let limit = params.effective_limit();
+
+        // Iterate over all messages with "msg:" prefix
+        for (_key, value) in self.iter_prefix(b"msg:") {
+            // Deserialize message
+            let message = Message::from_json_bytes(&value)?;
+
+            // Apply conversation_id filter
+            if let Some(ref conv_id) = params.conversation_id {
+                if &message.conversation_id != conv_id {
+                    continue;
+                }
+            }
+
+            // Apply since_msg_id filter
+            if let Some(since_id) = params.since_msg_id {
+                if message.msg_id <= since_id as i64 {
+                    continue;
+                }
+            }
+
+            messages.push(message);
+        }
+
+        // Sort by msg_id
+        if params.effective_order() == "desc" {
+            messages.sort_by(|a, b| b.msg_id.cmp(&a.msg_id));
+        } else {
+            messages.sort_by(|a, b| a.msg_id.cmp(&b.msg_id));
+        }
+
+        // Apply limit (fetch one extra to determine has_more)
+        if messages.len() > limit {
+            messages.truncate(limit);
+        }
+
+        Ok(messages)
+    }
 }
 
 impl Clone for RocksDbStore {

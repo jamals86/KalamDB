@@ -19,6 +19,9 @@ pub enum StorageError {
     #[error("Validation error: {0}")]
     Validation(String),
 
+    #[error("Invalid query: {0}")]
+    InvalidQuery(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
