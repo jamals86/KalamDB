@@ -35,9 +35,15 @@ chrono = { version = "0.4", features = ["serde"] }
 # Storage - using minimal features to avoid build issues on Windows
 rocksdb = { version = "0.24.0", default-features = false, features = ["snappy"] }
 
+# Apache Arrow ecosystem
+arrow = { version = "50.0", features = ["prettyprint"] }
+parquet = { version = "50.0", features = ["arrow", "async"] }
+datafusion = { version = "35.0" }
+
 # Web framework
 actix-web = "4.4"
 actix-rt = "2.9"
+actix-web-actors = "4.3"  # For WebSocket support
 
 # Configuration
 toml = "0.9.8"

@@ -1,15 +1,17 @@
 // Routes module - SQL-only API
 use actix_web::web;
-use crate::handlers;
+// use crate::handlers;
 
 /// Configure API routes for SQL-only API
 /// 
-/// Only one endpoint is exposed:
-/// - POST /api/v1/query - Execute SQL INSERT or SELECT statements
+/// Routes temporarily disabled until DataFusion integration
+/// Only one endpoint will be exposed:
+/// - POST /api/sql - Execute SQL statements
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
-        web::scope("/api/v1")
-            .route("/query", web::post().to(handlers::query::query_messages))
+        web::scope("/api")
+            // TODO: Re-enable after DataFusion integration
+            // .route("/sql", web::post().to(handlers::sql_handler))
     );
 }
 

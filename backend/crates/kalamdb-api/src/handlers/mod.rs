@@ -1,6 +1,5 @@
 // Handlers module
-pub mod messages;
-pub mod query;
+// Query handler temporarily disabled until DataFusion integration
+// pub mod query;
 
-pub use messages::*;
-pub use query::*;
+// pub use query::*;

@@ -1,7 +1,4 @@
 // RocksDB storage implementation
-use crate::error::StorageError;
-use crate::models::Message;
-use crate::storage::message_store::MessageStore;
 use rocksdb::{DB, Options, WriteOptions, IteratorMode, DBCompressionType};
 use std::path::Path;
 use std::sync::Arc;
@@ -112,88 +109,6 @@ impl RocksDbStore {
     /// Compact the database
     pub fn compact(&self) {
         self.db.compact_range::<&[u8], &[u8]>(None, None);
-    }
-}
-
-// Implement MessageStore trait for RocksDbStore
-impl MessageStore for RocksDbStore {
-    fn insert_message(&self, message: &Message) -> Result<(), StorageError> {
-        let key = format!("msg:{}", message.msg_id);
-        let value = message.to_json_bytes()?;
-        self.put(key.as_bytes(), &value)?;
-        Ok(())
-    }
-
-    fn get_message(&self, msg_id: i64) -> Result<Option<Message>, StorageError> {
-        let key = format!("msg:{}", msg_id);
-        match self.get(key.as_bytes())? {
-            Some(bytes) => {
-                let message = Message::from_json_bytes(&bytes)?;
-                Ok(Some(message))
-            }
-            None => Ok(None),
-        }
-    }
-
-    fn message_exists(&self, msg_id: i64) -> Result<bool, StorageError> {
-        let key = format!("msg:{}", msg_id);
-        self.exists(key.as_bytes()).map_err(|e| e.into())
-    }
-
-    fn delete_message(&self, msg_id: i64) -> Result<(), StorageError> {
-        let key = format!("msg:{}", msg_id);
-        self.delete(key.as_bytes())?;
-        Ok(())
-    }
-
-    fn message_count(&self) -> Result<u64, StorageError> {
-        // Count messages with prefix "msg:"
-        let count = self.iter_prefix(b"msg:").count() as u64;
-        Ok(count)
-    }
-
-    fn query_messages(&self, params: &crate::storage::QueryParams) -> Result<Vec<Message>, StorageError> {
-        // Validate query parameters
-        params.validate().map_err(|e| StorageError::InvalidQuery(e))?;
-
-        let mut messages = Vec::new();
-        let limit = params.effective_limit();
-
-        // Iterate over all messages with "msg:" prefix
-        for (_key, value) in self.iter_prefix(b"msg:") {
-            // Deserialize message
-            let message = Message::from_json_bytes(&value)?;
-
-            // Apply conversation_id filter
-            if let Some(ref conv_id) = params.conversation_id {
-                if &message.conversation_id != conv_id {
-                    continue;
-                }
-            }
-
-            // Apply since_msg_id filter
-            if let Some(since_id) = params.since_msg_id {
-                if message.msg_id <= since_id as i64 {
-                    continue;
-                }
-            }
-
-            messages.push(message);
-        }
-
-        // Sort by msg_id
-        if params.effective_order() == "desc" {
-            messages.sort_by(|a, b| b.msg_id.cmp(&a.msg_id));
-        } else {
-            messages.sort_by(|a, b| a.msg_id.cmp(&b.msg_id));
-        }
-
-        // Apply limit (fetch one extra to determine has_more)
-        if messages.len() > limit {
-            messages.truncate(limit);
-        }
-
-        Ok(messages)
     }
 }
 

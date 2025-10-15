@@ -27,18 +27,31 @@
 
 **Purpose**: Remove existing message-centric implementation and prepare for table-centric architecture
 
-- [ ] T001 [P] [Setup] Remove existing Message model from `backend/crates/kalamdb-core/src/models/message.rs`
-- [ ] T002 [P] [Setup] Remove MessageStore trait and implementations from `backend/crates/kalamdb-core/src/storage/message_store.rs`
-- [ ] T003 [P] [Setup] Remove message-specific query logic from `backend/crates/kalamdb-core/src/storage/query.rs`
-- [ ] T004 [P] [Setup] Remove existing SQL parser logic from `backend/crates/kalamdb-core/src/sql/parser.rs` (will be replaced with DataFusion)
-- [ ] T005 [P] [Setup] Remove existing SQL executor from `backend/crates/kalamdb-core/src/sql/executor.rs` (will be replaced with DataFusion)
-- [ ] T006 [P] [Setup] Remove message-specific handlers from `backend/crates/kalamdb-api/src/handlers/messages.rs`
-- [ ] T007 [Setup] Update `backend/Cargo.toml` dependencies: Add DataFusion, Arrow, Parquet, Actix-Web for WebSocket support
-- [ ] T008 [P] [Setup] Create new directory structure: `backend/crates/kalamdb-core/src/catalog/` for namespace/table catalog
-- [ ] T009 [P] [Setup] Create new directory structure: `backend/crates/kalamdb-core/src/schema/` for Arrow schema management
-- [ ] T010 [P] [Setup] Create new directory structure: `backend/crates/kalamdb-core/src/tables/` for table types (user, shared, stream)
-- [ ] T011 [P] [Setup] Create new directory structure: `backend/crates/kalamdb-core/src/flush/` for flush policy management
-- [ ] T013 [P] [Setup] Create new directory structure: `backend/crates/kalamdb-core/src/live_query/` for live subscription management
+- [X] T001 [P] [Setup] Remove existing Message model from `backend/crates/kalamdb-core/src/models/message.rs`
+- [X] T002 [P] [Setup] Remove MessageStore trait and implementations from `backend/crates/kalamdb-core/src/storage/message_store.rs`
+- [X] T003 [P] [Setup] Remove message-specific query logic from `backend/crates/kalamdb-core/src/storage/query.rs`
+- [X] T004 [P] [Setup] Remove existing SQL parser logic from `backend/crates/kalamdb-core/src/sql/parser.rs` (will be replaced with DataFusion)
+- [X] T005 [P] [Setup] Remove existing SQL executor from `backend/crates/kalamdb-core/src/sql/executor.rs` (will be replaced with DataFusion)
+- [X] T006 [P] [Setup] Remove message-specific handlers from `backend/crates/kalamdb-api/src/handlers/messages.rs`
+- [X] T007 [Setup] Update `backend/Cargo.toml` dependencies: Add DataFusion, Arrow, Parquet, Actix-Web for WebSocket support
+- [X] T008 [P] [Setup] Create new directory structure: `backend/crates/kalamdb-core/src/catalog/` for namespace/table catalog
+- [X] T009 [P] [Setup] Create new directory structure: `backend/crates/kalamdb-core/src/schema/` for Arrow schema management
+- [X] T010 [P] [Setup] Create new directory structure: `backend/crates/kalamdb-core/src/tables/` for table types (user, shared, stream)
+- [X] T011 [P] [Setup] Create new directory structure: `backend/crates/kalamdb-core/src/flush/` for flush policy management
+- [X] T013 [P] [Setup] Create new directory structure: `backend/crates/kalamdb-core/src/live_query/` for live subscription management
+
+### Additional Cleanup Tasks (Completed)
+
+- [X] T007a [Setup] Update module files to remove references to deleted modules (`backend/crates/kalamdb-core/src/models/mod.rs`, `backend/crates/kalamdb-core/src/storage/mod.rs`, `backend/crates/kalamdb-core/src/sql/mod.rs`)
+- [X] T007b [Setup] Clean up `backend/crates/kalamdb-core/src/storage/rocksdb_store.rs` to remove MessageStore trait implementation while preserving generic RocksDB operations
+- [X] T007c [Setup] Update `backend/crates/kalamdb-core/src/lib.rs` to export new catalog, schema, tables, flush, and live_query modules
+- [X] T007d [Setup] Create placeholder `mod.rs` files for all new directories with rustdoc documentation
+- [X] T007e [Setup] Temporarily disable old query handlers in `backend/crates/kalamdb-api/src/handlers/mod.rs` (will be reimplemented with DataFusion)
+- [X] T007f [Setup] Update `backend/crates/kalamdb-api/src/routes.rs` to prepare for new `/api/sql` endpoint structure
+- [X] T007g [Setup] Update `backend/crates/kalamdb-server/src/main.rs` to minimal working state (components to be added in Phase 2)
+- [X] T007h [Setup] Verify project compiles successfully with `cargo check` after all Phase 1 changes
+
+**Phase 1 Status**: ✅ **COMPLETE** - All 12 core tasks + 8 cleanup tasks completed. Project compiles successfully. Clean slate ready for Phase 2 foundational work.
 
 ---
 
@@ -636,13 +649,20 @@ While tests are not included in this task list, consider this testing approach w
 
 ## Summary
 
-**Total Tasks**: 229 tasks (enhanced with testing and documentation)
+**Total Tasks**: 237 tasks (229 original + 8 additional cleanup tasks from Phase 1)
+**Completed Tasks**: 20 tasks (12 core Phase 1 tasks + 8 cleanup tasks)
+**Remaining Tasks**: 217 tasks
 **P1 Critical Tasks**: ~195 tasks (Phases 1-10, 12-13, and essential Polish including T227-T229)
 **P2 Tasks**: ~20 tasks (Phases 11, 14, 16)
 **P3 Tasks**: ~6 tasks (Phase 15)
 
+**Progress**: 
+- ✅ Phase 1 (Setup & Code Removal): 100% complete (20/20 tasks)
+- ⏳ Phase 2 (Foundational): 0% complete (0/44 tasks) - **NEXT PHASE**
+- ⏳ Remaining phases: Pending Phase 2 completion
+
 **Parallel Opportunities**: 
-- Setup phase: 5 parallel tasks (reduced by 1)
+- Setup phase: ✅ All 12 parallel tasks completed
 - Foundational phase: ~23 parallel tasks (including RocksDB column family architecture)
 - User stories: 3-4 stories can proceed in parallel after foundational
 
