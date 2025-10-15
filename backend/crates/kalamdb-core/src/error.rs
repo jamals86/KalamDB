@@ -1,6 +1,37 @@
 // Error types module
 use thiserror::Error;
 
+/// Main error type for KalamDB
+#[derive(Error, Debug)]
+pub enum KalamDbError {
+    #[error("Storage error: {0}")]
+    Storage(#[from] StorageError),
+
+    #[error("Configuration error: {0}")]
+    Config(#[from] ConfigError),
+
+    #[error("API error: {0}")]
+    Api(#[from] ApiError),
+
+    #[error("Configuration file error: {0}")]
+    ConfigError(String),
+
+    #[error("Schema error: {0}")]
+    SchemaError(String),
+
+    #[error("Catalog error: {0}")]
+    CatalogError(String),
+
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("{0}")]
+    Other(String),
+}
+
 /// Storage-related errors
 #[derive(Error, Debug)]
 pub enum StorageError {

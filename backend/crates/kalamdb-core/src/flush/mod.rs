@@ -3,4 +3,6 @@
 //! This module manages flush policies that determine when data is written
 //! from RocksDB to Parquet storage.
 
-// TODO: Add flush modules as they are implemented
+pub mod policy;
+
+pub use policy::FlushPolicy;

@@ -5,6 +5,7 @@
 // and live query subscriptions.
 
 pub mod catalog;
+pub mod config;
 pub mod error;
 pub mod flush;
 pub mod ids;

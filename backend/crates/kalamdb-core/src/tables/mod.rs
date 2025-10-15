@@ -6,4 +6,9 @@
 //! - Stream tables: Ephemeral event streaming tables
 //! - System tables: Internal system metadata tables
 
-// TODO: Add table modules as they are implemented
+pub mod hybrid_table_provider;
+pub mod parquet_scan;
+pub mod rocksdb_scan;
+pub mod system;
+
+pub use hybrid_table_provider::HybridTableProvider;

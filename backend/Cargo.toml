@@ -30,15 +30,15 @@ env_logger = "0.11"
 tokio = { version = "1.48.0", features = ["full"] }
 
 # Time handling
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "=0.4.38", features = ["serde"] }
 
 # Storage - using minimal features to avoid build issues on Windows
 rocksdb = { version = "0.24.0", default-features = false, features = ["snappy"] }
 
 # Apache Arrow ecosystem
-arrow = { version = "50.0", features = ["prettyprint"] }
-parquet = { version = "50.0", features = ["arrow", "async"] }
-datafusion = { version = "35.0" }
+arrow = { version = "52.0", features = ["prettyprint"] }
+parquet = { version = "52.0", features = ["arrow", "async"] }
+datafusion = { version = "40.0" }
 
 # Web framework
 actix-web = "4.4"

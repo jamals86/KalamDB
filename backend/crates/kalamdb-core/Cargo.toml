@@ -10,6 +10,14 @@ repository.workspace = true
 # Storage
 rocksdb.workspace = true
 
+# Apache Arrow ecosystem
+arrow.workspace = true
+parquet.workspace = true
+datafusion.workspace = true
+
+# Async
+async-trait = "0.1"
+
 # Serialization
 serde.workspace = true
 serde_json.workspace = true

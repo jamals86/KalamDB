@@ -63,68 +63,70 @@
 
 ### Core Data Structures
 
-- [ ] T014 [P] [Foundation] Create Namespace entity in `backend/crates/kalamdb-core/src/catalog/namespace.rs` (name, created_at, options, table_count)
-- [ ] T014a [P] [Foundation] Create NamespaceId type-safe wrapper in `backend/crates/kalamdb-core/src/catalog/namespace_id.rs` (newtype pattern around String, use everywhere instead of raw String for namespace identifiers)
-- [ ] T015 [P] [Foundation] Create TableMetadata entity in `backend/crates/kalamdb-core/src/catalog/table_metadata.rs` (table_name, table_type, namespace, created_at, storage_location, flush_policy)
-- [ ] T015a [P] [Foundation] Create TableName type-safe wrapper in `backend/crates/kalamdb-core/src/catalog/table_name.rs` (newtype pattern around String, use everywhere instead of raw String for table identifiers)
-- [ ] T015b [P] [Foundation] Create TableType enum in `backend/crates/kalamdb-core/src/catalog/table_type.rs` (values: User, Shared, System, Stream - use enum everywhere instead of String)
-- [ ] T015c [P] [Foundation] Create UserId type-safe wrapper in `backend/crates/kalamdb-core/src/catalog/user_id.rs` (newtype pattern around String, use everywhere instead of raw String for user identifiers)
-- [ ] T016 [P] [Foundation] Create FlushPolicy entity in `backend/crates/kalamdb-core/src/flush/policy.rs` (policy_type: RowLimit/TimeInterval, row_limit, time_interval)
-- [ ] T017 [P] [Foundation] Create StorageLocation entity in `backend/crates/kalamdb-core/src/catalog/storage_location.rs` (location_name, location_type, path, credentials_ref, usage_count)
+- [X] T014 [P] [Foundation] Create Namespace entity in `backend/crates/kalamdb-core/src/catalog/namespace.rs` (name, created_at, options, table_count)
+- [X] T014a [P] [Foundation] Create NamespaceId type-safe wrapper in `backend/crates/kalamdb-core/src/catalog/namespace_id.rs` (newtype pattern around String, use everywhere instead of raw String for namespace identifiers)
+- [X] T015 [P] [Foundation] Create TableMetadata entity in `backend/crates/kalamdb-core/src/catalog/table_metadata.rs` (table_name, table_type, namespace, created_at, storage_location, flush_policy)
+- [X] T015a [P] [Foundation] Create TableName type-safe wrapper in `backend/crates/kalamdb-core/src/catalog/table_name.rs` (newtype pattern around String, use everywhere instead of raw String for table identifiers)
+- [X] T015b [P] [Foundation] Create TableType enum in `backend/crates/kalamdb-core/src/catalog/table_type.rs` (values: User, Shared, System, Stream - use enum everywhere instead of String)
+- [X] T015c [P] [Foundation] Create UserId type-safe wrapper in `backend/crates/kalamdb-core/src/catalog/user_id.rs` (newtype pattern around String, use everywhere instead of raw String for user identifiers)
+- [X] T016 [P] [Foundation] Create FlushPolicy entity in `backend/crates/kalamdb-core/src/flush/policy.rs` (policy_type: RowLimit/TimeInterval, row_limit, time_interval)
+- [X] T017 [P] [Foundation] Create StorageLocation entity in `backend/crates/kalamdb-core/src/catalog/storage_location.rs` (location_name, location_type, path, credentials_ref, usage_count)
 
 ### Configuration Persistence Foundation
 
-- [ ] T018 [P] [Foundation] Create configuration file manager in `backend/crates/kalamdb-core/src/config/file_manager.rs` (atomic file updates, JSON read/write)
-- [ ] T019 [P] [Foundation] Implement namespaces.json handler in `backend/crates/kalamdb-core/src/config/namespaces_config.rs` (load/save all namespaces)
-- [ ] T020 [P] [Foundation] Implement storage_locations.json handler in `backend/crates/kalamdb-core/src/config/storage_locations_config.rs` (load/save all storage locations)
-- [ ] T021 [Foundation] Create server startup configuration loader in `backend/crates/kalamdb-core/src/config/startup_loader.rs` (load all configs from JSON into in-memory catalog, NOT RocksDB - RocksDB is only for table data buffering)
+- [X] T018 [P] [Foundation] Create configuration file manager in `backend/crates/kalamdb-core/src/config/file_manager.rs` (atomic file updates, JSON read/write)
+- [X] T019 [P] [Foundation] Implement namespaces.json handler in `backend/crates/kalamdb-core/src/config/namespaces_config.rs` (load/save all namespaces)
+- [X] T020 [P] [Foundation] Implement storage_locations.json handler in `backend/crates/kalamdb-core/src/config/storage_locations_config.rs` (load/save all storage locations)
+- [X] T021 [Foundation] Create server startup configuration loader in `backend/crates/kalamdb-core/src/config/startup_loader.rs` (load all configs from JSON into in-memory catalog, NOT RocksDB - RocksDB is only for table data buffering)
 
 ### Schema Management Foundation
 
-- [ ] T022 [Foundation] Implement Arrow schema serialization/deserialization in `backend/crates/kalamdb-core/src/schema/arrow_schema.rs` (use DataFusion's built-in SchemaRef::to_json() and SchemaRef::from_json() methods, include table_options in schema files)
-- [ ] T023 [Foundation] Implement schema versioning logic in `backend/crates/kalamdb-core/src/schema/versioning.rs` (create schema_v{N}.json files with user options using DataFusion's schema serialization)
-- [ ] T024 [Foundation] Implement manifest.json management in `backend/crates/kalamdb-core/src/schema/manifest.rs` (read, write, update schema metadata)
-- [ ] T025 [Foundation] Implement schema directory structure creation in `backend/crates/kalamdb-core/src/schema/storage.rs` (/conf/{namespace}/schemas/{table_name}/)
-- [ ] T026 [Foundation] Add system column injection logic in `backend/crates/kalamdb-core/src/schema/system_columns.rs` (\_updated TIMESTAMP, \_deleted BOOLEAN for user/shared tables)
+- [X] T022 [Foundation] Implement Arrow schema serialization/deserialization in `backend/crates/kalamdb-core/src/schema/arrow_schema.rs` (use DataFusion's built-in SchemaRef::to_json() and SchemaRef::from_json() methods, include table_options in schema files)
+- [X] T023 [Foundation] Implement schema versioning logic in `backend/crates/kalamdb-core/src/schema/versioning.rs` (create schema_v{N}.json files with user options using DataFusion's schema serialization)
+- [X] T024 [Foundation] Implement manifest.json management in `backend/crates/kalamdb-core/src/schema/manifest.rs` (read, write, update schema metadata)
+- [X] T025 [Foundation] Implement schema directory structure creation in `backend/crates/kalamdb-core/src/schema/storage.rs` (/conf/{namespace}/schemas/{table_name}/)
+- [X] T026 [Foundation] Add system column injection logic in `backend/crates/kalamdb-core/src/schema/system_columns.rs` (\_updated TIMESTAMP, \_deleted BOOLEAN for user/shared tables)
 
 ### RocksDB Column Family Architecture
 
-- [ ] T027 [Foundation] Implement column family manager in `backend/crates/kalamdb-core/src/storage/column_family_manager.rs` (create/delete column families with naming convention, use NamespaceId and TableName types)
-- [ ] T027a [Foundation] Add column family naming utilities in column_family_manager.rs (use TableType enum: user_table:{NamespaceId}:{TableName}, shared_table:{NamespaceId}:{TableName}, stream_table:{NamespaceId}:{TableName}, system_table:{TableName})
-- [ ] T027b [Foundation] Implement RocksDB configuration in `backend/crates/kalamdb-core/src/storage/rocksdb_config.rs` (per-column-family memtable, write buffer, WAL settings, compaction)
-- [ ] T027c [Foundation] Create RocksDB initialization in `backend/crates/kalamdb-core/src/storage/rocksdb_init.rs` (open database, create default column families, configure options)
-- [ ] T027d [Foundation] Create TableName initialization in `backend/crates/kalamdb-core/src/storage/table_name.rs` to be used as type-safe identifiers for tables instead of raw strings (MERGED with T015a - delete this duplicate task)
+- [X] T027 [Foundation] Implement column family manager in `backend/crates/kalamdb-core/src/storage/column_family_manager.rs` (create/delete column families with naming convention, use NamespaceId and TableName types)
+- [X] T027a [Foundation] Add column family naming utilities in column_family_manager.rs (use TableType enum: user_table:{NamespaceId}:{TableName}, shared_table:{NamespaceId}:{TableName}, stream_table:{NamespaceId}:{TableName}, system_table:{TableName})
+- [X] T027b [Foundation] Implement RocksDB configuration in `backend/crates/kalamdb-core/src/storage/rocksdb_config.rs` (per-column-family memtable, write buffer, WAL settings, compaction)
+- [X] T027c [Foundation] Create RocksDB initialization in `backend/crates/kalamdb-core/src/storage/rocksdb_init.rs` (open database, create default column families, configure options)
+- [X] T027d [Foundation] Create TableName initialization in `backend/crates/kalamdb-core/src/storage/table_name.rs` to be used as type-safe identifiers for tables instead of raw strings (MERGED with T015a - delete this duplicate task)
 
 ### RocksDB Catalog Store
 
-- [ ] T028 [Foundation] Implement catalog store using RocksDB in `backend/crates/kalamdb-core/src/catalog/catalog_store.rs` (store system table data in dedicated column families: system_table:users, system_table:live_queries, system_table:storage_locations, system_table:jobs, use UserId type)
-- [ ] T029 [Foundation] Add catalog key prefixes for different entity types in catalog_store.rs (use UserId for user keys, subscription_id:, location_name:, job_id: for system tables)
-- [ ] T030 [Foundation] Implement system table CRUD operations in catalog_store.rs (insert, update, delete, query system table data, use type-safe wrappers)
-- [ ] T031 [Foundation] Implement table metadata cache in `backend/crates/kalamdb-core/src/catalog/table_cache.rs` (in-memory cache for table metadata loaded from JSON, NOT from RocksDB, use NamespaceId and TableName as keys)
+- [X] T028 [Foundation] Implement catalog store using RocksDB in `backend/crates/kalamdb-core/src/catalog/catalog_store.rs` (store system table data in dedicated column families: system_table:users, system_table:live_queries, system_table:storage_locations, system_table:jobs, use UserId type)
+- [X] T029 [Foundation] Add catalog key prefixes for different entity types in catalog_store.rs (use UserId for user keys, subscription_id:, location_name:, job_id: for system tables)
+- [X] T030 [Foundation] Implement system table CRUD operations in catalog_store.rs (insert, update, delete, query system table data, use type-safe wrappers)
+- [X] T031 [Foundation] Implement table metadata cache in `backend/crates/kalamdb-core/src/catalog/table_cache.rs` (in-memory cache for table metadata loaded from JSON, NOT from RocksDB, use NamespaceId and TableName as keys)
 
 ### DataFusion Integration Foundation
 
-- [ ] T032 [Foundation] Create DataFusion session factory in `backend/crates/kalamdb-core/src/sql/datafusion_session.rs` (create SessionContext with config, use NamespaceId and UserId in session state)
-- [ ] T033 [Foundation] Implement hybrid TableProvider in `backend/crates/kalamdb-core/src/tables/hybrid_table_provider.rs` (queries both RocksDB and Parquet, use TableName and TableType)
-- [ ] T034 [Foundation] Create RocksDB scan implementation for DataFusion in `backend/crates/kalamdb-core/src/tables/rocksdb_scan.rs` (convert RocksDB data to Arrow RecordBatch, support different key formats per TableType: {UserId}:{row_id} for User tables, {row_id} for Shared tables, {timestamp}:{row_id} for Stream tables)
-- [ ] T035 [Foundation] Create Parquet scan implementation for DataFusion in `backend/crates/kalamdb-core/src/tables/parquet_scan.rs` (scan Parquet files with bloom filter optimization)
-- [ ] T036 [Foundation] Implement \_deleted filter injection for queries in `backend/crates/kalamdb-core/src/sql/query_rewriter.rs` (add WHERE \_deleted = false by default)
+- [X] T032 [Foundation] Create DataFusion session factory in `backend/crates/kalamdb-core/src/sql/datafusion_session.rs` (create SessionContext with config, use NamespaceId and UserId in session state)
+- [X] T033 [Foundation] Implement hybrid TableProvider in `backend/crates/kalamdb-core/src/tables/hybrid_table_provider.rs` (queries both RocksDB and Parquet, use TableName and TableType)
+- [X] T034 [Foundation] Create RocksDB scan implementation for DataFusion in `backend/crates/kalamdb-core/src/tables/rocksdb_scan.rs` (convert RocksDB data to Arrow RecordBatch, support different key formats per TableType: {UserId}:{row_id} for User tables, {row_id} for Shared tables, {timestamp}:{row_id} for Stream tables)
+- [X] T035 [Foundation] Create Parquet scan implementation for DataFusion in `backend/crates/kalamdb-core/src/tables/parquet_scan.rs` (scan Parquet files with bloom filter optimization)
+- [X] T036 [Foundation] Implement \_deleted filter injection for queries in `backend/crates/kalamdb-core/src/sql/query_rewriter.rs` (add WHERE \_deleted = false by default)
 
 ### Storage Backend Foundation
 
-- [ ] T037 [P] [Foundation] Create filesystem storage backend in `backend/crates/kalamdb-core/src/storage/filesystem_backend.rs` (write/read Parquet files to local disk)
-- [ ] T038 [P] [Foundation] Create storage location template engine in `backend/crates/kalamdb-core/src/storage/path_template.rs` (substitute ${user_id} in paths using UserId type)
-- [ ] T039 [Foundation] Implement Parquet writer with \_updated bloom filter in `backend/crates/kalamdb-core/src/storage/parquet_writer.rs`
+- [X] T037 [P] [Foundation] Create filesystem storage backend in `backend/crates/kalamdb-core/src/storage/filesystem_backend.rs` (write/read Parquet files to local disk)
+- [X] T038 [P] [Foundation] Create storage location template engine in `backend/crates/kalamdb-core/src/storage/path_template.rs` (substitute ${user_id} in paths using UserId type)
+- [X] T039 [Foundation] Implement Parquet writer with \_updated bloom filter in `backend/crates/kalamdb-core/src/storage/parquet_writer.rs`
 
 ### System Tables Foundation
 
-- [ ] T040 [Foundation] Create system.users table schema in `backend/crates/kalamdb-core/src/tables/system/users.rs` (use UserId type, username, email, created_at)
-- [ ] T041 [Foundation] Create system.live_queries table schema in `backend/crates/kalamdb-core/src/tables/system/live_queries.rs` (live_id [PK, format: {user_id}-{unique_conn_id}-{table_name}-{query_id}], connection_id, table_name, query_id, use UserId and TableName types, query, options [JSON], created_at, updated_at, changes, node)
-- [ ] T042 [Foundation] Create system.storage_locations table schema in `backend/crates/kalamdb-core/src/tables/system/storage_locations.rs` (location_name, location_type, path, credentials_ref, usage_count)
-- [ ] T043 [Foundation] Create system.jobs table schema in `backend/crates/kalamdb-core/src/tables/system/jobs.rs` (job_id, job_type, use TableName for table_name, status, start_time, end_time, parameters, result, trace, memory_used_mb, cpu_used_percent, node_id, error_message)
-- [ ] T044 [Foundation] Implement system table registration in DataFusion in `backend/crates/kalamdb-core/src/tables/system/mod.rs` (register all system tables at startup)
+- [X] T040 [Foundation] Create system.users table schema in `backend/crates/kalamdb-core/src/tables/system/users.rs` (use UserId type, username, email, created_at)
+- [X] T041 [Foundation] Create system.live_queries table schema in `backend/crates/kalamdb-core/src/tables/system/live_queries.rs` (live_id [PK, format: {user_id}-{unique_conn_id}-{table_name}-{query_id}], connection_id, table_name, query_id, use UserId and TableName types, query, options [JSON], created_at, updated_at, changes, node)
+- [X] T042 [Foundation] Create system.storage_locations table schema in `backend/crates/kalamdb-core/src/tables/system/storage_locations.rs` (location_name, location_type, path, credentials_ref, usage_count)
+- [X] T043 [Foundation] Create system.jobs table schema in `backend/crates/kalamdb-core/src/tables/system/jobs.rs` (job_id, job_type, use TableName for table_name, status, start_time, end_time, parameters, result, trace, memory_used_mb, cpu_used_percent, node_id, error_message)
+- [X] T044 [Foundation] Implement system table registration in DataFusion in `backend/crates/kalamdb-core/src/tables/system/mod.rs` (register all system tables at startup)
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
+
+**Phase 2 Status**: ✅ **COMPLETE** - All 37 foundational tasks completed. 122 tests passing. Ready for Phase 3 user story implementation.
 
 ---
 
