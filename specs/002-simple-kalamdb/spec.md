@@ -246,6 +246,127 @@ Optimized for low-latency admin queries
 - Require fast access for permissions, catalog queries
 - No need for long-term archival in Parquet format
 
+### Schema Storage and Versioning
+
+Each table schema is stored in a **versioned, Arrow-compatible format** to support schema evolution and ALTER TABLE operations:
+
+**Directory Structure**:
+```
+/configs/
+  {namespace}/
+    manifest.json                    # Registry of all tables and current schema versions
+    schemas/
+      messages/                      # One folder per table
+        schema_v1.json               # Arrow schema with metadata
+        schema_v2.json               # Evolved schema (after ALTER TABLE)
+        current.json → schema_v2.json  # Symlink/pointer to active version
+      user_events/
+        schema_v1.json
+        current.json → schema_v1.json
+      ai_signals/
+        schema_v1.json
+        current.json → schema_v1.json
+```
+
+**Manifest File Format** (`manifest.json`):
+```json
+{
+  "messages": {
+    "current_version": 2,
+    "path": "schemas/messages/schema_v2.json",
+    "table_type": "user",
+    "created_at": "2025-01-15T10:30:00Z",
+    "updated_at": "2025-03-20T14:45:00Z"
+  },
+  "user_events": {
+    "current_version": 1,
+    "path": "schemas/user_events/schema_v1.json",
+    "table_type": "shared",
+    "created_at": "2025-02-01T08:00:00Z",
+    "updated_at": "2025-02-01T08:00:00Z"
+  },
+  "ai_signals": {
+    "current_version": 1,
+    "path": "schemas/ai_signals/schema_v1.json",
+    "table_type": "stream",
+    "created_at": "2025-03-10T12:15:00Z",
+    "updated_at": "2025-03-10T12:15:00Z"
+  }
+}
+```
+
+**Arrow Schema File Format** (`schema_v1.json`):
+```json
+{
+  "version": 1,
+  "created_at": "2025-01-15T10:30:00Z",
+  "arrow_schema": {
+    "fields": [
+      {
+        "name": "id",
+        "type": {"name": "int", "bitWidth": 64},
+        "nullable": false,
+        "metadata": {"auto_increment": "true"}
+      },
+      {
+        "name": "conversation_id",
+        "type": {"name": "utf8"},
+        "nullable": false
+      },
+      {
+        "name": "content",
+        "type": {"name": "utf8"},
+        "nullable": true
+      },
+      {
+        "name": "_updated",
+        "type": {"name": "timestamp", "unit": "MICROSECOND"},
+        "nullable": false,
+        "metadata": {"system_column": "true"}
+      },
+      {
+        "name": "_deleted",
+        "type": {"name": "bool"},
+        "nullable": false,
+        "metadata": {"system_column": "true"}
+      }
+    ]
+  }
+}
+```
+
+**Schema Evolution Workflow**:
+```
+1. User executes ALTER TABLE command
+    ↓
+2. System validates schema compatibility (DataFusion projection)
+    ↓
+3. Create new schema version file (schema_v{N+1}.json)
+    ↓
+4. Update manifest.json with new current_version and updated_at
+    ↓
+5. Update current.json symlink to new version
+    ↓
+6. DataFusion reloads schema for future queries
+    ↓
+7. Existing Parquet files remain with old schema
+   (DataFusion handles projection automatically)
+```
+
+**Schema Loading**:
+- **On table access**: System reads `manifest.json` → loads `current.json` → deserializes Arrow schema
+- **DataFusion integration**: Arrow schema directly loaded into DataFusion TableProvider
+- **Caching**: Manifest and current schemas cached in memory, invalidated on ALTER TABLE
+- **Backwards compatibility**: Old Parquet files read with schema projection (missing columns filled with NULL)
+
+**Benefits**:
+- ✅ Arrow-native format for zero-copy DataFusion integration
+- ✅ Versioning enables audit trail of schema changes
+- ✅ Symlink provides fast lookup of current schema
+- ✅ Manifest provides O(1) table existence checks
+- ✅ Created/updated timestamps enable change tracking
+- ✅ Future-proof for ALTER TABLE ADD/DROP/MODIFY COLUMN
+
 ### Flush Policy Enforcement
 
 Flush policies determine **when data moves from RocksDB to Parquet**:
@@ -295,22 +416,22 @@ FLUSH POLICY ROWS 5000 INTERVAL '1 minute';
 
 ### User Story 0 - REST API and WebSocket Interface (Priority: P1)
 
-A developer wants to interact with KalamDB through HTTP REST API for queries and table operations, and WebSocket connections for live query subscriptions. All database operations must be accessible via HTTP endpoints.
+A developer wants to interact with KalamDB through a simple HTTP REST API for executing SQL commands, and WebSocket connections for live query subscriptions with initial data fetch and real-time updates.
 
-**Why this priority**: REST API is the fundamental interface for all database interactions. Without it, no other features can be accessed.
+**Why this priority**: REST API and WebSocket are the fundamental interfaces for all database interactions. Without them, no other features can be accessed.
 
-**Independent Test**: Can be fully tested by sending HTTP requests to create tables, insert/query data, and establishing WebSocket connections for live queries.
+**Independent Test**: Can be fully tested by sending SQL commands via POST request and establishing WebSocket connections with multiple query subscriptions.
 
 **Acceptance Scenarios**:
 
-1. **Given** I have database access, **When** I send a POST request to `/api/query` with SQL statement, **Then** I receive query results in JSON format
-2. **Given** I want to create a table, **When** I send CREATE TABLE SQL via REST API, **Then** the table is created and I receive confirmation
-3. **Given** I want to insert data, **When** I send INSERT statement via REST API, **Then** data is written and I receive success response
-4. **Given** I want to query data, **When** I send SELECT statement via REST API, **Then** I receive matching rows in JSON format
-5. **Given** I want live updates, **When** I establish WebSocket connection with subscription query, **Then** the connection is accepted and subscription is active
-6. **Given** I have a WebSocket subscription, **When** data changes match my filter, **Then** I receive real-time notifications
-7. **Given** REST API endpoints exist, **When** I send malformed SQL, **Then** I receive clear error messages with HTTP 400 status
-8. **Given** I want to manage namespaces, **When** I send namespace operations via REST API, **Then** namespace commands execute successfully
+1. **Given** I have database access, **When** I send a POST request to `/api/sql` with a single SQL statement, **Then** I receive query results or success confirmation in JSON format
+2. **Given** I want to execute multiple commands, **When** I send a POST request with multiple SQL statements separated by semicolons, **Then** all commands execute in sequence and I receive results for each
+3. **Given** I want live updates, **When** I establish WebSocket connection with an array of subscription queries, **Then** the connection is accepted and I receive initial data for each query
+4. **Given** I have an active WebSocket subscription, **When** I specify "last N rows" in my query options, **Then** I receive the last N rows immediately upon connection
+5. **Given** I have a WebSocket subscription, **When** data changes (INSERT/UPDATE/DELETE) match my filter, **Then** I receive real-time change notifications with change type
+6. **Given** I have multiple queries in one WebSocket connection, **When** changes occur, **Then** I receive notifications for all matching subscriptions
+7. **Given** I send malformed SQL via REST API, **Then** I receive clear error messages with HTTP 400 status
+8. **Given** I have a WebSocket subscription, **When** rows are deleted (soft delete), **Then** I receive DELETE notifications with the deleted row data
 
 ---
 
@@ -448,6 +569,28 @@ A developer wants to drop (delete) user tables and shared tables they no longer 
 6. **Given** I drop a table, **When** I query the catalog, **Then** the table no longer appears in the table list
 7. **Given** a table is dropped, **When** I try to query it, **Then** I receive "table not found" error
 8. **Given** a table is dropped, **When** I create a new table with the same name, **Then** the new table is created successfully without conflicts
+
+---
+
+### User Story 3b - Table Schema Evolution (ALTER TABLE) (Priority: P2)
+
+A developer wants to modify table schemas after they have been created and contain data. They need to add new columns, remove unused columns, or modify column types as application requirements evolve. The system must preserve existing data and maintain backwards compatibility with old Parquet files.
+
+**Why this priority**: Schema evolution is essential for long-lived applications. Requirements change over time, and forcing developers to recreate tables with data migration is costly.
+
+**Independent Test**: Can be fully tested by creating a table, inserting data, altering the schema (add/drop/modify columns), and verifying queries work correctly with both old and new data.
+
+**Acceptance Scenarios**:
+
+1. **Given** a user table "messages" exists with data, **When** I execute ALTER TABLE messages ADD COLUMN priority STRING, **Then** the new column is added and existing rows have NULL for the new column
+2. **Given** I add a column with DEFAULT value, **When** querying old data, **Then** the default value is used for rows created before the schema change
+3. **Given** a table has multiple schema versions, **When** I query the table, **Then** DataFusion merges data from all Parquet files using schema projection
+4. **Given** a column is referenced in an active live query subscription, **When** I attempt to drop that column, **Then** the system prevents the change and shows which subscriptions reference it
+5. **Given** I modify a column type, **When** the change is incompatible (e.g., STRING to INT), **Then** the system rejects the change with validation error
+6. **Given** I execute ALTER TABLE, **When** the operation succeeds, **Then** a new schema version file is created and manifest.json is updated
+7. **Given** a table has schema version 3, **When** I run DESCRIBE TABLE, **Then** I see current version, schema history, and paths to schema files
+8. **Given** I attempt to alter a stream table, **When** I execute ALTER TABLE, **Then** the system rejects the operation (stream tables have immutable schemas)
+9. **Given** I attempt to alter a system column (_updated, _deleted), **When** I execute ALTER TABLE, **Then** the system rejects the operation
 
 ---
 
@@ -595,21 +738,49 @@ A user wants to browse and inspect their database structure just like in traditi
 - How does the system clean up user-specific Parquet files across thousands of user IDs during DROP TABLE?
 - What happens when storage backend (S3/filesystem) is unavailable during DROP TABLE?
 - How does the system handle DROP TABLE rollback if file deletion fails partway through?
+- What happens when ALTER TABLE ADD COLUMN is executed while a flush operation is writing Parquet files?
+- How does the system handle ALTER TABLE DROP COLUMN when the column is referenced in WHERE clauses of active subscriptions?
+- What happens when manifest.json becomes corrupted or contains invalid JSON?
+- How does the system recover if a schema version file (schema_v{N}.json) is missing or corrupted?
+- What happens when current.json symlink points to a non-existent schema version?
+- How does the system handle ALTER TABLE operations when the filesystem is out of space?
+- What happens when two ALTER TABLE operations are executed concurrently on the same table?
+- How does DataFusion handle schema projection when a column type changed incompatibly across versions?
+- What happens when querying old Parquet files (v1) after multiple schema evolutions (now at v5)?
+- How does the system handle DEFAULT values for new columns when reading old Parquet files?
+- What happens when ALTER TABLE MODIFY COLUMN attempts to narrow a type (e.g., BIGINT to INT)?
+- How does the system validate backwards compatibility before committing schema changes?
+- What happens when schema cache is invalidated but some queries are in-flight with old schema?
+- How does the system handle DROP COLUMN when the column was added and immediately dropped in rapid succession?
+- What happens when attempting to add a column with a name that matches a system column (_updated, _deleted)?
+- How does the system handle manifest.json concurrent updates from multiple schema alterations?
+- What happens when a schema version number overflows or reaches very high values (v9999+)?
+- How does DESCRIBE TABLE display schema history when there are hundreds of schema versions?
+- What happens when backup/restore encounters tables with different schema versions across user IDs?
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
 #### REST API and WebSocket Interface
-- **FR-001**: System MUST provide HTTP REST API for all SQL operations (DDL and DML)
-- **FR-002**: System MUST accept SQL statements via POST requests to `/api/query` endpoint
-- **FR-003**: System MUST return query results in JSON format
-- **FR-004**: System MUST provide WebSocket endpoint for live query subscriptions
-- **FR-005**: System MUST support authentication and authorization for REST API requests
-- **FR-006**: System MUST return appropriate HTTP status codes (200 OK, 400 Bad Request, 401 Unauthorized, 404 Not Found, 500 Internal Server Error)
-- **FR-007**: System MUST return clear error messages for malformed SQL or invalid operations
-- **FR-008**: System MUST support CORS headers for web browser clients
-- **FR-009**: System MUST log all API requests for debugging and auditing
+- **FR-001**: System MUST provide a single HTTP POST endpoint `/api/sql` for executing SQL statements
+- **FR-002**: System MUST accept a single SQL statement or multiple statements separated by semicolons in the request body
+- **FR-003**: System MUST execute multiple SQL statements in sequence when provided
+- **FR-004**: System MUST return query results in JSON format for SELECT statements
+- **FR-005**: System MUST return success/failure status for DDL and DML statements (CREATE, INSERT, UPDATE, DELETE, DROP)
+- **FR-006**: System MUST provide WebSocket endpoint `/ws` for live query subscriptions
+- **FR-007**: System MUST accept an array of subscription queries when establishing WebSocket connection
+- **FR-008**: System MUST support subscription options including "last N rows" to fetch initial data
+- **FR-009**: System MUST return initial data (last N rows) immediately upon WebSocket subscription establishment
+- **FR-010**: System MUST stream real-time change notifications (INSERT, UPDATE, DELETE) for all active subscriptions
+- **FR-011**: System MUST support multiple concurrent subscriptions within a single WebSocket connection
+- **FR-012**: System MUST include change type (INSERT/UPDATE/DELETE) in all change notifications
+- **FR-013**: System MUST support authentication and authorization for REST API and WebSocket connections
+- **FR-014**: System MUST return appropriate HTTP status codes (200 OK, 400 Bad Request, 401 Unauthorized, 500 Internal Server Error)
+- **FR-015**: System MUST return clear error messages for malformed SQL or invalid operations
+- **FR-016**: System MUST support CORS headers for web browser clients
+- **FR-017**: System MUST log all API requests and WebSocket connections for debugging and auditing
+- **FR-018**: System MUST NOT implement any additional REST API endpoints beyond `/api/sql`
 
 #### Namespace Management
 - **FR-010**: System MUST allow creation of namespaces with unique names
@@ -678,87 +849,140 @@ A user wants to browse and inspect their database structure just like in traditi
 - **FR-051**: System MUST support flush-to-disk policy with row limit configuration
 - **FR-052**: System MUST support flush-to-disk policy with time-based interval configuration
 - **FR-053**: System MUST flush data to disk when either row limit or time interval is reached
+- **FR-054**: System MUST automatically add system columns to every user table: _updated (TIMESTAMP), _deleted (BOOLEAN)
+- **FR-055**: System MUST set _updated column to current timestamp on every INSERT and UPDATE operation
+- **FR-056**: System MUST initialize _deleted column to false on INSERT operations
+- **FR-057**: System MUST build Bloom filters on _updated column in Parquet files for efficient time-range queries
+- **FR-058**: System MUST support deleted_retention option for user tables (e.g., '7d', '30d', 'off')
+- **FR-059**: System MUST implement soft delete by setting _deleted = true when DELETE operations execute
+- **FR-060**: System MUST update _updated timestamp when soft delete occurs
+- **FR-061**: When deleted_retention != 'off', system MUST schedule cleanup jobs to physically remove soft-deleted rows older than the retention period
+- **FR-062**: When deleted_retention = 'off', system MUST keep soft-deleted rows indefinitely
+- **FR-063**: System MUST support queries filtering by _deleted column to exclude/include soft-deleted rows
+- **FR-064**: System MUST support DROP USER TABLE command to delete user tables
+- **FR-065**: System MUST prevent DROP TABLE when active live query subscriptions exist
+- **FR-066**: System MUST mark all rows as deleted (_deleted = true) when DROP TABLE executes
+- **FR-067**: System MUST remove table metadata from manifest.json when DROP TABLE completes
+
+#### Schema Storage and Versioning
+- **FR-068**: System MUST store each table schema in Arrow-compatible JSON format
+- **FR-069**: System MUST organize schemas in `/configs/{namespace}/schemas/{table_name}/` directory structure
+- **FR-070**: System MUST create versioned schema files named `schema_v{N}.json` where N increments on each ALTER TABLE
+- **FR-071**: System MUST maintain a manifest.json file at `/configs/{namespace}/manifest.json` listing all tables
+- **FR-072**: Manifest.json MUST include for each table: current_version, path, table_type, created_at, updated_at
+- **FR-073**: System MUST create a `current.json` symlink/pointer to the active schema version for each table
+- **FR-074**: Schema files MUST include Arrow schema with field definitions (name, type, nullable, metadata)
+- **FR-075**: Schema files MUST include version number and created_at timestamp
+- **FR-076**: System MUST mark system columns (_updated, _deleted) with metadata flag `"system_column": "true"`
+- **FR-077**: System MUST cache manifest.json and current schemas in memory for fast table access
+- **FR-078**: System MUST invalidate schema cache when ALTER TABLE operations execute
+- **FR-079**: System MUST load Arrow schemas directly into DataFusion TableProvider for zero-copy integration
+- **FR-080**: System MUST support backwards compatibility when reading old Parquet files after schema evolution
+
+#### Table Schema Alteration (ALTER TABLE)
+- **FR-081**: System MUST support ALTER TABLE ADD COLUMN command for user and shared tables
+- **FR-082**: System MUST support ALTER TABLE DROP COLUMN command for user and shared tables
+- **FR-083**: System MUST support ALTER TABLE MODIFY COLUMN command to change column types (with validation)
+- **FR-084**: System MUST increment schema version number when ALTER TABLE executes successfully
+- **FR-085**: System MUST create new schema_v{N+1}.json file with updated Arrow schema
+- **FR-086**: System MUST update manifest.json with new current_version and updated_at timestamp
+- **FR-087**: System MUST update current.json symlink to point to new schema version
+- **FR-088**: System MUST validate schema changes for DataFusion compatibility before applying
+- **FR-089**: System MUST prevent dropping columns that are referenced in active live query subscriptions
+- **FR-090**: System MUST prevent schema changes that break backwards compatibility with existing Parquet files
+- **FR-091**: System MUST NOT allow altering system columns (_updated, _deleted)
+- **FR-092**: System MUST support adding columns with DEFAULT values
+- **FR-093**: System MUST handle NULL values for new columns when reading old Parquet data
+- **FR-094**: System MUST NOT support ALTER TABLE on stream tables (schemas are immutable for ephemeral tables)
+- **FR-095**: System MUST use schema projection to fill missing columns with NULL when reading old Parquet files
 
 #### Stream Table Management
-- **FR-081**: System MUST support creating stream tables for ephemeral, non-persistent events
-- **FR-082**: System MUST support CREATE STREAM TABLE syntax with column definitions
-- **FR-083**: System MUST support 'retention' option to specify event TTL (e.g., '10s', '1m', '5m')
-- **FR-084**: System MUST support 'ephemeral' option (true/false) to control buffering when no subscribers exist
-- **FR-085**: System MUST support 'max_buffer' option to limit the number of buffered events
-- **FR-086**: System MUST NOT persist stream table events to disk or S3 storage
-- **FR-087**: System MUST store stream table events in memory or RocksDB hot storage only
-- **FR-088**: System MUST automatically evict events older than the retention period
-- **FR-089**: System MUST evict oldest events when max_buffer limit is reached
-- **FR-090**: When ephemeral=true, system MUST discard new events immediately if no active subscribers exist
-- **FR-091**: When ephemeral=false, system MUST buffer events up to max_buffer even without subscribers
-- **FR-092**: System MUST deliver stream table events to subscribers in real-time without disk I/O
-- **FR-093**: System MUST support live query subscriptions on stream tables
-- **FR-094**: System MUST show stream tables in catalog with type=STREAM and configuration details
-- **FR-095**: System MUST support DataFusion-compatible datatypes for stream table columns
-- **FR-096**: System MUST handle stream table inserts with minimal latency (< 5ms)
-- **FR-097**: System MUST NOT add _updated or _deleted system columns to stream tables (ephemeral, no soft deletes)
-- **FR-098**: System MUST support DROP STREAM TABLE command to delete stream tables
+- **FR-096**: System MUST support creating stream tables for ephemeral, non-persistent events
+- **FR-097**: System MUST support CREATE STREAM TABLE syntax with column definitions
+- **FR-098**: System MUST support 'retention' option to specify event TTL (e.g., '10s', '1m', '5m')
+- **FR-099**: System MUST support 'ephemeral' option (true/false) to control buffering when no subscribers exist
+- **FR-100**: System MUST support 'max_buffer' option to limit the number of buffered events
+- **FR-101**: System MUST NOT persist stream table events to disk or S3 storage
+- **FR-102**: System MUST store stream table events in memory or RocksDB hot storage only
+- **FR-103**: System MUST automatically evict events older than the retention period
+- **FR-104**: System MUST evict oldest events when max_buffer limit is reached
+- **FR-105**: When ephemeral=true, system MUST discard new events immediately if no active subscribers exist
+- **FR-106**: When ephemeral=false, system MUST buffer events up to max_buffer even without subscribers
+- **FR-107**: System MUST deliver stream table events to subscribers in real-time without disk I/O
+- **FR-108**: System MUST support live query subscriptions on stream tables
+- **FR-109**: System MUST show stream tables in catalog with type=STREAM and configuration details
+- **FR-110**: System MUST support DataFusion-compatible datatypes for stream table columns
+- **FR-111**: System MUST handle stream table inserts with minimal latency (< 5ms)
+- **FR-112**: System MUST NOT add _updated or _deleted system columns to stream tables (ephemeral, no soft deletes)
+- **FR-113**: System MUST support DROP STREAM TABLE command to delete stream tables
 
 #### Shared Table Management  
-- **FR-099**: System MUST support creating shared tables accessible to all users in a namespace
-- **FR-100**: System MUST support CREATE SHARED TABLE syntax with column definitions
-- **FR-101**: System MUST automatically add system columns to every shared table: _updated (TIMESTAMP), _deleted (BOOLEAN)
-- **FR-102**: System MUST store shared table data in a single location (no user ID templating)
-- **FR-103**: System MUST apply user permissions to shared table access
-- **FR-104**: System MUST support DataFusion-compatible datatypes for shared table columns
-- **FR-105**: System MUST store shared table data in Parquet format
-- **FR-106**: System MUST support flush-to-disk policy with row limit configuration for shared tables
-- **FR-107**: System MUST support flush-to-disk policy with time-based interval configuration for shared tables
-- **FR-108**: System MUST support deleted_retention option for shared tables (same as user tables)
-- **FR-109**: System MUST handle soft deletes in shared tables using _deleted column (same as user tables)
-- **FR-110**: System MUST support DROP SHARED TABLE command to delete shared tables
+- **FR-114**: System MUST support creating shared tables accessible to all users in a namespace
+- **FR-115**: System MUST support CREATE SHARED TABLE syntax with column definitions
+- **FR-116**: System MUST automatically add system columns to every shared table: _updated (TIMESTAMP), _deleted (BOOLEAN)
+- **FR-117**: System MUST store shared table data in a single location (no user ID templating)
+- **FR-118**: System MUST apply user permissions to shared table access
+- **FR-119**: System MUST support DataFusion-compatible datatypes for shared table columns
+- **FR-120**: System MUST store shared table data in Parquet format
+- **FR-121**: System MUST support flush-to-disk policy with row limit configuration for shared tables
+- **FR-122**: System MUST support flush-to-disk policy with time-based interval configuration for shared tables
+- **FR-123**: System MUST support deleted_retention option for shared tables (same as user tables)
+- **FR-124**: System MUST handle soft deletes in shared tables using _deleted column (same as user tables)
+- **FR-125**: System MUST support DROP SHARED TABLE command to delete shared tables
 
 #### Storage Management
-- **FR-111**: System MUST support filesystem storage backend with configurable paths
-- **FR-112**: System MUST support S3 storage backend with bucket and credential configuration
-- **FR-113**: System MUST validate storage location accessibility before table creation
-- **FR-114**: System MUST support storage location templates with ${user_id} variable substitution
-- **FR-115**: System MUST track which tables use which storage locations
-- **FR-116**: System MUST flush data to filesystem storage backend when flush policy is triggered
-- **FR-117**: System MUST write Parquet files to configured filesystem paths
-- **FR-118**: System MUST handle filesystem errors gracefully with retry logic and error reporting
+- **FR-126**: System MUST support filesystem storage backend with configurable paths
+- **FR-127**: System MUST support S3 storage backend with bucket and credential configuration
+- **FR-128**: System MUST validate storage location accessibility before table creation
+- **FR-129**: System MUST support storage location templates with ${user_id} variable substitution
+- **FR-130**: System MUST track which tables use which storage locations
+- **FR-131**: System MUST flush data to filesystem storage backend when flush policy is triggered
+- **FR-132**: System MUST write Parquet files to configured filesystem paths
+- **FR-133**: System MUST handle filesystem errors gracefully with retry logic and error reporting
 
 #### Live Query Subscriptions with Change Tracking
-- **FR-119**: System MUST allow users to subscribe to live queries on their user tables via WebSocket connections
-- **FR-100**: System MUST support filtered subscriptions with WHERE clauses (e.g., `SELECT * FROM messages WHERE conversation_id = 'testid'`)
-- **FR-101**: System MUST notify subscribers via WebSocket when matching data is inserted with INSERT change type
-- **FR-102**: System MUST notify subscribers via WebSocket when matching data is updated with UPDATE change type and both old and new values
-- **FR-103**: System MUST notify subscribers via WebSocket when matching data is soft-deleted (DELETE change type) with _deleted = true
-- **FR-104**: System MUST only send notifications for data matching the subscription filter
-- **FR-105**: System MUST isolate subscriptions per user ID (users can only subscribe to their own data)
-- **FR-106**: System MUST automatically clean up subscriptions when WebSocket connections disconnect
-- **FR-107**: System MUST support multiple concurrent WebSocket subscriptions per user
-- **FR-108**: System MUST register all active subscriptions in system.live_queries table
-- **FR-109**: Live query subscriptions MUST inherently provide change tracking without requiring separate CDC infrastructure
-- **FR-110**: System MUST use _updated and _deleted columns for efficient change detection in live queries
-- **FR-111**: System MUST support "changes since timestamp" queries using _updated column for initial subscription data
+- **FR-134**: System MUST allow users to subscribe to live queries on their user tables via WebSocket connections
+- **FR-135**: System MUST support filtered subscriptions with WHERE clauses (e.g., `SELECT * FROM messages WHERE conversation_id = 'testid'`)
+- **FR-136**: System MUST support subscription options to specify "last N rows" for initial data fetch
+- **FR-137**: System MUST return initial data (last N rows) to subscribers immediately upon connection establishment
+- **FR-138**: System MUST notify subscribers via WebSocket when matching data is inserted with INSERT change type
+- **FR-139**: System MUST notify subscribers via WebSocket when matching data is updated with UPDATE change type and both old and new values
+- **FR-140**: System MUST notify subscribers via WebSocket when matching data is soft-deleted (DELETE change type) with _deleted = true
+- **FR-141**: System MUST only send notifications for data matching the subscription filter
+- **FR-142**: System MUST isolate subscriptions per user ID (users can only subscribe to their own data)
+- **FR-143**: System MUST automatically clean up subscriptions when WebSocket connections disconnect
+- **FR-144**: System MUST support multiple concurrent subscriptions within a single WebSocket connection
+- **FR-145**: System MUST handle each subscription independently within the same WebSocket connection
+- **FR-146**: System MUST register all active subscriptions in system.live_queries table
+- **FR-147**: Live query subscriptions MUST inherently provide change tracking without requiring separate CDC infrastructure
+- **FR-148**: System MUST use _updated and _deleted columns for efficient change detection in live queries
+- **FR-149**: System MUST support "changes since timestamp" queries using _updated column for initial subscription data
 
 #### Namespace Backup and Restore
-- **FR-112**: System MUST support backing up entire namespaces including all tables and data
-- **FR-113**: System MUST support restoring namespaces from backup files
-- **FR-114**: System MUST preserve all table schemas, data, and metadata during backup/restore
-- **FR-115**: System MUST support listing backup contents without restoring
-- **FR-116**: System MUST handle backup of namespaces with active write operations
-- **FR-117**: System MUST support incremental backups (future enhancement, documented for planning)
-- **FR-118**: System MUST NOT include stream table data in backups (stream tables are ephemeral)
-- **FR-119**: System MUST include soft-deleted rows (_deleted = true) in backups to preserve change history
+- **FR-150**: System MUST support backing up entire namespaces including all tables and data
+- **FR-151**: System MUST support restoring namespaces from backup files
+- **FR-152**: System MUST preserve all table schemas, data, and metadata during backup/restore
+- **FR-153**: System MUST support listing backup contents without restoring
+- **FR-154**: System MUST handle backup of namespaces with active write operations
+- **FR-155**: System MUST support incremental backups (future enhancement, documented for planning)
+- **FR-156**: System MUST NOT include stream table data in backups (stream tables are ephemeral)
+- **FR-157**: System MUST include soft-deleted rows (_deleted = true) in backups to preserve change history
+- **FR-158**: System MUST backup schema versions and manifest.json files to preserve schema history
 
 #### Catalog and Introspection
-- **FR-104**: System MUST provide SQL-like catalog queries to list namespaces
-- **FR-105**: System MUST provide SQL-like catalog queries to list tables within a namespace
-- **FR-106**: System MUST distinguish between user tables, shared tables, stream tables, and system tables in catalog listings
-- **FR-107**: System MUST support DESCRIBE TABLE commands to show table schema
-- **FR-108**: System MUST show auto-increment field configuration in table descriptions
-- **FR-109**: System MUST show storage location configuration in table descriptions (not applicable for stream tables)
-- **FR-110**: System MUST show flush policy configuration in table descriptions (not applicable for stream tables)
-- **FR-111**: System MUST show stream configuration (retention, ephemeral, max_buffer) in stream table descriptions
-- **FR-112**: System MUST provide table statistics (row counts, storage size)
-- **FR-113**: System MUST support querying table metadata including creation date and last modified date
+- **FR-159**: System MUST provide SQL-like catalog queries to list namespaces
+- **FR-160**: System MUST provide SQL-like catalog queries to list tables within a namespace
+- **FR-161**: System MUST distinguish between user tables, shared tables, stream tables, and system tables in catalog listings
+- **FR-162**: System MUST support DESCRIBE TABLE commands to show table schema
+- **FR-163**: System MUST show auto-increment field configuration in table descriptions
+- **FR-164**: System MUST show storage location configuration in table descriptions (not applicable for stream tables)
+- **FR-165**: System MUST show flush policy configuration in table descriptions (not applicable for stream tables)
+- **FR-166**: System MUST show stream configuration (retention, ephemeral, max_buffer) in stream table descriptions
+- **FR-167**: System MUST provide table statistics (row counts, storage size)
+- **FR-168**: System MUST support querying table metadata including creation date and last modified date
+- **FR-169**: System MUST expose automatic system columns (_updated, _deleted) in table descriptions
+- **FR-170**: System MUST show current schema version and schema history in table descriptions
+- **FR-171**: DESCRIBE TABLE output MUST include path to current schema file and manifest.json reference
 
 ### Key Entities
 
@@ -777,6 +1001,11 @@ A user wants to browse and inspect their database structure just like in traditi
 - **Change Notification**: A notification sent to subscribers. Attributes: change_type (INSERT/UPDATE/DELETE), affected_rows, old_values (for UPDATE/DELETE), new_values (for INSERT/UPDATE), timestamp
 - **Storage Location**: Physical storage configuration (now managed via system table). Attributes: location_name, location_type (filesystem/s3), path_template, credentials_ref, usage_count, accessibility_status
 - **Backup**: A snapshot of a namespace. Attributes: backup_id, namespace, creation_timestamp, file_location, size, table_count
+- **Table Schema**: Arrow-compatible JSON representation of table structure. Attributes: version (integer), created_at (timestamp), arrow_schema (field definitions with types, nullability, metadata)
+- **Schema Manifest**: Registry of all table schemas in a namespace. Attributes: namespace, table_entries (map of table_name → schema_metadata), last_updated
+- **Schema Metadata**: Metadata for a single table's schema. Attributes: table_name, current_version (integer), schema_path (string), table_type (user/shared/stream), created_at (timestamp), updated_at (timestamp)
+- **Schema Version File**: Individual versioned schema file. Location: `/configs/{namespace}/schemas/{table_name}/schema_v{N}.json`, Content: version, created_at, arrow_schema (Arrow JSON format)
+- **Schema History**: Audit trail of schema changes. Derived from: sequence of schema_v{N}.json files, each representing one evolution of the table structure
 
 ## Success Criteria *(mandatory)*
 
@@ -823,9 +1052,24 @@ A user wants to browse and inspect their database structure just like in traditi
 - **SC-040**: Live query subscribers receive DELETE notifications (\_deleted = true) within 50ms of soft delete operation
 - **SC-041**: REST API query endpoint responds within 100ms for simple SELECT queries on tables under 1M rows
 - **SC-042**: WebSocket subscription establishment completes within 200ms
-- **SC-043**: DROP TABLE operations complete within 5 seconds for tables with up to 1GB of data
-- **SC-044**: Filesystem flush operations write at least 50 MB/sec to local disk
-- **SC-045**: Hybrid queries (RocksDB + Parquet) perform within 2x of Parquet-only queries
+- **SC-043**: WebSocket initial data fetch (last N rows) completes within 500ms for N ≤ 1000
+- **SC-044**: Multiple subscriptions in single WebSocket connection perform with less than 10% overhead vs separate connections
+- **SC-045**: DROP TABLE operations complete within 5 seconds for tables with up to 1GB of data
+- **SC-046**: Filesystem flush operations write at least 50 MB/sec to local disk
+- **SC-047**: Hybrid queries (RocksDB + Parquet) perform within 2x of Parquet-only queries
+- **SC-048**: REST API supports at least 1,000 concurrent SQL execution requests
+- **SC-049**: ALTER TABLE ADD COLUMN completes within 1 second for tables with existing data
+- **SC-050**: ALTER TABLE DROP COLUMN completes within 1 second (metadata operation only)
+- **SC-051**: Schema version increment and manifest.json update complete atomically with no race conditions
+- **SC-052**: Schema cache invalidation completes within 100ms across all active queries
+- **SC-053**: DESCRIBE TABLE returns current schema version and history within 50ms
+- **SC-054**: Queries on tables with 10+ schema versions perform within 10% of single-version tables
+- **SC-055**: Schema projection for old Parquet files adds less than 5% query overhead
+- **SC-056**: Manifest.json reads complete within 5ms when cached in memory
+- **SC-057**: Schema files load and deserialize to Arrow format within 10ms
+- **SC-058**: Backwards compatibility validation for schema changes completes within 50ms
+- **SC-059**: ALTER TABLE validation (subscription checks, type compatibility) completes within 100ms
+- **SC-060**: Schema storage directory structure supports at least 10,000 tables per namespace
 
 ### Documentation Success Criteria (Constitution Principle VIII)
 
@@ -884,15 +1128,20 @@ A user wants to browse and inspect their database structure just like in traditi
 - RocksDB store for namespace/table catalog, system tables, and buffered writes
 - File system access for local storage backend
 - WebSocket protocol for live query subscriptions (provides real-time change notifications for INSERT/UPDATE/DELETE)
+- WebSocket must support multiple subscriptions per connection with independent filtering
+- WebSocket must support initial data fetch ("last N rows") upon subscription establishment
 - Template engine for ${user_id} path substitution
 - Backup/restore library compatible with Parquet and metadata formats
 - Permissions evaluation engine for filter and regex-based access control
 - Background task scheduler for time-based flush policies and deleted row retention cleanup
 - Bloom filter support in Parquet files for _updated column indexing
+- JSON serialization/deserialization for Arrow schema storage and manifest files
+- File system operations for schema directory management (/configs/{namespace}/schemas/)
+- Symlink or pointer mechanism for current.json schema references
+- Schema validation and backwards compatibility checking for ALTER TABLE operations
+- Atomic file operations for manifest.json updates to prevent corruption
 
 ## Out of Scope
-
-- Table schema migration/evolution after creation
 - Cross-namespace queries or data access
 - Cross-user data access (strict user isolation)
 - Advanced storage features like versioning, snapshots, or point-in-time recovery beyond basic backup
@@ -910,6 +1159,8 @@ A user wants to browse and inspect their database structure just like in traditi
 - Permission inheritance or delegation mechanisms
 - Hard delete operations (physical row removal on DELETE command)
 - Automatic compaction of Parquet files with soft-deleted rows
+- Additional REST API endpoints beyond `/api/sql` (keeping it simple with single endpoint)
+- Separate WebSocket endpoints for different query types (single `/ws` endpoint handles all subscriptions)
 
 ## Future Considerations
 
@@ -1110,8 +1361,8 @@ SELECT * FROM system.cluster_nodes;
 
 ### REST API Usage
 ```bash
-# Query via REST API
-curl -X POST http://localhost:8080/api/query \
+# Single SQL command via REST API
+curl -X POST http://localhost:8080/api/sql \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
   -d '{
@@ -1121,24 +1372,106 @@ curl -X POST http://localhost:8080/api/query \
 # Response
 {
   "status": "success",
-  "rows": [
-    {"message_id": 1, "conversation_id": "conv123", "content": "Hello", "_updated": "2025-10-15T10:00:00Z", "_deleted": false}
+  "results": [
+    {
+      "columns": ["message_id", "conversation_id", "content", "_updated", "_deleted"],
+      "rows": [
+        [1, "conv123", "Hello", "2025-10-15T10:00:00Z", false]
+      ],
+      "row_count": 1
+    }
   ],
-  "row_count": 1,
   "execution_time_ms": 45
 }
 
-# Create table via REST API
-curl -X POST http://localhost:8080/api/query \
+# Multiple SQL commands in one request
+curl -X POST http://localhost:8080/api/sql \
   -H "Content-Type: application/json" \
   -d '{
-    "sql": "CREATE USER TABLE messages (message_id BIGINT, content STRING) LOCATION '\''/data/users/${user_id}/messages/'\'' FLUSH POLICY ROWS 10000"
+    "sql": "CREATE USER TABLE messages (message_id BIGINT, content STRING) LOCATION '\''/data/users/${user_id}/messages/'\''; INSERT INTO messages (content) VALUES ('\''Hello'\''); SELECT * FROM messages;"
   }'
 
-# WebSocket subscription (conceptual)
-ws://localhost:8080/api/subscribe
+# Response with results for each statement
 {
-  "sql": "SUBSCRIBE SELECT * FROM messages WHERE conversation_id = '\''conv123'\''"
+  "status": "success",
+  "results": [
+    {"statement": "CREATE USER TABLE...", "status": "success"},
+    {"statement": "INSERT INTO...", "affected_rows": 1},
+    {"statement": "SELECT...", "rows": [...], "row_count": 1}
+  ]
+}
+
+# WebSocket subscription with multiple queries
+# Connect to: ws://localhost:8080/ws
+# Send subscription message:
+{
+  "subscriptions": [
+    {
+      "id": "sub1",
+      "sql": "SELECT * FROM messages WHERE conversation_id = '\''conv123'\''",
+      "options": {
+        "last_rows": 10  // Fetch last 10 rows initially
+      }
+    },
+    {
+      "id": "sub2", 
+      "sql": "SELECT * FROM messages WHERE conversation_id = '\''conv456'\''",
+      "options": {
+        "last_rows": 5
+      }
+    }
+  ]
+}
+
+# Initial data response (immediately after subscription)
+{
+  "type": "initial_data",
+  "subscription_id": "sub1",
+  "rows": [
+    {"message_id": 1, "conversation_id": "conv123", "content": "Hello", "_updated": "2025-10-15T10:00:00Z", "_deleted": false},
+    {"message_id": 2, "conversation_id": "conv123", "content": "Hi", "_updated": "2025-10-15T10:05:00Z", "_deleted": false}
+  ],
+  "row_count": 2
+}
+
+# Change notification (real-time)
+{
+  "type": "change",
+  "subscription_id": "sub1",
+  "change_type": "INSERT",
+  "timestamp": "2025-10-15T12:00:00Z",
+  "new_values": {
+    "message_id": 3,
+    "conversation_id": "conv123",
+    "content": "New message",
+    "_updated": "2025-10-15T12:00:00Z",
+    "_deleted": false
+  }
+}
+
+# UPDATE notification
+{
+  "type": "change",
+  "subscription_id": "sub1",
+  "change_type": "UPDATE",
+  "timestamp": "2025-10-15T12:05:00Z",
+  "old_values": {"message_id": 3, "content": "New message", "_updated": "2025-10-15T12:00:00Z"},
+  "new_values": {"message_id": 3, "content": "Updated message", "_updated": "2025-10-15T12:05:00Z"}
+}
+
+# DELETE notification (soft delete)
+{
+  "type": "change",
+  "subscription_id": "sub2",
+  "change_type": "DELETE",
+  "timestamp": "2025-10-15T12:10:00Z",
+  "old_values": {
+    "message_id": 5,
+    "conversation_id": "conv456",
+    "content": "Deleted message",
+    "_updated": "2025-10-15T12:10:00Z",
+    "_deleted": true
+  }
 }
 ```
 
@@ -1405,59 +1738,142 @@ WHERE conversation_id = 'conv456';
 DROP STREAM TABLE ai_signals;
 ```
 
+### ALTER TABLE Operations (Schema Evolution)
+```sql
+-- Add a new column to existing user table
+ALTER TABLE messages 
+ADD COLUMN priority STRING DEFAULT 'normal';
+
+-- Add multiple columns
+ALTER TABLE messages
+ADD COLUMN tags ARRAY<STRING>,
+ADD COLUMN metadata JSON;
+
+-- Drop a column (must not be referenced in active subscriptions)
+ALTER TABLE messages
+DROP COLUMN priority;
+
+-- Modify column type (with validation)
+ALTER TABLE messages
+MODIFY COLUMN content TEXT;  -- Expand VARCHAR to TEXT
+
+-- View schema history
+DESCRIBE TABLE messages;
+-- Output shows:
+-- - current_version: 3
+-- - schema_path: /configs/production/schemas/messages/current.json
+-- - schema_history:
+--   - v1 (2025-01-15): Initial schema
+--   - v2 (2025-03-20): Added priority column
+--   - v3 (2025-10-15): Removed priority, added tags and metadata
+
+-- Querying after schema evolution
+-- Old Parquet files (v1) will have NULL for new columns (tags, metadata)
+SELECT * FROM messages WHERE tags IS NOT NULL;
+
+-- Notes:
+-- - ALTER TABLE NOT supported on stream tables (immutable)
+-- - Cannot alter system columns (_updated, _deleted)
+-- - Schema changes must be backwards-compatible with existing Parquet files
+-- - Dropping columns fails if referenced in active live query subscriptions
+```
+
 ### Live Query Subscriptions with Change Tracking
 ```sql
--- Subscribe to filtered user table (user context: user123)
--- Returns INSERT, UPDATE, DELETE notifications
-SUBSCRIBE SELECT * FROM messages 
-WHERE conversation_id = 'conv456';
+-- WebSocket subscription with single query
+{
+  "subscriptions": [
+    {
+      "id": "messages_sub",
+      "sql": "SELECT * FROM messages WHERE conversation_id = 'conv456'",
+      "options": {
+        "last_rows": 20  // Get last 20 rows immediately
+      }
+    }
+  ]
+}
 
--- Subscribe with changes since timestamp
-SUBSCRIBE SELECT * FROM messages 
-WHERE _updated > '2025-10-14T00:00:00Z';
+-- WebSocket subscription with multiple queries
+{
+  "subscriptions": [
+    {
+      "id": "conv1",
+      "sql": "SELECT * FROM messages WHERE conversation_id = 'conv123'",
+      "options": {"last_rows": 10}
+    },
+    {
+      "id": "conv2",
+      "sql": "SELECT * FROM messages WHERE conversation_id = 'conv456'",
+      "options": {"last_rows": 10}
+    },
+    {
+      "id": "recent",
+      "sql": "SELECT * FROM messages WHERE _updated > '2025-10-14T00:00:00Z'",
+      "options": {"last_rows": 50}
+    }
+  ]
+}
 
--- Subscribe to all changes (user context: user123)
-SUBSCRIBE SELECT * FROM messages;
+-- Initial data response (for each subscription)
+{
+  "type": "initial_data",
+  "subscription_id": "conv1",
+  "rows": [
+    {"message_id": 100, "conversation_id": "conv123", "content": "Message 1", "_updated": "2025-10-15T09:00:00Z", "_deleted": false},
+    {"message_id": 101, "conversation_id": "conv123", "content": "Message 2", "_updated": "2025-10-15T09:30:00Z", "_deleted": false}
+  ]
+}
 
--- Notification format (conceptual):
--- INSERT event
--- {
---   "change_type": "INSERT",
---   "timestamp": "2025-10-14T12:00:00Z",
---   "new_values": { 
---     "message_id": 12345, 
---     "conversation_id": "conv456", 
---     "content": "Hello",
---     "_updated": "2025-10-14T12:00:00Z",
---     "_deleted": false
---   }
--- }
+-- INSERT notification
+{
+  "type": "change",
+  "subscription_id": "conv1",
+  "change_type": "INSERT",
+  "timestamp": "2025-10-15T12:00:00Z",
+  "new_values": {
+    "message_id": 102,
+    "conversation_id": "conv123",
+    "content": "New message",
+    "_updated": "2025-10-15T12:00:00Z",
+    "_deleted": false
+  }
+}
 
--- UPDATE event
--- {
---   "change_type": "UPDATE",
---   "timestamp": "2025-10-14T12:05:00Z",
---   "old_values": { "message_id": 12345, "content": "Hello", "_updated": "2025-10-14T12:00:00Z" },
---   "new_values": { "message_id": 12345, "content": "Hi there", "_updated": "2025-10-14T12:05:00Z" }
--- }
+-- UPDATE notification
+{
+  "type": "change",
+  "subscription_id": "conv1",
+  "change_type": "UPDATE",
+  "timestamp": "2025-10-15T12:05:00Z",
+  "old_values": {
+    "message_id": 102,
+    "content": "New message",
+    "_updated": "2025-10-15T12:00:00Z"
+  },
+  "new_values": {
+    "message_id": 102,
+    "content": "Updated message",
+    "_updated": "2025-10-15T12:05:00Z"
+  }
+}
 
--- DELETE event (soft delete)
--- {
---   "change_type": "DELETE",
---   "timestamp": "2025-10-14T12:10:00Z",
---   "old_values": { 
---     "message_id": 12345, 
---     "conversation_id": "conv456", 
---     "content": "Hi there",
---     "_updated": "2025-10-14T12:05:00Z",
---     "_deleted": false
---   },
---   "new_values": {
---     "message_id": 12345,
---     "_updated": "2025-10-14T12:10:00Z",
---     "_deleted": true
---   }
--- }
+-- DELETE notification (soft delete)
+{
+  "type": "change",
+  "subscription_id": "conv2",
+  "change_type": "DELETE",
+  "timestamp": "2025-10-15T12:10:00Z",
+  "old_values": {
+    "message_id": 200,
+    "conversation_id": "conv456",
+    "content": "Deleted message",
+    "_updated": "2025-10-15T12:10:00Z",
+    "_deleted": true
+  }
+}
+
+-- Note: All subscriptions in the same WebSocket connection receive
+-- their respective notifications independently
 ```
 
 ### Backup and Restore
