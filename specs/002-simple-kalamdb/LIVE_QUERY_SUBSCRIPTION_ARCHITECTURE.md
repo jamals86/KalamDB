@@ -38,23 +38,25 @@ A **live query subscription** is an active SQL query that continuously monitors 
 Each subscription is identified by a **composite live_id** with the format:
 
 ```
-live_id = "{connection_id}-{query_id}"
+live_id = "{connection_id}-{table_name}-{query_id}"
 ```
 
 **Components**:
-- `connection_id`: Globally unique WebSocket connection identifier (server-generated)
+- `connection_id`: Format `{user_id}-{unique_connection_id}` - Globally unique WebSocket connection identifier
+- `table_name`: Target table name extracted from SQL SELECT statement
 - `query_id`: User-friendly subscription identifier (client-chosen)
 
 **Examples**:
-- `"conn_abc123-messages"` - Subscription for messages query
-- `"conn_abc123-notifications"` - Subscription for notifications query
-- `"conn_xyz789-chat_history"` - Subscription for chat history query
+- `"user123-conn_abc-messages-updatedMessages"` - Subscription for messages query
+- `"user123-conn_abc-notifications-myNotifications"` - Subscription for notifications query
+- `"user456-conn_xyz-messages-chatHistory"` - Subscription for chat history query
 
 **Benefits**:
-- ✅ Client-friendly: Users choose meaningful names like "messages", "notifications"
-- ✅ Guaranteed uniqueness: `connection_id` ensures global uniqueness
-- ✅ Easy parsing: Split on `-` to extract `query_id` for client notifications
-- ✅ Connection grouping: All subscriptions for a connection share same prefix
+- ✅ Client-friendly: Users choose meaningful names like "updatedMessages", "myNotifications"
+- ✅ Guaranteed uniqueness: Composite format ensures global uniqueness across users
+- ✅ Type-safe: LiveId struct provides direct access to connection_id, table_name, and query_id
+- ✅ Efficient lookup: table_name enables O(1) filtering during change detection
+- ✅ User isolation: connection_id includes user_id for multi-tenant isolation
 
 ---
 
@@ -65,11 +67,13 @@ live_id = "{connection_id}-{query_id}"
 **Schema**:
 ```sql
 CREATE TABLE system.live_queries (
-    live_id TEXT PRIMARY KEY,          -- Format: "{connection_id}-{query_id}"
-    connection_id TEXT NOT NULL,       -- WebSocket connection identifier
+    live_id TEXT PRIMARY KEY,          -- Format: "{user_id}-{unique_conn_id}-{table_name}-{query_id}"
+    connection_id TEXT NOT NULL,       -- Format: "{user_id}-{unique_conn_id}"
+    table_name TEXT NOT NULL,          -- Target table name from SQL SELECT
     query_id TEXT NOT NULL,            -- User-chosen query identifier
     user_id TEXT NOT NULL,             -- Owner of the subscription
     query TEXT NOT NULL,               -- SQL query text
+    options TEXT,                      -- JSON: {"last_rows": 50} for initial data fetch
     created_at TIMESTAMP NOT NULL,     -- When subscription was created
     updated_at TIMESTAMP NOT NULL,     -- Last notification timestamp
     changes INTEGER NOT NULL,          -- Total notifications sent
@@ -77,6 +81,8 @@ CREATE TABLE system.live_queries (
 );
 
 CREATE INDEX idx_live_queries_connection ON system.live_queries(connection_id);
+CREATE INDEX idx_live_queries_user ON system.live_queries(user_id);
+CREATE INDEX idx_live_queries_table ON system.live_queries(table_name);
 CREATE INDEX idx_live_queries_node ON system.live_queries(node);
 ```
 
@@ -87,11 +93,13 @@ CREATE INDEX idx_live_queries_node ON system.live_queries(node);
 - Supports subscription management (KILL LIVE QUERY, system diagnostics)
 
 **Field Details**:
-- **live_id**: Primary key, composite format ensures uniqueness
-- **connection_id**: Groups all subscriptions for a WebSocket connection
+- **live_id**: Primary key, composite format `{user_id}-{unique_conn_id}-{table_name}-{query_id}` ensures uniqueness
+- **connection_id**: Groups all subscriptions for a WebSocket connection, format `{user_id}-{unique_conn_id}`
+- **table_name**: Extracted from SQL SELECT statement, enables efficient change filtering
 - **query_id**: Included in notifications so client knows which subscription changed
-- **user_id**: For security/authorization checks
+- **user_id**: For security/authorization checks and user-based filtering
 - **query**: SQL text to re-evaluate on data changes
+- **options**: JSON-encoded LiveQueryOptions (e.g., `{"last_rows": 50}` for initial data fetch)
 - **created_at**: Subscription creation time (immutable)
 - **updated_at**: Last notification delivery time (updated on each change)
 - **changes**: Counter of total notifications sent (incremented on each change)
@@ -103,48 +111,100 @@ CREATE INDEX idx_live_queries_node ON system.live_queries(node);
 
 **Data Structures**:
 ```rust
+
+struct LiveId {
+    connection_id: ConnectionId,
+    table_name: String,
+    query_id: String,
+}
+
+struct ConnectionId {
+    user_id: String,
+    unique_conn_id: String,
+}
+
+struct NodeId(String);
+
+struct UserId(String);
+
+struct LiveQuery {
+    live_id: LiveId,
+    query: String,
+    options: LiveQueryOptions,
+    changes: u64,
+}
+
+struct LiveQueryOptions {
+    last_rows: Option<u32>,
+}
+
 /// Represents a connected WebSocket with all its subscriptions
-struct ConnectedWebSocket {
-    actor: Addr<WebSocketSession>,  // Actix actor address for message delivery
-    live_ids: Vec<String>,          // All subscription live_ids for this connection
+struct UserConnectionSocket {
+    connection_id: ConnectionId,
+    actor: Addr<WebSocketSession>,
+    live_queries: HashMap<LiveId, LiveQuery>,
+}
+
+struct UserConnections {
+    sockets: HashMap<ConnectionId, UserConnectionSocket>,
 }
 
 /// In-memory registry for WebSocket connections and subscriptions
 struct LiveQueryRegistry {
-    // Map: connection_id → ConnectedWebSocket
-    connections: HashMap<String, ConnectedWebSocket>,
-    
-    // Map: live_id → connection_id (reverse lookup for notifications)
-    live_id_to_connection: HashMap<String, String>,
-    
-    // Current node identifier
-    node_id: String,
+    users: HashMap<UserId, UserConnections>,
+    node_id: NodeId,
 }
 ```
 
 **Purpose**:
-- **Fast notification delivery**: O(1) lookup from live_id → actor address
+- **Fast notification delivery**: O(1) lookup from user_id → table_name → matching subscriptions
 - **Lifecycle management**: Single source of truth for active WebSocket connections
 - **Multi-subscription support**: Each connection tracks all its subscriptions
 - **Efficient cleanup**: One connection_id lookup gets all subscriptions to remove
+- **Type safety**: Strongly-typed LiveId, ConnectionId, NodeId, UserId prevent errors
 
 **Operations**:
 ```rust
 impl LiveQueryRegistry {
     // Called when WebSocket connects
-    fn register_connection(&mut self, connection_id: String, actor: Addr<WebSocketSession>);
+    fn register_connection(&mut self, user_id: UserId, connection_id: ConnectionId, actor: Addr<WebSocketSession>);
     
     // Called when creating a subscription
-    fn register_subscription(&mut self, live_id: String, connection_id: String);
+    fn register_subscription(&mut self, user_id: UserId, live_query: LiveQuery);
     
     // Called when delivering change notification
-    fn get_actor(&self, live_id: &str) -> Option<&Addr<WebSocketSession>>;
+    fn get_subscriptions_for_table(&self, user_id: &UserId, table_name: &str) -> Vec<&LiveQuery>;
     
     // Called when WebSocket disconnects
-    fn unregister_connection(&mut self, connection_id: &str) -> Vec<String>;
+    fn unregister_connection(&mut self, user_id: &UserId, connection_id: &ConnectionId) -> Vec<LiveId>;
     
     // Called when killing individual subscription
-    fn unregister_subscription(&mut self, live_id: &str) -> Option<String>;
+    fn unregister_subscription(&mut self, live_id: &LiveId) -> Option<ConnectionId>;
+}
+
+impl LiveId {
+    // Parse from string format
+    fn from_string(s: &str) -> Result<Self, ParseError>;
+    
+    // Serialize to string format
+    fn to_string(&self) -> String;
+    
+    // Direct access to components
+    fn connection_id(&self) -> &ConnectionId;
+    fn table_name(&self) -> &str;
+    fn query_id(&self) -> &str;
+}
+
+impl ConnectionId {
+    // Parse from string format
+    fn from_string(s: &str) -> Result<Self, ParseError>;
+    
+    // Serialize to string format
+    fn to_string(&self) -> String;
+    
+    // Direct access to components
+    fn user_id(&self) -> &str;
+    fn unique_conn_id(&self) -> &str;
 }
 ```
 
@@ -160,12 +220,14 @@ Client                          Server
   |-- WebSocket Handshake ------> |
   |                               |
   | <-- Connection Accepted ----- |
-  |     (connection_id generated) |
+  |     (connection_id generated: |
+  |      user_id-unique_conn_id)  |
   |                               |
   |                            Registry:
-  |                            connections[connection_id] = ConnectedWebSocket {
+  |                            users[user_id].sockets[connection_id] = UserConnectionSocket {
   |                                actor: <WebSocketActor>,
-  |                                live_ids: []
+  |                                connection_id: ConnectionId { user_id, unique_conn_id },
+  |                                live_queries: HashMap::new()
   |                            }
 ```
 
@@ -173,22 +235,95 @@ Client                          Server
 
 **Client Request**:
 ```json
+**Client Request**:
+```json
 {
   "type": "subscribe",
   "subscriptions": [
     {
-      "query_id": "messages",
-      "sql": "SELECT * FROM messages WHERE conversation_id = 'conv1'"
+      "query_id": "updatedMessages",
+      "sql": "SELECT * FROM messages WHERE conversation_id = 'conv123'",
+      "options": { "last_rows": 50 }
     },
     {
-      "query_id": "notifications",
-      "sql": "SELECT * FROM notifications WHERE user_id = CURRENT_USER()"
+      "query_id": "myNotifications",
+      "sql": "SELECT * FROM notifications WHERE user_id = CURRENT_USER()",
+      "options": { "last_rows": 10 }
+    }
+  ]
+}
+```
+```
+
+**Server Processing**:
+```
+For each subscription:
+  1. Parse SQL SELECT to extract table_name (e.g., "messages")
+  
+  2. Generate live_id = LiveId {
+       connection_id: ConnectionId { user_id, unique_conn_id },
+       table_name: "messages",
+       query_id: "updatedMessages"
+     }
+     String format: "user123-conn_abc-messages-updatedMessages"
+  
+  3. Insert into system.live_queries:
+     INSERT INTO system.live_queries (
+       live_id, connection_id, table_name, query_id, user_id,
+       query, options, created_at, updated_at, changes, node
+     ) VALUES (
+       'user123-conn_abc-messages-updatedMessages',
+       'user123-conn_abc',
+       'messages',
+       'updatedMessages',
+       'user123',
+       'SELECT * FROM messages WHERE conversation_id = ''conv123''',
+       '{"last_rows": 50}',
+       NOW(),
+       NOW(),
+       0,
+       'node_1'
+     );
+  
+  4. Add to in-memory registry:
+     registry.users[user_id].sockets[connection_id].live_queries[live_id] = LiveQuery {
+       live_id,
+       query: "SELECT * FROM messages WHERE conversation_id = 'conv123'",
+       options: LiveQueryOptions { last_rows: Some(50) },
+       changes: 0
+     }
+  
+  5. If options.last_rows > 0:
+     - Execute query with LIMIT last_rows
+     - Send initial data to client
+```
+
+**Server Response**:
+```json
+{
+  "type": "subscription_created",
+  "subscriptions": [
+    {
+      "query_id": "updatedMessages",
+      "status": "active",
+      "initial_data": [
+        { "id": "msg1", "text": "Hello", "conversation_id": "conv123" },
+        { "id": "msg2", "text": "World", "conversation_id": "conv123" }
+      ]
+    },
+    {
+      "query_id": "myNotifications",
+      "status": "active",
+      "initial_data": [
+        { "id": "notif1", "text": "New message", "user_id": "user123" }
+      ]
     }
   ]
 }
 ```
 
-**Server Processing**:
+### Phase 3: Active Monitoring
+```
 ```
 For each subscription:
   1. Generate live_id = connection_id + "-" + query_id
@@ -239,64 +374,72 @@ For each subscription:
 **In-Memory State**:
 ```rust
 // Registry state after subscription creation
-connections = {
-    "conn_abc123": ConnectedWebSocket {
-        actor: <WebSocketActor>,
-        live_ids: [
-            "conn_abc123-messages",
-            "conn_abc123-notifications"
-        ]
+users = {
+    UserId("user123"): UserConnections {
+        sockets: {
+            ConnectionId { user_id: "user123", unique_conn_id: "conn_abc" }: UserConnectionSocket {
+                connection_id: ConnectionId { user_id: "user123", unique_conn_id: "conn_abc" },
+                actor: Addr<WebSocketSession>,
+                live_queries: {
+                    LiveId { connection_id, table_name: "messages", query_id: "updatedMessages" }: LiveQuery { ... },
+                    LiveId { connection_id, table_name: "notifications", query_id: "myNotifications" }: LiveQuery { ... }
+                }
+            }
+        }
     }
-}
-
-live_id_to_connection = {
-    "conn_abc123-messages": "conn_abc123",
-    "conn_abc123-notifications": "conn_abc123"
 }
 ```
 
 **Persistent State**:
 ```
 system.live_queries table:
-| live_id                        | connection_id | query_id      | user_id    | query            | created_at | updated_at | changes | node   |
-|--------------------------------|---------------|---------------|------------|------------------|------------|------------|---------|--------|
-| conn_abc123-messages           | conn_abc123   | messages      | user_alice | SELECT * FROM... | 10:00:00   | 10:00:00   | 0       | node_1 |
-| conn_abc123-notifications      | conn_abc123   | notifications | user_alice | SELECT * FROM... | 10:00:00   | 10:00:00   | 0       | node_1 |
+| live_id                                      | connection_id        | table_name      | query_id           | user_id    | query            | options           | created_at | updated_at | changes | node   |
+|----------------------------------------------|----------------------|---------------|--------------------|------------|------------------|-------------------|------------|------------|---------|--------|
+| user123-conn_abc-messages-updatedMessages    | user123-conn_abc     | messages      | updatedMessages    | user123    | SELECT * FROM... | {"last_rows":50}  | 10:00:00   | 10:00:00   | 0       | node_1 |
+| user123-conn_abc-notifications-myNotifications| user123-conn_abc    | notifications | myNotifications    | user123    | SELECT * FROM... | {"last_rows":10}  | 10:00:00   | 10:00:00   | 0       | node_1 |
 ```
 
 ### Phase 4: Connection Termination
 
 **On WebSocket Disconnect**:
 ```
-1. Lookup all subscriptions:
-   live_ids = registry.unregister_connection('conn_abc123')
-   // Returns: ["conn_abc123-messages", "conn_abc123-notifications"]
+1. Lookup user's connections:
+   user_connections = registry.users.get(user_id)
+   socket = user_connections.sockets.get(connection_id)
+   
+2. Collect all live_ids:
+   live_ids = socket.live_queries.keys()
+   // Returns: [LiveId { ... }, LiveId { ... }]
 
-2. Delete from system.live_queries:
+3. Delete from system.live_queries:
    DELETE FROM system.live_queries
-   WHERE live_id IN ('conn_abc123-messages', 'conn_abc123-notifications');
+   WHERE connection_id = 'user123-conn_abc';
 
-3. Remove from in-memory registry:
-   // Already done by unregister_connection:
-   // - Removes connections['conn_abc123']
-   // - Removes live_id_to_connection entries for both live_ids
+4. Remove from in-memory registry:
+   registry.users[user_id].sockets.remove(connection_id)
+   // This automatically removes all live_queries in that socket
 ```
 
 **On Individual Subscription Kill**:
 ```
-KILL LIVE QUERY 'conn_abc123-messages';
+KILL LIVE QUERY 'user123-conn_abc-messages-updatedMessages';
 
-1. Lookup connection_id:
-   connection_id = registry.unregister_subscription('conn_abc123-messages')
-   // Returns: "conn_abc123"
+1. Parse live_id:
+   live_id = LiveId::from_string('user123-conn_abc-messages-updatedMessages')
+   // Returns: LiveId { 
+   //   connection_id: ConnectionId { user_id: "user123", unique_conn_id: "conn_abc" },
+   //   table_name: "messages",
+   //   query_id: "updatedMessages"
+   // }
 
 2. Delete from system.live_queries:
-   DELETE FROM system.live_queries WHERE live_id = 'conn_abc123-messages';
+   DELETE FROM system.live_queries 
+   WHERE live_id = 'user123-conn_abc-messages-updatedMessages';
 
 3. Remove from in-memory registry:
-   // Already done by unregister_subscription:
-   // - Removes 'conn_abc123-messages' from connections['conn_abc123'].live_ids
-   // - Removes live_id_to_connection['conn_abc123-messages']
+   user_id = live_id.connection_id().user_id()
+   connection_id = live_id.connection_id()
+   registry.users[user_id].sockets[connection_id].live_queries.remove(live_id)
 ```
 
 ---
@@ -315,25 +458,40 @@ VALUES ('msg1', 'conv1', 'user_bob', 'Hello!');
 
 ```
 Storage Layer (RocksDB) detects change:
-  - Table: messages
-  - Operation: INSERT
-  - Affected row: { id: 'msg1', conversation_id: 'conv1', ... }
+  - Column Family: user_table:production:messages
+  - Key format: {user_id}:{row_id}
+  - Key: "user123:msg1"
+  - Affected row: { id: 'msg1', conversation_id: 'conv1', text: 'Hello!', ... }
+  
+Extract user_id from key:
+  - user_id = "user123"
 ```
 
 ### Step 2: Find Matching Subscriptions
 
-```sql
--- Query system.live_queries for subscriptions that match the change
-SELECT live_id, connection_id, query_id, query
-FROM system.live_queries
-WHERE node = 'node_1'  -- Only process subscriptions owned by current node
-  AND query LIKE '%messages%';  -- Simple filter (actual logic is more complex)
-
--- Returns:
--- live_id: 'conn_abc123-messages'
--- connection_id: 'conn_abc123'
--- query_id: 'messages'
--- query: 'SELECT * FROM messages WHERE conversation_id = 'conv1''
+```rust
+// Check if user has any connections
+if let Some(user_connections) = registry.users.get(&UserId("user123")) {
+    // Extract table_name from column family name
+    let table_name = "messages";
+    
+    // Loop over all sockets for this user
+    for (connection_id, socket) in user_connections.sockets.iter() {
+        // Loop over all live queries for this socket
+        for (live_id, live_query) in socket.live_queries.iter() {
+            // Check if this subscription matches the changed table
+            if live_id.table_name() == table_name {
+                // This subscription needs to be evaluated
+                // live_id = LiveId { 
+                //   connection_id: "user123-conn_abc",
+                //   table_name: "messages",
+                //   query_id: "updatedMessages"
+                // }
+                // live_query.query = "SELECT * FROM messages WHERE conversation_id = 'conv1'"
+            }
+        }
+    }
+}
 ```
 
 ### Step 3: Re-evaluate Query
@@ -346,35 +504,19 @@ Execute subscription query with change context:
     { id: 'msg1', conversation_id: 'conv1', sender_id: 'user_bob', text: 'Hello!' }
   ]
   
-  (This is the new/changed row that matches the subscription)
+  (This is the new/changed row that matches the subscription filter)
 ```
 
-### Step 4: Lookup Connection
+### Step 4: Send Notification
 
 ```rust
-// Use reverse lookup to find connection
-connection_id = registry.live_id_to_connection.get("conn_abc123-messages");
-// Returns: "conn_abc123"
+// We already have direct access from Step 2 loop:
+// - socket.actor: Addr<WebSocketSession>
+// - live_id.query_id(): &str (e.g., "updatedMessages")
 
-// Get WebSocket actor
-connected_ws = registry.connections.get("conn_abc123");
-// Returns: ConnectedWebSocket { actor: <WebSocketActor>, live_ids: [...] }
-```
-
-### Step 5: Extract Query ID
-
-```rust
-// Parse live_id to extract query_id for client notification
-let parts: Vec<&str> = "conn_abc123-messages".split('-').collect();
-let query_id = parts[1];  // "messages"
-```
-
-### Step 6: Send Notification
-
-```rust
 // Send message to WebSocket actor
-connected_ws.actor.do_send(ChangeNotification {
-    query_id: "messages".to_string(),
+socket.actor.do_send(ChangeNotification {
+    query_id: live_id.query_id().to_string(),  // "updatedMessages"
     change_type: ChangeType::Insert,
     rows: vec![/* changed data */],
 });
@@ -384,7 +526,7 @@ connected_ws.actor.do_send(ChangeNotification {
 ```json
 {
   "type": "change",
-  "query_id": "messages",
+  "query_id": "updatedMessages",
   "change_type": "INSERT",
   "rows": [
     {
@@ -398,14 +540,20 @@ connected_ws.actor.do_send(ChangeNotification {
 }
 ```
 
-### Step 7: Update Metrics
+### Step 5: Update Metrics
+    }
+  ]
+}
+```
+
+### Step 5: Update Metrics
 
 ```sql
 -- Increment changes counter and update timestamp
 UPDATE system.live_queries
 SET changes = changes + 1,
     updated_at = NOW()
-WHERE live_id = 'conn_abc123-messages';
+WHERE live_id = 'user123-conn_abc-messages-updatedMessages';
 ```
 
 ---
@@ -432,42 +580,58 @@ WHERE live_id = 'conn_abc123-messages';
 ```rust
 // Node 1 creates subscription
 INSERT INTO system.live_queries VALUES (
-    'conn_abc123-messages',
-    'conn_abc123',
-    'messages',
-    'user_alice',
-    'SELECT * FROM messages...',
-    NOW(),
-    NOW(),
-    0,
-    'node_1'  // <-- Node identifier
+    'user123-conn_abc-messages-updatedMessages',  -- live_id
+    'user123-conn_abc',                            -- connection_id
+    'messages',                                     -- table_name
+    'updatedMessages',                              -- query_id
+    'user123',                                      -- user_id
+    'SELECT * FROM messages...',                    -- query
+    '{"last_rows": 50}',                            -- options (JSON)
+    NOW(),                                          -- created_at
+    NOW(),                                          -- updated_at
+    0,                                              -- changes
+    'node_1'                                        -- node
 );
 ```
 
 **Change Detection on Node 2**:
-```sql
--- Node 2 detects a data change
--- Query for matching subscriptions:
-SELECT live_id, connection_id, query_id, query
-FROM system.live_queries
-WHERE node = 'node_2'  -- <-- Only process subscriptions owned by this node
-  AND query LIKE '%messages%';
+```rust
+// Node 2 detects a data change in user123's messages table
+// Extract user_id from RocksDB key: "user123:msg1"
+let user_id = "user123";
 
--- Returns: No results (subscription is owned by node_1)
--- Node 2 SKIPS notification (no duplicate sent)
+// Check in-memory registry (Node 2's registry)
+if let Some(user_connections) = registry.users.get(&UserId(user_id)) {
+    // Returns: None (user123 has no connections on node_2)
+}
+
+// Node 2 SKIPS notification (user not connected to this node)
 ```
 
 **Change Detection on Node 1**:
-```sql
--- Node 1 detects the same data change
--- Query for matching subscriptions:
-SELECT live_id, connection_id, query_id, query
-FROM system.live_queries
-WHERE node = 'node_1'  -- <-- Matches subscription
-  AND query LIKE '%messages%';
+```rust
+// Node 1 detects the same data change
+// Extract user_id from RocksDB key: "user123:msg1"
+let user_id = "user123";
 
--- Returns: 'conn_abc123-messages'
--- Node 1 DELIVERS notification (correct node)
+// Check in-memory registry (Node 1's registry)
+if let Some(user_connections) = registry.users.get(&UserId(user_id)) {
+    // Returns: Some(UserConnections { sockets: { ... } })
+    
+    // Extract table_name from column family
+    let table_name = "messages";
+    
+    // Find matching subscriptions (as described in Step 2)
+    for (connection_id, socket) in user_connections.sockets.iter() {
+        for (live_id, live_query) in socket.live_queries.iter() {
+            if live_id.table_name() == table_name {
+                // MATCH! Deliver notification
+            }
+        }
+    }
+}
+
+// Node 1 DELIVERS notification (user connected to this node)
 ```
 
 ### Node-Aware Benefits
@@ -515,50 +679,64 @@ backend/crates/kalamdb-core/src/live_query/
 
 1. **Subscription Registration** (O(1)):
    ```rust
-   fn register_subscription(&mut self, live_id: String, connection_id: String) {
-       // Add to reverse lookup
-       self.live_id_to_connection.insert(live_id.clone(), connection_id.clone());
+   fn register_subscription(&mut self, user_id: UserId, connection_id: ConnectionId, live_query: LiveQuery) {
+       // Get or create user's connections
+       let user_conns = self.users.entry(user_id).or_insert_with(|| UserConnections {
+           sockets: HashMap::new()
+       });
        
-       // Add to connection's live_ids vector
-       if let Some(conn) = self.connections.get_mut(&connection_id) {
-           conn.live_ids.push(live_id);
+       // Add live_query to socket
+       if let Some(socket) = user_conns.sockets.get_mut(&connection_id) {
+           socket.live_queries.insert(live_query.live_id.clone(), live_query);
        }
    }
    ```
 
-2. **Notification Delivery** (O(1)):
+2. **Notification Delivery** (O(k) where k = subscriptions for table):
    ```rust
-   fn deliver_notification(&self, live_id: &str, change_data: ChangeData) {
-       // Lookup connection_id (O(1))
-       if let Some(connection_id) = self.live_id_to_connection.get(live_id) {
-           // Get actor (O(1))
-           if let Some(conn) = self.connections.get(connection_id) {
-               // Extract query_id from live_id
-               let query_id = live_id.split('-').nth(1).unwrap();
-               
-               // Send message to actor (non-blocking)
-               conn.actor.do_send(ChangeNotification {
-                   query_id: query_id.to_string(),
-                   change_type: change_data.change_type,
-                   rows: change_data.rows,
-               });
+   fn deliver_notifications(&self, user_id: &UserId, table_name: &str, change_data: ChangeData) {
+       // Lookup user's connections (O(1))
+       if let Some(user_conns) = self.users.get(user_id) {
+           // Iterate over all sockets for this user (typically 1-2)
+           for (_, socket) in user_conns.sockets.iter() {
+               // Iterate over all live queries in socket
+               for (live_id, live_query) in socket.live_queries.iter() {
+                   // Check if table matches (O(1) string comparison)
+                   if live_id.table_name() == table_name {
+                       // Re-evaluate query filter
+                       if change_matches_query(&change_data, &live_query.query) {
+                           // Send notification to actor
+                           socket.actor.do_send(ChangeNotification {
+                               query_id: live_id.query_id().to_string(),
+                               change_type: change_data.change_type,
+                               rows: change_data.rows.clone(),
+                           });
+                       }
+                   }
+               }
            }
        }
    }
    ```
 
-3. **Connection Cleanup** (O(n) where n = subscriptions per connection):
+3. **Connection Cleanup** (O(m) where m = total subscriptions for connection):
    ```rust
-   fn unregister_connection(&mut self, connection_id: &str) -> Vec<String> {
-       // Remove connection and get all live_ids (O(1))
-       if let Some(conn) = self.connections.remove(connection_id) {
-           // Remove all reverse lookups (O(n))
-           for live_id in &conn.live_ids {
-               self.live_id_to_connection.remove(live_id);
+   fn unregister_connection(&mut self, user_id: &UserId, connection_id: &ConnectionId) -> Vec<LiveId> {
+       let mut removed_live_ids = Vec::new();
+       
+       if let Some(user_conns) = self.users.get_mut(user_id) {
+           // Remove socket and get all live_ids
+           if let Some(socket) = user_conns.sockets.remove(connection_id) {
+               removed_live_ids = socket.live_queries.keys().cloned().collect();
            }
-           return conn.live_ids;
+           
+           // If user has no more sockets, remove user entry
+           if user_conns.sockets.is_empty() {
+               self.users.remove(user_id);
+           }
        }
-       vec![]
+       
+       removed_live_ids
    }
    ```
 
@@ -567,17 +745,18 @@ backend/crates/kalamdb-core/src/live_query/
 **Create Subscription**:
 ```sql
 INSERT INTO system.live_queries (
-    live_id, connection_id, query_id, user_id, 
-    query, created_at, updated_at, changes, node
-) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 0, ?);
+    live_id, connection_id, table_name, query_id, user_id, 
+    query, options, created_at, updated_at, changes, node
+) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), 0, ?);
 ```
 
 **Find Matching Subscriptions** (on data change):
-```sql
-SELECT live_id, connection_id, query_id, query
-FROM system.live_queries
-WHERE node = ?
-  AND (/* complex query matching logic */);
+```rust
+// No database query needed - use in-memory registry
+// 1. Extract user_id from RocksDB key
+// 2. Lookup user in registry: registry.users.get(&user_id)
+// 3. Filter subscriptions by table_name
+// 4. Re-evaluate query filter for each match
 ```
 
 **Update Activity Metrics**:
@@ -799,20 +978,63 @@ INSERT INTO messages VALUES (...);
 
 The KalamDB live query subscription architecture provides:
 
-1. **Connection-Based Design**: Uses `connection_id` as the primary grouping key with composite `live_id = connection_id + "-" + query_id` format
+1. **User-Centric Design**: Registry organized by `user_id` → `connection_id` → `live_id` hierarchy with strongly-typed structs (LiveId, ConnectionId, NodeId, UserId)
 
-2. **Dual Storage**: Persistent `system.live_queries` table + in-memory `connection_registry` for fast lookups
+2. **Type-Safe LiveId**: Composite format `{user_id}-{unique_conn_id}-{table_name}-{query_id}` with struct-based access to all components without parsing
 
-3. **Client-Friendly**: Users choose meaningful `query_id` values included in notifications
+3. **Dual Storage**: Persistent `system.live_queries` table in RocksDB + in-memory `LiveQueryRegistry` for O(1) user lookup
 
-4. **Multi-Subscription**: Multiple live queries per WebSocket connection
+4. **Client-Friendly**: Users choose meaningful `query_id` values included in notifications
 
-5. **Node-Aware**: Cluster support with `node` field prevents duplicate notifications
+5. **Efficient Change Detection**: Extract `user_id` from RocksDB key → lookup in registry → filter by `table_name` → evaluate query
 
-6. **Observable**: Activity tracking via `changes` counter and `updated_at` timestamp
+6. **Multi-Subscription**: Multiple live queries per WebSocket connection, each with unique `query_id`
 
-7. **Performant**: O(1) notification delivery, supports millions of subscriptions
+7. **Node-Aware**: In-memory registry ensures only the node owning a WebSocket delivers notifications (no cross-node coordination)
 
-8. **Clean Lifecycle**: Automatic cleanup on disconnect, manual cleanup via KILL LIVE QUERY
+8. **Observable**: Activity tracking via `changes` counter and `updated_at` timestamp in system.live_queries
 
-This architecture is production-ready for real-time applications like chat, dashboards, collaborative editing, and live data monitoring.
+9. **Performant**: O(1) user lookup, O(k) notification delivery where k = subscriptions for that user's table
+
+10. **Clean Lifecycle**: Automatic cleanup on disconnect via ConnectionId, manual cleanup via KILL LIVE QUERY with LiveId parsing
+
+This architecture is production-ready for real-time applications like chat, dashboards, collaborative editing, and live data monitoring with millions of concurrent users.
+
+---
+
+## Complete Flow Recap
+
+**Subscription Creation Flow**:
+1. Client sends WebSocket connection request
+2. Server generates `ConnectionId { user_id, unique_conn_id }`
+3. Server creates WebSocket actor and registers in `LiveQueryRegistry.users[user_id].sockets[connection_id]`
+4. Client sends subscription array with `query_id` and SQL SELECT
+5. For each subscription:
+   - Parse SQL to extract `table_name`
+   - Generate `LiveId { connection_id, table_name, query_id }`
+   - Insert into `system.live_queries` with live_id string format
+   - Add to in-memory `socket.live_queries[live_id] = LiveQuery { live_id, query, options, changes }`
+   - If `options.last_rows > 0`, execute query and send initial data
+
+**Change Detection & Notification Flow**:
+1. INSERT/UPDATE/DELETE to user table writes to RocksDB with key `{user_id}:{row_id}`
+2. Extract `user_id` from key
+3. Check `registry.users.get(&user_id)` - if None, skip (user not connected to this node)
+4. Extract `table_name` from column family name (e.g., `user_table:production:messages` → "messages")
+5. Loop over `user_connections.sockets`:
+   - For each `socket`, loop over `socket.live_queries`
+   - If `live_id.table_name() == table_name`:
+     - Re-evaluate `live_query.query` with change data
+     - If matches filter, send to `socket.actor` with `live_id.query_id()`
+6. Update `system.live_queries` metrics: increment `changes`, set `updated_at`
+
+**Disconnection Cleanup Flow**:
+1. WebSocket disconnects
+2. Extract `user_id` and `connection_id`
+3. Lookup `registry.users[user_id].sockets[connection_id]`
+4. Collect all `live_ids` from `socket.live_queries.keys()`
+5. Delete from `system.live_queries WHERE connection_id = ?`
+6. Remove from in-memory: `user_connections.sockets.remove(connection_id)`
+7. If `user_connections.sockets.is_empty()`, remove `registry.users[user_id]`
+
+This design ensures **no parsing overhead** during hot path (change detection), **type safety** throughout, and **O(1) user isolation** for massive scalability.

@@ -120,8 +120,6 @@ Query Execution Strategy:
      - Handle _deleted column (exclude rows where _deleted = true)
   5. Sort and deduplicate if needed
     ↓
-Apply permission filters (row-level security)
-    ↓
 Return results to client
 ```
 
@@ -388,7 +386,7 @@ RocksDB is used exclusively for **buffering table data** before flush to Parquet
    Column Family Name: system_table:{table_name}
    
    Example column families:
-   - system_table:users (user_id → user data with permissions)
+   - system_table:users (user_id → user data with username, email)
    - system_table:live_queries (subscription_id → subscription metadata)
    - system_table:storage_locations (location_name → location config)
    - system_table:jobs (job_id → job status, metrics, result, trace)
@@ -430,7 +428,7 @@ Optimized for low-latency admin queries
 
 **Rationale**:
 - System tables are typically small (metadata)
-- Require fast access for permissions, catalog queries
+- Require fast access for catalog queries and monitoring
 - No need for long-term archival in Parquet format
 
 ### Configuration Persistence Architecture
@@ -776,19 +774,19 @@ A database administrator wants to organize their database into logical namespace
 
 ### User Story 2 - System Tables and User Management (Priority: P1)
 
-A database administrator wants to manage users and their permissions through a system table. Users have row-level permissions defined using filters that can reference columns or use regex patterns.
+A database administrator wants to manage users through a system table for basic user tracking and identification.
 
-**Why this priority**: User management and permissions are foundational security requirements needed before any data operations.
+**Why this priority**: User management provides basic user identification needed for user-scoped tables and tracking.
 
-**Independent Test**: Can be fully tested by adding users to the system table, assigning permissions with filters, and verifying access control is enforced.
+**Independent Test**: Can be fully tested by adding users to the system table and querying user information.
 
 **Acceptance Scenarios**:
 
-1. **Given** I am a database administrator, **When** I add a user to the system users table, **Then** the user is created with default permissions
-2. **Given** a user exists, **When** I assign permission `namespace.shared_table1.field1 = CURRENT_USER()`, **Then** the user can only access rows where field1 matches their username
-3. **Given** a user exists, **When** I assign permission with regex pattern like `namespace.messages.*`, **Then** the user can access all tables matching the pattern
-4. **Given** a user has row-level permissions, **When** they query a table, **Then** the system automatically applies the permission filter to their queries
-5. **Given** a user has multiple permissions, **When** they access different tables, **Then** each table applies its specific permission filter
+1. **Given** I am a database administrator, **When** I add a user to the system users table, **Then** the user is created with username and email
+2. **Given** users exist in the system, **When** I query the system.users table, **Then** I see all registered users with their details
+3. **Given** I want to track the current user, **When** I use CURRENT_USER() in a query, **Then** it returns the authenticated user's ID
+
+**Note**: Row-level permissions and access control on shared tables will be implemented in a future version using VIEWs. Each user will have their own VIEW of shared tables containing only rowid references, updated automatically on writes to RocksDB.
 
 ---
 
@@ -809,16 +807,17 @@ A database administrator or user wants to monitor active live query subscription
   - `HashMap<live_id, connection_id>` for reverse lookup during change detection
 - **Node-aware delivery**: `node` field identifies which node owns the WebSocket connection
 - **Change counter**: `changes` field tracks total notifications delivered per subscription
-- Subscriptions are stored in `system.live_queries` column family with key format: `{live_id}` (composite format: `{connection_id}-{query_id}`)
+- **Options storage**: `options` field stores JSON-encoded LiveQueryOptions (e.g., `{"last_rows": 50}`)
+- Subscriptions are stored in `system.live_queries` column family with key format: `{live_id}` (composite format: `{user_id}-{unique_conn_id}-{table_id}-{query_id}`)
 
 **Acceptance Scenarios**:
 
-1. **Given** a user has an active live query subscription, **When** I query `SELECT * FROM system.live_queries`, **Then** I see the subscription with live_id, connection_id, query_id, user_id, query text, created_at, updated_at, changes count, and node identifier
-2. **Given** a user opens one WebSocket connection with 3 subscription queries (query_ids: "messages", "notifications", "alerts"), **When** I query system.live_queries, **Then** I see 3 separate rows all with the same connection_id but different live_ids (e.g., "conn_abc-messages", "conn_abc-notifications", "conn_abc-alerts")
-3. **Given** multiple users have active subscriptions, **When** I filter `SELECT * FROM system.live_queries WHERE user_id = 'user123'`, **Then** I see only subscriptions for that user
-4. **Given** a subscription is actively streaming data, **When** I query the live_queries table, **Then** I see the changes counter incrementing and updated_at timestamp reflecting the last notification
-5. **Given** a subscription disconnects, **When** I query the live_queries table, **Then** all live_ids for that connection_id are automatically removed from the table
-6. **Given** I am a regular user, **When** I query system.live_queries, **Then** I only see my own subscriptions (subject to permissions)
+1. **Given** a user has an active live query subscription, **When** I query `SELECT * FROM system.live_queries`, **Then** I see the subscription with live_id, connection_id, table_id, query_id, user_id, query text, options (JSON), created_at, updated_at, changes count, and node identifier
+2. **Given** a user opens one WebSocket connection with 3 subscription queries (query_ids: "messages", "notifications", "alerts") targeting different tables, **When** I query system.live_queries, **Then** I see 3 separate rows all with the same connection_id but different live_ids (e.g., "user123-conn_abc-messages-messages", "user123-conn_abc-notifications-notifications", "user123-conn_abc-alerts-alerts")
+3. **Given** a subscription specifies options with `last_rows: 50`, **When** I query system.live_queries, **Then** I see the options field containing `{"last_rows": 50}`
+4. **Given** multiple users have active subscriptions, **When** I filter `SELECT * FROM system.live_queries WHERE user_id = 'user123'`, **Then** I see only subscriptions for that user
+5. **Given** a subscription is actively streaming data, **When** I query the live_queries table, **Then** I see the changes counter incrementing and updated_at timestamp reflecting the last notification
+6. **Given** a subscription disconnects, **When** I query the live_queries table, **Then** all live_ids for that connection_id are automatically removed from the table
 7. **Given** a cluster with nodeA and nodeB, **When** a user's WebSocket is connected to nodeB, **Then** the subscription rows show node='nodeB'
 8. **Given** a data change occurs in nodeA, **When** the system detects matching subscriptions, **Then** only subscriptions with node='nodeA' are notified locally (nodeB subscriptions are skipped)
 9. **Given** I want to kill a specific subscription, **When** I execute `KILL LIVE QUERY live_id`, **Then** the subscription is disconnected and removed from the table
@@ -859,9 +858,8 @@ A database administrator wants to monitor active and historical jobs (flush oper
 4. **Given** I want to see job history, **When** I query `SELECT * FROM system.jobs WHERE created_at > NOW() - INTERVAL '1h'`, **Then** I see completed jobs from the last hour
 5. **Given** the system.jobs table has a retention policy, **When** old job records exceed the retention period, **Then** they are automatically removed
 6. **Given** a job fails, **When** I query the table, **Then** I see status='failed' with error_message and partial metrics
-7. **Given** I am a regular user, **When** I query system.jobs, **Then** I only see jobs for my own user tables (subject to permissions)
-8. **Given** a job has parameters, **When** I query the table, **Then** I see the parameters array showing all inputs to the job
-9. **Given** a job completes, **When** I query the table, **Then** I see the result field containing the job outcome and trace showing execution context
+7. **Given** a job has parameters, **When** I query the table, **Then** I see the parameters array showing all inputs to the job
+8. **Given** a job completes, **When** I query the table, **Then** I see the result field containing the job outcome and trace showing execution context
 
 ---
 
@@ -962,10 +960,12 @@ A developer wants to create shared tables that are accessible across all users w
 **Acceptance Scenarios**:
 
 1. **Given** I am in namespace "production", **When** I create a shared table "conversations" with schema (conversation_id STRING, created_at TIMESTAMP), **Then** the table is created as a shared resource
-2. **Given** a shared table "conversations" exists, **When** any user inserts data, **Then** the data is visible to all users in the namespace (subject to permissions)
+2. **Given** a shared table "conversations" exists, **When** any user inserts data, **Then** the data is visible to all users in the namespace
 3. **Given** a shared table exists, **When** I specify a storage location, **Then** all data is stored at that single location (no user ID templating)
-4. **Given** I create a shared table, **When** I query from different users, **Then** all users see the same complete dataset (filtered by their permissions)
+4. **Given** I create a shared table, **When** I query from different users, **Then** all users see the same complete dataset
 5. **Given** I create a shared table, **When** I specify a flush policy, **Then** data is flushed according to the policy (row-based or time-based)
+
+**Note**: Fine-grained row-level access control on shared tables will be implemented in a future version using VIEWs. Each user will have their own VIEW of shared tables with filtered rowid references.
 
 ---
 
@@ -1025,8 +1025,6 @@ A user wants to browse and inspect their database structure just like in traditi
 
 ### Edge Cases
 
-- What happens when a user tries to create a table without having permissions in the system users table?
-- How does the system handle permission filters with CURRENT_USER() when the user is not authenticated?
 - What happens when a user tries to create a user table without specifying any columns?
 - How does the system handle storage location templates with invalid user ID variables?
 - What happens when a live query subscription filter is syntactically invalid?
@@ -1038,8 +1036,6 @@ A user wants to browse and inspect their database structure just like in traditi
 - What happens when S3 storage is unavailable during a flush operation?
 - What happens when a user tries to drop a table that has active live query subscriptions?
 - How does the system handle restoring a backup when the namespace already exists?
-- What happens when permission regex patterns overlap or conflict?
-- How does the system handle a user querying data they previously had access to but permissions were revoked?
 - What happens when querying system.live_queries if there are thousands of active subscriptions?
 - How does the system calculate bandwidth metrics for live subscriptions with intermittent data flow?
 - What happens when a storage location referenced by name is deleted while tables are using it?
@@ -1128,22 +1124,18 @@ A user wants to browse and inspect their database structure just like in traditi
 
 #### System Tables and User Management
 - **FR-016**: System MUST provide a system users table containing all users added to the system
-- **FR-017**: System MUST store user permissions in the system users table
-- **FR-018**: System MUST support row-level permissions using column value filters (e.g., `namespace.shared_table1.field1 = CURRENT_USER()`)
-- **FR-019**: System MUST support regex-based permissions for table access patterns (e.g., `namespace.messages.*`)
-- **FR-020**: System MUST automatically apply permission filters to all user queries
-- **FR-021**: System MUST support CURRENT_USER() function in permission expressions
-- **FR-022**: System MUST enforce permission checks before allowing any data access
-- **FR-023**: System MUST handle multiple permissions per user with appropriate precedence rules
+- **FR-017**: System MUST store basic user information (username, email) in the system users table
+- **FR-021**: System MUST support CURRENT_USER() function to identify the authenticated user
+
+**Note**: Row-level permissions and access control will be implemented in a future version using VIEWs with rowid references to shared tables.
 
 #### System Live Queries Table
 - **FR-024**: System MUST provide a system.live_queries table showing all active live query subscriptions
-- **FR-025**: System.live_queries table MUST include columns: id, user_id, query, created_at, bandwidth
+- **FR-025**: System.live_queries table MUST include columns: live_id, connection_id, table_id, query_id, user_id, query, options (JSON), created_at, updated_at, changes, node
 - **FR-026**: System MUST automatically add entries to system.live_queries when subscriptions are created
 - **FR-027**: System MUST automatically remove entries from system.live_queries when subscriptions disconnect
-- **FR-028**: System MUST update bandwidth metrics in real-time for active subscriptions
-- **FR-029**: System MUST apply user permissions to system.live_queries queries (users see only their own subscriptions by default)
-- **FR-030**: System MUST track bandwidth usage per subscription (bytes sent, messages sent, or similar metric)
+- **FR-028**: System MUST track changes counter (total notifications sent) and updated_at timestamp for each subscription
+- **FR-030**: System MUST store subscription options as JSON in the options field (e.g., `{"last_rows": 50}`)
 
 #### System Storage Locations Table
 - **FR-031**: System MUST provide a system.storage_locations table for predefined storage locations
@@ -1166,7 +1158,6 @@ A user wants to browse and inspect their database structure just like in traditi
 - **FR-046**: System MUST record which node executed the job (node_id)
 - **FR-047**: System MUST support configurable retention policy for job history (e.g., keep last 7 days)
 - **FR-048**: System MUST automatically remove job records older than the retention period
-- **FR-049**: System MUST apply user permissions to system.jobs queries (users see only their own table jobs by default)
 - **FR-050**: System MUST record partial metrics for failed jobs with error details
 - **FR-051**: System MUST store job parameters as an array of strings for input tracking
 - **FR-052**: System MUST store job result as a string containing the job outcome/output
