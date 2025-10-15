@@ -478,14 +478,17 @@
 - [ ] T215 [P] [Polish] Create API documentation for REST endpoint `/api/sql` with examples
 - [ ] T216 [P] [Polish] Create WebSocket protocol documentation for `/ws` endpoint with subscription examples
 - [ ] T217 [P] [Polish] Document SQL syntax for all DDL commands (CREATE/ALTER/DROP NAMESPACE, CREATE USER/SHARED/STREAM TABLE, etc.)
-- [ ] T218 [P] [Polish] Add rustdoc comments to all public APIs (modules, structs, functions)
-- [ ] T219 [P] [Polish] Create Architecture Decision Records (ADRs) for key design choices (table-per-user, DataFusion integration, soft deletes, RocksDB column families)
+- [ ] T218 [P] [Polish] Add rustdoc comments to all public APIs (modules, structs, functions) ensuring 100% coverage for kalamdb-core public API, kalamdb-api handlers, and all service interfaces
+- [ ] T219 [P] [Polish] Create Architecture Decision Records (ADRs) in `docs/backend/adrs/` for key design choices (table-per-user architecture, DataFusion integration, soft deletes, RocksDB column families, JSON config files, in-memory registry, Parquet bloom filters, JWT authentication) using markdown template with Context/Decision/Consequences sections
 
 ### Testing Support
 
-- [ ] T220 [P] [Polish] Create integration test framework setup in `backend/tests/integration/`
-- [ ] T221 [P] [Polish] Add test utilities for namespace/table creation, cleanup
-- [ ] T222 [P] [Polish] Add test utilities for WebSocket subscription testing
+- [ ] T220 [P] [Polish] Create integration test framework setup in `backend/tests/integration/common/mod.rs` (test harness, server lifecycle, cleanup utilities)
+- [ ] T221 [P] [Polish] Add namespace/table test utilities in `backend/tests/integration/common/fixtures.rs` (create/cleanup helpers, sample data generators)
+- [ ] T222 [P] [Polish] Add WebSocket test utilities in `backend/tests/integration/common/websocket.rs` (connection helpers, subscription matchers, change notification validators)
+- [ ] T227 [P] [Polish] Create automated test script from quickstart.md in `backend/tests/quickstart.sh` (bash script that runs all steps from quickstart guide: server startup, namespace/table creation, REST API queries, WebSocket subscriptions, live query notifications)
+- [ ] T228 [P] [Polish] Create benchmark suite in `backend/benches/` using criterion.rs (benchmark RocksDB writes, DataFusion queries, WebSocket message delivery, flush operations, measure <1ms write latency and <10ms notification latency)
+- [ ] T229 [P] [Polish] Create end-to-end integration test in `backend/tests/integration/test_quickstart.rs` (implement all scenarios from quickstart.md as automated tests: setup, REST API, WebSocket, live queries, system tables, performance validation)
 
 ### Code Cleanup
 
@@ -633,8 +636,8 @@ While tests are not included in this task list, consider this testing approach w
 
 ## Summary
 
-**Total Tasks**: 216 tasks (simplified - removed all permission-related tasks)
-**P1 Critical Tasks**: ~190 tasks (Phases 1-10, 12-13, and essential Polish)
+**Total Tasks**: 229 tasks (enhanced with testing and documentation)
+**P1 Critical Tasks**: ~195 tasks (Phases 1-10, 12-13, and essential Polish including T227-T229)
 **P2 Tasks**: ~20 tasks (Phases 11, 14, 16)
 **P3 Tasks**: ~6 tasks (Phase 15)
 
