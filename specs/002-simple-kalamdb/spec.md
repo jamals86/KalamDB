@@ -201,12 +201,28 @@ After retention period: Events automatically deleted from buffer
 
 ### Live Query Subscriptions & Change Tracking
 
-Live queries monitor **both storage tiers** for changes:
+Live queries monitor **both storage tiers** for changes using a **distributed actor-based architecture**:
 
 ```
-Client WebSocket Subscription
+Client WebSocket Connection
     ↓
-Register in system.live_queries table
+Generate unique connection_id for this WebSocket
+    ↓
+Create WebSocket Actor in Actix (Addr<WebSocketSession>)
+    ↓
+Store in memory: connection_id → ConnectedWebSocket { actor: Addr<WebSocketSession>, live_ids: Vec<String> }
+    ↓
+Client sends subscription array with user-chosen query_ids:
+[
+  { query_id: "messages", sql: "SELECT * FROM messages WHERE..." },
+  { query_id: "notifications", sql: "SELECT * FROM notifications WHERE..." }
+]
+    ↓
+For each subscription:
+  - Generate live_id = connection_id + "-" + query_id (e.g., "conn123-messages")
+  - Register in system.live_queries table (RocksDB) with live_id as key
+  - Store in memory: live_id → connection_id
+  - Add live_id to ConnectedWebSocket.live_ids vector
     ↓
 Monitor for changes:
   1. RocksDB writes (immediate notification)
@@ -214,18 +230,189 @@ Monitor for changes:
     ↓
 Match against subscription filter (WHERE clause)
     ↓
-Send change notification to client:
-  - INSERT: new row values
-  - UPDATE: old and new row values
-  - DELETE: deleted row values
+For each matching live_id:
+  - Check node field in system.live_queries
+  - If node == current_node:
+      - Lookup connection_id from live_id mapping
+      - Lookup ConnectedWebSocket from connection_id mapping
+      - Send message to actor (ConnectedWebSocket.actor)
+      - Include query_id in notification (extracted from live_id)
+      - Increment changes counter in system.live_queries
+      - Update updated_at timestamp
     ↓
-Update bandwidth metrics in system.live_queries
+Send change notification to client:
+  - query_id: "messages" (so client knows which subscription matched)
+  - change_type: INSERT/UPDATE/DELETE
+  - rows: changed data
+    ↓
+On WebSocket disconnect:
+  - Lookup ConnectedWebSocket by connection_id
+  - For each live_id in ConnectedWebSocket.live_ids:
+      - Delete from system.live_queries table
+      - Remove from live_id → connection_id mapping
+  - Remove connection_id → ConnectedWebSocket mapping
+```
+
+**In-Memory Registry Structure**:
+```rust
+// Data structures for in-memory registry
+struct ConnectedWebSocket {
+    actor: Addr<WebSocketSession>,
+    live_ids: Vec<String>,  // All live_ids for this connection
+}
+
+struct LiveQueryRegistry {
+    // Map: connection_id → ConnectedWebSocket
+    connections: HashMap<String, ConnectedWebSocket>,
+    
+    // Map: live_id → connection_id (for reverse lookup)
+    live_to_connection: HashMap<String, String>,
+    
+    // Current node identifier
+    node_id: String,
+}
+
+// Live ID Format: connection_id + "-" + query_id
+// Example: "conn_abc123-messages", "conn_abc123-notifications"
+// 
+// This format enables:
+// - Unique identification across all nodes (connection_id is globally unique)
+// - Client-friendly query_id extraction (split on last '-')
+// - Easy cleanup on disconnect (all live_ids for a connection)
+
+// On WebSocket connection:
+// 1. Generate connection_id (UUID or snowflake ID)
+// 2. Create WebSocketSession actor
+// 3. Store: connections[connection_id] = ConnectedWebSocket { actor, live_ids: [] }
+
+// On subscription registration (for each query with query_id):
+// 1. Generate live_id = connection_id + "-" + query_id
+// 2. Insert into system.live_queries (RocksDB) with live_id as key
+// 3. Store: live_to_connection[live_id] = connection_id
+// 4. Add live_id to connections[connection_id].live_ids
+
+// On change detection:
+// 1. Find matching live_ids from system.live_queries
+// 2. Filter by node_id (only local subscriptions)
+// 3. For each matching live_id:
+//      - connection_id = live_to_connection[live_id]
+//      - websocket = connections[connection_id]
+//      - query_id = extract_query_id(live_id)  // Split on '-'
+//      - Send message to websocket.actor with (query_id, change_data)
+// 4. Increment changes counter in system.live_queries[live_id]
+
+// On WebSocket disconnect:
+// 1. websocket = connections[connection_id]
+// 2. For each live_id in websocket.live_ids:
+//      - Delete from system.live_queries (RocksDB)
+//      - Remove from live_to_connection
+// 3. Remove from connections
 ```
 
 **Change Detection**:
 - RocksDB writes trigger immediate notifications (< 50ms)
 - Flush operations trigger batch notifications for persisted data
 - Subscribers receive unified stream regardless of storage tier
+- **Node-aware delivery**: Only the node that owns the WebSocket connection delivers notifications (prevents duplicate delivery in clustered deployments)
+- **Query ID in notifications**: Clients receive query_id with each change notification so they know which subscription triggered the event
+
+### RocksDB Column Family Architecture
+
+RocksDB is used exclusively for **buffering table data** before flush to Parquet. Each table type has its own column family structure:
+
+**Column Family Structure**:
+
+1. **User Tables** - One column family per user table (shared by all users):
+   ```
+   Column Family Name: user_table:{namespace}:{table_name}
+   
+   Key Format: {user_id}:{row_id}
+   Value: Serialized row data (Arrow RecordBatch or MessagePack)
+   
+   Example:
+   CF: user_table:production:messages
+   Keys:
+     - user123:1234567890123456789 → {msg_id: ..., conversation_id: ..., content: ..., _updated: ..., _deleted: false}
+     - user456:1234567890123456790 → {msg_id: ..., conversation_id: ..., content: ..., _updated: ..., _deleted: false}
+     - user123:1234567890123456791 → {msg_id: ..., conversation_id: ..., content: ..., _updated: ..., _deleted: false}
+   
+   Flush Behavior:
+   - When flush policy triggered (row limit or time interval)
+   - Iterate through column family, group rows by user_id
+   - For each user_id: write rows to separate Parquet file at ${user_id}/batch-*.parquet
+   - After successful flush: delete flushed rows from RocksDB
+   ```
+
+2. **Shared Tables** - One column family per shared table:
+   ```
+   Column Family Name: shared_table:{namespace}:{table_name}
+   
+   Key Format: {row_id}
+   Value: Serialized row data (Arrow RecordBatch or MessagePack)
+   
+   Example:
+   CF: shared_table:production:conversations
+   Keys:
+     - 1234567890123456789 → {conversation_id: ..., created_at: ..., _updated: ..., _deleted: false}
+     - 1234567890123456790 → {conversation_id: ..., created_at: ..., _updated: ..., _deleted: false}
+   
+   Flush Behavior:
+   - When flush policy triggered
+   - Read all buffered rows from column family
+   - Write to single Parquet file at shared/{table_name}/batch-*.parquet
+   - After successful flush: delete flushed rows from RocksDB
+   ```
+
+3. **Stream Tables** - One column family per stream table (shared by all users):
+   ```
+   Column Family Name: stream_table:{namespace}:{table_name}
+   
+   Key Format: {timestamp}:{row_id}  (timestamp for TTL ordering)
+   Value: Serialized event data
+   
+   Example:
+   CF: stream_table:production:ai_signals
+   Keys:
+     - 1697385600000:1234567890123456789 → {user_id: ..., event_type: 'ai_typing', payload: ...}
+     - 1697385600001:1234567890123456790 → {user_id: ..., event_type: 'user_offline', payload: ...}
+   
+   Eviction Behavior:
+   - TTL-based: Background job removes entries older than retention period
+   - Max buffer: Evict oldest entries (lowest timestamp) when buffer full
+   - Ephemeral mode: If no subscribers, discard immediately (no write to RocksDB)
+   - NEVER flush to Parquet (ephemeral by design)
+   ```
+
+4. **System Tables** - One column family per system table:
+   ```
+   Column Family Name: system_table:{table_name}
+   
+   Example column families:
+   - system_table:users (user_id → user data with permissions)
+   - system_table:live_queries (subscription_id → subscription metadata)
+   - system_table:storage_locations (location_name → location config)
+   - system_table:jobs (job_id → job status, metrics, result, trace)
+   
+   Behavior:
+   - No flush to Parquet (always in RocksDB for fast access)
+   - No TTL or eviction (except jobs table with retention policy)
+   - Direct read/write via SQL queries through DataFusion
+   ```
+
+**Key Design Decisions**:
+
+- ✅ **User tables**: Single column family for all users (efficient resource usage, simple management)
+- ✅ **Key prefix with user_id**: Enables efficient iteration and grouping during flush
+- ✅ **Stream tables**: Timestamp-prefixed keys for efficient TTL eviction
+- ✅ **Shared tables**: No user_id prefix (global data, single Parquet file on flush)
+- ✅ **Column families**: Isolated per table (different flush policies, independent operations)
+
+**Memory and Resource Considerations**:
+
+- Each column family has its own memtable and write buffer
+- User tables with many users: Keys naturally distributed, efficient compaction
+- Stream tables: Short-lived data, frequent eviction prevents unbounded growth
+- System tables: Small size, always in memory for fast lookups
 
 ### System Tables Architecture
 
@@ -246,18 +433,20 @@ Optimized for low-latency admin queries
 - Require fast access for permissions, catalog queries
 - No need for long-term archival in Parquet format
 
-### Schema Storage and Versioning
+### Configuration Persistence Architecture
 
-Each table schema is stored in a **versioned, Arrow-compatible format** to support schema evolution and ALTER TABLE operations:
+**All server configuration is persisted in JSON files within the `configs/` folder** to ensure the server can resume its state after restart. This includes namespaces, storage locations, table schemas, and all user-specified options.
 
 **Directory Structure**:
 ```
 /configs/
+  namespaces.json                    # All namespace definitions with metadata and options
+  storage_locations.json             # All predefined storage locations
   {namespace}/
     manifest.json                    # Registry of all tables and current schema versions
     schemas/
       messages/                      # One folder per table
-        schema_v1.json               # Arrow schema with metadata
+        schema_v1.json               # Arrow schema with metadata and user options
         schema_v2.json               # Evolved schema (after ALTER TABLE)
         current.json → schema_v2.json  # Symlink/pointer to active version
       user_events/
@@ -267,6 +456,62 @@ Each table schema is stored in a **versioned, Arrow-compatible format** to suppo
         schema_v1.json
         current.json → schema_v1.json
 ```
+
+**Namespaces Configuration** (`configs/namespaces.json`):
+```json
+{
+  "production": {
+    "name": "production",
+    "created_at": "2025-01-15T10:00:00Z",
+    "updated_at": "2025-01-15T10:00:00Z",
+    "table_count": 3,
+    "options": {
+      "retention_days": 90,
+      "auto_flush": true,
+      "default_flush_policy": {
+        "type": "rows",
+        "limit": 10000
+      }
+    }
+  },
+  "analytics": {
+    "name": "analytics",
+    "created_at": "2025-02-01T08:00:00Z",
+    "updated_at": "2025-02-01T08:00:00Z",
+    "table_count": 1,
+    "options": {
+      "retention_days": 365,
+      "auto_flush": false
+    }
+  }
+}
+```
+
+**Storage Locations Configuration** (`configs/storage_locations.json`):
+```json
+{
+  "s3-prod": {
+    "location_name": "s3-prod",
+    "location_type": "s3",
+    "path": "s3://prod-bucket/data/${user_id}/",
+    "credentials_ref": "aws-prod-creds",
+    "created_at": "2025-01-10T09:00:00Z",
+    "usage_count": 5
+  },
+  "local-dev": {
+    "location_name": "local-dev",
+    "location_type": "filesystem",
+    "path": "/var/data/kalamdb/${user_id}/",
+    "credentials_ref": null,
+    "created_at": "2025-01-10T09:05:00Z",
+    "usage_count": 2
+  }
+}
+```
+
+**Schema Storage and Versioning**:
+
+Each table schema is stored in a **versioned, Arrow-compatible format** to support schema evolution and ALTER TABLE operations
 
 **Manifest File Format** (`manifest.json`):
 ```json
@@ -300,6 +545,17 @@ Each table schema is stored in a **versioned, Arrow-compatible format** to suppo
 {
   "version": 1,
   "created_at": "2025-01-15T10:30:00Z",
+  "table_options": {
+    "flush_policy": {
+      "type": "rows",
+      "row_limit": 10000,
+      "time_interval": null
+    },
+    "storage_location": "s3://bucket/users/${user_id}/messages/",
+    "storage_location_reference": null,
+    "deleted_retention": "7d",
+    "auto_increment_field": "id"
+  },
   "arrow_schema": {
     "fields": [
       {
@@ -334,6 +590,71 @@ Each table schema is stored in a **versioned, Arrow-compatible format** to suppo
   }
 }
 ```
+
+**Stream Table Schema File Example** (`schema_v1.json` for stream table):
+```json
+{
+  "version": 1,
+  "created_at": "2025-03-10T12:15:00Z",
+  "table_options": {
+    "retention": "10s",
+    "ephemeral": true,
+    "max_buffer": 1000,
+    "storage_location": null,
+    "storage_location_reference": null
+  },
+  "arrow_schema": {
+    "fields": [
+      {
+        "name": "user_id",
+        "type": {"name": "utf8"},
+        "nullable": false
+      },
+      {
+        "name": "event_type",
+        "type": {"name": "utf8"},
+        "nullable": false
+      },
+      {
+        "name": "payload",
+        "type": {"name": "utf8"},
+        "nullable": true
+      }
+    ]
+  }
+}
+```
+
+**Configuration Persistence Requirements**:
+
+1. **Server Startup**: Load all configuration from JSON files into in-memory structures
+   - Load `configs/namespaces.json` → populate in-memory namespace catalog
+   - Load `configs/storage_locations.json` → populate in-memory storage location registry
+   - For each namespace, load `configs/{namespace}/manifest.json` → register all tables in memory
+   - For each table, load current schema from `configs/{namespace}/schemas/{table}/current.json` → cache in memory
+   - **Memory-based catalog**: All metadata (namespaces, tables, schemas) kept in memory for fast access
+   - **RocksDB usage**: Only for buffered table data (user/shared/stream table rows), NOT for configuration
+
+2. **Runtime Updates**: Any configuration change MUST immediately persist to JSON files
+   - CREATE NAMESPACE → update `configs/namespaces.json`, update in-memory catalog
+   - ALTER NAMESPACE → update `configs/namespaces.json`, update in-memory catalog
+   - DROP NAMESPACE → remove from `configs/namespaces.json`, delete `configs/{namespace}/` directory, remove from memory
+   - INSERT/UPDATE/DELETE on system.storage_locations → update `configs/storage_locations.json`, update in-memory registry
+   - CREATE TABLE → update `configs/{namespace}/manifest.json`, create schema files, register in memory
+   - ALTER TABLE → create new schema version file, update `manifest.json`, invalidate schema cache, reload in memory
+   - DROP TABLE → update `configs/{namespace}/manifest.json`, delete schema directory, remove from memory
+
+3. **Atomic Updates**: All JSON file updates must be atomic (write to temp file, then rename)
+   - Prevents corruption on crash or power failure
+   - Ensures server can always resume from last consistent state
+
+4. **Storage Architecture**:
+   - **In-Memory Catalog**: Namespaces, table metadata, schemas, storage locations (loaded from JSON on startup)
+   - **RocksDB**: Buffered table data only (user/shared/stream table rows before flush to Parquet)
+   - **JSON Files**: Persistent configuration for server restart
+   - **Parquet Files**: Cold storage for user/shared table data after flush
+   - On startup: JSON files → load into memory → server ready
+   - On shutdown: In-memory catalog already persisted in JSON files
 
 **Schema Evolution Workflow**:
 ```
@@ -473,19 +794,34 @@ A database administrator wants to manage users and their permissions through a s
 
 ### User Story 2a - Live Query Monitoring via System Table (Priority: P1)
 
-A database administrator or user wants to monitor active live query subscriptions in the system. They need to view all active subscriptions including connection details, bandwidth usage, and query information, and also ability to kill any live query
+A database administrator or user wants to monitor active live query subscriptions in the system. They need to view all active subscriptions including connection details, change tracking, query information, and ability to kill any live query. The system supports multiple subscriptions per WebSocket connection and node-aware routing for cluster deployments.
 
 **Why this priority**: Visibility into active subscriptions is critical for monitoring, debugging, and resource management with killing/freeing the queries
 
 **Independent Test**: Can be fully tested by creating live subscriptions and querying the system.live_queries table to verify all subscription details are visible.
 
+**System Architecture**:
+- Each WebSocket connection gets a unique `connection_id` (generated on connect)
+- Each WebSocket connection can have **multiple live query subscriptions** (client provides `query_id` for each)
+- **Live ID format**: `live_id = connection_id + "-" + query_id` (e.g., "conn_abc123-messages")
+- **In-memory registry** maintains:
+  - `HashMap<connection_id, ConnectedWebSocket>` where ConnectedWebSocket has actor address and list of live_ids
+  - `HashMap<live_id, connection_id>` for reverse lookup during change detection
+- **Node-aware delivery**: `node` field identifies which node owns the WebSocket connection
+- **Change counter**: `changes` field tracks total notifications delivered per subscription
+- Subscriptions are stored in `system.live_queries` column family with key format: `{live_id}` (composite format: `{connection_id}-{query_id}`)
+
 **Acceptance Scenarios**:
 
-1. **Given** a user has an active live query subscription, **When** I query `SELECT * FROM system.live_queries`, **Then** I see the subscription with id, user_id, query text, creation time, and bandwidth usage
-2. **Given** multiple users have active subscriptions, **When** I filter `SELECT * FROM system.live_queries WHERE user_id = 'user123'`, **Then** I see only subscriptions for that user
-3. **Given** a subscription is actively streaming data, **When** I query the live_queries table, **Then** I see real-time bandwidth metrics for that subscription
-4. **Given** a subscription disconnects, **When** I query the live_queries table, **Then** the subscription is automatically removed from the table
-5. **Given** I am a regular user, **When** I query system.live_queries, **Then** I only see my own subscriptions (subject to permissions)
+1. **Given** a user has an active live query subscription, **When** I query `SELECT * FROM system.live_queries`, **Then** I see the subscription with live_id, connection_id, query_id, user_id, query text, created_at, updated_at, changes count, and node identifier
+2. **Given** a user opens one WebSocket connection with 3 subscription queries (query_ids: "messages", "notifications", "alerts"), **When** I query system.live_queries, **Then** I see 3 separate rows all with the same connection_id but different live_ids (e.g., "conn_abc-messages", "conn_abc-notifications", "conn_abc-alerts")
+3. **Given** multiple users have active subscriptions, **When** I filter `SELECT * FROM system.live_queries WHERE user_id = 'user123'`, **Then** I see only subscriptions for that user
+4. **Given** a subscription is actively streaming data, **When** I query the live_queries table, **Then** I see the changes counter incrementing and updated_at timestamp reflecting the last notification
+5. **Given** a subscription disconnects, **When** I query the live_queries table, **Then** all live_ids for that connection_id are automatically removed from the table
+6. **Given** I am a regular user, **When** I query system.live_queries, **Then** I only see my own subscriptions (subject to permissions)
+7. **Given** a cluster with nodeA and nodeB, **When** a user's WebSocket is connected to nodeB, **Then** the subscription rows show node='nodeB'
+8. **Given** a data change occurs in nodeA, **When** the system detects matching subscriptions, **Then** only subscriptions with node='nodeA' are notified locally (nodeB subscriptions are skipped)
+9. **Given** I want to kill a specific subscription, **When** I execute `KILL LIVE QUERY live_id`, **Then** the subscription is disconnected and removed from the table
 
 ---
 
@@ -969,6 +1305,35 @@ A user wants to browse and inspect their database structure just like in traditi
 - **FR-157**: System MUST include soft-deleted rows (_deleted = true) in backups to preserve change history
 - **FR-158**: System MUST backup schema versions and manifest.json files to preserve schema history
 
+#### Configuration Persistence
+- **FR-172**: System MUST persist all configuration in JSON files within the `configs/` folder for server restart capability
+- **FR-173**: System MUST maintain `configs/namespaces.json` containing all namespace definitions with metadata and options
+- **FR-174**: System MUST maintain `configs/storage_locations.json` containing all predefined storage locations
+- **FR-175**: System MUST include user-specified options (flush_policy, storage_location, deleted_retention, etc.) in each schema file (`schema_v{N}.json`)
+- **FR-176**: System MUST include stream table options (retention, ephemeral, max_buffer) in stream table schema files
+- **FR-177**: System MUST load all configuration from JSON files into in-memory structures on server startup (NOT into RocksDB)
+- **FR-178**: System MUST immediately persist any configuration change to appropriate JSON file (CREATE/ALTER/DROP operations)
+- **FR-179**: System MUST use atomic file updates (write to temp file, then rename) to prevent corruption
+- **FR-180**: System MUST update `configs/namespaces.json` when namespace is created, altered, or dropped
+- **FR-181**: System MUST update `configs/storage_locations.json` when storage locations are added, modified, or deleted via system.storage_locations
+- **FR-182**: System MUST create/update schema files in `configs/{namespace}/schemas/{table}/` when tables are created or altered
+- **FR-183**: System MUST update `configs/{namespace}/manifest.json` when tables are created, altered, or dropped
+- **FR-184**: System MUST delete namespace directory `configs/{namespace}/` when namespace is dropped
+- **FR-185**: System MUST maintain in-memory catalog for namespaces, tables, schemas, and storage locations (loaded from JSON on startup)
+- **FR-186**: System MUST use RocksDB exclusively for buffered table data (user/shared/stream table rows), NOT for configuration metadata
+
+#### RocksDB Column Family Structure
+- **FR-187**: System MUST create one RocksDB column family per user table (format: `user_table:{namespace}:{table_name}`)
+- **FR-188**: User table column family keys MUST use format `{user_id}:{row_id}` to enable per-user grouping during flush
+- **FR-189**: System MUST create one RocksDB column family per shared table (format: `shared_table:{namespace}:{table_name}`)
+- **FR-190**: Shared table column family keys MUST use format `{row_id}` (no user_id prefix)
+- **FR-191**: System MUST create one RocksDB column family per stream table (format: `stream_table:{namespace}:{table_name}`)
+- **FR-192**: Stream table column family keys MUST use format `{timestamp}:{row_id}` to enable efficient TTL eviction
+- **FR-193**: System MUST create one RocksDB column family per system table (format: `system_table:{table_name}`)
+- **FR-194**: During user table flush, system MUST group rows by user_id and write each user's data to separate Parquet file at `${user_id}/batch-*.parquet`
+- **FR-195**: During shared table flush, system MUST write all buffered rows to single Parquet file at `shared/{table_name}/batch-*.parquet`
+- **FR-196**: Stream table data MUST NEVER flush to Parquet (ephemeral, memory-only, evicted by TTL or buffer limit)
+
 #### Catalog and Introspection
 - **FR-159**: System MUST provide SQL-like catalog queries to list namespaces
 - **FR-160**: System MUST provide SQL-like catalog queries to list tables within a namespace
@@ -1135,11 +1500,18 @@ A user wants to browse and inspect their database structure just like in traditi
 - Permissions evaluation engine for filter and regex-based access control
 - Background task scheduler for time-based flush policies and deleted row retention cleanup
 - Bloom filter support in Parquet files for _updated column indexing
-- JSON serialization/deserialization for Arrow schema storage and manifest files
-- File system operations for schema directory management (/configs/{namespace}/schemas/)
+- JSON serialization/deserialization for:
+  - Arrow schema storage in schema files
+  - Namespace configuration in `configs/namespaces.json`
+  - Storage location configuration in `configs/storage_locations.json`
+  - Manifest files (`configs/{namespace}/manifest.json`)
+  - Table options embedded in schema files
+- File system operations for:
+  - Schema directory management (`/configs/{namespace}/schemas/`)
+  - Configuration file management (`/configs/namespaces.json`, `/configs/storage_locations.json`)
+  - Atomic file updates (temp file + rename for consistency)
 - Symlink or pointer mechanism for current.json schema references
 - Schema validation and backwards compatibility checking for ALTER TABLE operations
-- Atomic file operations for manifest.json updates to prevent corruption
 
 ## Out of Scope
 - Cross-namespace queries or data access
