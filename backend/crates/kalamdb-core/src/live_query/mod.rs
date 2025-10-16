@@ -3,4 +3,11 @@
 //! This module handles WebSocket-based live query subscriptions and
 //! real-time change notifications.
 
-// TODO: Add live query modules as they are implemented
+pub mod connection_registry;
+pub mod manager;
+
+pub use connection_registry::{
+    ConnectionId, LiveId, LiveQuery, LiveQueryOptions, LiveQueryRegistry,
+    NodeId, UserConnectionSocket, UserConnections, UserId,
+};
+pub use manager::{LiveQueryManager, RegistryStats};

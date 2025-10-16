@@ -18,6 +18,7 @@ sqlparser.workspace = true
 
 # Async
 async-trait = "0.1"
+tokio = { workspace = true, features = ["sync"] }
 
 # Serialization
 serde.workspace = true

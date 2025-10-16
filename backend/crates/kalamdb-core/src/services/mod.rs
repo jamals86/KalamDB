@@ -4,5 +4,7 @@
 //! multiple components like storage, catalog, and configuration.
 
 pub mod namespace_service;
+pub mod storage_location_service;
 
 pub use namespace_service::NamespaceService;
+pub use storage_location_service::StorageLocationService;
