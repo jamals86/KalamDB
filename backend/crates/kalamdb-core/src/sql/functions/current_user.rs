@@ -3,95 +3,88 @@
 //! This module provides a user-defined function for DataFusion that returns the current user ID
 //! from the session context.
 
-use crate::catalog::UserId;
 use crate::sql::datafusion_session::KalamSessionState;
 use datafusion::arrow::array::{ArrayRef, StringArray};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::logical_expr::{ScalarUDF, Signature, TypeSignature, Volatility};
-use datafusion::physical_plan::ColumnarValue;
+use datafusion::logical_expr::{ColumnarValue, ScalarUDFImpl, Signature, Volatility};
+use std::any::Any;
 use std::sync::Arc;
 
-/// CURRENT_USER() scalar function
+/// CURRENT_USER() scalar function implementation
 ///
 /// Returns the user ID of the current session user.
 /// This function takes no arguments and returns a String (Utf8).
-pub struct CurrentUserFunction;
+#[derive(Debug, Clone)]
+pub struct CurrentUserFunction {
+    user_id: String,
+}
 
 impl CurrentUserFunction {
-    /// Create a new CURRENT_USER function
-    pub fn new() -> ScalarUDF {
-        let signature = Signature::new(
-            TypeSignature::Exact(vec![]),
-            Volatility::Stable,
-        );
-
-        ScalarUDF::new(
-            "CURRENT_USER",
-            &signature,
-            &DataType::Utf8,
-            &Self::invoke,
-        )
+    /// Create a new CURRENT_USER function with a default user
+    pub fn new() -> Self {
+        Self {
+            user_id: "default_user".to_string(),
+        }
     }
 
-    /// Invoke the CURRENT_USER function
-    fn invoke(args: &[ColumnarValue]) -> DataFusionResult<ColumnarValue> {
+    /// Create a CURRENT_USER function that uses a specific session state
+    pub fn with_session_state(session_state: &KalamSessionState) -> Self {
+        Self {
+            user_id: session_state.user_id.as_ref().to_string(),
+        }
+    }
+}
+
+impl Default for CurrentUserFunction {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ScalarUDFImpl for CurrentUserFunction {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn name(&self) -> &str {
+        "CURRENT_USER"
+    }
+
+    fn signature(&self) -> &Signature {
+        // Static signature with no arguments
+        static SIGNATURE: std::sync::OnceLock<Signature> = std::sync::OnceLock::new();
+        SIGNATURE.get_or_init(|| Signature::exact(vec![], Volatility::Stable))
+    }
+
+    fn return_type(&self, _args: &[DataType]) -> DataFusionResult<DataType> {
+        Ok(DataType::Utf8)
+    }
+
+    fn invoke(&self, args: &[ColumnarValue]) -> DataFusionResult<ColumnarValue> {
         if !args.is_empty() {
             return Err(DataFusionError::Plan(
                 "CURRENT_USER() takes no arguments".to_string(),
             ));
         }
 
-        // TODO: Extract user_id from session context
-        // For now, return a placeholder value
-        // This will be properly implemented when session context is passed through
-        let user_id = "default_user";
-        
-        let array = StringArray::from(vec![user_id]);
+        // Return the user ID as a single-element array
+        let array = StringArray::from(vec![self.user_id.as_str()]);
         Ok(ColumnarValue::Array(Arc::new(array) as ArrayRef))
-    }
-
-    /// Create a CURRENT_USER function that uses a specific session state
-    pub fn with_session_state(session_state: &KalamSessionState) -> ScalarUDF {
-        let user_id = session_state.user_id.clone();
-        
-        let signature = Signature::new(
-            TypeSignature::Exact(vec![]),
-            Volatility::Stable,
-        );
-
-        ScalarUDF::new(
-            "CURRENT_USER",
-            &signature,
-            &DataType::Utf8,
-            &move |args: &[ColumnarValue]| {
-                if !args.is_empty() {
-                    return Err(DataFusionError::Plan(
-                        "CURRENT_USER() takes no arguments".to_string(),
-                    ));
-                }
-
-                let array = StringArray::from(vec![user_id.as_ref().as_str()]);
-                Ok(ColumnarValue::Array(Arc::new(array) as ArrayRef))
-            },
-        )
-    }
-}
-
-impl Default for CurrentUserFunction {
-    fn default() -> Self {
-        Self
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::{NamespaceId, TableCache};
+    use crate::catalog::{NamespaceId, TableCache, UserId};
+    use datafusion::arrow::array::Array;
+    use datafusion::logical_expr::ScalarUDF;
 
     #[test]
     fn test_current_user_function_creation() {
-        let func = CurrentUserFunction::new();
+        let func_impl = CurrentUserFunction::new();
+        let func = ScalarUDF::new_from_impl(func_impl);
         assert_eq!(func.name(), "CURRENT_USER");
     }
 
@@ -102,11 +95,12 @@ mod tests {
         let table_cache = TableCache::new();
         let session_state = KalamSessionState::new(user_id.clone(), namespace_id, table_cache);
         
-        let func = CurrentUserFunction::with_session_state(&session_state);
+        let func_impl = CurrentUserFunction::with_session_state(&session_state);
+        let func = ScalarUDF::new_from_impl(func_impl.clone());
         assert_eq!(func.name(), "CURRENT_USER");
         
         // Test invocation
-        let result = (func.fun())(&[]);
+        let result = func_impl.invoke(&[]);
         assert!(result.is_ok());
         
         if let Ok(ColumnarValue::Array(arr)) = result {
@@ -120,9 +114,17 @@ mod tests {
 
     #[test]
     fn test_current_user_with_arguments_fails() {
-        let func = CurrentUserFunction::new();
+        let func_impl = CurrentUserFunction::new();
         let args = vec![ColumnarValue::Array(Arc::new(StringArray::from(vec!["arg"])))];
-        let result = (func.fun())(&args);
+        let result = func_impl.invoke(&args);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_current_user_return_type() {
+        let func_impl = CurrentUserFunction::new();
+        let return_type = func_impl.return_type(&[]);
+        assert!(return_type.is_ok());
+        assert_eq!(return_type.unwrap(), DataType::Utf8);
     }
 }
