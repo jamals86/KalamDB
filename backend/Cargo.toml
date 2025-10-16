@@ -39,6 +39,7 @@ rocksdb = { version = "0.24.0", default-features = false, features = ["snappy"] 
 arrow = { version = "52.0", features = ["prettyprint"] }
 parquet = { version = "52.0", features = ["arrow", "async"] }
 datafusion = { version = "40.0" }
+sqlparser = { version = "0.49" }
 
 # Web framework
 actix-web = "4.4"

@@ -14,6 +14,7 @@ rocksdb.workspace = true
 arrow.workspace = true
 parquet.workspace = true
 datafusion.workspace = true
+sqlparser.workspace = true
 
 # Async
 async-trait = "0.1"
@@ -32,6 +33,10 @@ chrono.workspace = true
 # Logging
 log.workspace = true
 
+# UUID generation
+uuid.workspace = true
+
 [dev-dependencies]
 # Testing utilities
 tempfile = "3.8"
+tokio = { workspace = true, features = ["test-util"] }

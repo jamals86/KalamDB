@@ -28,6 +28,21 @@ pub enum KalamDbError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("IO error: {0}")]
+    IoError(String),
+
+    #[error("Invalid SQL: {0}")]
+    InvalidSql(String),
+
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    #[error("Already exists: {0}")]
+    AlreadyExists(String),
+
+    #[error("Invalid operation: {0}")]
+    InvalidOperation(String),
+
     #[error("{0}")]
     Other(String),
 }
@@ -141,6 +156,13 @@ impl ApiError {
 impl From<String> for StorageError {
     fn from(msg: String) -> Self {
         StorageError::Validation(msg)
+    }
+}
+
+// Conversion from String to KalamDbError
+impl From<String> for KalamDbError {
+    fn from(msg: String) -> Self {
+        KalamDbError::Other(msg)
     }
 }
 

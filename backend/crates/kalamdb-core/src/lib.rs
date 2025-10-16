@@ -12,6 +12,7 @@ pub mod ids;
 pub mod live_query;
 pub mod models;
 pub mod schema;
+pub mod services;
 pub mod sql;
 pub mod storage;
 pub mod tables;
