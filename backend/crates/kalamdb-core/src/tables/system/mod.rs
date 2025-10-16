@@ -1,6 +1,7 @@
 //! System tables module
 
 pub mod jobs;
+pub mod jobs_provider;
 pub mod live_queries;
 pub mod live_queries_provider;
 pub mod storage_locations;
@@ -9,6 +10,7 @@ pub mod users;
 pub mod users_provider;
 
 pub use jobs::JobsTable;
+pub use jobs_provider::{JobRecord, JobsTableProvider};
 pub use live_queries::LiveQueriesTable;
 pub use live_queries_provider::{LiveQueryRecord, LiveQueriesTableProvider};
 pub use storage_locations::StorageLocationsTable;

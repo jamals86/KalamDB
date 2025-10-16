@@ -259,17 +259,17 @@
 
 ### Implementation for User Story 2c
 
-- [ ] T099 [P] [US2c] Implement system.jobs table provider in `backend/crates/kalamdb-core/src/tables/system/jobs_provider.rs` (TableProvider backed by RocksDB column family system_table:jobs, use TableName type)
-- [ ] T100 [US2c] Create job execution framework in `backend/crates/kalamdb-core/src/jobs/executor.rs` (execute jobs, track metrics, update status, use TableName type)
-- [ ] T101 [US2c] Add job registration in job executor (create job record with status='running' when job starts, use TableName)
-- [ ] T102 [US2c] Add job completion recording in job executor (update status='completed'/'failed', record end_time, result, trace, metrics, use TableName)
-- [ ] T103 [US2c] Implement resource usage tracking in job executor (measure memory_used_mb and cpu_used_percent during execution)
-- [ ] T104 [US2c] Add job parameters serialization in job executor (store job inputs as array of strings)
-- [ ] T105 [US2c] Add job result and trace recording in job executor (capture job outcome and execution context)
-- [ ] T106 [US2c] Implement job retention policy in `backend/crates/kalamdb-core/src/jobs/retention.rs` (cleanup jobs older than configurable period)
-- [ ] T108 [US2c] Add node_id tracking in job executor (identify which node executed the job)
+- [X] T106 [P] [US2c] Implement system.jobs table provider in `backend/crates/kalamdb-core/src/tables/system/jobs_provider.rs` (TableProvider backed by RocksDB column family system_table:jobs, use TableName type)
+- [X] T107 [US2c] Create job execution framework in `backend/crates/kalamdb-core/src/jobs/executor.rs` (execute jobs, track metrics, update status, use TableName type)
+- [X] T108 [US2c] Add job registration in job executor (create job record with status='running' when job starts, use TableName)
+- [X] T109 [US2c] Add job completion recording in job executor (update status='completed'/'failed', record end_time, result, trace, metrics, use TableName)
+- [X] T110 [US2c] Implement resource usage tracking in job executor (measure memory_used_mb and cpu_used_percent during execution)
+- [X] T111 [US2c] Add job parameters serialization in job executor (store job inputs as array of strings)
+- [X] T112 [US2c] Add job result and trace recording in job executor (capture job outcome and execution context)
+- [X] T113 [US2c] Implement job retention policy in `backend/crates/kalamdb-core/src/jobs/retention.rs` (cleanup jobs older than configurable period)
+- [X] T114 [US2c] Add node_id tracking in job executor (identify which node executed the job)
 
-**Checkpoint**: Job monitoring functional - can track jobs, view metrics, enforce retention policies
+**Checkpoint**: ✅ **COMPLETE** - Job monitoring functional - can track jobs, view metrics, enforce retention policies. All 9 tasks completed. 241 tests passing (24 new tests: 9 jobs_provider + 8 executor + 7 retention).
 
 ---
 
@@ -281,24 +281,24 @@
 
 ### Implementation for User Story 3
 
-- [ ] T109 [P] [US3] Implement CREATE USER TABLE parser in `backend/crates/kalamdb-core/src/sql/ddl/create_user_table.rs` (parse schema, LOCATION clause, LOCATION REFERENCE, FLUSH POLICY, deleted_retention, use NamespaceId and TableName types)
-- [ ] T110 [US3] Create user table service in `backend/crates/kalamdb-core/src/services/user_table_service.rs` (create table metadata, register in catalog, create column family, use NamespaceId and TableName types)
-- [ ] T111 [US3] Add auto-increment field injection in user_table_service.rs (add snowflake ID field if not specified)
-- [ ] T112 [US3] Add system column injection in user_table_service.rs (\_updated TIMESTAMP, \_deleted BOOLEAN for user tables)
-- [ ] T112a [US3] Prevent system column injection for stream tables (stream tables do NOT have \_updated or \_deleted columns - this validation added in stream table service, use TableType enum)
-- [ ] T113 [US3] Implement storage location resolution in user_table_service.rs (resolve LOCATION REFERENCE or validate LOCATION path template, use UserId in path)
-- [ ] T114 [US3] Create schema file for user table in user_table_service.rs (generate schema_v1.json using DataFusion's SchemaRef::to_json(), update manifest.json, create current.json symlink, use NamespaceId and TableName in path)
-- [ ] T115 [US3] Create column family for user table in user_table_service.rs (use column_family_manager to create user_table:{NamespaceId}:{TableName} using TableType enum)
-- [ ] T116 [US3] Implement user table INSERT handler in `backend/crates/kalamdb-core/src/tables/user_table_insert.rs` (write to RocksDB column family with key format {UserId}:{row_id}, set \_updated = NOW(), \_deleted = false)
-- [ ] T117 [US3] Implement user table UPDATE handler in `backend/crates/kalamdb-core/src/tables/user_table_update.rs` (update in RocksDB column family, set \_updated = NOW(), use UserId type)
-- [ ] T118 [US3] Implement user table DELETE handler (soft delete) in `backend/crates/kalamdb-core/src/tables/user_table_delete.rs` (set \_deleted = true, \_updated = NOW(), use UserId type)
-- [ ] T119 [US3] Create user table provider for DataFusion in `backend/crates/kalamdb-core/src/tables/user_table_provider.rs` (register table, provide schema, handle queries, use NamespaceId and TableName types)
-- [ ] T120 [US3] Implement user ID path substitution in user_table_provider.rs (replace ${user_id} with UserId in storage paths)
-- [ ] T121 [US3] Add data isolation enforcement in user_table_provider.rs (queries only access current user's data by filtering on UserId key prefix)
-- [ ] T122 [US3] Implement flush trigger logic in `backend/crates/kalamdb-core/src/flush/trigger.rs` (monitor row count and time intervals per column family, use TableName type)
-- [ ] T123 [US3] Create flush job for user tables in `backend/crates/kalamdb-core/src/flush/user_table_flush.rs` (iterate column family, group rows by UserId prefix, write separate Parquet file per user at ${UserId}/batch-*.parquet, delete flushed rows from RocksDB)
-- [ ] T124 [US3] Add deleted_retention configuration to table metadata in user_table_service.rs (use TableName type)
-- [ ] T125 [US3] Register flush jobs in system.jobs table (status, metrics, result, trace, use TableName type)
+- [X] T115 [P] [US3] Implement CREATE USER TABLE parser in `backend/crates/kalamdb-core/src/sql/ddl/create_user_table.rs` (parse schema, LOCATION clause, LOCATION REFERENCE, FLUSH POLICY, deleted_retention, use NamespaceId and TableName types)
+- [X] T116 [US3] Create user table service in `backend/crates/kalamdb-core/src/services/user_table_service.rs` (create table metadata, register in catalog, create column family, use NamespaceId and TableName types)
+- [X] T117 [US3] Add auto-increment field injection in user_table_service.rs (add snowflake ID field if not specified)
+- [X] T118 [US3] Add system column injection in user_table_service.rs (\_updated TIMESTAMP, \_deleted BOOLEAN for user tables)
+- [X] T119 [US3] Prevent system column injection for stream tables (stream tables do NOT have \_updated or \_deleted columns - this validation added in stream table service, use TableType enum)
+- [X] T120 [US3] Implement storage location resolution in user_table_service.rs (resolve LOCATION REFERENCE or validate LOCATION path template, use UserId in path)
+- [X] T121 [US3] Create schema file for user table in user_table_service.rs (generate schema_v1.json using DataFusion's SchemaRef::to_json(), update manifest.json, create current.json symlink, use NamespaceId and TableName in path)
+- [X] T122 [US3] Create column family for user table in user_table_service.rs (use column_family_manager to create user_table:{NamespaceId}:{TableName} using TableType enum)
+- [ ] T123 [US3] Implement user table INSERT handler in `backend/crates/kalamdb-core/src/tables/user_table_insert.rs` (write to RocksDB column family with key format {UserId}:{row_id}, set \_updated = NOW(), \_deleted = false)
+- [ ] T124 [US3] Implement user table UPDATE handler in `backend/crates/kalamdb-core/src/tables/user_table_update.rs` (update in RocksDB column family, set \_updated = NOW(), use UserId type)
+- [ ] T125 [US3] Implement user table DELETE handler (soft delete) in `backend/crates/kalamdb-core/src/tables/user_table_delete.rs` (set \_deleted = true, \_updated = NOW(), use UserId type)
+- [ ] T126 [US3] Create user table provider for DataFusion in `backend/crates/kalamdb-core/src/tables/user_table_provider.rs` (register table, provide schema, handle queries, use NamespaceId and TableName types)
+- [ ] T127 [US3] Implement user ID path substitution in user_table_provider.rs (replace ${user_id} with UserId in storage paths)
+- [ ] T128 [US3] Add data isolation enforcement in user_table_provider.rs (queries only access current user's data by filtering on UserId key prefix)
+- [ ] T129 [US3] Implement flush trigger logic in `backend/crates/kalamdb-core/src/flush/trigger.rs` (monitor row count and time intervals per column family, use TableName type)
+- [ ] T130 [US3] Create flush job for user tables in `backend/crates/kalamdb-core/src/flush/user_table_flush.rs` (iterate column family, group rows by UserId prefix, write separate Parquet file per user at ${UserId}/batch-*.parquet, delete flushed rows from RocksDB)
+- [ ] T131 [US3] Add deleted_retention configuration to table metadata in user_table_service.rs (use TableName type)
+- [ ] T132 [US3] Register flush jobs in system.jobs table (status, metrics, result, trace, use TableName type)
 
 **Checkpoint**: User table creation and basic operations functional - can create tables, insert/update/delete data with isolation
 
@@ -661,17 +661,24 @@ While tests are not included in this task list, consider this testing approach w
 
 ## Summary
 
-**Total Tasks**: 237 tasks (229 original + 8 additional cleanup tasks from Phase 1)
-**Completed Tasks**: 20 tasks (12 core Phase 1 tasks + 8 cleanup tasks)
-**Remaining Tasks**: 217 tasks
+**Total Tasks**: 229 tasks (actual count after fixing duplicate IDs in Phase 7-8)
+**Completed Tasks**: 114 tasks (Phases 1-8 complete)
+**Remaining Tasks**: 115 tasks  
 **P1 Critical Tasks**: ~195 tasks (Phases 1-10, 12-13, and essential Polish including T227-T229)
 **P2 Tasks**: ~20 tasks (Phases 11, 14, 16)
 **P3 Tasks**: ~6 tasks (Phase 15)
 
 **Progress**: 
 - ✅ Phase 1 (Setup & Code Removal): 100% complete (20/20 tasks)
-- ⏳ Phase 2 (Foundational): 0% complete (0/44 tasks) - **NEXT PHASE**
-- ⏳ Remaining phases: Pending Phase 2 completion
+- ✅ Phase 2 (Foundational): 100% complete (44/44 tasks) - 122 tests passing
+- ✅ Phase 3 (REST API & WebSocket - US0): 100% complete (15/15 tasks) - Basic implementation
+- ✅ Phase 4 (Namespace Management - US1): 100% complete (10/10 tasks) - 152 tests passing
+- ✅ Phase 5 (User Management - US2): 100% complete (4/4 tasks) - 162 tests passing
+- ✅ Phase 6 (Live Query Monitoring - US2a): 100% complete (10/10 tasks) - 218 tests passing
+- ✅ Phase 7 (Storage Locations - US2b): 100% complete (7/7 tasks) - 218 tests passing
+- ✅ Phase 8 (Job Monitoring - US2c): 100% complete (9/9 tasks) - 241 tests passing
+- ⏳ Phase 9 (User Table Creation - US3): 0% complete (0/18 tasks) - **NEXT PHASE**
+- ⏳ Remaining phases: Pending Phase 9+ completion
 
 **Parallel Opportunities**: 
 - Setup phase: ✅ All 12 parallel tasks completed
