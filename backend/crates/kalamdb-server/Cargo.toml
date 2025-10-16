@@ -17,6 +17,7 @@ tokio.workspace = true
 # Web framework
 actix-web.workspace = true
 actix-rt.workspace = true
+actix-cors.workspace = true
 
 # Configuration
 toml.workspace = true

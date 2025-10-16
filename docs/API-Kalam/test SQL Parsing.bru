@@ -1,0 +1,21 @@
+meta {
+  name: test SQL Parsing
+  type: http
+  seq: 2
+}
+
+post {
+  url: http://localhost:8080/api/sql
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+  "sql": "SELECT 1 as id, 'Alice' as name"
+  }
+}

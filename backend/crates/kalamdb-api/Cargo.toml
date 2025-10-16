@@ -10,13 +10,21 @@ repository.workspace = true
 # Core library
 kalamdb-core = { path = "../kalamdb-core" }
 
+# Apache Arrow
+arrow.workspace = true
+
 # Web framework
 actix-web.workspace = true
 actix-rt.workspace = true
+actix-web-actors.workspace = true
+actix.workspace = true
 
 # Serialization
 serde.workspace = true
 serde_json.workspace = true
+
+# UUID generation
+uuid.workspace = true
 
 # Time handling
 chrono.workspace = true
