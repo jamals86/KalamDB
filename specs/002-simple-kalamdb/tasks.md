@@ -8,6 +8,16 @@
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
+**⚠️ CRITICAL ARCHITECTURE UPDATE (2025-10-17)**:
+After Phase 2 began, the spec was updated with major architecture changes:
+1. **RocksDB-only metadata**: All namespaces, storage_locations, tables, and schemas now in RocksDB (eliminated JSON config files)
+2. **New kalamdb-sql crate**: Unified SQL interface for all 7 system tables (eliminates code duplication)
+3. **7 system tables** (was 4): Added system_namespaces, system_tables, system_table_schemas
+4. **Updated CF naming**: `system_users` not `system_table:users`
+5. **New CF**: `user_table_counters` for per-user flush tracking
+
+**Impact**: Phase 1.5 cleanup tasks added, Phase 2 tasks marked for refactoring. See sections marked with ⚠️.
+
 ## Format: `[ID] [P?] [Story] Description`
 - **[P]**: Can run in parallel (different files, no dependencies)
 - **[Story]**: Which user story this task belongs to (Setup, Foundation, US0, US1, US2, etc.)
@@ -16,10 +26,11 @@
 ## Path Conventions
 - Backend code: `backend/crates/`
 - Core library: `backend/crates/kalamdb-core/src/`
+- SQL engine: `backend/crates/kalamdb-sql/src/` ⚠️ **NEW CRATE**
 - API library: `backend/crates/kalamdb-api/src/`
 - Server binary: `backend/crates/kalamdb-server/src/`
-- Configuration files: `backend/conf/` (config.toml, config.example.toml, namespaces.json, storage_locations.json)
-- Data storage: `backend/conf/{namespace}/schemas/{table_name}/` for schema versioning
+- Configuration files: `backend/config.toml` (runtime config only - logging, ports, paths)
+- Data storage: RocksDB column families (all metadata in RocksDB, no JSON files) ⚠️ **ARCHITECTURE CHANGE**
 
 ---
 
@@ -51,7 +62,46 @@
 - [X] T007g [Setup] Update `backend/crates/kalamdb-server/src/main.rs` to minimal working state (components to be added in Phase 2)
 - [X] T007h [Setup] Verify project compiles successfully with `cargo check` after all Phase 1 changes
 
-**Phase 1 Status**: ✅ **COMPLETE** - All 12 core tasks + 8 cleanup tasks completed. Project compiles successfully. Clean slate ready for Phase 2 foundational work.
+**Phase 1 Status**: ✅ **COMPLETE** - All 12 core tasks + 8 cleanup tasks completed. Project compiles successfully. Clean slate ready for Phase 2.
+
+**⚠️ ARCHITECTURE UPDATE REQUIRED**: The spec has been updated to use RocksDB-only metadata (eliminating JSON config files) and adding a unified kalamdb-sql crate. Phase 2 tasks need updating to reflect this change.
+
+---
+
+## Phase 1.5: Architecture Update Cleanup ⚠️ NEW
+
+**Purpose**: Remove JSON-based config code and prepare for kalamdb-sql integration
+
+**Context**: Spec was updated after Phase 2 implementation began. These tasks remove obsolete code and prepare for the new unified SQL architecture.
+
+### Remove JSON Config File Logic (Obsolete)
+
+- [ ] T012a [P] [Cleanup] **DELETE** `backend/crates/kalamdb-core/src/config/file_manager.rs` (JSON file operations replaced by RocksDB-only metadata via kalamdb-sql)
+- [ ] T012b [P] [Cleanup] **DELETE** `backend/crates/kalamdb-core/src/config/namespaces_config.rs` (namespaces now in system_namespaces CF via kalamdb-sql)
+- [ ] T012c [P] [Cleanup] **DELETE** `backend/crates/kalamdb-core/src/config/storage_locations_config.rs` (storage_locations now in system_storage_locations CF via kalamdb-sql)
+- [ ] T012d [P] [Cleanup] **DELETE** `backend/crates/kalamdb-core/src/config/startup_loader.rs` (startup now loads from RocksDB via kalamdb-sql, not JSON)
+- [ ] T012e [Cleanup] Update `backend/crates/kalamdb-core/src/config/mod.rs` to remove references to deleted modules
+
+### Remove File-Based Schema Logic (Obsolete)
+
+- [ ] T012f [P] [Cleanup] **DELETE** `backend/crates/kalamdb-core/src/schema/manifest.rs` (manifest.json replaced by system_table_schemas CF)
+- [ ] T012g [P] [Cleanup] **DELETE** `backend/crates/kalamdb-core/src/schema/storage.rs` (schema directory structure replaced by RocksDB)
+- [ ] T012h [P] [Cleanup] **DELETE** `backend/crates/kalamdb-core/src/schema/versioning.rs` (schema_v{N}.json replaced by system_table_schemas CF)
+- [ ] T012i [Cleanup] Update `backend/crates/kalamdb-core/src/schema/mod.rs` to remove references to deleted modules (keep arrow_schema.rs and system_columns.rs)
+
+### Update Column Family Naming
+
+- [ ] T012j [Cleanup] Update `backend/crates/kalamdb-core/src/storage/column_family_manager.rs` system table naming:
+  - Change `system_table:users` → `system_users`
+  - Change `system_table:live_queries` → `system_live_queries`
+  - Change `system_table:storage_locations` → `system_storage_locations`
+  - Change `system_table:jobs` → `system_jobs`
+  - Add `system_namespaces` CF
+  - Add `system_tables` CF
+  - Add `system_table_schemas` CF
+  - Add `user_table_counters` CF (for per-user flush tracking)
+
+**Phase 1.5 Status**: ⚠️ **PENDING** - Must complete before continuing Phase 2
 
 ---
 
@@ -60,6 +110,32 @@
 **Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
+
+**📝 ARCHITECTURE NOTE**: Phase 2 includes creating the new kalamdb-sql crate for unified system table operations
+
+### kalamdb-sql Crate Creation ⚠️ NEW (Blocks all system table operations)
+
+- [ ] T013a [P] [Foundation] Create new crate `backend/crates/kalamdb-sql/` with Cargo.toml (dependencies: rocksdb, serde, serde_json, sqlparser, arrow, anyhow)
+- [ ] T013b [P] [Foundation] Create `backend/crates/kalamdb-sql/src/lib.rs` with public API exports and module declarations
+- [ ] T013c [P] [Foundation] Create `backend/crates/kalamdb-sql/src/models.rs` with Rust structs for 7 system tables:
+  - User (user_id, username, email, created_at)
+  - LiveQuery (live_id, connection_id, table_id, query_id, user_id, query, options, created_at, updated_at, changes, node)
+  - StorageLocation (location_name, location_type, path, credentials_ref, usage_count)
+  - Job (job_id, job_type, table_name, status, start_time, end_time, parameters, result, trace, memory_used_mb, cpu_used_percent, node_id, error_message)
+  - Namespace (namespace_id, name, created_at, options, table_count) ⚠️ NEW
+  - Table (table_id, table_name, namespace, table_type, created_at, storage_location, flush_policy, schema_version, deleted_retention_hours) ⚠️ NEW
+  - TableSchema (schema_id, table_id, version, arrow_schema, created_at, changes) ⚠️ NEW
+- [ ] T013d [P] [Foundation] Create `backend/crates/kalamdb-sql/src/parser.rs` with SQL parsing using sqlparser-rs (support SELECT, INSERT, UPDATE, DELETE for system tables)
+- [ ] T013e [P] [Foundation] Create `backend/crates/kalamdb-sql/src/executor.rs` with SQL execution logic (query planning, filtering, projections)
+- [ ] T013f [P] [Foundation] Create `backend/crates/kalamdb-sql/src/adapter.rs` with RocksDB read/write operations (key encoding, batch operations, support 7 CFs + user_table_counters)
+- [ ] T013g [Foundation] Implement KalamSql public API in lib.rs:
+  - `execute(sql: &str) -> Result<Vec<RecordBatch>>` (unified SQL execution)
+  - Typed helpers: `get_user()`, `insert_namespace()`, `get_table_schema()`, etc.
+- [ ] T013h [P] [Foundation] Add kalamdb-sql unit tests in `backend/crates/kalamdb-sql/src/tests/` (test all CRUD operations for each system table)
+- [ ] T013i [Foundation] Update `backend/Cargo.toml` workspace to include kalamdb-sql crate
+- [ ] T013j [Foundation] Update `backend/crates/kalamdb-core/Cargo.toml` to add kalamdb-sql as dependency
+
+**Checkpoint**: kalamdb-sql crate complete and tested - ready for integration into kalamdb-core
 
 ### Core Data Structures
 
@@ -72,35 +148,64 @@
 - [X] T016 [P] [Foundation] Create FlushPolicy entity in `backend/crates/kalamdb-core/src/flush/policy.rs` (policy_type: RowLimit/TimeInterval, row_limit, time_interval)
 - [X] T017 [P] [Foundation] Create StorageLocation entity in `backend/crates/kalamdb-core/src/catalog/storage_location.rs` (location_name, location_type, path, credentials_ref, usage_count)
 
-### Configuration Persistence Foundation
+### Configuration Persistence Foundation ~~OBSOLETE - See Phase 1.5 Cleanup~~
 
-- [X] T018 [P] [Foundation] Create configuration file manager in `backend/crates/kalamdb-core/src/config/file_manager.rs` (atomic file updates, JSON read/write)
-- [X] T019 [P] [Foundation] Implement namespaces.json handler in `backend/crates/kalamdb-core/src/config/namespaces_config.rs` (load/save all namespaces)
-- [X] T020 [P] [Foundation] Implement storage_locations.json handler in `backend/crates/kalamdb-core/src/config/storage_locations_config.rs` (load/save all storage locations)
-- [X] T021 [Foundation] Create server startup configuration loader in `backend/crates/kalamdb-core/src/config/startup_loader.rs` (load all configs from JSON into in-memory catalog, NOT RocksDB - RocksDB is only for table data buffering)
+**⚠️ ARCHITECTURE CHANGE**: These tasks are now obsolete. Configuration is stored in RocksDB via kalamdb-sql, not JSON files.
 
-### Schema Management Foundation
+- [X] ~~T018 [P] [Foundation] Create configuration file manager~~ **OBSOLETE** - Delete file_manager.rs (see T012a)
+- [X] ~~T019 [P] [Foundation] Implement namespaces.json handler~~ **OBSOLETE** - Delete namespaces_config.rs (see T012b)
+- [X] ~~T020 [P] [Foundation] Implement storage_locations.json handler~~ **OBSOLETE** - Delete storage_locations_config.rs (see T012c)
+- [X] ~~T021 [Foundation] Create server startup configuration loader~~ **OBSOLETE** - Delete startup_loader.rs (see T012d)
 
-- [X] T022 [Foundation] Implement Arrow schema serialization/deserialization in `backend/crates/kalamdb-core/src/schema/arrow_schema.rs` (use DataFusion's built-in SchemaRef::to_json() and SchemaRef::from_json() methods, include table_options in schema files)
-- [X] T023 [Foundation] Implement schema versioning logic in `backend/crates/kalamdb-core/src/schema/versioning.rs` (create schema_v{N}.json files with user options using DataFusion's schema serialization)
-- [X] T024 [Foundation] Implement manifest.json management in `backend/crates/kalamdb-core/src/schema/manifest.rs` (read, write, update schema metadata)
-- [X] T025 [Foundation] Implement schema directory structure creation in `backend/crates/kalamdb-core/src/schema/storage.rs` (/conf/{namespace}/schemas/{table_name}/)
-- [X] T026 [Foundation] Add system column injection logic in `backend/crates/kalamdb-core/src/schema/system_columns.rs` (\_updated TIMESTAMP, \_deleted BOOLEAN for user/shared tables)
+**Replacement**: Use kalamdb-sql crate (T013a-T013j) for all metadata operations
 
-### RocksDB Column Family Architecture
+### Schema Management Foundation ~~PARTIALLY OBSOLETE~~
 
-- [X] T027 [Foundation] Implement column family manager in `backend/crates/kalamdb-core/src/storage/column_family_manager.rs` (create/delete column families with naming convention, use NamespaceId and TableName types)
-- [X] T027a [Foundation] Add column family naming utilities in column_family_manager.rs (use TableType enum: user_table:{NamespaceId}:{TableName}, shared_table:{NamespaceId}:{TableName}, stream_table:{NamespaceId}:{TableName}, system_table:{TableName})
-- [X] T027b [Foundation] Implement RocksDB configuration in `backend/crates/kalamdb-core/src/storage/rocksdb_config.rs` (per-column-family memtable, write buffer, WAL settings, compaction)
-- [X] T027c [Foundation] Create RocksDB initialization in `backend/crates/kalamdb-core/src/storage/rocksdb_init.rs` (open database, create default column families, configure options)
-- [X] T027d [Foundation] Create TableName initialization in `backend/crates/kalamdb-core/src/storage/table_name.rs` to be used as type-safe identifiers for tables instead of raw strings (MERGED with T015a - delete this duplicate task)
+**⚠️ ARCHITECTURE CHANGE**: File-based schema storage replaced by system_table_schemas CF via kalamdb-sql
 
-### RocksDB Catalog Store
+- [X] T022 [Foundation] Implement Arrow schema serialization/deserialization in `backend/crates/kalamdb-core/src/schema/arrow_schema.rs` ✅ **KEEP** - Still needed for Arrow schema JSON format
+- [X] ~~T023 [Foundation] Implement schema versioning logic~~ **OBSOLETE** - Delete versioning.rs (see T012h) - Use system_table_schemas CF instead
+- [X] ~~T024 [Foundation] Implement manifest.json management~~ **OBSOLETE** - Delete manifest.rs (see T012f) - Use system_table_schemas CF instead
+- [X] ~~T025 [Foundation] Implement schema directory structure creation~~ **OBSOLETE** - Delete storage.rs (see T012g) - No file system schema storage
+- [X] T026 [Foundation] Add system column injection logic in `backend/crates/kalamdb-core/src/schema/system_columns.rs` ✅ **KEEP** - Still needed for \_updated, \_deleted columns
 
-- [X] T028 [Foundation] Implement catalog store using RocksDB in `backend/crates/kalamdb-core/src/catalog/catalog_store.rs` (store system table data in dedicated column families: system_table:users, system_table:live_queries, system_table:storage_locations, system_table:jobs, use UserId type)
-- [X] T029 [Foundation] Add catalog key prefixes for different entity types in catalog_store.rs (use UserId for user keys, subscription_id:, location_name:, job_id: for system tables)
-- [X] T030 [Foundation] Implement system table CRUD operations in catalog_store.rs (insert, update, delete, query system table data, use type-safe wrappers)
-- [X] T031 [Foundation] Implement table metadata cache in `backend/crates/kalamdb-core/src/catalog/table_cache.rs` (in-memory cache for table metadata loaded from JSON, NOT from RocksDB, use NamespaceId and TableName as keys)
+**Replacement for T023-T025**: Use kalamdb-sql to insert/query rows in system_table_schemas CF
+
+### RocksDB Column Family Architecture ~~NEEDS UPDATE~~
+
+**⚠️ ARCHITECTURE CHANGE**: System table CF naming changed + 4 new CFs added
+
+- [X] T027 [Foundation] Implement column family manager in `backend/crates/kalamdb-core/src/storage/column_family_manager.rs` ✅ **NEEDS UPDATE** - See T012j for CF naming changes
+- [X] T027a [Foundation] Add column family naming utilities **NEEDS UPDATE** - See T012j:
+  - User tables: `user_table:{namespace}:{table_name}` ✅ No change
+  - Shared tables: `shared_table:{namespace}:{table_name}` ✅ No change
+  - Stream tables: `stream_table:{namespace}:{table_name}` ✅ No change
+  - System tables: ~~`system_table:{name}`~~ → `system_{name}` ⚠️ **CHANGE**
+  - New CFs: `system_namespaces`, `system_tables`, `system_table_schemas`, `user_table_counters` ⚠️ **ADD**
+- [X] T027b [Foundation] Implement RocksDB configuration ✅ **KEEP** - No changes needed
+- [X] T027c [Foundation] Create RocksDB initialization ✅ **NEEDS UPDATE** - Must create 7 system CFs + user_table_counters CF on startup
+- [X] ~~T027d~~ **DUPLICATE** - Merged with T015a (deleted)
+
+### RocksDB Catalog Store ~~NEEDS MAJOR REFACTOR~~
+
+**⚠️ ARCHITECTURE CHANGE**: Catalog operations must use kalamdb-sql crate instead of manual RocksDB operations
+
+- [X] T028 [Foundation] ~~Implement catalog store using RocksDB~~ **NEEDS REFACTOR** - Update to use kalamdb-sql.execute() instead of direct RocksDB calls
+- [X] T029 [Foundation] ~~Add catalog key prefixes~~ **NEEDS REFACTOR** - Key encoding now handled by kalamdb-sql adapter.rs
+- [X] T030 [Foundation] ~~Implement system table CRUD operations~~ **NEEDS REFACTOR** - All CRUD now via kalamdb-sql SQL interface
+- [X] T031 [Foundation] ~~Implement table metadata cache~~ **NEEDS REFACTOR** - Load from RocksDB via kalamdb-sql, not from JSON files
+
+**New Tasks to Replace T028-T031**:
+
+- [ ] T028a [Foundation] **REFACTOR** `backend/crates/kalamdb-core/src/catalog/catalog_store.rs`:
+  - Remove manual RocksDB operations
+  - Add kalamdb_sql dependency
+  - Use `KalamSql::execute()` for all system table queries
+  - Keep high-level catalog API (get_namespace, create_table, etc.) but implement via SQL
+- [ ] T031a [Foundation] **REFACTOR** `backend/crates/kalamdb-core/src/catalog/table_cache.rs`:
+  - Change source from JSON files to RocksDB via kalamdb-sql
+  - Query `SELECT * FROM system.tables` and `SELECT * FROM system.namespaces` on startup
+  - Cache results in memory for fast access
 
 ### DataFusion Integration Foundation
 
@@ -661,47 +766,64 @@ While tests are not included in this task list, consider this testing approach w
 
 ## Summary
 
-**Total Tasks**: 229 tasks (actual count after fixing duplicate IDs in Phase 7-8)
-**Completed Tasks**: 114 tasks (Phases 1-8 complete)
-**Remaining Tasks**: 115 tasks  
-**P1 Critical Tasks**: ~195 tasks (Phases 1-10, 12-13, and essential Polish including T227-T229)
-**P2 Tasks**: ~20 tasks (Phases 11, 14, 16)
-**P3 Tasks**: ~6 tasks (Phase 15)
+**⚠️ ARCHITECTURE UPDATE (2025-10-17)**: Task counts will change after Phase 1.5 cleanup and kalamdb-sql integration
+
+**Total Tasks**: ~250 tasks (estimated after adding kalamdb-sql + cleanup tasks)
+**Completed Tasks**: 50 tasks (Phase 1 complete, Phase 2 partially complete - needs refactoring)
+**Remaining Tasks**: ~200 tasks  
+**P1 Critical Tasks**: ~210 tasks (includes kalamdb-sql crate, updated catalog operations, all user stories)
+**P2 Tasks**: ~25 tasks
+**P3 Tasks**: ~10 tasks
 
 **Progress**: 
 - ✅ Phase 1 (Setup & Code Removal): 100% complete (20/20 tasks)
-- ✅ Phase 2 (Foundational): 100% complete (44/44 tasks) - 122 tests passing
-- ✅ Phase 3 (REST API & WebSocket - US0): 100% complete (15/15 tasks) - Basic implementation
-- ✅ Phase 4 (Namespace Management - US1): 100% complete (10/10 tasks) - 152 tests passing
-- ✅ Phase 5 (User Management - US2): 100% complete (4/4 tasks) - 162 tests passing
-- ✅ Phase 6 (Live Query Monitoring - US2a): 100% complete (10/10 tasks) - 218 tests passing
-- ✅ Phase 7 (Storage Locations - US2b): 100% complete (7/7 tasks) - 218 tests passing
-- ✅ Phase 8 (Job Monitoring - US2c): 100% complete (9/9 tasks) - 241 tests passing
-- ⏳ Phase 9 (User Table Creation - US3): 0% complete (0/18 tasks) - **NEXT PHASE**
-- ⏳ Remaining phases: Pending Phase 9+ completion
+- ⚠️ **Phase 1.5 (Architecture Update Cleanup): 0% complete (10/10 tasks) - MUST DO FIRST**
+- ⚠️ Phase 2 (Foundational): ~70% complete - **NEEDS REFACTORING**:
+  - ✅ Core data structures (T014-T017): Complete
+  - ❌ Config persistence (T018-T021): **OBSOLETE** - Delete files (see Phase 1.5)
+  - ⚠️ Schema management (T022-T026): **PARTIALLY OBSOLETE** - Delete 3 files
+  - ⚠️ RocksDB CF architecture (T027-T027c): **NEEDS UPDATE** - CF naming + 4 new CFs
+  - ⚠️ Catalog store (T028-T031): **NEEDS MAJOR REFACTOR** - Use kalamdb-sql
+  - ✅ DataFusion integration (T032-T036): Complete (may need minor updates)
+  - ❌ **kalamdb-sql crate (T013a-T013j): NOT STARTED - CRITICAL BLOCKER**
+- ⏸️ Phase 3-16 (User Stories): **BLOCKED** - Wait for Phase 1.5 + Phase 2 refactor
+- ⏸️ Phase 17 (Polish): **BLOCKED**
+
+**IMMEDIATE ACTION REQUIRED**:
+1. ✅ Complete Phase 1.5 cleanup (T012a-T012j) - Delete obsolete files
+2. ✅ Complete kalamdb-sql crate (T013a-T013j) - CRITICAL BLOCKER
+3. ✅ Refactor catalog operations (T028a, T031a) - Use kalamdb-sql
+4. Then proceed with user story phases
 
 **Parallel Opportunities**: 
-- Setup phase: ✅ All 12 parallel tasks completed
-- Foundational phase: ~23 parallel tasks (including RocksDB column family architecture)
-- User stories: 3-4 stories can proceed in parallel after foundational
+- Phase 1.5: All 10 cleanup tasks can run in parallel
+- kalamdb-sql: T013c-T013f can run in parallel after T013a-T013b
+- After Phase 2: 3-4 user stories can proceed in parallel
 
-**MVP Scope** (P1 only):
+**MVP Scope** (P1 only - After Architecture Update):
 - REST API and WebSocket interface
-- Namespace management with persistent configuration (conf/namespaces.json)
-- User management (basic tracking, no permissions enforcement)
-- **System tables**:
-  - system.users (basic user tracking with username, email)
-  - **system.live_queries** (live_id [composite: connection_id-query_id], connection_id, query_id, user_id, query, created_at, updated_at, changes, node) - supports multiple subscriptions per connection
-  - system.storage_locations (predefined storage locations)
-  - system.jobs (job monitoring with metrics)
-- **In-memory WebSocket connection registry** (HashMap<connection_id, ConnectedWebSocket> where ConnectedWebSocket has actor and live_ids vector, HashMap<live_id, connection_id> for reverse lookup, node-aware delivery for clusters)
-- Storage location management with persistent configuration (conf/storage_locations.json)
-- **RocksDB column family architecture** (user_table, shared_table, stream_table, system_table column families)
+- **Namespace management via kalamdb-sql** (system_namespaces CF - no JSON files) ⚠️ **UPDATED**
+- User management (basic tracking with username, email)
+- **System tables** (7 total, all via kalamdb-sql):
+  - system_users (user_id, username, email, created_at)
+  - system_live_queries (live_id, connection_id, query_id, user_id, query, options, created_at, updated_at, changes, node)
+  - system_storage_locations (location_name, location_type, path, credentials_ref, usage_count)
+  - system_jobs (job_id, job_type, table_name, status, timestamps, metrics, node_id)
+  - **system_namespaces** (namespace_id, name, created_at, options, table_count) ⚠️ **NEW**
+  - **system_tables** (table_id, table_name, namespace, table_type, storage_location, flush_policy, schema_version) ⚠️ **NEW**
+  - **system_table_schemas** (schema_id, table_id, version, arrow_schema, created_at, changes) ⚠️ **NEW**
+- **In-memory WebSocket connection registry** (HashMap<connection_id, actor>, HashMap<live_id, connection_id>)
+- **Storage location management via kalamdb-sql** (system_storage_locations CF - no JSON files) ⚠️ **UPDATED**
+- **RocksDB column family architecture** (8 CFs total):
+  - User/shared/stream table CFs: `{type}_table:{namespace}:{table_name}`
+  - System table CFs: `system_users`, `system_live_queries`, `system_storage_locations`, `system_jobs`, `system_namespaces`, `system_tables`, `system_table_schemas`
+  - Flush tracking CF: `user_table_counters` ⚠️ **NEW**
+- **kalamdb-sql unified crate** for all system table operations ⚠️ **NEW**
 - User tables with flush policies and soft deletes
-- Schema versioning with table options persistence
-- Configuration persistence in JSON files for server restart capability
+- **Schema versioning in system_table_schemas** (no file system schemas) ⚠️ **UPDATED**
+- **RocksDB-only metadata persistence** (no JSON config files for namespaces/storage_locations/schemas) ⚠️ **UPDATED**
 - Stream tables for ephemeral events
-- Shared tables (accessible to all users - permissions via VIEWS in future)
+- Shared tables (accessible to all users)
 - Table deletion
 - Basic polish (config, errors, logging)
 

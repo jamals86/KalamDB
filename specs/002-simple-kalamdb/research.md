@@ -335,78 +335,155 @@ fn current_user(ctx: &SessionContext) -> Result<String> {
 
 ---
 
-## Decision 8: JSON Configuration Files (Not RocksDB)
+## Decision 8: JSON Configuration Files (Not RocksDB) ~~DEPRECATED~~
 
-**Context**: Where to store namespace and storage location metadata.
+> **⚠️ DEPRECATED**: This decision has been superseded. See "Decision 8: RocksDB-Only for Metadata Storage (Updated Architecture)" below for the current architecture.
 
-**Decision**: JSON files in `conf/` directory, loaded at startup
+**Original Context**: Where to store namespace and storage location metadata.
 
-**Rationale**:
+**Original Decision**: JSON files in `conf/` directory, loaded at startup
+
+**Why Deprecated**: Dual persistence (JSON + RocksDB) created complexity and sync issues. Architecture simplified to use RocksDB-only for all metadata.
+
+**Original Rationale** (for historical reference):
 - **Infrequent updates**: Namespaces and storage locations rarely change
 - **Human-readable**: Easy to inspect, edit, backup
 - **Git-friendly**: Version control for configuration changes
 - **Startup load**: Load into in-memory cache, no runtime RocksDB reads
 
-**RocksDB is ONLY for**:
-- Table data buffering (write path)
-- System table data (users, live_queries, jobs)
+**What Changed**: Clarification Q2 identified that dual persistence was unnecessary. All metadata now stored in RocksDB system tables (system_namespaces, system_storage_locations, system_tables, system_table_schemas).
 
-**Configuration Files**:
-- `conf/namespaces.json`: All namespaces
-- `conf/storage_locations.json`: All storage locations
-- `conf/{namespace}/schemas/{table_name}/`: Schema versioning
+---
 
-**namespaces.json Format**:
-```json
-{
-  "namespaces": [
-    {
-      "name": "app",
-      "created_at": "2025-10-14T10:00:00Z",
-      "options": {},
-      "table_count": 5
-    }
-  ]
-}
+## Decision 8: RocksDB-Only for Metadata Storage (Updated Architecture)
+
+**Context**: Original design stored namespaces and storage_locations in JSON files (`conf/namespaces.json`, `conf/storage_locations.json`). This created dual persistence paths (JSON + RocksDB).
+
+**Decision**: Store ALL metadata in RocksDB system tables - eliminate JSON config files
+
+**Rationale**:
+- **Single source of truth**: All metadata in one storage engine
+- **Transactional consistency**: Atomic updates across related metadata
+- **No file system sync issues**: Eliminates race conditions from dual persistence
+- **Simplified backup/restore**: Single RocksDB snapshot captures everything
+- **Consistent query interface**: kalamdb-sql provides unified SQL access to all metadata
+
+**Architecture Changes**:
+- **Removed**: `conf/namespaces.json`, `conf/storage_locations.json`
+- **Added**: `system_namespaces` CF, `system_storage_locations` CF (already existed)
+- **Added**: `system_tables` CF (new - table metadata registry)
+- **Added**: `system_table_schemas` CF (new - Arrow schema versions)
+
+**Column Family Strategy**:
 ```
-
-**storage_locations.json Format**:
-```json
-{
-  "locations": [
-    {
-      "location_name": "local_disk",
-      "location_type": "filesystem",
-      "path": "/data/${user_id}/tables",
-      "credentials_ref": null,
-      "usage_count": 3
-    }
-  ]
-}
+system_namespaces        # Namespace registry
+system_storage_locations # Storage location definitions
+system_tables            # Table metadata (type, storage, flush policy)
+system_table_schemas     # Arrow schema versions
+system_users             # User authentication
+system_live_queries      # Active subscriptions
+system_jobs              # Background job history
+user_table_counters      # Per-user-per-table row counts for flush tracking
 ```
-
-**Atomic Updates**:
-- Write to temporary file
-- Rename atomically (POSIX rename is atomic)
-- Ensures crash-safe persistence
 
 **Alternatives Considered**:
-1. **Store in RocksDB** - Rejected: Harder to inspect, backup, version control
-2. **TOML/YAML** - Rejected: JSON better for programmatic updates
-3. **SQL database** - Rejected: Adds external dependency
+1. **Keep JSON + RocksDB hybrid** - Rejected: Dual persistence adds complexity, sync issues
+2. **Use external database** - Rejected: Adds deployment dependency
+3. **Store in separate RocksDB instance** - Rejected: Unnecessary separation
+
+**Clarification Source**: Q2 from spec clarification workflow - "namespaces should be only a rocksdb columnfamily table and not in disk"
+
+---
+
+## Decision 9: Unified kalamdb-sql Crate for System Tables
+
+**Context**: With 7 system tables (users, live_queries, storage_locations, jobs, namespaces, tables, table_schemas), we'd need 7 separate CRUD implementations. This creates code duplication and maintenance burden.
+
+**Decision**: Create kalamdb-sql crate with unified SQL interface for all system tables
+
+**Rationale**:
+- **Eliminates duplication**: Single implementation serves 7 tables
+- **Consistent API**: All system tables accessed via SQL (SELECT, INSERT, UPDATE, DELETE)
+- **Type safety**: Rust models for each table with compile-time validation
+- **Maintainability**: Changes to system table logic happen in one place
+- **Future-ready**: Designed for distributed replication via kalamdb-raft
+
+**Architecture**:
+
+```rust
+// kalamdb-sql crate structure
+kalamdb-sql/
+├── src/
+│   ├── lib.rs          # Public API exports
+│   ├── models.rs       # Rust structs for 7 system tables
+│   │   ├── User { user_id, username, permissions }
+│   │   ├── LiveQuery { subscription_id, user_id, table_name, ... }
+│   │   ├── StorageLocation { location_name, location_type, ... }
+│   │   ├── Job { job_id, job_type, node_id, ... }
+│   │   ├── Namespace { namespace_id, name, options }
+│   │   ├── Table { table_id, namespace, table_name, ... }
+│   │   └── TableSchema { schema_id, table_id, version, ... }
+│   ├── parser.rs       # SQL parsing (sqlparser-rs)
+│   ├── executor.rs     # SQL execution logic
+│   └── adapter.rs      # RocksDB read/write operations
+```
+
+**Usage Pattern**:
+```rust
+// kalamdb-core uses kalamdb-sql for system table operations
+let sql_engine = KalamSql::new(rocksdb_handle);
+
+// Query system tables
+let users = sql_engine.execute("SELECT * FROM system.users WHERE username = 'alice'")?;
+
+// Insert into system tables
+sql_engine.execute("INSERT INTO system.namespaces (namespace_id, name, options) VALUES (?, ?, ?)")?;
+```
+
+**Benefits**:
+1. **~7x less code**: Single SQL engine vs 7 manual implementations
+2. **Consistent behavior**: All tables follow same query semantics
+3. **Easy testing**: Test SQL engine once, all tables validated
+4. **Simple integration**: kalamdb-core just calls execute()
+5. **Raft-ready**: SQL operations can be replicated as log entries
+
+**Alternatives Considered**:
+1. **Manual CRUD for each table** - Rejected: 7x code duplication
+2. **Generic macro-based solution** - Rejected: Harder to debug, less flexible
+3. **ORM library (diesel, sea-orm)** - Rejected: Designed for SQL databases, not RocksDB
+
+**Future Integration** (kalamdb-raft):
+- System table mutations become Raft log entries
+- Each entry contains: `(operation_id, sql_statement, parameters)`
+- Leader replicates to followers before applying to RocksDB
+- Followers apply committed entries to their local RocksDB
+- Strong consistency for all metadata operations
+
+**Clarification Source**: Q3 from spec clarification workflow - "create a separate crate called kalamdb-sql...unified usage of system table"
+
+**References**:
+- sqlparser-rs: https://github.com/sqlparser-rs/sqlparser-rs
+- Raft consensus: https://raft.github.io/
 
 ---
 
 ## Summary
 
 All technical unknowns resolved. Key decisions:
-1. ✅ DataFusion for SQL execution
+1. ✅ DataFusion for SQL execution (user/shared tables)
 2. ✅ RocksDB column families for table isolation
 3. ✅ Actix actors for WebSocket sessions
 4. ✅ Hybrid in-memory + RocksDB for live query routing
 5. ✅ DataFusion schema JSON serialization
 6. ✅ Parquet bloom filters on _updated
 7. ✅ JWT for authentication
-8. ✅ JSON config files for metadata
+8. ✅ **NEW**: RocksDB-only metadata (eliminated JSON config files)
+9. ✅ **NEW**: kalamdb-sql unified crate (eliminates system table code duplication)
 
-**Next Step**: Proceed to Phase 1 (data-model.md, contracts/, quickstart.md)
+**Major Architecture Changes**:
+- 7 system tables instead of 4 (added: namespaces, tables, table_schemas)
+- All metadata in RocksDB (no JSON files)
+- Unified SQL engine for all system tables
+- Future-ready for distributed replication (kalamdb-raft)
+
+**Next Step**: Update data-model.md to reflect 7 system tables + kalamdb-sql architecture

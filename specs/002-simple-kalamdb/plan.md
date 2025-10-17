@@ -21,20 +21,24 @@ The table-per-user architecture allows millions of concurrent users to maintain 
 **Language/Version**: Rust 1.75+ (stable toolchain, edition 2021)
 
 **Primary Dependencies**:
-- **RocksDB 0.21**: Fast write path (<1ms), column families for table isolation
+- **RocksDB 0.21**: Fast write path (<1ms), column families for table isolation + system tables
 - **Apache Arrow 50.0**: Zero-copy in-memory data format
 - **Apache Parquet 50.0**: Compressed columnar storage with bloom filters
 - **DataFusion 35.0**: SQL query engine with custom TableProvider integration
+- **sqlparser-rs**: SQL parsing library (used by kalamdb-sql crate for system tables)
 - **Actix-Web 4.4**: HTTP server and WebSocket actor framework
 - **tokio 1.35**: Async runtime for concurrent operations
-- **serde 1.0**: JSON serialization for configuration and API
+- **serde 1.0**: JSON serialization for API responses and Arrow schemas
 - **serde_json 1.0**: JSON handling for schemas and responses
 
 **Storage Architecture**:
 - **Hot tier**: RocksDB for write buffering (<1ms latency)
 - **Cold tier**: Parquet files for analytics-ready persistence
-- **Column families**: Isolated storage per table type (user/shared/system/stream)
+- **Column families**: Isolated storage per table type (user/shared/system/stream) plus dedicated CFs for system tables and metadata
+- **RocksDB-only metadata**: All configuration (namespaces, storage_locations, tables, schemas) stored in RocksDB system tables - NO JSON config files
+- **System tables**: 7 tables (users, live_queries, storage_locations, jobs, namespaces, tables, table_schemas) managed via unified kalamdb-sql crate
 - **Bloom filters**: _updated timestamp for efficient time-range queries
+- **Per-user flush tracking**: user_table_counters CF tracks row counts per user per table for flush policy
 
 **API Layer**:
 - **REST API**: Single `/api/sql` POST endpoint for all SQL operations
@@ -50,7 +54,7 @@ The table-per-user architecture allows millions of concurrent users to maintain 
 
 **Target Platform**: Linux/macOS server, embeddable library option
 
-**Project Type**: Multi-crate Rust workspace (kalamdb-core, kalamdb-api, kalamdb-server)
+**Project Type**: Multi-crate Rust workspace (kalamdb-core, kalamdb-sql, kalamdb-api, kalamdb-server)
 
 **Performance Goals**:
 - Writes: <1ms p99 (RocksDB path)
@@ -151,7 +155,7 @@ specs/002-simple-kalamdb/
 ```
 backend/
 ├── Cargo.toml                                 # Workspace manifest
-├── config.toml                                # Runtime configuration
+├── config.toml                                # Runtime configuration (logging, ports, paths)
 ├── config.example.toml                        # Configuration template
 ├── crates/
 │   ├── kalamdb-core/                         # Core library (embeddable)
@@ -159,16 +163,24 @@ backend/
 │   │   └── src/
 │   │       ├── lib.rs                        # Public API exports
 │   │       ├── error.rs                      # Error types
-│   │       ├── catalog/                      # Namespace and table metadata
+│   │       ├── catalog/                      # Namespace and table metadata (uses kalamdb-sql)
 │   │       ├── config/                       # Configuration management
 │   │       ├── schema/                       # Arrow schema management
 │   │       ├── storage/                      # Storage backends
 │   │       ├── tables/                       # Table providers
-│   │       ├── sql/                          # SQL execution
+│   │       ├── sql/                          # SQL execution (DataFusion integration)
 │   │       ├── flush/                        # Flush policy management
 │   │       ├── live_query/                   # Live subscription management
 │   │       ├── jobs/                         # Background job framework
 │   │       └── services/                     # Business logic services
+│   ├── kalamdb-sql/                          # Unified SQL engine for system tables (NEW)
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── lib.rs                        # Public API exports
+│   │       ├── models.rs                     # Rust types for 7 system tables
+│   │       ├── parser.rs                     # SQL parsing (sqlparser-rs)
+│   │       ├── executor.rs                   # SQL execution logic
+│   │       └── adapter.rs                    # RocksDB read/write adapter
 │   ├── kalamdb-api/                          # REST API and WebSocket
 │   │   ├── Cargo.toml
 │   │   └── src/
@@ -183,9 +195,6 @@ backend/
 │           ├── main.rs                       # Server entry point
 │           ├── config.rs                     # Config loading
 │           └── logging.rs                    # Logging setup
-├── conf/                                      # Configuration persistence
-│   ├── namespaces.json                       # Namespace registry
-│   └── storage_locations.json                # Storage location registry
 └── tests/
     └── integration/                          # Integration tests
         ├── test_end_to_end.rs                # Complete workflow test
@@ -194,8 +203,15 @@ backend/
 
 **Structure Decision**: Multi-crate Rust workspace with clear separation of concerns:
 - **kalamdb-core**: Embeddable library with all business logic
+- **kalamdb-sql**: Unified SQL engine for system table operations (prevents code duplication for 7 system tables)
 - **kalamdb-api**: HTTP/WebSocket API layer
 - **kalamdb-server**: Minimal binary entry point
+
+**Key Architecture Changes** (from spec clarifications):
+- **RocksDB-only metadata**: All namespace/table/schema metadata stored in RocksDB system tables (no JSON config files)
+- **7 system tables**: users, live_queries, storage_locations, jobs, namespaces, tables, table_schemas
+- **kalamdb-sql crate**: Unified CRUD operations for all system tables via SQL interface (eliminates 7x code duplication)
+- **Future-ready**: Architecture prepared for distributed replication via future kalamdb-raft crate
 
 ## Complexity Tracking
 
@@ -217,11 +233,23 @@ All technical decisions have been resolved:
 ### Decision 2: RocksDB Column Families for Table Isolation
 **Rationale**: Column families provide isolated storage per table with separate memtables and write buffers.
 
-**Naming Convention**:
+**Column Family Naming Convention**:
 - User tables: `user_table:{namespace}:{table_name}`
 - Shared tables: `shared_table:{namespace}:{table_name}`
-- System tables: `system_table:{table_name}`
+- System tables: `system_{table_name}` (e.g., `system_users`, `system_namespaces`, `system_tables`, `system_table_schemas`, `system_live_queries`, `system_storage_locations`, `system_jobs`)
 - Stream tables: `stream_table:{namespace}:{table_name}`
+- Flush tracking: `user_table_counters` (stores per-user-per-table row counts for flush policy)
+
+**System Tables** (7 total):
+1. system_users: User authentication and permissions
+2. system_live_queries: Active WebSocket subscriptions
+3. system_storage_locations: Predefined storage locations
+4. system_jobs: Background job history and metrics
+5. system_namespaces: Namespace registry and options
+6. system_tables: Table metadata and configuration
+7. system_table_schemas: Arrow schema versions and history
+
+**Update from Clarification Q2**: All metadata (namespaces, storage_locations, tables, schemas) is stored ONLY in RocksDB. JSON config files have been eliminated from the architecture.
 
 ### Decision 3: Actix-Web Actor Model for WebSocket Sessions
 **Rationale**: Battle-tested actor framework for WebSocket connection management with message passing and lifecycle management.
@@ -241,19 +269,64 @@ All technical decisions have been resolved:
 ### Decision 7: JWT for User Authentication
 **Rationale**: Stateless authentication with user_id claim for CURRENT_USER() function.
 
-### Decision 8: JSON Configuration Files
-**Rationale**: Human-readable, Git-friendly, simple backup/restore. RocksDB is ONLY for table data and system tables.
+### Decision 8: RocksDB-Only for Metadata Storage
+**Rationale**: Simplifies architecture by eliminating dual JSON+RocksDB persistence. All metadata lives in system tables with transactional consistency.
+
+**What Changed**: Originally, namespaces and storage_locations were stored in JSON files (`conf/namespaces.json`, `conf/storage_locations.json`). Now ALL metadata is stored in RocksDB system tables:
+- system_namespaces (replaces namespaces.json)
+- system_storage_locations (replaces storage_locations.json)
+- system_tables (new - table metadata)
+- system_table_schemas (new - Arrow schema versions)
+
+**Benefits**:
+- Single source of truth for all metadata
+- Transactional consistency for metadata operations
+- No file system sync issues
+- Simplified backup/restore (RocksDB snapshots)
+- Consistent query interface via kalamdb-sql
+
+**Clarification Q2**: "namespaces should be only a rocksdb columnfamily table and not in disk" - This decision eliminates all JSON config files from the architecture.
+
+### Decision 9: Unified kalamdb-sql Crate for System Tables
+**Rationale**: Eliminates code duplication by providing a single SQL-based interface for all 7 system tables.
+
+**Problem Solved**: Without unified crate, we'd need 7 separate CRUD implementations for each system table (users, live_queries, storage_locations, jobs, namespaces, tables, table_schemas). This creates:
+- ~7x code duplication
+- Inconsistent API patterns
+- Higher maintenance burden
+- More bugs from repeated logic
+
+**Architecture**:
+- **models.rs**: Rust structs for 7 system tables (User, LiveQuery, StorageLocation, Job, Namespace, Table, TableSchema)
+- **parser.rs**: SQL parsing using sqlparser-rs (SELECT, INSERT, UPDATE, DELETE)
+- **executor.rs**: SQL execution logic (query planning, filtering, projections)
+- **adapter.rs**: RocksDB read/write operations (key encoding, batch operations)
+
+**Usage Pattern**:
+```rust
+// kalamdb-core uses kalamdb-sql for all system table operations
+let sql_engine = KalamSql::new(rocksdb_handle);
+
+// Query system tables via SQL
+let users = sql_engine.execute("SELECT * FROM system.users WHERE username = 'alice'")?;
+
+// Insert into system tables
+sql_engine.execute("INSERT INTO system.namespaces (namespace_id, name, options) VALUES (?, ?, ?)")?;
+```
+
+**Future-Ready**: Architecture designed to support distributed replication via future kalamdb-raft crate. System table mutations will be replicated as Raft log entries containing SQL operations.
+
+**Clarification Q3**: "create a separate crate called kalamdb-sql...unified usage of system table"
 
 
 ## Phase 1: Design & Contracts
 
-**Status**: ✅ **COMPLETE**
-
-All Phase 1 artifacts have been created:
+**Status**: ⚠️ **NEEDS UPDATE** (data-model.md must reflect 7 system tables + kalamdb-sql architecture)
 
 ### ✅ data-model.md
 - 4 core entities documented (Namespace, TableMetadata, FlushPolicy, StorageLocation)
-- 4 system tables defined (users, live_queries, storage_locations, jobs)
+- **UPDATE NEEDED**: Add 3 new system tables (namespaces, tables, table_schemas) to data model
+- **UPDATE NEEDED**: Document kalamdb-sql models and relationships
 - Entity relationships and validation rules specified
 - RocksDB key formats and column family naming conventions
 - Type-safe wrappers (NamespaceId, TableName, UserId, etc.)
@@ -285,28 +358,43 @@ All Phase 1 artifacts have been created:
 
 ## Phase 2: Tasks
 
-**Status**: ✅ **COMPLETE** (tasks.md already exists)
+**Status**: ⚠️ **NEEDS REGENERATION** (tasks.md must be updated for kalamdb-sql crate + RocksDB-only metadata)
 
-The task breakdown covers all implementation work:
-- Phase 1: Setup & Code Removal (13 tasks)
-- Phase 2: Foundational (37 tasks)
-- Phases 3-12: User Stories (150+ tasks)
+The task breakdown must be updated to cover:
+- kalamdb-sql crate implementation (models, parser, executor, adapter)
+- RocksDB system table creation (7 tables, not 4)
+- Removal of JSON config file logic
+- Integration of kalamdb-sql into kalamdb-core
+- Updated flush policy tracking (user_table_counters CF)
+
+**Recommendation**: Run `/speckit.tasks` to regenerate tasks.md based on updated spec.md
 
 ## Implementation Readiness
 
-**Status**: ✅ **READY TO IMPLEMENT**
+**Status**: ⚠️ **NEEDS ARTIFACT UPDATES**
 
-All prerequisites met:
-- ✅ spec.md (feature specification)
-- ✅ plan.md (this file - technical plan)
-- ✅ research.md (technical decisions)
-- ✅ data-model.md (entities and relationships)
-- ✅ contracts/ (API specifications)
-- ✅ quickstart.md (end-to-end test guide)
-- ✅ tasks.md (implementation tasks)
+Prerequisites status:
+- ✅ spec.md (feature specification - updated with 7 clarifications, kalamdb-sql, Raft prep)
+- ✅ plan.md (this file - updated with new architecture)
+- ✅ research.md (technical decisions - updated with new decisions 8-9)
+- ⚠️ data-model.md (needs update for 7 system tables + kalamdb-sql models)
+- ✅ contracts/ (API specifications - no changes needed)
+- ✅ quickstart.md (end-to-end test guide - no changes needed)
+- ⚠️ tasks.md (needs regeneration via /speckit.tasks)
 - ✅ checklists/requirements.md (all items passed)
 
-**Next Command**: Run `/speckit.implement` to begin Phase 1 implementation (Setup & Code Removal).
+**Next Steps**:
+1. Update data-model.md to include:
+   - 7 system tables with complete schemas
+   - kalamdb-sql crate models and relationships
+   - Updated RocksDB column family architecture
+2. Run `/speckit.tasks` to regenerate tasks.md with:
+   - kalamdb-sql crate implementation tasks
+   - RocksDB-only metadata tasks
+   - Elimination of JSON config file logic
+   - Integration tasks for kalamdb-sql into core
+
+**After Updates Complete**: Run `/speckit.implement` to begin implementation
 
 ## Test Strategy
 
@@ -324,27 +412,39 @@ This validates end-to-end functionality matching the user's requirements: "test 
 ## Summary
 
 **Feature**: Simple KalamDB - User-Based Database with Live Queries  
-**Complexity**: Medium-High (multi-tier storage, real-time subscriptions, SQL execution)  
-**Timeline**: ~6-8 weeks for complete implementation (following tasks.md)  
-**Risk**: Low (all technical decisions validated, clear task breakdown)
+**Complexity**: Medium-High (multi-tier storage, real-time subscriptions, SQL execution, unified system table engine)  
+**Timeline**: ~6-8 weeks for complete implementation (following tasks.md after regeneration)  
+**Risk**: Low (all technical decisions validated, clear task breakdown needed)
 
 **Key Innovations**:
 - Table-per-user architecture for massive scalability
 - Hybrid RocksDB+Parquet storage for sub-millisecond writes + analytics
 - Actor-based WebSocket subscriptions for real-time notifications
 - DataFusion integration for standard SQL support
+- **NEW**: Unified kalamdb-sql crate eliminates system table code duplication
+- **NEW**: RocksDB-only metadata (no JSON config files)
+- **NEW**: Future-ready for distributed replication via kalamdb-raft
 
 **Architecture Highlights**:
-- Multi-crate Rust workspace (core/api/server)
+- Multi-crate Rust workspace (core/sql/api/server)
+- 7 system tables with unified SQL interface
 - Column family isolation per table
 - In-memory + RocksDB hybrid for live query routing
-- JSON configuration files for metadata
+- RocksDB-only metadata persistence (simplified architecture)
 - Parquet bloom filters for query optimization
+- Per-user-per-table flush tracking
 
-**Documentation**: Complete
-- 8 specification/planning documents
-- 2 API contracts (OpenAPI + WebSocket protocol)
-- 1 comprehensive testing guide
-- 186 detailed implementation tasks
+**Major Architecture Changes** (from spec clarifications):
+1. **Eliminated JSON config files**: All metadata now in RocksDB system tables
+2. **Added 3 system tables**: namespaces, tables, table_schemas (total: 7)
+3. **New kalamdb-sql crate**: Unified SQL engine for all system table operations
+4. **Future Raft preparation**: Architecture designed for distributed replication
 
-Ready to proceed with implementation! 🚀
+**Documentation**: Needs Updates
+- 8 specification/planning documents (plan.md updated ✅)
+- 2 API contracts (no changes needed ✅)
+- 1 comprehensive testing guide (no changes needed ✅)
+- data-model.md needs update for 7 system tables ⚠️
+- tasks.md needs regeneration via /speckit.tasks ⚠️
+
+**Status**: Awaiting artifact updates before implementation can proceed �

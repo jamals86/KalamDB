@@ -30,7 +30,7 @@ env_logger = "0.11"
 tokio = { version = "1.48.0", features = ["full"] }
 
 # Time handling
-chrono = { version = "=0.4.38", features = ["serde"] }
+chrono = { version = "0.4.42", features = ["serde"] }
 
 # Storage - using minimal features to avoid build issues on Windows
 rocksdb = { version = "0.24.0", default-features = false, features = ["snappy"] }
@@ -44,7 +44,7 @@ sqlparser = { version = "0.49" }
 # Web framework
 actix-web = "4.4"
 actix-rt = "2.9"
-actix-web-actors = "4.3"  # For WebSocket support
+actix-web-actors = "4.3.0"  # For WebSocket support
 actix = "0.13"  # Actor framework
 actix-cors = "0.7"  # CORS middleware
 
