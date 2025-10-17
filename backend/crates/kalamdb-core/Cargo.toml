@@ -10,6 +10,9 @@ repository.workspace = true
 # Storage
 rocksdb.workspace = true
 
+# Internal crates
+kalamdb-sql = { path = "../kalamdb-sql" }
+
 # Apache Arrow ecosystem
 arrow.workspace = true
 parquet.workspace = true

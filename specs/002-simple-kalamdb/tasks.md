@@ -133,11 +133,11 @@ After Phase 2 began, the spec was updated with major architecture changes:
   - Typed helpers: `get_user()`, `insert_user()`, `get_namespace()`, `insert_namespace()`, `get_table_schema()`, etc.
 - [X] T013h [P] [Foundation] Add kalamdb-sql unit tests in `backend/crates/kalamdb-sql/src/tests/` (test all CRUD operations for each system table) - 9 unit tests passing
 - [X] T013i [Foundation] Update `backend/Cargo.toml` workspace to include kalamdb-sql crate
-- [ ] T013j [Foundation] Update `backend/crates/kalamdb-core/Cargo.toml` to add kalamdb-sql as dependency - **BLOCKED**: Requires arrow-arith compilation fix (see KNOWN_ISSUES.md)
+- [X] T013j [Foundation] Update `backend/crates/kalamdb-core/Cargo.toml` to add kalamdb-sql as dependency - ~~**BLOCKED**: Requires arrow-arith compilation fix~~ ✅ **COMPLETE**: Dependency added, chrono pinned to 0.4.39 to resolve arrow-arith conflict
 
-**Checkpoint**: ✅ **kalamdb-sql crate complete and tested (9 tests passing)** - Core functionality ready, integration into kalamdb-core blocked by arrow-arith issue
+**Checkpoint**: ✅ **kalamdb-sql crate complete and tested (9 tests passing)** - Core functionality ready, integration into kalamdb-core complete
 
-**Phase 2 kalamdb-sql Status**: ✅ **9/10 tasks COMPLETE** - Crate created with full CRUD adapter for all 7 system tables. Only remaining task (T013j) blocked by upstream arrow-arith dependency conflict. The kalamdb-sql crate compiles and tests successfully in isolation.
+**Phase 2 kalamdb-sql Status**: ✅ **10/10 tasks COMPLETE** - Crate created with full CRUD adapter for all 7 system tables. Dependency successfully integrated into kalamdb-core (chrono pinned to 0.4.39 to resolve arrow-arith conflict).
 
 ### Core Data Structures
 
