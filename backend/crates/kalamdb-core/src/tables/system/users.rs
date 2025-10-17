@@ -57,6 +57,6 @@ mod tests {
     #[test]
     fn test_users_table_name() {
         assert_eq!(UsersTable::table_name(), "users");
-        assert_eq!(UsersTable::column_family_name(), "system_table:users");
+        assert_eq!(UsersTable::column_family_name(), "system_users");
     }
 }

@@ -1,7 +1,7 @@
 //! System.storage_locations table provider
 //!
 //! This module provides a DataFusion TableProvider implementation for the system.storage_locations table,
-//! backed by RocksDB column family system_table:storage_locations.
+//! backed by RocksDB column family system_storage_locations.
 
 use crate::catalog::{CatalogStore, StorageLocation};
 use crate::error::KalamDbError;

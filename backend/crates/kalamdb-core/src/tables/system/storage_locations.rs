@@ -37,7 +37,7 @@ impl StorageLocationsTable {
 
     /// Get the column family name
     pub fn column_family_name() -> String {
-        format!("system_table:{}", Self::table_name())
+        format!("system_{}", Self::table_name())
     }
 }
 
@@ -61,6 +61,6 @@ mod tests {
     #[test]
     fn test_storage_locations_table_name() {
         assert_eq!(StorageLocationsTable::table_name(), "storage_locations");
-        assert_eq!(StorageLocationsTable::column_family_name(), "system_table:storage_locations");
+        assert_eq!(StorageLocationsTable::column_family_name(), "system_storage_locations");
     }
 }

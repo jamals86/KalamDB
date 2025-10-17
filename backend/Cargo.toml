@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/kalamdb-core",
+    "crates/kalamdb-sql",
     "crates/kalamdb-api",
     "crates/kalamdb-server",
 ]
@@ -30,12 +31,17 @@ env_logger = "0.11"
 tokio = { version = "1.48.0", features = ["full"] }
 
 # Time handling
-chrono = { version = "0.4.42", features = ["serde"] }
+# Pinned to 0.4.39 to avoid conflict with arrow-arith 52.2.0's ChronoDateExt::quarter()
+# chrono 0.4.40+ added Datelike::quarter() which creates ambiguity
+# See: https://github.com/apache/arrow-rs/issues/7196
+chrono = { version = "=0.4.39", features = ["serde"] }
 
 # Storage - using minimal features to avoid build issues on Windows
 rocksdb = { version = "0.24.0", default-features = false, features = ["snappy"] }
 
-# Apache Arrow ecosystem
+# Apache Arrow ecosystem  
+# NOTE: Arrow 52.2.0 has a known issue with chrono 0.4.42 (quarter() method ambiguity)
+# Using chrono 0.4.38 as workaround until arrow-arith is fixed
 arrow = { version = "52.0", features = ["prettyprint"] }
 parquet = { version = "52.0", features = ["arrow", "async"] }
 datafusion = { version = "40.0" }

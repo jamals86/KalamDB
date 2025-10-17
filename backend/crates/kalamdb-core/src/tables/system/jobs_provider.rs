@@ -1,7 +1,7 @@
 //! System.jobs table provider
 //!
 //! This module provides a DataFusion TableProvider implementation for the system.jobs table,
-//! backed by RocksDB column family system_table:jobs.
+//! backed by RocksDB column family system_jobs.
 
 use crate::catalog::CatalogStore;
 use crate::error::KalamDbError;

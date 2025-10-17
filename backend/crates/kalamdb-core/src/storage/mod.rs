@@ -11,7 +11,7 @@ pub mod rocksdb_config;
 pub mod rocksdb_init;
 pub mod rocksdb_store;
 
-pub use column_family_manager::ColumnFamilyManager;
+pub use column_family_manager::{ColumnFamilyManager, SYSTEM_COLUMN_FAMILIES};
 pub use filesystem_backend::FilesystemBackend;
 pub use parquet_writer::ParquetWriter;
 pub use path_template::PathTemplate;

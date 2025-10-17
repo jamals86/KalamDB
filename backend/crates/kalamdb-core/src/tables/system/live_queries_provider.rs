@@ -1,7 +1,7 @@
 //! System.live_queries table provider
 //!
 //! This module provides a DataFusion TableProvider implementation for the system.live_queries table,
-//! backed by RocksDB column family system_table:live_queries.
+//! backed by RocksDB column family system_live_queries.
 
 use crate::catalog::CatalogStore;
 use crate::error::KalamDbError;

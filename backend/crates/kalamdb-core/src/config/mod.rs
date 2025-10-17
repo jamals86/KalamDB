@@ -1,13 +1,6 @@
-//! Configuration module for JSON file persistence
+//! Configuration module (DEPRECATED - metadata now in RocksDB via kalamdb-sql)
 //!
-//! This module manages configuration files including namespaces and storage locations.
+//! This module is being phased out. All configuration (namespaces, storage_locations, tables, schemas)
+//! is now stored in RocksDB system tables and managed via the kalamdb-sql crate.
 
-pub mod file_manager;
-pub mod namespaces_config;
-pub mod startup_loader;
-pub mod storage_locations_config;
-
-pub use file_manager::FileManager;
-pub use namespaces_config::NamespacesConfig;
-pub use startup_loader::{StartupConfig, StartupLoader};
-pub use storage_locations_config::StorageLocationsConfig;
+// All modules removed - configuration is now in RocksDB system tables via kalamdb-sql

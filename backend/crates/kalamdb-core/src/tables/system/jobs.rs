@@ -43,7 +43,7 @@ impl JobsTable {
 
     /// Get the column family name
     pub fn column_family_name() -> String {
-        format!("system_table:{}", Self::table_name())
+        format!("system_{}", Self::table_name())
     }
 }
 
@@ -73,6 +73,6 @@ mod tests {
     #[test]
     fn test_jobs_table_name() {
         assert_eq!(JobsTable::table_name(), "jobs");
-        assert_eq!(JobsTable::column_family_name(), "system_table:jobs");
+        assert_eq!(JobsTable::column_family_name(), "system_jobs");
     }
 }
