@@ -607,27 +607,94 @@ Table schema version history storing Arrow schemas as JSON for all tables.
 
 **Architecture Decision**: Instead of implementing separate CRUD logic for each system table, KalamDB uses a **unified SQL engine** that provides a single interface for all system table operations.
 
-**Crate Structure**:
+**Crate Structure** (Updated 2025-10-17):
 ```
 backend/crates/
-  kalamdb-sql/          # NEW: Unified SQL engine for system tables
+  kalamdb-sql/          # NEW: Unified SQL engine for system tables ONLY
+    Cargo.toml          # Dependencies: rocksdb, serde, serde_json, sqlparser, chrono, anyhow
     src/
       lib.rs            # Public API: execute_system_query(sql, rocksdb)
-      parser.rs         # SQL parsing using DataFusion's sqlparser
+      parser.rs         # SQL parsing using sqlparser-rs
       executor.rs       # SQL execution engine (SELECT/INSERT/UPDATE/DELETE)
-      models/           # Rust models for each system table (for serialization)
-        namespace.rs    # NamespaceRow struct
-        table.rs        # TableRow struct
-        schema.rs       # TableSchemaRow struct
-        user.rs         # UserRow struct
-        storage.rs      # StorageLocationRow struct
-        live_query.rs   # LiveQueryRow struct
-        job.rs          # JobRow struct
-      rocksdb_adapter.rs # Converts SQL operations to RocksDB column family ops
+      models/           # Rust models for 7 system tables
+        namespace.rs    # Namespace struct
+        table.rs        # Table struct
+        schema.rs       # TableSchema struct
+        user.rs         # User struct
+        storage.rs      # StorageLocation struct
+        live_query.rs   # LiveQuery struct
+        job.rs          # Job struct
+      adapter.rs        # RocksDB adapter for system tables (ONLY system_* CFs)
       
-  kalamdb-core/         # Uses kalamdb-sql for system table access
-  kalamdb-api/          # Uses kalamdb-sql for system table access
-  kalamdb-server/       # Uses kalamdb-sql for system table access
+  kalamdb-store/        # NEW: K/V store for user/shared/stream tables
+    Cargo.toml          # Dependencies: rocksdb (via kalamdb-sql or direct), serde, serde_json, chrono, anyhow
+    src/
+      lib.rs            # Public API: UserTableStore::put/get/delete
+      user_table_store.rs   # K/V operations for user tables
+      shared_table_store.rs # K/V operations for shared tables
+      stream_table_store.rs # K/V operations for stream tables
+      key_encoding.rs   # Key format utilities: {UserId}:{row_id}, etc.
+      
+  kalamdb-core/         # Business logic - NO direct RocksDB imports
+    Cargo.toml          # Dependencies: kalamdb-sql, kalamdb-store, datafusion, arrow, parquet
+    src/
+      tables/
+        user_table_insert.rs   # Uses kalamdb-store for writes
+        user_table_update.rs   # Uses kalamdb-store for updates
+        user_table_delete.rs   # Uses kalamdb-store for deletes
+        system/
+          users_provider.rs    # Uses kalamdb-sql for system.users
+          (other providers)    # All use kalamdb-sql
+      services/
+        namespace_service.rs   # Uses kalamdb-sql
+        user_table_service.rs  # Uses kalamdb-sql + kalamdb-store
+        
+  kalamdb-api/          # Uses kalamdb-sql for system table queries
+  kalamdb-server/       # Initializes both kalamdb-sql and kalamdb-store
+```
+
+**Architectural Layers**:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ kalamdb-core (Business Logic Layer)                             │
+│ - User table operations (INSERT/UPDATE/DELETE handlers)         │
+│ - System table providers (DataFusion TableProvider integration) │
+│ - Services (NamespaceService, UserTableService, etc.)           │
+│ - NO direct RocksDB imports                                     │
+└──────────────┬──────────────────────────────────────────────────┘
+               │
+               ├────────────────────────┬─────────────────────────┐
+               ▼                        ▼                         ▼
+┌──────────────────────────┐ ┌──────────────────────┐ ┌──────────────────┐
+│ kalamdb-sql              │ │ kalamdb-store        │ │ DataFusion/      │
+│ (System Tables)          │ │ (User/Shared/Stream) │ │ Arrow/Parquet    │
+├──────────────────────────┤ ├──────────────────────┤ └──────────────────┘
+│ Purpose:                 │ │ Purpose:             │
+│ - System metadata CRUD   │ │ - User data K/V ops  │
+│ - SQL parsing/execution  │ │ - Simple put/get/del │
+│ - 7 system tables        │ │ - UserId-scoped keys │
+│                          │ │                      │
+│ Owns:                    │ │ Owns:                │
+│ - RocksDB dependency     │ │ - RocksDB dependency │
+│ - System table models    │ │ - Key encoding logic │
+│                          │ │                      │
+│ Column Families:         │ │ Column Families:     │
+│ - system_users           │ │ - user_table:ns:tbl  │
+│ - system_namespaces      │ │ - shared_table:ns:tbl│
+│ - system_tables          │ │ - stream_table:ns:tbl│
+│ - system_table_schemas   │ │ - user_table_counters│
+│ - system_storage_locs    │ │                      │
+│ - system_live_queries    │ │                      │
+│ - system_jobs            │ │                      │
+└──────────────┬───────────┘ └──────────┬───────────┘
+               │                        │
+               └────────────┬───────────┘
+                            ▼
+                  ┌───────────────────┐
+                  │ RocksDB           │
+                  │ (Shared Instance) │
+                  └───────────────────┘
 ```
 
 **How It Works**:
@@ -776,8 +843,365 @@ All nodes: system.namespaces table now contains "production"
 **Example Usage in Core/API/Server**:
 
 ```rust
-// kalamdb-core/src/catalog/namespace_service.rs
-use kalamdb_sql::execute_system_query;
+// ============================================================================
+// kalamdb-sql: System tables (metadata)
+// ============================================================================
+
+// kalamdb-core/src/services/namespace_service.rs
+use kalamdb_sql::KalamSql;
+
+pub struct NamespaceService {
+    kalam_sql: Arc<KalamSql>,
+}
+
+impl NamespaceService {
+    pub fn create_namespace(&self, name: &str, options: &str) -> Result<()> {
+        // Use kalamdb-sql for system table operations
+        self.kalam_sql.insert_namespace(name, options)?;
+        Ok(())
+    }
+    
+    pub fn get_namespace(&self, name: &str) -> Result<Option<Namespace>> {
+        self.kalam_sql.get_namespace(name)
+    }
+}
+
+// kalamdb-core/src/tables/system/users_provider.rs
+use kalamdb_sql::KalamSql;
+
+pub struct UsersTableProvider {
+    kalam_sql: Arc<KalamSql>,
+    schema: SchemaRef,
+}
+
+impl UsersTableProvider {
+    pub fn new(kalam_sql: Arc<KalamSql>) -> Self {
+        Self {
+            kalam_sql,
+            schema: UsersTable::schema(),
+        }
+    }
+    
+    pub fn insert_user(&self, user: User) -> Result<()> {
+        self.kalam_sql.insert_user(&user)
+    }
+    
+    pub fn get_user(&self, username: &str) -> Result<Option<User>> {
+        self.kalam_sql.get_user(username)
+    }
+    
+    pub fn scan_all_users(&self) -> Result<Vec<User>> {
+        self.kalam_sql.scan_all_users()
+    }
+}
+
+// ============================================================================
+// kalamdb-store: User/Shared/Stream tables (data)
+// ============================================================================
+
+// kalamdb-core/src/tables/user_table_insert.rs
+use kalamdb_store::UserTableStore;
+
+pub struct UserTableInsertHandler {
+    store: Arc<UserTableStore>,
+}
+
+impl UserTableInsertHandler {
+    pub fn insert_row(
+        &self,
+        namespace_id: &NamespaceId,
+        table_name: &TableName,
+        user_id: &UserId,
+        row_data: JsonValue,
+    ) -> Result<String> {
+        // Use kalamdb-store for K/V operations
+        let row_id = self.generate_row_id()?;
+        
+        // kalamdb-store handles:
+        // - Key encoding: {UserId}:{row_id}
+        // - Column family lookup: user_table:{namespace}:{table}
+        // - System column injection: _updated, _deleted
+        self.store.put(namespace_id, table_name, user_id, &row_id, row_data)?;
+        
+        Ok(row_id)
+    }
+}
+
+// kalamdb-core/src/tables/user_table_update.rs
+use kalamdb_store::UserTableStore;
+
+pub struct UserTableUpdateHandler {
+    store: Arc<UserTableStore>,
+}
+
+impl UserTableUpdateHandler {
+    pub fn update_row(
+        &self,
+        namespace_id: &NamespaceId,
+        table_name: &TableName,
+        user_id: &UserId,
+        row_id: &str,
+        updates: JsonValue,
+    ) -> Result<()> {
+        // Read existing row
+        let existing = self.store.get(namespace_id, table_name, user_id, row_id)?
+            .ok_or_else(|| anyhow!("Row not found"))?;
+        
+        // Merge updates
+        let mut merged = existing;
+        // ... merge logic ...
+        
+        // Write back
+        self.store.put(namespace_id, table_name, user_id, row_id, merged)?;
+        
+        Ok(())
+    }
+}
+
+// ============================================================================
+// kalamdb-server: Initialization
+// ============================================================================
+
+// kalamdb-server/src/main.rs
+use kalamdb_sql::KalamSql;
+use kalamdb_store::UserTableStore;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Initialize RocksDB
+    let db = Arc::new(DB::open_cf(&opts, db_path, &all_column_families)?);
+    
+    // Initialize both layers
+    let kalam_sql = Arc::new(KalamSql::new(db.clone())?);
+    let user_store = Arc::new(UserTableStore::new(db.clone())?);
+    
+    // Pass to services
+    let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
+    let insert_handler = Arc::new(UserTableInsertHandler::new(user_store.clone()));
+    
+    // ...
+}
+```
+
+**kalamdb-store Public API** (New Crate):
+
+```rust
+// kalamdb-store/src/lib.rs
+
+pub struct UserTableStore {
+    db: Arc<DB>,
+}
+
+impl UserTableStore {
+    pub fn new(db: Arc<DB>) -> Result<Self> {
+        Ok(Self { db })
+    }
+    
+    /// Write a row to a user table
+    ///
+    /// # Arguments
+    /// * `namespace_id` - Namespace containing the table
+    /// * `table_name` - Name of the table
+    /// * `user_id` - User ID for data isolation
+    /// * `row_id` - Unique row identifier
+    /// * `row_data` - JSON row data (system columns auto-injected)
+    ///
+    /// # Key Format
+    /// RocksDB key: `{UserId}:{row_id}`
+    /// Column family: `user_table:{namespace}:{table}`
+    pub fn put(
+        &self,
+        namespace_id: &NamespaceId,
+        table_name: &TableName,
+        user_id: &UserId,
+        row_id: &str,
+        mut row_data: JsonValue,
+    ) -> Result<()> {
+        // Inject system columns
+        if let Some(obj) = row_data.as_object_mut() {
+            obj.insert("_updated".to_string(), JsonValue::Number(Utc::now().timestamp_millis().into()));
+            if !obj.contains_key("_deleted") {
+                obj.insert("_deleted".to_string(), JsonValue::Bool(false));
+            }
+        }
+        
+        // Build key
+        let key = format!("{}:{}", user_id.as_str(), row_id);
+        
+        // Get CF handle
+        let cf_name = format!("user_table:{}:{}", namespace_id.as_str(), table_name.as_str());
+        let cf = self.db.cf_handle(&cf_name)
+            .ok_or_else(|| anyhow!("Column family not found: {}", cf_name))?;
+        
+        // Serialize and write
+        let value_bytes = serde_json::to_vec(&row_data)?;
+        self.db.put_cf(cf, key.as_bytes(), &value_bytes)?;
+        
+        Ok(())
+    }
+    
+    /// Read a row from a user table
+    pub fn get(
+        &self,
+        namespace_id: &NamespaceId,
+        table_name: &TableName,
+        user_id: &UserId,
+        row_id: &str,
+    ) -> Result<Option<JsonValue>> {
+        let key = format!("{}:{}", user_id.as_str(), row_id);
+        let cf_name = format!("user_table:{}:{}", namespace_id.as_str(), table_name.as_str());
+        let cf = self.db.cf_handle(&cf_name)
+            .ok_or_else(|| anyhow!("Column family not found: {}", cf_name))?;
+        
+        if let Some(value_bytes) = self.db.get_cf(cf, key.as_bytes())? {
+            let row_data: JsonValue = serde_json::from_slice(&value_bytes)?;
+            Ok(Some(row_data))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    /// Delete a row from a user table (soft delete by default)
+    pub fn delete(
+        &self,
+        namespace_id: &NamespaceId,
+        table_name: &TableName,
+        user_id: &UserId,
+        row_id: &str,
+        hard: bool,
+    ) -> Result<()> {
+        if hard {
+            // Hard delete: physically remove
+            let key = format!("{}:{}", user_id.as_str(), row_id);
+            let cf_name = format!("user_table:{}:{}", namespace_id.as_str(), table_name.as_str());
+            let cf = self.db.cf_handle(&cf_name)
+                .ok_or_else(|| anyhow!("Column family not found: {}", cf_name))?;
+            
+            self.db.delete_cf(cf, key.as_bytes())?;
+        } else {
+            // Soft delete: set _deleted = true
+            let mut row_data = self.get(namespace_id, table_name, user_id, row_id)?
+                .ok_or_else(|| anyhow!("Row not found"))?;
+            
+            if let Some(obj) = row_data.as_object_mut() {
+                obj.insert("_deleted".to_string(), JsonValue::Bool(true));
+                obj.insert("_updated".to_string(), JsonValue::Number(Utc::now().timestamp_millis().into()));
+            }
+            
+            self.put(namespace_id, table_name, user_id, row_id, row_data)?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Scan all rows for a user in a table
+    pub fn scan_user(
+        &self,
+        namespace_id: &NamespaceId,
+        table_name: &TableName,
+        user_id: &UserId,
+    ) -> Result<impl Iterator<Item = (String, JsonValue)>> {
+        let cf_name = format!("user_table:{}:{}", namespace_id.as_str(), table_name.as_str());
+        let cf = self.db.cf_handle(&cf_name)
+            .ok_or_else(|| anyhow!("Column family not found: {}", cf_name))?;
+        
+        let prefix = format!("{}:", user_id.as_str());
+        
+        // Return iterator over keys starting with user prefix
+        let iter = self.db
+            .iterator_cf(cf, rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward))
+            .take_while(move |item| {
+                if let Ok((key, _)) = item {
+                    key.starts_with(prefix.as_bytes())
+                } else {
+                    false
+                }
+            })
+            .filter_map(|item| item.ok())
+            .map(|(key, value)| {
+                let row_id = String::from_utf8_lossy(&key).split(':').nth(1).unwrap_or("").to_string();
+                let row_data: JsonValue = serde_json::from_slice(&value).unwrap_or(JsonValue::Null);
+                (row_id, row_data)
+            });
+        
+        Ok(iter)
+    }
+}
+
+// SharedTableStore and StreamTableStore follow similar patterns
+// but with different key formats:
+// - Shared: key = {row_id} (no user prefix)
+// - Stream: key = {timestamp_ms}:{row_id}
+```
+
+**Benefits of Three-Layer Architecture**:
+
+1. **Clear Separation of Concerns**
+   - kalamdb-sql: System metadata (SQL interface)
+   - kalamdb-store: User data (K/V interface)
+   - kalamdb-core: Business logic (orchestration)
+
+2. **RocksDB Isolation**
+   - Only kalamdb-sql and kalamdb-store import `rocksdb` crate
+   - kalamdb-core has ZERO direct RocksDB coupling
+   - Easy to test business logic without mocking RocksDB
+
+3. **Simpler Dependencies**
+   - kalamdb-core doesn't need to understand column family naming
+   - kalamdb-core doesn't need to understand key encoding
+   - kalamdb-core just calls clean APIs: `kalam_sql.get_user()` or `store.put()`
+
+4. **Easier Testing**
+   - Mock `KalamSql` interface for system table tests
+   - Mock `UserTableStore` interface for data operation tests
+   - No need to mock RocksDB in business logic tests
+
+5. **Future Flexibility**
+   - Can replace RocksDB with another K/V store in kalamdb-store only
+   - Can add caching layer in kalamdb-store without touching kalamdb-core
+   - Can add query optimization in kalamdb-sql without touching kalamdb-core
+
+6. **Code Clarity**
+   - Clear intent: "This uses kalamdb-sql" = system metadata operation
+   - Clear intent: "This uses kalamdb-store" = user data operation
+   - No confusion about which layer does what
+
+**Migration Path** (Refactoring Tasks):
+
+1. **Phase 1: Create kalamdb-store crate**
+   - Extract K/V operations from user_table_insert/update/delete handlers
+   - Implement UserTableStore, SharedTableStore, StreamTableStore
+   - Add comprehensive tests
+
+2. **Phase 2: Add scan_all methods to kalamdb-sql**
+   - Add `scan_all_users()`, `scan_all_namespaces()`, etc.
+   - Update adapter.rs with iterator-based scanning
+   - Update lib.rs to expose scan methods
+
+3. **Phase 3: Refactor system table providers**
+   - Change constructor: `new(kalam_sql: Arc<KalamSql>)` 
+   - Replace all `CatalogStore` usage with `kalam_sql` methods
+   - Update tests to use `KalamSql` instead of `CatalogStore`
+
+4. **Phase 4: Refactor user table handlers**
+   - Change to use `UserTableStore` instead of direct RocksDB
+   - Update user_table_insert.rs, user_table_update.rs, user_table_delete.rs
+   - Remove RocksDB imports from these files
+
+5. **Phase 5: Deprecate CatalogStore**
+   - Mark `CatalogStore` as `#[deprecated]`
+   - Add migration guide in documentation
+   - Eventually remove in future version
+
+**Current Status** (as of 2025-10-17):
+
+- ✅ kalamdb-sql exists with basic CRUD for 7 system tables
+- ⚠️ kalamdb-store does NOT exist yet (needs creation)
+- ⚠️ kalamdb-core still uses CatalogStore (direct RocksDB)
+- ⚠️ user_table_insert/update/delete have direct RocksDB imports
+- ❌ scan_all methods missing from kalamdb-sql
+
+**Priority**: This refactoring should be completed **before** moving to production but can be deferred after Phase 9 (user table operations) is complete.
 
 pub fn create_namespace(namespace_id: &str, metadata: Option<String>) -> Result<()> {
     let sql = format!(
@@ -1116,6 +1540,8 @@ FLUSH POLICY ROWS 5000 INTERVAL '1 minute';
 - Q: Should namespaces and table schemas be stored in JSON files on disk or in RocksDB? → A: RocksDB only - Store namespaces, table schemas, and schema history in RocksDB column families (eliminate all file system JSON configuration)
 - Q: Should system tables have individual CRUD implementations or use a unified SQL engine? → A: Unified SQL engine - Create kalamdb-sql crate that provides SQL interface to all system tables, converts SQL to RocksDB column family operations, eliminates duplicate logic
 - Q: Should kalamdb-sql be designed with future Raft replication in mind? → A: Yes - kalamdb-sql should emit change events for system table modifications to enable future kalamdb-raft crate to replicate changes across cluster nodes (not implemented in this phase, but architecture prepared)
+- Q: Should RocksDB dependency be isolated to specific crates or spread across kalamdb-core? → A: Three-layer architecture - (1) kalamdb-sql: System tables with SQL interface and RocksDB, (2) kalamdb-store: User/Shared/Stream table K/V operations with RocksDB, (3) kalamdb-core: Business logic only, no direct RocksDB imports
+- Q: Should user table INSERT/UPDATE/DELETE operations use CatalogStore or a dedicated K/V store? → A: Create kalamdb-store crate for user table K/V operations (put/get/delete with UserId-scoped keys), eliminate CatalogStore direct usage in providers, all system table operations go through kalamdb-sql only
 
 ## User Scenarios & Testing *(mandatory)*
 

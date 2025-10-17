@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn test_inject_auto_increment_field() {
-        let (service, _db_path) = setup_test_service();
+        let (service, db_path) = setup_test_service();
 
         // Schema without ID field
         let schema = Arc::new(Schema::new(vec![
@@ -345,12 +345,12 @@ mod tests {
         assert_eq!(result.field(0).data_type(), &DataType::Int64);
 
         // Cleanup
-        let _ = std::fs::remove_dir_all(temp_dir);
+        let _ = std::fs::remove_dir_all(db_path);
     }
 
     #[test]
     fn test_inject_auto_increment_field_existing_id() {
-        let (service, _db_path) = setup_test_service();
+        let (service, db_path) = setup_test_service();
 
         // Schema with existing ID field
         let schema = Arc::new(Schema::new(vec![
@@ -363,12 +363,12 @@ mod tests {
         assert_eq!(result.field(0).name(), "id");
 
         // Cleanup
-        let _ = std::fs::remove_dir_all(temp_dir);
+        let _ = std::fs::remove_dir_all(db_path);
     }
 
     #[test]
     fn test_inject_system_columns() {
-        let (service, _db_path) = setup_test_service();
+        let (service, db_path) = setup_test_service();
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
@@ -381,12 +381,12 @@ mod tests {
         assert_eq!(result.field(3).name(), "_deleted");
 
         // Cleanup
-        let _ = std::fs::remove_dir_all(temp_dir);
+        let _ = std::fs::remove_dir_all(db_path);
     }
 
     #[test]
     fn test_inject_system_columns_stream_table() {
-        let (service, _db_path) = setup_test_service();
+        let (service, db_path) = setup_test_service();
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
@@ -400,7 +400,7 @@ mod tests {
         assert_eq!(result.field(1).name(), "event");
 
         // Cleanup
-        let _ = std::fs::remove_dir_all(temp_dir);
+        let _ = std::fs::remove_dir_all(db_path);
     }
 
     #[test]
@@ -422,7 +422,7 @@ mod tests {
 
     #[test]
     fn test_resolve_storage_location_invalid_path() {
-        let (service, _db_path) = setup_test_service();
+        let (service, db_path) = setup_test_service();
 
         // Path without ${user_id} should fail
         let location = Some(StorageLocation::Path("/data/messages".to_string()));
@@ -430,7 +430,7 @@ mod tests {
         assert!(result.is_err());
 
         // Cleanup
-        let _ = std::fs::remove_dir_all(temp_dir);
+        let _ = std::fs::remove_dir_all(db_path);
     }
 
     #[test]

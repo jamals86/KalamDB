@@ -30,6 +30,13 @@ pub enum FlushPolicy {
         /// Interval in seconds (must be > 0 and < 86400 = 24 hours)
         interval_seconds: u32,
     },
+    /// Flush when EITHER row limit OR time interval is reached
+    Combined {
+        /// Number of rows before flushing (must be > 0 and < 1,000,000)
+        row_limit: u32,
+        /// Interval in seconds (must be > 0 and < 86400 = 24 hours)
+        interval_seconds: u32,
+    },
 }
 
 impl FlushPolicy {
@@ -54,6 +61,26 @@ impl FlushPolicy {
                 }
                 Ok(())
             }
+            FlushPolicy::Combined {
+                row_limit,
+                interval_seconds,
+            } => {
+                // Validate row limit
+                if *row_limit == 0 {
+                    return Err("Row limit must be greater than 0".to_string());
+                }
+                if *row_limit >= 1_000_000 {
+                    return Err("Row limit must be less than 1,000,000".to_string());
+                }
+                // Validate interval
+                if *interval_seconds == 0 {
+                    return Err("Interval must be greater than 0".to_string());
+                }
+                if *interval_seconds >= 86400 {
+                    return Err("Interval must be less than 86400 seconds (24 hours)".to_string());
+                }
+                Ok(())
+            }
         }
     }
 
@@ -67,6 +94,16 @@ impl FlushPolicy {
     /// Create a time interval flush policy with validation
     pub fn time_interval(seconds: u32) -> Result<Self, String> {
         let policy = FlushPolicy::TimeInterval { interval_seconds: seconds };
+        policy.validate()?;
+        Ok(policy)
+    }
+
+    /// Create a combined flush policy with validation
+    pub fn combined(limit: u32, seconds: u32) -> Result<Self, String> {
+        let policy = FlushPolicy::Combined {
+            row_limit: limit,
+            interval_seconds: seconds,
+        };
         policy.validate()?;
         Ok(policy)
     }

@@ -1,0 +1,8 @@
+Things to add to the spec:
+1) A new table called user_files which is a table per user
+2) KFlows - Add a workflow triggers which also listen to streams, actions being done and write to the database
+3) KFlows will be used for system maintainance like: replication/backup and also periodict cleanup of deleted rows
+4) Sharding the user's own table's into multiple column families, for example: userA will be redirected to Shard A -> with users.shard-a.messages
+If we have like 5 user tables and 10 shards in total we will have 50 column families
+5) Raft Cluster - System tables should be replicated to all nodes
+6) Raft Cluster - User tables each shard should have a group in the cluster and replicated accordingly

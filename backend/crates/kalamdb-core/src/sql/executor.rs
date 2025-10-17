@@ -163,6 +163,8 @@ impl SqlExecutor {
 mod tests {
     use super::*;
     use datafusion::prelude::SessionContext;
+    use kalamdb_sql::KalamSql;
+    use rocksdb::{Options, DB};
     use std::env;
 
     fn setup_test_executor() -> (SqlExecutor, String, String) {
@@ -175,10 +177,22 @@ mod tests {
         let _ = std::fs::remove_file(&config_file);
         let _ = std::fs::remove_dir_all(&config_path);
 
-        let namespace_service = Arc::new(NamespaceService::new(
-            config_file.to_str().unwrap(),
-            config_path.to_str().unwrap(),
-        ));
+        // Create RocksDB instance
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+
+        let db = Arc::new(
+            DB::open_cf(
+                &opts,
+                &config_path,
+                vec!["system_namespaces", "system_tables", "system_table_schemas"],
+            )
+            .unwrap(),
+        );
+
+        let kalam_sql = Arc::new(KalamSql::new(db).unwrap());
+        let namespace_service = Arc::new(NamespaceService::new(kalam_sql));
 
         let session_context = Arc::new(SessionContext::new());
 
