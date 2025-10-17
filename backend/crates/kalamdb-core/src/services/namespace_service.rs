@@ -105,7 +105,7 @@ impl NamespaceService {
                     created_at: chrono::DateTime::from_timestamp(ns.created_at, 0)
                         .ok_or_else(|| KalamDbError::IoError("Invalid timestamp".to_string()))?,
                     options,
-                    table_count: ns.table_count as usize,
+                    table_count: ns.table_count as u32,
                 }))
             }
             None => Ok(None),

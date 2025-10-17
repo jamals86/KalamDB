@@ -47,19 +47,15 @@ async fn main() -> Result<()> {
     info!("RocksDB initialized at {}", db_path.display());
 
     // Initialize CatalogStore
-    let catalog_store = Arc::new(CatalogStore::new(db));
+    let catalog_store = Arc::new(CatalogStore::new(db.clone()));
     info!("CatalogStore initialized");
 
-    // Initialize NamespaceService
-    let config_path = db_path.join("conf");
-    std::fs::create_dir_all(&config_path)?;
-    let namespaces_json = config_path.join("namespaces.json").to_str().unwrap().to_string();
-    let base_config = config_path.to_str().unwrap().to_string();
-    
-    let namespace_service = Arc::new(NamespaceService::new(
-        namespaces_json,
-        base_config,
-    ));
+    // Initialize KalamSQL for system table operations
+    let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(db)?);
+    info!("KalamSQL initialized");
+
+    // Initialize NamespaceService (uses KalamSQL for RocksDB persistence)
+    let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
     info!("NamespaceService initialized");
 
     // Initialize DataFusion session factory

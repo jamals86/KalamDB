@@ -1,6 +1,10 @@
 //! Catalog store using RocksDB
 //!
 //! This module provides storage for system table data using dedicated column families.
+//!
+//! **NOTE**: This is a transitional layer. The updated column family naming (`system_{name}`)
+//! matches the Phase 1.5 architecture changes. Future refactoring (T028a) will replace direct
+//! RocksDB operations with kalamdb-sql SQL interface for consistency.
 
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
@@ -9,6 +13,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// System table catalog store backed by RocksDB
+///
+/// **Architecture Update**: Uses new column family naming `system_{name}` (not `system_table:{name}`)
 pub struct CatalogStore {
     db: Arc<DB>,
 }
@@ -20,8 +26,10 @@ impl CatalogStore {
     }
 
     /// Get column family handle for a system table
+    ///
+    /// **Updated**: Uses new CF naming convention `system_{name}` per Phase 1.5 changes
     fn get_cf_handle(&self, table_name: &str) -> Result<&ColumnFamily, KalamDbError> {
-        let cf_name = format!("system_table:{}", table_name);
+        let cf_name = format!("system_{}", table_name);
         self.db
             .cf_handle(&cf_name)
             .ok_or_else(|| KalamDbError::CatalogError(format!("Column family not found: {}", cf_name)))

@@ -10,6 +10,7 @@ repository.workspace = true
 # Core library
 kalamdb-core = { path = "../kalamdb-core" }
 kalamdb-api = { path = "../kalamdb-api" }
+kalamdb-sql = { path = "../kalamdb-sql" }
 
 # Async runtime
 tokio.workspace = true

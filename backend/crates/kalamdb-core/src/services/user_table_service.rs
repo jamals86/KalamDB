@@ -278,10 +278,10 @@ impl UserTableService {
     }
 
     /// Check if a table exists
-    fn table_exists(
+    pub fn table_exists(
         &self,
-        namespace: &NamespaceId,
-        table_name: &TableName,
+        _namespace: &NamespaceId,
+        _table_name: &TableName,
     ) -> Result<bool, KalamDbError> {
         // TODO: Query system_table_schemas to check if schema exists
         // For now, always return false - full implementation requires kalamdb-sql query
@@ -413,23 +413,16 @@ mod tests {
 
     #[test]
     fn test_resolve_storage_location_path() {
-        let temp_dir = env::temp_dir().join("kalamdb_user_table_service_test_5");
-        let db = Arc::new(DB::open_default(&temp_dir).unwrap());
-        let service = UserTableService::new(temp_dir.clone(), db);
+        let (service, _db_path) = setup_test_service();
 
         let location = Some(StorageLocation::Path("/data/${user_id}/messages".to_string()));
         let result = service.resolve_storage_location(&location, None).unwrap();
         assert_eq!(result, "/data/${user_id}/messages");
-
-        // Cleanup
-        let _ = std::fs::remove_dir_all(temp_dir);
     }
 
     #[test]
     fn test_resolve_storage_location_invalid_path() {
-        let temp_dir = env::temp_dir().join("kalamdb_user_table_service_test_6");
-        let db = Arc::new(DB::open_default(&temp_dir).unwrap());
-        let service = UserTableService::new(temp_dir.clone(), db);
+        let (service, _db_path) = setup_test_service();
 
         // Path without ${user_id} should fail
         let location = Some(StorageLocation::Path("/data/messages".to_string()));
@@ -442,14 +435,9 @@ mod tests {
 
     #[test]
     fn test_resolve_storage_location_default() {
-        let temp_dir = env::temp_dir().join("kalamdb_user_table_service_test_7");
-        let db = Arc::new(DB::open_default(&temp_dir).unwrap());
-        let service = UserTableService::new(temp_dir.clone(), db);
+        let (service, _db_path) = setup_test_service();
 
         let result = service.resolve_storage_location(&None, None).unwrap();
         assert_eq!(result, "/data/${user_id}/tables");
-
-        // Cleanup
-        let _ = std::fs::remove_dir_all(temp_dir);
     }
 }
