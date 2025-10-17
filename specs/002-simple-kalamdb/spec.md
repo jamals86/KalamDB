@@ -217,6 +217,9 @@ Client sends subscription array with user-chosen query_ids:
 ]
     ↓
 For each subscription:
+  - **User Table Scope**: If table is a user table, implicitly add `AND user_id = CURRENT_USER()` filter
+    (users can ONLY subscribe to their own partition for security and performance)
+  - **Shared/Stream Tables**: No implicit filter (users see all data subject to permissions)
   - Generate live_id = connection_id + "-" + query_id (e.g., "conn123-messages")
   - Register in system.live_queries table (RocksDB) with live_id as key
   - Store in memory: live_id → connection_id
@@ -386,8 +389,8 @@ RocksDB is used exclusively for **buffering table data** before flush to Parquet
    Column Family Name: system_table:{table_name}
    
    Example column families:
-   - system_table:users (user_id → user data with username, email)
-   - system_table:live_queries (subscription_id → subscription metadata)
+   - system_table:users (user_id → user data with username, metadata)
+   - system_table:live_queries (live_id → subscription metadata)
    - system_table:storage_locations (location_name → location config)
    - system_table:jobs (job_id → job status, metrics, result, trace)
    
@@ -395,6 +398,28 @@ RocksDB is used exclusively for **buffering table data** before flush to Parquet
    - No flush to Parquet (always in RocksDB for fast access)
    - No TTL or eviction (except jobs table with retention policy)
    - Direct read/write via SQL queries through DataFusion
+   ```
+
+5. **User Table Row Counters** - Single column family for all user-table row counters:
+   ```
+   Column Family Name: user_table_counters
+   
+   Key Format: {user_id}-{table_name}
+   Value: 64-bit integer (current buffered row count for this user-table partition)
+   
+   Example:
+   CF: user_table_counters
+   Keys:
+     - user123-messages → 8500  (user123 has 8,500 buffered messages)
+     - user456-messages → 12000 (user456 has 12,000 buffered messages, flush triggered!)
+     - user123-notifications → 450 (user123 has 450 buffered notifications)
+   
+   Behavior:
+   - On INSERT: Increment counter for {user_id}-{table_name}
+   - On DELETE (soft): No change to counter (row still buffered)
+   - On Flush Policy Check: Compare counter against table's FLUSH POLICY ROWS threshold
+   - On Flush Complete: Reset counter to 0 for that {user_id}-{table_name}
+   - Enables per-user-per-table independent flush tracking
    ```
 
 **Key Design Decisions**:
@@ -431,114 +456,441 @@ Optimized for low-latency admin queries
 - Require fast access for catalog queries and monitoring
 - No need for long-term archival in Parquet format
 
-### Configuration Persistence Architecture
+### System Tables Schema (Pre-defined by System)
 
-**All server configuration is persisted in JSON files within the `configs/` folder** to ensure the server can resume its state after restart. This includes namespaces, storage locations, table schemas, and all user-specified options.
+The following system tables are **automatically created on server startup** and cannot be altered or dropped by users. Users can INSERT/UPDATE/DELETE data in `system.users` and `system.storage_locations`, while `system.live_queries` and `system.jobs` are read-only (system-managed).
 
-**Directory Structure**:
+#### system.users
+
+User management table for basic user tracking and identification.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| user_id | STRING | PRIMARY KEY | Unique user identifier (application-provided) |
+| username | STRING | NOT NULL | User's login name |
+| metadata | STRING | - | JSON-encoded custom user metadata (flexible field for application use) |
+| created_at | TIMESTAMP | NOT NULL | User creation timestamp |
+| updated_at | TIMESTAMP | NOT NULL | Last modification timestamp |
+
+**Access**: Users can INSERT, UPDATE, DELETE rows  
+**Storage**: RocksDB column family `system_users`  
+**Key Format**: `{user_id}`
+
+#### system.live_queries
+
+Active live query subscriptions registry with connection tracking, change counters, and node-aware routing.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| live_id | STRING | PRIMARY KEY | Composite format: `{connection_id}-{query_id}` |
+| connection_id | STRING | NOT NULL | Unique WebSocket connection identifier (UUID or snowflake) |
+| table_name | STRING | NOT NULL | Target table name being subscribed to |
+| query_id | STRING | NOT NULL | Client-provided query identifier for notification routing |
+| user_id | STRING | NOT NULL | User who created the subscription |
+| query | STRING | NOT NULL | Full SQL query text (SELECT with optional WHERE clause) |
+| options | STRING | - | JSON-encoded LiveQueryOptions (e.g., `{"last_rows": 50}`) |
+| created_at | TIMESTAMP | NOT NULL | Subscription start time |
+| updated_at | TIMESTAMP | NOT NULL | Timestamp of last change notification delivered |
+| changes | BIGINT | NOT NULL DEFAULT 0 | Total number of change notifications delivered |
+| node | STRING | NOT NULL | Node identifier owning the WebSocket connection (for cluster routing) |
+
+**Access**: Read-only (system-managed, auto-populated on subscription, auto-deleted on disconnect)  
+**Storage**: RocksDB column family `system_live_queries`  
+**Key Format**: `{live_id}` (e.g., `conn_abc123-messages`)
+
+#### system.storage_locations
+
+Predefined storage location registry for centralized location management.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| location_name | STRING | PRIMARY KEY | Unique location identifier (e.g., "s3-prod", "local-dev") |
+| location_type | STRING | NOT NULL | Storage type: "s3", "filesystem", "azure", "gcs" |
+| path | STRING | NOT NULL | Base path template (supports `${user_id}` placeholder) |
+| credentials_ref | STRING | - | Reference to credential configuration (nullable for filesystem) |
+| usage_count | BIGINT | NOT NULL DEFAULT 0 | Number of tables referencing this location |
+| created_at | TIMESTAMP | NOT NULL | Location registration timestamp |
+| updated_at | TIMESTAMP | NOT NULL | Last modification timestamp |
+
+**Access**: Users can INSERT, UPDATE, DELETE rows (with validation: prevent delete if usage_count > 0)  
+**Storage**: RocksDB column family `system_storage_locations`  
+**Key Format**: `{location_name}`
+
+#### system.jobs
+
+Job monitoring and history table for all system operations (flush, cleanup, scheduled tasks).
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| job_id | STRING | PRIMARY KEY | Unique job identifier (UUID or snowflake) |
+| job_type | STRING | NOT NULL | Job type: "flush", "cleanup", "scheduled", "compaction" |
+| status | STRING | NOT NULL | Job status: "running", "completed", "failed" |
+| parameters | STRING | - | JSON-encoded job parameters (e.g., `{"table": "messages", "user_id": "user123"}`) |
+| result | STRING | - | JSON-encoded job result (e.g., `{"rows_flushed": 10000, "file_path": "..."}`) |
+| trace | STRING | - | JSON-encoded execution trace/context (e.g., stack trace for failures) |
+| error_message | STRING | - | Error description if status='failed' |
+| memory_used | BIGINT | - | Peak memory usage in bytes (nullable if not measured) |
+| cpu_used | BIGINT | - | CPU time in milliseconds (nullable if not measured) |
+| node | STRING | NOT NULL | Node identifier that executed the job |
+| created_at | TIMESTAMP | NOT NULL | Job start time |
+| updated_at | TIMESTAMP | NOT NULL | Job completion/last update time |
+
+**Access**: Read-only (system-managed, auto-populated on job start/completion)  
+**Storage**: RocksDB column family `system_jobs`  
+**Key Format**: `{job_id}`  
+**Retention**: Configurable retention policy (e.g., auto-delete jobs older than 30 days)
+
+#### system.namespaces
+
+Namespace registry storing all namespace definitions and metadata.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| namespace_id | STRING | PRIMARY KEY | Unique namespace identifier (e.g., "production", "dev") |
+| metadata | STRING | - | JSON-encoded namespace metadata (flexible field for options and settings) |
+| created_at | TIMESTAMP | NOT NULL | Namespace creation timestamp |
+| updated_at | TIMESTAMP | NOT NULL | Last modification timestamp |
+
+**Access**: Users can CREATE, ALTER, DROP namespaces (admin operation)  
+**Storage**: RocksDB column family `system_namespaces`  
+**Key Format**: `{namespace_id}`
+
+#### system.tables
+
+Table registry storing all table definitions across all namespaces.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| table_id | STRING | PRIMARY KEY | Composite: `{namespace_id}:{table_name}` |
+| namespace_id | STRING | NOT NULL | Parent namespace identifier |
+| table_name | STRING | NOT NULL | Table name within namespace |
+| table_type | STRING | NOT NULL | Table type: "USER", "SHARED", "STREAM" |
+| current_schema_version | INT | NOT NULL | Current active schema version number |
+| storage_location | STRING | - | Storage location (path or reference to system.storage_locations) |
+| flush_policy | STRING | - | JSON-encoded flush policy (e.g., `{"rows": 10000, "interval": "5m"}`) |
+| deleted_retention | STRING | - | Retention policy for soft-deleted rows (e.g., "7d", "30d", "off") |
+| stream_config | STRING | - | JSON-encoded stream table config (retention, ephemeral, max_buffer) |
+| created_at | TIMESTAMP | NOT NULL | Table creation timestamp |
+| updated_at | TIMESTAMP | NOT NULL | Last modification timestamp |
+
+**Access**: Users can CREATE, ALTER, DROP tables  
+**Storage**: RocksDB column family `system_tables`  
+**Key Format**: `{namespace_id}:{table_name}`  
+**Index**: Secondary index on `namespace_id` for listing tables by namespace
+
+#### system.table_schemas
+
+Table schema version history storing Arrow schemas as JSON for all tables.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| schema_id | STRING | PRIMARY KEY | Composite: `{namespace_id}:{table_name}:{version}` |
+| namespace_id | STRING | NOT NULL | Parent namespace identifier |
+| table_name | STRING | NOT NULL | Table name within namespace |
+| version | INT | NOT NULL | Schema version number (increments on ALTER TABLE) |
+| arrow_schema | STRING | NOT NULL | JSON-encoded Apache Arrow schema (fields, metadata, system columns) |
+| created_at | TIMESTAMP | NOT NULL | Schema version creation timestamp |
+
+**Access**: Read-only (system-managed, written on CREATE TABLE and ALTER TABLE)  
+**Storage**: RocksDB column family `system_table_schemas`  
+**Key Format**: `{namespace_id}:{table_name}:{version}`  
+**Schema History**: All versions retained (e.g., v1, v2, v3) for audit trail and rollback capability  
+**Current Schema Lookup**: Query `system.tables` for `current_schema_version`, then fetch from `system.table_schemas`
+
+**System Table Creation**: All system tables are automatically created during server initialization. The system validates their existence and structure on every startup.
+
+### Metadata Architecture (RocksDB-Only, No File System JSON)
+
+**All server metadata (namespaces, tables, schemas, schema history) is persisted exclusively in RocksDB** to ensure the server can resume its state after restart. This eliminates file system JSON configuration files and simplifies the architecture.
+
+### Unified SQL Engine for System Tables (kalamdb-sql Crate)
+
+**Architecture Decision**: Instead of implementing separate CRUD logic for each system table, KalamDB uses a **unified SQL engine** that provides a single interface for all system table operations.
+
+**Crate Structure**:
 ```
-/configs/
-  namespaces.json                    # All namespace definitions with metadata and options
-  storage_locations.json             # All predefined storage locations
-  {namespace}/
-    manifest.json                    # Registry of all tables and current schema versions
-    schemas/
-      messages/                      # One folder per table
-        schema_v1.json               # Arrow schema with metadata and user options
-        schema_v2.json               # Evolved schema (after ALTER TABLE)
-        current.json → schema_v2.json  # Symlink/pointer to active version
-      user_events/
-        schema_v1.json
-        current.json → schema_v1.json
-      ai_signals/
-        schema_v1.json
-        current.json → schema_v1.json
+backend/crates/
+  kalamdb-sql/          # NEW: Unified SQL engine for system tables
+    src/
+      lib.rs            # Public API: execute_system_query(sql, rocksdb)
+      parser.rs         # SQL parsing using DataFusion's sqlparser
+      executor.rs       # SQL execution engine (SELECT/INSERT/UPDATE/DELETE)
+      models/           # Rust models for each system table (for serialization)
+        namespace.rs    # NamespaceRow struct
+        table.rs        # TableRow struct
+        schema.rs       # TableSchemaRow struct
+        user.rs         # UserRow struct
+        storage.rs      # StorageLocationRow struct
+        live_query.rs   # LiveQueryRow struct
+        job.rs          # JobRow struct
+      rocksdb_adapter.rs # Converts SQL operations to RocksDB column family ops
+      
+  kalamdb-core/         # Uses kalamdb-sql for system table access
+  kalamdb-api/          # Uses kalamdb-sql for system table access
+  kalamdb-server/       # Uses kalamdb-sql for system table access
 ```
 
-**Namespaces Configuration** (`configs/namespaces.json`):
-```json
-{
-  "production": {
-    "name": "production",
-    "created_at": "2025-01-15T10:00:00Z",
-    "updated_at": "2025-01-15T10:00:00Z",
-    "table_count": 3,
-    "options": {
-      "retention_days": 90,
-      "auto_flush": true,
-      "default_flush_policy": {
-        "type": "rows",
-        "limit": 10000
-      }
-    }
-  },
-  "analytics": {
-    "name": "analytics",
-    "created_at": "2025-02-01T08:00:00Z",
-    "updated_at": "2025-02-01T08:00:00Z",
-    "table_count": 1,
-    "options": {
-      "retention_days": 365,
-      "auto_flush": false
-    }
-  }
+**How It Works**:
+
+1. **SQL Interface** - All system table operations use SQL syntax:
+   ```rust
+   // Instead of custom methods for each table:
+   // namespace_service.create(name, options)
+   // user_service.insert(user_id, username, metadata)
+   
+   // Unified SQL interface:
+   kalamdb_sql::execute_system_query(
+       "INSERT INTO system.namespaces (namespace_id, metadata) VALUES ('prod', '{}')",
+       &rocksdb_handle
+   )?;
+   
+   kalamdb_sql::execute_system_query(
+       "SELECT * FROM system.users WHERE user_id = 'user123'",
+       &rocksdb_handle
+   )?;
+   ```
+
+2. **SQL Parsing** - Uses DataFusion's `sqlparser-rs`:
+   ```rust
+   // Parse SQL statement
+   let stmt = sqlparser::parse("SELECT * FROM system.users WHERE user_id = ?");
+   
+   // Extract table name: "system.users"
+   // Extract operation: SELECT
+   // Extract filters: WHERE user_id = ?
+   ```
+
+3. **RocksDB Mapping** - Converts SQL to RocksDB operations:
+   ```rust
+   // SQL: INSERT INTO system.namespaces (namespace_id, metadata, created_at) VALUES (?, ?, ?)
+   // → RocksDB: cf="system_namespaces", key="namespace_id", value=NamespaceRow{...}.to_json()
+   
+   // SQL: SELECT * FROM system.users WHERE user_id = 'user123'
+   // → RocksDB: cf="system_users", key="user123", deserialize to UserRow
+   
+   // SQL: UPDATE system.tables SET current_schema_version = 2 WHERE table_id = 'prod:messages'
+   // → RocksDB: cf="system_tables", key="prod:messages", update field, serialize back
+   
+   // SQL: DELETE FROM system.live_queries WHERE live_id = 'conn123-messages'
+   // → RocksDB: cf="system_live_queries", key="conn123-messages", delete
+   ```
+
+4. **Rust Models** - Each system table has a typed struct:
+   ```rust
+   // models/namespace.rs
+   #[derive(Serialize, Deserialize, Debug)]
+   pub struct NamespaceRow {
+       pub namespace_id: String,
+       pub metadata: Option<String>,  // JSON string
+       pub created_at: DateTime<Utc>,
+       pub updated_at: DateTime<Utc>,
+   }
+   
+   // models/table.rs
+   #[derive(Serialize, Deserialize, Debug)]
+   pub struct TableRow {
+       pub table_id: String,  // "{namespace}:{table_name}"
+       pub namespace_id: String,
+       pub table_name: String,
+       pub table_type: TableType,  // enum: USER, SHARED, STREAM
+       pub current_schema_version: i32,
+       pub storage_location: Option<String>,
+       pub flush_policy: Option<String>,  // JSON string
+       pub deleted_retention: Option<String>,
+       pub stream_config: Option<String>,  // JSON string
+       pub created_at: DateTime<Utc>,
+       pub updated_at: DateTime<Utc>,
+   }
+   ```
+
+**Benefits**:
+
+✅ **No Code Duplication** - Single SQL engine for all system tables  
+✅ **Consistent Interface** - Same SQL syntax for all CRUD operations  
+✅ **Type Safety** - Rust models ensure correct serialization/deserialization  
+✅ **Maintainability** - Add new system table = add model + column family mapping  
+✅ **Testability** - Test SQL engine once, not per-table CRUD logic  
+✅ **Familiar Syntax** - Developers use SQL instead of learning custom APIs  
+✅ **DataFusion Integration** - Reuses existing SQL parsing infrastructure  
+✅ **Future-Proof for Raft** - Designed to support replication via change events (see below)
+
+**Future: Raft Consensus Integration (kalamdb-raft Crate)**
+
+**Important Design Consideration**: While Raft-based replication is **not implemented in this phase**, kalamdb-sql is architecturally designed to support it in the future:
+
+**Planned Architecture** (Future Enhancement):
+```
+kalamdb-sql (current phase)
+  ↓
+  Executes SQL on local RocksDB
+  ↓
+  [Future: Emit ChangeEvent for system table modifications]
+  ↓
+kalamdb-raft (future crate)
+  ↓
+  Listens to ChangeEvents from kalamdb-sql
+  ↓
+  Uses Raft consensus to replicate changes to cluster nodes
+  ↓
+  Other nodes apply same SQL via kalamdb-sql
+  ↓
+  All nodes have consistent system table state
+```
+
+**Future Change Event Model** (Preparatory Design):
+```rust
+// Future enhancement - not implemented in this phase
+pub enum SystemTableChangeEvent {
+    Insert { table: String, key: String, value: String, sql: String },
+    Update { table: String, key: String, old_value: String, new_value: String, sql: String },
+    Delete { table: String, key: String, sql: String },
+}
+
+// kalamdb-sql will be designed to optionally emit these events
+// kalamdb-raft will subscribe to events and replicate via Raft protocol
+```
+
+**Why This Matters Now**:
+1. **kalamdb-sql interface** should be stateless and idempotent (same SQL on any node produces same result)
+2. **SQL statements** should be the replication unit (not raw RocksDB operations)
+3. **Change events** can be added later without breaking existing API
+4. **System tables** already designed as single source of truth for cluster metadata
+
+**Example Future Replication Flow**:
+```
+Node 1: User executes "CREATE NAMESPACE production"
+  ↓
+Node 1: kalamdb-sql executes locally + emits ChangeEvent
+  ↓
+Node 1: kalamdb-raft receives event → proposes to Raft cluster
+  ↓
+Raft Consensus: Majority nodes agree → commit
+  ↓
+Node 2, 3: kalamdb-raft receives committed event → executes same SQL via kalamdb-sql
+  ↓
+All nodes: system.namespaces table now contains "production"
+```
+
+**Current Phase**: Focus on single-node kalamdb-sql implementation with clean SQL interface. Raft replication will be added in future phase as separate kalamdb-raft crate that builds on top of kalamdb-sql.
+
+**Example Usage in Core/API/Server**:
+
+```rust
+// kalamdb-core/src/catalog/namespace_service.rs
+use kalamdb_sql::execute_system_query;
+
+pub fn create_namespace(namespace_id: &str, metadata: Option<String>) -> Result<()> {
+    let sql = format!(
+        "INSERT INTO system.namespaces (namespace_id, metadata, created_at, updated_at) 
+         VALUES ('{}', {}, NOW(), NOW())",
+        namespace_id,
+        metadata.unwrap_or("null".to_string())
+    );
+    execute_system_query(&sql, &self.rocksdb)?;
+    Ok(())
+}
+
+pub fn list_namespaces() -> Result<Vec<NamespaceRow>> {
+    let result = execute_system_query(
+        "SELECT * FROM system.namespaces ORDER BY created_at DESC",
+        &self.rocksdb
+    )?;
+    Ok(result.into_iter().map(|row| row.into()).collect())
 }
 ```
 
-**Storage Locations Configuration** (`configs/storage_locations.json`):
-```json
-{
-  "s3-prod": {
-    "location_name": "s3-prod",
-    "location_type": "s3",
-    "path": "s3://prod-bucket/data/${user_id}/",
-    "credentials_ref": "aws-prod-creds",
-    "created_at": "2025-01-10T09:00:00Z",
-    "usage_count": 5
-  },
-  "local-dev": {
-    "location_name": "local-dev",
-    "location_type": "filesystem",
-    "path": "/var/data/kalamdb/${user_id}/",
-    "credentials_ref": null,
-    "created_at": "2025-01-10T09:05:00Z",
-    "usage_count": 2
-  }
+**RocksDB Column Families for Metadata**:
+```
+system_namespaces           # Namespace definitions
+system_tables               # Table registry (all tables across all namespaces)
+system_table_schemas        # Schema version history (Arrow schemas as JSON)
+system_users                # User management
+system_storage_locations    # Storage location registry
+system_live_queries         # Active subscriptions
+system_jobs                 # Job history and monitoring
+user_table_counters         # Per-user-per-table row counters for flush policies
+```
+
+**Column Family to System Table Mapping**:
+- `system.namespaces` → `system_namespaces` column family
+- `system.tables` → `system_tables` column family
+- `system.table_schemas` → `system_table_schemas` column family
+- `system.users` → `system_users` column family
+- `system.storage_locations` → `system_storage_locations` column family
+- `system.live_queries` → `system_live_queries` column family
+- `system.jobs` → `system_jobs` column family
+
+**No File System Configuration** - All metadata operations:
+- CREATE/ALTER/DROP NAMESPACE → `INSERT/UPDATE/DELETE INTO system.namespaces` → RocksDB write
+- CREATE/ALTER/DROP TABLE → `INSERT/UPDATE/DELETE INTO system.tables` → RocksDB write
+- Schema versioning → `INSERT INTO system.table_schemas` → RocksDB write (all versions retained)
+- Server startup → `SELECT * FROM system.namespaces/tables/table_schemas` → load into in-memory catalog
+
+**Example: Namespace Record in RocksDB** (`system_namespaces` column family):
+```
+Key: "production"
+Value (JSON): {
+  "namespace_id": "production",
+  "metadata": "{\"retention_days\": 90, \"auto_flush\": true}",
+  "created_at": "2025-01-15T10:00:00Z",
+  "updated_at": "2025-01-15T10:00:00Z"
+}
+```
+
+**Example: Table Record in RocksDB** (`system_tables` column family):
+```
+Key: "production:messages"
+Value (JSON): {
+  "table_id": "production:messages",
+  "namespace_id": "production",
+  "table_name": "messages",
+  "table_type": "USER",
+  "current_schema_version": 2,
+  "storage_location": "s3://bucket/users/${user_id}/messages/",
+  "flush_policy": "{\"rows\": 10000}",
+  "deleted_retention": "7d",
+  "stream_config": null,
+  "created_at": "2025-01-15T10:30:00Z",
+  "updated_at": "2025-03-20T14:45:00Z"
+}
+```
+
+**Example: Schema Version Record in RocksDB** (`system_table_schemas` column family):
+```
+Key: "production:messages:1"
+Value (JSON): {
+  "schema_id": "production:messages:1",
+  "namespace_id": "production",
+  "table_name": "messages",
+  "version": 1,
+  "arrow_schema": "{\"fields\": [{\"name\": \"id\", \"type\": {\"name\": \"int\", \"bitWidth\": 64}, \"nullable\": false}, ...]}",
+  "created_at": "2025-01-15T10:30:00Z"
+}
+
+Key: "production:messages:2"
+Value (JSON): {
+  "schema_id": "production:messages:2",
+  "namespace_id": "production",
+  "table_name": "messages",
+  "version": 2,
+  "arrow_schema": "{\"fields\": [{\"name\": \"id\", \"type\": {\"name\": \"int\", \"bitWidth\": 64}, \"nullable\": false}, {\"name\": \"priority\", \"type\": {\"name\": \"utf8\"}, \"nullable\": true}, ...]}",
+  "created_at": "2025-03-20T14:45:00Z"
 }
 ```
 
 **Schema Storage and Versioning**:
 
-Each table schema is stored in a **versioned, Arrow-compatible format** to support schema evolution and ALTER TABLE operations
+Each table schema is stored as a **versioned Arrow schema (JSON format)** in the `system_table_schemas` column family:
 
-**Manifest File Format** (`manifest.json`):
-```json
-{
-  "messages": {
-    "current_version": 2,
-    "path": "schemas/messages/schema_v2.json",
-    "table_type": "user",
-    "created_at": "2025-01-15T10:30:00Z",
-    "updated_at": "2025-03-20T14:45:00Z"
-  },
-  "user_events": {
-    "current_version": 1,
-    "path": "schemas/user_events/schema_v1.json",
-    "table_type": "shared",
-    "created_at": "2025-02-01T08:00:00Z",
-    "updated_at": "2025-02-01T08:00:00Z"
-  },
-  "ai_signals": {
-    "current_version": 1,
-    "path": "schemas/ai_signals/schema_v1.json",
-    "table_type": "stream",
-    "created_at": "2025-03-10T12:15:00Z",
-    "updated_at": "2025-03-10T12:15:00Z"
-  }
-}
-```
+- **Versioning**: Each ALTER TABLE creates a new schema version (v1, v2, v3, ...)
+- **History**: All versions retained in RocksDB for audit trail and potential rollback
+- **Current Version**: Tracked in `system.tables.current_schema_version` field
+- **Schema Lookup**:
+  1. Query `system.tables` for table → get `current_schema_version`
+  2. Query `system.table_schemas` with key `{namespace}:{table}:{version}` → get Arrow schema JSON
+  3. Deserialize Arrow schema and load into DataFusion TableProvider
 
-**Arrow Schema File Format** (`schema_v1.json`):
+**Arrow Schema Format Example** (stored as JSON string in `arrow_schema` column):
 ```json
 {
   "version": 1,
@@ -623,36 +975,36 @@ Each table schema is stored in a **versioned, Arrow-compatible format** to suppo
 }
 ```
 
-**Configuration Persistence Requirements**:
+**Metadata Persistence Requirements** (RocksDB-Only):
 
-1. **Server Startup**: Load all configuration from JSON files into in-memory structures
-   - Load `configs/namespaces.json` → populate in-memory namespace catalog
-   - Load `configs/storage_locations.json` → populate in-memory storage location registry
-   - For each namespace, load `configs/{namespace}/manifest.json` → register all tables in memory
-   - For each table, load current schema from `configs/{namespace}/schemas/{table}/current.json` → cache in memory
+1. **Server Startup**: Load all metadata from RocksDB into in-memory structures
+   - Load `system_namespaces` column family → populate in-memory namespace catalog
+   - Load `system_tables` column family → register all tables in memory
+   - Load `system_table_schemas` column family → cache current schema versions in memory
+   - Load `system_storage_locations` column family → populate storage location registry
+   - Load `system_users` column family → populate user catalog
    - **Memory-based catalog**: All metadata (namespaces, tables, schemas) kept in memory for fast access
-   - **RocksDB usage**: Only for buffered table data (user/shared/stream table rows), NOT for configuration
+   - **RocksDB usage**: For ALL metadata AND buffered table data (user/shared/stream table rows)
 
-2. **Runtime Updates**: Any configuration change MUST immediately persist to JSON files
-   - CREATE NAMESPACE → update `configs/namespaces.json`, update in-memory catalog
-   - ALTER NAMESPACE → update `configs/namespaces.json`, update in-memory catalog
-   - DROP NAMESPACE → remove from `configs/namespaces.json`, delete `configs/{namespace}/` directory, remove from memory
-   - INSERT/UPDATE/DELETE on system.storage_locations → update `configs/storage_locations.json`, update in-memory registry
-   - CREATE TABLE → update `configs/{namespace}/manifest.json`, create schema files, register in memory
-   - ALTER TABLE → create new schema version file, update `manifest.json`, invalidate schema cache, reload in memory
-   - DROP TABLE → update `configs/{namespace}/manifest.json`, delete schema directory, remove from memory
+2. **Runtime Updates**: All metadata changes persist to RocksDB
+   - CREATE NAMESPACE → write to `system_namespaces`, update in-memory catalog
+   - ALTER NAMESPACE → update row in `system_namespaces`, update in-memory catalog
+   - DROP NAMESPACE → delete from `system_namespaces` AND delete all related rows in `system_tables` and `system_table_schemas`, remove from memory
+   - CREATE TABLE → write to `system_tables` AND write initial schema to `system_table_schemas` (version=1), register in memory
+   - ALTER TABLE → write new schema version to `system_table_schemas`, update `current_schema_version` in `system_tables`, invalidate schema cache, reload in memory
+   - DROP TABLE → delete from `system_tables` (schema history in `system_table_schemas` can be retained or deleted based on retention policy), remove from memory
 
-3. **Atomic Updates**: All JSON file updates must be atomic (write to temp file, then rename)
-   - Prevents corruption on crash or power failure
+3. **Atomic Updates**: RocksDB provides atomic writes via WriteBatch
+   - Multi-row updates (e.g., DROP NAMESPACE affecting multiple tables) use WriteBatch for atomicity
    - Ensures server can always resume from last consistent state
 
 4. **Storage Architecture**:
-   - **In-Memory Catalog**: Namespaces, table metadata, schemas, storage locations (loaded from JSON on startup)
-   - **RocksDB**: Buffered table data only (user/shared/stream table rows before flush to Parquet)
-   - **JSON Files**: Persistent configuration for server restart
-   - **Parquet Files**: Cold storage for user/shared table data after flush
-   - On startup: JSON files → load into memory → server ready
-   - On shutdown: In-memory catalog already persisted in JSON files
+   - **In-Memory Catalog**: Namespaces, table metadata, schemas, storage locations (loaded from RocksDB on startup)
+   - **RocksDB**: ALL metadata (namespaces, tables, schemas) AND system tables (users, storage_locations, live_queries, jobs) AND buffered table data (user/shared/stream table rows)
+   - **No File System JSON**: All configuration persisted in RocksDB only
+   - **Parquet Files**: Cold storage for user/shared table data after flush (data only, no metadata)
+   - On startup: RocksDB → load all metadata into memory → server ready
+   - On shutdown: In-memory catalog already persisted in RocksDB
 
 **Schema Evolution Workflow**:
 ```
@@ -660,44 +1012,65 @@ Each table schema is stored in a **versioned, Arrow-compatible format** to suppo
     ↓
 2. System validates schema compatibility (DataFusion projection)
     ↓
-3. Create new schema version file (schema_v{N+1}.json)
+3. Write new schema version to RocksDB:
+   - Key: "{namespace}:{table}:{N+1}"
+   - Value: JSON with arrow_schema, version, created_at
     ↓
-4. Update manifest.json with new current_version and updated_at
+4. Update system.tables row:
+   - Set current_schema_version = N+1
+   - Set updated_at = NOW()
     ↓
-5. Update current.json symlink to new version
+5. Invalidate in-memory schema cache for this table
     ↓
-6. DataFusion reloads schema for future queries
+6. DataFusion reloads schema from RocksDB for future queries
     ↓
 7. Existing Parquet files remain with old schema
    (DataFusion handles projection automatically)
 ```
 
 **Schema Loading**:
-- **On table access**: System reads `manifest.json` → loads `current.json` → deserializes Arrow schema
+- **On table access**: Query `system.tables` (from memory cache) → get `current_schema_version` → query `system.table_schemas` (from RocksDB) → deserialize Arrow schema
 - **DataFusion integration**: Arrow schema directly loaded into DataFusion TableProvider
-- **Caching**: Manifest and current schemas cached in memory, invalidated on ALTER TABLE
+- **Caching**: Table metadata and current schemas cached in memory, invalidated on ALTER TABLE
 - **Backwards compatibility**: Old Parquet files read with schema projection (missing columns filled with NULL)
 
 **Benefits**:
-- ✅ Arrow-native format for zero-copy DataFusion integration
-- ✅ Versioning enables audit trail of schema changes
-- ✅ Symlink provides fast lookup of current schema
-- ✅ Manifest provides O(1) table existence checks
-- ✅ Created/updated timestamps enable change tracking
+- ✅ Arrow-native JSON format for DataFusion integration
+- ✅ Versioning enables audit trail of schema changes (all versions in RocksDB)
+- ✅ No file system I/O for schema operations
+- ✅ Atomic updates via RocksDB WriteBatch
+- ✅ Schema history queryable via system.table_schemas
 - ✅ Future-proof for ALTER TABLE ADD/DROP/MODIFY COLUMN
 
 ### Flush Policy Enforcement
 
 Flush policies determine **when data moves from RocksDB to Parquet**:
 
-**Row-Based Flush Policy**:
+**Row-Based Flush Policy (Per-User-Per-Table)**:
 ```sql
 CREATE USER TABLE messages (...)
 FLUSH POLICY ROWS 10000;
 ```
-- Background monitor tracks row count in RocksDB per table/user
-- When threshold reached → trigger flush job
-- All buffered rows serialized to single Parquet file
+- **Independent tracking**: Each user's partition of a table tracks rows separately
+- **Counter storage**: RocksDB column family `user_table_counters` with key `{user_id}-{table_name}` → counter value
+- **On INSERT**: Increment counter in `user_table_counters` (e.g., `user123-messages` = current + 1)
+- **Flush trigger**: When counter reaches threshold (10000) → trigger flush job for that specific user-table partition
+- **Flush scope**: Only rows for that user_id are flushed to Parquet (e.g., `user123/messages/batch-*.parquet`)
+- **Counter reset**: After successful flush, reset counter to 0 for that `{user_id}-{table_name}`
+- **Independence**: user123's messages at 8K rows does NOT trigger flush; user456's messages at 12K rows DOES trigger flush (only for user456)
+
+**Example**:
+```
+Table: messages with FLUSH POLICY ROWS 10000
+
+user_table_counters column family:
+- user123-messages → 8500  (no flush yet)
+- user456-messages → 12000 (flush triggered! writes user456's rows to user456/messages/batch-001.parquet)
+- user789-messages → 500   (no flush yet)
+
+After user456 flush completes:
+- user456-messages → 0 (counter reset)
+```
 
 **Time-Based Flush Policy**:
 ```sql
@@ -731,6 +1104,19 @@ FLUSH POLICY ROWS 5000 INTERVAL '1 minute';
 - Filesystem: Direct writes, configurable paths
 - Error handling: Failed flushes recorded in system.jobs with partial metrics
 
+## Clarifications
+
+### Session 2025-10-17
+
+- Q: Should system.storage_locations be stored in RocksDB only (like other system tables), JSON config files only, or both? → A: RocksDB only (system table) - consistent with other system tables, runtime updates
+- Q: Should the spec include schema documentation for all 4 pre-defined system tables? → A: Yes - Add schema documentation for all 4 pre-defined system tables (also: users table gets metadata field, remove email field)
+- Q: Should deleted_retention policy apply per-table, per-namespace, or globally? → A: Per-table - Each table specifies its own deleted_retention in CREATE TABLE
+- Q: Should flush policy row counters be per-table (all users combined), per-user-per-table (independent), or configurable? → A: Per-user per-table - Each user's partition tracks rows independently (store counters in separate RocksDB column family 'user-table-counters' with key format: {user_id}-{table_name})
+- Q: Should live query subscriptions on user tables span multiple users or be limited to current user? → A: Single-user scope - Implicit user_id filter (user can only subscribe to their own partition)
+- Q: Should namespaces and table schemas be stored in JSON files on disk or in RocksDB? → A: RocksDB only - Store namespaces, table schemas, and schema history in RocksDB column families (eliminate all file system JSON configuration)
+- Q: Should system tables have individual CRUD implementations or use a unified SQL engine? → A: Unified SQL engine - Create kalamdb-sql crate that provides SQL interface to all system tables, converts SQL to RocksDB column family operations, eliminates duplicate logic
+- Q: Should kalamdb-sql be designed with future Raft replication in mind? → A: Yes - kalamdb-sql should emit change events for system table modifications to enable future kalamdb-raft crate to replicate changes across cluster nodes (not implemented in this phase, but architecture prepared)
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 0 - REST API and WebSocket Interface (Priority: P1)
@@ -756,7 +1142,7 @@ A developer wants to interact with KalamDB through a simple HTTP REST API for ex
 
 ### User Story 1 - Namespace Management (Priority: P1)
 
-A database administrator wants to organize their database into logical namespaces. They need to create, list, edit, drop namespaces, and configure namespace-specific options.
+A database administrator wants to organize their database into logical namespaces. They need to create, list, edit, drop namespaces, and configure namespace-specific options. Namespaces are stored exclusively in RocksDB (`system_namespaces` column family), not in file system JSON files.
 
 **Why this priority**: Namespaces are the foundational organizational structure. Without them, no tables can exist.
 
@@ -764,11 +1150,11 @@ A database administrator wants to organize their database into logical namespace
 
 **Acceptance Scenarios**:
 
-1. **Given** I have database access, **When** I create a namespace named "production", **Then** the namespace is created and appears in the namespace list
-2. **Given** a namespace "production" exists, **When** I list all namespaces, **Then** I see "production" with its metadata (creation date, table count, options)
-3. **Given** a namespace "production" exists, **When** I edit the namespace to add options, **Then** the options are stored and applied to the namespace
-4. **Given** a namespace "production" has no tables, **When** I drop the namespace, **Then** the namespace is deleted successfully
-5. **Given** a namespace "production" has tables, **When** I attempt to drop it, **Then** the system prevents deletion and shows which tables exist
+1. **Given** I have database access, **When** I create a namespace named "production", **Then** the namespace is created in RocksDB `system_namespaces` and appears in the namespace list
+2. **Given** a namespace "production" exists, **When** I list all namespaces, **Then** I see "production" with its metadata from system_namespaces (creation date, metadata JSON)
+3. **Given** a namespace "production" exists, **When** I edit the namespace to add options, **Then** the metadata field in system_namespaces is updated with the new options (JSON string)
+4. **Given** a namespace "production" has no tables, **When** I drop the namespace, **Then** the namespace is deleted from system_namespaces RocksDB column family
+5. **Given** a namespace "production" has tables, **When** I attempt to drop it, **Then** the system queries system_tables to check for dependencies and prevents deletion showing which tables exist
 
 ---
 
@@ -782,9 +1168,10 @@ A database administrator wants to manage users through a system table for basic 
 
 **Acceptance Scenarios**:
 
-1. **Given** I am a database administrator, **When** I add a user to the system users table, **Then** the user is created with username and email
-2. **Given** users exist in the system, **When** I query the system.users table, **Then** I see all registered users with their details
-3. **Given** I want to track the current user, **When** I use CURRENT_USER() in a query, **Then** it returns the authenticated user's ID
+1. **Given** I am a database administrator, **When** I add a user to the system users table, **Then** the user is created with user_id, username, and optional metadata (JSON)
+2. **Given** users exist in the system, **When** I query the system.users table, **Then** I see all registered users with their user_id, username, metadata, created_at, and updated_at
+3. **Given** I want to store custom user data, **When** I insert a user with metadata='{"role": "admin", "preferences": {...}}', **Then** the metadata is stored as JSON string in the metadata column
+4. **Given** I want to track the current user, **When** I use CURRENT_USER() in a query, **Then** it returns the authenticated user's ID
 
 **Note**: Row-level permissions and access control on shared tables will be implemented in a future version using VIEWs. Each user will have their own VIEW of shared tables containing only rowid references, updated automatically on writes to RocksDB.
 
@@ -826,7 +1213,7 @@ A database administrator or user wants to monitor active live query subscription
 
 ### User Story 2b - Storage Location Management via System Table (Priority: P1)
 
-A database administrator wants to predefine and manage storage locations through a system table. When creating tables, users can reference these predefined locations instead of specifying full location strings.
+A database administrator wants to predefine and manage storage locations through a RocksDB system table. When creating tables, users can reference these predefined locations instead of specifying full location strings. Storage locations are persisted exclusively in RocksDB (no JSON configuration file) for consistency with other system tables and to enable runtime updates.
 
 **Why this priority**: Centralized storage location management simplifies table creation and ensures consistency across tables.
 
@@ -834,10 +1221,10 @@ A database administrator wants to predefine and manage storage locations through
 
 **Acceptance Scenarios**:
 
-1. **Given** I am a database administrator, **When** I add a storage location to `system.storage_locations` with name "s3-prod" and path "s3://prod-bucket/data/", **Then** the location is registered and available
-2. **Given** a storage location "s3-prod" exists, **When** I create a table with `LOCATION REFERENCE 's3-prod'`, **Then** the table uses the predefined location
-3. **Given** a storage location is referenced by tables, **When** I query `SELECT * FROM system.storage_locations`, **Then** I see usage count and which tables reference it
-4. **Given** I want to update a storage location, **When** I modify the system.storage_locations entry, **Then** existing tables continue using the old path but new tables use the updated path
+1. **Given** I am a database administrator, **When** I add a storage location to `system.storage_locations` RocksDB table with name "s3-prod" and path "s3://prod-bucket/data/", **Then** the location is registered in RocksDB and loaded into memory
+2. **Given** a storage location "s3-prod" exists in RocksDB, **When** I create a table with `LOCATION REFERENCE 's3-prod'`, **Then** the table uses the predefined location from the in-memory registry
+3. **Given** a storage location is referenced by tables, **When** I query `SELECT * FROM system.storage_locations`, **Then** I see usage count and which tables reference it (queried from RocksDB)
+4. **Given** I want to update a storage location, **When** I modify the system.storage_locations RocksDB entry, **Then** the in-memory registry is updated immediately, existing tables continue using the old path but new tables use the updated path
 5. **Given** a storage location is in use, **When** I attempt to delete it from system.storage_locations, **Then** the system prevents deletion and shows dependent tables
 
 ---
@@ -878,10 +1265,11 @@ A developer wants to create user-scoped tables where each user has their own iso
 3. **Given** I create a user table, **When** I don't specify an auto-increment field, **Then** the system automatically adds a snowflake ID field
 4. **Given** a user table "messages" exists, **When** user "user123" inserts data, **Then** the data is stored with _updated = NOW() and _deleted = false at the user-specific location
 5. **Given** a user table "messages" exists, **When** I query data for user "user123", **Then** I only see data belonging to that user where _deleted = false
-6. **Given** I create a user table, **When** I specify a flush policy with row limit, **Then** data is flushed to disk when the limit is reached
-7. **Given** I create a user table, **When** I specify a flush policy with time interval, **Then** data is flushed to disk at the specified intervals
-8. **Given** I create a user table with deleted_retention option, **When** I set deleted_retention='7d', **Then** soft-deleted rows are kept for 7 days before physical removal
-9. **Given** a user table has deleted_retention='off', **When** rows are soft-deleted, **Then** they are never physically removed (kept indefinitely)
+6. **Given** I create a user table with FLUSH POLICY ROWS 10000, **When** user123 inserts 12000 rows, **Then** only user123's data is flushed to disk (other users' data remains buffered independently)
+7. **Given** I create a user table, **When** I specify a flush policy with time interval, **Then** data is flushed to disk at the specified intervals (all buffered data for all users)
+8. **Given** I have user table "messages" with FLUSH POLICY ROWS 10000, **When** I query the user_table_counters, **Then** I see separate counters for each user (e.g., user123-messages, user456-messages)
+9. **Given** I create a user table with per-table deleted_retention option, **When** I set deleted_retention='7d', **Then** soft-deleted rows in that specific table are kept for 7 days before physical removal (independent of other tables)
+10. **Given** a user table has deleted_retention='off', **When** rows are soft-deleted, **Then** they are never physically removed in that table (kept indefinitely)
 
 ---
 
@@ -979,13 +1367,15 @@ A user wants to subscribe to real-time changes on their user table or stream tab
 
 **Acceptance Scenarios**:
 
-1. **Given** user "user123" has a table "messages", **When** they subscribe to `SELECT * FROM messages WHERE conversation_id = 'conv456'`, **Then** the subscription is created and active
-2. **Given** a subscription exists for conversation_id = 'conv456', **When** a message with that conversation_id is inserted, **Then** the subscriber receives an INSERT notification with the new row
-3. **Given** a subscription exists, **When** a matching row is updated, **Then** the subscriber receives an UPDATE notification with old and new row values
-4. **Given** a subscription exists, **When** a matching row is deleted, **Then** the subscriber receives a DELETE notification with the deleted row data
-5. **Given** a subscription exists, **When** data not matching the filter is changed, **Then** the subscriber does not receive any notification
-6. **Given** multiple subscriptions exist for the same user, **When** data is changed, **Then** only matching subscriptions receive notifications
-7. **Given** a subscription is active, **When** the subscriber disconnects, **Then** the subscription is cleaned up automatically
+1. **Given** user "user123" has a user table "messages", **When** they subscribe to `SELECT * FROM messages WHERE conversation_id = 'conv456'`, **Then** the subscription is created with implicit `user_id = 'user123'` filter (only their own data)
+2. **Given** user "user123" subscribes to user table "messages", **When** user "user456" inserts a message, **Then** user123 does NOT receive any notification (different user partition)
+3. **Given** user "user123" subscribes to shared table "conversations", **When** any user creates a conversation, **Then** user123 receives INSERT notification (shared tables have no implicit user_id filter)
+4. **Given** a subscription exists for conversation_id = 'conv456', **When** a message with that conversation_id is inserted by the same user, **Then** the subscriber receives an INSERT notification with the new row
+5. **Given** a subscription exists, **When** a matching row is updated, **Then** the subscriber receives an UPDATE notification with old and new row values
+6. **Given** a subscription exists, **When** a matching row is deleted, **Then** the subscriber receives a DELETE notification with the deleted row data
+7. **Given** a subscription exists, **When** data not matching the filter is changed, **Then** the subscriber does not receive any notification
+8. **Given** multiple subscriptions exist for the same user, **When** data is changed, **Then** only matching subscriptions receive notifications
+9. **Given** a subscription is active, **When** the subscriber disconnects, **Then** the subscription is cleaned up automatically
 
 ---
 
@@ -1173,18 +1563,24 @@ A user wants to browse and inspect their database structure just like in traditi
 - **FR-048**: System MUST isolate data between different user IDs in user tables
 - **FR-049**: System MUST support DataFusion-compatible datatypes for user table columns
 - **FR-050**: System MUST store user table data in Parquet format
-- **FR-051**: System MUST support flush-to-disk policy with row limit configuration
+- **FR-051**: System MUST support flush-to-disk policy with row limit configuration (per-user-per-table tracking)
+- **FR-051a**: System MUST maintain a dedicated RocksDB column family `user_table_counters` to track buffered row counts
+- **FR-051b**: Counter keys MUST use format `{user_id}-{table_name}` with 64-bit integer values
+- **FR-051c**: System MUST increment counter on INSERT for user tables (e.g., `user123-messages` = current + 1)
+- **FR-051d**: System MUST trigger flush job when a user-table counter reaches the table's FLUSH POLICY ROWS threshold
+- **FR-051e**: Flush job MUST flush only the specific user's partition (independent of other users' row counts)
+- **FR-051f**: System MUST reset counter to 0 for `{user_id}-{table_name}` after successful flush
 - **FR-052**: System MUST support flush-to-disk policy with time-based interval configuration
-- **FR-053**: System MUST flush data to disk when either row limit or time interval is reached
+- **FR-053**: System MUST flush data to disk when either row limit or time interval is reached (per-user-per-table for row limits)
 - **FR-054**: System MUST automatically add system columns to every user table: _updated (TIMESTAMP), _deleted (BOOLEAN)
 - **FR-055**: System MUST set _updated column to current timestamp on every INSERT and UPDATE operation
 - **FR-056**: System MUST initialize _deleted column to false on INSERT operations
 - **FR-057**: System MUST build Bloom filters on _updated column in Parquet files for efficient time-range queries
-- **FR-058**: System MUST support deleted_retention option for user tables (e.g., '7d', '30d', 'off')
+- **FR-058**: System MUST support per-table deleted_retention option for user tables (e.g., '7d', '30d', 'off') specified at table creation time
 - **FR-059**: System MUST implement soft delete by setting _deleted = true when DELETE operations execute
 - **FR-060**: System MUST update _updated timestamp when soft delete occurs
-- **FR-061**: When deleted_retention != 'off', system MUST schedule cleanup jobs to physically remove soft-deleted rows older than the retention period
-- **FR-062**: When deleted_retention = 'off', system MUST keep soft-deleted rows indefinitely
+- **FR-061**: When deleted_retention != 'off', system MUST schedule per-table cleanup jobs to physically remove soft-deleted rows older than the table-specific retention period
+- **FR-062**: When deleted_retention = 'off', system MUST keep soft-deleted rows indefinitely for that specific table
 - **FR-063**: System MUST support queries filtering by _deleted column to exclude/include soft-deleted rows
 - **FR-064**: System MUST support DROP USER TABLE command to delete user tables
 - **FR-065**: System MUST prevent DROP TABLE when active live query subscriptions exist
@@ -1253,7 +1649,7 @@ A user wants to browse and inspect their database structure just like in traditi
 - **FR-120**: System MUST store shared table data in Parquet format
 - **FR-121**: System MUST support flush-to-disk policy with row limit configuration for shared tables
 - **FR-122**: System MUST support flush-to-disk policy with time-based interval configuration for shared tables
-- **FR-123**: System MUST support deleted_retention option for shared tables (same as user tables)
+- **FR-123**: System MUST support per-table deleted_retention option for shared tables (same per-table scope as user tables)
 - **FR-124**: System MUST handle soft deletes in shared tables using _deleted column (same as user tables)
 - **FR-125**: System MUST support DROP SHARED TABLE command to delete shared tables
 
@@ -1276,7 +1672,10 @@ A user wants to browse and inspect their database structure just like in traditi
 - **FR-139**: System MUST notify subscribers via WebSocket when matching data is updated with UPDATE change type and both old and new values
 - **FR-140**: System MUST notify subscribers via WebSocket when matching data is soft-deleted (DELETE change type) with _deleted = true
 - **FR-141**: System MUST only send notifications for data matching the subscription filter
-- **FR-142**: System MUST isolate subscriptions per user ID (users can only subscribe to their own data)
+- **FR-142**: System MUST isolate subscriptions per user ID (users can only subscribe to their own data in user tables)
+- **FR-142a**: For user table subscriptions, system MUST implicitly add `AND user_id = CURRENT_USER()` filter to all queries
+- **FR-142b**: For shared and stream table subscriptions, system MUST NOT add implicit user_id filter (users see all data subject to permissions)
+- **FR-142c**: System MUST prevent users from subscribing to other users' partitions in user tables (security by default)
 - **FR-143**: System MUST automatically clean up subscriptions when WebSocket connections disconnect
 - **FR-144**: System MUST support multiple concurrent subscriptions within a single WebSocket connection
 - **FR-145**: System MUST handle each subscription independently within the same WebSocket connection
@@ -1296,34 +1695,63 @@ A user wants to browse and inspect their database structure just like in traditi
 - **FR-157**: System MUST include soft-deleted rows (_deleted = true) in backups to preserve change history
 - **FR-158**: System MUST backup schema versions and manifest.json files to preserve schema history
 
-#### Configuration Persistence
-- **FR-172**: System MUST persist all configuration in JSON files within the `configs/` folder for server restart capability
-- **FR-173**: System MUST maintain `configs/namespaces.json` containing all namespace definitions with metadata and options
-- **FR-174**: System MUST maintain `configs/storage_locations.json` containing all predefined storage locations
-- **FR-175**: System MUST include user-specified options (flush_policy, storage_location, deleted_retention, etc.) in each schema file (`schema_v{N}.json`)
-- **FR-176**: System MUST include stream table options (retention, ephemeral, max_buffer) in stream table schema files
-- **FR-177**: System MUST load all configuration from JSON files into in-memory structures on server startup (NOT into RocksDB)
-- **FR-178**: System MUST immediately persist any configuration change to appropriate JSON file (CREATE/ALTER/DROP operations)
-- **FR-179**: System MUST use atomic file updates (write to temp file, then rename) to prevent corruption
-- **FR-180**: System MUST update `configs/namespaces.json` when namespace is created, altered, or dropped
-- **FR-181**: System MUST update `configs/storage_locations.json` when storage locations are added, modified, or deleted via system.storage_locations
-- **FR-182**: System MUST create/update schema files in `configs/{namespace}/schemas/{table}/` when tables are created or altered
-- **FR-183**: System MUST update `configs/{namespace}/manifest.json` when tables are created, altered, or dropped
-- **FR-184**: System MUST delete namespace directory `configs/{namespace}/` when namespace is dropped
-- **FR-185**: System MUST maintain in-memory catalog for namespaces, tables, schemas, and storage locations (loaded from JSON on startup)
-- **FR-186**: System MUST use RocksDB exclusively for buffered table data (user/shared/stream table rows), NOT for configuration metadata
+#### Metadata Persistence (RocksDB-Only, No File System JSON)
+- **FR-172**: System MUST persist all metadata (namespaces, tables, schemas, schema history) exclusively in RocksDB column families
+- **FR-173**: System MUST maintain `system_namespaces` column family storing all namespace definitions with metadata
+- **FR-174**: System MUST maintain `system_tables` column family storing all table definitions across all namespaces
+- **FR-175**: System MUST maintain `system_table_schemas` column family storing all schema versions (Arrow schemas as JSON) with version history
+- **FR-176**: System MUST store table options (flush_policy, storage_location, deleted_retention, stream_config) in `system_tables` table as JSON strings
+- **FR-177**: System MUST load all metadata from RocksDB column families into in-memory structures on server startup
+- **FR-178**: System MUST immediately persist any metadata change to appropriate RocksDB column family (CREATE/ALTER/DROP operations)
+- **FR-179**: System MUST use RocksDB WriteBatch for atomic multi-row updates (e.g., DROP NAMESPACE affecting multiple tables)
+- **FR-180**: System MUST write to `system_namespaces` when namespace is created, altered, or dropped
+- **FR-181**: System MUST write to `system_tables` when table is created, altered, or dropped
+- **FR-182**: System MUST write new schema version to `system_table_schemas` when table is created or altered (all versions retained)
+- **FR-183**: System MUST update `current_schema_version` field in `system_tables` when ALTER TABLE executes
+- **FR-184**: System MUST delete all related rows (namespace, tables, schemas) when namespace is dropped using WriteBatch
+- **FR-185**: System MUST maintain in-memory catalog for namespaces, tables, schemas, and storage locations (loaded from RocksDB on startup)
+- **FR-186**: System MUST use RocksDB for ALL metadata AND buffered table data (user/shared/stream table rows)
+- **FR-186a**: System MUST NOT use file system JSON configuration files for any metadata storage
+
+#### Unified SQL Engine for System Tables (kalamdb-sql Crate)
+- **FR-187**: System MUST provide a separate `kalamdb-sql` crate for unified SQL access to all system tables
+- **FR-188**: kalamdb-sql MUST provide a single `execute_system_query(sql: &str, rocksdb: &DB)` interface for all system table operations
+- **FR-189**: kalamdb-sql MUST use DataFusion's sqlparser-rs library for SQL parsing
+- **FR-190**: kalamdb-sql MUST support SELECT, INSERT, UPDATE, DELETE operations on all system tables
+- **FR-191**: kalamdb-sql MUST map system table names to RocksDB column families (e.g., `system.namespaces` → `system_namespaces`)
+- **FR-192**: kalamdb-sql MUST provide Rust model structs for each system table with Serialize/Deserialize traits
+- **FR-193**: kalamdb-sql MUST convert SQL INSERT statements to RocksDB Put operations with serialized model data
+- **FR-194**: kalamdb-sql MUST convert SQL SELECT statements to RocksDB Get/Scan operations with deserialized model data
+- **FR-195**: kalamdb-sql MUST convert SQL UPDATE statements to RocksDB Get→Modify→Put operations
+- **FR-196**: kalamdb-sql MUST convert SQL DELETE statements to RocksDB Delete operations
+- **FR-197**: kalamdb-sql MUST handle WHERE clauses for primary key lookups (exact match on key)
+- **FR-198**: kalamdb-sql MUST handle WHERE clauses for secondary filters (scan + filter in memory)
+- **FR-199**: kalamdb-sql MUST return query results as typed Rust structs (e.g., Vec<NamespaceRow>)
+- **FR-200**: kalamdb-sql MUST validate table names against known system tables before execution
+- **FR-201**: kalamdb-sql MUST validate column names against model struct fields before execution
+- **FR-202**: kalamdb-sql models MUST use consistent naming: NamespaceRow, TableRow, TableSchemaRow, UserRow, StorageLocationRow, LiveQueryRow, JobRow
+- **FR-203**: All crates (kalamdb-core, kalamdb-api, kalamdb-server) MUST use kalamdb-sql for ALL system table access (no direct RocksDB access)
+- **FR-204**: kalamdb-sql MUST NOT duplicate CRUD logic for each system table (single engine, multiple models)
+- **FR-205**: kalamdb-sql MUST be designed to be stateless and idempotent (same SQL produces same result on any node - enables future Raft replication)
+- **FR-206**: kalamdb-sql SQL statements MUST be self-contained and replayable (enables future replication by replaying SQL on other nodes)
+- **FR-207**: kalamdb-sql architecture MUST support future addition of change event emission without breaking existing API (preparatory for kalamdb-raft integration)
+- **FR-208**: System table modifications via kalamdb-sql MUST be atomic at the SQL statement level (single statement = single RocksDB WriteBatch - enables consistent replication)
+
+**Note**: Raft consensus replication (kalamdb-raft crate) is **not implemented in this phase**. The above requirements prepare the architecture for future distributed cluster support where system table changes (CREATE NAMESPACE, CREATE TABLE, etc.) will be replicated across nodes via Raft protocol.
 
 #### RocksDB Column Family Structure
-- **FR-187**: System MUST create one RocksDB column family per user table (format: `user_table:{namespace}:{table_name}`)
-- **FR-188**: User table column family keys MUST use format `{user_id}:{row_id}` to enable per-user grouping during flush
-- **FR-189**: System MUST create one RocksDB column family per shared table (format: `shared_table:{namespace}:{table_name}`)
-- **FR-190**: Shared table column family keys MUST use format `{row_id}` (no user_id prefix)
-- **FR-191**: System MUST create one RocksDB column family per stream table (format: `stream_table:{namespace}:{table_name}`)
-- **FR-192**: Stream table column family keys MUST use format `{timestamp}:{row_id}` to enable efficient TTL eviction
-- **FR-193**: System MUST create one RocksDB column family per system table (format: `system_table:{table_name}`)
-- **FR-194**: During user table flush, system MUST group rows by user_id and write each user's data to separate Parquet file at `${user_id}/batch-*.parquet`
-- **FR-195**: During shared table flush, system MUST write all buffered rows to single Parquet file at `shared/{table_name}/batch-*.parquet`
-- **FR-196**: Stream table data MUST NEVER flush to Parquet (ephemeral, memory-only, evicted by TTL or buffer limit)
+- **FR-205**: System MUST create one RocksDB column family per user table (format: `user_table:{namespace}:{table_name}`)
+- **FR-206**: User table column family keys MUST use format `{user_id}:{row_id}` to enable per-user grouping during flush
+- **FR-207**: System MUST create one RocksDB column family per shared table (format: `shared_table:{namespace}:{table_name}`)
+- **FR-208**: Shared table column family keys MUST use format `{row_id}` (no user_id prefix)
+- **FR-209**: System MUST create one RocksDB column family per stream table (format: `stream_table:{namespace}:{table_name}`)
+- **FR-210**: Stream table column family keys MUST use format `{timestamp}:{row_id}` to enable efficient TTL eviction
+- **FR-211**: System MUST create RocksDB column families for metadata storage (accessed via kalamdb-sql): `system_namespaces`, `system_tables`, `system_table_schemas`
+- **FR-212**: System MUST create RocksDB column families for system tables (accessed via kalamdb-sql): `system_users`, `system_storage_locations`, `system_live_queries`, `system_jobs`
+- **FR-213**: System MUST create RocksDB column family `user_table_counters` for per-user-per-table flush policy row tracking
+- **FR-214**: During user table flush, system MUST group rows by user_id and write each user's data to separate Parquet file at `${user_id}/batch-*.parquet`
+- **FR-215**: During shared table flush, system MUST write all buffered rows to single Parquet file at `shared/{table_name}/batch-*.parquet`
+- **FR-216**: Stream table data MUST NEVER flush to Parquet (ephemeral, memory-only, evicted by TTL or buffer limit)
 
 #### Catalog and Introspection
 - **FR-159**: System MUST provide SQL-like catalog queries to list namespaces
@@ -1338,7 +1766,7 @@ A user wants to browse and inspect their database structure just like in traditi
 - **FR-168**: System MUST support querying table metadata including creation date and last modified date
 - **FR-169**: System MUST expose automatic system columns (_updated, _deleted) in table descriptions
 - **FR-170**: System MUST show current schema version and schema history in table descriptions
-- **FR-171**: DESCRIBE TABLE output MUST include path to current schema file and manifest.json reference
+- **FR-171**: DESCRIBE TABLE output MUST include current schema version and reference to system.table_schemas for version history
 
 ### Key Entities
 
