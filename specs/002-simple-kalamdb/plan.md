@@ -158,29 +158,37 @@ backend/
 ├── config.toml                                # Runtime configuration (logging, ports, paths)
 ├── config.example.toml                        # Configuration template
 ├── crates/
-│   ├── kalamdb-core/                         # Core library (embeddable)
-│   │   ├── Cargo.toml
+│   ├── kalamdb-core/                         # Core library - NO direct RocksDB imports
+│   │   ├── Cargo.toml                        # Dependencies: kalamdb-sql, kalamdb-store, datafusion, arrow, parquet
 │   │   └── src/
 │   │       ├── lib.rs                        # Public API exports
 │   │       ├── error.rs                      # Error types
 │   │       ├── catalog/                      # Namespace and table metadata (uses kalamdb-sql)
 │   │       ├── config/                       # Configuration management
 │   │       ├── schema/                       # Arrow schema management
-│   │       ├── storage/                      # Storage backends
-│   │       ├── tables/                       # Table providers
+│   │       ├── storage/                      # Storage backends (delegates to kalamdb-store)
+│   │       ├── tables/                       # Table providers (use kalamdb-store for data ops)
 │   │       ├── sql/                          # SQL execution (DataFusion integration)
 │   │       ├── flush/                        # Flush policy management
 │   │       ├── live_query/                   # Live subscription management
 │   │       ├── jobs/                         # Background job framework
 │   │       └── services/                     # Business logic services
-│   ├── kalamdb-sql/                          # Unified SQL engine for system tables (NEW)
-│   │   ├── Cargo.toml
+│   ├── kalamdb-sql/                          # Unified SQL engine for system tables
+│   │   ├── Cargo.toml                        # Dependencies: rocksdb, serde, serde_json, sqlparser, chrono, anyhow
 │   │   └── src/
-│   │       ├── lib.rs                        # Public API exports
+│   │       ├── lib.rs                        # Public API exports (execute, scan_all methods)
 │   │       ├── models.rs                     # Rust types for 7 system tables
 │   │       ├── parser.rs                     # SQL parsing (sqlparser-rs)
 │   │       ├── executor.rs                   # SQL execution logic
-│   │       └── adapter.rs                    # RocksDB read/write adapter
+│   │       └── adapter.rs                    # RocksDB read/write adapter (owns system_* CFs)
+│   ├── kalamdb-store/                        # K/V store for user/shared/stream tables
+│   │   ├── Cargo.toml                        # Dependencies: rocksdb, serde, serde_json, chrono, anyhow
+│   │   └── src/
+│   │       ├── lib.rs                        # Public API exports
+│   │       ├── user_table_store.rs           # UserTableStore: put/get/delete/scan_user
+│   │       ├── shared_table_store.rs         # SharedTableStore: put/get/delete/scan
+│   │       ├── stream_table_store.rs         # StreamTableStore: put/get/delete with TTL
+│   │       └── key_encoding.rs               # Key format utilities ({UserId}:{row_id}, etc.)
 │   ├── kalamdb-api/                          # REST API and WebSocket
 │   │   ├── Cargo.toml
 │   │   └── src/
@@ -192,7 +200,7 @@ backend/
 │   └── kalamdb-server/                       # Server binary
 │       ├── Cargo.toml
 │       └── src/
-│           ├── main.rs                       # Server entry point
+│           ├── main.rs                       # Server entry point (initializes kalamdb-sql + kalamdb-store)
 │           ├── config.rs                     # Config loading
 │           └── logging.rs                    # Logging setup
 └── tests/
@@ -201,9 +209,10 @@ backend/
         └── ...                               # Other test files
 ```
 
-**Structure Decision**: Multi-crate Rust workspace with clear separation of concerns:
-- **kalamdb-core**: Embeddable library with all business logic
-- **kalamdb-sql**: Unified SQL engine for system table operations (prevents code duplication for 7 system tables)
+**Structure Decision**: Multi-crate Rust workspace with three-layer architecture:
+- **kalamdb-core**: Embeddable library with all business logic (NO direct RocksDB imports)
+- **kalamdb-sql**: Unified SQL engine for system table operations (owns system_* column families)
+- **kalamdb-store**: K/V store for user/shared/stream tables (owns user_table:*, shared_table:*, stream_table:* CFs)
 - **kalamdb-api**: HTTP/WebSocket API layer
 - **kalamdb-server**: Minimal binary entry point
 
@@ -211,6 +220,8 @@ backend/
 - **RocksDB-only metadata**: All namespace/table/schema metadata stored in RocksDB system tables (no JSON config files)
 - **7 system tables**: users, live_queries, storage_locations, jobs, namespaces, tables, table_schemas
 - **kalamdb-sql crate**: Unified CRUD operations for all system tables via SQL interface (eliminates 7x code duplication)
+- **kalamdb-store crate**: K/V store abstraction for user/shared/stream tables (isolates RocksDB from business logic)
+- **Three-layer architecture**: kalamdb-core (NO RocksDB) → kalamdb-sql (system metadata) + kalamdb-store (user data) → RocksDB
 - **Future-ready**: Architecture prepared for distributed replication via future kalamdb-raft crate
 
 ## Complexity Tracking
@@ -438,6 +449,113 @@ This validates end-to-end functionality matching the user's requirements: "test 
 1. **Eliminated JSON config files**: All metadata now in RocksDB system tables
 2. **Added 3 system tables**: namespaces, tables, table_schemas (total: 7)
 3. **New kalamdb-sql crate**: Unified SQL engine for all system table operations
+4. **New kalamdb-store crate**: K/V store abstraction for user/shared/stream tables (see Architecture Refactoring Phase below)
+5. **Three-layer separation**: kalamdb-core (business logic) → kalamdb-sql + kalamdb-store (storage) → RocksDB
+
+## Architecture Refactoring Phase (Before Phase 10)
+
+**Status**: Planned (execute after Phase 9 completion)  
+**Priority**: Critical for clean architecture before Phase 10 (table deletion)
+
+### Motivation
+
+After Phase 9 implementation (user table operations), code review revealed direct RocksDB coupling in kalamdb-core:
+
+**Current Problems**:
+1. System table providers use `CatalogStore` (direct RocksDB operations)
+2. User table handlers import `rocksdb::DB` directly
+3. kalamdb-core has RocksDB dependencies it shouldn't have
+4. Difficult to test business logic without mocking RocksDB
+
+**Solution**: Three-Layer Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ kalamdb-core (Business Logic)                               │
+│ - NO direct RocksDB imports                                 │
+│ - Uses kalamdb-sql for system tables                        │
+│ - Uses kalamdb-store for user tables                        │
+└──────────────┬──────────────────────────────────────────────┘
+               │
+               ├──────────────────┬───────────────────────────┐
+               ▼                  ▼                           ▼
+┌──────────────────────┐ ┌─────────────────────┐ ┌───────────────────┐
+│ kalamdb-sql          │ │ kalamdb-store       │ │ DataFusion/       │
+│ (System Tables)      │ │ (User Tables)       │ │ Arrow/Parquet     │
+├──────────────────────┤ ├─────────────────────┤ └───────────────────┘
+│ - 7 system tables    │ │ - User table K/V    │
+│ - SQL interface      │ │ - Simple put/get    │
+│ - RocksDB adapter    │ │ - Key: UserId:rowid │
+└──────────┬───────────┘ └──────────┬──────────┘
+           │                        │
+           └────────────┬───────────┘
+                        ▼
+              ┌───────────────────┐
+              │ RocksDB           │
+              └───────────────────┘
+```
+
+### Benefits
+
+✅ **Clear Separation**: System metadata vs user data operations  
+✅ **RocksDB Isolation**: Only kalamdb-sql and kalamdb-store import RocksDB  
+✅ **Easier Testing**: Mock interfaces instead of RocksDB  
+✅ **Code Clarity**: Intent clear from which crate is used  
+✅ **Future Flexibility**: Can swap storage backends independently  
+✅ **Simplified Dependencies**: kalamdb-core doesn't need column family or key encoding knowledge
+
+### Migration Tasks Overview
+
+**Phase A: Create kalamdb-store crate** (~10 tasks)
+- Create crate structure with Cargo.toml
+- Implement UserTableStore with put/get/delete/scan_user methods
+- Implement SharedTableStore for shared tables
+- Implement StreamTableStore with TTL support
+- Add key_encoding.rs for key format utilities
+- Comprehensive unit tests
+
+**Phase B: Enhance kalamdb-sql** (~7 tasks)
+- Add scan_all_users() method and iterator
+- Add scan_all_namespaces(), scan_all_storage_locations(), etc. (7 methods total)
+- Update adapter.rs with RocksDB iteration logic
+- Update lib.rs to expose new public API
+- Add tests for scan methods
+
+**Phase C: Refactor system table providers** (~8 tasks)
+- Update UsersTableProvider to use Arc<KalamSql>
+- Update StorageLocationsTableProvider
+- Update LiveQueriesTableProvider
+- Update JobsTableProvider
+- Update all tests to use KalamSql instead of CatalogStore
+- Update service constructors
+
+**Phase D: Refactor user table handlers** (~6 tasks)
+- Update UserTableInsertHandler to use UserTableStore
+- Update UserTableUpdateHandler to use UserTableStore
+- Update UserTableDeleteHandler to use UserTableStore
+- Remove RocksDB imports from these files
+- Update all handler tests
+- Update dependency injection in main.rs
+
+**Phase E: Deprecate CatalogStore** (~2 tasks)
+- Mark CatalogStore as #[deprecated]
+- Add migration guide documentation
+
+**Total**: ~35-40 tasks, estimated 6-9 days
+
+### Success Criteria
+
+- [ ] kalamdb-store crate exists with full test coverage
+- [ ] All 7 system tables have scan_all methods in kalamdb-sql
+- [ ] All 4 system table providers use kalamdb-sql only
+- [ ] All 3 user table handlers use kalamdb-store only
+- [ ] kalamdb-core has ZERO direct rocksdb imports
+- [ ] All existing tests pass
+- [ ] CatalogStore marked as deprecated
+
+**Implementation Plan**: See detailed tasks in tasks.md Phase 9.5 (Architecture Refactoring)
+
+---
 4. **Future Raft preparation**: Architecture designed for distributed replication
 
 **Documentation**: Needs Updates

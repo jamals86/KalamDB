@@ -414,6 +414,116 @@ After Phase 2 began, the spec was updated with major architecture changes:
 
 ---
 
+## Phase 9.5: Architecture Refactoring - Three-Layer Separation (Priority: CRITICAL)
+
+**Goal**: Eliminate direct RocksDB coupling in kalamdb-core by introducing kalamdb-store crate and enhancing kalamdb-sql
+
+**Why Now**: Phase 9 implementation revealed direct RocksDB dependencies in business logic. Refactoring before Phase 10 prevents accumulating more technical debt.
+
+**Target Architecture**:
+```
+kalamdb-core (NO RocksDB imports)
+    ↓
+kalamdb-sql (system tables) + kalamdb-store (user/shared/stream tables)
+    ↓
+RocksDB (isolated to 2 crates only)
+```
+
+**Independent Test**: After refactoring, all 47 Phase 9 tests must still pass, kalamdb-core must have zero RocksDB imports
+
+### Step A: Create kalamdb-store Crate
+
+- [ ] T133 [P] [Refactor] Create `backend/crates/kalamdb-store/Cargo.toml` with dependencies: rocksdb = "0.24", serde = { version = "1.0", features = ["derive"] }, serde_json = "1.0", chrono = "0.4.39", anyhow = "1.0"
+- [ ] T134 [P] [Refactor] Create `backend/crates/kalamdb-store/src/lib.rs` with public API exports: `pub use user_table_store::UserTableStore;`, `pub use shared_table_store::SharedTableStore;`, `pub use stream_table_store::StreamTableStore;`
+- [ ] T135 [P] [Refactor] Create `backend/crates/kalamdb-store/src/key_encoding.rs` with key format utilities: `user_key(user_id: &UserId, row_id: &str) -> String` (returns "{user_id}:{row_id}"), `parse_user_key(key: &str) -> Result<(String, String)>`, `shared_key(row_id: &str) -> String`, `stream_key(timestamp_ms: i64, row_id: &str) -> String`
+- [ ] T136 [Refactor] Create `backend/crates/kalamdb-store/src/user_table_store.rs` with UserTableStore struct:
+  - `new(db: Arc<DB>) -> Result<Self>`
+  - `put(namespace_id: &NamespaceId, table_name: &TableName, user_id: &UserId, row_id: &str, row_data: JsonValue) -> Result<()>` (injects _updated, _deleted system columns)
+  - `get(namespace_id: &NamespaceId, table_name: &TableName, user_id: &UserId, row_id: &str) -> Result<Option<JsonValue>>`
+  - `delete(namespace_id: &NamespaceId, table_name: &TableName, user_id: &UserId, row_id: &str, hard: bool) -> Result<()>` (soft delete sets _deleted=true, hard delete removes physically)
+  - `scan_user(namespace_id: &NamespaceId, table_name: &TableName, user_id: &UserId) -> Result<impl Iterator<Item = (String, JsonValue)>>` (returns all rows for user)
+- [ ] T137 [P] [Refactor] Create `backend/crates/kalamdb-store/src/shared_table_store.rs` with SharedTableStore struct (similar API but no user_id parameter, key format: just row_id)
+- [ ] T138 [P] [Refactor] Create `backend/crates/kalamdb-store/src/stream_table_store.rs` with StreamTableStore struct (similar API, key format: timestamp_ms:row_id for TTL-based eviction)
+- [ ] T139 [P] [Refactor] Add kalamdb-store unit tests in `backend/crates/kalamdb-store/src/tests/` covering all methods for UserTableStore, SharedTableStore, StreamTableStore (test data isolation, system columns, soft/hard delete)
+- [ ] T140 [Refactor] Update `backend/Cargo.toml` workspace to include kalamdb-store crate
+- [ ] T141 [Refactor] Update `backend/crates/kalamdb-core/Cargo.toml` to add kalamdb-store as dependency
+
+**Checkpoint**: kalamdb-store crate complete with comprehensive tests
+
+### Step B: Enhance kalamdb-sql with scan_all Methods
+
+- [ ] T142 [P] [Refactor] Add `scan_all_users() -> Result<Vec<User>>` to `backend/crates/kalamdb-sql/src/adapter.rs` (iterate system_users CF, deserialize all rows)
+- [ ] T143 [P] [Refactor] Add `scan_all_namespaces() -> Result<Vec<Namespace>>` to adapter.rs (iterate system_namespaces CF)
+- [ ] T144 [P] [Refactor] Add `scan_all_storage_locations() -> Result<Vec<StorageLocation>>` to adapter.rs (iterate system_storage_locations CF)
+- [ ] T145 [P] [Refactor] Add `scan_all_live_queries() -> Result<Vec<LiveQuery>>` to adapter.rs (iterate system_live_queries CF)
+- [ ] T146 [P] [Refactor] Add `scan_all_jobs() -> Result<Vec<Job>>` to adapter.rs (iterate system_jobs CF)
+- [ ] T147 [P] [Refactor] Add `scan_all_tables() -> Result<Vec<Table>>` to adapter.rs (iterate system_tables CF)
+- [ ] T148 [P] [Refactor] Add `scan_all_table_schemas() -> Result<Vec<TableSchema>>` to adapter.rs (iterate system_table_schemas CF)
+- [ ] T149 [Refactor] Expose all scan_all methods in `backend/crates/kalamdb-sql/src/lib.rs` public API
+
+**Checkpoint**: kalamdb-sql has complete scan_all API for all 7 system tables
+
+### Step C: Refactor System Table Providers to Use kalamdb-sql
+
+- [ ] T150 [Refactor] Update `backend/crates/kalamdb-core/src/tables/system/users_provider.rs` to use Arc<KalamSql> instead of CatalogStore:
+  - Change constructor: `new(kalam_sql: Arc<KalamSql>) -> Self`
+  - Replace all `catalog_store.put_user()` with `kalam_sql.insert_user()`
+  - Replace all `catalog_store.get_user()` with `kalam_sql.get_user()`
+  - Update scan() to use `kalam_sql.scan_all_users()`
+  - Update all tests to create KalamSql instance instead of CatalogStore
+- [ ] T151 [Refactor] Update `backend/crates/kalamdb-core/src/tables/system/storage_locations_provider.rs` to use Arc<KalamSql> (same pattern as T150)
+- [ ] T152 [Refactor] Update `backend/crates/kalamdb-core/src/tables/system/live_queries_provider.rs` to use Arc<KalamSql> (same pattern as T150)
+- [ ] T153 [Refactor] Update `backend/crates/kalamdb-core/src/tables/system/jobs_provider.rs` to use Arc<KalamSql> (same pattern as T150)
+- [ ] T154 [Refactor] Update `backend/crates/kalamdb-core/src/services/namespace_service.rs` constructor to accept Arc<KalamSql> instead of Arc<CatalogStore>, update all method calls
+- [ ] T155 [Refactor] Update `backend/crates/kalamdb-server/src/main.rs` initialization to create Arc<KalamSql> and pass to all system table providers and services
+
+**Checkpoint**: All system table providers use kalamdb-sql, CatalogStore usage eliminated
+
+### Step D: Refactor User Table Handlers to Use kalamdb-store
+
+- [ ] T156 [Refactor] Update `backend/crates/kalamdb-core/src/tables/user_table_insert.rs` to use Arc<UserTableStore>:
+  - Change constructor: `new(store: Arc<UserTableStore>) -> Self`
+  - Replace manual RocksDB operations with `store.put(namespace_id, table_name, user_id, row_id, row_data)`
+  - Remove rocksdb::DB import
+  - Simplify system column injection (now handled by UserTableStore)
+  - Update all 7 tests
+- [ ] T157 [Refactor] Update `backend/crates/kalamdb-core/src/tables/user_table_update.rs` to use Arc<UserTableStore>:
+  - Change constructor: `new(store: Arc<UserTableStore>) -> Self`
+  - Replace manual RocksDB operations with `store.get()` and `store.put()`
+  - Remove rocksdb::DB import
+  - Update all 7 tests
+- [ ] T158 [Refactor] Update `backend/crates/kalamdb-core/src/tables/user_table_delete.rs` to use Arc<UserTableStore>:
+  - Change constructor: `new(store: Arc<UserTableStore>) -> Self`
+  - Replace manual soft delete with `store.delete(hard: false)`
+  - Replace manual hard delete with `store.delete(hard: true)`
+  - Remove rocksdb::DB import
+  - Update all 7 tests
+- [ ] T159 [Refactor] Update `backend/crates/kalamdb-core/src/services/user_table_service.rs` to accept Arc<UserTableStore> in constructor, update handler initialization
+- [ ] T160 [Refactor] Update `backend/crates/kalamdb-server/src/main.rs` to create Arc<UserTableStore> and pass to user table handlers
+
+**Checkpoint**: All user table handlers use kalamdb-store, direct RocksDB usage eliminated
+
+### Step E: Verify and Document
+
+- [ ] T161 [Refactor] Run `cargo check -p kalamdb-core` and verify ZERO rocksdb imports (grep for `use rocksdb` in kalamdb-core/src/)
+- [ ] T162 [Refactor] Run full test suite `cargo test -p kalamdb-core --lib` and verify all 47 Phase 9 tests still pass
+- [ ] T163 [Refactor] Mark `backend/crates/kalamdb-core/src/catalog/catalog_store.rs` as deprecated with `#[deprecated(since = "0.2.0", note = "Use kalamdb-sql for system tables and kalamdb-store for user tables")]`
+- [ ] T164 [Refactor] Add migration guide to `ARCHITECTURE_REFACTOR_PLAN.md` explaining CatalogStore deprecation
+- [ ] T165 [Refactor] Update `specs/002-simple-kalamdb/spec.md` to reflect three-layer architecture as implemented (mark as "✅ IMPLEMENTED" instead of "Planned")
+
+**Phase 9.5 Status**: Estimated 33 tasks, 6-9 days. Three-layer architecture complete: kalamdb-core (NO RocksDB) → kalamdb-sql + kalamdb-store → RocksDB
+
+**Success Criteria**:
+- ✅ kalamdb-store crate exists with full test coverage
+- ✅ All 7 system tables have scan_all methods in kalamdb-sql
+- ✅ All 4 system table providers use kalamdb-sql only
+- ✅ All 3 user table handlers use kalamdb-store only
+- ✅ kalamdb-core has ZERO direct rocksdb imports
+- ✅ All existing 47 tests pass
+- ✅ CatalogStore marked as deprecated
+
+---
+
 ## Phase 10: User Story 3a - Table Deletion and Cleanup (Priority: P1)
 
 **Goal**: Drop user and shared tables with cleanup of RocksDB buffers, Parquet files, and metadata
@@ -422,15 +532,15 @@ After Phase 2 began, the spec was updated with major architecture changes:
 
 ### Implementation for User Story 3a
 
-- [ ] T126 [P] [US3a] Implement DROP TABLE parser in `backend/crates/kalamdb-core/src/sql/ddl/drop_table.rs` (parse DROP USER TABLE and DROP SHARED TABLE, use NamespaceId and TableName types)
-- [ ] T127 [US3a] Create table deletion service in `backend/crates/kalamdb-core/src/services/table_deletion_service.rs` (orchestrate cleanup, use NamespaceId and TableName types)
-- [ ] T128 [US3a] Add active subscription check in table_deletion_service.rs (query system.live_queries, prevent drop if active subscriptions exist, use TableName)
-- [ ] T129 [US3a] Implement RocksDB buffer cleanup in table_deletion_service.rs (delete entire column family for table: user_table:{NamespaceId}:{TableName} or shared_table:{NamespaceId}:{TableName} using TableType enum)
-- [ ] T130 [US3a] Implement Parquet file deletion in table_deletion_service.rs (delete all user-specific Parquet files from storage, use UserId in path)
-- [ ] T131 [US3a] Add metadata removal in table_deletion_service.rs (remove from manifest.json, delete schema directory, use NamespaceId and TableName)
-- [ ] T132 [US3a] Update storage location usage count in table_deletion_service.rs (decrement usage_count when table references location)
-- [ ] T133 [US3a] Add error handling for partial failures in table_deletion_service.rs (rollback if file deletion fails)
-- [ ] T134 [US3a] Register DROP TABLE operations as jobs in system.jobs (track cleanup progress, use TableName)
+- [ ] T166 [P] [US3a] Implement DROP TABLE parser in `backend/crates/kalamdb-core/src/sql/ddl/drop_table.rs` (parse DROP USER TABLE and DROP SHARED TABLE, use NamespaceId and TableName types)
+- [ ] T167 [US3a] Create table deletion service in `backend/crates/kalamdb-core/src/services/table_deletion_service.rs` (orchestrate cleanup, use NamespaceId and TableName types, use kalamdb-sql for metadata, kalamdb-store for data cleanup)
+- [ ] T168 [US3a] Add active subscription check in table_deletion_service.rs (query system.live_queries via kalamdb-sql, prevent drop if active subscriptions exist, use TableName)
+- [ ] T169 [US3a] Implement RocksDB buffer cleanup in table_deletion_service.rs (delegate to kalamdb-store.drop_table() which deletes entire column family for table: user_table:{NamespaceId}:{TableName} or shared_table:{NamespaceId}:{TableName} using TableType enum)
+- [ ] T170 [US3a] Implement Parquet file deletion in table_deletion_service.rs (delete all user-specific Parquet files from storage, use UserId in path)
+- [ ] T171 [US3a] Add metadata removal in table_deletion_service.rs (remove from system.tables and system.table_schemas via kalamdb-sql, use NamespaceId and TableName)
+- [ ] T172 [US3a] Update storage location usage count in table_deletion_service.rs (decrement usage_count in system.storage_locations via kalamdb-sql when table references location)
+- [ ] T173 [US3a] Add error handling for partial failures in table_deletion_service.rs (rollback if file deletion fails)
+- [ ] T174 [US3a] Register DROP TABLE operations as jobs in system.jobs via kalamdb-sql (track cleanup progress, use TableName)
 
 **Checkpoint**: Table deletion functional - can drop tables with complete cleanup, prevent deletion when in use
 
@@ -444,10 +554,10 @@ After Phase 2 began, the spec was updated with major architecture changes:
 
 ### Implementation for User Story 3b
 
-- [ ] T135 [P] [US3b] Implement ALTER TABLE parser in `backend/crates/kalamdb-core/src/sql/ddl/alter_table.rs` (parse ADD COLUMN, DROP COLUMN, MODIFY COLUMN, use NamespaceId and TableName types)
-- [ ] T136 [US3b] Create schema evolution service in `backend/crates/kalamdb-core/src/services/schema_evolution_service.rs` (orchestrate schema changes, use NamespaceId and TableName types)
-- [ ] T137 [US3b] Add ALTER TABLE validation in schema_evolution_service.rs (check backwards compatibility, validate type changes)
-- [ ] T138 [US3b] Add subscription column reference check in schema_evolution_service.rs (prevent dropping columns referenced in active subscriptions, use TableName)
+- [ ] T175 [P] [US3b] Implement ALTER TABLE parser in `backend/crates/kalamdb-core/src/sql/ddl/alter_table.rs` (parse ADD COLUMN, DROP COLUMN, MODIFY COLUMN, use NamespaceId and TableName types)
+- [ ] T176 [US3b] Create schema evolution service in `backend/crates/kalamdb-core/src/services/schema_evolution_service.rs` (orchestrate schema changes, use NamespaceId and TableName types, use kalamdb-sql for metadata)
+- [ ] T177 [US3b] Add ALTER TABLE validation in schema_evolution_service.rs (check backwards compatibility, validate type changes)
+- [ ] T178 [US3b] Add subscription column reference check in schema_evolution_service.rs (prevent dropping columns referenced in active subscriptions via kalamdb-sql.scan_all_live_queries(), use TableName)
 - [ ] T139 [US3b] Prevent altering system columns in schema_evolution_service.rs (reject changes to \_updated, \_deleted)
 - [ ] T140 [US3b] Prevent altering stream tables in schema_evolution_service.rs (stream table schemas are immutable, use TableType enum)
 - [ ] T141 [US3b] Implement schema version increment in schema_evolution_service.rs (create schema_v{N+1}.json using DataFusion's SchemaRef::to_json())
