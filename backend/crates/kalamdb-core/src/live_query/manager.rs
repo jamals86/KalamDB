@@ -3,7 +3,7 @@
 //! This module coordinates live query subscriptions, change detection,
 //! and real-time notifications to WebSocket clients.
 
-use crate::catalog::CatalogStore;
+use kalamdb_sql::KalamSql;
 use crate::error::KalamDbError;
 use crate::live_query::connection_registry::{
     ConnectionId, LiveId, LiveQuery, LiveQueryOptions, LiveQueryRegistry, NodeId, UserId,
@@ -21,9 +21,9 @@ pub struct LiveQueryManager {
 
 impl LiveQueryManager {
     /// Create a new live query manager
-    pub fn new(catalog_store: Arc<CatalogStore>, node_id: NodeId) -> Self {
+    pub fn new(kalam_sql: Arc<KalamSql>, node_id: NodeId) -> Self {
         let registry = Arc::new(tokio::sync::RwLock::new(LiveQueryRegistry::new(node_id.clone())));
-        let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(catalog_store));
+        let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql));
         
         Self {
             registry,
@@ -288,9 +288,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
-        let catalog_store = Arc::new(CatalogStore::new(db));
+        let kalam_sql = Arc::new(KalamSql::new(db).unwrap());
         let node_id = NodeId::new("test_node".to_string());
-        let manager = LiveQueryManager::new(catalog_store, node_id);
+        let manager = LiveQueryManager::new(kalam_sql, node_id);
         (manager, temp_dir)
     }
 

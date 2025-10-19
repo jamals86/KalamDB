@@ -121,6 +121,87 @@ impl KalamSql {
     ) -> Result<Option<TableSchema>> {
         self.adapter.get_table_schema(table_id, version)
     }
+
+    /// Get a storage location by name
+    pub fn get_storage_location(&self, location_name: &str) -> Result<Option<StorageLocation>> {
+        self.adapter.get_storage_location(location_name)
+    }
+
+    /// Insert a storage location
+    pub fn insert_storage_location(&self, location: &StorageLocation) -> Result<()> {
+        self.adapter.insert_storage_location(location)
+    }
+
+    /// Get a live query by ID
+    pub fn get_live_query(&self, live_id: &str) -> Result<Option<LiveQuery>> {
+        self.adapter.get_live_query(live_id)
+    }
+
+    /// Insert a live query
+    pub fn insert_live_query(&self, live_query: &LiveQuery) -> Result<()> {
+        self.adapter.insert_live_query(live_query)
+    }
+
+    /// Get a job by ID
+    pub fn get_job(&self, job_id: &str) -> Result<Option<Job>> {
+        self.adapter.get_job(job_id)
+    }
+
+    /// Insert a job
+    pub fn insert_job(&self, job: &Job) -> Result<()> {
+        self.adapter.insert_job(job)
+    }
+
+    // Scan operations for all system tables
+
+    /// Scan all users
+    ///
+    /// Returns a vector of all users in the system.
+    pub fn scan_all_users(&self) -> Result<Vec<User>> {
+        self.adapter.scan_all_users()
+    }
+
+    /// Scan all namespaces
+    ///
+    /// Returns a vector of all namespaces in the system.
+    pub fn scan_all_namespaces(&self) -> Result<Vec<Namespace>> {
+        self.adapter.scan_all_namespaces()
+    }
+
+    /// Scan all storage locations
+    ///
+    /// Returns a vector of all storage locations in the system.
+    pub fn scan_all_storage_locations(&self) -> Result<Vec<StorageLocation>> {
+        self.adapter.scan_all_storage_locations()
+    }
+
+    /// Scan all live queries
+    ///
+    /// Returns a vector of all active live queries in the system.
+    pub fn scan_all_live_queries(&self) -> Result<Vec<LiveQuery>> {
+        self.adapter.scan_all_live_queries()
+    }
+
+    /// Scan all jobs
+    ///
+    /// Returns a vector of all jobs in the system.
+    pub fn scan_all_jobs(&self) -> Result<Vec<Job>> {
+        self.adapter.scan_all_jobs()
+    }
+
+    /// Scan all tables
+    ///
+    /// Returns a vector of all tables in the system.
+    pub fn scan_all_tables(&self) -> Result<Vec<Table>> {
+        self.adapter.scan_all_tables()
+    }
+
+    /// Scan all table schemas
+    ///
+    /// Returns a vector of all table schemas in the system.
+    pub fn scan_all_table_schemas(&self) -> Result<Vec<TableSchema>> {
+        self.adapter.scan_all_table_schemas()
+    }
 }
 
 #[cfg(test)]

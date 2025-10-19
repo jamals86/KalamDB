@@ -14,6 +14,10 @@ use kalamdb_core::services::NamespaceService;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::storage::RocksDbInit;
+use kalamdb_core::tables::system::{
+    UsersTableProvider, StorageLocationsTableProvider,
+    LiveQueriesTableProvider, JobsTableProvider,
+};
 use log::info;
 use std::sync::Arc;
 
@@ -58,6 +62,13 @@ async fn main() -> Result<()> {
     let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
     info!("NamespaceService initialized");
 
+    // Initialize system table providers (all use KalamSQL for RocksDB operations)
+    let users_provider = Arc::new(UsersTableProvider::new(kalam_sql.clone()));
+    let storage_locations_provider = Arc::new(StorageLocationsTableProvider::new(kalam_sql.clone()));
+    let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone()));
+    let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.clone()));
+    info!("System table providers initialized (users, storage_locations, live_queries, jobs)");
+
     // Initialize DataFusion session factory
     let session_factory = Arc::new(
         DataFusionSessionFactory::new()
@@ -65,8 +76,25 @@ async fn main() -> Result<()> {
     );
     info!("DataFusion session factory initialized");
 
-    // Initialize SqlExecutor
+    // Initialize DataFusion session and register system tables
     let session_context = Arc::new(session_factory.create_session());
+    
+    // Register system table providers with DataFusion
+    session_context
+        .register_table("system.users", users_provider.clone())
+        .expect("Failed to register system.users table");
+    session_context
+        .register_table("system.storage_locations", storage_locations_provider.clone())
+        .expect("Failed to register system.storage_locations table");
+    session_context
+        .register_table("system.live_queries", live_queries_provider.clone())
+        .expect("Failed to register system.live_queries table");
+    session_context
+        .register_table("system.jobs", jobs_provider.clone())
+        .expect("Failed to register system.jobs table");
+    info!("System tables registered with DataFusion (system.users, system.storage_locations, system.live_queries, system.jobs)");
+
+    // Initialize SqlExecutor
     let sql_executor = Arc::new(SqlExecutor::new(
         namespace_service.clone(),
         session_context.clone(),

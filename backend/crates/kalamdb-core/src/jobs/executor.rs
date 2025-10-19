@@ -256,8 +256,8 @@ impl JobExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::CatalogStore;
     use crate::storage::RocksDbInit;
+    use kalamdb_sql::KalamSql;
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -265,8 +265,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
-        let catalog_store = Arc::new(CatalogStore::new(db));
-        let jobs_provider = Arc::new(JobsTableProvider::new(catalog_store));
+        let kalam_sql = Arc::new(KalamSql::new(db).unwrap());
+        let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql));
         let executor = JobExecutor::new(jobs_provider, "test-node-1".to_string());
         (executor, temp_dir)
     }

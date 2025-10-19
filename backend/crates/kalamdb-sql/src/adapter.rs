@@ -4,7 +4,7 @@
 
 use crate::models::*;
 use anyhow::{anyhow, Result};
-use rocksdb::DB;
+use rocksdb::{IteratorMode, DB};
 use std::sync::Arc;
 
 /// RocksDB adapter for system tables
@@ -270,6 +270,141 @@ impl RocksDbAdapter {
         let value = serde_json::to_vec(table)?;
         self.db.put_cf(&cf, key.as_bytes(), &value)?;
         Ok(())
+    }
+
+    // Scan operations for all system tables
+
+    /// Scan all users
+    pub fn scan_all_users(&self) -> Result<Vec<User>> {
+        let cf = self
+            .db
+            .cf_handle("system_users")
+            .ok_or_else(|| anyhow!("system_users CF not found"))?;
+
+        let mut users = Vec::new();
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+
+        for item in iter {
+            let (_, value) = item?;
+            let user: User = serde_json::from_slice(&value)?;
+            users.push(user);
+        }
+
+        Ok(users)
+    }
+
+    /// Scan all namespaces
+    pub fn scan_all_namespaces(&self) -> Result<Vec<Namespace>> {
+        let cf = self
+            .db
+            .cf_handle("system_namespaces")
+            .ok_or_else(|| anyhow!("system_namespaces CF not found"))?;
+
+        let mut namespaces = Vec::new();
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+
+        for item in iter {
+            let (_, value) = item?;
+            let namespace: Namespace = serde_json::from_slice(&value)?;
+            namespaces.push(namespace);
+        }
+
+        Ok(namespaces)
+    }
+
+    /// Scan all storage locations
+    pub fn scan_all_storage_locations(&self) -> Result<Vec<StorageLocation>> {
+        let cf = self
+            .db
+            .cf_handle("system_storage_locations")
+            .ok_or_else(|| anyhow!("system_storage_locations CF not found"))?;
+
+        let mut locations = Vec::new();
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+
+        for item in iter {
+            let (_, value) = item?;
+            let location: StorageLocation = serde_json::from_slice(&value)?;
+            locations.push(location);
+        }
+
+        Ok(locations)
+    }
+
+    /// Scan all live queries
+    pub fn scan_all_live_queries(&self) -> Result<Vec<LiveQuery>> {
+        let cf = self
+            .db
+            .cf_handle("system_live_queries")
+            .ok_or_else(|| anyhow!("system_live_queries CF not found"))?;
+
+        let mut live_queries = Vec::new();
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+
+        for item in iter {
+            let (_, value) = item?;
+            let live_query: LiveQuery = serde_json::from_slice(&value)?;
+            live_queries.push(live_query);
+        }
+
+        Ok(live_queries)
+    }
+
+    /// Scan all jobs
+    pub fn scan_all_jobs(&self) -> Result<Vec<Job>> {
+        let cf = self
+            .db
+            .cf_handle("system_jobs")
+            .ok_or_else(|| anyhow!("system_jobs CF not found"))?;
+
+        let mut jobs = Vec::new();
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+
+        for item in iter {
+            let (_, value) = item?;
+            let job: Job = serde_json::from_slice(&value)?;
+            jobs.push(job);
+        }
+
+        Ok(jobs)
+    }
+
+    /// Scan all tables
+    pub fn scan_all_tables(&self) -> Result<Vec<Table>> {
+        let cf = self
+            .db
+            .cf_handle("system_tables")
+            .ok_or_else(|| anyhow!("system_tables CF not found"))?;
+
+        let mut tables = Vec::new();
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+
+        for item in iter {
+            let (_, value) = item?;
+            let table: Table = serde_json::from_slice(&value)?;
+            tables.push(table);
+        }
+
+        Ok(tables)
+    }
+
+    /// Scan all table schemas
+    pub fn scan_all_table_schemas(&self) -> Result<Vec<TableSchema>> {
+        let cf = self
+            .db
+            .cf_handle("system_table_schemas")
+            .ok_or_else(|| anyhow!("system_table_schemas CF not found"))?;
+
+        let mut schemas = Vec::new();
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+
+        for item in iter {
+            let (_, value) = item?;
+            let schema: TableSchema = serde_json::from_slice(&value)?;
+            schemas.push(schema);
+        }
+
+        Ok(schemas)
     }
 }
 

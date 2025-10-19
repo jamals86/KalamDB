@@ -273,16 +273,16 @@ impl StorageLocationService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::CatalogStore;
     use crate::storage::RocksDbInit;
+    use kalamdb_sql::KalamSql;
     use tempfile::TempDir;
 
     fn setup_test_service() -> (StorageLocationService, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
-        let catalog_store = Arc::new(CatalogStore::new(db));
-        let provider = Arc::new(StorageLocationsTableProvider::new(catalog_store));
+        let kalam_sql = Arc::new(KalamSql::new(db).unwrap());
+        let provider = Arc::new(StorageLocationsTableProvider::new(kalam_sql));
         let service = StorageLocationService::new(provider);
         (service, temp_dir)
     }
