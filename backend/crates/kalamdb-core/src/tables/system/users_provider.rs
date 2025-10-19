@@ -1,7 +1,7 @@
 //! System.users table provider
 //!
 //! This module provides a DataFusion TableProvider implementation for the system.users table,
-//! backed by RocksDB column family system_table:users.
+//! backed by RocksDB column family system_users.
 
 use crate::catalog::{CatalogStore, UserId};
 use crate::error::KalamDbError;

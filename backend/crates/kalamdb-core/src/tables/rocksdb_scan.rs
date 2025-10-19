@@ -69,7 +69,7 @@ mod tests {
 
         let scan = RocksDbScanExec::new(
             db.clone(),
-            "system_table:users".to_string(),
+            "system_users".to_string(),
             schema.clone(),
             None,
         );

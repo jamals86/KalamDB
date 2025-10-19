@@ -10,6 +10,9 @@ repository.workspace = true
 # Storage
 rocksdb.workspace = true
 
+# Internal crates
+kalamdb-sql = { path = "../kalamdb-sql" }
+
 # Apache Arrow ecosystem
 arrow.workspace = true
 parquet.workspace = true
@@ -18,6 +21,7 @@ sqlparser.workspace = true
 
 # Async
 async-trait = "0.1"
+tokio = { workspace = true, features = ["sync"] }
 
 # Serialization
 serde.workspace = true

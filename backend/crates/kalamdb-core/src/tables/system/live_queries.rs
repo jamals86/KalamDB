@@ -41,7 +41,7 @@ impl LiveQueriesTable {
 
     /// Get the column family name
     pub fn column_family_name() -> String {
-        format!("system_table:{}", Self::table_name())
+        format!("system_{}", Self::table_name())
     }
 }
 
@@ -69,6 +69,6 @@ mod tests {
     #[test]
     fn test_live_queries_table_name() {
         assert_eq!(LiveQueriesTable::table_name(), "live_queries");
-        assert_eq!(LiveQueriesTable::column_family_name(), "system_table:live_queries");
+        assert_eq!(LiveQueriesTable::column_family_name(), "system_live_queries");
     }
 }

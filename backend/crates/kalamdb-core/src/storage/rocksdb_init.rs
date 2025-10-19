@@ -3,7 +3,7 @@
 //! This module handles opening the RocksDB database and creating default column families.
 
 use crate::error::KalamDbError;
-use crate::storage::RocksDbConfig;
+use crate::storage::{RocksDbConfig, SYSTEM_COLUMN_FAMILIES};
 use rocksdb::{ColumnFamilyDescriptor, DB};
 use std::path::Path;
 use std::sync::Arc;
@@ -40,12 +40,10 @@ impl RocksDbInit {
             }
         };
 
-        // Ensure all required system table CFs are in the list
-        let system_tables = vec!["users", "live_queries", "storage_locations", "jobs"];
-        for table_name in system_tables {
-            let cf_name = format!("system_table:{}", table_name);
-            if !existing_cfs.contains(&cf_name) {
-                existing_cfs.push(cf_name);
+        // Ensure all required system CFs are in the list
+        for cf_name in SYSTEM_COLUMN_FAMILIES {
+            if !existing_cfs.contains(&cf_name.to_string()) {
+                existing_cfs.push(cf_name.to_string());
             }
         }
 
@@ -55,7 +53,7 @@ impl RocksDbInit {
         for cf_name in &existing_cfs {
             let opts = if cf_name == "default" {
                 RocksDbConfig::default().db_options
-            } else if cf_name.starts_with("system_table:") {
+            } else if cf_name.starts_with("system_") || cf_name == "user_table_counters" {
                 RocksDbConfig::system_table_cf_options()
             } else if cf_name.starts_with("user_table:") {
                 RocksDbConfig::user_table_cf_options()
@@ -82,25 +80,25 @@ impl RocksDbInit {
         Ok(Arc::new(db))
     }
 
-    /// Create default system table column families
+    /// Create default system column families
     ///
-    /// Creates column families for:
-    /// - system_table:users
-    /// - system_table:live_queries
-    /// - system_table:storage_locations
-    /// - system_table:jobs
+    /// Creates column families for all system tables defined in SYSTEM_COLUMN_FAMILIES:
+    /// - system_users
+    /// - system_live_queries
+    /// - system_storage_locations
+    /// - system_jobs
+    /// - system_namespaces
+    /// - system_tables
+    /// - system_table_schemas
+    /// - user_table_counters
     fn create_default_system_tables(&self, db: &Arc<DB>) -> Result<(), KalamDbError> {
-        let system_tables = vec!["users", "live_queries", "storage_locations", "jobs"];
-
-        for table_name in system_tables {
-            let cf_name = format!("system_table:{}", table_name);
-            
+        for cf_name in SYSTEM_COLUMN_FAMILIES {
             // Check if CF exists
-            if db.cf_handle(&cf_name).is_none() {
+            if db.cf_handle(cf_name).is_none() {
                 // CF doesn't exist, it should have been created during open
                 // If we reach here, something went wrong during initialization
                 return Err(KalamDbError::CatalogError(format!(
-                    "System table column family not found: {}",
+                    "System column family not found: {}",
                     cf_name
                 )));
             }
@@ -132,10 +130,14 @@ mod tests {
         let db = init.open().unwrap();
 
         // Verify system tables exist by checking CF handles
-        assert!(db.cf_handle("system_table:users").is_some());
-        assert!(db.cf_handle("system_table:live_queries").is_some());
-        assert!(db.cf_handle("system_table:storage_locations").is_some());
-        assert!(db.cf_handle("system_table:jobs").is_some());
+        assert!(db.cf_handle("system_users").is_some());
+        assert!(db.cf_handle("system_live_queries").is_some());
+        assert!(db.cf_handle("system_storage_locations").is_some());
+        assert!(db.cf_handle("system_jobs").is_some());
+        assert!(db.cf_handle("system_namespaces").is_some());
+        assert!(db.cf_handle("system_tables").is_some());
+        assert!(db.cf_handle("system_table_schemas").is_some());
+        assert!(db.cf_handle("user_table_counters").is_some());
 
         // Close database
         RocksDbInit::close(db);
@@ -159,7 +161,7 @@ mod tests {
         let db2 = init.open().unwrap();
 
         // Verify system tables still exist
-        assert!(db2.cf_handle("system_table:users").is_some());
+        assert!(db2.cf_handle("system_users").is_some());
 
         RocksDbInit::close(db2);
 

@@ -10,5 +10,13 @@ pub mod hybrid_table_provider;
 pub mod parquet_scan;
 pub mod rocksdb_scan;
 pub mod system;
+pub mod user_table_delete;
+pub mod user_table_insert;
+pub mod user_table_provider;
+pub mod user_table_update;
 
 pub use hybrid_table_provider::HybridTableProvider;
+pub use user_table_delete::UserTableDeleteHandler;
+pub use user_table_insert::UserTableInsertHandler;
+pub use user_table_provider::UserTableProvider;
+pub use user_table_update::UserTableUpdateHandler;

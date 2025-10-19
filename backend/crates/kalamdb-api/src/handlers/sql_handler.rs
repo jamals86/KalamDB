@@ -4,6 +4,7 @@
 
 use actix_web::{post, web, HttpResponse, Responder};
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
+use kalamdb_core::sql::executor::{ExecutionResult, SqlExecutor};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -52,6 +53,7 @@ use crate::models::{QueryResult, SqlRequest, SqlResponse};
 pub async fn execute_sql(
     req: web::Json<SqlRequest>,
     session_factory: web::Data<Arc<DataFusionSessionFactory>>,
+    sql_executor: web::Data<Arc<SqlExecutor>>,
 ) -> impl Responder {
     let start_time = Instant::now();
     
@@ -75,7 +77,7 @@ pub async fn execute_sql(
     let mut results = Vec::new();
     
     for (idx, sql) in statements.iter().enumerate() {
-        match execute_single_statement(sql, &session_factory).await {
+        match execute_single_statement(sql, &session_factory, &sql_executor).await {
             Ok(result) => results.push(result),
             Err(err) => {
                 let execution_time_ms = start_time.elapsed().as_millis() as u64;
@@ -93,25 +95,59 @@ pub async fn execute_sql(
     HttpResponse::Ok().json(SqlResponse::success(results, execution_time_ms))
 }
 
-/// Execute a single SQL statement using DataFusion
+/// Execute a single SQL statement
+/// First tries custom DDL commands (CREATE NAMESPACE, etc.)
+/// Falls back to DataFusion for standard SQL
 async fn execute_single_statement(
     sql: &str,
     session_factory: &Arc<DataFusionSessionFactory>,
+    sql_executor: &Arc<SqlExecutor>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
-    // Create a DataFusion session (TODO: pass user context)
+    // Try custom DDL commands first
+    match sql_executor.execute(sql).await {
+        Ok(result) => {
+            // Convert ExecutionResult to QueryResult
+            match result {
+                ExecutionResult::Success(message) => {
+                    return Ok(QueryResult::with_message(message));
+                }
+                ExecutionResult::RecordBatch(batch) => {
+                    return record_batch_to_query_result(vec![batch]);
+                }
+                ExecutionResult::RecordBatches(batches) => {
+                    return record_batch_to_query_result(batches);
+                }
+            }
+        }
+        Err(kalamdb_core::error::KalamDbError::InvalidSql(_)) => {
+            // Not a custom DDL, fall through to DataFusion
+        }
+        Err(e) => {
+            // Other error from custom DDL
+            return Err(Box::new(e));
+        }
+    }
+
+    // Fall back to DataFusion for standard SQL
     let ctx = session_factory.create_session();
-    
-    // Execute the SQL query
     let df = ctx.sql(sql).await?;
-    
-    // Collect results into Arrow batches
     let batches = df.collect().await?;
     
     if batches.is_empty() {
-        // DDL statements or queries with no results
-        return Ok(QueryResult::with_message(format!("Query executed successfully")));
+        return Ok(QueryResult::with_message("Query executed successfully".to_string()));
     }
     
+    record_batch_to_query_result(batches)
+}
+
+/// Convert Arrow RecordBatches to QueryResult
+fn record_batch_to_query_result(
+    batches: Vec<arrow::record_batch::RecordBatch>,
+) -> Result<QueryResult, Box<dyn std::error::Error>> {
+    if batches.is_empty() {
+        return Ok(QueryResult::with_message("Query executed successfully".to_string()));
+    }
+
     // Convert Arrow batches to JSON rows
     let schema = batches[0].schema();
     let column_names: Vec<String> = schema
