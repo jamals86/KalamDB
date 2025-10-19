@@ -3,6 +3,7 @@
 //! This module provides storage backends including RocksDB for fast writes
 //! and Parquet for analytics-ready persistence.
 
+pub mod backend;
 pub mod column_family_manager;
 pub mod filesystem_backend;
 pub mod parquet_writer;
@@ -11,6 +12,7 @@ pub mod rocksdb_config;
 pub mod rocksdb_init;
 pub mod rocksdb_store;
 
+pub use backend::{RocksDbBackend, StorageBackend};
 pub use column_family_manager::{ColumnFamilyManager, SYSTEM_COLUMN_FAMILIES};
 pub use filesystem_backend::FilesystemBackend;
 pub use parquet_writer::ParquetWriter;

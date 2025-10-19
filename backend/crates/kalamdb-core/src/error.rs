@@ -43,6 +43,12 @@ pub enum KalamDbError {
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
 
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
+    #[error("Permission denied: {0}")]
+    PermissionDenied(String),
+
     #[error("{0}")]
     Other(String),
 }

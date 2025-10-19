@@ -406,12 +406,93 @@ impl RocksDbAdapter {
 
         Ok(schemas)
     }
+
+    // Additional CRUD operations for table deletion and updates
+
+    /// Delete a table by table_id
+    pub fn delete_table(&self, table_id: &str) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle("system_tables")
+            .ok_or_else(|| anyhow!("system_tables CF not found"))?;
+
+        let key = format!("tbl:{}", table_id);
+        self.db.delete_cf(&cf, key.as_bytes())?;
+        Ok(())
+    }
+
+    /// Delete all table schemas for a given table_id
+    pub fn delete_table_schemas_for_table(&self, table_id: &str) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle("system_table_schemas")
+            .ok_or_else(|| anyhow!("system_table_schemas CF not found"))?;
+
+        // Iterate and delete all schemas with prefix "schema:{table_id}:"
+        let prefix = format!("schema:{}:", table_id);
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+
+        let mut keys_to_delete = Vec::new();
+        for item in iter {
+            let (key_bytes, _) = item?;
+            let key = String::from_utf8(key_bytes.to_vec())?;
+            if key.starts_with(&prefix) {
+                keys_to_delete.push(key);
+            }
+        }
+
+        // Delete all matching keys
+        for key in keys_to_delete {
+            self.db.delete_cf(&cf, key.as_bytes())?;
+        }
+
+        Ok(())
+    }
+
+    /// Update a storage location
+    pub fn update_storage_location(&self, location: &StorageLocation) -> Result<()> {
+        self.insert_storage_location(location) // Same as insert (upsert)
+    }
+
+    /// Update a job
+    pub fn update_job(&self, job: &Job) -> Result<()> {
+        self.insert_job(job) // Same as insert (upsert)
+    }
+
+    /// Update a table
+    pub fn update_table(&self, table: &Table) -> Result<()> {
+        self.insert_table(table) // Same as insert (upsert)
+    }
+
+    /// Get all table schemas for a given table_id
+    pub fn get_table_schemas_for_table(&self, table_id: &str) -> Result<Vec<TableSchema>> {
+        let cf = self
+            .db
+            .cf_handle("system_table_schemas")
+            .ok_or_else(|| anyhow!("system_table_schemas CF not found"))?;
+
+        let prefix = format!("schema:{}:", table_id);
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+
+        let mut schemas = Vec::new();
+        for item in iter {
+            let (key_bytes, value) = item?;
+            let key = String::from_utf8(key_bytes.to_vec())?;
+            if key.starts_with(&prefix) {
+                let schema: TableSchema = serde_json::from_slice(&value)?;
+                schemas.push(schema);
+            }
+        }
+
+        // Sort by version descending (newest first)
+        schemas.sort_by(|a, b| b.version.cmp(&a.version));
+
+        Ok(schemas)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_adapter_creation() {
         // This test would require a RocksDB instance

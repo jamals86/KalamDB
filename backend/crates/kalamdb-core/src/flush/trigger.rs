@@ -7,7 +7,6 @@ use crate::catalog::TableName;
 use crate::error::KalamDbError;
 use crate::flush::FlushPolicy;
 use chrono::{DateTime, Utc};
-use rocksdb::DB;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -94,18 +93,14 @@ impl FlushTriggerState {
 ///
 /// Tracks flush state for all tables and determines when to trigger flush jobs
 pub struct FlushTriggerMonitor {
-    /// RocksDB instance
-    db: Arc<DB>,
-    
     /// Flush state per column family (keyed by column family name)
     states: Arc<RwLock<HashMap<String, FlushTriggerState>>>,
 }
 
 impl FlushTriggerMonitor {
     /// Create a new flush trigger monitor
-    pub fn new(db: Arc<DB>) -> Self {
+    pub fn new() -> Self {
         Self {
-            db,
             states: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -253,16 +248,8 @@ impl FlushTriggerMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::RocksDbInit;
     use std::thread;
     use std::time::Duration;
-
-    fn create_test_db() -> (Arc<DB>, tempfile::TempDir) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
-        let db = init.open().unwrap();
-        (db, temp_dir)
-    }
 
     #[test]
     fn test_flush_trigger_state_row_limit() {
@@ -336,8 +323,8 @@ mod tests {
 
     #[test]
     fn test_flush_trigger_monitor_registration() {
-        let (db, _temp_dir) = create_test_db();
-        let monitor = FlushTriggerMonitor::new(db);
+        
+        let monitor = FlushTriggerMonitor::new();
 
         let table_name = TableName::new("test_table");
         let cf_name = "user_table:test:test_table".to_string();
@@ -363,8 +350,8 @@ mod tests {
 
     #[test]
     fn test_flush_trigger_monitor_row_tracking() {
-        let (db, _temp_dir) = create_test_db();
-        let monitor = FlushTriggerMonitor::new(db);
+        
+        let monitor = FlushTriggerMonitor::new();
 
         let table_name = TableName::new("test_table");
         let cf_name = "user_table:test:test_table".to_string();
@@ -392,8 +379,8 @@ mod tests {
 
     #[test]
     fn test_get_tables_needing_flush() {
-        let (db, _temp_dir) = create_test_db();
-        let monitor = FlushTriggerMonitor::new(db);
+        
+        let monitor = FlushTriggerMonitor::new();
 
         // Register multiple tables with different policies
         let table1 = TableName::new("table1");
@@ -437,8 +424,8 @@ mod tests {
 
     #[test]
     fn test_get_state() {
-        let (db, _temp_dir) = create_test_db();
-        let monitor = FlushTriggerMonitor::new(db);
+        
+        let monitor = FlushTriggerMonitor::new();
 
         let table_name = TableName::new("test_table");
         let cf_name = "user_table:test:test_table".to_string();

@@ -164,50 +164,25 @@ mod tests {
     use super::*;
     use datafusion::prelude::SessionContext;
     use kalamdb_sql::KalamSql;
-    use rocksdb::{Options, DB};
-    use std::env;
+    use kalamdb_store::test_utils::TestDb;
 
-    fn setup_test_executor() -> (SqlExecutor, String, String) {
-        let temp_dir = env::temp_dir();
-        let test_id = format!("executor_test_{}_{}", std::process::id(), uuid::Uuid::new_v4());
-        let config_file = temp_dir.join(format!("{}.json", test_id));
-        let config_path = temp_dir.join(&test_id);
+    fn setup_test_executor() -> SqlExecutor {
+        let test_db = TestDb::new(&[
+            "system_namespaces",
+            "system_tables",
+            "system_table_schemas"
+        ]).unwrap();
 
-        // Cleanup
-        let _ = std::fs::remove_file(&config_file);
-        let _ = std::fs::remove_dir_all(&config_path);
-
-        // Create RocksDB instance
-        let mut opts = Options::default();
-        opts.create_if_missing(true);
-        opts.create_missing_column_families(true);
-
-        let db = Arc::new(
-            DB::open_cf(
-                &opts,
-                &config_path,
-                vec!["system_namespaces", "system_tables", "system_table_schemas"],
-            )
-            .unwrap(),
-        );
-
-        let kalam_sql = Arc::new(KalamSql::new(db).unwrap());
+        let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql));
-
         let session_context = Arc::new(SessionContext::new());
 
-        let executor = SqlExecutor::new(namespace_service, session_context);
-
-        (
-            executor,
-            config_file.to_str().unwrap().to_string(),
-            config_path.to_str().unwrap().to_string(),
-        )
+        SqlExecutor::new(namespace_service, session_context)
     }
 
     #[tokio::test]
     async fn test_execute_create_namespace() {
-        let (executor, _, _) = setup_test_executor();
+        let executor = setup_test_executor();
 
         let result = executor
             .execute("CREATE NAMESPACE app")
@@ -224,7 +199,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_show_namespaces() {
-        let (executor, _, _) = setup_test_executor();
+        let executor = setup_test_executor();
 
         // Create some namespaces
         executor.execute("CREATE NAMESPACE app1").await.unwrap();
@@ -243,7 +218,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_alter_namespace() {
-        let (executor, _, _) = setup_test_executor();
+        let executor = setup_test_executor();
 
         executor.execute("CREATE NAMESPACE app").await.unwrap();
 
@@ -262,7 +237,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_drop_namespace() {
-        let (executor, _, _) = setup_test_executor();
+        let executor = setup_test_executor();
 
         executor.execute("CREATE NAMESPACE app").await.unwrap();
 
@@ -278,7 +253,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_drop_namespace_with_tables() {
-        let (executor, _, _) = setup_test_executor();
+        let executor = setup_test_executor();
 
         executor.execute("CREATE NAMESPACE app").await.unwrap();
 

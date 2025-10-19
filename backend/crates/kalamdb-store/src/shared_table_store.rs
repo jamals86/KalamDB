@@ -173,6 +173,49 @@ impl SharedTableStore {
 
         Ok(results)
     }
+
+    /// Drop entire table by deleting its column family
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace_id` - The namespace identifier
+    /// * `table_name` - The table name
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the column family was successfully dropped,
+    /// or an error if the operation fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use kalamdb_store::SharedTableStore;
+    /// # use std::sync::Arc;
+    /// # use rocksdb::DB;
+    /// # let db = Arc::new(DB::open_default("test").unwrap());
+    /// let store = SharedTableStore::new(db).unwrap();
+    /// store.drop_table("app", "conversations").unwrap();
+    /// ```
+    pub fn drop_table(&self, namespace_id: &str, table_name: &str) -> Result<()> {
+        let cf_name = format!("shared_table:{}:{}", namespace_id, table_name);
+        
+        let cf = self
+            .db
+            .cf_handle(&cf_name)
+            .with_context(|| format!("Column family not found: {}", cf_name))?;
+
+        // Delete all keys by iterating and batching deletes
+        let mut batch = rocksdb::WriteBatch::default();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        
+        for item in iter {
+            let (key, _) = item?;
+            batch.delete_cf(cf, key);
+        }
+
+        self.db.write(batch)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -318,5 +361,68 @@ mod tests {
         let results = store.scan("app", "conversations").unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "conv002");
+    }
+
+    #[test]
+    fn test_drop_table_deletes_all_shared_data() {
+        let (db, _temp_dir) = create_test_db();
+        let store = SharedTableStore::new(db).unwrap();
+
+        // Insert multiple rows
+        store
+            .put(
+                "app",
+                "conversations",
+                "conv001",
+                json!({"topic": "Tech"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "conversations",
+                "conv002",
+                json!({"topic": "Sports"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "conversations",
+                "conv003",
+                json!({"topic": "Politics"}),
+            )
+            .unwrap();
+
+        // Verify data exists
+        assert!(store
+            .get("app", "conversations", "conv001")
+            .unwrap()
+            .is_some());
+        assert!(store
+            .get("app", "conversations", "conv002")
+            .unwrap()
+            .is_some());
+        assert!(store
+            .get("app", "conversations", "conv003")
+            .unwrap()
+            .is_some());
+
+        // Drop the entire table
+        store.drop_table("app", "conversations").unwrap();
+
+        // Verify all data is deleted
+        assert!(store
+            .get("app", "conversations", "conv001")
+            .unwrap()
+            .is_none());
+        assert!(store
+            .get("app", "conversations", "conv002")
+            .unwrap()
+            .is_none());
+        assert!(store
+            .get("app", "conversations", "conv003")
+            .unwrap()
+            .is_none());
     }
 }

@@ -1136,15 +1136,26 @@ impl UserTableStore {
 
 **Benefits of Three-Layer Architecture**:
 
+**Status**: ✅ **PARTIALLY IMPLEMENTED** (User Table DML Complete - October 19, 2025)
+
+**Implementation Progress**:
+- ✅ kalamdb-store crate created with UserTableStore (Phase 9.5 T156-T158)
+- ✅ All DML handlers refactored (insert/update/delete use UserTableStore)
+- ✅ 44 user_table tests passing with new architecture
+- ✅ Zero RocksDB imports in DML business logic
+- ✅ CatalogStore deprecated in favor of kalamdb-sql
+- ⏳ System table providers use kalamdb-sql (already complete from earlier)
+- ⏳ SharedTableStore and StreamTableStore pending (future work)
+
 1. **Clear Separation of Concerns**
-   - kalamdb-sql: System metadata (SQL interface)
-   - kalamdb-store: User data (K/V interface)
-   - kalamdb-core: Business logic (orchestration)
+   - kalamdb-sql: System metadata (SQL interface) ✅ IMPLEMENTED
+   - kalamdb-store: User data (K/V interface) ✅ IMPLEMENTED
+   - kalamdb-core: Business logic (orchestration) ✅ IMPLEMENTED
 
 2. **RocksDB Isolation**
-   - Only kalamdb-sql and kalamdb-store import `rocksdb` crate
-   - kalamdb-core has ZERO direct RocksDB coupling
-   - Easy to test business logic without mocking RocksDB
+   - Only kalamdb-sql and kalamdb-store import `rocksdb` crate ✅ ACHIEVED
+   - kalamdb-core has ZERO direct RocksDB coupling in DML ✅ ACHIEVED
+   - Easy to test business logic without mocking RocksDB ✅ ACHIEVED
 
 3. **Simpler Dependencies**
    - kalamdb-core doesn't need to understand column family naming

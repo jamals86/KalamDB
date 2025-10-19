@@ -3,8 +3,8 @@
 //! This provider combines hot data from RocksDB with cold data from Parquet files.
 
 use crate::catalog::TableMetadata;
+use crate::storage::{RocksDbBackend, StorageBackend};
 use datafusion::arrow::datatypes::SchemaRef;
-use rocksdb::DB;
 use std::sync::Arc;
 
 /// Hybrid table provider that queries both RocksDB and Parquet (placeholder)
@@ -17,8 +17,8 @@ pub struct HybridTableProvider {
     /// Arrow schema
     schema: SchemaRef,
     
-    /// RocksDB instance
-    _db: Arc<DB>,
+    /// Storage backend
+    _backend: Arc<dyn StorageBackend>,
     
     /// Parquet file paths (cold storage)
     _parquet_paths: Vec<String>,
@@ -29,15 +29,26 @@ impl HybridTableProvider {
     pub fn new(
         table_metadata: TableMetadata,
         schema: SchemaRef,
-        db: Arc<DB>,
+        backend: Arc<dyn StorageBackend>,
         parquet_paths: Vec<String>,
     ) -> Self {
         Self {
             table_metadata,
             schema,
-            _db: db,
+            _backend: backend,
             _parquet_paths: parquet_paths,
         }
+    }
+    
+    /// Create a new hybrid table provider from a RocksDB instance (convenience method)
+    pub fn from_db(
+        table_metadata: TableMetadata,
+        schema: SchemaRef,
+        db: Arc<rocksdb::DB>,
+        parquet_paths: Vec<String>,
+    ) -> Self {
+        let backend = Arc::new(RocksDbBackend::new(db));
+        Self::new(table_metadata, schema, backend, parquet_paths)
     }
 
     /// Get the column family name for this table
@@ -86,7 +97,7 @@ mod tests {
             deleted_retention_hours: Some(720),
         };
 
-        let provider = HybridTableProvider::new(
+        let provider = HybridTableProvider::from_db(
             table_metadata,
             schema.clone(),
             db.clone(),

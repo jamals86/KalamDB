@@ -31,3 +31,6 @@ pub use user_table_store::UserTableStore;
 
 #[cfg(test)]
 mod tests;
+
+// Make test_utils available for testing in dependent crates
+pub mod test_utils;

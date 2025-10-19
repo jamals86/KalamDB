@@ -202,12 +202,61 @@ impl KalamSql {
     pub fn scan_all_table_schemas(&self) -> Result<Vec<TableSchema>> {
         self.adapter.scan_all_table_schemas()
     }
+
+    // Additional CRUD operations for table deletion and updates
+
+    /// Delete a table by table_id
+    ///
+    /// Removes the table metadata from system_tables.
+    pub fn delete_table(&self, table_id: &str) -> Result<()> {
+        self.adapter.delete_table(table_id)
+    }
+
+    /// Delete all table schemas for a given table_id
+    ///
+    /// Removes all schema versions for the specified table from system_table_schemas.
+    pub fn delete_table_schemas_for_table(&self, table_id: &str) -> Result<()> {
+        self.adapter.delete_table_schemas_for_table(table_id)
+    }
+
+    /// Update a storage location
+    ///
+    /// Updates an existing storage location (upsert).
+    pub fn update_storage_location(&self, location: &StorageLocation) -> Result<()> {
+        self.adapter.update_storage_location(location)
+    }
+
+    /// Update a job
+    ///
+    /// Updates an existing job (upsert), typically for status changes.
+    pub fn update_job(&self, job: &Job) -> Result<()> {
+        self.adapter.update_job(job)
+    }
+
+    /// Update a table
+    ///
+    /// Updates existing table metadata (upsert).
+    pub fn update_table(&self, table: &Table) -> Result<()> {
+        self.adapter.update_table(table)
+    }
+
+    /// Get all table schemas for a given table_id
+    ///
+    /// Returns all schema versions for the specified table, sorted by version descending.
+    pub fn get_table_schemas_for_table(&self, table_id: &str) -> Result<Vec<TableSchema>> {
+        self.adapter.get_table_schemas_for_table(table_id)
+    }
+
+    /// Get a table by table_id
+    ///
+    /// Fetches table metadata from system_tables.
+    pub fn get_table(&self, table_id: &str) -> Result<Option<Table>> {
+        self.adapter.get_table(table_id)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_kalamdb_sql_creation() {
         // This test would require a RocksDB instance

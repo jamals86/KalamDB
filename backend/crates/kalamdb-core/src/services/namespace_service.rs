@@ -274,34 +274,17 @@ impl NamespaceService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rocksdb::{DB, Options};
-    use std::env;
-    use std::path::PathBuf;
+    use kalamdb_store::test_utils::TestDb;
 
-    fn setup_test_service() -> (NamespaceService, PathBuf) {
-        let temp_dir = env::temp_dir();
-        let test_id = format!("ns_service_test_{}_{}", std::process::id(), uuid::Uuid::new_v4());
-        let db_path = temp_dir.join(&test_id);
-        
-        // Cleanup
-        let _ = std::fs::remove_dir_all(&db_path);
-        
-        // Create RocksDB with system_namespaces column family
-        let mut opts = Options::default();
-        opts.create_if_missing(true);
-        opts.create_missing_column_families(true);
-        
-        let db = Arc::new(DB::open_cf(&opts, &db_path, vec!["system_namespaces"]).unwrap());
-        let kalam_sql = Arc::new(KalamSql::new(db).unwrap());
-        
-        let service = NamespaceService::new(kalam_sql);
-        
-        (service, db_path)
+    fn setup_test_service() -> NamespaceService {
+        let test_db = TestDb::new(&["system_namespaces"]).unwrap();
+        let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
+        NamespaceService::new(kalam_sql)
     }
 
     #[test]
     fn test_create_namespace() {
-        let (service, _db_path) = setup_test_service();
+        let service = setup_test_service();
         
         let created = service.create("app", false).unwrap();
         assert!(created);
@@ -314,7 +297,7 @@ mod tests {
 
     #[test]
     fn test_create_namespace_if_not_exists() {
-        let (service, _) = setup_test_service();
+        let service = setup_test_service();
         
         let created1 = service.create("app", false).unwrap();
         assert!(created1);
@@ -325,7 +308,7 @@ mod tests {
 
     #[test]
     fn test_create_namespace_duplicate_error() {
-        let (service, _) = setup_test_service();
+        let service = setup_test_service();
         
         service.create("app", false).unwrap();
         let result = service.create("app", false);
@@ -334,7 +317,7 @@ mod tests {
 
     #[test]
     fn test_create_namespace_invalid_name() {
-        let (service, _) = setup_test_service();
+        let service = setup_test_service();
         
         let result = service.create("system", false);
         assert!(result.is_err());
@@ -346,7 +329,7 @@ mod tests {
     #[test]
     #[ignore] // TODO: Implement scan_all_namespaces() in kalamdb-sql first
     fn test_list_namespaces() {
-        let (service, _) = setup_test_service();
+        let service = setup_test_service();
         
         service.create("app1", false).unwrap();
         service.create("app2", false).unwrap();
@@ -359,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_update_options() {
-        let (service, _) = setup_test_service();
+        let service = setup_test_service();
         
         service.create("app", false).unwrap();
         
@@ -377,7 +360,7 @@ mod tests {
     #[test]
     #[ignore] // TODO: Implement delete_namespace() in kalamdb-sql first
     fn test_delete_namespace() {
-        let (service, _) = setup_test_service();
+        let service = setup_test_service();
         
         service.create("app", false).unwrap();
         let deleted = service.delete("app", false).unwrap();
@@ -389,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_delete_namespace_with_tables() {
-        let (service, _) = setup_test_service();
+        let service = setup_test_service();
         
         service.create("app", false).unwrap();
         service.increment_table_count("app").unwrap();
@@ -401,7 +384,7 @@ mod tests {
     #[test]
     #[ignore] // TODO: Implement delete_namespace() in kalamdb-sql first
     fn test_delete_namespace_if_exists() {
-        let (service, _) = setup_test_service();
+        let service = setup_test_service();
         
         let deleted = service.delete("nonexistent", true).unwrap();
         assert!(!deleted);
@@ -409,7 +392,7 @@ mod tests {
 
     #[test]
     fn test_table_count_management() {
-        let (service, _) = setup_test_service();
+        let service = setup_test_service();
         
         service.create("app", false).unwrap();
         

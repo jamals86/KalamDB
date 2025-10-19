@@ -171,6 +171,49 @@ impl StreamTableStore {
 
         Ok(deleted_count)
     }
+
+    /// Drop entire table by deleting its column family
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace_id` - The namespace identifier
+    /// * `table_name` - The table name
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the column family was successfully dropped,
+    /// or an error if the operation fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use kalamdb_store::StreamTableStore;
+    /// # use std::sync::Arc;
+    /// # use rocksdb::DB;
+    /// # let db = Arc::new(DB::open_default("test").unwrap());
+    /// let store = StreamTableStore::new(db).unwrap();
+    /// store.drop_table("app", "events").unwrap();
+    /// ```
+    pub fn drop_table(&self, namespace_id: &str, table_name: &str) -> Result<()> {
+        let cf_name = format!("stream_table:{}:{}", namespace_id, table_name);
+        
+        let cf = self
+            .db
+            .cf_handle(&cf_name)
+            .with_context(|| format!("Column family not found: {}", cf_name))?;
+
+        // Delete all keys by iterating and batching deletes
+        let mut batch = rocksdb::WriteBatch::default();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        
+        for item in iter {
+            let (key, _) = item?;
+            batch.delete_cf(cf, key);
+        }
+
+        self.db.write(batch)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -322,5 +365,75 @@ mod tests {
         let results = store.scan("app", "events").unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1, "evt003");
+    }
+
+    #[test]
+    fn test_drop_table_deletes_all_stream_data() {
+        let (db, _temp_dir) = create_test_db();
+        let store = StreamTableStore::new(db).unwrap();
+
+        let ts1 = 1697299200000; // Timestamp 1
+        let ts2 = 1697299210000; // Timestamp 2
+        let ts3 = 1697299220000; // Timestamp 3
+
+        // Insert multiple events
+        store
+            .put(
+                "app",
+                "events",
+                ts1,
+                "evt001",
+                json!({"type": "click"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "events",
+                ts2,
+                "evt002",
+                json!({"type": "view"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "events",
+                ts3,
+                "evt003",
+                json!({"type": "submit"}),
+            )
+            .unwrap();
+
+        // Verify data exists
+        assert!(store
+            .get("app", "events", ts1, "evt001")
+            .unwrap()
+            .is_some());
+        assert!(store
+            .get("app", "events", ts2, "evt002")
+            .unwrap()
+            .is_some());
+        assert!(store
+            .get("app", "events", ts3, "evt003")
+            .unwrap()
+            .is_some());
+
+        // Drop the entire table
+        store.drop_table("app", "events").unwrap();
+
+        // Verify all data is deleted
+        assert!(store
+            .get("app", "events", ts1, "evt001")
+            .unwrap()
+            .is_none());
+        assert!(store
+            .get("app", "events", ts2, "evt002")
+            .unwrap()
+            .is_none());
+        assert!(store
+            .get("app", "events", ts3, "evt003")
+            .unwrap()
+            .is_none());
     }
 }

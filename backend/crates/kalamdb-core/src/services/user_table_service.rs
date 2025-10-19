@@ -20,7 +20,6 @@ use crate::sql::ddl::create_user_table::{CreateUserTableStatement, StorageLocati
 use crate::storage::column_family_manager::ColumnFamilyManager;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use kalamdb_sql::KalamSql;
-use rocksdb::DB;
 use std::sync::Arc;
 
 /// User table service
@@ -29,7 +28,6 @@ use std::sync::Arc;
 /// column families, and metadata management.
 pub struct UserTableService {
     kalam_sql: Arc<KalamSql>,
-    db: Arc<DB>,
 }
 
 impl UserTableService {
@@ -37,9 +35,8 @@ impl UserTableService {
     ///
     /// # Arguments
     /// * `kalam_sql` - KalamSQL instance for schema storage
-    /// * `db` - RocksDB instance
-    pub fn new(kalam_sql: Arc<KalamSql>, db: Arc<DB>) -> Self {
-        Self { kalam_sql, db }
+    pub fn new(kalam_sql: Arc<KalamSql>) -> Self {
+        Self { kalam_sql }
     }
 
     /// Create a user table from a CREATE USER TABLE statement
@@ -300,38 +297,22 @@ impl UserTableService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rocksdb::Options;
-    use std::env;
-    use std::path::PathBuf;
+    use kalamdb_store::test_utils::TestDb;
 
-    fn setup_test_service() -> (UserTableService, PathBuf) {
-        let temp_dir = env::temp_dir();
-        let test_id = format!("user_table_service_test_{}_{}", std::process::id(), uuid::Uuid::new_v4());
-        let db_path = temp_dir.join(&test_id);
+    fn setup_test_service() -> UserTableService {
+        let test_db = TestDb::new(&[
+            "system_table_schemas",
+            "system_namespaces",
+            "system_tables"
+        ]).unwrap();
         
-        // Cleanup
-        let _ = std::fs::remove_dir_all(&db_path);
-        
-        // Create RocksDB with required column families
-        let mut opts = Options::default();
-        opts.create_if_missing(true);
-        opts.create_missing_column_families(true);
-        
-        let db = Arc::new(DB::open_cf(
-            &opts,
-            &db_path,
-            vec!["system_table_schemas", "system_namespaces", "system_tables"]
-        ).unwrap());
-        
-        let kalam_sql = Arc::new(KalamSql::new(db.clone()).unwrap());
-        let service = UserTableService::new(kalam_sql, db);
-        
-        (service, db_path)
+        let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
+        UserTableService::new(kalam_sql)
     }
 
     #[test]
     fn test_inject_auto_increment_field() {
-        let (service, db_path) = setup_test_service();
+        let service = setup_test_service();
 
         // Schema without ID field
         let schema = Arc::new(Schema::new(vec![
@@ -345,12 +326,11 @@ mod tests {
         assert_eq!(result.field(0).data_type(), &DataType::Int64);
 
         // Cleanup
-        let _ = std::fs::remove_dir_all(db_path);
     }
 
     #[test]
     fn test_inject_auto_increment_field_existing_id() {
-        let (service, db_path) = setup_test_service();
+        let service = setup_test_service();
 
         // Schema with existing ID field
         let schema = Arc::new(Schema::new(vec![
@@ -363,12 +343,11 @@ mod tests {
         assert_eq!(result.field(0).name(), "id");
 
         // Cleanup
-        let _ = std::fs::remove_dir_all(db_path);
     }
 
     #[test]
     fn test_inject_system_columns() {
-        let (service, db_path) = setup_test_service();
+        let service = setup_test_service();
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
@@ -381,12 +360,11 @@ mod tests {
         assert_eq!(result.field(3).name(), "_deleted");
 
         // Cleanup
-        let _ = std::fs::remove_dir_all(db_path);
     }
 
     #[test]
     fn test_inject_system_columns_stream_table() {
-        let (service, db_path) = setup_test_service();
+        let service = setup_test_service();
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
@@ -400,7 +378,6 @@ mod tests {
         assert_eq!(result.field(1).name(), "event");
 
         // Cleanup
-        let _ = std::fs::remove_dir_all(db_path);
     }
 
     #[test]
@@ -413,7 +390,7 @@ mod tests {
 
     #[test]
     fn test_resolve_storage_location_path() {
-        let (service, _db_path) = setup_test_service();
+        let service = setup_test_service();
 
         let location = Some(StorageLocation::Path("/data/${user_id}/messages".to_string()));
         let result = service.resolve_storage_location(&location, None).unwrap();
@@ -422,7 +399,7 @@ mod tests {
 
     #[test]
     fn test_resolve_storage_location_invalid_path() {
-        let (service, db_path) = setup_test_service();
+        let service = setup_test_service();
 
         // Path without ${user_id} should fail
         let location = Some(StorageLocation::Path("/data/messages".to_string()));
@@ -430,12 +407,11 @@ mod tests {
         assert!(result.is_err());
 
         // Cleanup
-        let _ = std::fs::remove_dir_all(db_path);
     }
 
     #[test]
     fn test_resolve_storage_location_default() {
-        let (service, _db_path) = setup_test_service();
+        let service = setup_test_service();
 
         let result = service.resolve_storage_location(&None, None).unwrap();
         assert_eq!(result, "/data/${user_id}/tables");

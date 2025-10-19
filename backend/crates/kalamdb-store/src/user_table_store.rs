@@ -204,6 +204,197 @@ impl UserTableStore {
 
         Ok(results)
     }
+
+    /// Scan all rows for a specific user (alias for scan_user).
+    ///
+    /// Returns a vector of `(row_id, row_data)` pairs.
+    /// Filters out soft-deleted rows.
+    pub fn scan(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        user_id: &str,
+    ) -> Result<Vec<(String, JsonValue)>> {
+        self.scan_user(namespace_id, table_name, user_id)
+    }
+
+    /// Scan all rows across all users.
+    ///
+    /// Returns a vector of `(user_id, row_id, row_data)` tuples.
+    /// Filters out soft-deleted rows.
+    ///
+    /// # Note
+    ///
+    /// This method scans the entire column family and may be expensive for large tables.
+    /// Use with caution in production environments.
+    pub fn scan_all(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> Result<Vec<(String, String, JsonValue)>> {
+        let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
+        let cf = self
+            .db
+            .cf_handle(&cf_name)
+            .with_context(|| format!("Column family not found: {}", cf_name))?;
+
+        let mut results = Vec::new();
+
+        let iter = self.db.iterator_cf(cf, IteratorMode::Start);
+        for item in iter {
+            let (key_bytes, value_bytes) = item?;
+            let key = String::from_utf8(key_bytes.to_vec())?;
+
+            let row_data: JsonValue = serde_json::from_slice(&value_bytes)?;
+
+            // Filter out soft-deleted rows
+            if let Some(obj) = row_data.as_object() {
+                if let Some(deleted) = obj.get("_deleted") {
+                    if deleted.as_bool() == Some(true) {
+                        continue;
+                    }
+                }
+            }
+
+            let (user_id, row_id) = parse_user_key(&key)?;
+            results.push((user_id, row_id, row_data));
+        }
+
+        Ok(results)
+    }
+
+    /// Get all rows grouped by user ID for flush operations.
+    ///
+    /// Returns a HashMap of `user_id -> Vec<(key_bytes, row_data)>`.
+    /// Filters out soft-deleted rows (they should not be flushed).
+    ///
+    /// # Note
+    ///
+    /// This method is designed for flush operations and returns raw key bytes
+    /// for efficient batch deletion.
+    pub fn get_rows_by_user(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> Result<std::collections::HashMap<String, Vec<(Vec<u8>, JsonValue)>>> {
+        use std::collections::HashMap;
+
+        let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
+        let cf = self
+            .db
+            .cf_handle(&cf_name)
+            .with_context(|| format!("Column family not found: {}", cf_name))?;
+
+        let mut rows_by_user: HashMap<String, Vec<(Vec<u8>, JsonValue)>> = HashMap::new();
+
+        let iter = self.db.iterator_cf(cf, IteratorMode::Start);
+        for item in iter {
+            let (key_bytes, value_bytes) = item?;
+
+            // Parse JSON value
+            let row_data: JsonValue = serde_json::from_slice(&value_bytes)?;
+
+            // Skip soft-deleted rows (don't flush them)
+            if let Some(obj) = row_data.as_object() {
+                if let Some(deleted) = obj.get("_deleted") {
+                    if deleted.as_bool() == Some(true) {
+                        continue;
+                    }
+                }
+            }
+
+            // Parse key to get user_id
+            let key_str = String::from_utf8(key_bytes.to_vec())?;
+            let (user_id, _row_id) = parse_user_key(&key_str)?;
+
+            rows_by_user
+                .entry(user_id)
+                .or_insert_with(Vec::new)
+                .push((key_bytes.to_vec(), row_data));
+        }
+
+        Ok(rows_by_user)
+    }
+
+    /// Delete multiple rows by their raw key bytes (batch operation).
+    ///
+    /// This method is designed for flush operations where we need to delete
+    /// rows after successfully writing them to Parquet files.
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace_id` - Namespace identifier
+    /// * `table_name` - Table name
+    /// * `keys` - Vector of raw key bytes to delete
+    pub fn delete_batch_by_keys(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        keys: &[Vec<u8>],
+    ) -> Result<()> {
+        use rocksdb::WriteBatch;
+
+        let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
+        let cf = self
+            .db
+            .cf_handle(&cf_name)
+            .with_context(|| format!("Column family not found: {}", cf_name))?;
+
+        let mut batch = WriteBatch::default();
+
+        for key_bytes in keys {
+            batch.delete_cf(cf, key_bytes);
+        }
+
+        self.db.write(batch)?;
+        Ok(())
+    }
+
+    /// Drop entire table by deleting its column family
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace_id` - The namespace identifier
+    /// * `table_name` - The table name
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the column family was successfully dropped,
+    /// or an error if the operation fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use kalamdb_store::UserTableStore;
+    /// # use std::sync::Arc;
+    /// # use rocksdb::DB;
+    /// # let db = Arc::new(DB::open_default("test").unwrap());
+    /// let store = UserTableStore::new(db).unwrap();
+    /// store.drop_table("app", "messages").unwrap();
+    /// ```
+    pub fn drop_table(&self, namespace_id: &str, table_name: &str) -> Result<()> {
+        let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
+        
+        // RocksDB requires dropping column families by destroying and recreating
+        // the DB instance. For now, we'll delete all keys in the CF as a workaround.
+        // TODO: Implement proper CF deletion when DB is reopened
+        let cf = self
+            .db
+            .cf_handle(&cf_name)
+            .with_context(|| format!("Column family not found: {}", cf_name))?;
+
+        // Delete all keys by iterating and batching deletes
+        let mut batch = rocksdb::WriteBatch::default();
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        
+        for item in iter {
+            let (key, _) = item?;
+            batch.delete_cf(cf, key);
+        }
+
+        self.db.write(batch)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -393,5 +584,339 @@ mod tests {
         // Different user shouldn't see the row
         let retrieved = store.get("app", "messages", "user456", "msg001").unwrap();
         assert!(retrieved.is_none());
+    }
+
+    #[test]
+    fn test_scan_alias() {
+        let (db, _temp_dir) = create_test_db();
+        let store = UserTableStore::new(db).unwrap();
+
+        store
+            .put(
+                "app",
+                "messages",
+                "user123",
+                "msg001",
+                json!({"content": "Message 1"}),
+            )
+            .unwrap();
+
+        // scan() should work the same as scan_user()
+        let results = store.scan("app", "messages", "user123").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "msg001");
+    }
+
+    #[test]
+    fn test_scan_all() {
+        let (db, _temp_dir) = create_test_db();
+        let store = UserTableStore::new(db).unwrap();
+
+        // Insert rows for multiple users
+        store
+            .put(
+                "app",
+                "messages",
+                "user123",
+                "msg001",
+                json!({"content": "User 123 - Message 1"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "messages",
+                "user123",
+                "msg002",
+                json!({"content": "User 123 - Message 2"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "messages",
+                "user456",
+                "msg003",
+                json!({"content": "User 456 - Message 1"}),
+            )
+            .unwrap();
+
+        let results = store.scan_all("app", "messages").unwrap();
+        assert_eq!(results.len(), 3);
+
+        // Verify we have rows from both users
+        let user_ids: Vec<String> = results.iter().map(|(uid, _, _)| uid.clone()).collect();
+        assert!(user_ids.contains(&"user123".to_string()));
+        assert!(user_ids.contains(&"user456".to_string()));
+
+        // Count rows per user
+        let user123_count = user_ids.iter().filter(|&id| id == "user123").count();
+        let user456_count = user_ids.iter().filter(|&id| id == "user456").count();
+        assert_eq!(user123_count, 2);
+        assert_eq!(user456_count, 1);
+    }
+
+    #[test]
+    fn test_scan_all_filters_soft_deleted() {
+        let (db, _temp_dir) = create_test_db();
+        let store = UserTableStore::new(db).unwrap();
+
+        store
+            .put(
+                "app",
+                "messages",
+                "user123",
+                "msg001",
+                json!({"content": "Message 1"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "messages",
+                "user123",
+                "msg002",
+                json!({"content": "Message 2"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "messages",
+                "user456",
+                "msg003",
+                json!({"content": "Message 3"}),
+            )
+            .unwrap();
+
+        // Soft delete one row
+        store
+            .delete("app", "messages", "user123", "msg001", false)
+            .unwrap();
+
+        let results = store.scan_all("app", "messages").unwrap();
+        assert_eq!(results.len(), 2);
+
+        // Verify deleted row is not in results
+        let row_ids: Vec<String> = results.iter().map(|(_, rid, _)| rid.clone()).collect();
+        assert!(!row_ids.contains(&"msg001".to_string()));
+        assert!(row_ids.contains(&"msg002".to_string()));
+        assert!(row_ids.contains(&"msg003".to_string()));
+    }
+
+    #[test]
+    fn test_get_rows_by_user() {
+        let (db, _temp_dir) = create_test_db();
+        let store = UserTableStore::new(db).unwrap();
+
+        // Insert rows for multiple users
+        store
+            .put(
+                "app",
+                "messages",
+                "user123",
+                "msg001",
+                json!({"content": "User 123 - Message 1"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "messages",
+                "user123",
+                "msg002",
+                json!({"content": "User 123 - Message 2"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "messages",
+                "user456",
+                "msg003",
+                json!({"content": "User 456 - Message 1"}),
+            )
+            .unwrap();
+
+        let rows_by_user = store.get_rows_by_user("app", "messages").unwrap();
+
+        assert_eq!(rows_by_user.len(), 2);
+        assert_eq!(rows_by_user.get("user123").unwrap().len(), 2);
+        assert_eq!(rows_by_user.get("user456").unwrap().len(), 1);
+
+        // Verify data
+        let user123_rows = rows_by_user.get("user123").unwrap();
+        assert_eq!(user123_rows[0].1["content"], "User 123 - Message 1");
+        assert_eq!(user123_rows[1].1["content"], "User 123 - Message 2");
+    }
+
+    #[test]
+    fn test_get_rows_by_user_filters_deleted() {
+        let (db, _temp_dir) = create_test_db();
+        let store = UserTableStore::new(db).unwrap();
+
+        store
+            .put(
+                "app",
+                "messages",
+                "user123",
+                "msg001",
+                json!({"content": "Message 1"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "messages",
+                "user123",
+                "msg002",
+                json!({"content": "Message 2"}),
+            )
+            .unwrap();
+
+        // Soft delete one row
+        store
+            .delete("app", "messages", "user123", "msg001", false)
+            .unwrap();
+
+        let rows_by_user = store.get_rows_by_user("app", "messages").unwrap();
+
+        // Only 1 row should be returned (msg002)
+        assert_eq!(rows_by_user.get("user123").unwrap().len(), 1);
+        assert_eq!(
+            rows_by_user.get("user123").unwrap()[0].1["content"],
+            "Message 2"
+        );
+    }
+
+    #[test]
+    fn test_delete_batch_by_keys() {
+        let (db, _temp_dir) = create_test_db();
+        let store = UserTableStore::new(db).unwrap();
+
+        // Insert rows
+        store
+            .put(
+                "app",
+                "messages",
+                "user123",
+                "msg001",
+                json!({"content": "Message 1"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "messages",
+                "user123",
+                "msg002",
+                json!({"content": "Message 2"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "messages",
+                "user456",
+                "msg003",
+                json!({"content": "Message 3"}),
+            )
+            .unwrap();
+
+        // Get rows by user to get the raw keys
+        let rows_by_user = store.get_rows_by_user("app", "messages").unwrap();
+        let user123_keys: Vec<Vec<u8>> = rows_by_user
+            .get("user123")
+            .unwrap()
+            .iter()
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        // Delete user123's rows
+        store
+            .delete_batch_by_keys("app", "messages", &user123_keys)
+            .unwrap();
+
+        // Verify user123's rows are deleted
+        assert!(store
+            .get("app", "messages", "user123", "msg001")
+            .unwrap()
+            .is_none());
+        assert!(store
+            .get("app", "messages", "user123", "msg002")
+            .unwrap()
+            .is_none());
+
+        // Verify user456's row still exists
+        assert!(store
+            .get("app", "messages", "user456", "msg003")
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn test_drop_table_deletes_all_user_data() {
+        let (db, _temp_dir) = create_test_db();
+        let store = UserTableStore::new(db).unwrap();
+
+        // Insert data for multiple users
+        store
+            .put(
+                "app",
+                "messages",
+                "user123",
+                "msg001",
+                json!({"content": "Message 1"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "messages",
+                "user456",
+                "msg002",
+                json!({"content": "Message 2"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "messages",
+                "user789",
+                "msg003",
+                json!({"content": "Message 3"}),
+            )
+            .unwrap();
+
+        // Verify data exists
+        assert!(store
+            .get("app", "messages", "user123", "msg001")
+            .unwrap()
+            .is_some());
+        assert!(store
+            .get("app", "messages", "user456", "msg002")
+            .unwrap()
+            .is_some());
+        assert!(store
+            .get("app", "messages", "user789", "msg003")
+            .unwrap()
+            .is_some());
+
+        // Drop the entire table
+        store.drop_table("app", "messages").unwrap();
+
+        // Verify all data is deleted
+        assert!(store
+            .get("app", "messages", "user123", "msg001")
+            .unwrap()
+            .is_none());
+        assert!(store
+            .get("app", "messages", "user456", "msg002")
+            .unwrap()
+            .is_none());
+        assert!(store
+            .get("app", "messages", "user789", "msg003")
+            .unwrap()
+            .is_none());
     }
 }
