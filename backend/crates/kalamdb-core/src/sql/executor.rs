@@ -9,7 +9,7 @@ use crate::services::{NamespaceService, UserTableService, SharedTableService, St
 use crate::sql::ddl::{
     AlterNamespaceStatement, CreateNamespaceStatement, DropNamespaceStatement,
     ShowNamespacesStatement, CreateUserTableStatement, CreateSharedTableStatement,
-    CreateStreamTableStatement, DropTableStatement, StorageLocation,
+    CreateStreamTableStatement, DropTableStatement,
 };
 use datafusion::arrow::array::{ArrayRef, StringArray, UInt32Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
@@ -72,6 +72,10 @@ impl SqlExecutor {
             return self.execute_alter_namespace(sql).await;
         } else if sql_upper.starts_with("DROP NAMESPACE") {
             return self.execute_drop_namespace(sql).await;
+        } else if sql_upper.starts_with("CREATE TABLE") {
+            return self.execute_create_table(sql).await;
+        } else if sql_upper.starts_with("DROP TABLE") {
+            return self.execute_drop_table(sql).await;
         } else if sql_upper.starts_with("SELECT") || sql_upper.starts_with("INSERT") 
             || sql_upper.starts_with("UPDATE") || sql_upper.starts_with("DELETE") {
             // Delegate DML queries to DataFusion
@@ -163,6 +167,42 @@ impl SqlExecutor {
         Ok(ExecutionResult::Success(message))
     }
 
+    /// Execute CREATE TABLE - determines table type from LOCATION and routes to appropriate service
+    async fn execute_create_table(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        // Determine table type based on SQL keywords or LOCATION pattern
+        let sql_upper = sql.to_uppercase();
+        let namespace_id = crate::catalog::NamespaceId::new("default"); // TODO: Get from context
+        
+        if sql_upper.contains("USER TABLE") || sql_upper.contains("${USER_ID}") {
+            // User table
+            let stmt = CreateUserTableStatement::parse(sql, &namespace_id)?;
+            self.user_table_service.create_table(stmt, None)?;
+            return Ok(ExecutionResult::Success("User table created successfully".to_string()));
+        } else if sql_upper.contains("STREAM TABLE") || sql_upper.contains("TTL") || sql_upper.contains("BUFFER_SIZE") {
+            // Stream table
+            let stmt = CreateStreamTableStatement::parse(sql, &namespace_id)?;
+            self.stream_table_service.create_table(stmt)?;
+            return Ok(ExecutionResult::Success("Stream table created successfully".to_string()));
+        } else {
+            // Default to shared table (most common case)
+            let stmt = CreateSharedTableStatement::parse(sql, &namespace_id)?;
+            self.shared_table_service.create_table(stmt)?;
+            return Ok(ExecutionResult::Success("Table created successfully".to_string()));
+        }
+    }
+
+    /// Execute DROP TABLE
+    async fn execute_drop_table(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        let _namespace_id = crate::catalog::NamespaceId::new("default"); // TODO: Get from context
+        let _stmt = DropTableStatement::parse(sql, &_namespace_id)?;
+        
+        // TODO: Implement DROP TABLE routing to services
+        // Services don't have drop_table methods yet
+        Err(KalamDbError::InvalidOperation(
+            "DROP TABLE not yet implemented - use system tables to manage tables".to_string()
+        ))
+    }
+
     /// Convert namespaces list to Arrow RecordBatch
     fn namespaces_to_record_batch(
         namespaces: Vec<Namespace>,
@@ -212,10 +252,27 @@ mod tests {
         ]).unwrap();
 
         let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
-        let namespace_service = Arc::new(NamespaceService::new(kalam_sql));
+        let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
         let session_context = Arc::new(SessionContext::new());
+        
+        // Initialize table services for tests
+        let user_table_service = Arc::new(crate::services::UserTableService::new(kalam_sql.clone()));
+        let shared_table_service = Arc::new(crate::services::SharedTableService::new(
+            Arc::new(kalamdb_store::SharedTableStore::new(test_db.db.clone()).unwrap()),
+            kalam_sql.clone()
+        ));
+        let stream_table_service = Arc::new(crate::services::StreamTableService::new(
+            Arc::new(kalamdb_store::StreamTableStore::new(test_db.db.clone()).unwrap()),
+            kalam_sql.clone()
+        ));
 
-        SqlExecutor::new(namespace_service, session_context)
+        SqlExecutor::new(
+            namespace_service, 
+            session_context,
+            user_table_service,
+            shared_table_service,
+            stream_table_service,
+        )
     }
 
     #[tokio::test]

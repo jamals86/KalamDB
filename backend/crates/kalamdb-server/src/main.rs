@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
     info!("RocksDB initialized at {}", db_path.display());
 
     // Initialize KalamSQL for system table operations
-    let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(db)?);
+    let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(db.clone())?);
     info!("KalamSQL initialized");
 
     // Initialize NamespaceService (uses KalamSQL for RocksDB persistence)
