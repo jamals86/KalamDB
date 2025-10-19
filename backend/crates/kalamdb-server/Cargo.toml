@@ -11,6 +11,10 @@ repository.workspace = true
 kalamdb-core = { path = "../kalamdb-core" }
 kalamdb-api = { path = "../kalamdb-api" }
 kalamdb-sql = { path = "../kalamdb-sql" }
+kalamdb-store = { path = "../kalamdb-store" }
+
+# DataFusion for system schema registration
+datafusion.workspace = true
 
 # Async runtime
 tokio.workspace = true

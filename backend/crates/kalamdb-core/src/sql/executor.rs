@@ -5,10 +5,11 @@
 
 use crate::catalog::Namespace;
 use crate::error::KalamDbError;
-use crate::services::NamespaceService;
+use crate::services::{NamespaceService, UserTableService, SharedTableService, StreamTableService};
 use crate::sql::ddl::{
     AlterNamespaceStatement, CreateNamespaceStatement, DropNamespaceStatement,
-    ShowNamespacesStatement,
+    ShowNamespacesStatement, CreateUserTableStatement, CreateSharedTableStatement,
+    CreateStreamTableStatement, DropTableStatement, StorageLocation,
 };
 use datafusion::arrow::array::{ArrayRef, StringArray, UInt32Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
@@ -34,8 +35,10 @@ pub enum ExecutionResult {
 /// Executes SQL statements by dispatching to appropriate handlers
 pub struct SqlExecutor {
     namespace_service: Arc<NamespaceService>,
-    #[allow(dead_code)]
     session_context: Arc<SessionContext>,
+    user_table_service: Arc<UserTableService>,
+    shared_table_service: Arc<SharedTableService>,
+    stream_table_service: Arc<StreamTableService>,
 }
 
 impl SqlExecutor {
@@ -43,10 +46,16 @@ impl SqlExecutor {
     pub fn new(
         namespace_service: Arc<NamespaceService>,
         session_context: Arc<SessionContext>,
+        user_table_service: Arc<UserTableService>,
+        shared_table_service: Arc<SharedTableService>,
+        stream_table_service: Arc<StreamTableService>,
     ) -> Self {
         Self {
             namespace_service,
             session_context,
+            user_table_service,
+            shared_table_service,
+            stream_table_service,
         }
     }
 
@@ -63,12 +72,41 @@ impl SqlExecutor {
             return self.execute_alter_namespace(sql).await;
         } else if sql_upper.starts_with("DROP NAMESPACE") {
             return self.execute_drop_namespace(sql).await;
+        } else if sql_upper.starts_with("SELECT") || sql_upper.starts_with("INSERT") 
+            || sql_upper.starts_with("UPDATE") || sql_upper.starts_with("DELETE") {
+            // Delegate DML queries to DataFusion
+            return self.execute_datafusion_query(sql).await;
         }
 
-        // Otherwise, delegate to DataFusion
+        // Otherwise, unsupported
         Err(KalamDbError::InvalidSql(
-            "Unsupported SQL statement. Only namespace DDL is currently supported.".to_string(),
+            format!("Unsupported SQL statement: {}", sql.lines().next().unwrap_or("")),
         ))
+    }
+
+    /// Execute query via DataFusion
+    async fn execute_datafusion_query(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        // Execute SQL via DataFusion
+        let df = self.session_context
+            .sql(sql)
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Error planning query: {}", e)))?;
+        
+        // Collect results
+        let batches = df
+            .collect()
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Error executing query: {}", e)))?;
+        
+        // Return batches
+        if batches.is_empty() {
+            // Return empty result with schema
+            Ok(ExecutionResult::RecordBatches(vec![]))
+        } else if batches.len() == 1 {
+            Ok(ExecutionResult::RecordBatch(batches[0].clone()))
+        } else {
+            Ok(ExecutionResult::RecordBatches(batches))
+        }
     }
 
     /// Execute CREATE NAMESPACE

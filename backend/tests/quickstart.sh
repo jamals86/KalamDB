@@ -6,7 +6,7 @@
 set -e
 
 # Configuration
-BASE_URL="${KALAMDB_URL:-http://localhost:3000}"  # Updated to match current server port
+BASE_URL="${KALAMDB_URL:-http://localhost:8080}"  # Default port is 8080 (see backend/config.toml)
 API_ENDPOINT="${BASE_URL}/api/sql"
 TOKEN="${TEST_JWT_TOKEN:-test-token-user123}"  # Placeholder for JWT token
 

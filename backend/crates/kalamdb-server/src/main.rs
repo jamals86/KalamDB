@@ -8,9 +8,9 @@ mod logging;
 use actix_web::{middleware, web, App, HttpServer};
 use actix_cors::Cors;
 use anyhow::Result;
+use datafusion::catalog::schema::{MemorySchemaProvider, SchemaProvider};
 use kalamdb_api::routes;
-use kalamdb_core::catalog::CatalogStore;
-use kalamdb_core::services::NamespaceService;
+use kalamdb_core::services::{NamespaceService, UserTableService, SharedTableService, StreamTableService};
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::storage::RocksDbInit;
@@ -18,6 +18,7 @@ use kalamdb_core::tables::system::{
     UsersTableProvider, StorageLocationsTableProvider,
     LiveQueriesTableProvider, JobsTableProvider,
 };
+use kalamdb_store::{UserTableStore, SharedTableStore, StreamTableStore};
 use log::info;
 use std::sync::Arc;
 
@@ -50,10 +51,6 @@ async fn main() -> Result<()> {
     let db = db_init.open()?;
     info!("RocksDB initialized at {}", db_path.display());
 
-    // Initialize CatalogStore
-    let catalog_store = Arc::new(CatalogStore::new(db.clone()));
-    info!("CatalogStore initialized");
-
     // Initialize KalamSQL for system table operations
     let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(db)?);
     info!("KalamSQL initialized");
@@ -76,28 +73,57 @@ async fn main() -> Result<()> {
     );
     info!("DataFusion session factory initialized");
 
-    // Initialize DataFusion session and register system tables
+    // Initialize DataFusion session
     let session_context = Arc::new(session_factory.create_session());
     
-    // Register system table providers with DataFusion
+    // Create "system" schema in DataFusion
+    // DataFusion's default catalog is named "datafusion", but we need to handle potential errors
+    let system_schema = Arc::new(MemorySchemaProvider::new());
+    let catalog_name = session_context.catalog_names().first()
+        .expect("No catalogs available")
+        .clone();
+    
     session_context
-        .register_table("system.users", users_provider.clone())
+        .catalog(&catalog_name)
+        .expect("Failed to get catalog")
+        .register_schema("system", system_schema.clone())
+        .expect("Failed to register system schema");
+    info!("System schema created in DataFusion (catalog: {})", catalog_name);
+    
+    // Register system table providers with DataFusion (in the system schema)
+    system_schema
+        .register_table("users".to_string(), users_provider.clone())
         .expect("Failed to register system.users table");
-    session_context
-        .register_table("system.storage_locations", storage_locations_provider.clone())
+    system_schema
+        .register_table("storage_locations".to_string(), storage_locations_provider.clone())
         .expect("Failed to register system.storage_locations table");
-    session_context
-        .register_table("system.live_queries", live_queries_provider.clone())
+    system_schema
+        .register_table("live_queries".to_string(), live_queries_provider.clone())
         .expect("Failed to register system.live_queries table");
-    session_context
-        .register_table("system.jobs", jobs_provider.clone())
+    system_schema
+        .register_table("jobs".to_string(), jobs_provider.clone())
         .expect("Failed to register system.jobs table");
     info!("System tables registered with DataFusion (system.users, system.storage_locations, system.live_queries, system.jobs)");
 
-    // Initialize SqlExecutor
+    // Initialize table stores
+    let user_table_store = Arc::new(UserTableStore::new(db.clone())?);
+    let shared_table_store = Arc::new(SharedTableStore::new(db.clone())?);
+    let stream_table_store = Arc::new(StreamTableStore::new(db.clone())?);
+    info!("Table stores initialized (user, shared, stream)");
+
+    // Initialize table services
+    let user_table_service = Arc::new(UserTableService::new(kalam_sql.clone()));
+    let shared_table_service = Arc::new(SharedTableService::new(shared_table_store.clone(), kalam_sql.clone()));
+    let stream_table_service = Arc::new(StreamTableService::new(stream_table_store.clone(), kalam_sql.clone()));
+    info!("Table services initialized (user, shared, stream)");
+
+    // Initialize SqlExecutor (still takes only 2 args - need to update SqlExecutor struct first)
     let sql_executor = Arc::new(SqlExecutor::new(
         namespace_service.clone(),
         session_context.clone(),
+        user_table_service.clone(),
+        shared_table_service.clone(),
+        stream_table_service.clone(),
     ));
     info!("SqlExecutor initialized");
 
