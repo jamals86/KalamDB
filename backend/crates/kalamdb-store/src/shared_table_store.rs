@@ -174,6 +174,37 @@ impl SharedTableStore {
         Ok(results)
     }
 
+    /// Delete multiple rows by their row IDs (batch delete).
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace_id` - Namespace identifier
+    /// * `table_name` - Table name
+    /// * `row_ids` - Vector of row IDs to delete
+    pub fn delete_batch_by_row_ids(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        row_ids: &[String],
+    ) -> Result<()> {
+        use rocksdb::WriteBatch;
+
+        let cf_name = format!("shared_table:{}:{}", namespace_id, table_name);
+        let cf = self
+            .db
+            .cf_handle(&cf_name)
+            .with_context(|| format!("Column family not found: {}", cf_name))?;
+
+        let mut batch = WriteBatch::default();
+
+        for row_id in row_ids {
+            batch.delete_cf(cf, row_id.as_bytes());
+        }
+
+        self.db.write(batch)?;
+        Ok(())
+    }
+
     /// Drop entire table by deleting its column family
     ///
     /// # Arguments

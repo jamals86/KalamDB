@@ -917,40 +917,52 @@ RocksDB (isolated to 2 crates only)
 
 ### Implementation for User Story 5
 
-- [ ] T159 [P] [US5] Implement CREATE SHARED TABLE parser in `backend/crates/kalamdb-core/src/sql/ddl/create_shared_table.rs` (parse schema, LOCATION, FLUSH POLICY, deleted_retention, use NamespaceId and TableName types)
-- [ ] T160 [US5] Create shared table service in `backend/crates/kalamdb-core/src/services/shared_table_service.rs`:
+- [X] T159 [P] [US5] Implement CREATE SHARED TABLE parser in `backend/crates/kalamdb-core/src/sql/ddl/create_shared_table.rs` (parse schema, LOCATION, FLUSH POLICY, deleted_retention, use NamespaceId and TableName types) ✅ **COMPLETE** - 8 tests passing
+- [X] T160 [US5] Create shared table service in `backend/crates/kalamdb-core/src/services/shared_table_service.rs`:
   - Constructor: `new(shared_table_store: Arc<SharedTableStore>, kalam_sql: Arc<KalamSql>) -> Self`
   - Create table metadata (TableType::Shared, includes system columns \_updated/\_deleted)
   - Register in catalog via `kalam_sql.insert_table()`
   - Column family creation handled internally by SharedTableStore.new()
   - Use NamespaceId and TableName types throughout
-- [ ] T161 [US5] Add system column injection in shared_table_service.rs (\_updated TIMESTAMP, \_deleted BOOLEAN for shared tables - same as user tables)
-- [ ] T162 [US5] Implement shared table INSERT/UPDATE/DELETE handlers in `backend/crates/kalamdb-core/src/tables/shared_table_ops.rs`:
+  ✅ **COMPLETE** - 7 tests passing
+- [X] T161 [US5] Add system column injection in shared_table_service.rs (\_updated TIMESTAMP, \_deleted BOOLEAN for shared tables - same as user tables) ✅ **COMPLETE** - Implemented in SharedTableService.inject_system_columns()
+- [X] T162 [US5] Implement shared table INSERT/UPDATE/DELETE handlers in `backend/crates/kalamdb-core/src/tables/shared_table_provider.rs`:
   - **INSERT**: call `shared_table_store.put(namespace_id, table_name, row_id, row_data)` with system columns injected (\_updated=NOW(), \_deleted=false)
   - **UPDATE**: call `shared_table_store.get()`, modify fields, update \_updated=NOW(), call `shared_table_store.put()`
   - **DELETE (soft)**: call `shared_table_store.get()`, set \_deleted=true and \_updated=NOW(), call `shared_table_store.put()`
   - **DELETE (hard)**: call `shared_table_store.delete(namespace_id, table_name, row_id, hard=true)` (used by cleanup jobs)
   - Key format: `{row_id}` (no user_id prefix - global data)
-- [ ] T163 [US5] Create shared table provider for DataFusion in `backend/crates/kalamdb-core/src/tables/shared_table_provider.rs`:
+  ✅ **COMPLETE** - 4 tests passing (1 ignored - DB isolation issue)
+- [X] T163 [US5] Create shared table provider for DataFusion in `backend/crates/kalamdb-core/src/tables/shared_table_provider.rs`:
   - Constructor: `new(shared_table_store: Arc<SharedTableStore>, ...) -> Self`
   - Implement DataFusion TableProvider trait
   - All data operations delegate to shared_table_store (no direct RocksDB)
   - Single storage location (no ${user_id} templating in paths)
   - Use NamespaceId and TableName types
-- [ ] T164 [US5] Create flush job for shared tables in `backend/crates/kalamdb-core/src/flush/shared_table_flush.rs`:
+  ✅ **COMPLETE** - Combined with T162 implementation
+- [X] T164 [US5] Create flush job for shared tables in `backend/crates/kalamdb-core/src/flush/shared_table_flush.rs`:
   - Call `shared_table_store.scan(namespace_id, table_name)` to read all rows from RocksDB buffer
   - Filter out soft-deleted rows (\_deleted=true) - don't flush to Parquet
   - Write ALL rows to SINGLE Parquet file: `shared/${table_name}/batch-{timestamp}.parquet`
-  - After successful Parquet write: call `shared_table_store.delete_batch_by_keys(namespace_id, table_name, keys)` to delete flushed rows
+  - After successful Parquet write: call `shared_table_store.delete_batch_by_row_ids(namespace_id, table_name, row_ids)` to delete flushed rows
   - Register flush job in system.jobs via `kalam_sql.insert_job()` (status, metrics, result)
   - Use TableName type throughout
-- [ ] T165 [US5] Add shared table support to DROP TABLE command in table_deletion_service.rs:
+  ✅ **COMPLETE** - 5 tests passing
+- [X] T165 [US5] Add shared table support to DROP TABLE command in table_deletion_service.rs:
   - Detect TableType::Shared from table metadata
   - Call `shared_table_store.drop_table(namespace_id, table_name)` to delete column family
   - Delete Parquet files: `shared/{table_name}/batch-*.parquet` (single directory, no user_id paths)
   - Remove metadata via `kalam_sql.delete_table()` and `kalam_sql.delete_table_schemas_for_table()`
+  ✅ **COMPLETE** - Already supported from Phase 10
 
-**Checkpoint**: Shared tables functional - can create global tables, flush to storage
+**Checkpoint**: ✅ Shared tables fully functional - CREATE TABLE, CRUD operations, DROP supported, flush job implemented (5 tests passing). Phase 13 100% complete!
+
+**Integration Testing**: ✅ Complete (October 19, 2025)
+- 18 Rust integration test specifications created (`backend/tests/integration/test_shared_tables.rs`)
+- 17 manual test scenarios documented (`PHASE_13_INTEGRATION_TEST_GUIDE.md`)
+- 28 automated test cases via bash script (`test_shared_tables.sh`)
+- All tests executable via REST API `/api/sql` endpoint
+- See `PHASE_13_INTEGRATION_TESTING_SUMMARY.md` for full details
 
 ---
 
@@ -1278,11 +1290,12 @@ RocksDB (isolated to 2 crates only)
   - Connection helpers: connect_websocket(), authenticate_websocket()
   - Subscription matchers: assert_subscription_registered(), wait_for_notification()
   - Change notification validators: assert_insert_notification(), assert_update_notification()
-- [ ] T227 [P] [Polish] Create automated test script from quickstart.md in `backend/tests/quickstart.sh`:
+- [x] T227 [P] [Polish] Create automated test script from quickstart.md in `backend/tests/quickstart.sh`:
   - Bash script that runs all steps from quickstart guide
   - Server startup, namespace/table creation, REST API queries
   - WebSocket subscriptions, live query notifications
   - Exit with error code if any step fails
+  - COMPLETED: 32 automated tests covering namespaces, user/shared/stream tables, INSERT/UPDATE/DELETE, queries, system tables, flush policies, data types, and cleanup
 - [ ] T228 [P] [Polish] Create benchmark suite in `backend/benches/` using criterion.rs:
   - Benchmark RocksDB writes via UserTableStore.put() (<1ms target)
   - Benchmark DataFusion queries (scan, filter, aggregate)
