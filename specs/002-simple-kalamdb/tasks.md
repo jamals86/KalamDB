@@ -841,37 +841,40 @@ RocksDB (isolated to 2 crates only)
 
 ### Implementation for User Story 4a
 
-- [ ] T147 [P] [US4a] Implement CREATE STREAM TABLE parser in `backend/crates/kalamdb-core/src/sql/ddl/create_stream_table.rs` (parse schema, retention, ephemeral, max_buffer, use NamespaceId and TableName types)
-- [ ] T148 [US4a] Create stream table service in `backend/crates/kalamdb-core/src/services/stream_table_service.rs`:
+- [X] T147 [P] [US4a] Implement CREATE STREAM TABLE parser in `backend/crates/kalamdb-core/src/sql/ddl/create_stream_table.rs` (parse schema, retention, ephemeral, max_buffer, use NamespaceId and TableName types) ✅ **COMPLETE** - 6 tests passing
+- [X] T148 [US4a] Create stream table service in `backend/crates/kalamdb-core/src/services/stream_table_service.rs`:
   - Constructor: `new(stream_table_store: Arc<StreamTableStore>, kalam_sql: Arc<KalamSql>) -> Self`
   - Create table metadata (TableType::Stream, no system columns \_updated/\_deleted)
   - Register in catalog via `kalam_sql.insert_table()`
   - Column family creation handled internally by StreamTableStore.new()
   - Use NamespaceId and TableName types throughout
-- [ ] T149 [US4a] Create stream table provider in `backend/crates/kalamdb-core/src/tables/stream_table_provider.rs`:
+  ✅ **COMPLETE** - 4 tests passing
+- [X] T149 [US4a] Create stream table provider in `backend/crates/kalamdb-core/src/tables/stream_table_provider.rs`:
   - Constructor: `new(stream_table_store: Arc<StreamTableStore>, ...) -> Self`
   - Implement DataFusion TableProvider trait
   - All data operations delegate to stream_table_store (no direct RocksDB)
   - Memory/RocksDB-only (no Parquet writes)
   - Use NamespaceId and TableName types
-- [ ] T150 [US4a] Implement stream table INSERT handler in stream_table_provider.rs:
+  ✅ **COMPLETE** - 7 tests passing
+- [x] T150 [US4a] Implement stream table INSERT handler in stream_table_provider.rs:
   - Call `stream_table_store.put(namespace_id, table_name, row_id, row_data)`
   - Key format: `{timestamp_ms}:{row_id}` (timestamp-prefixed for TTL eviction)
   - NO system columns (\_updated, \_deleted) - stream tables don't have these
   - Check ephemeral mode before writing (see T152)
-- [ ] T151 [US4a] Add ephemeral mode check in stream_table_provider.rs:
+- [x] T151 [US4a] Add ephemeral mode check in stream_table_provider.rs:
   - Before INSERT: check if table has ephemeral=true flag
   - If ephemeral=true: query live query manager to check if any subscribers exist for this table
   - If no subscribers: discard event immediately (don't write to storage)
   - If subscribers exist: write to storage and deliver notification
   - Log discarded event count for monitoring
-- [ ] T152 [US4a] Implement TTL-based eviction in `backend/crates/kalamdb-core/src/tables/stream_table_eviction.rs`:
+  ✅ **COMPLETE** - 3 new tests passing (ephemeral mode with/without subscribers, non-ephemeral)
+- [x] T152 [US4a] Implement TTL-based eviction in `backend/crates/kalamdb-core/src/jobs/stream_eviction.rs`:
   - Background job runs every N seconds (configurable)
   - For each stream table: call `stream_table_store.evict_older_than(namespace_id, table_name, cutoff_timestamp)`
   - Cutoff calculation: NOW() - retention_period (from table metadata)
   - StreamTableStore.evict_older_than() uses timestamp prefix in keys for efficient deletion
   - Register eviction jobs in system.jobs via `kalam_sql.insert_job()` (use TableName)
-- [ ] T153 [US4a] Implement max_buffer eviction in stream_table_eviction.rs:
+- [x] T153 [US4a] Implement max_buffer eviction in stream_eviction.rs:
   - Check buffer size: call `stream_table_store.scan(namespace_id, table_name).count()`
   - If count > max_buffer: evict oldest entries by timestamp prefix
   - Use `stream_table_store.delete(namespace_id, table_name, row_id)` for batch deletion
@@ -882,7 +885,7 @@ RocksDB (isolated to 2 crates only)
   - Live query manager delivers to subscribed WebSocket connections
   - Target latency: <5ms from INSERT to WebSocket delivery
   - Include change_type='INSERT', row_data in notification
-- [ ] T155 [US4a] Prevent Parquet flush for stream tables in `backend/crates/kalamdb-core/src/flush/trigger.rs`:
+- [x] T155 [US4a] Prevent Parquet flush for stream tables in `backend/crates/kalamdb-core/src/flush/trigger.rs`:
   - Check TableType enum before registering flush trigger
   - Skip flush trigger registration for TableType::Stream
   - Stream tables NEVER flush to Parquet (ephemeral data only)
@@ -893,11 +896,12 @@ RocksDB (isolated to 2 crates only)
   - Show max_buffer limit (e.g., "10000 rows")
   - Show NO system columns (\_updated, \_deleted don't exist for streams)
   - Use NamespaceId and TableName for lookup
-- [ ] T157 [US4a] Implement DROP STREAM TABLE support in table_deletion_service.rs:
+- [X] T157 [US4a] Implement DROP STREAM TABLE support in table_deletion_service.rs:
   - Detect TableType::Stream from table metadata
   - Call `stream_table_store.drop_table(namespace_id, table_name)` to delete column family
   - NO Parquet files to delete (stream tables never flush)
   - Remove metadata via `kalam_sql.delete_table()` and `kalam_sql.delete_table_schemas_for_table()`
+  ✅ **COMPLETE** - Already supported from Phase 10
 
 **Checkpoint**: Stream tables functional - can create ephemeral tables, insert events, deliver real-time without persistence
 

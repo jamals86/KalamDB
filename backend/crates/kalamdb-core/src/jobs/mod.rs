@@ -38,6 +38,8 @@
 
 pub mod executor;
 pub mod retention;
+pub mod stream_eviction;
 
 pub use executor::{JobExecutor, JobResult};
 pub use retention::{RetentionConfig, RetentionPolicy};
+pub use stream_eviction::{StreamEvictionConfig, StreamEvictionJob};
