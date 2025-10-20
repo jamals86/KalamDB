@@ -84,8 +84,6 @@ impl SqlExecutor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_executor_creation() {
         // This test would require a RocksDB instance

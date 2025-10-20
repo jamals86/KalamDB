@@ -1,7 +1,8 @@
 # Architecture Refactoring Plan: Three-Layer Separation
 
-**Date**: 2025-10-17  
-**Status**: Planned (Not Yet Implemented)  
+**Date**: 2025-10-17 (Plan Created)  
+**Status**: ✅ PARTIALLY IMPLEMENTED (Phase 9.5 Complete - User Table DML)  
+**Last Updated**: 2025-10-19  
 **Priority**: High (Complete after Phase 9)
 
 ## Problem Statement
@@ -420,3 +421,93 @@ Create tests that verify:
 - **Spec Update**: `specs/002-simple-kalamdb/spec.md` (Section: "Unified SQL Engine for System Tables")
 - **Clarifications**: `specs/002-simple-kalamdb/spec.md` (Session 2025-10-17, last 2 entries)
 - **Current Implementation**: Phase 9 tasks T123-T125 completed (INSERT/UPDATE/DELETE handlers with direct RocksDB)
+
+---
+
+## Migration Guide: CatalogStore Deprecation
+
+**Status**: Implemented October 19, 2025  
+**Affected Version**: v0.2.0+
+
+### Overview
+
+`CatalogStore` is deprecated in favor of the three-layer architecture. All code should migrate to use:
+- **kalamdb-sql** for system table operations
+- **kalamdb-store** for user table DML operations
+
+### Migration Examples
+
+#### Before (CatalogStore - DEPRECATED)
+
+```rust
+use kalamdb_core::catalog::CatalogStore;
+
+// System table access
+let catalog = CatalogStore::new(db.clone());
+let namespaces = catalog.get_all_namespaces()?;
+```
+
+#### After (kalamdb-sql - RECOMMENDED)
+
+```rust
+use kalamdb_sql::KalamSql;
+
+// System table access via SQL
+let kalam_sql = Arc::new(KalamSql::new(db)?);
+let results = kalam_sql.execute("SELECT * FROM system_namespaces").await?;
+```
+
+### User Table Operations
+
+#### Before (Direct RocksDB - DEPRECATED)
+
+```rust
+use rocksdb::DB;
+
+let cf = db.cf_handle(&cf_name)?;
+db.put_cf(cf, key, value)?;
+```
+
+#### After (UserTableStore - RECOMMENDED)
+
+```rust
+use kalamdb_store::UserTableStore;
+
+let store = Arc::new(UserTableStore::new(db)?);
+store.put(namespace, table, user_id, row_id, data)?;
+```
+
+### Implementation Status
+
+✅ **Completed (Phase 9.5)**:
+- T156: user_table_insert.rs refactored to use UserTableStore
+- T157: user_table_update.rs refactored to use UserTableStore
+- T158: user_table_delete.rs refactored to use UserTableStore
+- T163: CatalogStore marked as `#[deprecated]`
+
+**Result**: All DML handlers now use UserTableStore. No direct RocksDB imports in business logic.
+
+### Deprecation Timeline
+
+- **v0.2.0** (Current): CatalogStore marked deprecated, warnings issued
+- **v0.3.0** (Planned): CatalogStore usage removed from codebase
+- **v0.4.0** (Planned): CatalogStore completely removed
+
+### System Table Provider Status
+
+System table providers currently use `kalamdb-sql::KalamSql`:
+- ✅ UsersTableProvider
+- ✅ StorageLocationsTableProvider
+- ✅ LiveQueriesTableProvider
+- ✅ JobsTableProvider
+
+All providers have `scan_all()` methods for DataFusion integration.
+
+### Testing
+
+All refactored handlers have full test coverage:
+- ✅ 44 user_table tests passing (insert, update, delete, provider)
+- ✅ Zero RocksDB imports in DML handler main code
+- ✅ All tests use new UserTableStore pattern
+
+---

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/kalamdb-core",
     "crates/kalamdb-sql",
+    "crates/kalamdb-store",
     "crates/kalamdb-api",
     "crates/kalamdb-server",
 ]

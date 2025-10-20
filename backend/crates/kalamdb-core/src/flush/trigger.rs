@@ -3,11 +3,10 @@
 //! This module monitors row count and time intervals per column family to determine
 //! when flush operations should be triggered based on configured flush policies.
 
-use crate::catalog::TableName;
+use crate::catalog::{TableName, TableType};
 use crate::error::KalamDbError;
 use crate::flush::FlushPolicy;
 use chrono::{DateTime, Utc};
-use rocksdb::DB;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -94,34 +93,45 @@ impl FlushTriggerState {
 ///
 /// Tracks flush state for all tables and determines when to trigger flush jobs
 pub struct FlushTriggerMonitor {
-    /// RocksDB instance
-    db: Arc<DB>,
-    
     /// Flush state per column family (keyed by column family name)
     states: Arc<RwLock<HashMap<String, FlushTriggerState>>>,
 }
 
 impl FlushTriggerMonitor {
     /// Create a new flush trigger monitor
-    pub fn new(db: Arc<DB>) -> Self {
+    pub fn new() -> Self {
         Self {
-            db,
             states: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// Register a table for flush monitoring
     ///
+    /// Stream tables are NEVER registered because they don't flush to Parquet.
+    /// This is an architectural decision: stream tables are ephemeral and remain
+    /// in memory/RocksDB only for real-time delivery.
+    ///
     /// # Arguments
     /// * `table_name` - Name of the table
     /// * `cf_name` - Column family name
+    /// * `table_type` - Type of table (User, Shared, System, Stream)
     /// * `flush_policy` - Flush policy for this table
+    ///
+    /// # Returns
+    /// Ok(()) if table was registered, or if table is Stream type (skip without error)
     pub fn register_table(
         &self,
         table_name: TableName,
         cf_name: String,
+        table_type: &TableType,
         flush_policy: FlushPolicy,
     ) -> Result<(), KalamDbError> {
+        // Stream tables NEVER flush to Parquet - skip registration
+        if matches!(table_type, TableType::Stream) {
+            // Return Ok without registering - this is expected behavior
+            return Ok(());
+        }
+
         let mut states = self.states.write().map_err(|e| {
             KalamDbError::Other(format!("Failed to acquire write lock: {}", e))
         })?;
@@ -253,16 +263,8 @@ impl FlushTriggerMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::RocksDbInit;
     use std::thread;
     use std::time::Duration;
-
-    fn create_test_db() -> (Arc<DB>, tempfile::TempDir) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
-        let db = init.open().unwrap();
-        (db, temp_dir)
-    }
 
     #[test]
     fn test_flush_trigger_state_row_limit() {
@@ -336,15 +338,15 @@ mod tests {
 
     #[test]
     fn test_flush_trigger_monitor_registration() {
-        let (db, _temp_dir) = create_test_db();
-        let monitor = FlushTriggerMonitor::new(db);
+        
+        let monitor = FlushTriggerMonitor::new();
 
         let table_name = TableName::new("test_table");
         let cf_name = "user_table:test:test_table".to_string();
         let flush_policy = FlushPolicy::row_limit(100).unwrap();
 
-        // Register table
-        let result = monitor.register_table(table_name.clone(), cf_name.clone(), flush_policy);
+        // Register table (User table type - should register)
+        let result = monitor.register_table(table_name.clone(), cf_name.clone(), &TableType::User, flush_policy);
         assert!(result.is_ok());
 
         // Verify registration
@@ -363,15 +365,15 @@ mod tests {
 
     #[test]
     fn test_flush_trigger_monitor_row_tracking() {
-        let (db, _temp_dir) = create_test_db();
-        let monitor = FlushTriggerMonitor::new(db);
+        
+        let monitor = FlushTriggerMonitor::new();
 
         let table_name = TableName::new("test_table");
         let cf_name = "user_table:test:test_table".to_string();
         let flush_policy = FlushPolicy::row_limit(100).unwrap();
 
         monitor
-            .register_table(table_name, cf_name.clone(), flush_policy)
+            .register_table(table_name, cf_name.clone(), &TableType::User, flush_policy)
             .unwrap();
 
         // Initially should not flush
@@ -392,8 +394,8 @@ mod tests {
 
     #[test]
     fn test_get_tables_needing_flush() {
-        let (db, _temp_dir) = create_test_db();
-        let monitor = FlushTriggerMonitor::new(db);
+        
+        let monitor = FlushTriggerMonitor::new();
 
         // Register multiple tables with different policies
         let table1 = TableName::new("table1");
@@ -405,10 +407,10 @@ mod tests {
         let policy2 = FlushPolicy::row_limit(50).unwrap();
 
         monitor
-            .register_table(table1.clone(), cf1.clone(), policy1)
+            .register_table(table1.clone(), cf1.clone(), &TableType::User, policy1)
             .unwrap();
         monitor
-            .register_table(table2.clone(), cf2.clone(), policy2)
+            .register_table(table2.clone(), cf2.clone(), &TableType::User, policy2)
             .unwrap();
 
         // Initially no tables need flushing
@@ -437,15 +439,15 @@ mod tests {
 
     #[test]
     fn test_get_state() {
-        let (db, _temp_dir) = create_test_db();
-        let monitor = FlushTriggerMonitor::new(db);
+        
+        let monitor = FlushTriggerMonitor::new();
 
         let table_name = TableName::new("test_table");
         let cf_name = "user_table:test:test_table".to_string();
         let flush_policy = FlushPolicy::row_limit(100).unwrap();
 
         monitor
-            .register_table(table_name.clone(), cf_name.clone(), flush_policy)
+            .register_table(table_name.clone(), cf_name.clone(), &TableType::User, flush_policy)
             .unwrap();
 
         // Get initial state
@@ -461,5 +463,47 @@ mod tests {
         // Get updated state
         let state = monitor.get_state(&cf_name).unwrap().unwrap();
         assert_eq!(state.current_row_count, 50);
+    }
+
+    #[test]
+    fn test_stream_tables_never_register() {
+        // Stream tables should NOT be registered for flush monitoring
+        // They are ephemeral and never flush to Parquet
+        let monitor = FlushTriggerMonitor::new();
+
+        let table_name = TableName::new("events");
+        let cf_name = "stream_table:app:events".to_string();
+        let flush_policy = FlushPolicy::row_limit(100).unwrap();
+
+        // Try to register stream table - should succeed but NOT actually register
+        let result = monitor.register_table(
+            table_name.clone(),
+            cf_name.clone(),
+            &TableType::Stream,
+            flush_policy,
+        );
+        assert!(result.is_ok());
+
+        // Verify stream table was NOT registered
+        let registered = monitor.get_registered_tables().unwrap();
+        assert_eq!(registered.len(), 0);
+
+        // Verify we can't get state for stream table
+        let state = monitor.get_state(&cf_name).unwrap();
+        assert!(state.is_none());
+
+        // Now register a user table to verify normal registration still works
+        let user_table = TableName::new("users");
+        let user_cf = "user_table:app:users".to_string();
+        let user_policy = FlushPolicy::row_limit(100).unwrap();
+
+        monitor
+            .register_table(user_table.clone(), user_cf.clone(), &TableType::User, user_policy)
+            .unwrap();
+
+        // User table should be registered
+        let registered = monitor.get_registered_tables().unwrap();
+        assert_eq!(registered.len(), 1);
+        assert_eq!(registered[0], user_cf);
     }
 }

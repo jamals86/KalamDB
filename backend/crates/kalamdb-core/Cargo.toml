@@ -12,6 +12,7 @@ rocksdb.workspace = true
 
 # Internal crates
 kalamdb-sql = { path = "../kalamdb-sql" }
+kalamdb-store = { path = "../kalamdb-store" }
 
 # Apache Arrow ecosystem
 arrow.workspace = true

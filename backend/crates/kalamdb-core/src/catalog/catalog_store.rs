@@ -1,5 +1,12 @@
 //! Catalog store using RocksDB
 //!
+//! **DEPRECATED**: This module is deprecated as of v0.2.0. Use kalamdb-sql for system tables
+//! and kalamdb-store for user tables instead of direct RocksDB access.
+//!
+//! **Migration Guide**:
+//! - System tables → Use kalamdb-sql::KalamSql with SQL queries
+//! - User tables → Use kalamdb-store::UserTableStore for DML operations
+//!
 //! This module provides storage for system table data using dedicated column families.
 //!
 //! **NOTE**: This is a transitional layer. The updated column family naming (`system_{name}`)
@@ -14,11 +21,19 @@ use std::sync::Arc;
 
 /// System table catalog store backed by RocksDB
 ///
+/// **DEPRECATED**: Use kalamdb-sql for system tables and kalamdb-store for user tables.
+/// This struct will be removed in a future version.
+///
 /// **Architecture Update**: Uses new column family naming `system_{name}` (not `system_table:{name}`)
+#[deprecated(
+    since = "0.2.0",
+    note = "Use kalamdb-sql for system tables and kalamdb-store for user tables instead of CatalogStore"
+)]
 pub struct CatalogStore {
     db: Arc<DB>,
 }
 
+#[allow(deprecated)]
 impl CatalogStore {
     /// Create a new catalog store
     pub fn new(db: Arc<DB>) -> Self {
@@ -235,6 +250,7 @@ impl CatalogStore {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::storage::RocksDbInit;

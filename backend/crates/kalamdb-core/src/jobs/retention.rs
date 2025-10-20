@@ -67,43 +67,11 @@ impl RetentionPolicy {
 
     /// Enforce retention with extended failure retention
     fn enforce_with_extended_failures(&self) -> Result<usize, KalamDbError> {
-        use crate::catalog::CatalogStore;
-
-        let success_cutoff = chrono::Utc::now().timestamp_millis()
-            - (self.config.retention_days * 24 * 60 * 60 * 1000);
-
-        let failure_cutoff = chrono::Utc::now().timestamp_millis()
-            - (self.config.failure_retention_days * 24 * 60 * 60 * 1000);
-
-        // Access the underlying catalog store to iterate jobs
-        let catalog_store = &self.jobs_provider.catalog_store;
-        let iter = catalog_store.iter("jobs")?;
-        let mut deleted_count = 0;
-
-        for (key, value) in iter {
-            let job: crate::tables::system::JobRecord =
-                serde_json::from_slice(&value).map_err(|e| {
-                    KalamDbError::SerializationError(format!("Failed to deserialize job: {}", e))
-                })?;
-
-            // Determine if job should be deleted based on status and age
-            let should_delete = match job.status.as_str() {
-                "completed" => job.start_time < success_cutoff,
-                "failed" => job.start_time < failure_cutoff,
-                "running" => false, // Never delete running jobs
-                _ => job.start_time < success_cutoff,
-            };
-
-            if should_delete {
-                let job_id = String::from_utf8_lossy(&key).to_string();
-                // Remove "job:" prefix if present
-                let job_id = job_id.strip_prefix("job:").unwrap_or(&job_id);
-                catalog_store.delete_job(job_id)?;
-                deleted_count += 1;
-            }
-        }
-
-        Ok(deleted_count)
+        // TODO: Delete not yet implemented in kalamdb-sql adapter
+        // This method requires iterating and deleting jobs based on retention policy
+        Err(KalamDbError::Other(
+            "Delete operation not yet implemented in kalamdb-sql adapter".to_string()
+        ))
     }
 
     /// Get the retention configuration
@@ -129,8 +97,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
-        let catalog_store = Arc::new(CatalogStore::new(db));
-        let jobs_provider = Arc::new(JobsTableProvider::new(catalog_store));
+        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(db).unwrap());
+        let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql));
         let retention = RetentionPolicy::with_defaults(Arc::clone(&jobs_provider));
         (retention, jobs_provider, temp_dir)
     }
@@ -286,8 +254,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
-        let catalog_store = Arc::new(CatalogStore::new(db));
-        let jobs_provider = Arc::new(JobsTableProvider::new(catalog_store));
+        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(db).unwrap());
+        let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql));
 
         let custom_config = RetentionConfig {
             retention_days: 7,

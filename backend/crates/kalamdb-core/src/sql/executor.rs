@@ -5,10 +5,11 @@
 
 use crate::catalog::Namespace;
 use crate::error::KalamDbError;
-use crate::services::NamespaceService;
+use crate::services::{NamespaceService, UserTableService, SharedTableService, StreamTableService};
 use crate::sql::ddl::{
     AlterNamespaceStatement, CreateNamespaceStatement, DropNamespaceStatement,
-    ShowNamespacesStatement,
+    ShowNamespacesStatement, CreateUserTableStatement, CreateSharedTableStatement,
+    CreateStreamTableStatement, DropTableStatement,
 };
 use datafusion::arrow::array::{ArrayRef, StringArray, UInt32Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
@@ -34,8 +35,10 @@ pub enum ExecutionResult {
 /// Executes SQL statements by dispatching to appropriate handlers
 pub struct SqlExecutor {
     namespace_service: Arc<NamespaceService>,
-    #[allow(dead_code)]
     session_context: Arc<SessionContext>,
+    user_table_service: Arc<UserTableService>,
+    shared_table_service: Arc<SharedTableService>,
+    stream_table_service: Arc<StreamTableService>,
 }
 
 impl SqlExecutor {
@@ -43,10 +46,16 @@ impl SqlExecutor {
     pub fn new(
         namespace_service: Arc<NamespaceService>,
         session_context: Arc<SessionContext>,
+        user_table_service: Arc<UserTableService>,
+        shared_table_service: Arc<SharedTableService>,
+        stream_table_service: Arc<StreamTableService>,
     ) -> Self {
         Self {
             namespace_service,
             session_context,
+            user_table_service,
+            shared_table_service,
+            stream_table_service,
         }
     }
 
@@ -63,12 +72,45 @@ impl SqlExecutor {
             return self.execute_alter_namespace(sql).await;
         } else if sql_upper.starts_with("DROP NAMESPACE") {
             return self.execute_drop_namespace(sql).await;
+        } else if sql_upper.starts_with("CREATE TABLE") {
+            return self.execute_create_table(sql).await;
+        } else if sql_upper.starts_with("DROP TABLE") {
+            return self.execute_drop_table(sql).await;
+        } else if sql_upper.starts_with("SELECT") || sql_upper.starts_with("INSERT") 
+            || sql_upper.starts_with("UPDATE") || sql_upper.starts_with("DELETE") {
+            // Delegate DML queries to DataFusion
+            return self.execute_datafusion_query(sql).await;
         }
 
-        // Otherwise, delegate to DataFusion
+        // Otherwise, unsupported
         Err(KalamDbError::InvalidSql(
-            "Unsupported SQL statement. Only namespace DDL is currently supported.".to_string(),
+            format!("Unsupported SQL statement: {}", sql.lines().next().unwrap_or("")),
         ))
+    }
+
+    /// Execute query via DataFusion
+    async fn execute_datafusion_query(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        // Execute SQL via DataFusion
+        let df = self.session_context
+            .sql(sql)
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Error planning query: {}", e)))?;
+        
+        // Collect results
+        let batches = df
+            .collect()
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Error executing query: {}", e)))?;
+        
+        // Return batches
+        if batches.is_empty() {
+            // Return empty result with schema
+            Ok(ExecutionResult::RecordBatches(vec![]))
+        } else if batches.len() == 1 {
+            Ok(ExecutionResult::RecordBatch(batches[0].clone()))
+        } else {
+            Ok(ExecutionResult::RecordBatches(batches))
+        }
     }
 
     /// Execute CREATE NAMESPACE
@@ -125,6 +167,42 @@ impl SqlExecutor {
         Ok(ExecutionResult::Success(message))
     }
 
+    /// Execute CREATE TABLE - determines table type from LOCATION and routes to appropriate service
+    async fn execute_create_table(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        // Determine table type based on SQL keywords or LOCATION pattern
+        let sql_upper = sql.to_uppercase();
+        let namespace_id = crate::catalog::NamespaceId::new("default"); // TODO: Get from context
+        
+        if sql_upper.contains("USER TABLE") || sql_upper.contains("${USER_ID}") {
+            // User table
+            let stmt = CreateUserTableStatement::parse(sql, &namespace_id)?;
+            self.user_table_service.create_table(stmt, None)?;
+            return Ok(ExecutionResult::Success("User table created successfully".to_string()));
+        } else if sql_upper.contains("STREAM TABLE") || sql_upper.contains("TTL") || sql_upper.contains("BUFFER_SIZE") {
+            // Stream table
+            let stmt = CreateStreamTableStatement::parse(sql, &namespace_id)?;
+            self.stream_table_service.create_table(stmt)?;
+            return Ok(ExecutionResult::Success("Stream table created successfully".to_string()));
+        } else {
+            // Default to shared table (most common case)
+            let stmt = CreateSharedTableStatement::parse(sql, &namespace_id)?;
+            self.shared_table_service.create_table(stmt)?;
+            return Ok(ExecutionResult::Success("Table created successfully".to_string()));
+        }
+    }
+
+    /// Execute DROP TABLE
+    async fn execute_drop_table(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        let _namespace_id = crate::catalog::NamespaceId::new("default"); // TODO: Get from context
+        let _stmt = DropTableStatement::parse(sql, &_namespace_id)?;
+        
+        // TODO: Implement DROP TABLE routing to services
+        // Services don't have drop_table methods yet
+        Err(KalamDbError::InvalidOperation(
+            "DROP TABLE not yet implemented - use system tables to manage tables".to_string()
+        ))
+    }
+
     /// Convert namespaces list to Arrow RecordBatch
     fn namespaces_to_record_batch(
         namespaces: Vec<Namespace>,
@@ -164,50 +242,42 @@ mod tests {
     use super::*;
     use datafusion::prelude::SessionContext;
     use kalamdb_sql::KalamSql;
-    use rocksdb::{Options, DB};
-    use std::env;
+    use kalamdb_store::test_utils::TestDb;
 
-    fn setup_test_executor() -> (SqlExecutor, String, String) {
-        let temp_dir = env::temp_dir();
-        let test_id = format!("executor_test_{}_{}", std::process::id(), uuid::Uuid::new_v4());
-        let config_file = temp_dir.join(format!("{}.json", test_id));
-        let config_path = temp_dir.join(&test_id);
+    fn setup_test_executor() -> SqlExecutor {
+        let test_db = TestDb::new(&[
+            "system_namespaces",
+            "system_tables",
+            "system_table_schemas"
+        ]).unwrap();
 
-        // Cleanup
-        let _ = std::fs::remove_file(&config_file);
-        let _ = std::fs::remove_dir_all(&config_path);
-
-        // Create RocksDB instance
-        let mut opts = Options::default();
-        opts.create_if_missing(true);
-        opts.create_missing_column_families(true);
-
-        let db = Arc::new(
-            DB::open_cf(
-                &opts,
-                &config_path,
-                vec!["system_namespaces", "system_tables", "system_table_schemas"],
-            )
-            .unwrap(),
-        );
-
-        let kalam_sql = Arc::new(KalamSql::new(db).unwrap());
-        let namespace_service = Arc::new(NamespaceService::new(kalam_sql));
-
+        let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
+        let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
         let session_context = Arc::new(SessionContext::new());
+        
+        // Initialize table services for tests
+        let user_table_service = Arc::new(crate::services::UserTableService::new(kalam_sql.clone()));
+        let shared_table_service = Arc::new(crate::services::SharedTableService::new(
+            Arc::new(kalamdb_store::SharedTableStore::new(test_db.db.clone()).unwrap()),
+            kalam_sql.clone()
+        ));
+        let stream_table_service = Arc::new(crate::services::StreamTableService::new(
+            Arc::new(kalamdb_store::StreamTableStore::new(test_db.db.clone()).unwrap()),
+            kalam_sql.clone()
+        ));
 
-        let executor = SqlExecutor::new(namespace_service, session_context);
-
-        (
-            executor,
-            config_file.to_str().unwrap().to_string(),
-            config_path.to_str().unwrap().to_string(),
+        SqlExecutor::new(
+            namespace_service, 
+            session_context,
+            user_table_service,
+            shared_table_service,
+            stream_table_service,
         )
     }
 
     #[tokio::test]
     async fn test_execute_create_namespace() {
-        let (executor, _, _) = setup_test_executor();
+        let executor = setup_test_executor();
 
         let result = executor
             .execute("CREATE NAMESPACE app")
@@ -224,7 +294,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_show_namespaces() {
-        let (executor, _, _) = setup_test_executor();
+        let executor = setup_test_executor();
 
         // Create some namespaces
         executor.execute("CREATE NAMESPACE app1").await.unwrap();
@@ -243,7 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_alter_namespace() {
-        let (executor, _, _) = setup_test_executor();
+        let executor = setup_test_executor();
 
         executor.execute("CREATE NAMESPACE app").await.unwrap();
 
@@ -262,7 +332,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_drop_namespace() {
-        let (executor, _, _) = setup_test_executor();
+        let executor = setup_test_executor();
 
         executor.execute("CREATE NAMESPACE app").await.unwrap();
 
@@ -278,7 +348,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_drop_namespace_with_tables() {
-        let (executor, _, _) = setup_test_executor();
+        let executor = setup_test_executor();
 
         executor.execute("CREATE NAMESPACE app").await.unwrap();
 

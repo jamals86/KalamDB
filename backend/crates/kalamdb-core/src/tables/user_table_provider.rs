@@ -19,7 +19,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use rocksdb::DB;
+use kalamdb_store::UserTableStore;
 use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;
@@ -38,8 +38,8 @@ pub struct UserTableProvider {
     /// Arrow schema for the table
     schema: SchemaRef,
 
-    /// RocksDB instance for hot data
-    db: Arc<DB>,
+    /// UserTableStore for DML operations
+    store: Arc<UserTableStore>,
 
     /// Current user ID for data isolation
     current_user_id: UserId,
@@ -63,24 +63,24 @@ impl UserTableProvider {
     /// # Arguments
     /// * `table_metadata` - Table metadata (namespace, table name, type, etc.)
     /// * `schema` - Arrow schema for the table
-    /// * `db` - RocksDB instance
+    /// * `store` - UserTableStore for DML operations
     /// * `current_user_id` - Current user ID for data isolation
     /// * `parquet_paths` - Optional list of Parquet file paths for cold data
     pub fn new(
         table_metadata: TableMetadata,
         schema: SchemaRef,
-        db: Arc<DB>,
+        store: Arc<UserTableStore>,
         current_user_id: UserId,
         parquet_paths: Vec<String>,
     ) -> Self {
-        let insert_handler = Arc::new(UserTableInsertHandler::new(db.clone()));
-        let update_handler = Arc::new(UserTableUpdateHandler::new(db.clone()));
-        let delete_handler = Arc::new(UserTableDeleteHandler::new(db.clone()));
+        let insert_handler = Arc::new(UserTableInsertHandler::new(store.clone()));
+        let update_handler = Arc::new(UserTableUpdateHandler::new(store.clone()));
+        let delete_handler = Arc::new(UserTableDeleteHandler::new(store.clone()));
 
         Self {
             table_metadata,
             schema,
-            db,
+            store,
             current_user_id,
             insert_handler,
             update_handler,
@@ -294,33 +294,15 @@ impl TableProvider for UserTableProvider {
 mod tests {
     use super::*;
     use crate::flush::FlushPolicy;
-    use crate::storage::RocksDbInit;
     use chrono::Utc;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
-    use rocksdb::Options;
+    use kalamdb_store::test_utils::TestDb;
+    use kalamdb_store::UserTableStore;
     use serde_json::json;
 
-    fn create_test_db() -> (Arc<DB>, tempfile::TempDir) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        
-        // Create RocksDB with both system and user table column families
-        let mut opts = Options::default();
-        opts.create_if_missing(true);
-        opts.create_missing_column_families(true);
-        
-        let cf_names = vec![
-            "system_users",
-            "system_namespaces",
-            "system_tables",
-            "system_table_schemas",
-            "system_storage_locations",
-            "system_live_queries",
-            "system_jobs",
-            "user_table:chat:messages", // For test table
-        ];
-        
-        let db = DB::open_cf(&opts, temp_dir.path(), &cf_names).unwrap();
-        (Arc::new(db), temp_dir)
+    fn create_test_db() -> Arc<UserTableStore> {
+        let test_db = TestDb::single_cf("user_table:chat:messages").unwrap();
+        Arc::new(UserTableStore::new(test_db.db).unwrap())
     }
 
     fn create_test_schema() -> SchemaRef {
@@ -347,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_user_table_provider_creation() {
-        let (db, _temp_dir) = create_test_db();
+        let store = create_test_db();
         let schema = create_test_schema();
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
@@ -355,7 +337,7 @@ mod tests {
         let provider = UserTableProvider::new(
             metadata.clone(),
             schema.clone(),
-            db.clone(),
+            store.clone(),
             user_id.clone(),
             vec![],
         );
@@ -373,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_substitute_user_id_in_path() {
-        let (db, _temp_dir) = create_test_db();
+        let store = create_test_db();
         let schema = create_test_schema();
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
@@ -381,7 +363,7 @@ mod tests {
         let provider = UserTableProvider::new(
             metadata,
             schema,
-            db,
+            store,
             user_id,
             vec![],
         );
@@ -407,7 +389,7 @@ mod tests {
 
     #[test]
     fn test_user_key_prefix() {
-        let (db, _temp_dir) = create_test_db();
+        let store = create_test_db();
         let schema = create_test_schema();
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
@@ -415,7 +397,7 @@ mod tests {
         let provider = UserTableProvider::new(
             metadata,
             schema,
-            db,
+            store,
             user_id,
             vec![],
         );
@@ -428,7 +410,7 @@ mod tests {
 
     #[test]
     fn test_insert_row() {
-        let (db, _temp_dir) = create_test_db();
+        let store = create_test_db();
         let schema = create_test_schema();
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
@@ -436,7 +418,7 @@ mod tests {
         let provider = UserTableProvider::new(
             metadata,
             schema,
-            db,
+            store,
             user_id,
             vec![],
         );
@@ -454,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_insert_batch() {
-        let (db, _temp_dir) = create_test_db();
+        let store = create_test_db();
         let schema = create_test_schema();
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
@@ -462,7 +444,7 @@ mod tests {
         let provider = UserTableProvider::new(
             metadata,
             schema,
-            db,
+            store,
             user_id,
             vec![],
         );
@@ -482,7 +464,7 @@ mod tests {
 
     #[test]
     fn test_update_row() {
-        let (db, _temp_dir) = create_test_db();
+        let store = create_test_db();
         let schema = create_test_schema();
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
@@ -490,7 +472,7 @@ mod tests {
         let provider = UserTableProvider::new(
             metadata,
             schema,
-            db,
+            store,
             user_id,
             vec![],
         );
@@ -508,7 +490,7 @@ mod tests {
 
     #[test]
     fn test_delete_row() {
-        let (db, _temp_dir) = create_test_db();
+        let store = create_test_db();
         let schema = create_test_schema();
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
@@ -516,7 +498,7 @@ mod tests {
         let provider = UserTableProvider::new(
             metadata,
             schema,
-            db,
+            store,
             user_id,
             vec![],
         );
@@ -533,7 +515,7 @@ mod tests {
 
     #[test]
     fn test_data_isolation_different_users() {
-        let (db, _temp_dir) = create_test_db();
+        let store = create_test_db();
         let schema = create_test_schema();
         let metadata = create_test_metadata();
 
@@ -543,7 +525,7 @@ mod tests {
         let provider1 = UserTableProvider::new(
             metadata.clone(),
             schema.clone(),
-            db.clone(),
+            store.clone(),
             user1_id.clone(),
             vec![],
         );
@@ -551,7 +533,7 @@ mod tests {
         let provider2 = UserTableProvider::new(
             metadata,
             schema,
-            db,
+            store,
             user2_id.clone(),
             vec![],
         );

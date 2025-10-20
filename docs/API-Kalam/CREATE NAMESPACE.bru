@@ -1,0 +1,21 @@
+meta {
+  name: CREATE NAMESPACE
+  type: http
+  seq: 4
+}
+
+post {
+  url: http://localhost:8080/api/sql
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "sql": "SELECT 1 as id; SELECT 2 as id"
+  }
+}
