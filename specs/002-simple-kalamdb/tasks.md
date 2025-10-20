@@ -1216,13 +1216,13 @@ Ready for Phase 17.
 
 ### Configuration and Deployment
 
-- [ ] T199 [P] [Polish] Update server configuration in `backend/crates/kalamdb-server/src/config.rs`:
+- [X] T199 [P] [Polish] Update server configuration in `backend/crates/kalamdb-server/src/config.rs`:
   - Add DataFusion config (memory limits, query parallelism)
   - Add flush policy defaults (default_row_limit, default_time_interval)
   - Add retention policies (default_deleted_retention_hours)
   - Add RocksDB settings (column family cache sizes, write buffer sizes)
   - Add stream table defaults (default_ttl_seconds, default_max_buffer)
-- [ ] T200 [P] [Polish] Create example configuration file `backend/config.example.toml` with all settings documented:
+- [X] T200 [P] [Polish] Create example configuration file `backend/config.example.toml` with all settings documented:
   - **NOTE**: Runtime config only (logging, ports, RocksDB paths, DataFusion settings)
   - NO namespace/storage location config (now in system tables via kalamdb-sql)
   - Include comments explaining each setting

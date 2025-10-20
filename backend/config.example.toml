@@ -1,58 +1,46 @@
 # KalamDB Server Configuration
-#
-# Copy this file to config.toml and customize for your environment
-# Default values are shown below
+# This is an example configuration file with all available settings.
+# Copy this file to config.toml and adjust values for your environment.
 
 [server]
-# Server host and port
 host = "127.0.0.1"
 port = 8080
-
-# Number of worker threads (0 = use CPU count)
 workers = 0
 
 [storage]
-# RocksDB storage path
 rocksdb_path = "./data/rocksdb"
-
-# Enable WAL for durability
 enable_wal = true
-
-# Compression type: "none", "snappy", "zlib", "lz4", "zstd"
 compression = "lz4"
 
+[datafusion]
+memory_limit = 1073741824
+query_parallelism = 0
+max_partitions = 16
+batch_size = 8192
+
+[flush]
+default_row_limit = 10000
+default_time_interval = 300
+
+[retention]
+default_deleted_retention_hours = 168
+
+[stream]
+default_ttl_seconds = 10
+default_max_buffer = 10000
+
 [limits]
-# Maximum message content size in bytes (default: 1MB)
 max_message_size = 1048576
-
-# Maximum messages to return in a single query
 max_query_limit = 1000
-
-# Default query limit if not specified
 default_query_limit = 50
 
 [logging]
-# Log level: "error", "warn", "info", "debug", "trace"
 level = "info"
-
-# Log file path (use absolute or relative path)
 file_path = "./logs/app.log"
-
-# Also log to console (with colors)
-# Console format: [timestamp] [LEVEL] - thread - module:line - message (with colors)
-# File format:    [timestamp] [LEVEL] [thread - module:line] - message (plain text)
 log_to_console = true
-
-# Note: The 'format' field is deprecated - console always uses colored format,
-# file always uses plain text format
-# format = "compact"
+format = "compact"
 
 [performance]
-# Request timeout in seconds
 request_timeout = 30
-
-# Keep-alive timeout in seconds
 keepalive_timeout = 75
-
-# Maximum number of concurrent connections
 max_connections = 25000
