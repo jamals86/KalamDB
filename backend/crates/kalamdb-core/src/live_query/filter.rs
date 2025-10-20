@@ -34,7 +34,7 @@
 
 use crate::error::KalamDbError;
 use datafusion::sql::sqlparser::ast::{BinaryOperator, Expr, Statement, Value};
-use datafusion::sql::sqlparser::dialect::GenericDialect;
+use datafusion::sql::sqlparser::dialect::PostgreSqlDialect;
 use datafusion::sql::sqlparser::parser::Parser;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
@@ -64,7 +64,7 @@ impl FilterPredicate {
         // Parse as a SELECT with WHERE to extract the expression
         let sql = format!("SELECT * FROM t WHERE {}", where_clause);
 
-        let dialect = GenericDialect {};
+        let dialect = PostgreSqlDialect {};
         let statements = Parser::parse_sql(&dialect, &sql).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to parse WHERE clause: {}", e))
         })?;

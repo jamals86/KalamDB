@@ -9,10 +9,12 @@
 
 use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
 use crate::error::KalamDbError;
+use crate::ids::SnowflakeGenerator;
 use crate::tables::user_table_delete::UserTableDeleteHandler;
 use crate::tables::user_table_insert::UserTableInsertHandler;
 use crate::tables::user_table_update::UserTableUpdateHandler;
 use async_trait::async_trait;
+use chrono::Utc;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
@@ -20,9 +22,13 @@ use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_store::UserTableStore;
+use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;
+
+/// Shared Snowflake generator for auto-increment values
+static AUTO_ID_GENERATOR: Lazy<SnowflakeGenerator> = Lazy::new(|| SnowflakeGenerator::new(0));
 
 /// User table provider for DataFusion
 ///
@@ -164,6 +170,50 @@ impl UserTableProvider {
             &self.current_user_id,
             rows,
         )
+    }
+
+    /// Populate generated columns (id, created_at) when they are missing from the INSERT payload
+    fn prepare_insert_rows(&self, rows: &mut [JsonValue]) -> Result<(), String> {
+        let has_id = self.schema.field_with_name("id").is_ok();
+        let has_created_at = self.schema.field_with_name("created_at").is_ok();
+
+        if !has_id && !has_created_at {
+            return Ok(());
+        }
+
+        for row in rows.iter_mut() {
+            let obj = row
+                .as_object_mut()
+                .ok_or_else(|| "Row data must be a JSON object".to_string())?;
+
+            if has_id {
+                let needs_id = match obj.get("id") {
+                    None | Some(JsonValue::Null) => true,
+                    _ => false,
+                };
+
+                if needs_id {
+                    let id = AUTO_ID_GENERATOR
+                        .next_id()
+                        .map_err(|e| format!("Failed to generate auto-increment id: {}", e))?;
+                    obj.insert("id".to_string(), JsonValue::from(id));
+                }
+            }
+
+            if has_created_at {
+                let needs_ts = match obj.get("created_at") {
+                    None | Some(JsonValue::Null) => true,
+                    _ => false,
+                };
+
+                if needs_ts {
+                    let now_ms = Utc::now().timestamp_millis();
+                    obj.insert("created_at".to_string(), JsonValue::from(now_ms));
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Update a single row in this user table
@@ -384,9 +434,13 @@ impl TableProvider for UserTableProvider {
         // Process each batch
         for batch in batches {
             // Convert Arrow RecordBatch to JSON rows
-            let json_rows = arrow_batch_to_json(&batch).map_err(|e| {
+            let mut json_rows = arrow_batch_to_json(&batch).map_err(|e| {
                 DataFusionError::Execution(format!("Arrow to JSON conversion failed: {}", e))
             })?;
+
+            // Populate auto-increment IDs when missing
+            self.prepare_insert_rows(&mut json_rows)
+                .map_err(|e| DataFusionError::Execution(e))?;
 
             // Insert each row using the insert_batch method
             // This automatically handles user_id scoping

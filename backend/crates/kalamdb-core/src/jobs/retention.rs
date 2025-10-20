@@ -67,11 +67,34 @@ impl RetentionPolicy {
 
     /// Enforce retention with extended failure retention
     fn enforce_with_extended_failures(&self) -> Result<usize, KalamDbError> {
-        // TODO: Delete not yet implemented in kalamdb-sql adapter
-        // This method requires iterating and deleting jobs based on retention policy
-        Err(KalamDbError::Other(
-            "Delete operation not yet implemented in kalamdb-sql adapter".to_string(),
-        ))
+        let now = chrono::Utc::now().timestamp_millis();
+        let retention_ms = self.config.retention_days * 24 * 60 * 60 * 1000;
+        let failure_retention_ms = self.config.failure_retention_days * 24 * 60 * 60 * 1000;
+
+        let jobs = self.jobs_provider.list_jobs()?;
+        let mut deleted = 0;
+
+        for job in jobs {
+            if job.status == "running" {
+                continue;
+            }
+
+            let reference_time = job.end_time.unwrap_or(job.start_time);
+            let age_ms = now - reference_time;
+
+            let threshold = if job.status == "failed" {
+                failure_retention_ms
+            } else {
+                retention_ms
+            };
+
+            if age_ms > threshold {
+                self.jobs_provider.delete_job(&job.job_id)?;
+                deleted += 1;
+            }
+        }
+
+        Ok(deleted)
     }
 
     /// Get the retention configuration

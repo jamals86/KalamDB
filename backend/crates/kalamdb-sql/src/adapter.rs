@@ -188,6 +188,18 @@ impl RocksDbAdapter {
         Ok(())
     }
 
+    /// Delete a storage location
+    pub fn delete_storage_location(&self, location_name: &str) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle("system_storage_locations")
+            .ok_or_else(|| anyhow!("system_storage_locations CF not found"))?;
+
+        let key = format!("loc:{}", location_name);
+        self.db.delete_cf(&cf, key.as_bytes())?;
+        Ok(())
+    }
+
     // Live query operations
 
     /// Get a live query by ID
@@ -220,6 +232,18 @@ impl RocksDbAdapter {
         Ok(())
     }
 
+    /// Delete a live query by ID
+    pub fn delete_live_query(&self, live_id: &str) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle("system_live_queries")
+            .ok_or_else(|| anyhow!("system_live_queries CF not found"))?;
+
+        let key = format!("lq:{}", live_id);
+        self.db.delete_cf(&cf, key.as_bytes())?;
+        Ok(())
+    }
+
     // Job operations
 
     /// Get a job by ID
@@ -249,6 +273,18 @@ impl RocksDbAdapter {
         let key = format!("job:{}", job.job_id);
         let value = serde_json::to_vec(job)?;
         self.db.put_cf(&cf, key.as_bytes(), &value)?;
+        Ok(())
+    }
+
+    /// Delete a job by ID
+    pub fn delete_job(&self, job_id: &str) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle("system_jobs")
+            .ok_or_else(|| anyhow!("system_jobs CF not found"))?;
+
+        let key = format!("job:{}", job_id);
+        self.db.delete_cf(&cf, key.as_bytes())?;
         Ok(())
     }
 

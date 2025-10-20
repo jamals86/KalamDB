@@ -18,7 +18,13 @@ use crate::sql::ddl::{
     DropNamespaceStatement, DropTableStatement, ShowNamespacesStatement, ShowTableStatsStatement,
     ShowTablesStatement,
 };
-use crate::tables::{SharedTableProvider, StreamTableProvider, UserTableProvider};
+use crate::tables::{
+    system::{
+        NamespacesTableProvider, SystemTablesTableProvider,
+        UsersTableProvider as SystemUsersTableProvider,
+    },
+    SharedTableProvider, StreamTableProvider, UserTableProvider,
+};
 use datafusion::arrow::array::{ArrayRef, StringArray, UInt32Array};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
@@ -336,6 +342,57 @@ impl SqlExecutor {
     /// Create a fresh SessionContext for a specific user with only their tables registered
     ///
     /// This ensures user data isolation by creating a dedicated session with user-scoped TableProviders.
+    fn register_system_tables_in_session(
+        &self,
+        session: &SessionContext,
+        kalam_sql: &Arc<KalamSql>,
+    ) -> Result<(), KalamDbError> {
+        use datafusion::catalog::schema::MemorySchemaProvider;
+
+        let catalog_name = "kalam";
+        let catalog = session
+            .catalog(catalog_name)
+            .ok_or_else(|| KalamDbError::Other(format!("Catalog '{}' not found", catalog_name)))?;
+
+        if catalog.schema("system").is_none() {
+            let system_schema = Arc::new(MemorySchemaProvider::new());
+            catalog
+                .register_schema("system", system_schema)
+                .map_err(|e| {
+                    KalamDbError::Other(format!("Failed to register system schema: {}", e))
+                })?;
+        }
+
+        let system_schema = catalog.schema("system").ok_or_else(|| {
+            KalamDbError::Other("System schema not found after registration".to_string())
+        })?;
+
+        system_schema
+            .register_table(
+                "namespaces".to_string(),
+                Arc::new(NamespacesTableProvider::new(kalam_sql.clone())),
+            )
+            .map_err(|e| {
+                KalamDbError::Other(format!("Failed to register system.namespaces: {}", e))
+            })?;
+
+        system_schema
+            .register_table(
+                "tables".to_string(),
+                Arc::new(SystemTablesTableProvider::new(kalam_sql.clone())),
+            )
+            .map_err(|e| KalamDbError::Other(format!("Failed to register system.tables: {}", e)))?;
+
+        system_schema
+            .register_table(
+                "users".to_string(),
+                Arc::new(SystemUsersTableProvider::new(kalam_sql.clone())),
+            )
+            .map_err(|e| KalamDbError::Other(format!("Failed to register system.users: {}", e)))?;
+
+        Ok(())
+    }
+
     async fn create_user_session_context(
         &self,
         user_id: &UserId,
@@ -350,6 +407,8 @@ impl SqlExecutor {
             .kalam_sql
             .as_ref()
             .ok_or_else(|| KalamDbError::InvalidOperation("KalamSQL not configured".to_string()))?;
+
+        self.register_system_tables_in_session(&user_session, kalam_sql)?;
 
         // Get the "kalam" catalog
         let catalog_name = "kalam";
@@ -1079,11 +1138,10 @@ impl SqlExecutor {
         let update_info = self.parse_update_statement(sql)?;
 
         // Create appropriate SessionContext based on user_id
-        let session = if let Some(uid) = user_id {
-            self.create_user_session_context(uid).await?
-        } else {
-            self.session_context.as_ref().clone()
-        };
+        let effective_user_id = user_id
+            .cloned()
+            .unwrap_or_else(|| UserId::from("anonymous"));
+        let session = self.create_user_session_context(&effective_user_id).await?;
 
         // Get table provider from the appropriate session
         let table_ref = datafusion::sql::TableReference::parse_str(&format!(
@@ -1105,13 +1163,13 @@ impl SqlExecutor {
                 KalamDbError::InvalidOperation("UserTableStore not configured".to_string())
             })?;
 
-            let uid = user_id.ok_or_else(|| {
-                KalamDbError::InvalidOperation("user_id required for user table UPDATE".to_string())
-            })?;
-
             // Scan only this user's rows
             let all_rows = store
-                .scan_user(&update_info.namespace, &update_info.table, uid.as_str())
+                .scan_user(
+                    &update_info.namespace,
+                    &update_info.table,
+                    effective_user_id.as_str(),
+                )
                 .map_err(|e| KalamDbError::Other(format!("Scan failed: {}", e)))?;
 
             // Filter rows by WHERE clause (simple evaluation: col = 'value')
@@ -1122,8 +1180,7 @@ impl SqlExecutor {
                 // Check if row matches WHERE clause
                 if let Some(obj) = row_data.as_object() {
                     if let Some(col_value) = obj.get(&where_col) {
-                        let col_str = col_value.as_str().unwrap_or("");
-                        if col_str == where_val {
+                        if Self::value_matches(col_value, &where_val) {
                             // Build update JSON from SET clause
                             let mut updates = serde_json::Map::new();
                             for (col, val) in &update_info.set_values {
@@ -1175,8 +1232,7 @@ impl SqlExecutor {
             // Check if row matches WHERE clause
             if let Some(obj) = row_data.as_object() {
                 if let Some(col_value) = obj.get(&where_col) {
-                    let col_str = col_value.as_str().unwrap_or("");
-                    if col_str == where_val {
+                    if Self::value_matches(col_value, &where_val) {
                         // Build update JSON from SET clause
                         let mut updates = serde_json::Map::new();
                         for (col, val) in &update_info.set_values {
@@ -1215,11 +1271,10 @@ impl SqlExecutor {
         let delete_info = self.parse_delete_statement(sql)?;
 
         // Create appropriate SessionContext based on user_id
-        let session = if let Some(uid) = user_id {
-            self.create_user_session_context(uid).await?
-        } else {
-            self.session_context.as_ref().clone()
-        };
+        let effective_user_id = user_id
+            .cloned()
+            .unwrap_or_else(|| UserId::from("anonymous"));
+        let session = self.create_user_session_context(&effective_user_id).await?;
 
         // Get table provider from the appropriate session
         let table_ref = datafusion::sql::TableReference::parse_str(&format!(
@@ -1241,13 +1296,13 @@ impl SqlExecutor {
                 KalamDbError::InvalidOperation("UserTableStore not configured".to_string())
             })?;
 
-            let uid = user_id.ok_or_else(|| {
-                KalamDbError::InvalidOperation("user_id required for user table DELETE".to_string())
-            })?;
-
             // Scan only this user's rows
             let all_rows = store
-                .scan_user(&delete_info.namespace, &delete_info.table, uid.as_str())
+                .scan_user(
+                    &delete_info.namespace,
+                    &delete_info.table,
+                    effective_user_id.as_str(),
+                )
                 .map_err(|e| KalamDbError::Other(format!("Scan failed: {}", e)))?;
 
             // Filter rows by WHERE clause
@@ -1258,8 +1313,7 @@ impl SqlExecutor {
                 // Check if row matches WHERE clause
                 if let Some(obj) = row_data.as_object() {
                     if let Some(col_value) = obj.get(&where_col) {
-                        let col_str = col_value.as_str().unwrap_or("");
-                        if col_str == where_val {
+                        if Self::value_matches(col_value, &where_val) {
                             // Call delete method (soft delete for user tables)
                             user_provider.delete_row(&row_id).map_err(|e| {
                                 KalamDbError::Other(format!("Delete failed: {}", e))
@@ -1303,8 +1357,7 @@ impl SqlExecutor {
             // Check if row matches WHERE clause
             if let Some(obj) = row_data.as_object() {
                 if let Some(col_value) = obj.get(&where_col) {
-                    let col_str = col_value.as_str().unwrap_or("");
-                    if col_str == where_val {
+                    if Self::value_matches(col_value, &where_val) {
                         // Call soft delete method
                         shared_provider
                             .delete_soft(&row_id)
@@ -1334,6 +1387,24 @@ impl SqlExecutor {
         let col_name = parts[0].to_string();
         let col_value = parts[1].trim_matches('\'').trim_matches('"').to_string();
         Ok((col_name, col_value))
+    }
+
+    /// Compare a JSON value with a string literal from a WHERE clause
+    fn value_matches(value: &serde_json::Value, target: &str) -> bool {
+        match value {
+            serde_json::Value::String(s) => s == target,
+            serde_json::Value::Number(n) => n.to_string() == target,
+            serde_json::Value::Bool(b) => {
+                let target_lower = target.to_ascii_lowercase();
+                match target_lower.as_str() {
+                    "true" => *b,
+                    "false" => !*b,
+                    _ => false,
+                }
+            }
+            serde_json::Value::Null => target.eq_ignore_ascii_case("null"),
+            _ => false,
+        }
     }
 
     /// Parse UPDATE statement (simple parser for integration tests)

@@ -484,9 +484,7 @@ async fn test_shared_table_multiple_tables_same_namespace() {
         .execute_sql(r#"INSERT INTO test_ns.conversations (conversation_id, title) VALUES ('conv1', 'Test')"#)
         .await;
     server
-        .execute_sql(
-            r#"INSERT INTO test_ns.config (conversation_id, title) VALUES ('setting1', 'value1')"#,
-        )
+        .execute_sql(r#"INSERT INTO test_ns.config (name, value) VALUES ('setting1', 'value1')"#)
         .await;
 
     // Query both tables

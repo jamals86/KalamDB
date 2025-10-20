@@ -35,14 +35,17 @@ impl CreateStreamTableStatement {
     pub fn parse(sql: &str, current_namespace: &NamespaceId) -> Result<Self, KalamDbError> {
         // Preprocess SQL to remove "STREAM" keyword and TTL/BUFFER_SIZE clauses for standard SQL parser
         // "CREATE STREAM TABLE ... TTL 3600 BUFFER_SIZE 1000" -> "CREATE TABLE ..."
-        let normalized_sql = sql
-            .replace("STREAM TABLE", "TABLE")
-            .replace(['\n', '\r'], " "); // Normalize line breaks
+        // Normalize whitespace and remove stream-specific keywords before parsing
+        let normalized_sql = sql.replace(['\n', '\r'], " ");
+        let normalized_sql = normalized_sql.replace("STREAM TABLE", "TABLE");
 
-        // Remove TTL and BUFFER_SIZE clauses using regex
+        // Remove stream-specific modifiers using regex
         use regex::Regex;
-        let ttl_re = Regex::new(r"(?i)\s+TTL\s+\d+").unwrap();
+        let type_re = Regex::new(r"(?i)\s+TYPE\s+STREAM").unwrap();
+        let ttl_re = Regex::new(r"(?i)\s+TTL\s+\d+(\s+SECONDS)?").unwrap();
         let buffer_re = Regex::new(r"(?i)\s+BUFFER_SIZE\s+\d+").unwrap();
+
+        let normalized_sql = type_re.replace_all(&normalized_sql, "").to_string();
         let normalized_sql = ttl_re.replace_all(&normalized_sql, "").to_string();
         let normalized_sql = buffer_re.replace_all(&normalized_sql, "").to_string();
 

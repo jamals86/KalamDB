@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use rocksdb::{IteratorMode, DB};
+use rocksdb::{ColumnFamily, IteratorMode, DB};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -30,6 +30,24 @@ impl UserTableStore {
     /// Create a new user table store.
     pub fn new(db: Arc<DB>) -> Result<Self> {
         Ok(Self { db })
+    }
+
+    fn cf_name(namespace_id: &str, table_name: &str) -> String {
+        format!("user_table:{}:{}", namespace_id, table_name)
+    }
+
+    fn ensure_cf(&self, namespace_id: &str, table_name: &str) -> Result<&ColumnFamily> {
+        let cf_name = Self::cf_name(namespace_id, table_name);
+        if self.db.cf_handle(&cf_name).is_none() {
+            self.create_column_family(namespace_id, table_name)?;
+        }
+
+        self.db.cf_handle(&cf_name).with_context(|| {
+            format!(
+                "Column family not found even after creation attempt: {}",
+                cf_name
+            )
+        })
     }
 
     /// Create a column family for a user table.
@@ -96,11 +114,7 @@ impl UserTableStore {
             obj.insert("_deleted".to_string(), JsonValue::Bool(false));
         }
 
-        let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
-        let cf = self
-            .db
-            .cf_handle(&cf_name)
-            .with_context(|| format!("Column family not found: {}", cf_name))?;
+        let cf = self.ensure_cf(namespace_id, table_name)?;
 
         let key = user_key(user_id, row_id);
         let value = serde_json::to_vec(&row_data)?;
@@ -119,11 +133,11 @@ impl UserTableStore {
         user_id: &str,
         row_id: &str,
     ) -> Result<Option<JsonValue>> {
-        let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
-        let cf = self
-            .db
-            .cf_handle(&cf_name)
-            .with_context(|| format!("Column family not found: {}", cf_name))?;
+        let cf_name = Self::cf_name(namespace_id, table_name);
+        let cf = match self.db.cf_handle(&cf_name) {
+            Some(cf) => cf,
+            None => return Ok(None),
+        };
 
         let key = user_key(user_id, row_id);
         let value = self.db.get_cf(cf, key.as_bytes())?;
@@ -158,11 +172,11 @@ impl UserTableStore {
         user_id: &str,
         row_id: &str,
     ) -> Result<Option<JsonValue>> {
-        let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
-        let cf = self
-            .db
-            .cf_handle(&cf_name)
-            .with_context(|| format!("Column family not found: {}", cf_name))?;
+        let cf_name = Self::cf_name(namespace_id, table_name);
+        let cf = match self.db.cf_handle(&cf_name) {
+            Some(cf) => cf,
+            None => return Ok(None),
+        };
 
         let key = user_key(user_id, row_id);
         let value = self.db.get_cf(cf, key.as_bytes())?;
@@ -189,11 +203,7 @@ impl UserTableStore {
         row_id: &str,
         hard: bool,
     ) -> Result<()> {
-        let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
-        let cf = self
-            .db
-            .cf_handle(&cf_name)
-            .with_context(|| format!("Column family not found: {}", cf_name))?;
+        let cf = self.ensure_cf(namespace_id, table_name)?;
 
         let key = user_key(user_id, row_id);
 
@@ -231,11 +241,11 @@ impl UserTableStore {
         table_name: &str,
         user_id: &str,
     ) -> Result<Vec<(String, JsonValue)>> {
-        let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
-        let cf = self
-            .db
-            .cf_handle(&cf_name)
-            .with_context(|| format!("Column family not found: {}", cf_name))?;
+        let cf_name = Self::cf_name(namespace_id, table_name);
+        let cf = match self.db.cf_handle(&cf_name) {
+            Some(cf) => cf,
+            None => return Ok(Vec::new()),
+        };
 
         let prefix = format!("{}:", user_id);
         let mut results = Vec::new();
@@ -295,11 +305,11 @@ impl UserTableStore {
         namespace_id: &str,
         table_name: &str,
     ) -> Result<Vec<(String, String, JsonValue)>> {
-        let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
-        let cf = self
-            .db
-            .cf_handle(&cf_name)
-            .with_context(|| format!("Column family not found: {}", cf_name))?;
+        let cf_name = Self::cf_name(namespace_id, table_name);
+        let cf = match self.db.cf_handle(&cf_name) {
+            Some(cf) => cf,
+            None => return Ok(Vec::new()),
+        };
 
         let mut results = Vec::new();
 
@@ -342,11 +352,11 @@ impl UserTableStore {
     ) -> Result<std::collections::HashMap<String, Vec<(Vec<u8>, JsonValue)>>> {
         use std::collections::HashMap;
 
-        let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
-        let cf = self
-            .db
-            .cf_handle(&cf_name)
-            .with_context(|| format!("Column family not found: {}", cf_name))?;
+        let cf_name = Self::cf_name(namespace_id, table_name);
+        let cf = match self.db.cf_handle(&cf_name) {
+            Some(cf) => cf,
+            None => return Ok(std::collections::HashMap::new()),
+        };
 
         let mut rows_by_user: HashMap<String, Vec<(Vec<u8>, JsonValue)>> = HashMap::new();
 
@@ -397,11 +407,11 @@ impl UserTableStore {
     ) -> Result<()> {
         use rocksdb::WriteBatch;
 
-        let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
-        let cf = self
-            .db
-            .cf_handle(&cf_name)
-            .with_context(|| format!("Column family not found: {}", cf_name))?;
+        let cf_name = Self::cf_name(namespace_id, table_name);
+        let cf = match self.db.cf_handle(&cf_name) {
+            Some(cf) => cf,
+            None => return Ok(()),
+        };
 
         let mut batch = WriteBatch::default();
 
@@ -436,7 +446,7 @@ impl UserTableStore {
     /// store.drop_table("app", "messages").unwrap();
     /// ```
     pub fn drop_table(&self, namespace_id: &str, table_name: &str) -> Result<()> {
-        let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
+        let cf_name = Self::cf_name(namespace_id, table_name);
 
         // RocksDB requires dropping column families by destroying and recreating
         // the DB instance. For now, we'll delete all keys in the CF as a workaround.

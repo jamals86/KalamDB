@@ -94,7 +94,7 @@ impl LiveQueriesTableProvider {
             query: live_query.query,
             options: live_query.options.unwrap_or_default(),
             created_at: live_query.created_at,
-            updated_at: chrono::Utc::now().timestamp_millis(),
+            updated_at: live_query.updated_at,
             changes: live_query.changes,
             node: live_query.node,
         };
@@ -106,10 +106,9 @@ impl LiveQueriesTableProvider {
 
     /// Delete a live query subscription
     pub fn delete_live_query(&self, live_id: &str) -> Result<(), KalamDbError> {
-        // TODO: Delete not yet implemented in kalamdb-sql adapter
-        Err(KalamDbError::Other(
-            "Delete operation not yet implemented in kalamdb-sql adapter".to_string(),
-        ))
+        self.kalam_sql
+            .delete_live_query(live_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to delete live query: {}", e)))
     }
 
     /// Get a live query by ID
@@ -149,11 +148,23 @@ impl LiveQueriesTableProvider {
         &self,
         connection_id: &str,
     ) -> Result<Vec<String>, KalamDbError> {
-        // TODO: Delete not yet implemented in kalamdb-sql adapter
-        // For now, return error
-        Err(KalamDbError::Other(
-            "Delete operation not yet implemented in kalamdb-sql adapter".to_string(),
-        ))
+        let live_queries = self
+            .kalam_sql
+            .scan_all_live_queries()
+            .map_err(|e| KalamDbError::Other(format!("Failed to scan live queries: {}", e)))?;
+
+        let mut deleted_ids = Vec::new();
+        for lq in live_queries
+            .into_iter()
+            .filter(|lq| lq.connection_id == connection_id)
+        {
+            self.kalam_sql
+                .delete_live_query(&lq.live_id)
+                .map_err(|e| KalamDbError::Other(format!("Failed to delete live query: {}", e)))?;
+            deleted_ids.push(lq.live_id);
+        }
+
+        Ok(deleted_ids)
     }
 
     /// Get all live queries for a user_id

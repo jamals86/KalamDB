@@ -169,10 +169,12 @@ impl StorageLocationsTableProvider {
                         location_name, loc.usage_count
                     )));
                 }
-                // TODO: Implement delete in kalamdb-sql adapter
-                Err(KalamDbError::Other(
-                    "Delete storage location not yet implemented in kalamdb-sql".to_string(),
-                ))
+                self.kalam_sql
+                    .delete_storage_location(location_name)
+                    .map_err(|e| {
+                        KalamDbError::Other(format!("Failed to delete storage location: {}", e))
+                    })?;
+                Ok(())
             }
             None => Err(KalamDbError::NotFound(format!(
                 "Storage location not found: {}",

@@ -35,7 +35,7 @@ impl UsersTable {
 
     /// Get the column family name
     pub fn column_family_name() -> String {
-        format!("system_table:{}", Self::table_name())
+        format!("system_{}", Self::table_name())
     }
 }
 

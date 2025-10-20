@@ -118,6 +118,45 @@ impl JobsTableProvider {
         }
     }
 
+    fn convert_sql_job(job: kalamdb_sql::Job) -> JobRecord {
+        JobRecord {
+            job_id: job.job_id,
+            job_type: job.job_type,
+            table_name: if job.table_name.is_empty() {
+                None
+            } else {
+                Some(job.table_name)
+            },
+            status: job.status,
+            start_time: job.start_time,
+            end_time: job.end_time,
+            parameters: if job.parameters.is_empty() {
+                None
+            } else {
+                Some(job.parameters.join(","))
+            },
+            result: job.result,
+            trace: job.trace,
+            memory_used_mb: job.memory_used_mb,
+            cpu_used_percent: job.cpu_used_percent,
+            node_id: job.node_id,
+            error_message: job.error_message,
+        }
+    }
+
+    /// List all jobs from the system.jobs table
+    pub fn list_jobs(&self) -> Result<Vec<JobRecord>, KalamDbError> {
+        let jobs = self
+            .kalam_sql
+            .scan_all_jobs()
+            .map_err(|e| KalamDbError::Other(format!("Failed to scan jobs: {}", e)))?;
+
+        Ok(jobs
+            .into_iter()
+            .map(Self::convert_sql_job)
+            .collect::<Vec<_>>())
+    }
+
     /// Insert a new job record
     pub fn insert_job(&self, job: JobRecord) -> Result<(), KalamDbError> {
         // Convert to kalamdb_sql model
@@ -180,11 +219,10 @@ impl JobsTableProvider {
     }
 
     /// Delete a job record
-    pub fn delete_job(&self, _job_id: &str) -> Result<(), KalamDbError> {
-        // TODO: Delete not yet implemented in kalamdb-sql adapter
-        Err(KalamDbError::Other(
-            "Delete operation not yet implemented in kalamdb-sql adapter".to_string(),
-        ))
+    pub fn delete_job(&self, job_id: &str) -> Result<(), KalamDbError> {
+        self.kalam_sql
+            .delete_job(job_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to delete job: {}", e)))
     }
 
     /// Get a job by ID
@@ -226,11 +264,26 @@ impl JobsTableProvider {
     }
 
     /// Delete jobs older than retention period (in days)
-    pub fn cleanup_old_jobs(&self, _retention_days: i64) -> Result<usize, KalamDbError> {
-        // TODO: Delete not yet implemented in kalamdb-sql adapter
-        Err(KalamDbError::Other(
-            "Delete operation not yet implemented in kalamdb-sql adapter".to_string(),
-        ))
+    pub fn cleanup_old_jobs(&self, retention_days: i64) -> Result<usize, KalamDbError> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let retention_ms = retention_days * 24 * 60 * 60 * 1000;
+
+        let jobs = self.list_jobs()?;
+        let mut deleted = 0;
+
+        for job in jobs {
+            if job.status == "running" {
+                continue;
+            }
+
+            let reference_time = job.end_time.unwrap_or(job.start_time);
+            if now - reference_time > retention_ms {
+                self.delete_job(&job.job_id)?;
+                deleted += 1;
+            }
+        }
+
+        Ok(deleted)
     }
 
     /// Scan all jobs and return as RecordBatch

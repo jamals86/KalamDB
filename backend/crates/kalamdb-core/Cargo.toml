@@ -42,6 +42,9 @@ metrics = "0.22"
 # UUID generation
 uuid.workspace = true
 
+# Single-assignment statics
+once_cell = "1.19"
+
 # Regular expressions
 regex = "1.10"
 

@@ -149,15 +149,26 @@ pub async fn create_shared_table(
     namespace: &str,
     table_name: &str,
 ) -> SqlResponse {
-    let sql = format!(
-        r#"CREATE SHARED TABLE {}.{} (
+    let columns = if table_name == "config" {
+        r#"
+            name TEXT NOT NULL,
+            value TEXT,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        "#
+    } else {
+        r#"
             conversation_id TEXT NOT NULL,
             title TEXT,
             status TEXT,
             participant_count INTEGER,
             created_at TIMESTAMP
-        ) FLUSH ROWS 50"#,
-        namespace, table_name
+        "#
+    };
+
+    let sql = format!(
+        "CREATE SHARED TABLE {}.{} ({}) FLUSH ROWS 50",
+        namespace, table_name, columns
     );
     server.execute_sql(&sql).await
 }
@@ -196,10 +207,33 @@ pub async fn create_stream_table(
 /// * `namespace` - Namespace name
 /// * `table_name` - Table name
 pub async fn drop_table(server: &TestServer, namespace: &str, table_name: &str) -> SqlResponse {
-    // Try to detect table type from system catalog, or default to SHARED for tests
-    // TODO: Query system.tables to determine actual table type
-    let sql = format!("DROP SHARED TABLE {}.{}", namespace, table_name);
-    server.execute_sql(&sql).await
+    let lookup_sql = format!(
+        "SELECT table_type FROM system.tables WHERE namespace = '{}' AND table_name = '{}'",
+        namespace, table_name
+    );
+    let lookup_response = server.execute_sql(&lookup_sql).await;
+
+    let table_type = if lookup_response.status == "success" {
+        lookup_response
+            .results
+            .get(0)
+            .and_then(|result| result.rows.as_ref())
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("table_type"))
+            .and_then(|value| value.as_str())
+            .map(|s| s.to_string())
+    } else {
+        None
+    };
+
+    let drop_sql = match table_type.as_deref() {
+        Some("user") => format!("DROP USER TABLE {}.{}", namespace, table_name),
+        Some("shared") => format!("DROP SHARED TABLE {}.{}", namespace, table_name),
+        Some("stream") => format!("DROP STREAM TABLE {}.{}", namespace, table_name),
+        _ => format!("DROP TABLE {}.{}", namespace, table_name),
+    };
+
+    server.execute_sql(&drop_sql).await
 }
 
 /// Insert sample messages into a messages table.

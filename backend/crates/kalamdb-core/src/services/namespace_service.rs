@@ -74,21 +74,45 @@ impl NamespaceService {
         let options_json = serde_json::to_string(&namespace.options)
             .map_err(|e| KalamDbError::IoError(format!("Failed to serialize options: {}", e)))?;
 
+        let sql_namespace = SqlNamespace {
+            namespace_id: name.as_str().to_string(),
+            name: name.as_str().to_string(),
+            created_at: namespace.created_at.timestamp(),
+            options: options_json,
+            table_count: namespace.table_count as i32,
+        };
+
         self.kalam_sql
-            .insert_namespace(name.as_str(), &options_json)
+            .insert_namespace_struct(&sql_namespace)
             .map_err(|e| KalamDbError::IoError(format!("Failed to insert namespace: {}", e)))?;
 
         Ok(true)
     }
 
     /// List all namespaces
-    ///
-    /// **TODO**: Implement scan_all_namespaces() in kalamdb-sql adapter
     pub fn list(&self) -> Result<Vec<Namespace>, KalamDbError> {
-        // TODO: When kalamdb-sql adds scan_all_namespaces(), use that instead
-        // For now, return empty list with warning
-        log::warn!("NamespaceService::list() not fully implemented - kalamdb-sql needs scan_all_namespaces()");
-        Ok(Vec::new())
+        let namespaces = self
+            .kalam_sql
+            .scan_all_namespaces()
+            .map_err(|e| KalamDbError::IoError(format!("Failed to scan namespaces: {}", e)))?;
+
+        let mut result = Vec::with_capacity(namespaces.len());
+        for ns in namespaces {
+            let options: HashMap<String, JsonValue> =
+                serde_json::from_str(&ns.options).unwrap_or_default();
+
+            let created_at = chrono::DateTime::from_timestamp(ns.created_at, 0)
+                .ok_or_else(|| KalamDbError::IoError("Invalid timestamp".to_string()))?;
+
+            result.push(Namespace {
+                name: NamespaceId::from(ns.name),
+                created_at,
+                options,
+                table_count: ns.table_count as u32,
+            });
+        }
+
+        Ok(result)
     }
 
     /// Get a specific namespace by name
@@ -140,8 +164,6 @@ impl NamespaceService {
             namespace.options.insert(key, value);
         }
 
-        // TODO: When kalamdb-sql adds update_namespace(), use that
-        // For now, re-insert the namespace
         let options_json = serde_json::to_string(&namespace.options)
             .map_err(|e| KalamDbError::IoError(format!("Failed to serialize options: {}", e)))?;
 
@@ -154,7 +176,7 @@ impl NamespaceService {
         };
 
         self.kalam_sql
-            .insert_namespace(name.as_str(), &sql_namespace.options)
+            .insert_namespace_struct(&sql_namespace)
             .map_err(|e| KalamDbError::IoError(format!("Failed to update namespace: {}", e)))?;
 
         Ok(())
@@ -170,8 +192,6 @@ impl NamespaceService {
     /// * `Ok(true)` - Namespace was deleted
     /// * `Ok(false)` - Namespace didn't exist and if_exists was true
     /// * `Err(_)` - Namespace has tables or I/O error
-    ///
-    /// **TODO**: Implement delete_namespace() in kalamdb-sql adapter
     pub fn delete(
         &self,
         name: impl Into<NamespaceId>,
@@ -203,8 +223,9 @@ impl NamespaceService {
             )));
         }
 
-        // TODO: When kalamdb-sql adds delete_namespace(), use that
-        log::warn!("NamespaceService::delete() not fully implemented - kalamdb-sql needs delete_namespace()");
+        self.kalam_sql
+            .delete_namespace(name.as_str())
+            .map_err(|e| KalamDbError::IoError(format!("Failed to delete namespace: {}", e)))?;
 
         Ok(true)
     }
@@ -221,7 +242,6 @@ impl NamespaceService {
 
         namespace.increment_table_count();
 
-        // TODO: This should be an atomic update operation
         let options_json = serde_json::to_string(&namespace.options)
             .map_err(|e| KalamDbError::IoError(format!("Failed to serialize options: {}", e)))?;
 
@@ -234,7 +254,7 @@ impl NamespaceService {
         };
 
         self.kalam_sql
-            .insert_namespace(name, &sql_namespace.options)
+            .insert_namespace_struct(&sql_namespace)
             .map_err(|e| KalamDbError::IoError(format!("Failed to update table count: {}", e)))?;
 
         Ok(())
@@ -252,7 +272,6 @@ impl NamespaceService {
 
         namespace.decrement_table_count();
 
-        // TODO: This should be an atomic update operation
         let options_json = serde_json::to_string(&namespace.options)
             .map_err(|e| KalamDbError::IoError(format!("Failed to serialize options: {}", e)))?;
 
@@ -265,7 +284,7 @@ impl NamespaceService {
         };
 
         self.kalam_sql
-            .insert_namespace(name, &sql_namespace.options)
+            .insert_namespace_struct(&sql_namespace)
             .map_err(|e| KalamDbError::IoError(format!("Failed to update table count: {}", e)))?;
 
         Ok(())

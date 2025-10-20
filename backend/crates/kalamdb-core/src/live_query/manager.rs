@@ -117,8 +117,10 @@ impl LiveQueryManager {
 
         // Compile and cache the filter if WHERE clause exists
         if let Some(clause) = where_clause {
+            let resolved_clause =
+                Self::resolve_where_clause_placeholders(&clause, connection_id.user_id());
             let mut filter_cache = self.filter_cache.write().await;
-            filter_cache.insert(live_id.to_string(), &clause)?;
+            filter_cache.insert(live_id.to_string(), &resolved_clause)?;
         }
 
         let timestamp = Self::current_timestamp_ms();
@@ -160,6 +162,13 @@ impl LiveQueryManager {
         registry.register_subscription(&user_id, live_query)?;
 
         Ok(live_id)
+    }
+
+    fn resolve_where_clause_placeholders(clause: &str, user_id: &str) -> String {
+        let replacement = format!("'{}'", user_id);
+        clause
+            .replace("CURRENT_USER()", &replacement)
+            .replace("current_user()", &replacement)
     }
 
     /// Register a live query subscription with optional initial data fetch

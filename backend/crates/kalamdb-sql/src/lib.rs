@@ -149,6 +149,11 @@ impl KalamSql {
         self.adapter.insert_storage_location(location)
     }
 
+    /// Delete a storage location by name
+    pub fn delete_storage_location(&self, location_name: &str) -> Result<()> {
+        self.adapter.delete_storage_location(location_name)
+    }
+
     /// Get a live query by ID
     pub fn get_live_query(&self, live_id: &str) -> Result<Option<LiveQuery>> {
         self.adapter.get_live_query(live_id)
@@ -159,6 +164,11 @@ impl KalamSql {
         self.adapter.insert_live_query(live_query)
     }
 
+    /// Delete a live query by ID
+    pub fn delete_live_query(&self, live_id: &str) -> Result<()> {
+        self.adapter.delete_live_query(live_id)
+    }
+
     /// Get a job by ID
     pub fn get_job(&self, job_id: &str) -> Result<Option<Job>> {
         self.adapter.get_job(job_id)
@@ -167,6 +177,11 @@ impl KalamSql {
     /// Insert a job
     pub fn insert_job(&self, job: &Job) -> Result<()> {
         self.adapter.insert_job(job)
+    }
+
+    /// Delete a job by ID
+    pub fn delete_job(&self, job_id: &str) -> Result<()> {
+        self.adapter.delete_job(job_id)
     }
 
     // Scan operations for all system tables
