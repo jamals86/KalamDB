@@ -2,9 +2,10 @@
 //!
 //! This module provides HTTP handlers for executing SQL statements via the REST API.
 
-use actix_web::{post, web, HttpResponse, Responder};
+use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::{ExecutionResult, SqlExecutor};
+use kalamdb_core::catalog::UserId;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -51,11 +52,19 @@ use crate::models::{QueryResult, SqlRequest, SqlResponse};
 /// ```
 #[post("/api/sql")]
 pub async fn execute_sql(
+    http_req: HttpRequest,
     req: web::Json<SqlRequest>,
     session_factory: web::Data<Arc<DataFusionSessionFactory>>,
     sql_executor: web::Data<Arc<SqlExecutor>>,
 ) -> impl Responder {
     let start_time = Instant::now();
+    
+    // Extract user_id from X-USER-ID header (optional)
+    let user_id: Option<UserId> = http_req
+        .headers()
+        .get("X-USER-ID")
+        .and_then(|h| h.to_str().ok())
+        .map(UserId::from);
     
     // Split SQL by semicolons to handle multiple statements
     let statements: Vec<&str> = req.sql
@@ -77,7 +86,7 @@ pub async fn execute_sql(
     let mut results = Vec::new();
     
     for (idx, sql) in statements.iter().enumerate() {
-        match execute_single_statement(sql, &session_factory, &sql_executor).await {
+        match execute_single_statement(sql, &session_factory, &sql_executor, user_id.as_ref()).await {
             Ok(result) => results.push(result),
             Err(err) => {
                 let execution_time_ms = start_time.elapsed().as_millis() as u64;
@@ -102,9 +111,10 @@ async fn execute_single_statement(
     sql: &str,
     session_factory: &Arc<DataFusionSessionFactory>,
     sql_executor: &Arc<SqlExecutor>,
+    user_id: Option<&UserId>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     // Try custom DDL commands first
-    match sql_executor.execute(sql).await {
+    match sql_executor.execute(sql, user_id).await {
         Ok(result) => {
             // Convert ExecutionResult to QueryResult
             match result {

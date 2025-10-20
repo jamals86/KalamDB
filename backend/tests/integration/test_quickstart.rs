@@ -33,14 +33,15 @@ async fn test_02_create_user_table() {
     // Create namespace first
     server.execute_sql("CREATE NAMESPACE app").await;
     
-    // Create user table with flush policy
-    let response = server.execute_sql(
+    // Create user table with flush policy (requires X-USER-ID header)
+    let response = server.execute_sql_with_user(
         r#"CREATE USER TABLE app.messages (
             id INT AUTO_INCREMENT,
             user_id VARCHAR NOT NULL,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) FLUSH ROWS 100"#
+        ) FLUSH ROWS 100"#,
+        Some("user123") // Pass user_id for USER table creation
     ).await;
     
     assert_eq!(response.status, "success", "Failed to create user table: {:?}", response.error);
@@ -53,7 +54,7 @@ async fn test_02_create_user_table() {
 async fn test_03_insert_data() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "app").await;
-    fixtures::create_messages_table(&server, "app").await;
+    fixtures::create_messages_table(&server, "app", Some("user123")).await;
     
     // Insert multiple messages
     let start = Instant::now();
@@ -80,7 +81,7 @@ async fn test_03_insert_data() {
 async fn test_04_query_data() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "app").await;
-    fixtures::create_messages_table(&server, "app").await;
+    fixtures::create_messages_table(&server, "app", Some("user123")).await;
     fixtures::insert_sample_messages(&server, "app", "user123", 5).await;
     
     // Query user messages
@@ -101,7 +102,7 @@ async fn test_04_query_data() {
 async fn test_05_update_data() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "app").await;
-    fixtures::create_messages_table(&server, "app").await;
+    fixtures::create_messages_table(&server, "app", Some("user123")).await;
     fixtures::insert_sample_messages(&server, "app", "user123", 3).await;
     
     // Update first message
@@ -121,7 +122,7 @@ async fn test_05_update_data() {
 async fn test_06_delete_data() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "app").await;
-    fixtures::create_messages_table(&server, "app").await;
+    fixtures::create_messages_table(&server, "app", Some("user123")).await;
     fixtures::insert_sample_messages(&server, "app", "user123", 3).await;
     
     // Delete message (soft delete)
@@ -209,7 +210,7 @@ async fn test_11_list_namespaces() {
 async fn test_12_list_tables() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "app").await;
-    fixtures::create_messages_table(&server, "app").await;
+    fixtures::create_messages_table(&server, "app", Some("user123")).await;
     fixtures::create_shared_table(&server, "app", "config").await;
     
     // Query system.tables
@@ -232,7 +233,7 @@ async fn test_13_query_system_users() {
 async fn test_14_drop_table() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "app").await;
-    fixtures::create_messages_table(&server, "app").await;
+    fixtures::create_messages_table(&server, "app", Some("user123")).await;
     
     // Verify table exists
     assert!(server.table_exists("app", "messages").await);
@@ -250,7 +251,7 @@ async fn test_14_drop_table() {
 async fn test_15_drop_namespace() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "app").await;
-    fixtures::create_messages_table(&server, "app").await;
+    fixtures::create_messages_table(&server, "app", Some("user123")).await;
     
     // Drop namespace (CASCADE)
     let response = fixtures::drop_namespace(&server, "app").await;
@@ -272,7 +273,7 @@ async fn test_16_complete_workflow() {
     assert_eq!(response.status, "success");
     
     // 2. Create user table
-    let response = fixtures::create_messages_table(&server, "workflow_test").await;
+    let response = fixtures::create_messages_table(&server, "workflow_test", Some("user123")).await;
     assert_eq!(response.status, "success");
     
     // 3. Insert data
@@ -294,7 +295,7 @@ async fn test_16_complete_workflow() {
 async fn test_17_performance_write_latency() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "perf").await;
-    fixtures::create_messages_table(&server, "perf").await;
+    fixtures::create_messages_table(&server, "perf", Some("user123")).await;
     
     // Measure single write latency
     let mut total_duration = std::time::Duration::ZERO;
@@ -331,7 +332,7 @@ async fn test_17_performance_write_latency() {
 async fn test_18_performance_query_latency() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "perf").await;
-    fixtures::create_messages_table(&server, "perf").await;
+    fixtures::create_messages_table(&server, "perf", Some("user123")).await;
     fixtures::insert_sample_messages(&server, "perf", "user123", 100).await;
     
     // Measure query latency

@@ -205,7 +205,22 @@ impl TestServer {
     /// assert_eq!(response.status, "success");
     /// ```
     pub async fn execute_sql(&self, sql: &str) -> SqlResponse {
-        match self.sql_executor.execute(sql).await {
+        self.execute_sql_with_user(sql, None).await
+    }
+
+    /// Execute SQL with optional user_id context and return the response.
+    ///
+    /// # Arguments
+    ///
+    /// * `sql` - SQL statement to execute
+    /// * `user_id` - Optional user_id for USER table operations
+    ///
+    /// # Returns
+    ///
+    /// `SqlResponse` containing status, results, and any errors
+    pub async fn execute_sql_with_user(&self, sql: &str, user_id: Option<&str>) -> SqlResponse {
+        let user_id_obj = user_id.map(|id| kalamdb_core::catalog::UserId::from(id));
+        match self.sql_executor.execute(sql, user_id_obj.as_ref()).await {
             Ok(result) => {
                 use kalamdb_core::sql::ExecutionResult;
                 match result {

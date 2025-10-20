@@ -92,9 +92,9 @@ pub async fn drop_namespace(server: &TestServer, namespace: &str) -> SqlResponse
 /// # Example
 ///
 /// ```no_run
-/// fixtures::create_messages_table(&server, "app").await;
+/// fixtures::create_messages_table(&server, "app", Some("user123")).await;
 /// ```
-pub async fn create_messages_table(server: &TestServer, namespace: &str) -> SqlResponse {
+pub async fn create_messages_table(server: &TestServer, namespace: &str, user_id: Option<&str>) -> SqlResponse {
     let sql = format!(
         r#"CREATE USER TABLE {}.messages (
             id INT AUTO_INCREMENT,
@@ -104,7 +104,7 @@ pub async fn create_messages_table(server: &TestServer, namespace: &str) -> SqlR
         ) FLUSH ROWS 100"#,
         namespace
     );
-    server.execute_sql(&sql).await
+    server.execute_sql_with_user(&sql, user_id).await
 }
 
 /// Create a user table with custom flush policy.
@@ -375,7 +375,7 @@ pub async fn setup_complete_environment(server: &TestServer, namespace: &str) ->
     }
 
     // Create user table
-    let resp = create_messages_table(server, namespace).await;
+    let resp = create_messages_table(server, namespace, Some("user123")).await;
     if resp.status != "success" {
         anyhow::bail!("Failed to create messages table: {:?}", resp.error);
     }
@@ -413,7 +413,7 @@ mod tests {
         let server = TestServer::new().await;
         create_namespace(&server, "app").await;
         
-        let response = create_messages_table(&server, "app").await;
+        let response = create_messages_table(&server, "app", Some("user123")).await;
         assert_eq!(response.status, "success");
         assert!(server.table_exists("app", "messages").await);
     }
@@ -422,7 +422,7 @@ mod tests {
     async fn test_insert_sample_messages() {
         let server = TestServer::new().await;
         create_namespace(&server, "app").await;
-        create_messages_table(&server, "app").await;
+        create_messages_table(&server, "app", Some("user123")).await;
         
         let responses = insert_sample_messages(&server, "app", "user123", 5).await;
         assert_eq!(responses.len(), 5);

@@ -241,7 +241,7 @@ impl SqlExecutor {
     }
 
     /// Execute a SQL statement
-    pub async fn execute(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    pub async fn execute(&self, sql: &str, user_id: Option<&UserId>) -> Result<ExecutionResult, KalamDbError> {
         let sql_upper = sql.trim().to_uppercase();
 
         // Try to parse as DDL first
@@ -257,7 +257,7 @@ impl SqlExecutor {
             || sql_upper.starts_with("CREATE USER TABLE")
             || sql_upper.starts_with("CREATE SHARED TABLE")
             || sql_upper.starts_with("CREATE STREAM TABLE") {
-            return self.execute_create_table(sql).await;
+            return self.execute_create_table(sql, user_id).await;
         } else if sql_upper.starts_with("DROP TABLE") {
             return self.execute_drop_table(sql).await;
         } else if sql_upper.starts_with("SELECT") || sql_upper.starts_with("INSERT") 
@@ -351,14 +351,20 @@ impl SqlExecutor {
     }
 
     /// Execute CREATE TABLE - determines table type from LOCATION and routes to appropriate service
-    async fn execute_create_table(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_create_table(&self, sql: &str, user_id: Option<&UserId>) -> Result<ExecutionResult, KalamDbError> {
         // Determine table type based on SQL keywords or LOCATION pattern
         let sql_upper = sql.to_uppercase();
         let namespace_id = crate::catalog::NamespaceId::new("default"); // TODO: Get from context
-        let default_user_id = crate::catalog::UserId::from("system"); // TODO: Get from context
+        let default_user_id = user_id.cloned().unwrap_or_else(|| crate::catalog::UserId::from("system"));
         
         if sql_upper.contains("USER TABLE") || sql_upper.contains("${USER_ID}") {
-            // User table
+            // User table - requires user_id
+            let actual_user_id = user_id.ok_or_else(|| {
+                KalamDbError::InvalidOperation(
+                    "CREATE USER TABLE requires X-USER-ID header to be set".to_string()
+                )
+            })?;
+            
             let stmt = CreateUserTableStatement::parse(sql, &namespace_id)?;
             let table_name = stmt.table_name.clone();
             let namespace_id = stmt.namespace_id.clone(); // Use the namespace from the statement
@@ -615,7 +621,7 @@ mod tests {
         let executor = setup_test_executor();
 
         let result = executor
-            .execute("CREATE NAMESPACE app")
+            .execute("CREATE NAMESPACE app", None)
             .await
             .unwrap();
 
@@ -632,10 +638,10 @@ mod tests {
         let executor = setup_test_executor();
 
         // Create some namespaces
-        executor.execute("CREATE NAMESPACE app1").await.unwrap();
-        executor.execute("CREATE NAMESPACE app2").await.unwrap();
+        executor.execute("CREATE NAMESPACE app1", None).await.unwrap();
+        executor.execute("CREATE NAMESPACE app2", None).await.unwrap();
 
-        let result = executor.execute("SHOW NAMESPACES").await.unwrap();
+        let result = executor.execute("SHOW NAMESPACES", None).await.unwrap();
 
         match result {
             ExecutionResult::RecordBatch(batch) => {
@@ -650,10 +656,10 @@ mod tests {
     async fn test_execute_alter_namespace() {
         let executor = setup_test_executor();
 
-        executor.execute("CREATE NAMESPACE app").await.unwrap();
+        executor.execute("CREATE NAMESPACE app", None).await.unwrap();
 
         let result = executor
-            .execute("ALTER NAMESPACE app SET OPTIONS (enabled = true)")
+            .execute("ALTER NAMESPACE app SET OPTIONS (enabled = true)", None)
             .await
             .unwrap();
 
@@ -669,9 +675,9 @@ mod tests {
     async fn test_execute_drop_namespace() {
         let executor = setup_test_executor();
 
-        executor.execute("CREATE NAMESPACE app").await.unwrap();
+        executor.execute("CREATE NAMESPACE app", None).await.unwrap();
 
-        let result = executor.execute("DROP NAMESPACE app").await.unwrap();
+        let result = executor.execute("DROP NAMESPACE app", None).await.unwrap();
 
         match result {
             ExecutionResult::Success(msg) => {
@@ -685,7 +691,7 @@ mod tests {
     async fn test_execute_drop_namespace_with_tables() {
         let executor = setup_test_executor();
 
-        executor.execute("CREATE NAMESPACE app").await.unwrap();
+        executor.execute("CREATE NAMESPACE app", None).await.unwrap();
 
         // Simulate adding a table
         executor
@@ -693,7 +699,7 @@ mod tests {
             .increment_table_count("app")
             .unwrap();
 
-        let result = executor.execute("DROP NAMESPACE app").await;
+        let result = executor.execute("DROP NAMESPACE app", None).await;
         assert!(result.is_err());
     }
 }
