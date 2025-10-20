@@ -8,11 +8,16 @@ Things to add to the spec:
     - system helpers
     - System tables names instead of having multiple places where we name them
     - Any system things that is shared between or needed in -sql/-store/-core
+- Make sure the user can't listen to a shared table since this will ruin performance
+- Instead of having something like this: let cf_name = format!("user_table:{}:{}", namespace_id, table_name); let cf_name = format!("shared_table:{}:{}", namespace_id, table_name);
+    make this a helper class which deals with naming, for system/shared/user
+- "_deleted" and "_updated" should be stored one time only, currently we are always writing them as string's
+- Make sure we use the actor model for the flush jobs so we can view them easily just like live queries/streas as well
 
 
 Features:
 - Make the project has a generic serdes models, so we can change the serialization from the json
-- A new table called user_files which is a table per user
+- A new table called user_files which is a table per user for storing files and their references in the storage location we have
 - KFlows - Add a workflow triggers which also listen to streams, actions being done and write to the database
 - KFlows will be used for system maintainance like: replication/backup and also periodict cleanup of deleted rows
 - Sharding the user's own table's into multiple column families, for example: userA will be redirected to Shard A -> with users.shard-a.messages

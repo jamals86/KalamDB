@@ -44,8 +44,19 @@ pub struct CreateSharedTableStatement {
 impl CreateSharedTableStatement {
     /// Parse a CREATE SHARED TABLE statement from SQL
     pub fn parse(sql: &str, current_namespace: &NamespaceId) -> Result<Self, KalamDbError> {
+        // Preprocess SQL to remove "SHARED" keyword and FLUSH clause for standard SQL parser
+        // "CREATE SHARED TABLE ... FLUSH ROWS 100" -> "CREATE TABLE ..."
+        let normalized_sql = sql
+            .replace("SHARED TABLE", "TABLE")
+            .replace(|c| c == '\n' || c == '\r', " "); // Normalize line breaks
+        
+        // Remove FLUSH clause using regex
+        use regex::Regex;
+        let flush_re = Regex::new(r"(?i)\s+FLUSH\s+(ROWS|SECONDS|BYTES)\s+\d+").unwrap();
+        let normalized_sql = flush_re.replace_all(&normalized_sql, "").to_string();
+        
         let dialect = GenericDialect {};
-        let statements = Parser::parse_sql(&dialect, sql)
+        let statements = Parser::parse_sql(&dialect, &normalized_sql)
             .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
         if statements.is_empty() {
@@ -55,13 +66,14 @@ impl CreateSharedTableStatement {
         }
 
         let stmt = &statements[0];
-        Self::parse_statement(stmt, current_namespace)
+        Self::parse_statement(stmt, current_namespace, sql)
     }
 
     /// Parse the CREATE TABLE statement
     fn parse_statement(
         stmt: &Statement,
         current_namespace: &NamespaceId,
+        original_sql: &str,
     ) -> Result<Self, KalamDbError> {
         match stmt {
             Statement::CreateTable {
@@ -73,18 +85,25 @@ impl CreateSharedTableStatement {
                 // Extract table name
                 let table_name = Self::extract_table_name(name)?;
 
+                // Extract namespace from qualified name, or use current_namespace
+                let namespace_id = if let Some(ns) = Self::extract_namespace(name) {
+                    NamespaceId::new(ns)
+                } else {
+                    current_namespace.clone()
+                };
+
                 // Parse schema from columns
                 let schema = Self::parse_schema(columns)?;
 
-                // TODO: Parse WITH options for LOCATION, FLUSH POLICY, DELETED_RETENTION
-                // For now, return basic statement with defaults
+                // Parse FLUSH policy from original SQL (if present)
+                let flush_policy = Self::parse_flush_policy(original_sql)?;
 
                 Ok(CreateSharedTableStatement {
                     table_name: TableName::new(table_name),
-                    namespace_id: current_namespace.clone(),
+                    namespace_id,
                     schema,
                     location: None,
-                    flush_policy: None,
+                    flush_policy,
                     deleted_retention: None,
                     if_not_exists: *if_not_exists,
                 })
@@ -106,6 +125,17 @@ impl CreateSharedTableStatement {
 
         // Take the last part as table name (handles both "table" and "namespace.table")
         Ok(parts.last().unwrap().value.clone())
+    }
+
+    /// Extract namespace from object name if qualified, otherwise return None
+    fn extract_namespace(name: &datafusion::sql::sqlparser::ast::ObjectName) -> Option<String> {
+        let parts = &name.0;
+        if parts.len() >= 2 {
+            // Qualified name like "app.config" - first part is namespace
+            Some(parts[0].value.clone())
+        } else {
+            None
+        }
     }
 
     /// Parse schema from column definitions
@@ -171,6 +201,30 @@ impl CreateSharedTableStatement {
                 sql_type
             ))),
         }
+    }
+
+    /// Parse FLUSH policy from SQL text
+    /// Supports: FLUSH ROWS 100, FLUSH SECONDS 60
+    fn parse_flush_policy(sql: &str) -> Result<Option<FlushPolicy>, KalamDbError> {
+        use regex::Regex;
+        
+        // Look for FLUSH ROWS <number>
+        let rows_re = Regex::new(r"(?i)FLUSH\s+ROWS\s+(\d+)").unwrap();
+        if let Some(caps) = rows_re.captures(sql) {
+            let count: usize = caps[1].parse()
+                .map_err(|_| KalamDbError::InvalidSql("Invalid FLUSH ROWS value".to_string()))?;
+            return Ok(Some(FlushPolicy::Rows(count)));
+        }
+        
+        // Look for FLUSH SECONDS <number>
+        let seconds_re = Regex::new(r"(?i)FLUSH\s+SECONDS\s+(\d+)").unwrap();
+        if let Some(caps) = seconds_re.captures(sql) {
+            let secs: u64 = caps[1].parse()
+                .map_err(|_| KalamDbError::InvalidSql("Invalid FLUSH SECONDS value".to_string()))?;
+            return Ok(Some(FlushPolicy::Time(secs)));
+        }
+        
+        Ok(None)
     }
 }
 

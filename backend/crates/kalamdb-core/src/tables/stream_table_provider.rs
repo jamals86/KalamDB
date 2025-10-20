@@ -9,6 +9,7 @@
 
 use crate::catalog::{NamespaceId, TableMetadata, TableName};
 use crate::error::KalamDbError;
+use crate::live_query::manager::{ChangeNotification, ChangeType, LiveQueryManager};
 use crate::tables::system::LiveQueriesTableProvider;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -53,6 +54,9 @@ pub struct StreamTableProvider {
     /// Optional live queries provider for ephemeral mode checks
     live_queries: Option<Arc<LiveQueriesTableProvider>>,
 
+    /// Optional live query manager for real-time notifications (T154)
+    live_query_manager: Option<Arc<LiveQueryManager>>,
+
     /// Counter for discarded events (ephemeral mode, no subscribers)
     discarded_count: std::sync::atomic::AtomicU64,
 }
@@ -83,6 +87,7 @@ impl StreamTableProvider {
             ephemeral,
             max_buffer,
             live_queries: None,
+            live_query_manager: None,
             discarded_count: std::sync::atomic::AtomicU64::new(0),
         }
     }
@@ -90,6 +95,12 @@ impl StreamTableProvider {
     /// Set the live queries provider for ephemeral mode checks
     pub fn with_live_queries(mut self, live_queries: Arc<LiveQueriesTableProvider>) -> Self {
         self.live_queries = Some(live_queries);
+        self
+    }
+
+    /// Set the live query manager for real-time notifications (T154)
+    pub fn with_live_query_manager(mut self, live_query_manager: Arc<LiveQueryManager>) -> Self {
+        self.live_query_manager = Some(live_query_manager);
         self
     }
 
@@ -195,12 +206,27 @@ impl StreamTableProvider {
                 self.table_name().as_str(),
                 timestamp_ms,
                 row_id,
-                row_data,
+                row_data.clone(),
             )
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
-        // TODO T154: Notify live query manager with change notification
-        // Include change_type='INSERT', row_data in notification
+        // T154: Notify live query manager with change notification
+        if let Some(live_query_manager) = &self.live_query_manager {
+            let notification = ChangeNotification::insert(
+                self.table_name().as_str().to_string(),
+                row_data.clone(),
+            );
+
+            // Deliver notification asynchronously (spawn task to avoid blocking)
+            let manager = Arc::clone(live_query_manager);
+            let table_name = self.table_name().as_str().to_string();
+            tokio::spawn(async move {
+                if let Err(e) = manager.notify_table_change(&table_name, notification).await {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Failed to notify subscribers: {}", e);
+                }
+            });
+        }
 
         Ok(timestamp_ms)
     }

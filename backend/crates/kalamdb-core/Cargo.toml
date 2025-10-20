@@ -41,6 +41,9 @@ log.workspace = true
 # UUID generation
 uuid.workspace = true
 
+# Regular expressions
+regex = "1.10"
+
 [dev-dependencies]
 # Testing utilities
 tempfile = "3.8"

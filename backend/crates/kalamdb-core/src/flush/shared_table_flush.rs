@@ -5,6 +5,7 @@
 
 use crate::catalog::{NamespaceId, TableName};
 use crate::error::KalamDbError;
+use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::storage::ParquetWriter;
 use crate::tables::system::jobs_provider::JobRecord;
 use chrono::Utc;
@@ -37,6 +38,9 @@ pub struct SharedTableFlushJob {
 
     /// Node ID for job tracking
     node_id: String,
+
+    /// Optional LiveQueryManager for flush notifications
+    live_query_manager: Option<Arc<LiveQueryManager>>,
 }
 
 /// Result of a flush job execution
@@ -69,7 +73,14 @@ impl SharedTableFlushJob {
             schema,
             storage_location,
             node_id,
+            live_query_manager: None,
         }
+    }
+
+    /// Set the live query manager for this flush job
+    pub fn with_live_query_manager(mut self, manager: Arc<LiveQueryManager>) -> Self {
+        self.live_query_manager = Some(manager);
+        self
     }
 
     /// Generate batch filename with timestamp
@@ -130,6 +141,25 @@ impl SharedTableFlushJob {
 
         // Mark job as completed
         job_record = job_record.complete(Some(result_json.to_string()));
+
+        // Send flush notification to live query subscribers
+        if let Some(live_query_manager) = &self.live_query_manager {
+            let table_name = format!("{}.{}", self.namespace_id.as_str(), self.table_name.as_str());
+            let parquet_files = parquet_file.as_ref().map(|f| vec![f.clone()]).unwrap_or_default();
+            
+            let notification = ChangeNotification::flush(
+                table_name.clone(),
+                rows_flushed,
+                parquet_files,
+            );
+            
+            let manager = Arc::clone(live_query_manager);
+            tokio::spawn(async move {
+                if let Err(e) = manager.notify_table_change(&table_name, notification).await {
+                    log::warn!("Failed to send flush notification for {}: {}", table_name, e);
+                }
+            });
+        }
 
         Ok(FlushJobResult {
             job_record,

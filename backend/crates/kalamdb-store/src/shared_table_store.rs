@@ -98,6 +98,33 @@ impl SharedTableStore {
         }
     }
 
+    /// Get a row including soft-deleted rows.
+    ///
+    /// Unlike `get()`, this method returns soft-deleted rows (where `_deleted = true`).
+    /// Useful for change detection when notifying DELETE operations.
+    pub fn get_include_deleted(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        row_id: &str,
+    ) -> Result<Option<JsonValue>> {
+        let cf_name = format!("shared_table:{}:{}", namespace_id, table_name);
+        let cf = self
+            .db
+            .cf_handle(&cf_name)
+            .with_context(|| format!("Column family not found: {}", cf_name))?;
+
+        let value = self.db.get_cf(cf, row_id.as_bytes())?;
+
+        match value {
+            Some(bytes) => {
+                let row_data: JsonValue = serde_json::from_slice(&bytes)?;
+                Ok(Some(row_data))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Delete a row (soft or hard delete).
     ///
     /// # Arguments

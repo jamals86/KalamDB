@@ -33,8 +33,21 @@ pub struct CreateStreamTableStatement {
 impl CreateStreamTableStatement {
     /// Parse a CREATE STREAM TABLE statement from SQL
     pub fn parse(sql: &str, current_namespace: &NamespaceId) -> Result<Self, KalamDbError> {
+        // Preprocess SQL to remove "STREAM" keyword and TTL/BUFFER_SIZE clauses for standard SQL parser
+        // "CREATE STREAM TABLE ... TTL 3600 BUFFER_SIZE 1000" -> "CREATE TABLE ..."
+        let normalized_sql = sql
+            .replace("STREAM TABLE", "TABLE")
+            .replace(|c| c == '\n' || c == '\r', " "); // Normalize line breaks
+        
+        // Remove TTL and BUFFER_SIZE clauses using regex
+        use regex::Regex;
+        let ttl_re = Regex::new(r"(?i)\s+TTL\s+\d+").unwrap();
+        let buffer_re = Regex::new(r"(?i)\s+BUFFER_SIZE\s+\d+").unwrap();
+        let normalized_sql = ttl_re.replace_all(&normalized_sql, "").to_string();
+        let normalized_sql = buffer_re.replace_all(&normalized_sql, "").to_string();
+        
         let dialect = GenericDialect {};
-        let statements = Parser::parse_sql(&dialect, sql)
+        let statements = Parser::parse_sql(&dialect, &normalized_sql)
             .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
         if statements.is_empty() {
@@ -44,13 +57,14 @@ impl CreateStreamTableStatement {
         }
 
         let stmt = &statements[0];
-        Self::parse_statement(stmt, current_namespace)
+        Self::parse_statement(stmt, current_namespace, sql)
     }
 
     /// Parse the CREATE TABLE statement
     fn parse_statement(
         stmt: &Statement,
         current_namespace: &NamespaceId,
+        original_sql: &str,
     ) -> Result<Self, KalamDbError> {
         match stmt {
             Statement::CreateTable {
@@ -65,16 +79,19 @@ impl CreateStreamTableStatement {
                 // Parse schema from columns
                 let schema = Self::parse_schema(columns)?;
 
-                // TODO: Parse WITH options for RETENTION, EPHEMERAL, MAX_BUFFER
-                // For now, return basic statement with defaults
+                // Parse TTL/retention from original SQL (if present)
+                let retention_seconds = Self::parse_ttl(original_sql)?;
+                
+                // Parse BUFFER_SIZE from original SQL (if present)
+                let max_buffer = Self::parse_buffer_size(original_sql)?;
 
                 Ok(CreateStreamTableStatement {
                     table_name: TableName::new(table_name),
                     namespace_id: current_namespace.clone(),
                     schema,
-                    retention_seconds: None,
-                    ephemeral: false,
-                    max_buffer: None,
+                    retention_seconds,
+                    ephemeral: false, // TODO: parse EPHEMERAL keyword
+                    max_buffer,
                     if_not_exists: *if_not_exists,
                 })
             }
@@ -174,6 +191,36 @@ impl CreateStreamTableStatement {
         }
 
         Ok(())
+    }
+
+    /// Parse TTL (retention) from SQL text
+    /// Supports: TTL 3600 (seconds)
+    fn parse_ttl(sql: &str) -> Result<Option<u32>, KalamDbError> {
+        use regex::Regex;
+        
+        let ttl_re = Regex::new(r"(?i)TTL\s+(\d+)").unwrap();
+        if let Some(caps) = ttl_re.captures(sql) {
+            let seconds: u32 = caps[1].parse()
+                .map_err(|_| KalamDbError::InvalidSql("Invalid TTL value".to_string()))?;
+            return Ok(Some(seconds));
+        }
+        
+        Ok(None)
+    }
+
+    /// Parse BUFFER_SIZE from SQL text
+    /// Supports: BUFFER_SIZE 1000 (number of rows)
+    fn parse_buffer_size(sql: &str) -> Result<Option<usize>, KalamDbError> {
+        use regex::Regex;
+        
+        let buffer_re = Regex::new(r"(?i)BUFFER_SIZE\s+(\d+)").unwrap();
+        if let Some(caps) = buffer_re.captures(sql) {
+            let size: usize = caps[1].parse()
+                .map_err(|_| KalamDbError::InvalidSql("Invalid BUFFER_SIZE value".to_string()))?;
+            return Ok(Some(size));
+        }
+        
+        Ok(None)
     }
 }
 

@@ -253,7 +253,10 @@ impl SqlExecutor {
             return self.execute_alter_namespace(sql).await;
         } else if sql_upper.starts_with("DROP NAMESPACE") {
             return self.execute_drop_namespace(sql).await;
-        } else if sql_upper.starts_with("CREATE TABLE") {
+        } else if sql_upper.starts_with("CREATE TABLE") 
+            || sql_upper.starts_with("CREATE USER TABLE")
+            || sql_upper.starts_with("CREATE SHARED TABLE")
+            || sql_upper.starts_with("CREATE STREAM TABLE") {
             return self.execute_create_table(sql).await;
         } else if sql_upper.starts_with("DROP TABLE") {
             return self.execute_drop_table(sql).await;
@@ -268,7 +271,6 @@ impl SqlExecutor {
             format!("Unsupported SQL statement: {}", sql.lines().next().unwrap_or("")),
         ))
     }
-
     /// Execute query via DataFusion
     async fn execute_datafusion_query(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
         // Execute SQL via DataFusion
@@ -359,8 +361,31 @@ impl SqlExecutor {
             // User table
             let stmt = CreateUserTableStatement::parse(sql, &namespace_id)?;
             let table_name = stmt.table_name.clone();
+            let namespace_id = stmt.namespace_id.clone(); // Use the namespace from the statement
             let schema = stmt.schema.clone();
-            self.user_table_service.create_table(stmt, None)?;
+            let flush_policy = stmt.flush_policy.clone();
+            let deleted_retention_hours = stmt.deleted_retention_hours;
+            
+            let metadata = self.user_table_service.create_table(stmt, None)?;
+            
+            // Insert into system.tables via KalamSQL
+            if let Some(kalam_sql) = &self.kalam_sql {
+                let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
+                let table = kalamdb_sql::models::Table {
+                    table_id,
+                    table_name: table_name.as_str().to_string(),
+                    namespace: namespace_id.as_str().to_string(),
+                    table_type: "user".to_string(),
+                    created_at: chrono::Utc::now().timestamp_millis(),
+                    storage_location: metadata.storage_location.clone(),
+                    flush_policy: serde_json::to_string(&flush_policy.unwrap_or_default())
+                        .unwrap_or_else(|_| "{}".to_string()),
+                    schema_version: 1,
+                    deleted_retention_hours: deleted_retention_hours.unwrap_or(0) as i32,
+                };
+                kalam_sql.insert_table(&table)
+                    .map_err(|e| KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e)))?;
+            }
             
             // Register with DataFusion if stores are configured
             if self.user_table_store.is_some() {
@@ -378,8 +403,30 @@ impl SqlExecutor {
             // Stream table
             let stmt = CreateStreamTableStatement::parse(sql, &namespace_id)?;
             let table_name = stmt.table_name.clone();
+            let namespace_id = stmt.namespace_id.clone(); // Use the namespace from the statement
             let schema = stmt.schema.clone();
-            self.stream_table_service.create_table(stmt)?;
+            let retention_seconds = stmt.retention_seconds;
+            
+            let metadata = self.stream_table_service.create_table(stmt)?;
+            
+            // Insert into system.tables via KalamSQL
+            if let Some(kalam_sql) = &self.kalam_sql {
+                let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
+                let table = kalamdb_sql::models::Table {
+                    table_id,
+                    table_name: table_name.as_str().to_string(),
+                    namespace: namespace_id.as_str().to_string(),
+                    table_type: "stream".to_string(),
+                    created_at: chrono::Utc::now().timestamp_millis(),
+                    storage_location: metadata.storage_location.clone(),
+                    flush_policy: serde_json::to_string(&metadata.flush_policy)
+                        .unwrap_or_else(|_| "{}".to_string()),
+                    schema_version: 1,
+                    deleted_retention_hours: retention_seconds.map(|s| (s / 3600) as i32).unwrap_or(0),
+                };
+                kalam_sql.insert_table(&table)
+                    .map_err(|e| KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e)))?;
+            }
             
             // Register with DataFusion if stores are configured
             if self.stream_table_store.is_some() {
@@ -397,8 +444,48 @@ impl SqlExecutor {
             // Default to shared table (most common case)
             let stmt = CreateSharedTableStatement::parse(sql, &namespace_id)?;
             let table_name = stmt.table_name.clone();
+            let namespace_id = stmt.namespace_id.clone(); // Use the namespace from the statement
             let schema = stmt.schema.clone();
-            self.shared_table_service.create_table(stmt)?;
+            let flush_policy = stmt.flush_policy.clone();
+            let deleted_retention = stmt.deleted_retention;
+            
+            let metadata = self.shared_table_service.create_table(stmt)?;
+            
+            // Insert into system.tables via KalamSQL
+            if let Some(kalam_sql) = &self.kalam_sql {
+                let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
+                
+                // Convert local FlushPolicy to the global one for serialization
+                let flush_policy_json = if let Some(fp) = flush_policy {
+                    match fp {
+                        crate::sql::ddl::create_shared_table::FlushPolicy::Rows(n) => {
+                            serde_json::json!({"type": "row_limit", "row_limit": n}).to_string()
+                        }
+                        crate::sql::ddl::create_shared_table::FlushPolicy::Time(s) => {
+                            serde_json::json!({"type": "time_interval", "interval_seconds": s}).to_string()
+                        }
+                        crate::sql::ddl::create_shared_table::FlushPolicy::Combined { rows, seconds } => {
+                            serde_json::json!({"type": "combined", "row_limit": rows, "interval_seconds": seconds}).to_string()
+                        }
+                    }
+                } else {
+                    "{}".to_string()
+                };
+                
+                let table = kalamdb_sql::models::Table {
+                    table_id,
+                    table_name: table_name.as_str().to_string(),
+                    namespace: namespace_id.as_str().to_string(),
+                    table_type: "shared".to_string(),
+                    created_at: chrono::Utc::now().timestamp_millis(),
+                    storage_location: metadata.storage_location.clone(),
+                    flush_policy: flush_policy_json,
+                    schema_version: 1,
+                    deleted_retention_hours: deleted_retention.map(|s| (s / 3600) as i32).unwrap_or(0),
+                };
+                kalam_sql.insert_table(&table)
+                    .map_err(|e| KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e)))?;
+            }
             
             // Register with DataFusion if stores are configured
             if self.shared_table_store.is_some() {

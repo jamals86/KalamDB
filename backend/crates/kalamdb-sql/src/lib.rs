@@ -196,6 +196,13 @@ impl KalamSql {
         self.adapter.scan_all_tables()
     }
 
+    /// Insert a new table
+    ///
+    /// Inserts table metadata into system_tables.
+    pub fn insert_table(&self, table: &Table) -> Result<()> {
+        self.adapter.insert_table(table)
+    }
+
     /// Scan all table schemas
     ///
     /// Returns a vector of all table schemas in the system.

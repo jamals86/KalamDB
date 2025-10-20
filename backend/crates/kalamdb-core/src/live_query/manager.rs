@@ -8,6 +8,8 @@ use crate::error::KalamDbError;
 use crate::live_query::connection_registry::{
     ConnectionId, LiveId, LiveQuery, LiveQueryOptions, LiveQueryRegistry, NodeId, UserId,
 };
+use crate::live_query::filter::FilterCache;
+use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::tables::system::live_queries_provider::{LiveQueryRecord, LiveQueriesTableProvider};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,6 +18,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct LiveQueryManager {
     registry: Arc<tokio::sync::RwLock<LiveQueryRegistry>>,
     live_queries_provider: Arc<LiveQueriesTableProvider>,
+    filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
+    initial_data_fetcher: Arc<InitialDataFetcher>,
     node_id: NodeId,
 }
 
@@ -24,10 +28,14 @@ impl LiveQueryManager {
     pub fn new(kalam_sql: Arc<KalamSql>, node_id: NodeId) -> Self {
         let registry = Arc::new(tokio::sync::RwLock::new(LiveQueryRegistry::new(node_id.clone())));
         let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql));
+        let filter_cache = Arc::new(tokio::sync::RwLock::new(FilterCache::new()));
+        let initial_data_fetcher = Arc::new(InitialDataFetcher::new());
         
         Self {
             registry,
             live_queries_provider,
+            filter_cache,
+            initial_data_fetcher,
             node_id,
         }
     }
@@ -63,6 +71,7 @@ impl LiveQueryManager {
     /// 1. Generates a LiveId
     /// 2. Registers in system.live_queries table
     /// 3. Adds to in-memory registry
+    /// 4. Compiles and caches the WHERE clause filter
     ///
     /// # Arguments
     /// * `connection_id` - The WebSocket connection ID
@@ -76,12 +85,39 @@ impl LiveQueryManager {
         query: String,
         options: LiveQueryOptions,
     ) -> Result<LiveId, KalamDbError> {
-        // Parse SQL to extract table_name
-        // TODO: Implement proper SQL parsing with DataFusion
+        // Parse SQL to extract table_name and WHERE clause
         let table_name = self.extract_table_name_from_query(&query)?;
+        let mut where_clause = self.extract_where_clause(&query);
         
         // Generate LiveId
-        let live_id = LiveId::new(connection_id.clone(), table_name, query_id);
+        let live_id = LiveId::new(connection_id.clone(), table_name.clone(), query_id);
+        
+        // T174: Auto-inject user_id filter for user tables (row-level security)
+        // User tables: user_id.namespace.table (3 parts = 2 dots)
+        // Shared tables: namespace.table (2 parts = 1 dot)
+        // Simple names: table (1 part = 0 dots) - skip injection
+        let dot_count = table_name.matches('.').count();
+        let is_user_table = dot_count == 2;
+        
+        if is_user_table {
+            let user_id = connection_id.user_id();
+            let user_filter = format!("user_id = '{}'", user_id);
+            
+            // Inject user_id filter into WHERE clause
+            where_clause = if let Some(existing_clause) = where_clause {
+                // Combine with existing filter: user_id = 'X' AND existing
+                Some(format!("{} AND {}", user_filter, existing_clause))
+            } else {
+                // No existing filter, just add user_id
+                Some(user_filter)
+            };
+        }
+        
+        // Compile and cache the filter if WHERE clause exists
+        if let Some(clause) = where_clause {
+            let mut filter_cache = self.filter_cache.write().await;
+            filter_cache.insert(live_id.to_string(), &clause)?;
+        }
         
         let timestamp = Self::current_timestamp_ms();
         
@@ -125,6 +161,68 @@ impl LiveQueryManager {
         Ok(live_id)
     }
 
+    /// Register a live query subscription with optional initial data fetch
+    ///
+    /// This is the enhanced version that can fetch initial data before
+    /// starting real-time notifications. Use this when clients need to
+    /// populate their state before receiving live updates.
+    ///
+    /// # Arguments
+    /// * `connection_id` - The WebSocket connection ID
+    /// * `query_id` - User-chosen identifier for this subscription
+    /// * `query` - SQL SELECT query
+    /// * `options` - Subscription options (user_id filter, etc.)
+    /// * `initial_data_options` - Options for initial data fetch (if Some)
+    ///
+    /// # Returns
+    /// SubscriptionResult with LiveId and optional initial data
+    pub async fn register_subscription_with_initial_data(
+        &self,
+        connection_id: ConnectionId,
+        query_id: String,
+        query: String,
+        options: LiveQueryOptions,
+        initial_data_options: Option<InitialDataOptions>,
+    ) -> Result<SubscriptionResult, KalamDbError> {
+        // First register the subscription (reuse existing method)
+        let live_id = self.register_subscription(
+            connection_id,
+            query_id,
+            query.clone(),
+            options,
+        ).await?;
+        
+        // Fetch initial data if requested
+        let initial_data = if let Some(fetch_options) = initial_data_options {
+            let table_name = live_id.table_name();
+            
+            // TODO: Determine table_type from table_name
+            // For now, we'll need to parse it or get it from context
+            // User tables: user_id.namespace.table
+            // Shared tables: namespace.table
+            let table_type = if table_name.matches('.').count() == 2 {
+                crate::catalog::TableType::User
+            } else {
+                crate::catalog::TableType::Shared
+            };
+            
+            let result = self.initial_data_fetcher.fetch_initial_data(
+                table_name,
+                table_type,
+                fetch_options,
+            ).await?;
+            
+            Some(result)
+        } else {
+            None
+        };
+        
+        Ok(SubscriptionResult {
+            live_id,
+            initial_data,
+        })
+    }
+
     /// Extract table name from SQL query
     ///
     /// This is a simple implementation that looks for "FROM table_name"
@@ -149,12 +247,39 @@ impl LiveQueryManager {
         Ok(table_name)
     }
 
+    /// Extract WHERE clause from SQL query
+    ///
+    /// Returns None if no WHERE clause exists.
+    /// This is a simple implementation that looks for "WHERE ..."
+    fn extract_where_clause(&self, query: &str) -> Option<String> {
+        let query_upper = query.to_uppercase();
+        let where_pos = query_upper.find(" WHERE ")?;
+        
+        // Get everything after WHERE, handling potential ORDER BY, LIMIT, etc.
+        let after_where = &query[(where_pos + 7)..];  // Skip " WHERE "
+        
+        // Find the end of the WHERE clause (before ORDER BY, LIMIT, etc.)
+        let end_keywords = [" ORDER BY", " LIMIT", " OFFSET", " GROUP BY"];
+        let mut end_pos = after_where.len();
+        
+        for keyword in &end_keywords {
+            if let Some(pos) = after_where.to_uppercase().find(keyword) {
+                if pos < end_pos {
+                    end_pos = pos;
+                }
+            }
+        }
+        
+        Some(after_where[..end_pos].trim().to_string())
+    }
+
     /// Unregister a WebSocket connection
     ///
     /// This should be called when a WebSocket disconnects. It:
     /// 1. Collects all live_ids for this connection
     /// 2. Deletes from system.live_queries
     /// 3. Removes from in-memory registry
+    /// 4. Cleans up cached filters
     pub async fn unregister_connection(
         &self,
         user_id: &UserId,
@@ -166,6 +291,14 @@ impl LiveQueryManager {
             registry.unregister_connection(user_id, connection_id)
         };
         
+        // Remove cached filters for all live queries
+        {
+            let mut filter_cache = self.filter_cache.write().await;
+            for live_id in &live_ids {
+                filter_cache.remove(&live_id.to_string());
+            }
+        }
+        
         // Delete from system.live_queries
         self.live_queries_provider.delete_by_connection_id(&connection_id.to_string())?;
         
@@ -175,12 +308,19 @@ impl LiveQueryManager {
     /// Unregister a single live query subscription
     ///
     /// This is used by the KILL LIVE QUERY command. It:
-    /// 1. Removes from in-memory registry
-    /// 2. Deletes from system.live_queries
+    /// 1. Removes cached filter
+    /// 2. Removes from in-memory registry
+    /// 3. Deletes from system.live_queries
     pub async fn unregister_subscription(
         &self,
         live_id: &LiveId,
     ) -> Result<(), KalamDbError> {
+        // Remove cached filter first (even before checking if live_id exists)
+        {
+            let mut filter_cache = self.filter_cache.write().await;
+            filter_cache.remove(&live_id.to_string());
+        }
+        
         // Remove from in-memory registry
         let connection_id = {
             let mut registry = self.registry.write().await;
@@ -268,6 +408,204 @@ impl LiveQueryManager {
     pub fn registry(&self) -> Arc<tokio::sync::RwLock<LiveQueryRegistry>> {
         Arc::clone(&self.registry)
     }
+
+    /// Notify subscribers about a change to a table (T154)
+    ///
+    /// This is called after data changes (INSERT/UPDATE/DELETE) to deliver
+    /// real-time notifications to subscribed WebSocket connections.
+    ///
+    /// # Arguments
+    /// * `table_name` - The table that changed
+    /// * `change_notification` - The change details to send to subscribers
+    ///
+    /// # Returns
+    /// Number of notifications delivered
+    ///
+    /// # Note
+    /// This is a simplified implementation for Phase 12 T154.
+    /// Full filtering and WebSocket delivery will be implemented in Phase 14.
+    /// Notify live query subscribers of a table change
+    ///
+    /// This method is called by change detectors when a row is inserted, updated, or deleted.
+    /// It applies filters and only notifies subscribers whose WHERE clause matches the changed row.
+    ///
+    /// # Arguments
+    /// * `table_name` - Name of the table that changed
+    /// * `change_notification` - Details about the change (type, row data)
+    ///
+    /// # Returns
+    /// Number of subscribers notified (after filtering)
+    pub async fn notify_table_change(
+        &self,
+        table_name: &str,
+        change_notification: ChangeNotification,
+    ) -> Result<usize, KalamDbError> {
+        // Get filter cache for matching
+        let filter_cache = self.filter_cache.read().await;
+        
+        // Collect live_ids that need to be notified
+        let live_ids_to_notify: Vec<LiveId> = {
+            let registry = self.registry.read().await;
+            let mut ids = Vec::new();
+
+            // Iterate through all users
+            for (_user_id, user_connections) in registry.users.iter() {
+                // Iterate through all connections for this user
+                for (_conn_id, socket) in user_connections.sockets.iter() {
+                    // Iterate through all live queries on this connection
+                    for (live_id, _live_query) in socket.live_queries.iter() {
+                        // Check if this subscription is for the changed table
+                        if live_id.table_name() == table_name {
+                            // Check filter if one exists
+                            if let Some(filter) = filter_cache.get(&live_id.to_string()) {
+                                // Apply filter to row data
+                                match filter.matches(&change_notification.row_data) {
+                                    Ok(true) => {
+                                        // Filter matched, include this subscriber
+                                        ids.push(live_id.clone());
+                                    }
+                                    Ok(false) => {
+                                        // Filter didn't match, skip this subscriber
+                                        #[cfg(debug_assertions)]
+                                        eprintln!(
+                                            "Filter didn't match for live_id={}, skipping notification",
+                                            live_id.to_string()
+                                        );
+                                    }
+                                    Err(e) => {
+                                        // Filter evaluation error, log and skip
+                                        eprintln!(
+                                            "Filter evaluation error for live_id={}: {}",
+                                            live_id.to_string(),
+                                            e
+                                        );
+                                    }
+                                }
+                            } else {
+                                // No filter, notify all subscribers
+                                ids.push(live_id.clone());
+                            }
+                        }
+                    }
+                }
+            }
+
+            ids
+        }; // registry read lock is dropped here
+        
+        // Drop filter cache read lock before acquiring write locks
+        drop(filter_cache);
+
+        // Now increment changes for each live_id (needs write lock)
+        let notification_count = live_ids_to_notify.len();
+        for live_id in live_ids_to_notify.iter() {
+            self.increment_changes(live_id).await?;
+
+            // Log notification (in production, use proper logging)
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "Notified subscriber: live_id={}, change_type={:?}",
+                live_id.to_string(),
+                change_notification.change_type
+            );
+        }
+
+        Ok(notification_count)
+    }
+}
+
+/// Change notification for live query subscribers
+#[derive(Debug, Clone)]
+pub struct ChangeNotification {
+    pub change_type: ChangeType,
+    pub table_name: String,
+    pub row_data: serde_json::Value,
+    pub old_data: Option<serde_json::Value>, // For UPDATE notifications
+    pub row_id: Option<String>,              // For DELETE notifications (hard delete)
+}
+
+impl ChangeNotification {
+    /// Create an INSERT notification
+    pub fn insert(table_name: String, row_data: serde_json::Value) -> Self {
+        Self {
+            change_type: ChangeType::Insert,
+            table_name,
+            row_data,
+            old_data: None,
+            row_id: None,
+        }
+    }
+
+    /// Create an UPDATE notification with old and new values
+    pub fn update(
+        table_name: String,
+        old_data: serde_json::Value,
+        new_data: serde_json::Value,
+    ) -> Self {
+        Self {
+            change_type: ChangeType::Update,
+            table_name,
+            row_data: new_data,
+            old_data: Some(old_data),
+            row_id: None,
+        }
+    }
+
+    /// Create a DELETE notification (soft delete with data)
+    pub fn delete_soft(table_name: String, row_data: serde_json::Value) -> Self {
+        Self {
+            change_type: ChangeType::Delete,
+            table_name,
+            row_data,
+            old_data: None,
+            row_id: None,
+        }
+    }
+
+    /// Create a DELETE notification (hard delete, row_id only)
+    pub fn delete_hard(table_name: String, row_id: String) -> Self {
+        Self {
+            change_type: ChangeType::Delete,
+            table_name,
+            row_data: serde_json::Value::Null,
+            old_data: None,
+            row_id: Some(row_id),
+        }
+    }
+
+    /// Create a FLUSH notification (Parquet flush completion)
+    pub fn flush(table_name: String, row_count: usize, parquet_files: Vec<String>) -> Self {
+        Self {
+            change_type: ChangeType::Flush,
+            table_name,
+            row_data: serde_json::json!({
+                "row_count": row_count,
+                "parquet_files": parquet_files,
+                "flushed_at": chrono::Utc::now().timestamp_millis(),
+            }),
+            old_data: None,
+            row_id: None,
+        }
+    }
+}
+
+/// Result of registering a live query subscription with initial data
+#[derive(Debug, Clone)]
+pub struct SubscriptionResult {
+    /// The generated LiveId for the subscription
+    pub live_id: LiveId,
+    
+    /// Initial data returned with the subscription (if requested)
+    pub initial_data: Option<InitialDataResult>,
+}
+
+/// Type of change that occurred
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeType {
+    Insert,
+    Update,
+    Delete,
+    Flush, // Parquet flush completion
 }
 
 /// Registry statistics
@@ -489,5 +827,95 @@ mod tests {
         assert_ne!(live_id1.to_string(), live_id2.to_string());
         assert_ne!(live_id1.to_string(), live_id3.to_string());
         assert_ne!(live_id2.to_string(), live_id3.to_string());
+    }
+
+    #[tokio::test]
+    async fn test_filter_compilation_and_caching() {
+        let (manager, _temp_dir) = create_test_manager().await;
+        let user_id = UserId::new("user1".to_string());
+        
+        let connection_id = manager.register_connection(user_id.clone(), "conn1".to_string()).await.unwrap();
+        
+        // Register subscription with WHERE clause
+        let live_id = manager.register_subscription(
+            connection_id.clone(),
+            "filtered_messages".to_string(),
+            "SELECT * FROM messages WHERE user_id = 'user1' AND read = false".to_string(),
+            LiveQueryOptions::default(),
+        ).await.unwrap();
+        
+        // Verify filter was compiled and cached
+        let filter_cache = manager.filter_cache.read().await;
+        let filter = filter_cache.get(&live_id.to_string());
+        assert!(filter.is_some());
+        
+        // Verify filter SQL is correct
+        let filter = filter.unwrap();
+        assert_eq!(filter.sql(), "user_id = 'user1' AND read = false");
+    }
+
+    #[tokio::test]
+    async fn test_notification_filtering() {
+        let (manager, _temp_dir) = create_test_manager().await;
+        let user_id = UserId::new("user1".to_string());
+        
+        let connection_id = manager.register_connection(user_id.clone(), "conn1".to_string()).await.unwrap();
+        
+        // Register subscription with filter
+        manager.register_subscription(
+            connection_id.clone(),
+            "q1".to_string(),
+            "SELECT * FROM messages WHERE user_id = 'user1'".to_string(),
+            LiveQueryOptions::default(),
+        ).await.unwrap();
+        
+        // Matching notification
+        let matching_change = ChangeNotification::insert(
+            "messages".to_string(),
+            serde_json::json!({"user_id": "user1", "text": "Hello"}),
+        );
+        
+        let notified = manager.notify_table_change("messages", matching_change).await.unwrap();
+        assert_eq!(notified, 1); // Should notify
+        
+        // Non-matching notification
+        let non_matching_change = ChangeNotification::insert(
+            "messages".to_string(),
+            serde_json::json!({"user_id": "user2", "text": "Hello"}),
+        );
+        
+        let notified = manager.notify_table_change("messages", non_matching_change).await.unwrap();
+        assert_eq!(notified, 0); // Should NOT notify (filter didn't match)
+    }
+
+    #[tokio::test]
+    async fn test_filter_cleanup_on_unsubscribe() {
+        let (manager, _temp_dir) = create_test_manager().await;
+        let user_id = UserId::new("user1".to_string());
+        
+        let connection_id = manager.register_connection(user_id.clone(), "conn1".to_string()).await.unwrap();
+        
+        let live_id = manager.register_subscription(
+            connection_id.clone(),
+            "q1".to_string(),
+            "SELECT * FROM messages WHERE user_id = 'user1'".to_string(),
+            LiveQueryOptions::default(),
+        ).await.unwrap();
+        
+        // Verify filter exists
+        {
+            let filter_cache = manager.filter_cache.read().await;
+            assert!(filter_cache.get(&live_id.to_string()).is_some());
+        }
+        
+        // Try to unregister subscription (will fail due to delete not implemented in kalamdb-sql)
+        // But filter cleanup happens first, so we can verify it worked
+        let _ = manager.unregister_subscription(&live_id).await;
+        
+        // Verify filter was removed (cleanup happens before DB delete)
+        {
+            let filter_cache = manager.filter_cache.read().await;
+            assert!(filter_cache.get(&live_id.to_string()).is_none());
+        }
     }
 }

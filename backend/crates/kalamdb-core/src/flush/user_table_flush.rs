@@ -5,6 +5,7 @@
 
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
+use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::storage::ParquetWriter;
 use crate::tables::system::jobs_provider::JobRecord;
 use chrono::Utc;
@@ -38,6 +39,9 @@ pub struct UserTableFlushJob {
 
     /// Node ID for job tracking
     node_id: String,
+
+    /// Optional LiveQueryManager for flush notifications
+    live_query_manager: Option<Arc<LiveQueryManager>>,
 }
 
 /// Result of a flush job execution
@@ -73,7 +77,14 @@ impl UserTableFlushJob {
             schema,
             storage_location,
             node_id,
+            live_query_manager: None,
         }
+    }
+
+    /// Set the LiveQueryManager for flush notifications (builder pattern)
+    pub fn with_live_query_manager(mut self, manager: Arc<LiveQueryManager>) -> Self {
+        self.live_query_manager = Some(manager);
+        self
     }
 
     /// Substitute ${user_id} in storage path template
@@ -143,6 +154,26 @@ impl UserTableFlushJob {
 
         // Mark job as completed
         job_record = job_record.complete(Some(result_json.to_string()));
+
+        // T172: Notify subscribers of flush completion
+        if let Some(live_query_manager) = &self.live_query_manager {
+            let notification = ChangeNotification::flush(
+                self.table_name.as_str().to_string(),
+                rows_flushed,
+                parquet_files.clone(),
+            );
+
+            let manager = Arc::clone(live_query_manager);
+            let table_name = self.table_name.as_str().to_string();
+
+            // Spawn async notification (non-blocking)
+            tokio::spawn(async move {
+                if let Err(e) = manager.notify_table_change(&table_name, notification).await {
+                    #[cfg(debug_assertions)]
+                    eprintln!("Failed to notify flush completion: {}", e);
+                }
+            });
+        }
 
         Ok(FlushJobResult {
             job_record,
