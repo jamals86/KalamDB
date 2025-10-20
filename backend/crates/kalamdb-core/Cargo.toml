@@ -36,6 +36,9 @@ chrono.workspace = true
 # Logging
 log.workspace = true
 
+# Metrics
+metrics = "0.22"
+
 # UUID generation
 uuid.workspace = true
 

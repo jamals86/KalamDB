@@ -428,8 +428,11 @@ impl RocksDbAdapter {
             .cf_handle("system_tables")
             .ok_or_else(|| anyhow!("system_tables CF not found"))?;
 
-        let key = format!("tbl:{}", table_id);
+        let key = format!("table:{}", table_id);
         self.db.delete_cf(&cf, key.as_bytes())?;
+        
+        // Flush to ensure delete is immediately visible
+        self.db.flush_cf(&cf)?;
         Ok(())
     }
 

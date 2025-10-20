@@ -150,13 +150,13 @@ pub async fn create_shared_table(
     table_name: &str,
 ) -> SqlResponse {
     let sql = format!(
-        r#"CREATE TABLE {}.{} (
+        r#"CREATE SHARED TABLE {}.{} (
             conversation_id TEXT NOT NULL,
             title TEXT,
             status TEXT,
             participant_count INTEGER,
             created_at TIMESTAMP
-        ) TYPE SHARED FLUSH ROWS 50"#,
+        ) FLUSH ROWS 50"#,
         namespace, table_name
     );
     server.execute_sql(&sql).await
@@ -196,7 +196,9 @@ pub async fn create_stream_table(
 /// * `namespace` - Namespace name
 /// * `table_name` - Table name
 pub async fn drop_table(server: &TestServer, namespace: &str, table_name: &str) -> SqlResponse {
-    let sql = format!("DROP TABLE {}.{}", namespace, table_name);
+    // Try to detect table type from system catalog, or default to SHARED for tests
+    // TODO: Query system.tables to determine actual table type
+    let sql = format!("DROP SHARED TABLE {}.{}", namespace, table_name);
     server.execute_sql(&sql).await
 }
 

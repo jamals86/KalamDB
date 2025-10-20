@@ -98,9 +98,18 @@ impl DropTableStatement {
             .and_then(|s| s.split_whitespace().next())
             .ok_or_else(|| KalamDbError::InvalidSql("Table name is required".to_string()))?;
 
+        // Handle qualified name (namespace.table)
+        let (namespace_id, table_name) = if let Some(dot_pos) = name.find('.') {
+            let ns = &name[..dot_pos];
+            let tbl = &name[dot_pos + 1..];
+            (NamespaceId::new(ns), TableName::new(tbl))
+        } else {
+            (current_namespace.clone(), TableName::new(name))
+        };
+
         Ok(Self {
-            table_name: TableName::new(name),
-            namespace_id: current_namespace.clone(),
+            table_name,
+            namespace_id,
             table_type,
             if_exists,
         })

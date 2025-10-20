@@ -143,6 +143,7 @@ User tables create one table instance per user with isolated storage.
 ```sql
 CREATE USER TABLE app.messages (
   id BIGINT,
+  conversation_id BIGINT,
   content TEXT,
   author TEXT,
   timestamp TIMESTAMP

@@ -133,7 +133,7 @@ impl TestServer {
 
         // Initialize services
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
-        let user_table_service = Arc::new(UserTableService::new(kalam_sql.clone()));
+        let user_table_service = Arc::new(UserTableService::new(kalam_sql.clone(), user_table_store.clone()));
         let shared_table_service = Arc::new(SharedTableService::new(
             shared_table_store.clone(),
             kalam_sql.clone(),
@@ -214,6 +214,29 @@ impl TestServer {
         self.execute_sql_with_user(sql, None).await
     }
 
+    /// Execute SQL as a specific user (convenience wrapper).
+    ///
+    /// # Arguments
+    ///
+    /// * `sql` - SQL statement to execute
+    /// * `user_id` - User ID string
+    ///
+    /// # Returns
+    ///
+    /// `SqlResponse` containing status, results, and any errors
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let response = server.execute_sql_as_user(
+    ///     "INSERT INTO test_ns.notes (content) VALUES ('Hello')",
+    ///     "user123"
+    /// ).await;
+    /// ```
+    pub async fn execute_sql_as_user(&self, sql: &str, user_id: &str) -> SqlResponse {
+        self.execute_sql_with_user(sql, Some(user_id)).await
+    }
+
     /// Execute SQL with optional user_id context and return the response.
     ///
     /// # Arguments
@@ -236,11 +259,25 @@ impl TestServer {
                         execution_time_ms: 0,
                         error: None,
                     },
-                    ExecutionResult::RecordBatch(_) | ExecutionResult::RecordBatches(_) => {
-                        // For now, return success without converting batches
+                    ExecutionResult::RecordBatch(batch) => {
+                        // Convert single batch to JSON
+                        let query_result = record_batch_to_query_result(&batch);
                         SqlResponse {
                             status: "success".to_string(),
-                            results: vec![],
+                            results: vec![query_result],
+                            execution_time_ms: 0,
+                            error: None,
+                        }
+                    }
+                    ExecutionResult::RecordBatches(batches) => {
+                        // Convert multiple batches to JSON
+                        let results: Vec<_> = batches
+                            .iter()
+                            .map(record_batch_to_query_result)
+                            .collect();
+                        SqlResponse {
+                            status: "success".to_string(),
+                            results,
                             execution_time_ms: 0,
                             error: None,
                         }
@@ -259,7 +296,104 @@ impl TestServer {
             },
         }
     }
+}
 
+/// Convert Arrow RecordBatch to QueryResult for JSON response
+fn record_batch_to_query_result(
+    batch: &datafusion::arrow::record_batch::RecordBatch,
+) -> kalamdb_api::models::QueryResult {
+    use datafusion::arrow::array::*;
+    use datafusion::arrow::datatypes::DataType;
+    use std::collections::HashMap;
+
+    let schema = batch.schema();
+    let num_rows = batch.num_rows();
+    let mut rows: Vec<HashMap<String, serde_json::Value>> = Vec::with_capacity(num_rows);
+
+    // Extract column names
+    let columns: Vec<String> = schema
+        .fields()
+        .iter()
+        .map(|f| f.name().clone())
+        .collect();
+
+    for row_idx in 0..num_rows {
+        let mut row_map = HashMap::new();
+
+        for (col_idx, field) in schema.fields().iter().enumerate() {
+            let column = batch.column(col_idx);
+            let value = match field.data_type() {
+                DataType::Utf8 => {
+                    let array = column.as_any().downcast_ref::<StringArray>().unwrap();
+                    if array.is_null(row_idx) {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::Value::String(array.value(row_idx).to_string())
+                    }
+                }
+                DataType::Int32 => {
+                    let array = column.as_any().downcast_ref::<Int32Array>().unwrap();
+                    if array.is_null(row_idx) {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::Value::Number(array.value(row_idx).into())
+                    }
+                }
+                DataType::Int64 => {
+                    let array = column.as_any().downcast_ref::<Int64Array>().unwrap();
+                    if array.is_null(row_idx) {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::Value::Number(array.value(row_idx).into())
+                    }
+                }
+                DataType::Float64 => {
+                    let array = column.as_any().downcast_ref::<Float64Array>().unwrap();
+                    if array.is_null(row_idx) {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::Number::from_f64(array.value(row_idx))
+                            .map(serde_json::Value::Number)
+                            .unwrap_or(serde_json::Value::Null)
+                    }
+                }
+                DataType::Boolean => {
+                    let array = column.as_any().downcast_ref::<BooleanArray>().unwrap();
+                    if array.is_null(row_idx) {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::Value::Bool(array.value(row_idx))
+                    }
+                }
+                DataType::Timestamp(_, _) => {
+                    let array = column
+                        .as_any()
+                        .downcast_ref::<TimestampMillisecondArray>()
+                        .unwrap();
+                    if array.is_null(row_idx) {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::Value::Number(array.value(row_idx).into())
+                    }
+                }
+                _ => serde_json::Value::String(format!("{:?}", column)),
+            };
+
+            row_map.insert(field.name().clone(), value);
+        }
+
+        rows.push(row_map);
+    }
+
+    kalamdb_api::models::QueryResult {
+        rows: Some(rows),
+        row_count: num_rows,
+        columns,
+        message: None,
+    }
+}
+
+impl TestServer {
     /// Cleanup all test namespaces and tables.
     ///
     /// This drops all non-system namespaces and their tables.

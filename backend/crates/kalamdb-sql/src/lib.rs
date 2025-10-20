@@ -35,11 +35,13 @@ pub mod adapter;
 pub mod executor;
 pub mod models;
 pub mod parser;
+pub mod query_cache;
 
 pub use adapter::RocksDbAdapter;
 pub use executor::SqlExecutor;
 pub use models::*;
 pub use parser::SqlParser;
+pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
 
 use anyhow::Result;
 use rocksdb::DB;

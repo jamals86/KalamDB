@@ -62,21 +62,48 @@ impl SharedTableService {
     ///
     /// # Returns
     /// Table metadata for the created shared table
+    /// Create a new shared table
+    ///
+    /// # Returns
+    /// * `Ok((metadata, was_created))` - Table metadata and whether it was newly created (false if IF NOT EXISTS and exists)
+    /// * `Err(KalamDbError)` - If creation failed
     pub fn create_table(
         &self,
         stmt: CreateSharedTableStatement,
-    ) -> Result<TableMetadata, KalamDbError> {
+    ) -> Result<(TableMetadata, bool), KalamDbError> {
         // Validate table name
         self.validate_table_name(&stmt.table_name)?;
 
         // Check if table already exists
         if self.table_exists(&stmt.namespace_id, &stmt.table_name)? {
             if stmt.if_not_exists {
-                return Err(KalamDbError::AlreadyExists(format!(
-                    "Shared table {}.{} already exists",
-                    stmt.namespace_id.as_str(),
-                    stmt.table_name.as_str()
-                )));
+                // Return existing table metadata (or a default success response)
+                // For now, we'll create a minimal metadata response
+                let table_id = format!("{}:{}", stmt.namespace_id.as_str(), stmt.table_name.as_str());
+                
+                // Get existing table from system.tables
+                let existing_table = self.kalam_sql
+                    .get_table(&table_id)
+                    .map_err(|e| KalamDbError::Other(format!("Failed to get existing table: {}", e)))?
+                    .ok_or_else(|| KalamDbError::NotFound(format!("Table {} not found", table_id)))?;
+                
+                // Return a minimal metadata object for the existing table
+                return Ok((TableMetadata {
+                    table_name: stmt.table_name.clone(),
+                    table_type: TableType::Shared,
+                    namespace: stmt.namespace_id.clone(),
+                    created_at: chrono::DateTime::from_timestamp(existing_table.created_at / 1000, 0)
+                        .unwrap_or_else(chrono::Utc::now),
+                    storage_location: existing_table.storage_location,
+                    flush_policy: serde_json::from_str(&existing_table.flush_policy)
+                        .unwrap_or_default(),
+                    schema_version: existing_table.schema_version as u32,
+                    deleted_retention_hours: if existing_table.deleted_retention_hours > 0 {
+                        Some(existing_table.deleted_retention_hours as u32)
+                    } else {
+                        None
+                    },
+                }, false)); // false = not newly created
             } else {
                 return Err(KalamDbError::AlreadyExists(format!(
                     "Shared table {}.{} already exists",
@@ -86,8 +113,9 @@ impl SharedTableService {
             }
         }
 
-        // Inject system columns (_updated, _deleted)
-        let schema = self.inject_system_columns(stmt.schema.clone())?;
+        // Use the schema as-is WITHOUT injecting system columns
+        // System columns will be added dynamically by SharedTableProvider at query time
+        let schema = stmt.schema.clone();
 
         // Resolve storage location
         let storage_location = stmt.location.unwrap_or_else(|| "/data/shared".to_string());
@@ -113,6 +141,19 @@ impl SharedTableService {
             stmt.deleted_retention,
         )?;
 
+        // Create RocksDB column family for this table
+        // This ensures the table is ready for data operations immediately after creation
+        self.shared_table_store
+            .create_column_family(stmt.namespace_id.as_str(), stmt.table_name.as_str())
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to create column family for shared table {}.{}: {}",
+                    stmt.namespace_id.as_str(),
+                    stmt.table_name.as_str(),
+                    e
+                ))
+            })?;
+
         // Note: Column family creation must be done separately via DB instance
         // The caller should use:
         // db.create_cf(format!("shared_table:{}:{}", namespace_id, table_name), &opts)
@@ -129,7 +170,7 @@ impl SharedTableService {
             deleted_retention_hours: stmt.deleted_retention.map(|secs| (secs / 3600) as u32),
         };
 
-        Ok(metadata)
+        Ok((metadata, true)) // true = newly created
     }
 
     /// Validate table name
@@ -231,7 +272,8 @@ impl SharedTableService {
     /// Create schema metadata in RocksDB via kalamdb-sql
     ///
     /// Shared tables store:
-    /// - Schema in system_table_schemas (version 1)
+    /// - Schema in system_table_schemas (version 1) WITHOUT system columns
+    /// - System columns (_updated, _deleted) are added dynamically by SharedTableProvider
     /// - Table metadata in system_tables
     /// - Flush policy configuration
     fn create_schema_metadata(
@@ -251,23 +293,26 @@ impl SharedTableService {
         let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
 
         // Create TableSchema record for version 1
-        let _table_schema = TableSchema {
+        let table_schema = TableSchema {
             schema_id: format!("{}:1", table_id),
             table_id: table_id.clone(),
             version: 1,
             arrow_schema: arrow_schema_json,
-            created_at: chrono::Utc::now().timestamp(),
+            // Use millis for consistency with other parts of the system
+            created_at: chrono::Utc::now().timestamp_millis(),
             changes: format!(
                 "Initial shared table schema. System columns: _updated, _deleted. Deleted retention: {:?}h",
                 deleted_retention.map(|s| s / 3600)
             ),
         };
 
-        // Insert schema into system_table_schemas (TODO: add this method to kalamdb-sql)
-        // For now, we'll skip this and rely on get_table_schema returning None
-        // self.kalam_sql
-        //     .insert_table_schema(&table_schema)
-        //     .map_err(|e| KalamDbError::StorageError(e.to_string()))?;
+        // Insert schema into system_table_schemas via KalamSQL so DataFusion can load it
+        self.kalam_sql
+            .insert_table_schema(&table_schema)
+            .map_err(|e| KalamDbError::SchemaError(format!(
+                "Failed to insert schema for {}: {}",
+                table_id, e
+            )))?;
 
         // Create Table record in system_tables
         let flush_policy_str = match flush_policy {
@@ -359,7 +404,8 @@ mod tests {
         let result = service.create_table(stmt);
         assert!(result.is_ok());
 
-        let metadata = result.unwrap();
+        let (metadata, was_created) = result.unwrap();
+        assert!(was_created);
         assert_eq!(metadata.table_name.as_str(), "config");
         assert_eq!(metadata.table_type, TableType::Shared);
         assert_eq!(metadata.namespace.as_str(), "app");
@@ -412,7 +458,7 @@ mod tests {
         let result = service.create_table(stmt);
         assert!(result.is_ok());
 
-        let metadata = result.unwrap();
+        let (metadata, _was_created) = result.unwrap();
         assert_eq!(metadata.storage_location, "/custom/path/shared");
     }
 

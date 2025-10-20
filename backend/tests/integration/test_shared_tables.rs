@@ -254,18 +254,18 @@ async fn test_shared_table_delete() {
     // Insert data
     server
         .execute_sql(
-            r#"INSERT INTO test_ns.conversations (name, value) VALUES ('conv001', 'To Delete')"#,
+            r#"INSERT INTO test_ns.conversations (conversation_id, title, status) VALUES ('conv001', 'To Delete', 'active')"#,
         )
         .await;
     server
         .execute_sql(
-            r#"INSERT INTO test_ns.conversations (name, value) VALUES ('conv002', 'To Keep')"#,
+            r#"INSERT INTO test_ns.conversations (conversation_id, title, status) VALUES ('conv002', 'To Keep', 'active')"#,
         )
         .await;
 
     // Delete one row (soft delete)
     let response = server
-        .execute_sql("DELETE FROM test_ns.conversations WHERE name = 'conv001'")
+        .execute_sql("DELETE FROM test_ns.conversations WHERE conversation_id = 'conv001'")
         .await;
 
     assert_eq!(
@@ -276,7 +276,7 @@ async fn test_shared_table_delete() {
 
     // Verify deletion (soft delete should hide the row)
     let response = server
-        .execute_sql("SELECT name FROM test_ns.conversations ORDER BY name")
+        .execute_sql("SELECT conversation_id FROM test_ns.conversations ORDER BY conversation_id")
         .await;
 
     assert_eq!(response.status, "success");
@@ -292,12 +292,12 @@ async fn test_shared_table_system_columns() {
 
     // Insert data
     server.execute_sql(
-        r#"INSERT INTO test_ns.conversations (name, value) VALUES ('conv001', 'Test Conversation')"#
+        r#"INSERT INTO test_ns.conversations (conversation_id, title, participant_count) VALUES ('conv001', 'Test Conversation', 5)"#
     ).await;
 
     // Query including system columns
     let response = server
-        .execute_sql("SELECT name, value, _updated, _deleted FROM test_ns.conversations")
+        .execute_sql("SELECT conversation_id, title, _updated, _deleted FROM test_ns.conversations")
         .await;
 
     assert_eq!(
@@ -374,15 +374,15 @@ async fn test_shared_table_query_filtering() {
 
     // Insert test data
     server.execute_sql(
-        r#"INSERT INTO test_ns.conversations (name, value) VALUES ('active', 'Active Conversation')"#
+        r#"INSERT INTO test_ns.conversations (conversation_id, title, status) VALUES ('conv001', 'Active Conversation', 'active')"#
     ).await;
     server.execute_sql(
-        r#"INSERT INTO test_ns.conversations (name, value) VALUES ('archived', 'Archived Conversation')"#
+        r#"INSERT INTO test_ns.conversations (conversation_id, title, status) VALUES ('conv002', 'Archived Conversation', 'archived')"#
     ).await;
 
     // Query with filter
     let response = server
-        .execute_sql("SELECT * FROM test_ns.conversations WHERE name = 'active'")
+        .execute_sql("SELECT * FROM test_ns.conversations WHERE status = 'active'")
         .await;
 
     assert_eq!(
@@ -403,23 +403,23 @@ async fn test_shared_table_ordering() {
     // Insert data in random order
     server
         .execute_sql(
-            r#"INSERT INTO test_ns.conversations (name, value) VALUES ('conv003', 'Third')"#,
+            r#"INSERT INTO test_ns.conversations (conversation_id, title) VALUES ('conv003', 'Third')"#,
         )
         .await;
     server
         .execute_sql(
-            r#"INSERT INTO test_ns.conversations (name, value) VALUES ('conv001', 'First')"#,
+            r#"INSERT INTO test_ns.conversations (conversation_id, title) VALUES ('conv001', 'First')"#,
         )
         .await;
     server
         .execute_sql(
-            r#"INSERT INTO test_ns.conversations (name, value) VALUES ('conv002', 'Second')"#,
+            r#"INSERT INTO test_ns.conversations (conversation_id, title) VALUES ('conv002', 'Second')"#,
         )
         .await;
 
     // Query with ORDER BY
     let response = server
-        .execute_sql("SELECT name FROM test_ns.conversations ORDER BY name ASC")
+        .execute_sql("SELECT conversation_id, title FROM test_ns.conversations ORDER BY conversation_id ASC")
         .await;
 
     assert_eq!(
@@ -441,8 +441,8 @@ async fn test_shared_table_drop_with_data() {
     for i in 0..5 {
         server
             .execute_sql(&format!(
-                r#"INSERT INTO test_ns.conversations (name, value) VALUES ('conv{}', 'Data {}')"#,
-                i, i
+                r#"INSERT INTO test_ns.conversations (conversation_id, title, participant_count) VALUES ('conv{}', 'Data {}', {})"#,
+                i, i, i + 1
             ))
             .await;
     }
@@ -479,10 +479,10 @@ async fn test_shared_table_multiple_tables_same_namespace() {
 
     // Insert data into both tables
     server
-        .execute_sql(r#"INSERT INTO test_ns.conversations (name, value) VALUES ('conv1', 'Test')"#)
+        .execute_sql(r#"INSERT INTO test_ns.conversations (conversation_id, title) VALUES ('conv1', 'Test')"#)
         .await;
     server
-        .execute_sql(r#"INSERT INTO test_ns.config (name, value) VALUES ('setting1', 'value1')"#)
+        .execute_sql(r#"INSERT INTO test_ns.config (conversation_id, title) VALUES ('setting1', 'value1')"#)
         .await;
 
     // Query both tables
@@ -511,7 +511,7 @@ async fn test_shared_table_complete_lifecycle() {
     // 3. Insert data
     for i in 0..3 {
         server.execute_sql(
-            &format!(r#"INSERT INTO lifecycle_test.conversations (name, value) VALUES ('item{}', 'value{}')"#, i, i)
+            &format!(r#"INSERT INTO lifecycle_test.conversations (conversation_id, title, participant_count) VALUES ('item{}', 'value{}', {})"#, i, i, i + 1)
         ).await;
     }
 
@@ -524,13 +524,13 @@ async fn test_shared_table_complete_lifecycle() {
     // 5. Update data
     server
         .execute_sql(
-            r#"UPDATE lifecycle_test.conversations SET value = 'updated' WHERE name = 'item1'"#,
+            r#"UPDATE lifecycle_test.conversations SET title = 'updated' WHERE conversation_id = 'item1'"#,
         )
         .await;
 
     // 6. Delete data
     server
-        .execute_sql("DELETE FROM lifecycle_test.conversations WHERE name = 'item2'")
+        .execute_sql("DELETE FROM lifecycle_test.conversations WHERE conversation_id = 'item2'")
         .await;
 
     // 7. Drop table

@@ -4,13 +4,14 @@
 //! coordinating between parsers, services, and DataFusion.
 
 use crate::catalog::Namespace;
-use crate::catalog::{NamespaceId, TableName, TableType, UserId};
+use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
 use crate::error::KalamDbError;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 use crate::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
     UserTableService,
 };
+use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::sql::ddl::{
     AlterNamespaceStatement, CreateNamespaceStatement, CreateSharedTableStatement,
     CreateStreamTableStatement, CreateUserTableStatement, DescribeTableStatement,
@@ -55,6 +56,25 @@ pub struct SqlExecutor {
     shared_table_store: Option<Arc<SharedTableStore>>,
     stream_table_store: Option<Arc<StreamTableStore>>,
     kalam_sql: Option<Arc<KalamSql>>,
+    // Session factory for creating per-user sessions
+    session_factory: DataFusionSessionFactory,
+}
+
+/// UPDATE statement parsed info
+#[derive(Debug)]
+struct UpdateInfo {
+    namespace: String,
+    table: String,
+    set_values: Vec<(String, serde_json::Value)>,
+    where_clause: String,
+}
+
+/// DELETE statement parsed info
+#[derive(Debug)]
+struct DeleteInfo {
+    namespace: String,
+    table: String,
+    where_clause: String,
 }
 
 impl SqlExecutor {
@@ -66,6 +86,8 @@ impl SqlExecutor {
         shared_table_service: Arc<SharedTableService>,
         stream_table_service: Arc<StreamTableService>,
     ) -> Self {
+        let session_factory = DataFusionSessionFactory::default();
+        
         Self {
             namespace_service,
             session_context,
@@ -77,6 +99,7 @@ impl SqlExecutor {
             shared_table_store: None,
             stream_table_store: None,
             kalam_sql: None,
+            session_factory,
         }
     }
 
@@ -204,26 +227,14 @@ impl SqlExecutor {
 
         match table_type {
             TableType::User => {
-                let store = self.user_table_store.as_ref().ok_or_else(|| {
-                    KalamDbError::InvalidOperation("UserTableStore not configured".to_string())
-                })?;
-
-                // TODO: Get current_user_id from execution context
-                let current_user_id = UserId::from("system");
-
-                let provider = Arc::new(UserTableProvider::new(
-                    table_metadata,
-                    schema,
-                    store.clone(),
-                    current_user_id,
-                    vec![], // parquet_paths - empty for now
-                ));
-
-                df_schema
-                    .register_table(table_name.as_str().to_string(), provider)
-                    .map_err(|e| {
-                        KalamDbError::Other(format!("Failed to register user table: {}", e))
-                    })?;
+                // For user tables, DO NOT register with DataFusion at CREATE TABLE time
+                // because the provider needs the actual user_id from each query request.
+                // User tables will be registered dynamically at query time via reregister_user_tables_for_user()
+                
+                // Just return Ok - the table metadata is already in system.tables,
+                // schema is in system.table_schemas, and column family is created.
+                // That's all we need for CREATE TABLE.
+                return Ok(());
             }
             TableType::Shared => {
                 let store = self.shared_table_store.as_ref().ok_or_else(|| {
@@ -300,15 +311,19 @@ impl SqlExecutor {
             || sql_upper.starts_with("CREATE STREAM TABLE")
         {
             return self.execute_create_table(sql, user_id).await;
-        } else if sql_upper.starts_with("DROP TABLE") {
-            return self.execute_drop_table(sql).await;
-        } else if sql_upper.starts_with("SELECT")
-            || sql_upper.starts_with("INSERT")
-            || sql_upper.starts_with("UPDATE")
-            || sql_upper.starts_with("DELETE")
+        } else if sql_upper.starts_with("DROP TABLE")
+            || sql_upper.starts_with("DROP USER TABLE")
+            || sql_upper.starts_with("DROP SHARED TABLE")
+            || sql_upper.starts_with("DROP STREAM TABLE")
         {
-            // Delegate DML queries to DataFusion
-            return self.execute_datafusion_query(sql).await;
+            return self.execute_drop_table(sql).await;
+        } else if sql_upper.starts_with("UPDATE") {
+            return self.execute_update(sql, user_id).await;
+        } else if sql_upper.starts_with("DELETE") {
+            return self.execute_delete(sql, user_id).await;
+        } else if sql_upper.starts_with("SELECT") || sql_upper.starts_with("INSERT") {
+            // Delegate SELECT/INSERT to DataFusion
+            return self.execute_datafusion_query(sql, user_id).await;
         }
 
         // Otherwise, unsupported
@@ -317,11 +332,234 @@ impl SqlExecutor {
             sql.lines().next().unwrap_or("")
         )))
     }
+    
+    /// Create a fresh SessionContext for a specific user with only their tables registered
+    /// 
+    /// This ensures user data isolation by creating a dedicated session with user-scoped TableProviders.
+    async fn create_user_session_context(&self, user_id: &UserId) -> Result<SessionContext, KalamDbError> {
+        use datafusion::catalog::schema::MemorySchemaProvider;
+        
+        // Create fresh SessionContext using the shared RuntimeEnv (efficient - no memory duplication)
+        let user_session = self.session_factory.create_session();
+        
+        // Get KalamSQL for querying system tables
+        let kalam_sql = self.kalam_sql.as_ref().ok_or_else(|| {
+            KalamDbError::InvalidOperation("KalamSQL not configured".to_string())
+        })?;
+
+        // Get the "kalam" catalog
+        let catalog_name = "kalam";
+        let catalog = user_session
+            .catalog(catalog_name)
+            .ok_or_else(|| KalamDbError::Other(format!("Catalog '{}' not found", catalog_name)))?;
+
+        // Get all tables from system.tables
+        let all_tables = kalam_sql.scan_all_tables().map_err(|e| {
+            KalamDbError::Other(format!("Failed to scan system.tables: {}", e))
+        })?;
+        
+        // Create namespaces for all unique namespaces in the tables
+        let unique_namespaces: std::collections::HashSet<_> = all_tables
+            .iter()
+            .map(|t| t.namespace.as_str())
+            .collect();
+        
+        for namespace_str in unique_namespaces {
+            if catalog.schema(namespace_str).is_none() {
+                let new_schema = Arc::new(MemorySchemaProvider::new());
+                catalog.register_schema(namespace_str, new_schema)
+                    .map_err(|e| KalamDbError::Other(format!("Failed to register schema '{}': {}", namespace_str, e)))?;
+            }
+        }
+
+        // Register shared tables (no user isolation needed)
+        for table in all_tables.iter().filter(|t| t.table_type == "shared") {
+            let table_name = TableName::new(&table.table_name);
+            let namespace_id = NamespaceId::new(&table.namespace);
+            let table_id = format!("{}:{}", table.namespace, table.table_name);
+            
+            // Get schema
+            let table_schema = kalam_sql
+                .get_table_schema(&table_id, None)
+                .map_err(|e| KalamDbError::Other(format!("Failed to get schema for {}: {}", table_id, e)))?
+                .ok_or_else(|| KalamDbError::NotFound(format!("Schema not found for table {}", table_id)))?;
+
+            let arrow_schema_with_opts = ArrowSchemaWithOptions::from_json_string(&table_schema.arrow_schema)
+                .map_err(|e| KalamDbError::Other(format!("Failed to parse arrow schema for {}: {}", table_id, e)))?;
+            let schema = arrow_schema_with_opts.schema;
+
+            // Create metadata
+            let metadata = TableMetadata {
+                table_name: table_name.clone(),
+                table_type: TableType::Shared,
+                namespace: namespace_id.clone(),
+                created_at: chrono::DateTime::from_timestamp_millis(table.created_at)
+                    .unwrap_or_else(|| chrono::Utc::now()),
+                storage_location: table.storage_location.clone(),
+                flush_policy: serde_json::from_str(&table.flush_policy).unwrap_or_default(),
+                schema_version: table.schema_version as u32,
+                deleted_retention_hours: if table.deleted_retention_hours > 0 {
+                    Some(table.deleted_retention_hours as u32)
+                } else {
+                    None
+                },
+            };
+
+            // Get shared table store
+            let store = self.shared_table_store.as_ref().ok_or_else(|| {
+                KalamDbError::InvalidOperation("SharedTableStore not configured".to_string())
+            })?;
+
+            // Create provider
+            let provider = Arc::new(SharedTableProvider::new(
+                metadata,
+                schema,
+                store.clone(),
+            ));
+
+            // Register with fully qualified name
+            let qualified_name = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
+            user_session.register_table(&qualified_name, provider.clone())
+                .map_err(|e| KalamDbError::Other(format!("Failed to register shared table {}: {}", qualified_name, e)))?;
+
+            // Also register without namespace prefix
+            user_session.register_table(table_name.as_str(), provider)
+                .map_err(|e| KalamDbError::Other(format!("Failed to register shared table {}: {}", table_name.as_str(), e)))?;
+        }
+
+        // Register user tables with the current user_id (ensures data isolation)
+        for table in all_tables.iter().filter(|t| t.table_type == "user") {
+            let table_name = TableName::new(&table.table_name);
+            let namespace_id = NamespaceId::new(&table.namespace);
+            let table_id = format!("{}:{}", table.namespace, table.table_name);
+            
+            // Get schema
+            let table_schema = kalam_sql
+                .get_table_schema(&table_id, None)
+                .map_err(|e| KalamDbError::Other(format!("Failed to get schema for {}: {}", table_id, e)))?
+                .ok_or_else(|| KalamDbError::NotFound(format!("Schema not found for table {}", table_id)))?;
+
+            let arrow_schema_with_opts = ArrowSchemaWithOptions::from_json_string(&table_schema.arrow_schema)
+                .map_err(|e| KalamDbError::Other(format!("Failed to parse arrow schema for {}: {}", table_id, e)))?;
+            let schema = arrow_schema_with_opts.schema;
+
+            // Create metadata
+            let metadata = TableMetadata {
+                table_name: table_name.clone(),
+                table_type: TableType::User,
+                namespace: namespace_id.clone(),
+                created_at: chrono::DateTime::from_timestamp_millis(table.created_at)
+                    .unwrap_or_else(|| chrono::Utc::now()),
+                storage_location: table.storage_location.clone(),
+                flush_policy: serde_json::from_str(&table.flush_policy).unwrap_or_default(),
+                schema_version: table.schema_version as u32,
+                deleted_retention_hours: if table.deleted_retention_hours > 0 {
+                    Some(table.deleted_retention_hours as u32)
+                } else {
+                    None
+                },
+            };
+
+            // Get user table store
+            let store = self.user_table_store.as_ref().ok_or_else(|| {
+                KalamDbError::InvalidOperation("UserTableStore not configured".to_string())
+            })?;
+
+            // Create provider with the CURRENT user_id (critical for data isolation)
+            let provider = Arc::new(UserTableProvider::new(
+                metadata,
+                schema,
+                store.clone(),
+                user_id.clone(),
+                vec![], // parquet_paths - empty for now
+            ));
+
+            // Register with fully qualified name
+            let qualified_name = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
+            user_session.register_table(&qualified_name, provider.clone())
+                .map_err(|e| KalamDbError::Other(format!("Failed to register user table {}: {}", qualified_name, e)))?;
+
+            // Also register without namespace prefix
+            user_session.register_table(table_name.as_str(), provider)
+                .map_err(|e| KalamDbError::Other(format!("Failed to register user table {}: {}", table_name.as_str(), e)))?;
+        }
+
+        // Register stream tables
+        // Stream tables are NOT user-specific - they are append-only event streams shared across users
+        for table in all_tables.iter().filter(|t| t.table_type == "stream") {
+            let table_name = TableName::new(&table.table_name);
+            let namespace_id = NamespaceId::new(&table.namespace);
+            let table_id = format!("{}:{}", table.namespace, table.table_name);
+            
+            // Get schema
+            let table_schema = kalam_sql
+                .get_table_schema(&table_id, None)
+                .map_err(|e| KalamDbError::Other(format!("Failed to get schema for {}: {}", table_id, e)))?
+                .ok_or_else(|| KalamDbError::NotFound(format!("Schema not found for table {}", table_id)))?;
+
+            let arrow_schema_with_opts = ArrowSchemaWithOptions::from_json_string(&table_schema.arrow_schema)
+                .map_err(|e| KalamDbError::Other(format!("Failed to parse arrow schema for {}: {}", table_id, e)))?;
+            let schema = arrow_schema_with_opts.schema;
+
+            // Create metadata
+            let metadata = TableMetadata {
+                table_name: table_name.clone(),
+                table_type: TableType::Stream,
+                namespace: namespace_id.clone(),
+                created_at: chrono::DateTime::from_timestamp_millis(table.created_at)
+                    .unwrap_or_else(|| chrono::Utc::now()),
+                storage_location: table.storage_location.clone(),
+                flush_policy: serde_json::from_str(&table.flush_policy).unwrap_or_default(),
+                schema_version: table.schema_version as u32,
+                deleted_retention_hours: if table.deleted_retention_hours > 0 {
+                    Some(table.deleted_retention_hours as u32)
+                } else {
+                    None
+                },
+            };
+
+            // Get stream table store
+            let store = self.stream_table_store.as_ref().ok_or_else(|| {
+                KalamDbError::InvalidOperation("StreamTableStore not configured".to_string())
+            })?;
+
+            // Create provider
+            let provider = Arc::new(StreamTableProvider::new(
+                metadata,
+                schema,
+                store.clone(),
+                None,  // retention_seconds - TODO: get from table metadata
+                false, // ephemeral - TODO: get from table metadata
+                None,  // max_buffer - TODO: get from table metadata
+            ));
+
+            // Register with fully qualified name
+            let qualified_name = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
+            user_session.register_table(&qualified_name, provider.clone())
+                .map_err(|e| KalamDbError::Other(format!("Failed to register stream table {}: {}", qualified_name, e)))?;
+
+            // Also register without namespace prefix
+            user_session.register_table(table_name.as_str(), provider)
+                .map_err(|e| KalamDbError::Other(format!("Failed to register stream table {}: {}", table_name.as_str(), e)))?;
+        }
+
+        Ok(user_session)
+    }
+    
     /// Execute query via DataFusion
-    async fn execute_datafusion_query(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    ///
+    /// Always creates a fresh SessionContext to ensure tables are up-to-date after CREATE TABLE operations.
+    /// For queries with user_id, creates per-user providers with data isolation.
+    /// For queries without user_id, creates session with anonymous user (shared/stream tables accessible).
+    async fn execute_datafusion_query(&self, sql: &str, user_id: Option<&UserId>) -> Result<ExecutionResult, KalamDbError> {
+        // Always create a fresh SessionContext (whether user_id provided or not)
+        // This ensures newly created tables are available
+        let anonymous_user = UserId::from("anonymous");
+        let uid = user_id.unwrap_or(&anonymous_user);
+        let session = self.create_user_session_context(uid).await?;
+        
         // Execute SQL via DataFusion
-        let df = self
-            .session_context
+        let df = session
             .sql(sql)
             .await
             .map_err(|e| KalamDbError::Other(format!("Error planning query: {}", e)))?;
@@ -630,65 +868,73 @@ impl SqlExecutor {
             let flush_policy = stmt.flush_policy.clone();
             let deleted_retention = stmt.deleted_retention;
 
-            let metadata = self.shared_table_service.create_table(stmt)?;
+            let (metadata, was_created) = self.shared_table_service.create_table(stmt)?;
 
-            // Insert into system.tables via KalamSQL
-            if let Some(kalam_sql) = &self.kalam_sql {
-                let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
+            // Only insert into system.tables and register with DataFusion if table was newly created
+            if was_created {
+                // Insert into system.tables via KalamSQL
+                if let Some(kalam_sql) = &self.kalam_sql {
+                    let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
 
-                // Convert local FlushPolicy to the global one for serialization
-                let flush_policy_json = if let Some(fp) = flush_policy {
-                    match fp {
-                        crate::sql::ddl::create_shared_table::FlushPolicy::Rows(n) => {
-                            serde_json::json!({"type": "row_limit", "row_limit": n}).to_string()
+                    // Convert local FlushPolicy to the global one for serialization
+                    let flush_policy_json = if let Some(fp) = flush_policy {
+                        match fp {
+                            crate::sql::ddl::create_shared_table::FlushPolicy::Rows(n) => {
+                                serde_json::json!({"type": "row_limit", "row_limit": n}).to_string()
+                            }
+                            crate::sql::ddl::create_shared_table::FlushPolicy::Time(s) => {
+                                serde_json::json!({"type": "time_interval", "interval_seconds": s}).to_string()
+                            }
+                            crate::sql::ddl::create_shared_table::FlushPolicy::Combined { rows, seconds } => {
+                                serde_json::json!({"type": "combined", "row_limit": rows, "interval_seconds": seconds}).to_string()
+                            }
                         }
-                        crate::sql::ddl::create_shared_table::FlushPolicy::Time(s) => {
-                            serde_json::json!({"type": "time_interval", "interval_seconds": s}).to_string()
-                        }
-                        crate::sql::ddl::create_shared_table::FlushPolicy::Combined { rows, seconds } => {
-                            serde_json::json!({"type": "combined", "row_limit": rows, "interval_seconds": seconds}).to_string()
-                        }
-                    }
-                } else {
-                    "{}".to_string()
-                };
+                    } else {
+                        "{}".to_string()
+                    };
 
-                let table = kalamdb_sql::models::Table {
-                    table_id,
-                    table_name: table_name.as_str().to_string(),
-                    namespace: namespace_id.as_str().to_string(),
-                    table_type: "shared".to_string(),
-                    created_at: chrono::Utc::now().timestamp_millis(),
-                    storage_location: metadata.storage_location.clone(),
-                    flush_policy: flush_policy_json,
-                    schema_version: 1,
-                    deleted_retention_hours: deleted_retention
-                        .map(|s| (s / 3600) as i32)
-                        .unwrap_or(0),
-                };
-                kalam_sql.insert_table(&table).map_err(|e| {
-                    KalamDbError::Other(format!(
-                        "Failed to insert table into system catalog: {}",
-                        e
-                    ))
-                })?;
+                    let table = kalamdb_sql::models::Table {
+                        table_id,
+                        table_name: table_name.as_str().to_string(),
+                        namespace: namespace_id.as_str().to_string(),
+                        table_type: "shared".to_string(),
+                        created_at: chrono::Utc::now().timestamp_millis(),
+                        storage_location: metadata.storage_location.clone(),
+                        flush_policy: flush_policy_json,
+                        schema_version: 1,
+                        deleted_retention_hours: deleted_retention
+                            .map(|s| (s / 3600) as i32)
+                            .unwrap_or(0),
+                    };
+                    kalam_sql.insert_table(&table).map_err(|e| {
+                        KalamDbError::Other(format!(
+                            "Failed to insert table into system catalog: {}",
+                            e
+                        ))
+                    })?;
+                }
+
+                // Register with DataFusion if stores are configured
+                if self.shared_table_store.is_some() {
+                    self.register_table_with_datafusion(
+                        &namespace_id,
+                        &table_name,
+                        crate::catalog::TableType::Shared,
+                        schema,
+                        default_user_id,
+                    )
+                    .await?;
+                }
+
+                Ok(ExecutionResult::Success(
+                    "Table created successfully".to_string(),
+                ))
+            } else {
+                // Table already existed (IF NOT EXISTS case)
+                Ok(ExecutionResult::Success(
+                    format!("Table {}.{} already exists (skipped)", namespace_id, table_name)
+                ))
             }
-
-            // Register with DataFusion if stores are configured
-            if self.shared_table_store.is_some() {
-                self.register_table_with_datafusion(
-                    &namespace_id,
-                    &table_name,
-                    crate::catalog::TableType::Shared,
-                    schema,
-                    default_user_id,
-                )
-                .await?;
-            }
-
-            Ok(ExecutionResult::Success(
-                "Table created successfully".to_string(),
-            ))
         }
     }
 
@@ -701,8 +947,9 @@ impl SqlExecutor {
             )
         })?;
 
-        let namespace_id = crate::catalog::NamespaceId::new("default"); // TODO: Get from context
-        let stmt = DropTableStatement::parse(sql, &namespace_id)?;
+        // Use default namespace - the SQL parser will extract namespace from qualified name (namespace.table)
+        let default_namespace = crate::catalog::NamespaceId::new("default");
+        let stmt = DropTableStatement::parse(sql, &default_namespace)?;
 
         // Execute the drop operation
         let result = deletion_service.drop_table(
@@ -728,6 +975,332 @@ impl SqlExecutor {
             deletion_result.files_deleted,
             deletion_result.bytes_freed
         )))
+    }
+
+    /// Execute UPDATE statement
+    ///
+    /// Simple implementation for integration tests:
+    /// UPDATE namespace.table SET col1=val1, col2=val2 WHERE key_col = 'key_value'
+    ///
+    /// For Phase 18, this is a temporary implementation that:
+    /// 1. Parses the SQL to extract table, SET clause, WHERE clause
+    /// 2. Scans all rows and filters in-memory (simple WHERE evaluation)
+    /// 3. Calls TableProvider update methods directly
+    /// 4. For user tables, creates per-user SessionContext to ensure data isolation
+    ///
+    /// Future: Use DataFusion's DML capabilities when available
+    async fn execute_update(&self, sql: &str, user_id: Option<&UserId>) -> Result<ExecutionResult, KalamDbError> {
+        // Parse UPDATE statement (basic parser for integration tests)
+        let update_info = self.parse_update_statement(sql)?;
+
+        // Create appropriate SessionContext based on user_id
+        let session = if let Some(uid) = user_id {
+            self.create_user_session_context(uid).await?
+        } else {
+            self.session_context.as_ref().clone()
+        };
+
+        // Get table provider from the appropriate session
+        let table_ref = datafusion::sql::TableReference::parse_str(&format!(
+            "{}.{}",
+            update_info.namespace, update_info.table
+        ));
+        let table_provider = session
+            .table_provider(table_ref)
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Table not found: {}", e)))?;
+
+        // Try to cast to UserTableProvider first
+        use crate::tables::{SharedTableProvider, UserTableProvider};
+        
+        // Check if it's a UserTableProvider
+        if let Some(user_provider) = table_provider.as_any().downcast_ref::<UserTableProvider>() {
+            // User table UPDATE with isolation
+            let store = self.user_table_store.as_ref().ok_or_else(|| {
+                KalamDbError::InvalidOperation("UserTableStore not configured".to_string())
+            })?;
+            
+            let uid = user_id.ok_or_else(|| {
+                KalamDbError::InvalidOperation("user_id required for user table UPDATE".to_string())
+            })?;
+            
+            // Scan only this user's rows
+            let all_rows = store
+                .scan_user(&update_info.namespace, &update_info.table, uid.as_str())
+                .map_err(|e| KalamDbError::Other(format!("Scan failed: {}", e)))?;
+
+            // Filter rows by WHERE clause (simple evaluation: col = 'value')
+            let (where_col, where_val) = self.parse_simple_where(&update_info.where_clause)?;
+
+            let mut updated_count = 0;
+            for (row_id, row_data) in all_rows {
+                // Check if row matches WHERE clause
+                if let Some(obj) = row_data.as_object() {
+                    if let Some(col_value) = obj.get(&where_col) {
+                        let col_str = col_value.as_str().unwrap_or("");
+                        if col_str == where_val {
+                            // Build update JSON from SET clause
+                            let mut updates = serde_json::Map::new();
+                            for (col, val) in &update_info.set_values {
+                                updates.insert(col.clone(), val.clone());
+                            }
+
+                            // Call update method
+                            user_provider
+                                .update_row(&row_id, serde_json::Value::Object(updates))
+                                .map_err(|e| KalamDbError::Other(format!("Update failed: {}", e)))?;
+
+                            updated_count += 1;
+                        }
+                    }
+                }
+            }
+
+            return Ok(ExecutionResult::Success(format!(
+                "Updated {} row(s)",
+                updated_count
+            )));
+        }
+        
+        // Otherwise, try SharedTableProvider
+        let shared_provider = table_provider
+            .as_any()
+            .downcast_ref::<SharedTableProvider>()
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(
+                    "UPDATE only supported on shared and user tables currently".to_string(),
+                )
+            })?;
+
+        // Scan all rows from store
+        let all_rows = self
+            .shared_table_store
+            .as_ref()
+            .ok_or_else(|| KalamDbError::InvalidOperation("Store not configured".to_string()))?
+            .scan(&update_info.namespace, &update_info.table)
+            .map_err(|e| KalamDbError::Other(format!("Scan failed: {}", e)))?;
+
+        // Filter rows by WHERE clause (simple evaluation: col = 'value')
+        let (where_col, where_val) = self.parse_simple_where(&update_info.where_clause)?;
+
+        let mut updated_count = 0;
+        for (row_id, row_data) in all_rows {
+            // Check if row matches WHERE clause
+            if let Some(obj) = row_data.as_object() {
+                if let Some(col_value) = obj.get(&where_col) {
+                    let col_str = col_value.as_str().unwrap_or("");
+                    if col_str == where_val {
+                        // Build update JSON from SET clause
+                        let mut updates = serde_json::Map::new();
+                        for (col, val) in &update_info.set_values {
+                            updates.insert(col.clone(), val.clone());
+                        }
+
+                        // Call update method
+                        shared_provider
+                            .update(&row_id, serde_json::Value::Object(updates))
+                            .map_err(|e| KalamDbError::Other(format!("Update failed: {}", e)))?;
+
+                        updated_count += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(ExecutionResult::Success(format!(
+            "Updated {} row(s)",
+            updated_count
+        )))
+    }
+
+    /// Execute DELETE statement
+    ///
+    /// DELETE FROM namespace.table WHERE key_col = 'key_value'
+    ///
+    /// Implements soft delete (sets _deleted=true)
+    /// For user tables, creates per-user SessionContext to ensure data isolation
+    async fn execute_delete(&self, sql: &str, user_id: Option<&UserId>) -> Result<ExecutionResult, KalamDbError> {
+        // Parse DELETE statement
+        let delete_info = self.parse_delete_statement(sql)?;
+
+        // Create appropriate SessionContext based on user_id
+        let session = if let Some(uid) = user_id {
+            self.create_user_session_context(uid).await?
+        } else {
+            self.session_context.as_ref().clone()
+        };
+
+        // Get table provider from the appropriate session
+        let table_ref = datafusion::sql::TableReference::parse_str(&format!(
+            "{}.{}",
+            delete_info.namespace, delete_info.table
+        ));
+        let table_provider = session
+            .table_provider(table_ref)
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Table not found: {}", e)))?;
+
+        // Try to cast to UserTableProvider first
+        use crate::tables::{SharedTableProvider, UserTableProvider};
+        
+        // Check if it's a UserTableProvider
+        if let Some(user_provider) = table_provider.as_any().downcast_ref::<UserTableProvider>() {
+            // User table DELETE with isolation
+            let store = self.user_table_store.as_ref().ok_or_else(|| {
+                KalamDbError::InvalidOperation("UserTableStore not configured".to_string())
+            })?;
+            
+            let uid = user_id.ok_or_else(|| {
+                KalamDbError::InvalidOperation("user_id required for user table DELETE".to_string())
+            })?;
+            
+            // Scan only this user's rows
+            let all_rows = store
+                .scan_user(&delete_info.namespace, &delete_info.table, uid.as_str())
+                .map_err(|e| KalamDbError::Other(format!("Scan failed: {}", e)))?;
+
+            // Filter rows by WHERE clause
+            let (where_col, where_val) = self.parse_simple_where(&delete_info.where_clause)?;
+
+            let mut deleted_count = 0;
+            for (row_id, row_data) in all_rows {
+                // Check if row matches WHERE clause
+                if let Some(obj) = row_data.as_object() {
+                    if let Some(col_value) = obj.get(&where_col) {
+                        let col_str = col_value.as_str().unwrap_or("");
+                        if col_str == where_val {
+                            // Call delete method (soft delete for user tables)
+                            user_provider
+                                .delete_row(&row_id)
+                                .map_err(|e| KalamDbError::Other(format!("Delete failed: {}", e)))?;
+
+                            deleted_count += 1;
+                        }
+                    }
+                }
+            }
+
+            return Ok(ExecutionResult::Success(format!(
+                "Deleted {} row(s)",
+                deleted_count
+            )));
+        }
+        
+        // Otherwise, try SharedTableProvider
+        let shared_provider = table_provider
+            .as_any()
+            .downcast_ref::<SharedTableProvider>()
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(
+                    "DELETE only supported on shared and user tables currently".to_string(),
+                )
+            })?;
+
+        // Scan all rows from store
+        let all_rows = self
+            .shared_table_store
+            .as_ref()
+            .ok_or_else(|| KalamDbError::InvalidOperation("Store not configured".to_string()))?
+            .scan(&delete_info.namespace, &delete_info.table)
+            .map_err(|e| KalamDbError::Other(format!("Scan failed: {}", e)))?;
+
+        // Filter rows by WHERE clause
+        let (where_col, where_val) = self.parse_simple_where(&delete_info.where_clause)?;
+
+        let mut deleted_count = 0;
+        for (row_id, row_data) in all_rows {
+            // Check if row matches WHERE clause
+            if let Some(obj) = row_data.as_object() {
+                if let Some(col_value) = obj.get(&where_col) {
+                    let col_str = col_value.as_str().unwrap_or("");
+                    if col_str == where_val {
+                        // Call soft delete method
+                        shared_provider
+                            .delete_soft(&row_id)
+                            .map_err(|e| KalamDbError::Other(format!("Delete failed: {}", e)))?;
+
+                        deleted_count += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(ExecutionResult::Success(format!(
+            "Deleted {} row(s)",
+            deleted_count
+        )))
+    }
+
+    /// Parse simple WHERE clause: col = 'value'
+    fn parse_simple_where(&self, where_clause: &str) -> Result<(String, String), KalamDbError> {
+        let parts: Vec<&str> = where_clause.split('=').map(|s| s.trim()).collect();
+        if parts.len() != 2 {
+            return Err(KalamDbError::InvalidSql(format!(
+                "Unsupported WHERE clause (only simple col='value' supported): {}",
+                where_clause
+            )));
+        }
+        let col_name = parts[0].to_string();
+        let col_value = parts[1].trim_matches('\'').trim_matches('"').to_string();
+        Ok((col_name, col_value))
+    }
+
+    /// Parse UPDATE statement (simple parser for integration tests)
+    fn parse_update_statement(&self, sql: &str) -> Result<UpdateInfo, KalamDbError> {
+        // Regex pattern: UPDATE namespace.table SET col1=val1, col2=val2 WHERE condition
+        let re = regex::Regex::new(
+            r"(?i)UPDATE\s+([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)\s+SET\s+(.+?)\s+WHERE\s+(.+)",
+        )
+        .unwrap();
+
+        let captures = re.captures(sql.trim()).ok_or_else(|| {
+            KalamDbError::InvalidSql(format!("Invalid UPDATE syntax: {}", sql))
+        })?;
+
+        let namespace = captures[1].to_string();
+        let table = captures[2].to_string();
+        let set_clause = captures[3].to_string();
+        let where_clause = captures[4].to_string();
+
+        // Parse SET clause (col1=val1, col2=val2)
+        let mut set_values = Vec::new();
+        for assignment in set_clause.split(',') {
+            let parts: Vec<&str> = assignment.split('=').map(|s| s.trim()).collect();
+            if parts.len() != 2 {
+                return Err(KalamDbError::InvalidSql(format!(
+                    "Invalid SET clause: {}",
+                    assignment
+                )));
+            }
+            let col_name = parts[0].to_string();
+            let col_value = parts[1].trim_matches('\'').trim_matches('"').to_string();
+            set_values.push((col_name, serde_json::json!(col_value)));
+        }
+
+        Ok(UpdateInfo {
+            namespace,
+            table,
+            set_values,
+            where_clause,
+        })
+    }
+
+    /// Parse DELETE statement
+    fn parse_delete_statement(&self, sql: &str) -> Result<DeleteInfo, KalamDbError> {
+        // Regex pattern: DELETE FROM namespace.table WHERE condition
+        let re =
+            regex::Regex::new(r"(?i)DELETE\s+FROM\s+([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)\s+WHERE\s+(.+)")
+                .unwrap();
+
+        let captures = re.captures(sql.trim()).ok_or_else(|| {
+            KalamDbError::InvalidSql(format!("Invalid DELETE syntax: {}", sql))
+        })?;
+
+        Ok(DeleteInfo {
+            namespace: captures[1].to_string(),
+            table: captures[2].to_string(),
+            where_clause: captures[3].to_string(),
+        })
     }
 
     /// Convert namespaces list to Arrow RecordBatch
@@ -922,8 +1495,9 @@ mod tests {
         let session_context = Arc::new(SessionContext::new());
 
         // Initialize table services for tests
+        let user_table_store = Arc::new(kalamdb_store::UserTableStore::new(test_db.db.clone()).unwrap());
         let user_table_service =
-            Arc::new(crate::services::UserTableService::new(kalam_sql.clone()));
+            Arc::new(crate::services::UserTableService::new(kalam_sql.clone(), user_table_store));
         let shared_table_service = Arc::new(crate::services::SharedTableService::new(
             Arc::new(kalamdb_store::SharedTableStore::new(test_db.db.clone()).unwrap()),
             kalam_sql.clone(),

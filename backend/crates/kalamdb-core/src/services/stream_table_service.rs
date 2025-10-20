@@ -88,6 +88,11 @@ impl StreamTableService {
         // Stream tables use the schema as-is (no modifications)
         let schema = stmt.schema.clone();
 
+        // Create column family for this stream table
+        self.stream_table_store
+            .create_column_family(stmt.namespace_id.as_str(), stmt.table_name.as_str())
+            .map_err(|e| KalamDbError::Other(format!("Failed to create column family: {}", e)))?;
+
         // Store schema in system_table_schemas via kalamdb-sql
         self.create_schema_metadata(
             &stmt.namespace_id,
@@ -97,10 +102,6 @@ impl StreamTableService {
             stmt.ephemeral,
             stmt.max_buffer,
         )?;
-
-        // Note: Column family creation must be done separately via DB instance
-        // The caller should use:
-        // db.create_cf(format!("stream_table:{}:{}", namespace_id, table_name), &opts)
 
         // Create and return table metadata
         let metadata = TableMetadata {
@@ -145,18 +146,17 @@ impl StreamTableService {
             table_id: table_id.clone(),
             version: 1,
             arrow_schema: arrow_schema_json,
-            created_at: chrono::Utc::now().timestamp(),
+            created_at: chrono::Utc::now().timestamp_millis(), // Use millis for consistency
             changes: format!(
                 "Initial stream table schema. Retention: {:?}s, Ephemeral: {}, Max Buffer: {:?}",
                 retention_seconds, ephemeral, max_buffer
             ),
         };
 
-        // Insert schema into system_table_schemas (TODO: add this method to kalamdb-sql)
-        // For now, we'll skip this and rely on get_table_schema returning None
-        // self.kalam_sql
-        //     .insert_table_schema(&table_schema)
-        //     .map_err(|e| KalamDbError::StorageError(e.to_string()))?;
+        // Insert schema into system_table_schemas
+        self.kalam_sql
+            .insert_table_schema(&table_schema)
+            .map_err(|e| KalamDbError::SchemaError(format!("Failed to insert table schema: {}", e)))?;
 
         // Create Table record in system_tables
         let table = kalamdb_sql::models::Table {

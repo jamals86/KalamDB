@@ -13,7 +13,7 @@ use crate::tables::user_table_delete::UserTableDeleteHandler;
 use crate::tables::user_table_insert::UserTableInsertHandler;
 use crate::tables::user_table_update::UserTableUpdateHandler;
 use async_trait::async_trait;
-use datafusion::arrow::datatypes::SchemaRef;
+use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::SessionState;
@@ -258,6 +258,8 @@ impl TableProvider for UserTableProvider {
     }
 
     fn schema(&self) -> SchemaRef {
+        // Return the base schema without system columns
+        // System columns (_updated, _deleted) are added dynamically during scan()
         self.schema.clone()
     }
 
@@ -268,22 +270,366 @@ impl TableProvider for UserTableProvider {
     async fn scan(
         &self,
         _state: &SessionState,
-        _projection: Option<&Vec<usize>>,
+        projection: Option<&Vec<usize>>,
         _filters: &[Expr],
-        _limit: Option<usize>,
+        limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // TODO: Implement full scan with:
-        // 1. RocksDB scan with user_key_prefix() for data isolation (T128)
-        // 2. Parquet file scanning from user_storage_location()
-        // 3. Merge results from both sources
-        // 4. Apply projection, filters, and limit
-        //
-        // For now, return NotImplemented error
-        Err(DataFusionError::NotImplemented(format!(
-            "User table scanning not yet implemented for table: {}. Use insert_row(), update_row(), delete_row() methods instead.",
-            self.table_name().as_str()
-        )))
+        // Get the base schema and add system columns for the scan result
+        let mut fields = self.schema.fields().to_vec();
+        
+        // Add system columns: _updated (timestamp) and _deleted (boolean)
+        fields.push(Arc::new(Field::new(
+            "_updated",
+            DataType::Timestamp(TimeUnit::Millisecond, None),
+            false, // NOT NULL
+        )));
+        fields.push(Arc::new(Field::new(
+            "_deleted",
+            DataType::Boolean,
+            false, // NOT NULL
+        )));
+        
+        let full_schema = Arc::new(Schema::new(fields));
+        
+        // Read rows for this user only (using user_id prefix)
+        // This enforces data isolation at the storage layer
+        let all_rows = self.store
+            .scan_user(
+                self.namespace_id().as_str(),
+                self.table_name().as_str(),
+                self.current_user_id.as_str(),
+            )
+            .map_err(|e| DataFusionError::Execution(format!("Failed to scan user table: {}", e)))?;
+
+        // Filter out soft-deleted rows (_deleted=true)
+        let rows: Vec<_> = all_rows
+            .into_iter()
+            .filter(|(_row_id, row_data)| {
+                // Check if _deleted is false or missing (default to false)
+                row_data
+                    .get("_deleted")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                    == false
+            })
+            .collect();
+
+        // Apply limit if specified
+        let rows = if let Some(limit_value) = limit {
+            rows.into_iter().take(limit_value).collect()
+        } else {
+            rows
+        };
+
+        // Convert JSON rows to Arrow RecordBatch (includes system columns)
+        let row_values: Vec<JsonValue> = rows.into_iter().map(|(_id, data)| data).collect();
+        
+        let batch = json_rows_to_arrow_batch(&full_schema, row_values)
+            .map_err(|e| DataFusionError::Execution(format!("JSON to Arrow conversion failed: {}", e)))?;
+
+        // Apply projection if specified
+        let (final_batch, final_schema) = if let Some(proj_indices) = projection {
+            let projected_columns: Vec<_> = proj_indices
+                .iter()
+                .map(|&i| batch.column(i).clone())
+                .collect();
+            
+            let projected_fields: Vec<_> = proj_indices
+                .iter()
+                .map(|&i| full_schema.field(i).clone())
+                .collect();
+            
+            let projected_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(projected_fields));
+            
+            let projected_batch = datafusion::arrow::record_batch::RecordBatch::try_new(projected_schema.clone(), projected_columns)
+                .map_err(|e| DataFusionError::Execution(format!("Failed to project batch: {}", e)))?;
+            
+            (projected_batch, projected_schema)
+        } else {
+            (batch, full_schema)
+        };
+
+        // Create a MemoryExec plan that returns our batch
+        use datafusion::physical_plan::memory::MemoryExec;
+        
+        let partitions = vec![vec![final_batch]];
+        let exec = MemoryExec::try_new(&partitions, final_schema, None)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemoryExec: {}", e)))?;
+
+        Ok(Arc::new(exec))
     }
+
+    async fn insert_into(
+        &self,
+        _state: &SessionState,
+        input: Arc<dyn ExecutionPlan>,
+        _overwrite: bool,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        use datafusion::physical_plan::collect;
+        use datafusion::execution::TaskContext;
+
+        // Execute the input plan to get RecordBatches
+        let task_ctx = Arc::new(TaskContext::default());
+        let batches = collect(input, task_ctx)
+            .await
+            .map_err(|e| DataFusionError::Execution(format!("Failed to collect input: {}", e)))?;
+
+        // Process each batch
+        for batch in batches {
+            // Convert Arrow RecordBatch to JSON rows
+            let json_rows = arrow_batch_to_json(&batch)
+                .map_err(|e| DataFusionError::Execution(format!("Arrow to JSON conversion failed: {}", e)))?;
+
+            // Insert each row using the insert_batch method
+            // This automatically handles user_id scoping
+            self.insert_batch(json_rows)
+                .map_err(|e| DataFusionError::Execution(format!("Insert failed: {}", e)))?;
+        }
+
+        // Return empty execution plan (INSERT returns no rows)
+        use datafusion::physical_plan::empty::EmptyExec;
+        Ok(Arc::new(EmptyExec::new(self.schema.clone())))
+    }
+}
+
+/// Convert Arrow RecordBatch to Vec of JSON objects
+///
+/// This is a helper function for INSERT operations that converts Arrow columnar
+/// data to row-oriented JSON objects suitable for storage.
+///
+/// Supports common Arrow data types:
+/// - Utf8 (String)
+/// - Int32, Int64 (Integers)
+/// - Float64 (Floating point)
+/// - Boolean
+/// - Timestamp (milliseconds)
+///
+/// Handles null values correctly for all types.
+fn arrow_batch_to_json(batch: &datafusion::arrow::record_batch::RecordBatch) -> Result<Vec<JsonValue>, String> {
+    use datafusion::arrow::array::*;
+    use datafusion::arrow::datatypes::DataType;
+
+    let schema = batch.schema();
+    let num_rows = batch.num_rows();
+    let mut rows = Vec::with_capacity(num_rows);
+
+    for row_idx in 0..num_rows {
+        let mut row_map = serde_json::Map::new();
+
+        for (col_idx, field) in schema.fields().iter().enumerate() {
+            let column = batch.column(col_idx);
+            let field_name = field.name().clone();
+
+            // Skip system columns - they'll be added automatically by the insert handler
+            if field_name == "_updated" || field_name == "_deleted" {
+                continue;
+            }
+
+            // Extract value based on data type
+            let value = match field.data_type() {
+                DataType::Utf8 => {
+                    let array = column.as_any().downcast_ref::<StringArray>()
+                        .ok_or_else(|| format!("Failed to downcast column {} to StringArray", field_name))?;
+                    
+                    if array.is_null(row_idx) {
+                        JsonValue::Null
+                    } else {
+                        JsonValue::String(array.value(row_idx).to_string())
+                    }
+                }
+                DataType::Int32 => {
+                    let array = column.as_any().downcast_ref::<Int32Array>()
+                        .ok_or_else(|| format!("Failed to downcast column {} to Int32Array", field_name))?;
+                    
+                    if array.is_null(row_idx) {
+                        JsonValue::Null
+                    } else {
+                        JsonValue::Number(array.value(row_idx).into())
+                    }
+                }
+                DataType::Int64 => {
+                    let array = column.as_any().downcast_ref::<Int64Array>()
+                        .ok_or_else(|| format!("Failed to downcast column {} to Int64Array", field_name))?;
+                    
+                    if array.is_null(row_idx) {
+                        JsonValue::Null
+                    } else {
+                        JsonValue::Number(array.value(row_idx).into())
+                    }
+                }
+                DataType::Float64 => {
+                    let array = column.as_any().downcast_ref::<Float64Array>()
+                        .ok_or_else(|| format!("Failed to downcast column {} to Float64Array", field_name))?;
+                    
+                    if array.is_null(row_idx) {
+                        JsonValue::Null
+                    } else {
+                        let f = array.value(row_idx);
+                        JsonValue::Number(
+                            serde_json::Number::from_f64(f)
+                                .ok_or_else(|| format!("Invalid f64 value: {}", f))?
+                        )
+                    }
+                }
+                DataType::Boolean => {
+                    let array = column.as_any().downcast_ref::<BooleanArray>()
+                        .ok_or_else(|| format!("Failed to downcast column {} to BooleanArray", field_name))?;
+                    
+                    if array.is_null(row_idx) {
+                        JsonValue::Null
+                    } else {
+                        JsonValue::Bool(array.value(row_idx))
+                    }
+                }
+                DataType::Timestamp(_, _) => {
+                    let array = column.as_any().downcast_ref::<TimestampMillisecondArray>()
+                        .ok_or_else(|| format!("Failed to downcast column {} to TimestampMillisecondArray", field_name))?;
+                    
+                    if array.is_null(row_idx) {
+                        JsonValue::Null
+                    } else {
+                        JsonValue::Number(array.value(row_idx).into())
+                    }
+                }
+                _ => {
+                    return Err(format!("Unsupported data type for column {}: {:?}", field_name, field.data_type()));
+                }
+            };
+
+            row_map.insert(field_name, value);
+        }
+
+        rows.push(JsonValue::Object(row_map));
+    }
+
+    Ok(rows)
+}
+
+/// Convert JSON rows to Arrow RecordBatch
+///
+/// This is a helper function for SELECT operations that converts row-oriented
+/// JSON objects to Arrow columnar format.
+///
+/// Supports common Arrow data types:
+/// - Utf8 (String)
+/// - Int32, Int64 (Integers)
+/// - Float64 (Floating point)
+/// - Boolean
+/// - Timestamp (milliseconds)
+///
+/// Handles null values correctly for all types.
+fn json_rows_to_arrow_batch(
+    schema: &SchemaRef,
+    rows: Vec<JsonValue>,
+) -> Result<datafusion::arrow::record_batch::RecordBatch, String> {
+    use datafusion::arrow::array::*;
+    use datafusion::arrow::datatypes::DataType;
+
+    if rows.is_empty() {
+        // Return empty batch with correct schema
+        let empty_arrays: Vec<Arc<dyn datafusion::arrow::array::Array>> = schema
+            .fields()
+            .iter()
+            .map(|field| {
+                let array: Arc<dyn datafusion::arrow::array::Array> = match field.data_type() {
+                    DataType::Utf8 => Arc::new(StringArray::from(Vec::<Option<String>>::new())),
+                    DataType::Int32 => Arc::new(Int32Array::from(Vec::<Option<i32>>::new())),
+                    DataType::Int64 => Arc::new(Int64Array::from(Vec::<Option<i64>>::new())),
+                    DataType::Float64 => Arc::new(Float64Array::from(Vec::<Option<f64>>::new())),
+                    DataType::Boolean => Arc::new(BooleanArray::from(Vec::<Option<bool>>::new())),
+                    DataType::Timestamp(TimeUnit::Millisecond, _) => {
+                        Arc::new(TimestampMillisecondArray::from(Vec::<Option<i64>>::new()))
+                    }
+                    _ => Arc::new(StringArray::from(Vec::<Option<String>>::new())),
+                };
+                array
+            })
+            .collect();
+
+        return datafusion::arrow::record_batch::RecordBatch::try_new(schema.clone(), empty_arrays)
+            .map_err(|e| format!("Failed to create empty batch: {}", e));
+    }
+
+    // Build arrays for each column
+    let mut arrays: Vec<Arc<dyn datafusion::arrow::array::Array>> = Vec::new();
+
+    for field in schema.fields() {
+        let array: Arc<dyn datafusion::arrow::array::Array> = match field.data_type() {
+            DataType::Utf8 => {
+                let values: Vec<Option<String>> = rows
+                    .iter()
+                    .map(|row_data| {
+                        row_data
+                            .get(field.name())
+                            .and_then(|v| v.as_str().map(|s| s.to_string()))
+                    })
+                    .collect();
+                Arc::new(StringArray::from(values))
+            }
+            DataType::Int32 => {
+                let values: Vec<Option<i32>> = rows
+                    .iter()
+                    .map(|row_data| {
+                        row_data
+                            .get(field.name())
+                            .and_then(|v| v.as_i64().map(|i| i as i32))
+                    })
+                    .collect();
+                Arc::new(Int32Array::from(values))
+            }
+            DataType::Int64 => {
+                let values: Vec<Option<i64>> = rows
+                    .iter()
+                    .map(|row_data| row_data.get(field.name()).and_then(|v| v.as_i64()))
+                    .collect();
+                Arc::new(Int64Array::from(values))
+            }
+            DataType::Float64 => {
+                let values: Vec<Option<f64>> = rows
+                    .iter()
+                    .map(|row_data| row_data.get(field.name()).and_then(|v| v.as_f64()))
+                    .collect();
+                Arc::new(Float64Array::from(values))
+            }
+            DataType::Boolean => {
+                let values: Vec<Option<bool>> = rows
+                    .iter()
+                    .map(|row_data| row_data.get(field.name()).and_then(|v| v.as_bool()))
+                    .collect();
+                Arc::new(BooleanArray::from(values))
+            }
+            DataType::Timestamp(TimeUnit::Millisecond, _) => {
+                let values: Vec<Option<i64>> = rows
+                    .iter()
+                    .map(|row_data| {
+                        row_data.get(field.name()).and_then(|v| {
+                            // Try to parse as i64 timestamp or ISO string
+                            v.as_i64().or_else(|| {
+                                v.as_str().and_then(|s| {
+                                    chrono::DateTime::parse_from_rfc3339(s)
+                                        .ok()
+                                        .map(|dt| dt.timestamp_millis())
+                                })
+                            })
+                        })
+                    })
+                    .collect();
+                Arc::new(TimestampMillisecondArray::from(values))
+            }
+            _ => {
+                return Err(format!(
+                    "Unsupported data type for field {}: {:?}",
+                    field.name(),
+                    field.data_type()
+                ));
+            }
+        };
+
+        arrays.push(array);
+    }
+
+    datafusion::arrow::record_batch::RecordBatch::try_new(schema.clone(), arrays)
+        .map_err(|e| format!("Failed to create RecordBatch: {}", e))
 }
 
 #[cfg(test)]

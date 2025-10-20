@@ -345,6 +345,217 @@ impl TableProvider for StreamTableProvider {
             "Stream table scan not yet implemented".to_string(),
         ))
     }
+
+    /// Insert data into the stream table
+    ///
+    /// Implements DataFusion's insert_into trait method for stream tables.
+    /// Converts Arrow RecordBatch to JSON events and calls insert_event().
+    ///
+    /// **Important differences from user tables**:
+    /// - NO system columns (_updated, _deleted)
+    /// - Uses timestamp-based keys for TTL eviction
+    /// - Supports ephemeral mode (discard if no subscribers)
+    /// - Triggers real-time notifications to subscribers
+    async fn insert_into(
+        &self,
+        _state: &SessionState,
+        input: Arc<dyn ExecutionPlan>,
+        _overwrite: bool,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        use datafusion::physical_plan::collect;
+        use datafusion::execution::TaskContext;
+
+        // Execute the input plan to get RecordBatches
+        let task_ctx = Arc::new(TaskContext::default());
+        let batches = collect(input, task_ctx)
+            .await
+            .map_err(|e| DataFusionError::Execution(format!("Failed to collect input: {}", e)))?;
+
+        let mut total_inserted = 0;
+
+        // Process each batch
+        for batch in batches {
+            // Convert Arrow RecordBatch to JSON rows
+            let json_rows = arrow_batch_to_json(&batch)
+                .map_err(|e| DataFusionError::Execution(format!("Arrow to JSON conversion failed: {}", e)))?;
+
+            // Insert each event
+            for (idx, row_data) in json_rows.into_iter().enumerate() {
+                // Generate row_id (use index for now, could use a UUID or snowflake ID)
+                let row_id = format!("event_{}", idx);
+
+                // Insert event (handles ephemeral mode and notifications internally)
+                self.insert_event(&row_id, row_data)
+                    .map_err(|e| DataFusionError::Execution(format!("Insert failed: {}", e)))?;
+
+                total_inserted += 1;
+            }
+        }
+
+        // Create a result batch with the count
+        use datafusion::arrow::array::UInt64Array;
+        use datafusion::arrow::record_batch::RecordBatch;
+        use datafusion::arrow::datatypes::{DataType, Field, Schema};
+
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "count",
+            DataType::UInt64,
+            false,
+        )]));
+        let count_array = UInt64Array::from(vec![total_inserted]);
+        let result_batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(count_array)])
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create result batch: {}", e)))?;
+
+        // Return a MemoryExec with the result
+        use datafusion::physical_plan::memory::MemoryExec;
+        let partitions = vec![vec![result_batch]];
+        let exec = MemoryExec::try_new(&partitions, schema, None)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemoryExec: {}", e)))?;
+
+        Ok(Arc::new(exec))
+    }
+}
+
+/// Helper function to convert Arrow RecordBatch to JSON rows
+///
+/// Converts each row in the batch to a JSON object (HashMap).
+/// Similar to user_table_provider but WITHOUT system columns.
+fn arrow_batch_to_json(
+    batch: &datafusion::arrow::record_batch::RecordBatch,
+) -> Result<Vec<JsonValue>, KalamDbError> {
+    use datafusion::arrow::array::*;
+    use datafusion::arrow::datatypes::DataType;
+    use serde_json::Map;
+
+    let schema = batch.schema();
+    let num_rows = batch.num_rows();
+    let mut rows = Vec::with_capacity(num_rows);
+
+    for row_idx in 0..num_rows {
+        let mut row_map = Map::new();
+
+        for (col_idx, field) in schema.fields().iter().enumerate() {
+            let column = batch.column(col_idx);
+            let col_name = field.name().clone();
+
+            let value = match field.data_type() {
+                DataType::Utf8 => {
+                    let array = column.as_any().downcast_ref::<StringArray>().ok_or_else(|| {
+                        KalamDbError::Other(format!("Expected StringArray for column {}", col_name))
+                    })?;
+                    if array.is_null(row_idx) {
+                        JsonValue::Null
+                    } else {
+                        JsonValue::String(array.value(row_idx).to_string())
+                    }
+                }
+                DataType::Int32 => {
+                    let array = column.as_any().downcast_ref::<Int32Array>().ok_or_else(|| {
+                        KalamDbError::Other(format!("Expected Int32Array for column {}", col_name))
+                    })?;
+                    if array.is_null(row_idx) {
+                        JsonValue::Null
+                    } else {
+                        JsonValue::Number(array.value(row_idx).into())
+                    }
+                }
+                DataType::Int64 => {
+                    let array = column.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
+                        KalamDbError::Other(format!("Expected Int64Array for column {}", col_name))
+                    })?;
+                    if array.is_null(row_idx) {
+                        JsonValue::Null
+                    } else {
+                        JsonValue::Number(array.value(row_idx).into())
+                    }
+                }
+                DataType::Float64 => {
+                    let array = column.as_any().downcast_ref::<Float64Array>().ok_or_else(|| {
+                        KalamDbError::Other(format!("Expected Float64Array for column {}", col_name))
+                    })?;
+                    if array.is_null(row_idx) {
+                        JsonValue::Null
+                    } else {
+                        serde_json::Number::from_f64(array.value(row_idx))
+                            .map(JsonValue::Number)
+                            .unwrap_or(JsonValue::Null)
+                    }
+                }
+                DataType::Boolean => {
+                    let array = column.as_any().downcast_ref::<BooleanArray>().ok_or_else(|| {
+                        KalamDbError::Other(format!("Expected BooleanArray for column {}", col_name))
+                    })?;
+                    if array.is_null(row_idx) {
+                        JsonValue::Null
+                    } else {
+                        JsonValue::Bool(array.value(row_idx))
+                    }
+                }
+                DataType::Timestamp(unit, _) => {
+                    use datafusion::arrow::datatypes::TimeUnit;
+                    
+                    // Handle different timestamp types
+                    let value_ms = match unit {
+                        TimeUnit::Second => {
+                            let array = column.as_any().downcast_ref::<TimestampSecondArray>().ok_or_else(|| {
+                                KalamDbError::Other(format!("Expected TimestampSecondArray for column {}", col_name))
+                            })?;
+                            if array.is_null(row_idx) {
+                                JsonValue::Null
+                            } else {
+                                JsonValue::Number((array.value(row_idx) * 1000).into())
+                            }
+                        }
+                        TimeUnit::Millisecond => {
+                            let array = column.as_any().downcast_ref::<TimestampMillisecondArray>().ok_or_else(|| {
+                                KalamDbError::Other(format!("Expected TimestampMillisecondArray for column {}", col_name))
+                            })?;
+                            if array.is_null(row_idx) {
+                                JsonValue::Null
+                            } else {
+                                JsonValue::Number(array.value(row_idx).into())
+                            }
+                        }
+                        TimeUnit::Microsecond => {
+                            let array = column.as_any().downcast_ref::<TimestampMicrosecondArray>().ok_or_else(|| {
+                                KalamDbError::Other(format!("Expected TimestampMicrosecondArray for column {}", col_name))
+                            })?;
+                            if array.is_null(row_idx) {
+                                JsonValue::Null
+                            } else {
+                                JsonValue::Number((array.value(row_idx) / 1000).into())
+                            }
+                        }
+                        TimeUnit::Nanosecond => {
+                            let array = column.as_any().downcast_ref::<TimestampNanosecondArray>().ok_or_else(|| {
+                                KalamDbError::Other(format!("Expected TimestampNanosecondArray for column {}", col_name))
+                            })?;
+                            if array.is_null(row_idx) {
+                                JsonValue::Null
+                            } else {
+                                JsonValue::Number((array.value(row_idx) / 1_000_000).into())
+                            }
+                        }
+                    };
+                    
+                    value_ms
+                }
+                _ => {
+                    return Err(KalamDbError::Other(format!(
+                        "Unsupported data type {:?} for column {}",
+                        field.data_type(),
+                        col_name
+                    )));
+                }
+            };
+
+            row_map.insert(col_name, value);
+        }
+
+        rows.push(JsonValue::Object(row_map));
+    }
+
+    Ok(rows)
 }
 
 #[cfg(test)]

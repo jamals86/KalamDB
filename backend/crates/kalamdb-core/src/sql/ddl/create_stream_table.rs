@@ -76,6 +76,14 @@ impl CreateStreamTableStatement {
                 // Extract table name
                 let table_name = Self::extract_table_name(name)?;
 
+                // Extract namespace from SQL if provided (e.g., "test_ns.events")
+                // Otherwise use current_namespace
+                let namespace_id = if let Some(ns) = Self::extract_namespace_from_table_name(name) {
+                    NamespaceId::new(ns)
+                } else {
+                    current_namespace.clone()
+                };
+
                 // Parse schema from columns
                 let schema = Self::parse_schema(columns)?;
 
@@ -87,7 +95,7 @@ impl CreateStreamTableStatement {
 
                 Ok(CreateStreamTableStatement {
                     table_name: TableName::new(table_name),
-                    namespace_id: current_namespace.clone(),
+                    namespace_id,
                     schema,
                     retention_seconds,
                     ephemeral: false, // TODO: parse EPHEMERAL keyword
@@ -112,6 +120,19 @@ impl CreateStreamTableStatement {
 
         // Take the last part as table name (handles both "table" and "namespace.table")
         Ok(parts.last().unwrap().value.clone())
+    }
+
+    /// Extract namespace from object name (if provided in SQL)
+    fn extract_namespace_from_table_name(
+        name: &datafusion::sql::sqlparser::ast::ObjectName,
+    ) -> Option<String> {
+        let parts = &name.0;
+        // If we have "namespace.table", return the namespace (first part)
+        if parts.len() >= 2 {
+            Some(parts[0].value.clone())
+        } else {
+            None
+        }
     }
 
     /// Parse schema from column definitions

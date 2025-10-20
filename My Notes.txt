@@ -6,7 +6,10 @@ Things to add to the spec:
 - Add also branch and revision from git to the version when running the server prompt
 - Log the size of the rocksdb database
 - RocksDB folder should be configured using the config .toml file and also by default it need to sit next to the binary file and not temporary table
-
+- Make sure when using scan() we are using it with a key, for erxample scanning the streams should be done only for specific user_id
+    - Also scanning user's table should be done with a user_id
+    - Stream table as well
+- Add code documentation on scan() functions since they are essential for our design
 - make tests run either on local server or on temporary server like its doing now
 - Double check if we can use kalamdb-store with kalamdb-sql instead of calling rocksdb directly from kalamdb-sql
 - Check if ddls can be included inside kalamdb-sql as well since they belong there, if it's not all maybe the names or models only
@@ -39,8 +42,21 @@ Things to add to the spec:
     Check what other columns i need when writing to parquet file 
     or if it's better to indicate this in the file itself, or if there ability
     to have attributes or properties inside the parquet itself
-
-
+- An option when creating a table to have an index for a specific column
+    Create statement should include that index with it as well for example this query:
+    
+- In buffer we also add an index for the user_id for the buffered data, in order to have queries faster
+    Also we cna implement indexes as well, but now user_id is enough, so that:
+    1) each table will have another column_family
+    2) this will be managed with data added in the main table streams with a reference user_id -> refId
+    NOTE: Check if this really needed since we have the key with userId already
+- Can you check why in kalamdb-store we are not using the same NamespaceId and TableName models for something like this for example:
+        namespace_id: &str,
+        table_name: &str,
+        This will have something consistent and if in the future we want to pass anything beyond we csna do it simply
+- Check both user_table_store and shared_table_store and maybe the streams store and also the system tables
+    and check if there anything we can improve with polymorphisim
+    to write less code there, since all of them looks similar
 
 Features:
 - Add CLI tool which is using the API and you can login with specific user to do the actions inside of it, this should be a separate binary
@@ -54,3 +70,7 @@ Features:
 - Raft Cluster - User tables each shard should have a group in the cluster and replicated accordingly
 - User can easily download his data
 - compaction jobs that runs per user whenever he has many parquet files in the system
+- Add an optimizre which runs in the background and check if the queries/design is all correctly functioning like:
+    - If a table is a shared table and has many rows
+    - If a user table is getting big
+    - more will come later, the archeticture should support this

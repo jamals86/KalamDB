@@ -20,6 +20,7 @@ use crate::sql::ddl::create_user_table::{CreateUserTableStatement, StorageLocati
 use crate::storage::column_family_manager::ColumnFamilyManager;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use kalamdb_sql::KalamSql;
+use kalamdb_store::UserTableStore;
 use std::sync::Arc;
 
 /// User table service
@@ -28,6 +29,7 @@ use std::sync::Arc;
 /// column families, and metadata management.
 pub struct UserTableService {
     kalam_sql: Arc<KalamSql>,
+    user_table_store: Arc<UserTableStore>,
 }
 
 impl UserTableService {
@@ -35,8 +37,12 @@ impl UserTableService {
     ///
     /// # Arguments
     /// * `kalam_sql` - KalamSQL instance for schema storage
-    pub fn new(kalam_sql: Arc<KalamSql>) -> Self {
-        Self { kalam_sql }
+    /// * `user_table_store` - UserTableStore for column family creation
+    pub fn new(kalam_sql: Arc<KalamSql>, user_table_store: Arc<UserTableStore>) -> Self {
+        Self { 
+            kalam_sql,
+            user_table_store,
+        }
     }
 
     /// Create a user table from a CREATE USER TABLE statement
@@ -102,12 +108,20 @@ impl UserTableService {
             stmt.deleted_retention_hours,
         )?;
 
-        // Note: Column family creation must be done separately via DB instance
-        // because Arc<DB> doesn't allow mutable operations.
-        // The caller should use:
-        // db.create_cf(ColumnFamilyManager::column_family_name(...), &opts)
+        // 5. Create RocksDB column family for this table
+        // This ensures the table is ready for data operations immediately after creation
+        self.user_table_store
+            .create_column_family(stmt.namespace_id.as_str(), stmt.table_name.as_str())
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to create column family for user table {}.{}: {}",
+                    stmt.namespace_id.as_str(),
+                    stmt.table_name.as_str(),
+                    e
+                ))
+            })?;
 
-        // 5. Create and return table metadata
+        // 6. Create and return table metadata
         let metadata = TableMetadata {
             table_name: stmt.table_name.clone(),
             table_type: TableType::User,
@@ -251,14 +265,31 @@ impl UserTableService {
         let schema_str = serde_json::to_string(&schema_json)
             .map_err(|e| KalamDbError::SchemaError(format!("Failed to serialize schema: {}", e)))?;
 
-        // TODO: Use kalamdb-sql to insert into system_table_schemas
-        // For now, just log - full implementation requires system_table_schemas table setup
+        // Create TableSchema record
+        let table_id = format!("{}:{}", namespace.as_str(), table_name.as_str());
+        let table_schema = kalamdb_sql::models::TableSchema {
+            schema_id: format!("{}_v1", table_id),
+            table_id: table_id.clone(),
+            version: 1,
+            arrow_schema: schema_str,
+            created_at: chrono::Utc::now().timestamp_millis(),
+            changes: "Initial schema".to_string(),
+        };
+
+        // Insert into system.table_schemas via KalamSQL
+        self.kalam_sql
+            .insert_table_schema(&table_schema)
+            .map_err(|e| {
+                KalamDbError::SchemaError(format!(
+                    "Failed to insert schema for {}: {}",
+                    table_id, e
+                ))
+            })?;
+
         log::info!(
-            "Schema for table {}.{} would be saved to system_table_schemas CF",
-            namespace.as_str(),
-            table_name.as_str()
+            "Schema for table {} saved to system.table_schemas (version 1)",
+            table_id
         );
-        log::debug!("Schema JSON: {}", schema_str);
 
         Ok(())
     }
@@ -301,7 +332,8 @@ mod tests {
             TestDb::new(&["system_table_schemas", "system_namespaces", "system_tables"]).unwrap();
 
         let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
-        UserTableService::new(kalam_sql)
+        let user_table_store = Arc::new(UserTableStore::new(test_db.db.clone()).unwrap());
+        UserTableService::new(kalam_sql, user_table_store)
     }
 
     #[test]

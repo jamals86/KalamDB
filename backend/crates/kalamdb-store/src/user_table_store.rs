@@ -32,6 +32,40 @@ impl UserTableStore {
         Ok(Self { db })
     }
 
+    /// Create a column family for a user table.
+    ///
+    /// This should be called during CREATE USER TABLE to initialize storage.
+    /// Returns Ok(()) if the CF was created successfully or already exists.
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace_id` - Namespace identifier
+    /// * `table_name` - Table name
+    ///
+    /// # Safety
+    ///
+    /// See SharedTableStore::create_column_family for safety documentation.
+    /// The same reasoning applies here.
+    pub fn create_column_family(&self, namespace_id: &str, table_name: &str) -> Result<()> {
+        let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
+        
+        // Check if CF already exists
+        if self.db.cf_handle(&cf_name).is_some() {
+            return Ok(());
+        }
+
+        // Create new column family
+        let opts = rocksdb::Options::default();
+        unsafe {
+            let db_ptr = Arc::as_ptr(&self.db) as *mut DB;
+            (*db_ptr)
+                .create_cf(&cf_name, &opts)
+                .with_context(|| format!("Failed to create column family: {}", cf_name))?;
+        }
+
+        Ok(())
+    }
+
     /// Insert or update a row for a specific user.
     ///
     /// Automatically injects system columns:

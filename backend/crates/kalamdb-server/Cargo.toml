@@ -53,6 +53,14 @@ name = "test_shared_tables"
 path = "../../tests/integration/test_shared_tables.rs"
 
 [[test]]
+name = "test_user_tables"
+path = "../../tests/integration/test_user_tables.rs"
+
+[[test]]
+name = "test_stream_tables"
+path = "../../tests/integration/test_stream_tables.rs"
+
+[[test]]
 name = "test_quickstart"
 path = "../../tests/integration/test_quickstart.rs"
 
