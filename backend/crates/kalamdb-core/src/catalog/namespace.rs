@@ -63,11 +63,7 @@ impl Namespace {
             return Err("Namespace name 'system' is reserved".to_string());
         }
 
-        if !name
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_lowercase())
-        {
+        if !name.chars().next().is_some_and(|c| c.is_ascii_lowercase()) {
             return Err("Namespace name must start with a lowercase letter".to_string());
         }
 

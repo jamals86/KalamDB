@@ -180,13 +180,11 @@ impl fmt::Display for LiveId {
 }
 
 /// Live query options
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LiveQueryOptions {
     /// Number of last rows to fetch for initial data
     pub last_rows: Option<u32>,
 }
-
 
 /// Live query subscription
 #[derive(Debug, Clone)]
@@ -305,10 +303,7 @@ impl LiveQueryRegistry {
     /// Register a new WebSocket connection
     pub fn register_connection(&mut self, user_id: UserId, connection_id: ConnectionId) {
         let socket = UserConnectionSocket::new(connection_id);
-        self.users
-            .entry(user_id)
-            .or_default()
-            .add_socket(socket);
+        self.users.entry(user_id).or_default().add_socket(socket);
     }
 
     /// Register a live query subscription

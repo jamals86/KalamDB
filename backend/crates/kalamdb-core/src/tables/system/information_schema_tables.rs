@@ -159,8 +159,6 @@ impl TableProvider for InformationSchemaTablesProvider {
 
 #[cfg(test)]
 mod tests {
-    
-    
 
     #[tokio::test]
     async fn test_information_schema_tables_provider() {

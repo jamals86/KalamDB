@@ -227,21 +227,21 @@ impl TableProvider for SharedTableProvider {
     fn schema(&self) -> SchemaRef {
         // Add system columns to the schema
         let mut fields = self.schema.fields().to_vec();
-        
+
         // Add _updated (timestamp in milliseconds)
         fields.push(Arc::new(Field::new(
             "_updated",
             DataType::Timestamp(TimeUnit::Millisecond, None),
             false, // NOT NULL
         )));
-        
+
         // Add _deleted (boolean)
         fields.push(Arc::new(Field::new(
             "_deleted",
             DataType::Boolean,
             false, // NOT NULL
         )));
-        
+
         Arc::new(Schema::new(fields))
     }
 
@@ -258,18 +258,17 @@ impl TableProvider for SharedTableProvider {
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         // Get the full schema with system columns
         let full_schema = self.schema();
-        
+
         // Read all rows from the store
-        let rows = self.store
-            .scan(
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
-            )
+        let rows = self
+            .store
+            .scan(self.namespace_id().as_str(), self.table_name().as_str())
             .map_err(|e| DataFusionError::Execution(format!("Failed to scan table: {}", e)))?;
 
         // Convert JSON rows to Arrow RecordBatch (includes system columns now)
-        let batch = json_rows_to_arrow_batch(&rows, &full_schema, limit)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to convert rows to Arrow: {}", e)))?;
+        let batch = json_rows_to_arrow_batch(&rows, &full_schema, limit).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to convert rows to Arrow: {}", e))
+        })?;
 
         // Apply projection if specified
         let (final_batch, final_schema) = if let Some(proj_indices) = projection {
@@ -277,28 +276,34 @@ impl TableProvider for SharedTableProvider {
                 .iter()
                 .map(|&i| batch.column(i).clone())
                 .collect();
-            
+
             let projected_fields: Vec<_> = proj_indices
                 .iter()
                 .map(|&i| full_schema.field(i).clone())
                 .collect();
-            
-            let projected_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(projected_fields));
-            
-            let projected_batch = datafusion::arrow::record_batch::RecordBatch::try_new(projected_schema.clone(), projected_columns)
-                .map_err(|e| DataFusionError::Execution(format!("Failed to project batch: {}", e)))?;
-            
+
+            let projected_schema =
+                Arc::new(datafusion::arrow::datatypes::Schema::new(projected_fields));
+
+            let projected_batch = datafusion::arrow::record_batch::RecordBatch::try_new(
+                projected_schema.clone(),
+                projected_columns,
+            )
+            .map_err(|e| DataFusionError::Execution(format!("Failed to project batch: {}", e)))?;
+
             (projected_batch, projected_schema)
         } else {
-            (batch, self.schema.clone())
+            // Use full_schema (with system columns) instead of self.schema
+            (batch, full_schema.clone())
         };
 
         // Create a MemoryExec plan that returns our batch
         use datafusion::physical_plan::memory::MemoryExec;
-        
+
         let partitions = vec![vec![final_batch]];
-        let exec = MemoryExec::try_new(&partitions, final_schema, None)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemoryExec: {}", e)))?;
+        let exec = MemoryExec::try_new(&partitions, final_schema, None).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to create MemoryExec: {}", e))
+        })?;
 
         Ok(Arc::new(exec))
     }
@@ -309,8 +314,8 @@ impl TableProvider for SharedTableProvider {
         input: Arc<dyn ExecutionPlan>,
         _overwrite: bool,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        use datafusion::physical_plan::collect;
         use datafusion::execution::TaskContext;
+        use datafusion::physical_plan::collect;
 
         // Execute the input plan to get RecordBatches
         let task_ctx = Arc::new(TaskContext::default());
@@ -321,14 +326,15 @@ impl TableProvider for SharedTableProvider {
         // Process each batch
         for batch in batches {
             // Convert Arrow RecordBatch to JSON rows
-            let json_rows = arrow_batch_to_json(&batch)
-                .map_err(|e| DataFusionError::Execution(format!("Arrow to JSON conversion failed: {}", e)))?;
+            let json_rows = arrow_batch_to_json(&batch).map_err(|e| {
+                DataFusionError::Execution(format!("Arrow to JSON conversion failed: {}", e))
+            })?;
 
             // Insert each row
             for (idx, row_data) in json_rows.into_iter().enumerate() {
                 // Generate row_id using snowflake ID (or UUID for now)
                 let row_id = format!("{}_{}", chrono::Utc::now().timestamp_millis(), idx);
-                
+
                 self.insert(&row_id, row_data)
                     .map_err(|e| DataFusionError::Execution(format!("Insert failed: {}", e)))?;
             }
@@ -344,7 +350,9 @@ impl TableProvider for SharedTableProvider {
 ///
 /// This is a helper function for INSERT operations that converts Arrow columnar
 /// data to row-oriented JSON objects suitable for storage.
-fn arrow_batch_to_json(batch: &datafusion::arrow::record_batch::RecordBatch) -> Result<Vec<JsonValue>, String> {
+fn arrow_batch_to_json(
+    batch: &datafusion::arrow::record_batch::RecordBatch,
+) -> Result<Vec<JsonValue>, String> {
     use datafusion::arrow::array::*;
     use datafusion::arrow::datatypes::DataType;
 
@@ -357,7 +365,7 @@ fn arrow_batch_to_json(batch: &datafusion::arrow::record_batch::RecordBatch) -> 
 
         for (col_idx, field) in schema.fields().iter().enumerate() {
             let column = batch.column(col_idx);
-            
+
             // Skip system columns if present in input (we'll inject them)
             if field.name() == "_updated" || field.name() == "_deleted" {
                 continue;
@@ -366,8 +374,12 @@ fn arrow_batch_to_json(batch: &datafusion::arrow::record_batch::RecordBatch) -> 
             // Convert Arrow value to JSON
             let json_value = match field.data_type() {
                 DataType::Utf8 => {
-                    let array = column.as_any().downcast_ref::<StringArray>()
-                        .ok_or_else(|| format!("Failed to downcast {} to StringArray", field.name()))?;
+                    let array = column
+                        .as_any()
+                        .downcast_ref::<StringArray>()
+                        .ok_or_else(|| {
+                            format!("Failed to downcast {} to StringArray", field.name())
+                        })?;
                     if array.is_null(row_idx) {
                         JsonValue::Null
                     } else {
@@ -375,8 +387,12 @@ fn arrow_batch_to_json(batch: &datafusion::arrow::record_batch::RecordBatch) -> 
                     }
                 }
                 DataType::Int32 => {
-                    let array = column.as_any().downcast_ref::<Int32Array>()
-                        .ok_or_else(|| format!("Failed to downcast {} to Int32Array", field.name()))?;
+                    let array = column
+                        .as_any()
+                        .downcast_ref::<Int32Array>()
+                        .ok_or_else(|| {
+                            format!("Failed to downcast {} to Int32Array", field.name())
+                        })?;
                     if array.is_null(row_idx) {
                         JsonValue::Null
                     } else {
@@ -384,8 +400,12 @@ fn arrow_batch_to_json(batch: &datafusion::arrow::record_batch::RecordBatch) -> 
                     }
                 }
                 DataType::Int64 => {
-                    let array = column.as_any().downcast_ref::<Int64Array>()
-                        .ok_or_else(|| format!("Failed to downcast {} to Int64Array", field.name()))?;
+                    let array = column
+                        .as_any()
+                        .downcast_ref::<Int64Array>()
+                        .ok_or_else(|| {
+                            format!("Failed to downcast {} to Int64Array", field.name())
+                        })?;
                     if array.is_null(row_idx) {
                         JsonValue::Null
                     } else {
@@ -393,8 +413,13 @@ fn arrow_batch_to_json(batch: &datafusion::arrow::record_batch::RecordBatch) -> 
                     }
                 }
                 DataType::Float64 => {
-                    let array = column.as_any().downcast_ref::<Float64Array>()
-                        .ok_or_else(|| format!("Failed to downcast {} to Float64Array", field.name()))?;
+                    let array =
+                        column
+                            .as_any()
+                            .downcast_ref::<Float64Array>()
+                            .ok_or_else(|| {
+                                format!("Failed to downcast {} to Float64Array", field.name())
+                            })?;
                     if array.is_null(row_idx) {
                         JsonValue::Null
                     } else {
@@ -404,8 +429,13 @@ fn arrow_batch_to_json(batch: &datafusion::arrow::record_batch::RecordBatch) -> 
                     }
                 }
                 DataType::Boolean => {
-                    let array = column.as_any().downcast_ref::<BooleanArray>()
-                        .ok_or_else(|| format!("Failed to downcast {} to BooleanArray", field.name()))?;
+                    let array =
+                        column
+                            .as_any()
+                            .downcast_ref::<BooleanArray>()
+                            .ok_or_else(|| {
+                                format!("Failed to downcast {} to BooleanArray", field.name())
+                            })?;
                     if array.is_null(row_idx) {
                         JsonValue::Null
                     } else {

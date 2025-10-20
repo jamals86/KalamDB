@@ -55,7 +55,6 @@ pub async fn execute_sql(
     http_req: HttpRequest,
     req: web::Json<SqlRequest>,
     session_factory: web::Data<Arc<DataFusionSessionFactory>>,
-    sql_executor: web::Data<Arc<SqlExecutor>>,
 ) -> impl Responder {
     let start_time = Instant::now();
 
@@ -85,9 +84,18 @@ pub async fn execute_sql(
 
     // Execute each statement sequentially
     let mut results = Vec::new();
+    let sql_executor: Option<&Arc<SqlExecutor>> = http_req
+        .app_data::<web::Data<Arc<SqlExecutor>>>()
+        .map(|data| data.as_ref());
 
     for (idx, sql) in statements.iter().enumerate() {
-        match execute_single_statement(sql, &session_factory, &sql_executor, user_id.as_ref()).await
+        match execute_single_statement(
+            sql,
+            session_factory.get_ref(),
+            sql_executor,
+            user_id.as_ref(),
+        )
+        .await
         {
             Ok(result) => results.push(result),
             Err(err) => {
@@ -112,31 +120,33 @@ pub async fn execute_sql(
 async fn execute_single_statement(
     sql: &str,
     session_factory: &Arc<DataFusionSessionFactory>,
-    sql_executor: &Arc<SqlExecutor>,
+    sql_executor: Option<&Arc<SqlExecutor>>,
     user_id: Option<&UserId>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     // Try custom DDL commands first
-    match sql_executor.execute(sql, user_id).await {
-        Ok(result) => {
-            // Convert ExecutionResult to QueryResult
-            match result {
-                ExecutionResult::Success(message) => {
-                    return Ok(QueryResult::with_message(message));
-                }
-                ExecutionResult::RecordBatch(batch) => {
-                    return record_batch_to_query_result(vec![batch]);
-                }
-                ExecutionResult::RecordBatches(batches) => {
-                    return record_batch_to_query_result(batches);
+    if let Some(sql_executor) = sql_executor {
+        match sql_executor.execute(sql, user_id).await {
+            Ok(result) => {
+                // Convert ExecutionResult to QueryResult
+                match result {
+                    ExecutionResult::Success(message) => {
+                        return Ok(QueryResult::with_message(message));
+                    }
+                    ExecutionResult::RecordBatch(batch) => {
+                        return record_batch_to_query_result(vec![batch]);
+                    }
+                    ExecutionResult::RecordBatches(batches) => {
+                        return record_batch_to_query_result(batches);
+                    }
                 }
             }
-        }
-        Err(kalamdb_core::error::KalamDbError::InvalidSql(_)) => {
-            // Not a custom DDL, fall through to DataFusion
-        }
-        Err(e) => {
-            // Other error from custom DDL
-            return Err(Box::new(e));
+            Err(kalamdb_core::error::KalamDbError::InvalidSql(_)) => {
+                // Not a custom DDL, fall through to DataFusion
+            }
+            Err(e) => {
+                // Other error from custom DDL
+                return Err(Box::new(e));
+            }
         }
     }
 

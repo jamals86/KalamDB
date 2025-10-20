@@ -128,7 +128,10 @@ async fn main() -> Result<()> {
     info!("Table stores initialized (user, shared, stream)");
 
     // Initialize table services
-    let user_table_service = Arc::new(UserTableService::new(kalam_sql.clone(), user_table_store.clone()));
+    let user_table_service = Arc::new(UserTableService::new(
+        kalam_sql.clone(),
+        user_table_store.clone(),
+    ));
     let shared_table_service = Arc::new(SharedTableService::new(
         shared_table_store.clone(),
         kalam_sql.clone(),

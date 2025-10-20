@@ -57,7 +57,7 @@ impl SharedTableStore {
     /// 3. RocksDB handles concurrent access through internal locking
     pub fn create_column_family(&self, namespace_id: &str, table_name: &str) -> Result<()> {
         let cf_name = format!("shared_table:{}:{}", namespace_id, table_name);
-        
+
         // Check if CF already exists
         if self.db.cf_handle(&cf_name).is_some() {
             // CF already exists, nothing to do
@@ -66,13 +66,13 @@ impl SharedTableStore {
 
         // Create new column family with default options
         let opts = rocksdb::Options::default();
-        
+
         // SAFETY: RocksDB's DB is internally synchronized. The create_cf method
         // requires &mut self for API consistency, but RocksDB handles all
         // synchronization internally via locks. This is safe in a multi-threaded
         // context because:
         // 1. RocksDB uses internal mutexes to protect all data structures
-        // 2. create_cf is an atomic operation from RocksDB's perspective  
+        // 2. create_cf is an atomic operation from RocksDB's perspective
         // 3. We're not violating any actual data races - the mut requirement
         //    is a Rust API design choice, not a safety invariant
         unsafe {

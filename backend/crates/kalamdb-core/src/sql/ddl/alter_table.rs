@@ -21,9 +21,7 @@ pub enum ColumnOperation {
         default_value: Option<String>,
     },
     /// Drop an existing column
-    Drop {
-        column_name: String,
-    },
+    Drop { column_name: String },
     /// Modify an existing column's data type
     Modify {
         column_name: String,
@@ -90,7 +88,7 @@ impl AlterTableStatement {
     /// Extract table name from ALTER TABLE statement
     fn extract_table_name(sql: &str) -> Result<String, KalamDbError> {
         let sql_upper = sql.to_uppercase();
-        
+
         // Try different patterns
         let after_alter = if sql_upper.contains("ALTER USER TABLE") {
             sql.split_whitespace()
@@ -116,7 +114,7 @@ impl AlterTableStatement {
     /// Parse ADD COLUMN operation
     fn parse_add_column(sql: &str) -> Result<ColumnOperation, KalamDbError> {
         let sql_upper = sql.to_uppercase();
-        
+
         // Find the position of ADD COLUMN or ADD
         let add_pos = if sql_upper.contains(" ADD COLUMN ") {
             sql_upper.find(" ADD COLUMN ").unwrap()
@@ -144,10 +142,10 @@ impl AlterTableStatement {
 
         let column_name = parts[0].to_string();
         let data_type = parts[1].to_string();
-        
+
         let upper_def = column_def.to_uppercase();
         let nullable = !upper_def.contains("NOT NULL");
-        
+
         // Extract default value if present
         let default_value = if upper_def.contains("DEFAULT") {
             let default_pos = upper_def.find("DEFAULT").unwrap();
@@ -169,7 +167,7 @@ impl AlterTableStatement {
     /// Parse DROP COLUMN operation
     fn parse_drop_column(sql: &str) -> Result<ColumnOperation, KalamDbError> {
         let sql_upper = sql.to_uppercase();
-        
+
         // Find the position of DROP COLUMN or DROP
         let drop_pos = if sql_upper.contains(" DROP COLUMN ") {
             sql_upper.find(" DROP COLUMN ").unwrap()
@@ -195,7 +193,7 @@ impl AlterTableStatement {
     /// Parse MODIFY COLUMN operation
     fn parse_modify_column(sql: &str) -> Result<ColumnOperation, KalamDbError> {
         let sql_upper = sql.to_uppercase();
-        
+
         // Find the position of MODIFY COLUMN or MODIFY
         let modify_pos = if sql_upper.contains(" MODIFY COLUMN ") {
             sql_upper.find(" MODIFY COLUMN ").unwrap()
@@ -223,7 +221,7 @@ impl AlterTableStatement {
 
         let column_name = parts[0].to_string();
         let new_data_type = parts[1].to_string();
-        
+
         let upper_def = column_def.to_uppercase();
         let nullable = if upper_def.contains("NULL") {
             Some(!upper_def.contains("NOT NULL"))
@@ -254,9 +252,9 @@ mod tests {
             &test_namespace(),
         )
         .unwrap();
-        
+
         assert_eq!(stmt.table_name.as_str(), "messages");
-        
+
         match stmt.operation {
             ColumnOperation::Add {
                 column_name,
@@ -280,7 +278,7 @@ mod tests {
             &test_namespace(),
         )
         .unwrap();
-        
+
         match stmt.operation {
             ColumnOperation::Add { nullable, .. } => {
                 assert!(!nullable);
@@ -296,7 +294,7 @@ mod tests {
             &test_namespace(),
         )
         .unwrap();
-        
+
         match stmt.operation {
             ColumnOperation::Add {
                 column_name,
@@ -312,14 +310,12 @@ mod tests {
 
     #[test]
     fn test_parse_drop_column() {
-        let stmt = AlterTableStatement::parse(
-            "ALTER TABLE messages DROP COLUMN age",
-            &test_namespace(),
-        )
-        .unwrap();
-        
+        let stmt =
+            AlterTableStatement::parse("ALTER TABLE messages DROP COLUMN age", &test_namespace())
+                .unwrap();
+
         assert_eq!(stmt.table_name.as_str(), "messages");
-        
+
         match stmt.operation {
             ColumnOperation::Drop { column_name } => {
                 assert_eq!(column_name, "age");
@@ -330,12 +326,9 @@ mod tests {
 
     #[test]
     fn test_parse_drop_column_shorthand() {
-        let stmt = AlterTableStatement::parse(
-            "ALTER TABLE messages DROP age",
-            &test_namespace(),
-        )
-        .unwrap();
-        
+        let stmt =
+            AlterTableStatement::parse("ALTER TABLE messages DROP age", &test_namespace()).unwrap();
+
         match stmt.operation {
             ColumnOperation::Drop { column_name } => {
                 assert_eq!(column_name, "age");
@@ -351,9 +344,9 @@ mod tests {
             &test_namespace(),
         )
         .unwrap();
-        
+
         assert_eq!(stmt.table_name.as_str(), "messages");
-        
+
         match stmt.operation {
             ColumnOperation::Modify {
                 column_name,
@@ -375,7 +368,7 @@ mod tests {
             &test_namespace(),
         )
         .unwrap();
-        
+
         match stmt.operation {
             ColumnOperation::Modify { nullable, .. } => {
                 assert_eq!(nullable, Some(false));
@@ -391,7 +384,7 @@ mod tests {
             &test_namespace(),
         )
         .unwrap();
-        
+
         assert_eq!(stmt.table_name.as_str(), "messages");
     }
 
@@ -402,7 +395,7 @@ mod tests {
             &test_namespace(),
         )
         .unwrap();
-        
+
         assert_eq!(stmt.table_name.as_str(), "conversations");
     }
 
@@ -414,7 +407,8 @@ mod tests {
 
     #[test]
     fn test_parse_missing_column_name() {
-        let result = AlterTableStatement::parse("ALTER TABLE messages ADD COLUMN", &test_namespace());
+        let result =
+            AlterTableStatement::parse("ALTER TABLE messages ADD COLUMN", &test_namespace());
         assert!(result.is_err());
     }
 

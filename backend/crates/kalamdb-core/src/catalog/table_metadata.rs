@@ -81,11 +81,7 @@ impl TableMetadata {
     ///
     /// Name must match regex: ^[a-z][a-z0-9_]*$
     pub fn validate_table_name(name: &str) -> Result<(), String> {
-        if !name
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_lowercase())
-        {
+        if !name.chars().next().is_some_and(|c| c.is_ascii_lowercase()) {
             return Err("Table name must start with a lowercase letter".to_string());
         }
 

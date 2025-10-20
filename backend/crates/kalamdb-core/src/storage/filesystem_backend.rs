@@ -69,11 +69,7 @@ impl FilesystemBackend {
         let mut files = Vec::new();
         for entry in entries {
             let entry = entry.map_err(KalamDbError::Io)?;
-            if entry
-                .file_type()
-                .map_err(KalamDbError::Io)?
-                .is_file()
-            {
+            if entry.file_type().map_err(KalamDbError::Io)?.is_file() {
                 if let Some(file_name) = entry.file_name().to_str() {
                     files.push(file_name.to_string());
                 }

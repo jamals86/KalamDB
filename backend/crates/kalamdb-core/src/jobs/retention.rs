@@ -88,7 +88,7 @@ impl RetentionPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use crate::storage::RocksDbInit;
     use crate::tables::system::JobRecord;
     use tempfile::TempDir;

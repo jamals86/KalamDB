@@ -615,7 +615,6 @@ impl RestoreService {
 
 #[cfg(test)]
 mod tests {
-    
 
     #[test]
     fn test_restore_service_creation() {

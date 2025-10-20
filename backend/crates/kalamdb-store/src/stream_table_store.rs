@@ -45,7 +45,7 @@ impl StreamTableStore {
     /// See SharedTableStore::create_column_family for safety documentation.
     pub fn create_column_family(&self, namespace_id: &str, table_name: &str) -> Result<()> {
         let cf_name = format!("stream_table:{}:{}", namespace_id, table_name);
-        
+
         // Check if CF already exists
         if self.db.cf_handle(&cf_name).is_some() {
             return Ok(());

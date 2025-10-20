@@ -32,15 +32,15 @@ impl DescribeTableStatement {
     pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
         let sql = sql.trim();
         let sql_upper = sql.to_uppercase();
-        
+
         // Check for DESCRIBE TABLE or DESC TABLE prefix (case-insensitive)
         let rest = if sql_upper.strip_prefix("DESCRIBE TABLE ").is_some() {
-            sql[15..].trim()  // Use original casing for table names
+            sql[15..].trim() // Use original casing for table names
         } else if sql_upper.strip_prefix("DESC TABLE ").is_some() {
-            sql[11..].trim()  // Use original casing for table names
+            sql[11..].trim() // Use original casing for table names
         } else {
             return Err(KalamDbError::InvalidSql(
-                "Expected DESCRIBE TABLE or DESC TABLE".to_string()
+                "Expected DESCRIBE TABLE or DESC TABLE".to_string(),
             ));
         };
 
@@ -68,9 +68,10 @@ impl DescribeTableStatement {
                 table_name: TableName::new(parts[1].trim()),
                 show_history,
             }),
-            _ => Err(KalamDbError::InvalidSql(
-                format!("Invalid table reference: {}", table_ref)
-            ))
+            _ => Err(KalamDbError::InvalidSql(format!(
+                "Invalid table reference: {}",
+                table_ref
+            ))),
         }
     }
 }

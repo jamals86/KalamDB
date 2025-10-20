@@ -419,7 +419,9 @@ async fn test_shared_table_ordering() {
 
     // Query with ORDER BY
     let response = server
-        .execute_sql("SELECT conversation_id, title FROM test_ns.conversations ORDER BY conversation_id ASC")
+        .execute_sql(
+            "SELECT conversation_id, title FROM test_ns.conversations ORDER BY conversation_id ASC",
+        )
         .await;
 
     assert_eq!(
@@ -482,7 +484,9 @@ async fn test_shared_table_multiple_tables_same_namespace() {
         .execute_sql(r#"INSERT INTO test_ns.conversations (conversation_id, title) VALUES ('conv1', 'Test')"#)
         .await;
     server
-        .execute_sql(r#"INSERT INTO test_ns.config (conversation_id, title) VALUES ('setting1', 'value1')"#)
+        .execute_sql(
+            r#"INSERT INTO test_ns.config (conversation_id, title) VALUES ('setting1', 'value1')"#,
+        )
         .await;
 
     // Query both tables

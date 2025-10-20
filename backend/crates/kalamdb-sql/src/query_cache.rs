@@ -72,12 +72,12 @@ pub struct QueryCacheTtlConfig {
 impl Default for QueryCacheTtlConfig {
     fn default() -> Self {
         Self {
-            tables: Duration::from_secs(60),           // 60s for tables list
-            namespaces: Duration::from_secs(60),       // 60s for namespaces list
-            live_queries: Duration::from_secs(10),     // 10s for live queries (more dynamic)
+            tables: Duration::from_secs(60),             // 60s for tables list
+            namespaces: Duration::from_secs(60),         // 60s for namespaces list
+            live_queries: Duration::from_secs(10),       // 10s for live queries (more dynamic)
             storage_locations: Duration::from_secs(300), // 5min for storage locations (rarely change)
-            jobs: Duration::from_secs(30),             // 30s for jobs list
-            single_entity: Duration::from_secs(120),   // 2min for individual entities
+            jobs: Duration::from_secs(30),               // 30s for jobs list
+            single_entity: Duration::from_secs(120),     // 2min for individual entities
         }
     }
 }
@@ -104,9 +104,7 @@ impl QueryCache {
             QueryCacheKey::AllLiveQueries => self.ttl_config.live_queries,
             QueryCacheKey::AllStorageLocations => self.ttl_config.storage_locations,
             QueryCacheKey::AllJobs => self.ttl_config.jobs,
-            QueryCacheKey::Table(_) | QueryCacheKey::Namespace(_) => {
-                self.ttl_config.single_entity
-            }
+            QueryCacheKey::Table(_) | QueryCacheKey::Namespace(_) => self.ttl_config.single_entity,
         }
     }
 
@@ -199,9 +197,7 @@ impl QueryCache {
                 QueryCacheKey::AllLiveQueries => ttl_config.live_queries,
                 QueryCacheKey::AllStorageLocations => ttl_config.storage_locations,
                 QueryCacheKey::AllJobs => ttl_config.jobs,
-                QueryCacheKey::Table(_) | QueryCacheKey::Namespace(_) => {
-                    ttl_config.single_entity
-                }
+                QueryCacheKey::Table(_) | QueryCacheKey::Namespace(_) => ttl_config.single_entity,
             };
             !entry.is_expired(ttl)
         });
@@ -211,7 +207,7 @@ impl QueryCache {
     pub fn stats(&self) -> CacheStats {
         let cache = self.cache.read().unwrap();
         let total = cache.len();
-        
+
         let mut expired = 0;
         let ttl_config = &self.ttl_config;
         for (key, entry) in cache.iter() {
@@ -221,9 +217,7 @@ impl QueryCache {
                 QueryCacheKey::AllLiveQueries => ttl_config.live_queries,
                 QueryCacheKey::AllStorageLocations => ttl_config.storage_locations,
                 QueryCacheKey::AllJobs => ttl_config.jobs,
-                QueryCacheKey::Table(_) | QueryCacheKey::Namespace(_) => {
-                    ttl_config.single_entity
-                }
+                QueryCacheKey::Table(_) | QueryCacheKey::Namespace(_) => ttl_config.single_entity,
             };
             if entry.is_expired(ttl) {
                 expired += 1;
@@ -305,7 +299,8 @@ mod tests {
         cache.invalidate_tables();
 
         let all_tables: Option<Vec<TestData>> = cache.get(&QueryCacheKey::AllTables);
-        let single_table: Option<Vec<TestData>> = cache.get(&QueryCacheKey::Table("users".to_string()));
+        let single_table: Option<Vec<TestData>> =
+            cache.get(&QueryCacheKey::Table("users".to_string()));
         let namespaces: Option<Vec<TestData>> = cache.get(&QueryCacheKey::AllNamespaces);
 
         assert!(all_tables.is_none());
@@ -328,7 +323,8 @@ mod tests {
         cache.invalidate_namespaces();
 
         let all_namespaces: Option<Vec<TestData>> = cache.get(&QueryCacheKey::AllNamespaces);
-        let single_namespace: Option<Vec<TestData>> = cache.get(&QueryCacheKey::Namespace("app1".to_string()));
+        let single_namespace: Option<Vec<TestData>> =
+            cache.get(&QueryCacheKey::Namespace("app1".to_string()));
         let tables: Option<Vec<TestData>> = cache.get(&QueryCacheKey::AllTables);
 
         assert!(all_namespaces.is_none());
@@ -445,12 +441,33 @@ mod tests {
 
         let cache = QueryCache::with_config(config);
 
-        assert_eq!(cache.get_ttl(&QueryCacheKey::AllTables), Duration::from_secs(60));
-        assert_eq!(cache.get_ttl(&QueryCacheKey::AllNamespaces), Duration::from_secs(120));
-        assert_eq!(cache.get_ttl(&QueryCacheKey::AllLiveQueries), Duration::from_secs(10));
-        assert_eq!(cache.get_ttl(&QueryCacheKey::AllStorageLocations), Duration::from_secs(300));
-        assert_eq!(cache.get_ttl(&QueryCacheKey::AllJobs), Duration::from_secs(30));
-        assert_eq!(cache.get_ttl(&QueryCacheKey::Table("users".to_string())), Duration::from_secs(90));
-        assert_eq!(cache.get_ttl(&QueryCacheKey::Namespace("app1".to_string())), Duration::from_secs(90));
+        assert_eq!(
+            cache.get_ttl(&QueryCacheKey::AllTables),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            cache.get_ttl(&QueryCacheKey::AllNamespaces),
+            Duration::from_secs(120)
+        );
+        assert_eq!(
+            cache.get_ttl(&QueryCacheKey::AllLiveQueries),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            cache.get_ttl(&QueryCacheKey::AllStorageLocations),
+            Duration::from_secs(300)
+        );
+        assert_eq!(
+            cache.get_ttl(&QueryCacheKey::AllJobs),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            cache.get_ttl(&QueryCacheKey::Table("users".to_string())),
+            Duration::from_secs(90)
+        );
+        assert_eq!(
+            cache.get_ttl(&QueryCacheKey::Namespace("app1".to_string())),
+            Duration::from_secs(90)
+        );
     }
 }

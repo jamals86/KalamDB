@@ -95,9 +95,7 @@ impl SchemaCache {
     /// Called after ALTER TABLE operations.
     pub fn invalidate_table(&self, namespace_id: &Option<NamespaceId>, table_name: &TableName) {
         let mut cache = self.cache.write().unwrap();
-        cache.retain(|k, _| {
-            !(k.namespace_id == *namespace_id && k.table_name == *table_name)
-        });
+        cache.retain(|k, _| !(k.namespace_id == *namespace_id && k.table_name == *table_name));
     }
 
     /// Invalidate a specific schema version

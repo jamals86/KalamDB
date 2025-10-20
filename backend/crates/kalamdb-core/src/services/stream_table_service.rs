@@ -156,7 +156,9 @@ impl StreamTableService {
         // Insert schema into system_table_schemas
         self.kalam_sql
             .insert_table_schema(&table_schema)
-            .map_err(|e| KalamDbError::SchemaError(format!("Failed to insert table schema: {}", e)))?;
+            .map_err(|e| {
+                KalamDbError::SchemaError(format!("Failed to insert table schema: {}", e))
+            })?;
 
         // Create Table record in system_tables
         let table = kalamdb_sql::models::Table {

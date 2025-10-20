@@ -79,31 +79,46 @@ impl SharedTableService {
             if stmt.if_not_exists {
                 // Return existing table metadata (or a default success response)
                 // For now, we'll create a minimal metadata response
-                let table_id = format!("{}:{}", stmt.namespace_id.as_str(), stmt.table_name.as_str());
-                
+                let table_id = format!(
+                    "{}:{}",
+                    stmt.namespace_id.as_str(),
+                    stmt.table_name.as_str()
+                );
+
                 // Get existing table from system.tables
-                let existing_table = self.kalam_sql
+                let existing_table = self
+                    .kalam_sql
                     .get_table(&table_id)
-                    .map_err(|e| KalamDbError::Other(format!("Failed to get existing table: {}", e)))?
-                    .ok_or_else(|| KalamDbError::NotFound(format!("Table {} not found", table_id)))?;
-                
+                    .map_err(|e| {
+                        KalamDbError::Other(format!("Failed to get existing table: {}", e))
+                    })?
+                    .ok_or_else(|| {
+                        KalamDbError::NotFound(format!("Table {} not found", table_id))
+                    })?;
+
                 // Return a minimal metadata object for the existing table
-                return Ok((TableMetadata {
-                    table_name: stmt.table_name.clone(),
-                    table_type: TableType::Shared,
-                    namespace: stmt.namespace_id.clone(),
-                    created_at: chrono::DateTime::from_timestamp(existing_table.created_at / 1000, 0)
+                return Ok((
+                    TableMetadata {
+                        table_name: stmt.table_name.clone(),
+                        table_type: TableType::Shared,
+                        namespace: stmt.namespace_id.clone(),
+                        created_at: chrono::DateTime::from_timestamp(
+                            existing_table.created_at / 1000,
+                            0,
+                        )
                         .unwrap_or_else(chrono::Utc::now),
-                    storage_location: existing_table.storage_location,
-                    flush_policy: serde_json::from_str(&existing_table.flush_policy)
-                        .unwrap_or_default(),
-                    schema_version: existing_table.schema_version as u32,
-                    deleted_retention_hours: if existing_table.deleted_retention_hours > 0 {
-                        Some(existing_table.deleted_retention_hours as u32)
-                    } else {
-                        None
+                        storage_location: existing_table.storage_location,
+                        flush_policy: serde_json::from_str(&existing_table.flush_policy)
+                            .unwrap_or_default(),
+                        schema_version: existing_table.schema_version as u32,
+                        deleted_retention_hours: if existing_table.deleted_retention_hours > 0 {
+                            Some(existing_table.deleted_retention_hours as u32)
+                        } else {
+                            None
+                        },
                     },
-                }, false)); // false = not newly created
+                    false,
+                )); // false = not newly created
             } else {
                 return Err(KalamDbError::AlreadyExists(format!(
                     "Shared table {}.{} already exists",
@@ -309,10 +324,12 @@ impl SharedTableService {
         // Insert schema into system_table_schemas via KalamSQL so DataFusion can load it
         self.kalam_sql
             .insert_table_schema(&table_schema)
-            .map_err(|e| KalamDbError::SchemaError(format!(
-                "Failed to insert schema for {}: {}",
-                table_id, e
-            )))?;
+            .map_err(|e| {
+                KalamDbError::SchemaError(format!(
+                    "Failed to insert schema for {}: {}",
+                    table_id, e
+                ))
+            })?;
 
         // Create Table record in system_tables
         let flush_policy_str = match flush_policy {

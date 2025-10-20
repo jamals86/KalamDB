@@ -51,11 +51,7 @@ impl ParquetWriter {
             .set_max_row_group_size(100_000);
 
         // Find _updated column and enable bloom filter
-        if schema
-            .fields()
-            .iter()
-            .any(|f| f.name() == "_updated")
-        {
+        if schema.fields().iter().any(|f| f.name() == "_updated") {
             // Enable bloom filter on _updated column with 0.01 FPP (1% false positive rate)
             // ColumnPath::from() accepts a str and converts it to the proper type
             props_builder = props_builder

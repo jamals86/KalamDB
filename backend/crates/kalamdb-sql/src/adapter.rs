@@ -430,7 +430,7 @@ impl RocksDbAdapter {
 
         let key = format!("table:{}", table_id);
         self.db.delete_cf(&cf, key.as_bytes())?;
-        
+
         // Flush to ensure delete is immediately visible
         self.db.flush_cf(&cf)?;
         Ok(())

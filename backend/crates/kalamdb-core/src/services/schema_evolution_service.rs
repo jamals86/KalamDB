@@ -84,8 +84,9 @@ impl SchemaEvolutionService {
             })?;
 
         // Prevent altering stream tables (T180)
-        let table_type = TableType::from_str(&table.table_type)
-            .ok_or_else(|| KalamDbError::InvalidSql(format!("Unknown table type: {}", table.table_type)))?;
+        let table_type = TableType::from_str(&table.table_type).ok_or_else(|| {
+            KalamDbError::InvalidSql(format!("Unknown table type: {}", table.table_type))
+        })?;
         if table_type == TableType::Stream {
             return Err(KalamDbError::invalid_schema_evolution(
                 "Stream tables have immutable schemas and cannot be altered",
@@ -110,8 +111,9 @@ impl SchemaEvolutionService {
             })?;
 
         // Deserialize Arrow schema using ArrowSchemaWithOptions
-        let arrow_schema_with_opts = ArrowSchemaWithOptions::from_json_string(&current_schema.arrow_schema)
-            .map_err(|e| KalamDbError::SchemaError(format!("Failed to parse schema: {}", e)))?;
+        let arrow_schema_with_opts =
+            ArrowSchemaWithOptions::from_json_string(&current_schema.arrow_schema)
+                .map_err(|e| KalamDbError::SchemaError(format!("Failed to parse schema: {}", e)))?;
         let arrow_schema = arrow_schema_with_opts.schema.as_ref().clone();
 
         // Validate the operation (T177)
@@ -123,7 +125,8 @@ impl SchemaEvolutionService {
 
         // Serialize new schema using ArrowSchemaWithOptions
         let new_schema_with_opts = ArrowSchemaWithOptions::new(Arc::new(new_arrow_schema));
-        let new_schema_json = new_schema_with_opts.to_json_string()
+        let new_schema_json = new_schema_with_opts
+            .to_json_string()
             .map_err(|e| KalamDbError::SchemaError(format!("Failed to serialize schema: {}", e)))?;
 
         // Create change description
@@ -315,9 +318,10 @@ impl SchemaEvolutionService {
 
                 // If NOT NULL, must have default value
                 if !nullable && default_value.is_none() {
-                    return Err(KalamDbError::invalid_schema_evolution(
-                        format!("NOT NULL column '{}' requires a DEFAULT value for existing rows", column_name)
-                    ));
+                    return Err(KalamDbError::invalid_schema_evolution(format!(
+                        "NOT NULL column '{}' requires a DEFAULT value for existing rows",
+                        column_name
+                    )));
                 }
 
                 Ok(())
@@ -334,9 +338,10 @@ impl SchemaEvolutionService {
                 // Prevent dropping primary key (assuming first field is PK)
                 if let Some(first_field) = schema.fields().first() {
                     if first_field.name() == column_name {
-                        return Err(KalamDbError::invalid_schema_evolution(
-                            format!("Cannot drop primary key column '{}'", column_name)
-                        ));
+                        return Err(KalamDbError::invalid_schema_evolution(format!(
+                            "Cannot drop primary key column '{}'",
+                            column_name
+                        )));
                     }
                 }
 
@@ -358,9 +363,10 @@ impl SchemaEvolutionService {
                 // Prevent modifying primary key
                 if let Some(first_field) = schema.fields().first() {
                     if first_field.name() == column_name {
-                        return Err(KalamDbError::invalid_schema_evolution(
-                            format!("Cannot modify primary key column '{}'", column_name)
-                        ));
+                        return Err(KalamDbError::invalid_schema_evolution(format!(
+                            "Cannot modify primary key column '{}'",
+                            column_name
+                        )));
                     }
                 }
 
@@ -398,11 +404,8 @@ impl SchemaEvolutionService {
                 let new_field = Field::new(column_name, arrow_type, *nullable);
 
                 // Add field to schema (convert Arc<Field> to Field)
-                let mut fields: Vec<Field> = schema
-                    .fields()
-                    .iter()
-                    .map(|f| (**f).clone())
-                    .collect();
+                let mut fields: Vec<Field> =
+                    schema.fields().iter().map(|f| (**f).clone()).collect();
                 fields.push(new_field);
 
                 Ok(Schema::new(fields))
@@ -742,10 +745,7 @@ mod tests {
         );
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("NOT NULL column"));
+        assert!(result.unwrap_err().to_string().contains("NOT NULL column"));
     }
 
     #[test]

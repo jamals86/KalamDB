@@ -10,4 +10,4 @@ pub mod schema_cache;
 pub use datafusion_session::{DataFusionSessionFactory, KalamSessionState};
 pub use executor::{ExecutionResult, SqlExecutor};
 pub use functions::CurrentUserFunction;
-pub use schema_cache::{SchemaCache, SchemaCacheKey, get_or_load_schema};
+pub use schema_cache::{get_or_load_schema, SchemaCache, SchemaCacheKey};

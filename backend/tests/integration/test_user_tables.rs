@@ -16,18 +16,25 @@ use common::{fixtures, TestServer};
 use kalamdb_api::models::SqlResponse;
 
 /// Helper to create a user table for testing
-async fn create_user_table(server: &TestServer, namespace: &str, table_name: &str, user_id: &str) -> SqlResponse {
-    server.execute_sql_as_user(
-        &format!(
-            r#"CREATE USER TABLE {}.{} (
+async fn create_user_table(
+    server: &TestServer,
+    namespace: &str,
+    table_name: &str,
+    user_id: &str,
+) -> SqlResponse {
+    server
+        .execute_sql_as_user(
+            &format!(
+                r#"CREATE USER TABLE {}.{} (
                 id TEXT,
                 content TEXT,
                 priority INT
             ) LOCATION 's3://bucket/users/${{user_id}}/{}/'"#,
-            namespace, table_name, table_name
-        ),
-        user_id,
-    ).await
+                namespace, table_name, table_name
+            ),
+            user_id,
+        )
+        .await
 }
 
 #[actix_web::test]
@@ -112,7 +119,7 @@ async fn test_user_table_data_isolation() {
     if let Some(rows) = &response.results[0].rows {
         // User1 should only see their own note
         assert_eq!(rows.len(), 1, "User1 should only see 1 row");
-        
+
         let row = &rows[0];
         assert_eq!(row.get("id").unwrap().as_str().unwrap(), "note1");
         assert_eq!(row.get("content").unwrap().as_str().unwrap(), "User1 note");
@@ -134,7 +141,7 @@ async fn test_user_table_data_isolation() {
     if let Some(rows) = &response.results[0].rows {
         // User2 should only see their own note
         assert_eq!(rows.len(), 1, "User2 should only see 1 row");
-        
+
         let row = &rows[0];
         assert_eq!(row.get("id").unwrap().as_str().unwrap(), "note2");
         assert_eq!(row.get("content").unwrap().as_str().unwrap(), "User2 note");
@@ -185,7 +192,10 @@ async fn test_user_table_update_with_isolation() {
 
     // Verify user1's update
     let response = server
-        .execute_sql_as_user("SELECT id, content FROM test_ns.notes WHERE id = 'note1'", "user1")
+        .execute_sql_as_user(
+            "SELECT id, content FROM test_ns.notes WHERE id = 'note1'",
+            "user1",
+        )
         .await;
 
     if let Some(rows) = &response.results[0].rows {
@@ -198,7 +208,10 @@ async fn test_user_table_update_with_isolation() {
 
     // Verify user2's data unchanged
     let response = server
-        .execute_sql_as_user("SELECT id, content FROM test_ns.notes WHERE id = 'note2'", "user2")
+        .execute_sql_as_user(
+            "SELECT id, content FROM test_ns.notes WHERE id = 'note2'",
+            "user2",
+        )
         .await;
 
     if let Some(rows) = &response.results[0].rows {
@@ -248,7 +261,10 @@ async fn test_user_table_delete_with_isolation() {
 
     // Verify user1's data is deleted (soft delete - _deleted=true)
     let response = server
-        .execute_sql_as_user("SELECT id, content FROM test_ns.notes WHERE id = 'note1'", "user1")
+        .execute_sql_as_user(
+            "SELECT id, content FROM test_ns.notes WHERE id = 'note1'",
+            "user1",
+        )
         .await;
 
     assert_eq!(
@@ -316,12 +332,12 @@ async fn test_user_table_system_columns() {
 
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1);
-        
+
         let row = &rows[0];
         // Verify system columns exist
         assert!(row.contains_key("_updated"), "_updated column should exist");
         assert!(row.contains_key("_deleted"), "_deleted column should exist");
-        
+
         // _deleted should be false for new rows
         assert_eq!(row.get("_deleted").unwrap().as_bool().unwrap(), false);
     } else {
@@ -408,7 +424,10 @@ async fn test_user_table_user_cannot_access_other_users_data() {
 
     // Verify user1's data unchanged
     let response = server
-        .execute_sql_as_user("SELECT id, content FROM test_ns.notes WHERE id = 'note1'", "user1")
+        .execute_sql_as_user(
+            "SELECT id, content FROM test_ns.notes WHERE id = 'note1'",
+            "user1",
+        )
         .await;
 
     if let Some(rows) = &response.results[0].rows {

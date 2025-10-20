@@ -39,7 +39,7 @@ impl UserTableService {
     /// * `kalam_sql` - KalamSQL instance for schema storage
     /// * `user_table_store` - UserTableStore for column family creation
     pub fn new(kalam_sql: Arc<KalamSql>, user_table_store: Arc<UserTableStore>) -> Self {
-        Self { 
+        Self {
             kalam_sql,
             user_table_store,
         }

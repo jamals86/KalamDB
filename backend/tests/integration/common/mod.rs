@@ -133,7 +133,10 @@ impl TestServer {
 
         // Initialize services
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
-        let user_table_service = Arc::new(UserTableService::new(kalam_sql.clone(), user_table_store.clone()));
+        let user_table_service = Arc::new(UserTableService::new(
+            kalam_sql.clone(),
+            user_table_store.clone(),
+        ));
         let shared_table_service = Arc::new(SharedTableService::new(
             shared_table_store.clone(),
             kalam_sql.clone(),
@@ -271,10 +274,8 @@ impl TestServer {
                     }
                     ExecutionResult::RecordBatches(batches) => {
                         // Convert multiple batches to JSON
-                        let results: Vec<_> = batches
-                            .iter()
-                            .map(record_batch_to_query_result)
-                            .collect();
+                        let results: Vec<_> =
+                            batches.iter().map(record_batch_to_query_result).collect();
                         SqlResponse {
                             status: "success".to_string(),
                             results,
@@ -311,11 +312,7 @@ fn record_batch_to_query_result(
     let mut rows: Vec<HashMap<String, serde_json::Value>> = Vec::with_capacity(num_rows);
 
     // Extract column names
-    let columns: Vec<String> = schema
-        .fields()
-        .iter()
-        .map(|f| f.name().clone())
-        .collect();
+    let columns: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();
 
     for row_idx in 0..num_rows {
         let mut row_map = HashMap::new();

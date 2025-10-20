@@ -47,7 +47,7 @@ use std::sync::Arc;
 ///
 /// // Read batch from Parquet (would have old schema)
 /// // let batch = read_parquet_batch()?;
-/// 
+///
 /// // Project to new schema
 /// // let projected = project_batch(&batch, &old_schema, &new_schema)?;
 /// # Ok(())
@@ -73,14 +73,9 @@ pub fn project_batch(
         // Check if field exists in old schema
         if let Ok(old_field) = old_schema.field_with_name(field_name) {
             // Field exists in old schema - handle type changes
-            let old_column = batch
-                .column_by_name(field_name)
-                .ok_or_else(|| {
-                    KalamDbError::SchemaError(format!(
-                        "Column '{}' not found in batch",
-                        field_name
-                    ))
-                })?;
+            let old_column = batch.column_by_name(field_name).ok_or_else(|| {
+                KalamDbError::SchemaError(format!("Column '{}' not found in batch", field_name))
+            })?;
 
             // Check if type changed
             if old_field.data_type() != new_field.data_type() {
@@ -103,7 +98,7 @@ pub fn project_batch(
             // Field is new (added after Parquet was written)
             // Fill with NULL values
             let null_array = Arc::new(NullArray::new(num_rows)) as ArrayRef;
-            
+
             // Convert NullArray to the target type with all nulls
             let typed_nulls = match new_field.data_type() {
                 DataType::Null => null_array,
@@ -117,7 +112,7 @@ pub fn project_batch(
                     })?
                 }
             };
-            
+
             new_columns.push(typed_nulls);
         }
     }
@@ -168,23 +163,23 @@ fn types_compatible(old_type: &DataType, new_type: &DataType) -> bool {
         (DataType::Int8, DataType::Int16 | DataType::Int32 | DataType::Int64) => true,
         (DataType::Int16, DataType::Int32 | DataType::Int64) => true,
         (DataType::Int32, DataType::Int64) => true,
-        
+
         // Unsigned integer widening
         (DataType::UInt8, DataType::UInt16 | DataType::UInt32 | DataType::UInt64) => true,
         (DataType::UInt16, DataType::UInt32 | DataType::UInt64) => true,
         (DataType::UInt32, DataType::UInt64) => true,
-        
+
         // Float widening
         (DataType::Float32, DataType::Float64) => true,
-        
+
         // String types
         (DataType::Utf8, DataType::LargeUtf8) => true,
-        
+
         // Timestamp precision changes (same unit)
         (DataType::Timestamp(old_unit, old_tz), DataType::Timestamp(new_unit, new_tz)) => {
             old_unit == new_unit && old_tz == new_tz
         }
-        
+
         // Default: incompatible
         _ => false,
     }
@@ -242,7 +237,7 @@ mod tests {
         let result = project_batch(&batch, &old_schema, &new_schema).unwrap();
         assert_eq!(result.num_rows(), 3);
         assert_eq!(result.num_columns(), 3);
-        
+
         // New column should be all nulls
         let email_col = result.column(2);
         assert_eq!(email_col.null_count(), 3);
@@ -278,13 +273,9 @@ mod tests {
 
     #[test]
     fn test_project_batch_type_widening() {
-        let old_schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int32, false),
-        ]));
+        let old_schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
 
-        let new_schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-        ]));
+        let new_schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
         let batch = RecordBatch::try_new(
             old_schema.clone(),
@@ -294,7 +285,7 @@ mod tests {
 
         let result = project_batch(&batch, &old_schema, &new_schema).unwrap();
         assert_eq!(result.num_rows(), 3);
-        
+
         // Check that column was cast to Int64
         let id_col = result.column(0);
         let int64_array = id_col.as_any().downcast_ref::<Int64Array>().unwrap();
@@ -305,9 +296,7 @@ mod tests {
 
     #[test]
     fn test_schemas_compatible_added_column() {
-        let old_schema = Schema::new(vec![
-            Field::new("id", DataType::Int32, false),
-        ]);
+        let old_schema = Schema::new(vec![Field::new("id", DataType::Int32, false)]);
 
         let new_schema = Schema::new(vec![
             Field::new("id", DataType::Int32, false),
@@ -319,13 +308,9 @@ mod tests {
 
     #[test]
     fn test_schemas_compatible_type_widening() {
-        let old_schema = Schema::new(vec![
-            Field::new("id", DataType::Int32, false),
-        ]);
+        let old_schema = Schema::new(vec![Field::new("id", DataType::Int32, false)]);
 
-        let new_schema = Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-        ]);
+        let new_schema = Schema::new(vec![Field::new("id", DataType::Int64, false)]);
 
         assert!(schemas_compatible(&old_schema, &new_schema));
     }
