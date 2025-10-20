@@ -5,16 +5,22 @@
 
 use crate::catalog::Namespace;
 use crate::error::KalamDbError;
-use crate::services::{NamespaceService, UserTableService, SharedTableService, StreamTableService};
+use crate::services::{NamespaceService, UserTableService, SharedTableService, StreamTableService, TableDeletionService};
 use crate::sql::ddl::{
     AlterNamespaceStatement, CreateNamespaceStatement, DropNamespaceStatement,
     ShowNamespacesStatement, CreateUserTableStatement, CreateSharedTableStatement,
     CreateStreamTableStatement, DropTableStatement,
 };
+use crate::tables::{UserTableProvider, SharedTableProvider, StreamTableProvider};
+use crate::catalog::{NamespaceId, TableName, UserId, TableType};
+use crate::schema::arrow_schema::ArrowSchemaWithOptions;
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::array::{ArrayRef, StringArray, UInt32Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::prelude::SessionContext;
+use kalamdb_store::{UserTableStore, SharedTableStore, StreamTableStore};
+use kalamdb_sql::KalamSql;
 use std::sync::Arc;
 
 /// SQL execution result
@@ -39,6 +45,12 @@ pub struct SqlExecutor {
     user_table_service: Arc<UserTableService>,
     shared_table_service: Arc<SharedTableService>,
     stream_table_service: Arc<StreamTableService>,
+    table_deletion_service: Option<Arc<TableDeletionService>>,
+    // Stores for table provider creation
+    user_table_store: Option<Arc<UserTableStore>>,
+    shared_table_store: Option<Arc<SharedTableStore>>,
+    stream_table_store: Option<Arc<StreamTableStore>>,
+    kalam_sql: Option<Arc<KalamSql>>,
 }
 
 impl SqlExecutor {
@@ -56,7 +68,176 @@ impl SqlExecutor {
             user_table_service,
             shared_table_service,
             stream_table_service,
+            table_deletion_service: None,
+            user_table_store: None,
+            shared_table_store: None,
+            stream_table_store: None,
+            kalam_sql: None,
         }
+    }
+    
+    /// Set the table deletion service (optional, for DROP TABLE support)
+    pub fn with_table_deletion_service(mut self, service: Arc<TableDeletionService>) -> Self {
+        self.table_deletion_service = Some(service);
+        self
+    }
+    
+    /// Set stores and KalamSQL for table registration (optional, for SELECT/INSERT/UPDATE/DELETE support)
+    pub fn with_stores(
+        mut self,
+        user_table_store: Arc<UserTableStore>,
+        shared_table_store: Arc<SharedTableStore>,
+        stream_table_store: Arc<StreamTableStore>,
+        kalam_sql: Arc<KalamSql>,
+    ) -> Self {
+        self.user_table_store = Some(user_table_store);
+        self.shared_table_store = Some(shared_table_store);
+        self.stream_table_store = Some(stream_table_store);
+        self.kalam_sql = Some(kalam_sql);
+        self
+    }
+    
+    /// Load and register existing tables from system_tables on initialization
+    pub async fn load_existing_tables(&self, default_user_id: UserId) -> Result<(), KalamDbError> {
+        let kalam_sql = self.kalam_sql.as_ref()
+            .ok_or_else(|| KalamDbError::InvalidOperation(
+                "Cannot load tables - KalamSQL not configured".to_string()
+            ))?;
+        
+        // Get all tables from system_tables
+        let tables = kalam_sql.scan_all_tables()
+            .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {:?}", e)))?;
+        
+        for table in tables {
+            // Get schema for the table
+            let schemas = kalam_sql.get_table_schemas_for_table(&table.table_id)
+                .map_err(|e| KalamDbError::Other(format!("Failed to get schemas: {:?}", e)))?;
+            
+            if schemas.is_empty() {
+                continue; // Skip tables without schemas
+            }
+            
+            // Use the latest schema version
+            let latest_schema = &schemas[0];
+            let schema_with_opts = ArrowSchemaWithOptions::from_json_string(&latest_schema.arrow_schema)
+                .map_err(|e| KalamDbError::Other(format!("Failed to parse schema: {:?}", e)))?;
+            let schema = schema_with_opts.schema;
+            
+            // Parse namespace and table_name
+            let namespace_id = NamespaceId::from(table.namespace.as_str());
+            let table_name = TableName::from(table.table_name.as_str());
+            let table_type = TableType::from_str(&table.table_type)
+                .ok_or_else(|| KalamDbError::Other(format!("Invalid table type: {}", table.table_type)))?;
+            
+            // Register based on table type
+            self.register_table_with_datafusion(
+                &namespace_id,
+                &table_name,
+                table_type,
+                schema,
+                default_user_id.clone(),
+            ).await?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Register a table with DataFusion SessionContext
+    async fn register_table_with_datafusion(
+        &self,
+        namespace_id: &NamespaceId,
+        table_name: &TableName,
+        table_type: TableType,
+        schema: SchemaRef,
+        default_user_id: UserId,
+    ) -> Result<(), KalamDbError> {
+        use datafusion::catalog::schema::MemorySchemaProvider;
+        
+        // Use the "kalam" catalog (configured in DataFusionSessionFactory)
+        let catalog_name = "kalam";
+        
+        let catalog = self.session_context.catalog(catalog_name)
+            .ok_or_else(|| KalamDbError::Other(format!("Catalog '{}' not found", catalog_name)))?;
+        
+        // Ensure schema exists for the namespace
+        let namespace_str = namespace_id.as_str();
+        if catalog.schema(namespace_str).is_none() {
+            // Create new schema for this namespace
+            let new_schema = Arc::new(MemorySchemaProvider::new());
+            catalog.register_schema(namespace_str, new_schema)
+                .map_err(|e| KalamDbError::Other(format!("Failed to register schema '{}': {}", namespace_str, e)))?;
+        }
+        
+        // Get the schema
+        let df_schema = catalog.schema(namespace_str)
+            .ok_or_else(|| KalamDbError::Other(format!("Schema '{}' not found after registration", namespace_str)))?;
+        
+        // Create minimal table metadata for registration
+        let table_metadata = crate::catalog::TableMetadata::new(
+            table_name.clone(),
+            table_type,
+            namespace_id.clone(),
+            String::new(), // Storage location will be loaded from metadata
+        );
+        
+        match table_type {
+            TableType::User => {
+                let store = self.user_table_store.as_ref()
+                    .ok_or_else(|| KalamDbError::InvalidOperation("UserTableStore not configured".to_string()))?;
+                
+                // TODO: Get current_user_id from execution context
+                let current_user_id = UserId::from("system");
+                
+                let provider = Arc::new(UserTableProvider::new(
+                    table_metadata,
+                    schema,
+                    store.clone(),
+                    current_user_id,
+                    vec![], // parquet_paths - empty for now
+                ));
+                
+                df_schema
+                    .register_table(table_name.as_str().to_string(), provider)
+                    .map_err(|e| KalamDbError::Other(format!("Failed to register user table: {}", e)))?;
+            }
+            TableType::Shared => {
+                let store = self.shared_table_store.as_ref()
+                    .ok_or_else(|| KalamDbError::InvalidOperation("SharedTableStore not configured".to_string()))?;
+                
+                let provider = Arc::new(SharedTableProvider::new(
+                    table_metadata,
+                    schema,
+                    store.clone(),
+                ));
+                
+                df_schema
+                    .register_table(table_name.as_str().to_string(), provider)
+                    .map_err(|e| KalamDbError::Other(format!("Failed to register shared table: {}", e)))?;
+            }
+            TableType::Stream => {
+                let store = self.stream_table_store.as_ref()
+                    .ok_or_else(|| KalamDbError::InvalidOperation("StreamTableStore not configured".to_string()))?;
+                
+                let provider = Arc::new(StreamTableProvider::new(
+                    table_metadata,
+                    schema,
+                    store.clone(),
+                    None, // retention_seconds - TODO: get from table metadata
+                    false, // ephemeral - TODO: get from table metadata
+                    None, // max_buffer - TODO: get from table metadata
+                ));
+                
+                df_schema
+                    .register_table(table_name.as_str().to_string(), provider)
+                    .map_err(|e| KalamDbError::Other(format!("Failed to register stream table: {}", e)))?;
+            }
+            TableType::System => {
+                // System tables are already registered at startup
+                return Ok(());
+            }
+        }
+        
+        Ok(())
     }
 
     /// Execute a SQL statement
@@ -172,34 +353,101 @@ impl SqlExecutor {
         // Determine table type based on SQL keywords or LOCATION pattern
         let sql_upper = sql.to_uppercase();
         let namespace_id = crate::catalog::NamespaceId::new("default"); // TODO: Get from context
+        let default_user_id = crate::catalog::UserId::from("system"); // TODO: Get from context
         
         if sql_upper.contains("USER TABLE") || sql_upper.contains("${USER_ID}") {
             // User table
             let stmt = CreateUserTableStatement::parse(sql, &namespace_id)?;
+            let table_name = stmt.table_name.clone();
+            let schema = stmt.schema.clone();
             self.user_table_service.create_table(stmt, None)?;
+            
+            // Register with DataFusion if stores are configured
+            if self.user_table_store.is_some() {
+                self.register_table_with_datafusion(
+                    &namespace_id,
+                    &table_name,
+                    crate::catalog::TableType::User,
+                    schema,
+                    default_user_id,
+                ).await?;
+            }
+            
             return Ok(ExecutionResult::Success("User table created successfully".to_string()));
         } else if sql_upper.contains("STREAM TABLE") || sql_upper.contains("TTL") || sql_upper.contains("BUFFER_SIZE") {
             // Stream table
             let stmt = CreateStreamTableStatement::parse(sql, &namespace_id)?;
+            let table_name = stmt.table_name.clone();
+            let schema = stmt.schema.clone();
             self.stream_table_service.create_table(stmt)?;
+            
+            // Register with DataFusion if stores are configured
+            if self.stream_table_store.is_some() {
+                self.register_table_with_datafusion(
+                    &namespace_id,
+                    &table_name,
+                    crate::catalog::TableType::Stream,
+                    schema,
+                    default_user_id,
+                ).await?;
+            }
+            
             return Ok(ExecutionResult::Success("Stream table created successfully".to_string()));
         } else {
             // Default to shared table (most common case)
             let stmt = CreateSharedTableStatement::parse(sql, &namespace_id)?;
+            let table_name = stmt.table_name.clone();
+            let schema = stmt.schema.clone();
             self.shared_table_service.create_table(stmt)?;
+            
+            // Register with DataFusion if stores are configured
+            if self.shared_table_store.is_some() {
+                self.register_table_with_datafusion(
+                    &namespace_id,
+                    &table_name,
+                    crate::catalog::TableType::Shared,
+                    schema,
+                    default_user_id,
+                ).await?;
+            }
+            
             return Ok(ExecutionResult::Success("Table created successfully".to_string()));
         }
     }
 
     /// Execute DROP TABLE
     async fn execute_drop_table(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
-        let _namespace_id = crate::catalog::NamespaceId::new("default"); // TODO: Get from context
-        let _stmt = DropTableStatement::parse(sql, &_namespace_id)?;
+        // Check if table deletion service is available
+        let deletion_service = self.table_deletion_service.as_ref()
+            .ok_or_else(|| KalamDbError::InvalidOperation(
+                "DROP TABLE not available - table deletion service not configured".to_string()
+            ))?;
         
-        // TODO: Implement DROP TABLE routing to services
-        // Services don't have drop_table methods yet
-        Err(KalamDbError::InvalidOperation(
-            "DROP TABLE not yet implemented - use system tables to manage tables".to_string()
+        let namespace_id = crate::catalog::NamespaceId::new("default"); // TODO: Get from context
+        let stmt = DropTableStatement::parse(sql, &namespace_id)?;
+        
+        // Execute the drop operation
+        let result = deletion_service.drop_table(
+            &stmt.namespace_id,
+            &stmt.table_name,
+            stmt.table_type,
+            stmt.if_exists,
+        )?;
+        
+        // If if_exists is true and table didn't exist, return success message
+        if result.is_none() {
+            return Ok(ExecutionResult::Success(
+                format!("Table {}.{} does not exist (skipped)", stmt.namespace_id, stmt.table_name)
+            ));
+        }
+        
+        let deletion_result = result.unwrap();
+        Ok(ExecutionResult::Success(
+            format!(
+                "Table {}.{} dropped successfully ({} Parquet files deleted, {} bytes freed)",
+                stmt.namespace_id, stmt.table_name, 
+                deletion_result.files_deleted, deletion_result.bytes_freed
+            )
         ))
     }
 

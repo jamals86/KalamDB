@@ -64,6 +64,12 @@ toml = "0.9.8"
 # System
 num_cpus = "1.16"
 
+# Testing
+tempfile = "3.8"
+
+# Benchmarking
+criterion = { version = "0.5", features = ["html_reports"] }
+
 [profile.release]
 opt-level = 3
 lto = true

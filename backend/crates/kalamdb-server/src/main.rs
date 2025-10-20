@@ -10,7 +10,7 @@ use actix_cors::Cors;
 use anyhow::Result;
 use datafusion::catalog::schema::{MemorySchemaProvider, SchemaProvider};
 use kalamdb_api::routes;
-use kalamdb_core::services::{NamespaceService, UserTableService, SharedTableService, StreamTableService};
+use kalamdb_core::services::{NamespaceService, UserTableService, SharedTableService, StreamTableService, TableDeletionService};
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::storage::RocksDbInit;
@@ -117,15 +117,39 @@ async fn main() -> Result<()> {
     let stream_table_service = Arc::new(StreamTableService::new(stream_table_store.clone(), kalam_sql.clone()));
     info!("Table services initialized (user, shared, stream)");
 
-    // Initialize SqlExecutor (still takes only 2 args - need to update SqlExecutor struct first)
-    let sql_executor = Arc::new(SqlExecutor::new(
-        namespace_service.clone(),
-        session_context.clone(),
-        user_table_service.clone(),
-        shared_table_service.clone(),
-        stream_table_service.clone(),
+    // Initialize TableDeletionService for DROP TABLE support
+    let table_deletion_service = Arc::new(TableDeletionService::new(
+        user_table_store.clone(),
+        shared_table_store.clone(),
+        stream_table_store.clone(),
+        kalam_sql.clone(),
     ));
-    info!("SqlExecutor initialized");
+    info!("TableDeletionService initialized");
+
+    // Initialize SqlExecutor with builder pattern
+    let sql_executor = Arc::new(
+        SqlExecutor::new(
+            namespace_service.clone(),
+            session_context.clone(),
+            user_table_service.clone(),
+            shared_table_service.clone(),
+            stream_table_service.clone(),
+        )
+        .with_table_deletion_service(table_deletion_service)
+        .with_stores(
+            user_table_store.clone(),
+            shared_table_store.clone(),
+            stream_table_store.clone(),
+            kalam_sql.clone(),
+        )
+    );
+    info!("SqlExecutor initialized with DROP TABLE support and table registration");
+
+    // Load existing tables from system_tables and register with DataFusion
+    let default_user_id = kalamdb_core::catalog::UserId::from("system");
+    sql_executor.load_existing_tables(default_user_id).await
+        .expect("Failed to load existing tables");
+    info!("Existing tables loaded and registered with DataFusion");
 
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     info!("Starting HTTP server on {}", bind_addr);
