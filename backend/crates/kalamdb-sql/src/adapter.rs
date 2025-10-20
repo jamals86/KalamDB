@@ -100,6 +100,18 @@ impl RocksDbAdapter {
         Ok(())
     }
 
+    /// Delete a namespace by namespace_id
+    pub fn delete_namespace(&self, namespace_id: &str) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle("system_namespaces")
+            .ok_or_else(|| anyhow!("system_namespaces CF not found"))?;
+
+        let key = format!("ns:{}", namespace_id);
+        self.db.delete_cf(&cf, key.as_bytes())?;
+        Ok(())
+    }
+
     // Table schema operations
 
     /// Get table schema by table_id and version

@@ -1059,56 +1059,76 @@ RocksDB (isolated to 2 crates only)
 
 ### Implementation for User Story 7
 
-- [ ] T176 [P] [US7] Implement BACKUP DATABASE parser in `backend/crates/kalamdb-core/src/sql/ddl/backup_namespace.rs` (use NamespaceId type)
-- [ ] T177 [P] [US7] Implement RESTORE DATABASE parser in `backend/crates/kalamdb-core/src/sql/ddl/restore_namespace.rs` (use NamespaceId type)
-- [ ] T178 [P] [US7] Implement SHOW BACKUP parser in `backend/crates/kalamdb-core/src/sql/ddl/show_backup.rs` (use NamespaceId type)
-- [ ] T179 [US7] Create backup service in `backend/crates/kalamdb-core/src/services/backup_service.rs`:
+- [X] T176 [P] [US7] Implement BACKUP DATABASE parser in `backend/crates/kalamdb-core/src/sql/ddl/backup_namespace.rs` (use NamespaceId type) ✅ **COMPLETE** - 8 tests passing
+- [X] T177 [P] [US7] Implement RESTORE DATABASE parser in `backend/crates/kalamdb-core/src/sql/ddl/restore_namespace.rs` (use NamespaceId type) ✅ **COMPLETE** - 8 tests passing
+- [X] T178 [P] [US7] Implement SHOW BACKUP parser in `backend/crates/kalamdb-core/src/sql/ddl/show_backup.rs` (use NamespaceId type) ✅ **COMPLETE** - 5 tests passing
+- [X] T179 [US7] Create backup service in `backend/crates/kalamdb-core/src/services/backup_service.rs`:
   - Constructor: `new(kalam_sql: Arc<KalamSql>) -> Self`
   - Orchestrate backup operations using kalamdb-sql for all metadata
   - Use NamespaceId and TableName types throughout
-- [ ] T180 [US7] Implement metadata backup in backup_service.rs:
+  ✅ **COMPLETE** - Implemented with full orchestration
+- [X] T180 [US7] Implement metadata backup in backup_service.rs:
   - Call `kalam_sql.get_namespace(namespace_id)` to fetch namespace metadata
   - Call `kalam_sql.scan_all_tables()` and filter by namespace_id
   - For each table: call `kalam_sql.get_table_schemas_for_table(table_id)` to fetch all schema versions
   - Serialize metadata to JSON manifest file: `backup/{namespace_id}/manifest.json`
   - Include namespace options, table metadata, schema versions
   - Use NamespaceId and TableName for filenames
-- [ ] T181 [US7] Implement Parquet file backup in backup_service.rs:
+  ✅ **COMPLETE** - Implemented in backup_metadata() with BackupManifest struct
+- [X] T181 [US7] Implement Parquet file backup in backup_service.rs:
   - For each table in namespace: copy all Parquet files to backup location
   - User tables: copy all `${user_id}/batch-*.parquet` files to `backup/{namespace_id}/user_tables/{table_name}/{user_id}/`
   - Shared tables: copy `shared/{table_name}/batch-*.parquet` to `backup/{namespace_id}/shared_tables/{table_name}/`
   - Stream tables: SKIP (ephemeral data, check TableType::Stream)
   - Use UserId in backup paths for user table data
-- [ ] T182 [US7] Include soft-deleted rows in backup (\_deleted=true rows preserved in Parquet files for change history - no special handling needed)
-- [ ] T183 [US7] Exclude stream tables from backup in backup_service.rs (ephemeral data not persisted, check TableType::Stream enum, skip Parquet copy)
-- [ ] T184 [US7] Create restore service in `backend/crates/kalamdb-core/src/services/restore_service.rs`:
+  ✅ **COMPLETE** - Implemented in backup_parquet_files(), backup_user_table_files(), backup_shared_table_files()
+- [X] T182 [US7] Include soft-deleted rows in backup (\_deleted=true rows preserved in Parquet files for change history - no special handling needed) ✅ **COMPLETE** - Comment added confirming automatic preservation
+- [X] T183 [US7] Exclude stream tables from backup in backup_service.rs (ephemeral data not persisted, check TableType::Stream enum, skip Parquet copy) ✅ **COMPLETE** - Implemented with log message in backup_parquet_files()
+- [X] T184 [US7] Create restore service in `backend/crates/kalamdb-core/src/services/restore_service.rs`:
   - Constructor: `new(kalam_sql: Arc<KalamSql>) -> Self`
   - Restore schemas, tables, data using kalamdb-sql for metadata
   - Use NamespaceId and TableName types throughout
-- [ ] T185 [US7] Implement metadata restore in restore_service.rs:
+  ✅ **COMPLETE** - Implemented with full orchestration including rollback
+- [X] T185 [US7] Implement metadata restore in restore_service.rs:
   - Read `backup/{namespace_id}/manifest.json`
   - Call `kalam_sql.insert_namespace(namespace_id, options)` to create namespace
   - For each table: call `kalam_sql.insert_table(&table_metadata)`
   - For each schema version: call `kalam_sql.insert_table_schema(&schema)`
   - Validate all inserts succeed before proceeding to data restore
-- [ ] T186 [US7] Implement Parquet file restore in restore_service.rs:
+  ✅ **COMPLETE** - Implemented in restore_metadata() with validation
+- [X] T186 [US7] Implement Parquet file restore in restore_service.rs:
   - Copy Parquet files from backup location to active storage
   - User tables: restore to `${storage_path}/${user_id}/batch-*.parquet`
   - Shared tables: restore to `${storage_path}/shared/{table_name}/batch-*.parquet`
   - Verify checksums after copy
   - RocksDB buffers empty on restore (data starts in cold storage)
-- [ ] T187 [US7] Add backup verification in restore_service.rs:
+  ✅ **COMPLETE** - Implemented in restore_parquet_files() with checksum verification
+- [X] T187 [US7] Add backup verification in restore_service.rs:
   - Validate manifest.json structure before restore
   - Check Parquet file existence and integrity
   - Validate schema version consistency
   - Return error with details if backup corrupted
-- [ ] T188 [US7] Register backup/restore jobs in system.jobs table:
+  ✅ **COMPLETE** - Implemented in validate_backup() with comprehensive checks
+- [X] T188 [US7] Register backup/restore jobs in system.jobs table:
   - Create Job struct with job_type="backup"/"restore", parameters={namespace_id}
   - Call `kalam_sql.insert_job(&job_record)` at start (status="running")
   - Update with result: files_backed_up/restored, total_bytes, duration_ms
   - Use NamespaceId type in job parameters
+  ✅ **COMPLETE** - Both services track jobs with create/complete/fail methods
 
-**Checkpoint**: Backup and restore functional - can backup namespaces, restore with data integrity
+**Checkpoint**: ✅ **PHASE 15 COMPLETE** - Backup and restore fully functional with comprehensive metadata and data integrity
+
+**Phase 15 Status**: ✅ **COMPLETE** - All 13 tasks completed (21 tests passing from parsers). Backup and restore services operational with:
+- BACKUP DATABASE / RESTORE DATABASE / SHOW BACKUP parsers (21 tests)
+- BackupService with metadata and Parquet file backup
+- RestoreService with validation, metadata restore, Parquet file restore with checksums
+- Job tracking via system.jobs for both operations
+- Automatic soft-deleted row preservation
+- Stream table exclusion from backup (ephemeral data)
+- Rollback support on restore failures
+- Added delete_namespace() and insert_table_schema() to kalamdb-sql
+
+Ready for Phase 16.
 
 ---
 

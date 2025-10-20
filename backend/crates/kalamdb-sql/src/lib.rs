@@ -113,6 +113,16 @@ impl KalamSql {
         self.adapter.insert_namespace(&namespace)
     }
 
+    /// Insert a namespace struct directly
+    pub fn insert_namespace_struct(&self, namespace: &Namespace) -> Result<()> {
+        self.adapter.insert_namespace(namespace)
+    }
+
+    /// Delete a namespace by namespace_id
+    pub fn delete_namespace(&self, namespace_id: &str) -> Result<()> {
+        self.adapter.delete_namespace(namespace_id)
+    }
+
     /// Get table schema by table_id and version
     pub fn get_table_schema(
         &self,
@@ -120,6 +130,11 @@ impl KalamSql {
         version: Option<i32>,
     ) -> Result<Option<TableSchema>> {
         self.adapter.get_table_schema(table_id, version)
+    }
+
+    /// Insert a table schema
+    pub fn insert_table_schema(&self, schema: &TableSchema) -> Result<()> {
+        self.adapter.insert_table_schema(schema)
     }
 
     /// Get a storage location by name

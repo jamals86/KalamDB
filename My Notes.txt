@@ -1,6 +1,8 @@
 Things to add to the spec:
 - make tests run either on local server or on temporary server like its doing now
 - Double check if we can use kalamdb-store with kalamdb-sql instead of calling rocksdb directly from kalamdb-sql
+- Check if ddls can be included inside kalamdb-sql as well since they belong there, if it's not all maybe the names or models only
+- Default catalog for system tables is system, no need for a different one
 - instead of relying on rocksdb with features like column-families, make the project generic so we can add any
     type of storage like sled/redis or anything else
 - Maybe its better to have a crate like kalamdb-commons which will be included in all other crates for:
@@ -10,15 +12,16 @@ Things to add to the spec:
     - System tables names instead of having multiple places where we name them
     - Any system things that is shared between or needed in -sql/-store/-core
 - Make sure the user can't listen to a shared table since this will ruin performance
+- Add crate for kalamdb-live which is responsible for live subscribers logic and it's communicate with the kalamdb-store and kalamdb-sql
 - Instead of having something like this: let cf_name = format!("user_table:{}:{}", namespace_id, table_name); let cf_name = format!("shared_table:{}:{}", namespace_id, table_name);
     make this a helper class which deals with naming, for system/shared/user
 - "_deleted" and "_updated" should be stored one time only, currently we are always writing them as string's
-- Make sure we use the actor model for the flush jobs so we can view them easily just like live queries/streas as well
+- Make sure we use the actor model for the flush jobs so we can view them easily just like live queries/streams/backup jobs as well
 - Make sure for expr check like in live_queries we use datafusion expressions and cache them
 - For sql functions we can use the datafusion own functions as well
 - Make sure when we select/insert/delet/update user table if we specify FROM namespace1.user.user_files then it will be like: FROM namespace1.jamal86.user_files
     Specify .user. should have X-USER-ID in the header if not then there should be an error
-
+- ShowBackupStatement for example has the same str: "SHOW BACKUP FOR DATABASE" multiple times, change the code to have it as an enum one time
 
 
 Features:
@@ -30,4 +33,4 @@ Features:
     If we have like 5 user tables and 10 shards in total we will have 50 column families
 - Raft Cluster - System tables should be replicated to all nodes
 - Raft Cluster - User tables each shard should have a group in the cluster and replicated accordingly
-
+- User can easily download his data
