@@ -14,6 +14,9 @@ pub mod drop_table;
 pub mod backup_namespace;
 pub mod restore_namespace;
 pub mod show_backup;
+pub mod show_tables;
+pub mod describe_table;
+pub mod show_table_stats;
 
 pub use create_namespace::CreateNamespaceStatement;
 pub use show_namespaces::ShowNamespacesStatement;
@@ -27,3 +30,6 @@ pub use drop_table::DropTableStatement;
 pub use backup_namespace::BackupDatabaseStatement;
 pub use restore_namespace::RestoreDatabaseStatement;
 pub use show_backup::ShowBackupStatement;
+pub use show_tables::ShowTablesStatement;
+pub use describe_table::DescribeTableStatement;
+pub use show_table_stats::ShowTableStatsStatement;

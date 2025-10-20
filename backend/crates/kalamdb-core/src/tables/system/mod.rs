@@ -8,6 +8,7 @@ pub mod storage_locations;
 pub mod storage_locations_provider;
 pub mod users;
 pub mod users_provider;
+pub mod information_schema_tables;
 
 pub use jobs::JobsTable;
 pub use jobs_provider::{JobRecord, JobsTableProvider};
@@ -17,6 +18,7 @@ pub use storage_locations::StorageLocationsTable;
 pub use storage_locations_provider::{StorageLocationRecord, StorageLocationsTableProvider};
 pub use users::UsersTable;
 pub use users_provider::{UserRecord, UsersTableProvider};
+pub use information_schema_tables::InformationSchemaTablesProvider;
 
 /// Register all system tables with DataFusion
 pub fn register_system_tables() {

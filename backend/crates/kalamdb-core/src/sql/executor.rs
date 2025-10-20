@@ -9,7 +9,8 @@ use crate::services::{NamespaceService, UserTableService, SharedTableService, St
 use crate::sql::ddl::{
     AlterNamespaceStatement, CreateNamespaceStatement, DropNamespaceStatement,
     ShowNamespacesStatement, CreateUserTableStatement, CreateSharedTableStatement,
-    CreateStreamTableStatement, DropTableStatement,
+    CreateStreamTableStatement, DropTableStatement, ShowTablesStatement, DescribeTableStatement,
+    ShowTableStatsStatement,
 };
 use crate::tables::{UserTableProvider, SharedTableProvider, StreamTableProvider};
 use crate::catalog::{NamespaceId, TableName, UserId, TableType};
@@ -249,6 +250,12 @@ impl SqlExecutor {
             return self.execute_create_namespace(sql).await;
         } else if sql_upper.starts_with("SHOW NAMESPACES") {
             return self.execute_show_namespaces(sql).await;
+        } else if sql_upper.starts_with("SHOW TABLES") {
+            return self.execute_show_tables(sql).await;
+        } else if sql_upper.starts_with("SHOW STATS") {
+            return self.execute_show_table_stats(sql).await;
+        } else if sql_upper.starts_with("DESCRIBE TABLE") || sql_upper.starts_with("DESC TABLE") {
+            return self.execute_describe_table(sql).await;
         } else if sql_upper.starts_with("ALTER NAMESPACE") {
             return self.execute_alter_namespace(sql).await;
         } else if sql_upper.starts_with("DROP NAMESPACE") {
@@ -319,6 +326,95 @@ impl SqlExecutor {
 
         // Convert to RecordBatch
         let batch = Self::namespaces_to_record_batch(namespaces)?;
+
+        Ok(ExecutionResult::RecordBatch(batch))
+    }
+
+    /// Execute SHOW TABLES
+    async fn execute_show_tables(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        let stmt = ShowTablesStatement::parse(sql)?;
+        
+        let kalam_sql = self.kalam_sql.as_ref().ok_or_else(|| {
+            KalamDbError::Other("KalamSql not initialized".to_string())
+        })?;
+        
+        // Scan all tables from kalam_sql
+        let tables = kalam_sql
+            .scan_all_tables()
+            .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
+        
+        // Filter by namespace if specified
+        let filtered_tables: Vec<_> = if let Some(namespace_id) = &stmt.namespace_id {
+            tables.into_iter()
+                .filter(|t| t.namespace == namespace_id.as_str())
+                .collect()
+        } else {
+            tables
+        };
+
+        // Convert to RecordBatch
+        let batch = Self::tables_to_record_batch(filtered_tables)?;
+
+        Ok(ExecutionResult::RecordBatch(batch))
+    }
+
+    /// Execute DESCRIBE TABLE
+    async fn execute_describe_table(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        let stmt = DescribeTableStatement::parse(sql)?;
+        
+        let kalam_sql = self.kalam_sql.as_ref().ok_or_else(|| {
+            KalamDbError::Other("KalamSql not initialized".to_string())
+        })?;
+        
+        // Get all tables to find the requested one
+        let tables = kalam_sql
+            .scan_all_tables()
+            .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
+        
+        // Find the table (match by name and optionally namespace)
+        let table = tables.into_iter().find(|t| {
+            let name_matches = t.table_name == stmt.table_name.as_str();
+            let namespace_matches = stmt.namespace_id.as_ref()
+                .map(|ns| t.namespace == ns.as_str())
+                .unwrap_or(true);
+            name_matches && namespace_matches
+        }).ok_or_else(|| {
+            KalamDbError::NotFound(format!("Table '{}' not found", stmt.table_name.as_str()))
+        })?;
+
+        // Convert to detailed RecordBatch with table metadata
+        let batch = Self::table_details_to_record_batch(&table)?;
+
+        Ok(ExecutionResult::RecordBatch(batch))
+    }
+
+    /// Execute SHOW STATS FOR TABLE
+    async fn execute_show_table_stats(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        let stmt = ShowTableStatsStatement::parse(sql)?;
+        
+        let kalam_sql = self.kalam_sql.as_ref().ok_or_else(|| {
+            KalamDbError::Other("KalamSql not initialized".to_string())
+        })?;
+        
+        // Get all tables to find the requested one
+        let tables = kalam_sql
+            .scan_all_tables()
+            .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
+        
+        // Find the table (match by name and optionally namespace)
+        let table = tables.into_iter().find(|t| {
+            let name_matches = t.table_name == stmt.table_name.as_str();
+            let namespace_matches = stmt.namespace_id.as_ref()
+                .map(|ns| t.namespace == ns.as_str())
+                .unwrap_or(true);
+            name_matches && namespace_matches
+        }).ok_or_else(|| {
+            KalamDbError::NotFound(format!("Table '{}' not found", stmt.table_name.as_str()))
+        })?;
+
+        // For now, return basic statistics
+        // In Phase 16, this would query actual row counts from hot/cold storage
+        let batch = Self::table_stats_to_record_batch(&table)?;
 
         Ok(ExecutionResult::RecordBatch(batch))
     }
@@ -573,6 +669,139 @@ impl SqlExecutor {
         ));
 
         RecordBatch::try_new(schema, vec![names, table_counts, created_at]).map_err(|e| {
+            KalamDbError::Other(format!("Failed to create RecordBatch: {}", e))
+        })
+    }
+
+    /// Convert table list to RecordBatch for SHOW TABLES
+    fn tables_to_record_batch(
+        tables: Vec<kalamdb_sql::Table>,
+    ) -> Result<RecordBatch, KalamDbError> {
+        use datafusion::arrow::array::TimestampMillisecondArray;
+        
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("namespace", DataType::Utf8, false),
+            Field::new("table_name", DataType::Utf8, false),
+            Field::new("table_type", DataType::Utf8, false),
+            Field::new("created_at", DataType::Utf8, false),
+        ]));
+
+        let namespaces: ArrayRef = Arc::new(StringArray::from(
+            tables.iter().map(|t| t.namespace.as_str()).collect::<Vec<_>>(),
+        ));
+
+        let names: ArrayRef = Arc::new(StringArray::from(
+            tables.iter().map(|t| t.table_name.as_str()).collect::<Vec<_>>(),
+        ));
+
+        let types: ArrayRef = Arc::new(StringArray::from(
+            tables.iter().map(|t| t.table_type.as_str()).collect::<Vec<_>>(),
+        ));
+
+        let created_at: ArrayRef = Arc::new(StringArray::from(
+            tables.iter().map(|t| {
+                chrono::DateTime::from_timestamp_millis(t.created_at)
+                    .map(|dt| dt.to_rfc3339())
+                    .unwrap_or_else(|| "unknown".to_string())
+            }).collect::<Vec<_>>(),
+        ));
+
+        RecordBatch::try_new(schema, vec![namespaces, names, types, created_at]).map_err(|e| {
+            KalamDbError::Other(format!("Failed to create RecordBatch: {}", e))
+        })
+    }
+
+    /// Convert table details to RecordBatch for DESCRIBE TABLE
+    fn table_details_to_record_batch(
+        table: &kalamdb_sql::Table,
+    ) -> Result<RecordBatch, KalamDbError> {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("property", DataType::Utf8, false),
+            Field::new("value", DataType::Utf8, false),
+        ]));
+
+        let properties = vec![
+            "table_id",
+            "table_name",
+            "namespace",
+            "table_type",
+            "storage_location",
+            "flush_policy",
+            "schema_version",
+            "deleted_retention_hours",
+            "created_at",
+        ];
+
+        let created_at_str = chrono::DateTime::from_timestamp_millis(table.created_at)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_else(|| "unknown".to_string());
+        
+        let schema_version_str = table.schema_version.to_string();
+        let retention_hours_str = table.deleted_retention_hours.to_string();
+
+        let values = vec![
+            table.table_id.as_str(),
+            table.table_name.as_str(),
+            table.namespace.as_str(),
+            table.table_type.as_str(),
+            table.storage_location.as_str(),
+            table.flush_policy.as_str(),
+            &schema_version_str,
+            &retention_hours_str,
+            &created_at_str,
+        ];
+
+        let property_array: ArrayRef = Arc::new(StringArray::from(properties));
+        let value_array: ArrayRef = Arc::new(StringArray::from(values));
+
+        RecordBatch::try_new(schema, vec![property_array, value_array]).map_err(|e| {
+            KalamDbError::Other(format!("Failed to create RecordBatch: {}", e))
+        })
+    }
+
+    /// Convert table statistics to RecordBatch for SHOW STATS
+    fn table_stats_to_record_batch(
+        table: &kalamdb_sql::Table,
+    ) -> Result<RecordBatch, KalamDbError> {
+        use datafusion::arrow::array::UInt64Array;
+        
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("statistic", DataType::Utf8, false),
+            Field::new("value", DataType::Utf8, false),
+        ]));
+
+        // For Phase 16, we return metadata-based statistics
+        // Future phases can query actual row counts from hot/cold storage
+        let statistics = vec![
+            "table_name",
+            "namespace",
+            "table_type",
+            "storage_location",
+            "schema_version",
+            "created_at",
+            "status",
+        ];
+
+        let created_at_str = chrono::DateTime::from_timestamp_millis(table.created_at)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_else(|| "unknown".to_string());
+        
+        let schema_version_str = table.schema_version.to_string();
+
+        let values = vec![
+            table.table_name.as_str(),
+            table.namespace.as_str(),
+            table.table_type.as_str(),
+            table.storage_location.as_str(),
+            &schema_version_str,
+            &created_at_str,
+            "active", // Placeholder - could query actual status
+        ];
+
+        let statistic_array: ArrayRef = Arc::new(StringArray::from(statistics));
+        let value_array: ArrayRef = Arc::new(StringArray::from(values));
+
+        RecordBatch::try_new(schema, vec![statistic_array, value_array]).map_err(|e| {
             KalamDbError::Other(format!("Failed to create RecordBatch: {}", e))
         })
     }

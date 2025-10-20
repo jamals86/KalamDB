@@ -1,4 +1,9 @@
 Things to add to the spec:
+- Include TODO's found in the codebase, maybe some needs to be added to the plan and tasks
+- Re-write the README it has things outdated now
+    - Remove the parquet mentioning that much it can be mentioned only once max
+    - Add also mention that the websocket is directly opened to the server no need for another service in the middle
+    
 - make tests run either on local server or on temporary server like its doing now
 - Double check if we can use kalamdb-store with kalamdb-sql instead of calling rocksdb directly from kalamdb-sql
 - Check if ddls can be included inside kalamdb-sql as well since they belong there, if it's not all maybe the names or models only
@@ -21,10 +26,12 @@ Things to add to the spec:
 - For sql functions we can use the datafusion own functions as well
 - Make sure when we select/insert/delet/update user table if we specify FROM namespace1.user.user_files then it will be like: FROM namespace1.jamal86.user_files
     Specify .user. should have X-USER-ID in the header if not then there should be an error
+    Instead of from("system") we should pass the exact user_id
 - ShowBackupStatement for example has the same str: "SHOW BACKUP FOR DATABASE" multiple times, change the code to have it as an enum one time
-
+- In API query result, also return the time took for the query to process, this need to be an option in the configuration toml
 
 Features:
+- Add CLI tool which is using the API and you can login with specific user to do the actions inside of it, this should be a separate binary
 - Make the project has a generic serdes models, so we can change the serialization from the json
 - A new table called user_files which is a table per user for storing files and their references in the storage location we have
 - KFlows - Add a workflow triggers which also listen to streams, actions being done and write to the database
@@ -34,3 +41,4 @@ Features:
 - Raft Cluster - System tables should be replicated to all nodes
 - Raft Cluster - User tables each shard should have a group in the cluster and replicated accordingly
 - User can easily download his data
+
