@@ -47,14 +47,15 @@ impl NamespaceService {
         if_not_exists: bool,
     ) -> Result<bool, KalamDbError> {
         let name = name.into();
-        
+
         // Validate namespace name
         Namespace::validate_name(name.as_str())?;
 
         // Check if namespace already exists
-        let existing = self.kalam_sql.get_namespace(name.as_str())
-            .map_err(|e| KalamDbError::IoError(format!("Failed to check namespace existence: {}", e)))?;
-        
+        let existing = self.kalam_sql.get_namespace(name.as_str()).map_err(|e| {
+            KalamDbError::IoError(format!("Failed to check namespace existence: {}", e))
+        })?;
+
         if existing.is_some() {
             if if_not_exists {
                 return Ok(false);
@@ -72,8 +73,9 @@ impl NamespaceService {
         // Convert to SQL model and save to RocksDB via kalamdb-sql
         let options_json = serde_json::to_string(&namespace.options)
             .map_err(|e| KalamDbError::IoError(format!("Failed to serialize options: {}", e)))?;
-        
-        self.kalam_sql.insert_namespace(name.as_str(), &options_json)
+
+        self.kalam_sql
+            .insert_namespace(name.as_str(), &options_json)
             .map_err(|e| KalamDbError::IoError(format!("Failed to insert namespace: {}", e)))?;
 
         Ok(true)
@@ -91,15 +93,17 @@ impl NamespaceService {
 
     /// Get a specific namespace by name
     pub fn get(&self, name: &str) -> Result<Option<Namespace>, KalamDbError> {
-        let sql_namespace = self.kalam_sql.get_namespace(name)
+        let sql_namespace = self
+            .kalam_sql
+            .get_namespace(name)
             .map_err(|e| KalamDbError::IoError(format!("Failed to get namespace: {}", e)))?;
-        
+
         match sql_namespace {
             Some(ns) => {
                 // Convert SQL model to core model
-                let options: HashMap<String, JsonValue> = serde_json::from_str(&ns.options)
-                    .unwrap_or_default();
-                
+                let options: HashMap<String, JsonValue> =
+                    serde_json::from_str(&ns.options).unwrap_or_default();
+
                 Ok(Some(Namespace {
                     name: NamespaceId::from(ns.name),
                     created_at: chrono::DateTime::from_timestamp(ns.created_at, 0)
@@ -125,13 +129,11 @@ impl NamespaceService {
         options: HashMap<String, JsonValue>,
     ) -> Result<(), KalamDbError> {
         let name = name.into();
-        
+
         // Load existing namespace
-        let mut namespace = self.get(name.as_str())?
-            .ok_or_else(|| KalamDbError::NotFound(format!(
-                "Namespace '{}' not found",
-                name.as_str()
-            )))?;
+        let mut namespace = self.get(name.as_str())?.ok_or_else(|| {
+            KalamDbError::NotFound(format!("Namespace '{}' not found", name.as_str()))
+        })?;
 
         // Merge options
         for (key, value) in options {
@@ -142,7 +144,7 @@ impl NamespaceService {
         // For now, re-insert the namespace
         let options_json = serde_json::to_string(&namespace.options)
             .map_err(|e| KalamDbError::IoError(format!("Failed to serialize options: {}", e)))?;
-        
+
         let sql_namespace = SqlNamespace {
             namespace_id: name.as_str().to_string(),
             name: name.as_str().to_string(),
@@ -150,8 +152,9 @@ impl NamespaceService {
             options: options_json,
             table_count: namespace.table_count as i32,
         };
-        
-        self.kalam_sql.insert_namespace(name.as_str(), &sql_namespace.options)
+
+        self.kalam_sql
+            .insert_namespace(name.as_str(), &sql_namespace.options)
             .map_err(|e| KalamDbError::IoError(format!("Failed to update namespace: {}", e)))?;
 
         Ok(())
@@ -175,7 +178,7 @@ impl NamespaceService {
         if_exists: bool,
     ) -> Result<bool, KalamDbError> {
         let name = name.into();
-        
+
         // Check if namespace exists
         let namespace = match self.get(name.as_str())? {
             Some(ns) => ns,
@@ -212,18 +215,16 @@ impl NamespaceService {
     ///
     /// **TODO**: Implement update_namespace() in kalamdb-sql adapter for atomic counter updates
     pub fn increment_table_count(&self, name: &str) -> Result<(), KalamDbError> {
-        let mut namespace = self.get(name)?
-            .ok_or_else(|| KalamDbError::NotFound(format!(
-                "Namespace '{}' not found",
-                name
-            )))?;
+        let mut namespace = self
+            .get(name)?
+            .ok_or_else(|| KalamDbError::NotFound(format!("Namespace '{}' not found", name)))?;
 
         namespace.increment_table_count();
-        
+
         // TODO: This should be an atomic update operation
         let options_json = serde_json::to_string(&namespace.options)
             .map_err(|e| KalamDbError::IoError(format!("Failed to serialize options: {}", e)))?;
-        
+
         let sql_namespace = SqlNamespace {
             namespace_id: name.to_string(),
             name: name.to_string(),
@@ -231,8 +232,9 @@ impl NamespaceService {
             options: options_json,
             table_count: namespace.table_count as i32,
         };
-        
-        self.kalam_sql.insert_namespace(name, &sql_namespace.options)
+
+        self.kalam_sql
+            .insert_namespace(name, &sql_namespace.options)
             .map_err(|e| KalamDbError::IoError(format!("Failed to update table count: {}", e)))?;
 
         Ok(())
@@ -244,18 +246,16 @@ impl NamespaceService {
     ///
     /// **TODO**: Implement update_namespace() in kalamdb-sql adapter for atomic counter updates
     pub fn decrement_table_count(&self, name: &str) -> Result<(), KalamDbError> {
-        let mut namespace = self.get(name)?
-            .ok_or_else(|| KalamDbError::NotFound(format!(
-                "Namespace '{}' not found",
-                name
-            )))?;
+        let mut namespace = self
+            .get(name)?
+            .ok_or_else(|| KalamDbError::NotFound(format!("Namespace '{}' not found", name)))?;
 
         namespace.decrement_table_count();
-        
+
         // TODO: This should be an atomic update operation
         let options_json = serde_json::to_string(&namespace.options)
             .map_err(|e| KalamDbError::IoError(format!("Failed to serialize options: {}", e)))?;
-        
+
         let sql_namespace = SqlNamespace {
             namespace_id: name.to_string(),
             name: name.to_string(),
@@ -263,8 +263,9 @@ impl NamespaceService {
             options: options_json,
             table_count: namespace.table_count as i32,
         };
-        
-        self.kalam_sql.insert_namespace(name, &sql_namespace.options)
+
+        self.kalam_sql
+            .insert_namespace(name, &sql_namespace.options)
             .map_err(|e| KalamDbError::IoError(format!("Failed to update table count: {}", e)))?;
 
         Ok(())
@@ -285,10 +286,10 @@ mod tests {
     #[test]
     fn test_create_namespace() {
         let service = setup_test_service();
-        
+
         let created = service.create("app", false).unwrap();
         assert!(created);
-        
+
         // Verify namespace exists
         let namespace = service.get("app").unwrap().unwrap();
         assert_eq!(namespace.name.as_str(), "app");
@@ -298,10 +299,10 @@ mod tests {
     #[test]
     fn test_create_namespace_if_not_exists() {
         let service = setup_test_service();
-        
+
         let created1 = service.create("app", false).unwrap();
         assert!(created1);
-        
+
         let created2 = service.create("app", true).unwrap();
         assert!(!created2);
     }
@@ -309,7 +310,7 @@ mod tests {
     #[test]
     fn test_create_namespace_duplicate_error() {
         let service = setup_test_service();
-        
+
         service.create("app", false).unwrap();
         let result = service.create("app", false);
         assert!(result.is_err());
@@ -318,10 +319,10 @@ mod tests {
     #[test]
     fn test_create_namespace_invalid_name() {
         let service = setup_test_service();
-        
+
         let result = service.create("system", false);
         assert!(result.is_err());
-        
+
         let result = service.create("Invalid-Name", false);
         assert!(result.is_err());
     }
@@ -330,10 +331,10 @@ mod tests {
     #[ignore] // TODO: Implement scan_all_namespaces() in kalamdb-sql first
     fn test_list_namespaces() {
         let service = setup_test_service();
-        
+
         service.create("app1", false).unwrap();
         service.create("app2", false).unwrap();
-        
+
         let namespaces = service.list().unwrap();
         assert_eq!(namespaces.len(), 2);
         assert_eq!(namespaces[0].name.as_str(), "app1");
@@ -343,29 +344,35 @@ mod tests {
     #[test]
     fn test_update_options() {
         let service = setup_test_service();
-        
+
         service.create("app", false).unwrap();
-        
+
         let mut options = HashMap::new();
         options.insert("max_tables".to_string(), JsonValue::Number(100.into()));
-        options.insert("region".to_string(), JsonValue::String("us-west".to_string()));
-        
+        options.insert(
+            "region".to_string(),
+            JsonValue::String("us-west".to_string()),
+        );
+
         service.update_options("app", options).unwrap();
-        
+
         let namespace = service.get("app").unwrap().unwrap();
         assert_eq!(namespace.options.len(), 2);
-        assert_eq!(namespace.options.get("max_tables"), Some(&JsonValue::Number(100.into())));
+        assert_eq!(
+            namespace.options.get("max_tables"),
+            Some(&JsonValue::Number(100.into()))
+        );
     }
 
     #[test]
     #[ignore] // TODO: Implement delete_namespace() in kalamdb-sql first
     fn test_delete_namespace() {
         let service = setup_test_service();
-        
+
         service.create("app", false).unwrap();
         let deleted = service.delete("app", false).unwrap();
         assert!(deleted);
-        
+
         let namespace = service.get("app").unwrap();
         assert!(namespace.is_none());
     }
@@ -373,10 +380,10 @@ mod tests {
     #[test]
     fn test_delete_namespace_with_tables() {
         let service = setup_test_service();
-        
+
         service.create("app", false).unwrap();
         service.increment_table_count("app").unwrap();
-        
+
         let result = service.delete("app", false);
         assert!(result.is_err());
     }
@@ -385,7 +392,7 @@ mod tests {
     #[ignore] // TODO: Implement delete_namespace() in kalamdb-sql first
     fn test_delete_namespace_if_exists() {
         let service = setup_test_service();
-        
+
         let deleted = service.delete("nonexistent", true).unwrap();
         assert!(!deleted);
     }
@@ -393,17 +400,17 @@ mod tests {
     #[test]
     fn test_table_count_management() {
         let service = setup_test_service();
-        
+
         service.create("app", false).unwrap();
-        
+
         service.increment_table_count("app").unwrap();
         let namespace = service.get("app").unwrap().unwrap();
         assert_eq!(namespace.table_count, 1);
-        
+
         service.increment_table_count("app").unwrap();
         let namespace = service.get("app").unwrap().unwrap();
         assert_eq!(namespace.table_count, 2);
-        
+
         service.decrement_table_count("app").unwrap();
         let namespace = service.get("app").unwrap().unwrap();
         assert_eq!(namespace.table_count, 1);

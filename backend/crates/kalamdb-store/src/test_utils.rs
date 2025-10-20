@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn test_create_test_db() {
         let test_db = TestDb::new(&["user_table:app:messages"]).unwrap();
-        
+
         // Verify DB is accessible
         let cf = test_db.db.cf_handle("user_table:app:messages");
         assert!(cf.is_some());
@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn test_with_user_tables() {
         let test_db = TestDb::with_user_tables().unwrap();
-        
+
         // Verify both CFs exist
         assert!(test_db.db.cf_handle("user_table:app:messages").is_some());
         assert!(test_db.db.cf_handle("user_table:app:events").is_some());
@@ -107,7 +107,7 @@ mod tests {
     #[test]
     fn test_single_cf() {
         let test_db = TestDb::single_cf("user_table:app:messages").unwrap();
-        
+
         // Verify CF exists
         assert!(test_db.db.cf_handle("user_table:app:messages").is_some());
     }

@@ -73,9 +73,7 @@ impl UserTableInsertHandler {
                 &row_id,
                 row_data,
             )
-            .map_err(|e| {
-                KalamDbError::Other(format!("Failed to insert row: {}", e))
-            })?;
+            .map_err(|e| KalamDbError::Other(format!("Failed to insert row: {}", e)))?;
 
         log::debug!(
             "Inserted row into {}.{} for user {} with row_id {}",

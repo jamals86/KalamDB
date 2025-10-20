@@ -29,26 +29,26 @@ use serde::{Deserialize, Serialize};
 pub struct TableMetadata {
     /// Table identifier within namespace
     pub table_name: TableName,
-    
+
     /// Type of table (User, Shared, System, Stream)
     pub table_type: TableType,
-    
+
     /// Parent namespace
     pub namespace: NamespaceId,
-    
+
     /// When the table was created
     pub created_at: DateTime<Utc>,
-    
+
     /// Storage location (path template or location reference name)
     pub storage_location: String,
-    
+
     /// When to flush buffered data to Parquet
     pub flush_policy: FlushPolicy,
-    
+
     /// Current schema version number
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
-    
+
     /// How long to keep deleted rows (in hours)
     pub deleted_retention_hours: Option<u32>,
 }
@@ -81,12 +81,22 @@ impl TableMetadata {
     ///
     /// Name must match regex: ^[a-z][a-z0-9_]*$
     pub fn validate_table_name(name: &str) -> Result<(), String> {
-        if !name.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
+        if !name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase())
+        {
             return Err("Table name must start with a lowercase letter".to_string());
         }
 
-        if !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
-            return Err("Table name can only contain lowercase letters, digits, and underscores".to_string());
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
+            return Err(
+                "Table name can only contain lowercase letters, digits, and underscores"
+                    .to_string(),
+            );
         }
 
         Ok(())
@@ -189,18 +199,24 @@ mod tests {
             "/data".to_string(),
         );
 
-        assert_eq!(metadata.schema_directory(), "conf/analytics/schemas/events/");
+        assert_eq!(
+            metadata.schema_directory(),
+            "conf/analytics/schemas/events/"
+        );
     }
 
     #[test]
     fn test_with_flush_policy() {
-        let policy = FlushPolicy::TimeInterval { interval_seconds: 300 };
+        let policy = FlushPolicy::TimeInterval {
+            interval_seconds: 300,
+        };
         let metadata = TableMetadata::new(
             TableName::new("test"),
             TableType::User,
             NamespaceId::new("app"),
             "/data".to_string(),
-        ).with_flush_policy(policy.clone());
+        )
+        .with_flush_policy(policy.clone());
 
         assert_eq!(metadata.flush_policy, policy);
     }
@@ -212,7 +228,8 @@ mod tests {
             TableType::User,
             NamespaceId::new("app"),
             "/data".to_string(),
-        ).with_deleted_retention(72);
+        )
+        .with_deleted_retention(72);
 
         assert_eq!(metadata.deleted_retention_hours, Some(72));
     }

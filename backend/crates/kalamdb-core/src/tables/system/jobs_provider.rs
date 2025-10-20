@@ -3,7 +3,6 @@
 //! This module provides a DataFusion TableProvider implementation for the system.jobs table,
 //! backed by RocksDB column family system_jobs.
 
-use kalamdb_sql::KalamSql;
 use crate::error::KalamDbError;
 use crate::tables::system::jobs::JobsTable;
 use async_trait::async_trait;
@@ -16,6 +15,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_sql::KalamSql;
 use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::sync::Arc;
@@ -26,11 +26,11 @@ pub struct JobRecord {
     pub job_id: String,
     pub job_type: String, // "flush", "compact", "cleanup", etc.
     pub table_name: Option<String>,
-    pub status: String, // "running", "completed", "failed"
-    pub start_time: i64, // timestamp in milliseconds
-    pub end_time: Option<i64>, // timestamp in milliseconds
+    pub status: String,             // "running", "completed", "failed"
+    pub start_time: i64,            // timestamp in milliseconds
+    pub end_time: Option<i64>,      // timestamp in milliseconds
     pub parameters: Option<String>, // JSON array of strings
-    pub result: Option<String>, // JSON
+    pub result: Option<String>,     // JSON
     pub trace: Option<String>,
     pub memory_used_mb: Option<f64>,
     pub cpu_used_percent: Option<f64>,
@@ -136,7 +136,7 @@ impl JobsTableProvider {
             node_id: job.node_id,
             error_message: job.error_message,
         };
-        
+
         self.kalam_sql
             .insert_job(&sql_job)
             .map_err(|e| KalamDbError::Other(format!("Failed to insert job: {}", e)))
@@ -145,10 +145,11 @@ impl JobsTableProvider {
     /// Update an existing job record
     pub fn update_job(&self, job: JobRecord) -> Result<(), KalamDbError> {
         // Check if job exists
-        let existing = self.kalam_sql
+        let existing = self
+            .kalam_sql
             .get_job(&job.job_id)
             .map_err(|e| KalamDbError::Other(format!("Failed to get job: {}", e)))?;
-        
+
         if existing.is_none() {
             return Err(KalamDbError::NotFound(format!(
                 "Job not found: {}",
@@ -182,26 +183,35 @@ impl JobsTableProvider {
     pub fn delete_job(&self, _job_id: &str) -> Result<(), KalamDbError> {
         // TODO: Delete not yet implemented in kalamdb-sql adapter
         Err(KalamDbError::Other(
-            "Delete operation not yet implemented in kalamdb-sql adapter".to_string()
+            "Delete operation not yet implemented in kalamdb-sql adapter".to_string(),
         ))
     }
 
     /// Get a job by ID
     pub fn get_job(&self, job_id: &str) -> Result<Option<JobRecord>, KalamDbError> {
-        let sql_job = self.kalam_sql
+        let sql_job = self
+            .kalam_sql
             .get_job(job_id)
             .map_err(|e| KalamDbError::Other(format!("Failed to get job: {}", e)))?;
-        
+
         match sql_job {
             Some(j) => {
                 let job = JobRecord {
                     job_id: j.job_id,
                     job_type: j.job_type,
-                    table_name: if j.table_name.is_empty() { None } else { Some(j.table_name) },
+                    table_name: if j.table_name.is_empty() {
+                        None
+                    } else {
+                        Some(j.table_name)
+                    },
                     status: j.status,
                     start_time: j.start_time,
                     end_time: j.end_time,
-                    parameters: if j.parameters.is_empty() { None } else { Some(j.parameters.join(",")) },
+                    parameters: if j.parameters.is_empty() {
+                        None
+                    } else {
+                        Some(j.parameters.join(","))
+                    },
                     result: j.result,
                     trace: j.trace,
                     memory_used_mb: j.memory_used_mb,
@@ -219,13 +229,14 @@ impl JobsTableProvider {
     pub fn cleanup_old_jobs(&self, _retention_days: i64) -> Result<usize, KalamDbError> {
         // TODO: Delete not yet implemented in kalamdb-sql adapter
         Err(KalamDbError::Other(
-            "Delete operation not yet implemented in kalamdb-sql adapter".to_string()
+            "Delete operation not yet implemented in kalamdb-sql adapter".to_string(),
         ))
     }
 
     /// Scan all jobs and return as RecordBatch
     pub fn scan_all_jobs(&self) -> Result<RecordBatch, KalamDbError> {
-        let jobs = self.kalam_sql
+        let jobs = self
+            .kalam_sql
             .scan_all_jobs()
             .map_err(|e| KalamDbError::Other(format!("Failed to scan jobs: {}", e)))?;
 
@@ -255,7 +266,7 @@ impl JobsTableProvider {
             start_times.push(Some(job.start_time));
             end_times.push(job.end_time);
             if !job.parameters.is_empty() {
-                parameters_vec.append_value(&job.parameters.join(","));
+                parameters_vec.append_value(job.parameters.join(","));
             } else {
                 parameters_vec.append_null();
             }
@@ -434,8 +445,7 @@ mod tests {
 
         let retrieved = provider.get_job("job-005").unwrap().unwrap();
         assert!(retrieved.parameters.is_some());
-        let parsed: Vec<String> =
-            serde_json::from_str(&retrieved.parameters.unwrap()).unwrap();
+        let parsed: Vec<String> = serde_json::from_str(&retrieved.parameters.unwrap()).unwrap();
         assert_eq!(parsed, params);
     }
 

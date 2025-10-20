@@ -70,7 +70,7 @@ impl RetentionPolicy {
         // TODO: Delete not yet implemented in kalamdb-sql adapter
         // This method requires iterating and deleting jobs based on retention policy
         Err(KalamDbError::Other(
-            "Delete operation not yet implemented in kalamdb-sql adapter".to_string()
+            "Delete operation not yet implemented in kalamdb-sql adapter".to_string(),
         ))
     }
 
@@ -88,7 +88,7 @@ impl RetentionPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::CatalogStore;
+    
     use crate::storage::RocksDbInit;
     use crate::tables::system::JobRecord;
     use tempfile::TempDir;

@@ -48,13 +48,13 @@ impl CreateSharedTableStatement {
         // "CREATE SHARED TABLE ... FLUSH ROWS 100" -> "CREATE TABLE ..."
         let normalized_sql = sql
             .replace("SHARED TABLE", "TABLE")
-            .replace(|c| c == '\n' || c == '\r', " "); // Normalize line breaks
-        
+            .replace(['\n', '\r'], " "); // Normalize line breaks
+
         // Remove FLUSH clause using regex
         use regex::Regex;
         let flush_re = Regex::new(r"(?i)\s+FLUSH\s+(ROWS|SECONDS|BYTES)\s+\d+").unwrap();
         let normalized_sql = flush_re.replace_all(&normalized_sql, "").to_string();
-        
+
         let dialect = GenericDialect {};
         let statements = Parser::parse_sql(&dialect, &normalized_sql)
             .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
@@ -207,23 +207,25 @@ impl CreateSharedTableStatement {
     /// Supports: FLUSH ROWS 100, FLUSH SECONDS 60
     fn parse_flush_policy(sql: &str) -> Result<Option<FlushPolicy>, KalamDbError> {
         use regex::Regex;
-        
+
         // Look for FLUSH ROWS <number>
         let rows_re = Regex::new(r"(?i)FLUSH\s+ROWS\s+(\d+)").unwrap();
         if let Some(caps) = rows_re.captures(sql) {
-            let count: usize = caps[1].parse()
+            let count: usize = caps[1]
+                .parse()
                 .map_err(|_| KalamDbError::InvalidSql("Invalid FLUSH ROWS value".to_string()))?;
             return Ok(Some(FlushPolicy::Rows(count)));
         }
-        
+
         // Look for FLUSH SECONDS <number>
         let seconds_re = Regex::new(r"(?i)FLUSH\s+SECONDS\s+(\d+)").unwrap();
         if let Some(caps) = seconds_re.captures(sql) {
-            let secs: u64 = caps[1].parse()
+            let secs: u64 = caps[1]
+                .parse()
                 .map_err(|_| KalamDbError::InvalidSql("Invalid FLUSH SECONDS value".to_string()))?;
             return Ok(Some(FlushPolicy::Time(secs)));
         }
-        
+
         Ok(None)
     }
 }

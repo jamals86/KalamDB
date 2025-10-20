@@ -24,16 +24,16 @@ use std::sync::Arc;
 pub struct RestoreResult {
     /// Namespace ID that was restored
     pub namespace_id: String,
-    
+
     /// Number of tables restored
     pub tables_count: usize,
-    
+
     /// Number of Parquet files restored
     pub files_count: usize,
-    
+
     /// Total bytes restored
     pub total_bytes: u64,
-    
+
     /// Job ID tracking this restore
     pub job_id: String,
 }
@@ -159,13 +159,11 @@ impl RestoreService {
             ));
         }
 
-        let manifest_json = fs::read_to_string(&manifest_path).map_err(|e| {
-            KalamDbError::IoError(format!("Failed to read manifest: {}", e))
-        })?;
+        let manifest_json = fs::read_to_string(&manifest_path)
+            .map_err(|e| KalamDbError::IoError(format!("Failed to read manifest: {}", e)))?;
 
-        let manifest: BackupManifest = serde_json::from_str(&manifest_json).map_err(|e| {
-            KalamDbError::IoError(format!("Failed to parse manifest: {}", e))
-        })?;
+        let manifest: BackupManifest = serde_json::from_str(&manifest_json)
+            .map_err(|e| KalamDbError::IoError(format!("Failed to parse manifest: {}", e)))?;
 
         // Validate manifest version
         if manifest.version != "1.0" {
@@ -195,20 +193,27 @@ impl RestoreService {
 
         // Validate Parquet file existence for user/shared tables
         for table in &manifest.tables {
-            let table_type = TableType::from_str(&table.table_type)
-                .ok_or_else(|| KalamDbError::InvalidSql(format!("Invalid table type: {}", table.table_type)))?;
+            let table_type = TableType::from_str(&table.table_type).ok_or_else(|| {
+                KalamDbError::InvalidSql(format!("Invalid table type: {}", table.table_type))
+            })?;
 
             match table_type {
                 TableType::User => {
                     let table_backup_dir = backup_dir.join("user_tables").join(&table.table_name);
                     if !table_backup_dir.exists() {
-                        log::warn!("No Parquet files found for user table '{}' (may be empty)", table.table_name);
+                        log::warn!(
+                            "No Parquet files found for user table '{}' (may be empty)",
+                            table.table_name
+                        );
                     }
                 }
                 TableType::Shared => {
                     let table_backup_dir = backup_dir.join("shared_tables").join(&table.table_name);
                     if !table_backup_dir.exists() {
-                        log::warn!("No Parquet files found for shared table '{}' (may be empty)", table.table_name);
+                        log::warn!(
+                            "No Parquet files found for shared table '{}' (may be empty)",
+                            table.table_name
+                        );
                     }
                 }
                 TableType::Stream => {
@@ -251,11 +256,9 @@ impl RestoreService {
         // Step 3: Create schema versions
         for (table_id, schemas) in &manifest.table_schemas {
             for schema in schemas {
-                self.kalam_sql
-                    .insert_table_schema(schema)
-                    .map_err(|e| {
-                        KalamDbError::IoError(format!("Failed to insert schema: {}", e))
-                    })?;
+                self.kalam_sql.insert_table_schema(schema).map_err(|e| {
+                    KalamDbError::IoError(format!("Failed to insert schema: {}", e))
+                })?;
 
                 log::debug!(
                     "Restored schema version {} for table '{}'",
@@ -268,7 +271,11 @@ impl RestoreService {
         log::info!(
             "Restored metadata: {} tables, {} schemas",
             manifest.tables.len(),
-            manifest.table_schemas.values().map(|v| v.len()).sum::<usize>()
+            manifest
+                .table_schemas
+                .values()
+                .map(|v| v.len())
+                .sum::<usize>()
         );
 
         Ok(())
@@ -285,8 +292,9 @@ impl RestoreService {
         let mut total_bytes = 0u64;
 
         for table in &manifest.tables {
-            let table_type = TableType::from_str(&table.table_type)
-                .ok_or_else(|| KalamDbError::InvalidSql(format!("Invalid table type: {}", table.table_type)))?;
+            let table_type = TableType::from_str(&table.table_type).ok_or_else(|| {
+                KalamDbError::InvalidSql(format!("Invalid table type: {}", table.table_type))
+            })?;
 
             match table_type {
                 TableType::User => {
@@ -301,7 +309,10 @@ impl RestoreService {
                 }
                 TableType::Stream => {
                     // No Parquet files for stream tables
-                    log::debug!("Skipping Parquet restore for stream table '{}'", table.table_name);
+                    log::debug!(
+                        "Skipping Parquet restore for stream table '{}'",
+                        table.table_name
+                    );
                 }
                 TableType::System => {
                     // System tables not restored
@@ -481,7 +492,10 @@ impl RestoreService {
 
     /// Rollback metadata in case of Parquet restore failure (T185)
     fn rollback_metadata(&self, manifest: &BackupManifest) -> Result<(), KalamDbError> {
-        log::warn!("Rolling back metadata for namespace '{}'", manifest.namespace.namespace_id);
+        log::warn!(
+            "Rolling back metadata for namespace '{}'",
+            manifest.namespace.namespace_id
+        );
 
         // Delete table schemas
         for table_id in manifest.table_schemas.keys() {
@@ -498,21 +512,35 @@ impl RestoreService {
         }
 
         // Delete namespace
-        if let Err(e) = self.kalam_sql.delete_namespace(&manifest.namespace.namespace_id) {
-            log::error!("Failed to delete namespace '{}': {}", manifest.namespace.namespace_id, e);
+        if let Err(e) = self
+            .kalam_sql
+            .delete_namespace(&manifest.namespace.namespace_id)
+        {
+            log::error!(
+                "Failed to delete namespace '{}': {}",
+                manifest.namespace.namespace_id,
+                e
+            );
             return Err(KalamDbError::IoError(format!(
                 "Failed to delete namespace during rollback: {}",
                 e
             )));
         }
 
-        log::info!("Rollback completed for namespace '{}'", manifest.namespace.namespace_id);
+        log::info!(
+            "Rollback completed for namespace '{}'",
+            manifest.namespace.namespace_id
+        );
         Ok(())
     }
 
     /// Create a restore job record (T188)
     fn create_restore_job(&self, namespace_id: &NamespaceId) -> Result<String, KalamDbError> {
-        let job_id = format!("restore-{}-{}", namespace_id.as_str(), chrono::Utc::now().timestamp_millis());
+        let job_id = format!(
+            "restore-{}-{}",
+            namespace_id.as_str(),
+            chrono::Utc::now().timestamp_millis()
+        );
 
         let job = Job {
             job_id: job_id.clone(),
@@ -587,7 +615,7 @@ impl RestoreService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
 
     #[test]
     fn test_restore_service_creation() {

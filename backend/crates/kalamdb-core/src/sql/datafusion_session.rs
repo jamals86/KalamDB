@@ -14,10 +14,10 @@ use std::sync::Arc;
 pub struct KalamSessionState {
     /// Current user ID
     pub user_id: UserId,
-    
+
     /// Current namespace
     pub namespace_id: NamespaceId,
-    
+
     /// Table metadata cache
     pub table_cache: TableCache,
 }
@@ -43,7 +43,7 @@ impl DataFusionSessionFactory {
     pub fn new() -> DataFusionResult<Self> {
         let runtime_config = RuntimeConfig::new();
         let runtime_env = RuntimeEnv::new(runtime_config)?;
-        
+
         Ok(Self {
             runtime_env: Arc::new(runtime_env),
         })
@@ -54,7 +54,7 @@ impl DataFusionSessionFactory {
         let config = SessionConfig::new()
             .with_information_schema(true)
             .with_default_catalog_and_schema("kalam", "default");
-        
+
         SessionContext::new_with_config_rt(config, self.runtime_env.clone())
     }
 
@@ -67,7 +67,7 @@ impl DataFusionSessionFactory {
     ) -> (SessionContext, KalamSessionState) {
         let session = self.create_session();
         let state = KalamSessionState::new(user_id, namespace_id, table_cache);
-        
+
         (session, state)
     }
 
@@ -97,9 +97,9 @@ mod tests {
     fn test_create_session() {
         let factory = DataFusionSessionFactory::new().unwrap();
         let session = factory.create_session();
-        
+
         // Verify session is created
-        assert_eq!(session.catalog("kalam").is_some(), true);
+        assert!(session.catalog("kalam").is_some());
     }
 
     #[test]
@@ -108,16 +108,13 @@ mod tests {
         let user_id = UserId::new("user1");
         let namespace_id = NamespaceId::new("app");
         let table_cache = TableCache::new();
-        
-        let (session, state) = factory.create_session_for_user(
-            user_id.clone(),
-            namespace_id.clone(),
-            table_cache,
-        );
-        
+
+        let (session, state) =
+            factory.create_session_for_user(user_id.clone(), namespace_id.clone(), table_cache);
+
         // Verify session is created
         assert!(session.catalog("kalam").is_some());
-        
+
         // Verify state
         assert_eq!(state.user_id, user_id);
         assert_eq!(state.namespace_id, namespace_id);
@@ -128,9 +125,9 @@ mod tests {
         let user_id = UserId::new("user1");
         let namespace_id = NamespaceId::new("app");
         let table_cache = TableCache::new();
-        
+
         let state = KalamSessionState::new(user_id.clone(), namespace_id.clone(), table_cache);
-        
+
         assert_eq!(state.user_id, user_id);
         assert_eq!(state.namespace_id, namespace_id);
     }

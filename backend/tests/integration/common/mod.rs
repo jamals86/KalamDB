@@ -32,13 +32,16 @@
 //! }
 //! ```
 
+use anyhow::Result;
+use kalamdb_api::models::SqlResponse;
+use kalamdb_core::services::{
+    NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
+    UserTableService,
+};
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_core::services::{NamespaceService, UserTableService, SharedTableService, StreamTableService, TableDeletionService};
-use kalamdb_api::models::SqlResponse;
 use std::sync::Arc;
 use tempfile::TempDir;
-use anyhow::Result;
 
 pub mod fixtures;
 pub mod websocket;
@@ -98,7 +101,12 @@ impl TestServer {
         // Create temporary database
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let db_path = data_dir.unwrap_or_else(|| {
-            temp_dir.path().join("test_db").to_str().unwrap().to_string()
+            temp_dir
+                .path()
+                .join("test_db")
+                .to_str()
+                .unwrap()
+                .to_string()
         });
 
         // Initialize RocksDB with all system tables
@@ -106,37 +114,34 @@ impl TestServer {
         let db = db_init.open().expect("Failed to open RocksDB");
 
         // Initialize KalamSQL
-        let kalam_sql = Arc::new(
-            kalamdb_sql::KalamSql::new(db.clone()).expect("Failed to create KalamSQL")
-        );
+        let kalam_sql =
+            Arc::new(kalamdb_sql::KalamSql::new(db.clone()).expect("Failed to create KalamSQL"));
 
         // Initialize stores (needed by some services)
         let user_table_store = Arc::new(
             kalamdb_store::UserTableStore::new(db.clone())
-                .expect("Failed to create UserTableStore")
+                .expect("Failed to create UserTableStore"),
         );
         let shared_table_store = Arc::new(
             kalamdb_store::SharedTableStore::new(db.clone())
-                .expect("Failed to create SharedTableStore")
+                .expect("Failed to create SharedTableStore"),
         );
         let stream_table_store = Arc::new(
             kalamdb_store::StreamTableStore::new(db.clone())
-                .expect("Failed to create StreamTableStore")
+                .expect("Failed to create StreamTableStore"),
         );
 
         // Initialize services
-        let namespace_service = Arc::new(
-            NamespaceService::new(kalam_sql.clone())
-        );
-        let user_table_service = Arc::new(
-            UserTableService::new(kalam_sql.clone())
-        );
-        let shared_table_service = Arc::new(
-            SharedTableService::new(shared_table_store.clone(), kalam_sql.clone())
-        );
-        let stream_table_service = Arc::new(
-            StreamTableService::new(stream_table_store.clone(), kalam_sql.clone())
-        );
+        let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
+        let user_table_service = Arc::new(UserTableService::new(kalam_sql.clone()));
+        let shared_table_service = Arc::new(SharedTableService::new(
+            shared_table_store.clone(),
+            kalam_sql.clone(),
+        ));
+        let stream_table_service = Arc::new(StreamTableService::new(
+            stream_table_store.clone(),
+            kalam_sql.clone(),
+        ));
 
         // Initialize TableDeletionService for DROP TABLE support
         let table_deletion_service = Arc::new(TableDeletionService::new(
@@ -148,8 +153,7 @@ impl TestServer {
 
         // Initialize DataFusion session factory
         let session_factory = Arc::new(
-            DataFusionSessionFactory::new()
-                .expect("Failed to create DataFusion session factory")
+            DataFusionSessionFactory::new().expect("Failed to create DataFusion session factory"),
         );
 
         // Create session context
@@ -170,12 +174,14 @@ impl TestServer {
                 shared_table_store.clone(),
                 stream_table_store.clone(),
                 kalam_sql.clone(),
-            )
+            ),
         );
 
         // Load existing tables from system_tables
         let default_user_id = kalamdb_core::catalog::UserId::from("system");
-        sql_executor.load_existing_tables(default_user_id).await
+        sql_executor
+            .load_existing_tables(default_user_id)
+            .await
             .expect("Failed to load existing tables");
 
         Self {
@@ -219,7 +225,7 @@ impl TestServer {
     ///
     /// `SqlResponse` containing status, results, and any errors
     pub async fn execute_sql_with_user(&self, sql: &str, user_id: Option<&str>) -> SqlResponse {
-        let user_id_obj = user_id.map(|id| kalamdb_core::catalog::UserId::from(id));
+        let user_id_obj = user_id.map(kalamdb_core::catalog::UserId::from);
         match self.sql_executor.execute(sql, user_id_obj.as_ref()).await {
             Ok(result) => {
                 use kalamdb_core::sql::ExecutionResult;
@@ -240,7 +246,7 @@ impl TestServer {
                         }
                     }
                 }
-            },
+            }
             Err(e) => SqlResponse {
                 status: "error".to_string(),
                 results: vec![],
@@ -260,7 +266,8 @@ impl TestServer {
     /// System tables (users, live_queries, etc.) are preserved.
     pub async fn cleanup(&self) -> Result<()> {
         // Get all namespaces
-        let namespaces = self.kalam_sql
+        let namespaces = self
+            .kalam_sql
             .scan_all_namespaces()
             .map_err(|e| anyhow::anyhow!("Failed to list namespaces: {:?}", e))?;
 
@@ -269,7 +276,10 @@ impl TestServer {
             let sql = format!("DROP NAMESPACE {} CASCADE", ns.name);
             let response = self.execute_sql(&sql).await;
             if response.status != "success" {
-                eprintln!("Warning: Failed to drop namespace {}: {:?}", ns.name, response.error);
+                eprintln!(
+                    "Warning: Failed to drop namespace {}: {:?}",
+                    ns.name, response.error
+                );
             }
         }
 
@@ -283,7 +293,8 @@ impl TestServer {
     /// * `namespace` - Name of the namespace
     pub async fn cleanup_namespace(&self, namespace: &str) -> Result<()> {
         // Get all tables in namespace
-        let tables = self.kalam_sql
+        let tables = self
+            .kalam_sql
             .scan_all_tables()
             .map_err(|e| anyhow::anyhow!("Failed to list tables: {:?}", e))?;
 
@@ -310,7 +321,12 @@ impl TestServer {
 
     /// Get the database path.
     pub fn db_path(&self) -> String {
-        self.temp_dir.path().join("test_db").to_str().unwrap().to_string()
+        self.temp_dir
+            .path()
+            .join("test_db")
+            .to_str()
+            .unwrap()
+            .to_string()
     }
 
     /// Check if a namespace exists.
@@ -361,11 +377,11 @@ mod tests {
     #[actix_web::test]
     async fn test_cleanup() {
         let server = TestServer::new().await;
-        
+
         // Create namespace
         server.execute_sql("CREATE NAMESPACE test_ns").await;
         assert!(server.namespace_exists("test_ns").await);
-        
+
         // Cleanup
         server.cleanup().await.unwrap();
         assert!(!server.namespace_exists("test_ns").await);
@@ -374,9 +390,9 @@ mod tests {
     #[actix_web::test]
     async fn test_namespace_exists() {
         let server = TestServer::new().await;
-        
+
         assert!(!server.namespace_exists("nonexistent").await);
-        
+
         server.execute_sql("CREATE NAMESPACE test_ns").await;
         assert!(server.namespace_exists("test_ns").await);
     }

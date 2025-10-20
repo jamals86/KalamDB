@@ -3,9 +3,9 @@
 //! This module provides HTTP handlers for executing SQL statements via the REST API.
 
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
+use kalamdb_core::catalog::UserId;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::{ExecutionResult, SqlExecutor};
-use kalamdb_core::catalog::UserId;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -58,21 +58,22 @@ pub async fn execute_sql(
     sql_executor: web::Data<Arc<SqlExecutor>>,
 ) -> impl Responder {
     let start_time = Instant::now();
-    
+
     // Extract user_id from X-USER-ID header (optional)
     let user_id: Option<UserId> = http_req
         .headers()
         .get("X-USER-ID")
         .and_then(|h| h.to_str().ok())
         .map(UserId::from);
-    
+
     // Split SQL by semicolons to handle multiple statements
-    let statements: Vec<&str> = req.sql
+    let statements: Vec<&str> = req
+        .sql
         .split(';')
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();
-    
+
     if statements.is_empty() {
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
         return HttpResponse::BadRequest().json(SqlResponse::error(
@@ -81,12 +82,13 @@ pub async fn execute_sql(
             execution_time_ms,
         ));
     }
-    
+
     // Execute each statement sequentially
     let mut results = Vec::new();
-    
+
     for (idx, sql) in statements.iter().enumerate() {
-        match execute_single_statement(sql, &session_factory, &sql_executor, user_id.as_ref()).await {
+        match execute_single_statement(sql, &session_factory, &sql_executor, user_id.as_ref()).await
+        {
             Ok(result) => results.push(result),
             Err(err) => {
                 let execution_time_ms = start_time.elapsed().as_millis() as u64;
@@ -99,7 +101,7 @@ pub async fn execute_sql(
             }
         }
     }
-    
+
     let execution_time_ms = start_time.elapsed().as_millis() as u64;
     HttpResponse::Ok().json(SqlResponse::success(results, execution_time_ms))
 }
@@ -142,11 +144,13 @@ async fn execute_single_statement(
     let ctx = session_factory.create_session();
     let df = ctx.sql(sql).await?;
     let batches = df.collect().await?;
-    
+
     if batches.is_empty() {
-        return Ok(QueryResult::with_message("Query executed successfully".to_string()));
+        return Ok(QueryResult::with_message(
+            "Query executed successfully".to_string(),
+        ));
     }
-    
+
     record_batch_to_query_result(batches)
 }
 
@@ -155,36 +159,35 @@ fn record_batch_to_query_result(
     batches: Vec<arrow::record_batch::RecordBatch>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     if batches.is_empty() {
-        return Ok(QueryResult::with_message("Query executed successfully".to_string()));
+        return Ok(QueryResult::with_message(
+            "Query executed successfully".to_string(),
+        ));
     }
 
     // Convert Arrow batches to JSON rows
     let schema = batches[0].schema();
-    let column_names: Vec<String> = schema
-        .fields()
-        .iter()
-        .map(|f| f.name().clone())
-        .collect();
-    
+    let column_names: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();
+
     let mut rows = Vec::new();
-    
+
     for batch in &batches {
         // Convert each batch to JSON using Arrow's JSON writer
         let mut buf = Vec::new();
         let mut writer = arrow::json::LineDelimitedWriter::new(&mut buf);
         writer.write(batch)?;
         writer.finish()?;
-        
+
         // Parse the JSON lines
         let json_str = String::from_utf8(buf)?;
         for line in json_str.lines() {
             if !line.is_empty() {
-                let json_row: std::collections::HashMap<String, serde_json::Value> = serde_json::from_str(line)?;
+                let json_row: std::collections::HashMap<String, serde_json::Value> =
+                    serde_json::from_str(line)?;
                 rows.push(json_row);
             }
         }
     }
-    
+
     Ok(QueryResult::with_rows(rows, column_names))
 }
 
@@ -192,82 +195,85 @@ fn record_batch_to_query_result(
 mod tests {
     use super::*;
     use actix_web::{test, App};
-    
+
     #[actix_rt::test]
     async fn test_execute_sql_endpoint() {
         // Create a test session factory
         let session_factory = Arc::new(DataFusionSessionFactory::new().unwrap());
-        
+
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(session_factory))
-                .service(execute_sql)
-        ).await;
-        
+                .service(execute_sql),
+        )
+        .await;
+
         let req_body = SqlRequest {
             sql: "SELECT 1 as id, 'Alice' as name".to_string(),
         };
-        
+
         let req = test::TestRequest::post()
             .uri("/api/sql")
             .set_json(&req_body)
             .to_request();
-        
+
         let resp = test::call_service(&app, req).await;
         assert!(resp.status().is_success());
-        
+
         // Parse the response body to verify structure
         let body = test::read_body(resp).await;
         let response: SqlResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(response.status, "success");
         assert_eq!(response.results.len(), 1);
     }
-    
+
     #[actix_rt::test]
     async fn test_execute_sql_empty_query() {
         let session_factory = Arc::new(DataFusionSessionFactory::new().unwrap());
-        
+
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(session_factory))
-                .service(execute_sql)
-        ).await;
-        
+                .service(execute_sql),
+        )
+        .await;
+
         let req_body = SqlRequest {
             sql: "".to_string(),
         };
-        
+
         let req = test::TestRequest::post()
             .uri("/api/sql")
             .set_json(&req_body)
             .to_request();
-        
+
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 400);
     }
-    
+
     #[actix_rt::test]
     async fn test_execute_sql_multiple_statements() {
         let session_factory = Arc::new(DataFusionSessionFactory::new().unwrap());
-        
+
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(session_factory))
-                .service(execute_sql)
-        ).await;
-        
+                .service(execute_sql),
+        )
+        .await;
+
         let req_body = SqlRequest {
             sql: "SELECT 1 as id; SELECT 2 as id".to_string(),
         };
-        
+
         let req = test::TestRequest::post()
             .uri("/api/sql")
             .set_json(&req_body)
             .to_request();
-        
+
         let resp = test::call_service(&app, req).await;
         assert!(resp.status().is_success());
-        
+
         // Parse response and verify we got 2 result sets
         let body = test::read_body(resp).await;
         let response: SqlResponse = serde_json::from_slice(&body).unwrap();

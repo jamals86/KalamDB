@@ -338,7 +338,7 @@ impl UserTableStore {
 
             rows_by_user
                 .entry(user_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push((key_bytes.to_vec(), row_data));
         }
 
@@ -403,7 +403,7 @@ impl UserTableStore {
     /// ```
     pub fn drop_table(&self, namespace_id: &str, table_name: &str) -> Result<()> {
         let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
-        
+
         // RocksDB requires dropping column families by destroying and recreating
         // the DB instance. For now, we'll delete all keys in the CF as a workaround.
         // TODO: Implement proper CF deletion when DB is reopened
@@ -415,7 +415,7 @@ impl UserTableStore {
         // Delete all keys by iterating and batching deletes
         let mut batch = rocksdb::WriteBatch::default();
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-        
+
         for item in iter {
             let (key, _) = item?;
             batch.delete_cf(cf, key);

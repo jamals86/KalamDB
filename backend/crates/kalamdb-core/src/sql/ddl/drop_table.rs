@@ -14,13 +14,13 @@ use crate::error::KalamDbError;
 pub struct DropTableStatement {
     /// Table name to drop
     pub table_name: TableName,
-    
+
     /// Namespace ID (defaults to current namespace)
     pub namespace_id: NamespaceId,
-    
+
     /// Table type (User, Shared, or Stream)
     pub table_type: TableType,
-    
+
     /// If true, don't error if table doesn't exist
     pub if_exists: bool,
 }
@@ -36,7 +36,7 @@ impl DropTableStatement {
     /// - DROP USER TABLE IF EXISTS name
     pub fn parse(sql: &str, current_namespace: &NamespaceId) -> Result<Self, KalamDbError> {
         let sql_upper = sql.trim().to_uppercase();
-        
+
         if !sql_upper.starts_with("DROP") {
             return Err(KalamDbError::InvalidSql(
                 "Expected DROP TABLE statement".to_string(),
@@ -45,7 +45,7 @@ impl DropTableStatement {
 
         // Determine if IF EXISTS is present
         let if_exists = sql_upper.contains("IF EXISTS");
-        
+
         // Determine table type
         let table_type = if sql_upper.contains("DROP USER TABLE") {
             TableType::User
@@ -96,9 +96,7 @@ impl DropTableStatement {
 
         let name = name_part
             .and_then(|s| s.split_whitespace().next())
-            .ok_or_else(|| {
-                KalamDbError::InvalidSql("Table name is required".to_string())
-            })?;
+            .ok_or_else(|| KalamDbError::InvalidSql("Table name is required".to_string()))?;
 
         Ok(Self {
             table_name: TableName::new(name),
@@ -119,7 +117,8 @@ mod tests {
 
     #[test]
     fn test_parse_drop_user_table() {
-        let stmt = DropTableStatement::parse("DROP USER TABLE messages", &test_namespace()).unwrap();
+        let stmt =
+            DropTableStatement::parse("DROP USER TABLE messages", &test_namespace()).unwrap();
         assert_eq!(stmt.table_name.as_str(), "messages");
         assert_eq!(stmt.table_type, TableType::User);
         assert!(!stmt.if_exists);
@@ -127,7 +126,8 @@ mod tests {
 
     #[test]
     fn test_parse_drop_shared_table() {
-        let stmt = DropTableStatement::parse("DROP SHARED TABLE conversations", &test_namespace()).unwrap();
+        let stmt = DropTableStatement::parse("DROP SHARED TABLE conversations", &test_namespace())
+            .unwrap();
         assert_eq!(stmt.table_name.as_str(), "conversations");
         assert_eq!(stmt.table_type, TableType::Shared);
         assert!(!stmt.if_exists);
@@ -135,7 +135,8 @@ mod tests {
 
     #[test]
     fn test_parse_drop_stream_table() {
-        let stmt = DropTableStatement::parse("DROP STREAM TABLE events", &test_namespace()).unwrap();
+        let stmt =
+            DropTableStatement::parse("DROP STREAM TABLE events", &test_namespace()).unwrap();
         assert_eq!(stmt.table_name.as_str(), "events");
         assert_eq!(stmt.table_type, TableType::Stream);
         assert!(!stmt.if_exists);
@@ -151,7 +152,9 @@ mod tests {
 
     #[test]
     fn test_parse_drop_table_if_exists() {
-        let stmt = DropTableStatement::parse("DROP USER TABLE IF EXISTS messages", &test_namespace()).unwrap();
+        let stmt =
+            DropTableStatement::parse("DROP USER TABLE IF EXISTS messages", &test_namespace())
+                .unwrap();
         assert_eq!(stmt.table_name.as_str(), "messages");
         assert_eq!(stmt.table_type, TableType::User);
         assert!(stmt.if_exists);
@@ -159,7 +162,11 @@ mod tests {
 
     #[test]
     fn test_parse_drop_shared_table_if_exists() {
-        let stmt = DropTableStatement::parse("DROP SHARED TABLE IF EXISTS conversations", &test_namespace()).unwrap();
+        let stmt = DropTableStatement::parse(
+            "DROP SHARED TABLE IF EXISTS conversations",
+            &test_namespace(),
+        )
+        .unwrap();
         assert_eq!(stmt.table_name.as_str(), "conversations");
         assert_eq!(stmt.table_type, TableType::Shared);
         assert!(stmt.if_exists);

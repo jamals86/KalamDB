@@ -22,10 +22,10 @@ use serde::{Deserialize, Serialize};
 pub struct Subscription {
     /// Unique subscription identifier (client-generated)
     pub id: String,
-    
+
     /// SQL query for live updates (must be a SELECT statement)
     pub sql: String,
-    
+
     /// Optional subscription options
     #[serde(default)]
     pub options: SubscriptionOptions,
@@ -77,16 +77,16 @@ mod tests {
                 last_rows: Some(10),
             },
         };
-        
+
         let json = serde_json::to_string(&sub).unwrap();
         assert!(json.contains("sub-1"));
         assert!(json.contains("SELECT"));
-        
+
         let deserialized: Subscription = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, "sub-1");
         assert_eq!(deserialized.options.last_rows, Some(10));
     }
-    
+
     #[test]
     fn test_subscription_request_with_multiple() {
         let request = SubscriptionRequest {
@@ -94,7 +94,9 @@ mod tests {
                 Subscription {
                     id: "sub-1".to_string(),
                     sql: "SELECT * FROM messages".to_string(),
-                    options: SubscriptionOptions { last_rows: Some(10) },
+                    options: SubscriptionOptions {
+                        last_rows: Some(10),
+                    },
                 },
                 Subscription {
                     id: "sub-2".to_string(),
@@ -103,17 +105,17 @@ mod tests {
                 },
             ],
         };
-        
+
         let json = serde_json::to_string(&request).unwrap();
         let deserialized: SubscriptionRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.subscriptions.len(), 2);
     }
-    
+
     #[test]
     fn test_subscription_default_options() {
         let json = r#"{"id":"sub-1","sql":"SELECT * FROM users"}"#;
         let sub: Subscription = serde_json::from_str(json).unwrap();
-        
+
         assert_eq!(sub.options.last_rows, None);
     }
 }

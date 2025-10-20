@@ -11,7 +11,7 @@
 //! - File system operations for Parquet files
 //! - No direct RocksDB access
 
-use crate::catalog::{NamespaceId, TableName, TableType};
+use crate::catalog::{NamespaceId, TableType};
 use crate::error::KalamDbError;
 use kalamdb_sql::{Job, KalamSql, Namespace, Table, TableSchema};
 use serde::{Deserialize, Serialize};
@@ -25,19 +25,19 @@ use std::sync::Arc;
 pub struct BackupManifest {
     /// Backup version format
     pub version: String,
-    
+
     /// Timestamp when backup was created
     pub created_at: i64,
-    
+
     /// Namespace metadata
     pub namespace: Namespace,
-    
+
     /// All tables in namespace
     pub tables: Vec<Table>,
-    
+
     /// Schema versions for each table
     pub table_schemas: HashMap<String, Vec<TableSchema>>,
-    
+
     /// Backup statistics
     pub statistics: BackupStatistics,
 }
@@ -47,19 +47,19 @@ pub struct BackupManifest {
 pub struct BackupStatistics {
     /// Number of tables backed up
     pub tables_count: usize,
-    
+
     /// Number of Parquet files copied
     pub files_count: usize,
-    
+
     /// Total bytes backed up
     pub total_bytes: u64,
-    
+
     /// Number of user tables
     pub user_tables_count: usize,
-    
+
     /// Number of shared tables
     pub shared_tables_count: usize,
-    
+
     /// Number of stream tables (metadata only, no data)
     pub stream_tables_count: usize,
 }
@@ -69,10 +69,10 @@ pub struct BackupStatistics {
 pub struct BackupResult {
     /// Path where backup was stored
     pub backup_path: String,
-    
+
     /// Backup manifest
     pub manifest: BackupManifest,
-    
+
     /// Job ID tracking this backup
     pub job_id: String,
 }
@@ -130,7 +130,10 @@ impl BackupService {
         // Step 3: Create backup directory structure
         let backup_dir = PathBuf::from(backup_path);
         if let Err(e) = fs::create_dir_all(&backup_dir) {
-            self.fail_backup_job(&job_id, &format!("Failed to create backup directory: {}", e))?;
+            self.fail_backup_job(
+                &job_id,
+                &format!("Failed to create backup directory: {}", e),
+            )?;
             return Err(KalamDbError::IoError(format!(
                 "Failed to create backup directory: {}",
                 e
@@ -177,10 +180,8 @@ impl BackupService {
 
         // Step 7: Write manifest to file
         let manifest_path = backup_dir.join("manifest.json");
-        let manifest_json =
-            serde_json::to_string_pretty(&manifest).map_err(|e| {
-                KalamDbError::IoError(format!("Failed to serialize manifest: {}", e))
-            })?;
+        let manifest_json = serde_json::to_string_pretty(&manifest)
+            .map_err(|e| KalamDbError::IoError(format!("Failed to serialize manifest: {}", e)))?;
 
         if let Err(e) = fs::write(&manifest_path, manifest_json) {
             self.fail_backup_job(&job_id, &format!("Failed to write manifest: {}", e))?;
@@ -247,8 +248,9 @@ impl BackupService {
         let mut stream_tables_count = 0;
 
         for table in tables {
-            let table_type = TableType::from_str(&table.table_type)
-                .ok_or_else(|| KalamDbError::InvalidSql(format!("Invalid table type: {}", table.table_type)))?;
+            let table_type = TableType::from_str(&table.table_type).ok_or_else(|| {
+                KalamDbError::InvalidSql(format!("Invalid table type: {}", table.table_type))
+            })?;
 
             match table_type {
                 TableType::User => {
@@ -315,9 +317,7 @@ impl BackupService {
         };
 
         // Create backup destination for this user table
-        let table_backup_dir = backup_dir
-            .join("user_tables")
-            .join(&table.table_name);
+        let table_backup_dir = backup_dir.join("user_tables").join(&table.table_name);
 
         // Find all user directories (pattern: ${base_path}/*/batch-*.parquet)
         let base_dir = Path::new(base_path);
@@ -384,9 +384,7 @@ impl BackupService {
         }
 
         // Create backup destination
-        let table_backup_dir = backup_dir
-            .join("shared_tables")
-            .join(&table.table_name);
+        let table_backup_dir = backup_dir.join("shared_tables").join(&table.table_name);
 
         // Copy all Parquet files
         self.copy_parquet_files(&shared_dir, &table_backup_dir)
@@ -432,11 +430,7 @@ impl BackupService {
                 files_count += 1;
                 total_bytes += bytes;
 
-                log::debug!(
-                    "Copied Parquet file: {} ({} bytes)",
-                    path.display(),
-                    bytes
-                );
+                log::debug!("Copied Parquet file: {} ({} bytes)", path.display(), bytes);
             }
         }
 
@@ -445,7 +439,11 @@ impl BackupService {
 
     /// Create a backup job record (T188)
     fn create_backup_job(&self, namespace_id: &NamespaceId) -> Result<String, KalamDbError> {
-        let job_id = format!("backup-{}-{}", namespace_id.as_str(), chrono::Utc::now().timestamp_millis());
+        let job_id = format!(
+            "backup-{}-{}",
+            namespace_id.as_str(),
+            chrono::Utc::now().timestamp_millis()
+        );
 
         let job = Job {
             job_id: job_id.clone(),
@@ -519,7 +517,7 @@ impl BackupService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
 
     #[test]
     fn test_backup_service_creation() {

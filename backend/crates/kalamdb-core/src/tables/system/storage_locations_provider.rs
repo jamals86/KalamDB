@@ -6,7 +6,7 @@
 //! **Architecture Note**: This provider now uses `kalamdb-sql` for all system table operations,
 //! eliminating direct RocksDB coupling from kalamdb-core.
 
-use crate::catalog::{LocationType, StorageLocation};
+use crate::catalog::StorageLocation;
 use crate::error::KalamDbError;
 use crate::tables::system::storage_locations::StorageLocationsTable;
 use async_trait::async_trait;
@@ -52,13 +52,13 @@ impl From<StorageLocation> for StorageLocationRecord {
 impl From<StorageLocationRecord> for StorageLocation {
     fn from(rec: StorageLocationRecord) -> Self {
         use crate::catalog::LocationType;
-        
+
         let location_type = match rec.location_type.as_str() {
             "Filesystem" => LocationType::Filesystem,
             "S3" => LocationType::S3,
             _ => LocationType::Filesystem, // Default
         };
-        
+
         Self {
             location_name: rec.location_name,
             location_type,
@@ -88,19 +88,22 @@ impl StorageLocationsTableProvider {
     pub fn insert_location(&self, location: StorageLocationRecord) -> Result<(), KalamDbError> {
         // Validate location name format
         StorageLocation::validate_name(&location.location_name)?;
-        
+
         // Check if location already exists via kalamdb-sql
-        let existing = self.kalam_sql
+        let existing = self
+            .kalam_sql
             .get_storage_location(&location.location_name)
-            .map_err(|e| KalamDbError::Other(format!("Failed to check existing location: {}", e)))?;
-        
+            .map_err(|e| {
+                KalamDbError::Other(format!("Failed to check existing location: {}", e))
+            })?;
+
         if existing.is_some() {
             return Err(KalamDbError::AlreadyExists(format!(
                 "Storage location already exists: {}",
                 location.location_name
             )));
         }
-        
+
         // Convert to kalamdb-sql model and insert
         let sql_location = kalamdb_sql::StorageLocation {
             location_name: location.location_name.clone(),
@@ -111,7 +114,7 @@ impl StorageLocationsTableProvider {
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
         };
-        
+
         self.kalam_sql
             .insert_storage_location(&sql_location)
             .map_err(|e| KalamDbError::Other(format!("Failed to insert storage location: {}", e)))
@@ -120,17 +123,20 @@ impl StorageLocationsTableProvider {
     /// Update an existing storage location
     pub fn update_location(&self, location: StorageLocationRecord) -> Result<(), KalamDbError> {
         // Check if location exists
-        let existing = self.kalam_sql
+        let existing = self
+            .kalam_sql
             .get_storage_location(&location.location_name)
-            .map_err(|e| KalamDbError::Other(format!("Failed to check existing location: {}", e)))?;
-        
+            .map_err(|e| {
+                KalamDbError::Other(format!("Failed to check existing location: {}", e))
+            })?;
+
         if existing.is_none() {
             return Err(KalamDbError::NotFound(format!(
                 "Storage location not found: {}",
                 location.location_name
             )));
         }
-        
+
         // Convert and update
         let sql_location = kalamdb_sql::StorageLocation {
             location_name: location.location_name.clone(),
@@ -141,7 +147,7 @@ impl StorageLocationsTableProvider {
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
         };
-        
+
         self.kalam_sql
             .insert_storage_location(&sql_location)
             .map_err(|e| KalamDbError::Other(format!("Failed to update storage location: {}", e)))
@@ -150,10 +156,11 @@ impl StorageLocationsTableProvider {
     /// Delete a storage location
     pub fn delete_location(&self, location_name: &str) -> Result<(), KalamDbError> {
         // Check if location exists and get usage count
-        let existing = self.kalam_sql
+        let existing = self
+            .kalam_sql
             .get_storage_location(location_name)
             .map_err(|e| KalamDbError::Other(format!("Failed to get storage location: {}", e)))?;
-        
+
         match existing {
             Some(loc) => {
                 if loc.usage_count > 0 {
@@ -175,11 +182,15 @@ impl StorageLocationsTableProvider {
     }
 
     /// Get a storage location by name
-    pub fn get_location(&self, location_name: &str) -> Result<Option<StorageLocationRecord>, KalamDbError> {
-        let sql_location = self.kalam_sql
+    pub fn get_location(
+        &self,
+        location_name: &str,
+    ) -> Result<Option<StorageLocationRecord>, KalamDbError> {
+        let sql_location = self
+            .kalam_sql
             .get_storage_location(location_name)
             .map_err(|e| KalamDbError::Other(format!("Failed to get storage location: {}", e)))?;
-        
+
         Ok(sql_location.map(|loc| StorageLocationRecord {
             location_name: loc.location_name,
             location_type: loc.location_type, // Already a String
@@ -193,14 +204,12 @@ impl StorageLocationsTableProvider {
 
     /// Increment usage count for a location
     pub fn increment_usage(&self, location_name: &str) -> Result<(), KalamDbError> {
-        let mut location = self.get_location(location_name)?
-            .ok_or_else(|| KalamDbError::NotFound(format!(
-                "Storage location not found: {}",
-                location_name
-            )))?;
-        
+        let mut location = self.get_location(location_name)?.ok_or_else(|| {
+            KalamDbError::NotFound(format!("Storage location not found: {}", location_name))
+        })?;
+
         location.usage_count += 1;
-        
+
         // Convert back to kalamdb-sql model and update
         let sql_location = kalamdb_sql::StorageLocation {
             location_name: location.location_name,
@@ -211,7 +220,7 @@ impl StorageLocationsTableProvider {
             created_at: location.created_at,
             updated_at: chrono::Utc::now().timestamp(),
         };
-        
+
         self.kalam_sql
             .insert_storage_location(&sql_location)
             .map_err(|e| KalamDbError::Other(format!("Failed to increment usage: {}", e)))
@@ -219,16 +228,14 @@ impl StorageLocationsTableProvider {
 
     /// Decrement usage count for a location
     pub fn decrement_usage(&self, location_name: &str) -> Result<(), KalamDbError> {
-        let mut location = self.get_location(location_name)?
-            .ok_or_else(|| KalamDbError::NotFound(format!(
-                "Storage location not found: {}",
-                location_name
-            )))?;
-        
+        let mut location = self.get_location(location_name)?.ok_or_else(|| {
+            KalamDbError::NotFound(format!("Storage location not found: {}", location_name))
+        })?;
+
         if location.usage_count > 0 {
             location.usage_count -= 1;
         }
-        
+
         // Convert back to kalamdb-sql model and update
         let sql_location = kalamdb_sql::StorageLocation {
             location_name: location.location_name,
@@ -239,7 +246,7 @@ impl StorageLocationsTableProvider {
             created_at: location.created_at,
             updated_at: chrono::Utc::now().timestamp(),
         };
-        
+
         self.kalam_sql
             .insert_storage_location(&sql_location)
             .map_err(|e| KalamDbError::Other(format!("Failed to decrement usage: {}", e)))
@@ -247,10 +254,11 @@ impl StorageLocationsTableProvider {
 
     /// Scan all storage locations and return as RecordBatch
     pub fn scan_all_locations(&self) -> Result<RecordBatch, KalamDbError> {
-        let locations = self.kalam_sql
+        let locations = self
+            .kalam_sql
             .scan_all_storage_locations()
             .map_err(|e| KalamDbError::Other(format!("Failed to scan storage locations: {}", e)))?;
-        
+
         let mut location_names = StringBuilder::new();
         let mut location_types = StringBuilder::new();
         let mut paths = StringBuilder::new();
@@ -258,7 +266,7 @@ impl StorageLocationsTableProvider {
         let mut usage_counts = Vec::new();
         let mut created_ats = Vec::new();
         let mut updated_ats = Vec::new();
-        
+
         for location in locations {
             location_names.append_value(&location.location_name);
             location_types.append_value(&location.location_type);
@@ -272,7 +280,7 @@ impl StorageLocationsTableProvider {
             created_ats.push(Some(location.created_at));
             updated_ats.push(Some(location.updated_at));
         }
-        
+
         let batch = RecordBatch::try_new(
             self.schema.clone(),
             vec![
@@ -281,12 +289,16 @@ impl StorageLocationsTableProvider {
                 Arc::new(paths.finish()) as ArrayRef,
                 Arc::new(credentials_refs.finish()) as ArrayRef,
                 Arc::new(datafusion::arrow::array::Int64Array::from(usage_counts)) as ArrayRef,
-                Arc::new(datafusion::arrow::array::TimestampMillisecondArray::from(created_ats)) as ArrayRef,
-                Arc::new(datafusion::arrow::array::TimestampMillisecondArray::from(updated_ats)) as ArrayRef,
+                Arc::new(datafusion::arrow::array::TimestampMillisecondArray::from(
+                    created_ats,
+                )) as ArrayRef,
+                Arc::new(datafusion::arrow::array::TimestampMillisecondArray::from(
+                    updated_ats,
+                )) as ArrayRef,
             ],
         )
         .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))?;
-        
+
         Ok(batch)
     }
 }
@@ -338,7 +350,7 @@ mod tests {
     #[test]
     fn test_insert_location() {
         let (provider, _temp_dir) = setup_test_provider();
-        
+
         let now = chrono::Utc::now().timestamp_millis();
         let location = StorageLocationRecord {
             location_name: "local_disk".to_string(),
@@ -349,9 +361,9 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        
+
         provider.insert_location(location.clone()).unwrap();
-        
+
         let retrieved = provider.get_location("local_disk").unwrap().unwrap();
         assert_eq!(retrieved.location_name, "local_disk");
         assert_eq!(retrieved.path, "/data/tables");
@@ -360,7 +372,7 @@ mod tests {
     #[test]
     fn test_insert_duplicate_location() {
         let (provider, _temp_dir) = setup_test_provider();
-        
+
         let now = chrono::Utc::now().timestamp_millis();
         let location = StorageLocationRecord {
             location_name: "local_disk".to_string(),
@@ -371,17 +383,20 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        
+
         provider.insert_location(location.clone()).unwrap();
         let result = provider.insert_location(location);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), KalamDbError::AlreadyExists(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            KalamDbError::AlreadyExists(_)
+        ));
     }
 
     #[test]
     fn test_update_location() {
         let (provider, _temp_dir) = setup_test_provider();
-        
+
         let now = chrono::Utc::now().timestamp_millis();
         let location = StorageLocationRecord {
             location_name: "local_disk".to_string(),
@@ -392,9 +407,9 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        
+
         provider.insert_location(location).unwrap();
-        
+
         let updated = StorageLocationRecord {
             location_name: "local_disk".to_string(),
             location_type: "Filesystem".to_string(),
@@ -404,9 +419,9 @@ mod tests {
             created_at: now,
             updated_at: now + 1000,
         };
-        
+
         provider.update_location(updated).unwrap();
-        
+
         let retrieved = provider.get_location("local_disk").unwrap().unwrap();
         assert_eq!(retrieved.path, "/new/path");
         assert_eq!(retrieved.credentials_ref, Some("creds123".to_string()));
@@ -416,7 +431,7 @@ mod tests {
     #[ignore] // Delete not yet implemented in kalamdb-sql adapter
     fn test_delete_location() {
         let (provider, _temp_dir) = setup_test_provider();
-        
+
         let now = chrono::Utc::now().timestamp_millis();
         let location = StorageLocationRecord {
             location_name: "local_disk".to_string(),
@@ -427,10 +442,10 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        
+
         provider.insert_location(location).unwrap();
         provider.delete_location("local_disk").unwrap();
-        
+
         let retrieved = provider.get_location("local_disk").unwrap();
         assert!(retrieved.is_none());
     }
@@ -439,7 +454,7 @@ mod tests {
     #[ignore] // Delete not yet implemented in kalamdb-sql adapter
     fn test_delete_location_with_usage() {
         let (provider, _temp_dir) = setup_test_provider();
-        
+
         let now = chrono::Utc::now().timestamp_millis();
         let location = StorageLocationRecord {
             location_name: "local_disk".to_string(),
@@ -450,18 +465,21 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        
+
         provider.insert_location(location).unwrap();
         let result = provider.delete_location("local_disk");
-        
+
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), KalamDbError::InvalidOperation(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            KalamDbError::InvalidOperation(_)
+        ));
     }
 
     #[test]
     fn test_increment_usage() {
         let (provider, _temp_dir) = setup_test_provider();
-        
+
         let now = chrono::Utc::now().timestamp_millis();
         let location = StorageLocationRecord {
             location_name: "local_disk".to_string(),
@@ -472,10 +490,10 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        
+
         provider.insert_location(location).unwrap();
         provider.increment_usage("local_disk").unwrap();
-        
+
         let retrieved = provider.get_location("local_disk").unwrap().unwrap();
         assert_eq!(retrieved.usage_count, 1);
     }
@@ -483,7 +501,7 @@ mod tests {
     #[test]
     fn test_decrement_usage() {
         let (provider, _temp_dir) = setup_test_provider();
-        
+
         let now = chrono::Utc::now().timestamp_millis();
         let location = StorageLocationRecord {
             location_name: "local_disk".to_string(),
@@ -494,10 +512,10 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        
+
         provider.insert_location(location).unwrap();
         provider.decrement_usage("local_disk").unwrap();
-        
+
         let retrieved = provider.get_location("local_disk").unwrap().unwrap();
         assert_eq!(retrieved.usage_count, 1);
     }
@@ -505,7 +523,7 @@ mod tests {
     #[test]
     fn test_scan_all_locations() {
         let (provider, _temp_dir) = setup_test_provider();
-        
+
         let now = chrono::Utc::now().timestamp_millis();
         let location1 = StorageLocationRecord {
             location_name: "local_disk".to_string(),
@@ -516,7 +534,7 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        
+
         let location2 = StorageLocationRecord {
             location_name: "s3_bucket".to_string(),
             location_type: "S3".to_string(),
@@ -526,10 +544,10 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        
+
         provider.insert_location(location1).unwrap();
         provider.insert_location(location2).unwrap();
-        
+
         let batch = provider.scan_all_locations().unwrap();
         assert_eq!(batch.num_rows(), 2);
         assert_eq!(batch.num_columns(), 7); // Updated from 5 to 7
@@ -538,7 +556,7 @@ mod tests {
     #[test]
     fn test_invalid_location_name() {
         let (provider, _temp_dir) = setup_test_provider();
-        
+
         let now = chrono::Utc::now().timestamp_millis();
         let location = StorageLocationRecord {
             location_name: "Invalid-Name".to_string(),
@@ -549,7 +567,7 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        
+
         let result = provider.insert_location(location);
         assert!(result.is_err());
     }

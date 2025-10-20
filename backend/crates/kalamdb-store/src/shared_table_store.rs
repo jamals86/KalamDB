@@ -256,7 +256,7 @@ impl SharedTableStore {
     /// ```
     pub fn drop_table(&self, namespace_id: &str, table_name: &str) -> Result<()> {
         let cf_name = format!("shared_table:{}:{}", namespace_id, table_name);
-        
+
         let cf = self
             .db
             .cf_handle(&cf_name)
@@ -265,7 +265,7 @@ impl SharedTableStore {
         // Delete all keys by iterating and batching deletes
         let mut batch = rocksdb::WriteBatch::default();
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-        
+
         for item in iter {
             let (key, _) = item?;
             batch.delete_cf(cf, key);
@@ -428,12 +428,7 @@ mod tests {
 
         // Insert multiple rows
         store
-            .put(
-                "app",
-                "conversations",
-                "conv001",
-                json!({"topic": "Tech"}),
-            )
+            .put("app", "conversations", "conv001", json!({"topic": "Tech"}))
             .unwrap();
         store
             .put(

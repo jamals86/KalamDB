@@ -37,15 +37,15 @@ impl CreateStreamTableStatement {
         // "CREATE STREAM TABLE ... TTL 3600 BUFFER_SIZE 1000" -> "CREATE TABLE ..."
         let normalized_sql = sql
             .replace("STREAM TABLE", "TABLE")
-            .replace(|c| c == '\n' || c == '\r', " "); // Normalize line breaks
-        
+            .replace(['\n', '\r'], " "); // Normalize line breaks
+
         // Remove TTL and BUFFER_SIZE clauses using regex
         use regex::Regex;
         let ttl_re = Regex::new(r"(?i)\s+TTL\s+\d+").unwrap();
         let buffer_re = Regex::new(r"(?i)\s+BUFFER_SIZE\s+\d+").unwrap();
         let normalized_sql = ttl_re.replace_all(&normalized_sql, "").to_string();
         let normalized_sql = buffer_re.replace_all(&normalized_sql, "").to_string();
-        
+
         let dialect = GenericDialect {};
         let statements = Parser::parse_sql(&dialect, &normalized_sql)
             .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
@@ -81,7 +81,7 @@ impl CreateStreamTableStatement {
 
                 // Parse TTL/retention from original SQL (if present)
                 let retention_seconds = Self::parse_ttl(original_sql)?;
-                
+
                 // Parse BUFFER_SIZE from original SQL (if present)
                 let max_buffer = Self::parse_buffer_size(original_sql)?;
 
@@ -197,14 +197,15 @@ impl CreateStreamTableStatement {
     /// Supports: TTL 3600 (seconds)
     fn parse_ttl(sql: &str) -> Result<Option<u32>, KalamDbError> {
         use regex::Regex;
-        
+
         let ttl_re = Regex::new(r"(?i)TTL\s+(\d+)").unwrap();
         if let Some(caps) = ttl_re.captures(sql) {
-            let seconds: u32 = caps[1].parse()
+            let seconds: u32 = caps[1]
+                .parse()
                 .map_err(|_| KalamDbError::InvalidSql("Invalid TTL value".to_string()))?;
             return Ok(Some(seconds));
         }
-        
+
         Ok(None)
     }
 
@@ -212,14 +213,15 @@ impl CreateStreamTableStatement {
     /// Supports: BUFFER_SIZE 1000 (number of rows)
     fn parse_buffer_size(sql: &str) -> Result<Option<usize>, KalamDbError> {
         use regex::Regex;
-        
+
         let buffer_re = Regex::new(r"(?i)BUFFER_SIZE\s+(\d+)").unwrap();
         if let Some(caps) = buffer_re.captures(sql) {
-            let size: usize = caps[1].parse()
+            let size: usize = caps[1]
+                .parse()
                 .map_err(|_| KalamDbError::InvalidSql("Invalid BUFFER_SIZE value".to_string()))?;
             return Ok(Some(size));
         }
-        
+
         Ok(None)
     }
 }
@@ -240,7 +242,7 @@ mod tests {
         assert_eq!(stmt.table_name.as_str(), "events");
         assert_eq!(stmt.namespace_id, namespace);
         assert_eq!(stmt.schema.fields().len(), 3);
-        assert_eq!(stmt.ephemeral, false); // Default
+        assert!(!stmt.ephemeral); // Default
         assert!(stmt.retention_seconds.is_none()); // Default
         assert!(stmt.max_buffer.is_none()); // Default
     }

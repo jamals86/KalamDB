@@ -7,7 +7,6 @@
 use crate::catalog::TableType;
 use crate::error::KalamDbError;
 use serde_json::Value as JsonValue;
-use std::sync::Arc;
 
 /// Options for fetching initial data when subscribing to a live query
 #[derive(Debug, Clone)]
@@ -15,11 +14,11 @@ pub struct InitialDataOptions {
     /// Fetch changes since this timestamp (milliseconds since Unix epoch)
     /// If None, returns last N rows instead
     pub since_timestamp: Option<i64>,
-    
+
     /// Maximum number of rows to return
     /// Default: 100
     pub limit: usize,
-    
+
     /// Include soft-deleted rows (_deleted=true)
     /// Default: false
     pub include_deleted: bool,
@@ -44,7 +43,7 @@ impl InitialDataOptions {
             include_deleted: false,
         }
     }
-    
+
     /// Create options to fetch the last N rows
     pub fn last(limit: usize) -> Self {
         Self {
@@ -53,13 +52,13 @@ impl InitialDataOptions {
             include_deleted: false,
         }
     }
-    
+
     /// Set the maximum number of rows to return
     pub fn with_limit(mut self, limit: usize) -> Self {
         self.limit = limit;
         self
     }
-    
+
     /// Include soft-deleted rows in the result
     pub fn with_deleted(mut self) -> Self {
         self.include_deleted = true;
@@ -72,14 +71,14 @@ impl InitialDataOptions {
 pub struct InitialDataResult {
     /// The fetched rows (as JSON objects)
     pub rows: Vec<JsonValue>,
-    
+
     /// Timestamp of the most recent row in the result
     /// Can be used as the starting point for real-time notifications
     pub latest_timestamp: Option<i64>,
-    
+
     /// Total number of rows available (may exceed limit)
     pub total_available: usize,
-    
+
     /// Whether there are more rows beyond the limit
     pub has_more: bool,
 }
@@ -94,7 +93,7 @@ impl InitialDataFetcher {
     pub fn new() -> Self {
         Self {}
     }
-    
+
     /// Fetch initial data for a table
     ///
     /// # Arguments
@@ -117,13 +116,13 @@ impl InitialDataFetcher {
         //   AND (_deleted = false OR {include_deleted})
         // ORDER BY _updated DESC
         // LIMIT {limit + 1}  -- +1 to detect has_more
-        
+
         log::warn!(
             "Initial data fetch not yet implemented for table: {} (type: {:?})",
             table_name,
             table_type
         );
-        
+
         Ok(InitialDataResult {
             rows: vec![],
             latest_timestamp: None,
@@ -131,7 +130,7 @@ impl InitialDataFetcher {
             has_more: false,
         })
     }
-    
+
     /// Parse table name into components
     ///
     /// # Arguments
@@ -147,7 +146,7 @@ impl InitialDataFetcher {
         table_type: TableType,
     ) -> Result<(Option<String>, String, String), KalamDbError> {
         let parts: Vec<&str> = table_name.split('.').collect();
-        
+
         match table_type {
             TableType::User => {
                 if parts.len() != 3 {
@@ -197,7 +196,7 @@ mod tests {
         let options = InitialDataOptions::default();
         assert_eq!(options.since_timestamp, None);
         assert_eq!(options.limit, 100);
-        assert_eq!(options.include_deleted, false);
+        assert!(!options.include_deleted);
     }
 
     #[test]
@@ -205,7 +204,7 @@ mod tests {
         let options = InitialDataOptions::since(1729468800000);
         assert_eq!(options.since_timestamp, Some(1729468800000));
         assert_eq!(options.limit, 100);
-        assert_eq!(options.include_deleted, false);
+        assert!(!options.include_deleted);
     }
 
     #[test]
@@ -213,7 +212,7 @@ mod tests {
         let options = InitialDataOptions::last(50);
         assert_eq!(options.since_timestamp, None);
         assert_eq!(options.limit, 50);
-        assert_eq!(options.include_deleted, false);
+        assert!(!options.include_deleted);
     }
 
     #[test]
@@ -221,17 +220,17 @@ mod tests {
         let options = InitialDataOptions::since(1729468800000)
             .with_limit(200)
             .with_deleted();
-        
+
         assert_eq!(options.since_timestamp, Some(1729468800000));
         assert_eq!(options.limit, 200);
-        assert_eq!(options.include_deleted, true);
+        assert!(options.include_deleted);
     }
 
     #[test]
     fn test_parse_user_table_name() {
         let fetcher = InitialDataFetcher::new();
         let result = fetcher.parse_table_name("user123.messages.chat", TableType::User);
-        
+
         assert!(result.is_ok());
         let (user_id, namespace, table) = result.unwrap();
         assert_eq!(user_id, Some("user123".to_string()));
@@ -243,7 +242,7 @@ mod tests {
     fn test_parse_shared_table_name() {
         let fetcher = InitialDataFetcher::new();
         let result = fetcher.parse_table_name("public.announcements", TableType::Shared);
-        
+
         assert!(result.is_ok());
         let (user_id, namespace, table) = result.unwrap();
         assert_eq!(user_id, None);
@@ -255,7 +254,7 @@ mod tests {
     fn test_parse_invalid_user_table_name() {
         let fetcher = InitialDataFetcher::new();
         let result = fetcher.parse_table_name("messages.chat", TableType::User);
-        
+
         assert!(result.is_err());
     }
 
@@ -263,7 +262,7 @@ mod tests {
     fn test_parse_invalid_shared_table_name() {
         let fetcher = InitialDataFetcher::new();
         let result = fetcher.parse_table_name("user123.public.announcements", TableType::Shared);
-        
+
         assert!(result.is_err());
     }
 }

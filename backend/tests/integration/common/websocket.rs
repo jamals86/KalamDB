@@ -33,10 +33,10 @@
 //! }
 //! ```
 
+use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
-use anyhow::{Result, bail};
 
 /// WebSocket subscription message format.
 ///
@@ -189,7 +189,10 @@ impl WebSocketClient {
     /// # Returns
     ///
     /// The next notification, or an error if timeout is reached
-    pub async fn wait_for_notification(&mut self, timeout: Duration) -> Result<NotificationMessage> {
+    pub async fn wait_for_notification(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<NotificationMessage> {
         // In a real implementation, this would:
         // 1. Wait for WebSocket message with timeout
         // 2. Parse notification from JSON
@@ -256,7 +259,10 @@ impl WebSocketClient {
 pub fn assert_insert_notification(notification: &NotificationMessage, expected_query_id: &str) {
     assert_eq!(notification.query_id, expected_query_id);
     assert_eq!(notification.change_type, "INSERT");
-    assert!(notification.old_data.is_none(), "INSERT should not have old_data");
+    assert!(
+        notification.old_data.is_none(),
+        "INSERT should not have old_data"
+    );
 }
 
 /// Assert that a notification is an UPDATE operation.
@@ -274,7 +280,10 @@ pub fn assert_insert_notification(notification: &NotificationMessage, expected_q
 pub fn assert_update_notification(notification: &NotificationMessage, expected_query_id: &str) {
     assert_eq!(notification.query_id, expected_query_id);
     assert_eq!(notification.change_type, "UPDATE");
-    assert!(notification.old_data.is_some(), "UPDATE should have old_data");
+    assert!(
+        notification.old_data.is_some(),
+        "UPDATE should have old_data"
+    );
 }
 
 /// Assert that a notification is a DELETE operation.
@@ -301,14 +310,25 @@ pub fn assert_delete_notification(notification: &NotificationMessage, expected_q
 /// * `notification` - The notification to validate
 /// * `field` - Field name to check
 /// * `expected_value` - Expected value
-pub fn assert_notification_field(notification: &NotificationMessage, field: &str, expected_value: &Value) {
-    let data = notification.data.as_object()
+pub fn assert_notification_field(
+    notification: &NotificationMessage,
+    field: &str,
+    expected_value: &Value,
+) {
+    let data = notification
+        .data
+        .as_object()
         .expect("Notification data should be an object");
-    
-    let actual_value = data.get(field)
+
+    let actual_value = data
+        .get(field)
         .unwrap_or_else(|| panic!("Field '{}' not found in notification data", field));
-    
-    assert_eq!(actual_value, expected_value, "Field '{}' has unexpected value", field);
+
+    assert_eq!(
+        actual_value, expected_value,
+        "Field '{}' has unexpected value",
+        field
+    );
 }
 
 /// Assert that a subscription was registered in system.live_queries.
@@ -320,17 +340,22 @@ pub fn assert_notification_field(notification: &NotificationMessage, field: &str
 /// * `query_result` - Result from SELECT * FROM system.live_queries
 /// * `expected_query_id` - Expected query ID
 pub fn assert_subscription_registered(query_result: &Value, expected_query_id: &str) {
-    let rows = query_result.as_array()
+    let rows = query_result
+        .as_array()
         .expect("Query result should be an array");
-    
+
     let found = rows.iter().any(|row| {
         row.get("query_id")
             .and_then(|v| v.as_str())
             .map(|id| id.contains(expected_query_id))
             .unwrap_or(false)
     });
-    
-    assert!(found, "Subscription '{}' not found in system.live_queries", expected_query_id);
+
+    assert!(
+        found,
+        "Subscription '{}' not found in system.live_queries",
+        expected_query_id
+    );
 }
 
 /// Create a subscription message JSON.
@@ -391,9 +416,11 @@ mod tests {
     #[tokio::test]
     async fn test_subscribe() {
         let mut ws = WebSocketClient::connect("ws://localhost:8080/ws").await;
-        
-        ws.subscribe("messages", "SELECT * FROM app.messages").await.unwrap();
-        
+
+        ws.subscribe("messages", "SELECT * FROM app.messages")
+            .await
+            .unwrap();
+
         assert_eq!(ws.subscription_count(), 1);
         assert!(ws.is_subscribed("messages"));
     }
@@ -401,14 +428,17 @@ mod tests {
     #[test]
     fn test_create_subscription_message() {
         let message = create_subscription_message("test", "SELECT * FROM app.messages");
-        
+
         assert!(message.get("subscriptions").is_some());
         let subs = message.get("subscriptions").unwrap().as_array().unwrap();
         assert_eq!(subs.len(), 1);
-        
+
         let sub = &subs[0];
         assert_eq!(sub.get("query_id").unwrap().as_str().unwrap(), "test");
-        assert_eq!(sub.get("sql").unwrap().as_str().unwrap(), "SELECT * FROM app.messages");
+        assert_eq!(
+            sub.get("sql").unwrap().as_str().unwrap(),
+            "SELECT * FROM app.messages"
+        );
     }
 
     #[test]
@@ -420,7 +450,7 @@ mod tests {
             old_data: None,
             timestamp: None,
         };
-        
+
         assert_insert_notification(&notification, "messages");
     }
 
@@ -433,7 +463,7 @@ mod tests {
             old_data: Some(json!({"id": 1, "content": "original"})),
             timestamp: None,
         };
-        
+
         assert_update_notification(&notification, "messages");
     }
 
@@ -446,7 +476,7 @@ mod tests {
             old_data: None,
             timestamp: None,
         };
-        
+
         assert_notification_field(&notification, "id", &json!(1));
         assert_notification_field(&notification, "content", &json!("test"));
     }

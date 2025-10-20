@@ -87,11 +87,7 @@ impl SharedTableProvider {
     /// # System Column Injection
     /// - _updated: Current timestamp (milliseconds)
     /// - _deleted: false
-    pub fn insert(
-        &self,
-        row_id: &str,
-        mut row_data: JsonValue,
-    ) -> Result<(), KalamDbError> {
+    pub fn insert(&self, row_id: &str, mut row_data: JsonValue) -> Result<(), KalamDbError> {
         // Inject system columns
         let now_ms = chrono::Utc::now().timestamp_millis();
         if let Some(obj) = row_data.as_object_mut() {
@@ -121,13 +117,10 @@ impl SharedTableProvider {
     /// # System Column Updates
     /// - _updated: Updated to current timestamp
     /// - _deleted: Preserved unless explicitly set
-    pub fn update(
-        &self,
-        row_id: &str,
-        updates: JsonValue,
-    ) -> Result<(), KalamDbError> {
+    pub fn update(&self, row_id: &str, updates: JsonValue) -> Result<(), KalamDbError> {
         // Get existing row
-        let mut row_data = self.store
+        let mut row_data = self
+            .store
             .get(
                 self.namespace_id().as_str(),
                 self.table_name().as_str(),
@@ -137,12 +130,16 @@ impl SharedTableProvider {
             .ok_or_else(|| KalamDbError::NotFound(format!("Row not found: {}", row_id)))?;
 
         // Apply updates
-        if let (Some(existing), Some(new_fields)) = (row_data.as_object_mut(), updates.as_object()) {
+        if let (Some(existing), Some(new_fields)) = (row_data.as_object_mut(), updates.as_object())
+        {
             for (key, value) in new_fields {
                 existing.insert(key.clone(), value.clone());
             }
             // Update _updated timestamp
-            existing.insert("_updated".to_string(), serde_json::json!(chrono::Utc::now().timestamp_millis()));
+            existing.insert(
+                "_updated".to_string(),
+                serde_json::json!(chrono::Utc::now().timestamp_millis()),
+            );
         }
 
         // Store updated row
@@ -164,7 +161,8 @@ impl SharedTableProvider {
     /// Row remains in RocksDB until flush or cleanup job removes it.
     pub fn delete_soft(&self, row_id: &str) -> Result<(), KalamDbError> {
         // Get existing row
-        let row_data = self.store
+        let row_data = self
+            .store
             .get(
                 self.namespace_id().as_str(),
                 self.table_name().as_str(),
@@ -177,10 +175,15 @@ impl SharedTableProvider {
         let updated_row = if let Some(obj) = row_data.as_object() {
             let mut new_obj = obj.clone();
             new_obj.insert("_deleted".to_string(), serde_json::json!(true));
-            new_obj.insert("_updated".to_string(), serde_json::json!(chrono::Utc::now().timestamp_millis()));
+            new_obj.insert(
+                "_updated".to_string(),
+                serde_json::json!(chrono::Utc::now().timestamp_millis()),
+            );
             serde_json::json!(new_obj)
         } else {
-            return Err(KalamDbError::InvalidOperation("Row data is not a JSON object".to_string()));
+            return Err(KalamDbError::InvalidOperation(
+                "Row data is not a JSON object".to_string(),
+            ));
         };
 
         // Store updated row
@@ -247,17 +250,21 @@ impl TableProvider for SharedTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::test_utils::TestDb;
-    use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
     use crate::catalog::TableType;
+    use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+    use kalamdb_store::test_utils::TestDb;
 
     fn create_test_provider() -> (SharedTableProvider, TestDb) {
         let test_db = TestDb::new(&["shared_table:app:config"]).unwrap();
-        
+
         let schema = Arc::new(Schema::new(vec![
             Field::new("setting_key", DataType::Utf8, false),
             Field::new("setting_value", DataType::Utf8, false),
-            Field::new("_updated", DataType::Timestamp(TimeUnit::Millisecond, None), false),
+            Field::new(
+                "_updated",
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                false,
+            ),
             Field::new("_deleted", DataType::Boolean, false),
         ]));
 
@@ -291,13 +298,16 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify row was stored
-        let stored = provider.store.get(
-            provider.namespace_id().as_str(),
-            provider.table_name().as_str(),
-            "setting_1"
-        ).unwrap();
+        let stored = provider
+            .store
+            .get(
+                provider.namespace_id().as_str(),
+                provider.table_name().as_str(),
+                "setting_1",
+            )
+            .unwrap();
         assert!(stored.is_some());
-        
+
         let stored_data = stored.unwrap();
         assert_eq!(stored_data["setting_key"], "max_connections");
         assert_eq!(stored_data["_deleted"], serde_json::json!(false));
@@ -323,11 +333,15 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify update
-        let stored = provider.store.get(
-            provider.namespace_id().as_str(),
-            provider.table_name().as_str(),
-            "setting_2"
-        ).unwrap().unwrap();
+        let stored = provider
+            .store
+            .get(
+                provider.namespace_id().as_str(),
+                provider.table_name().as_str(),
+                "setting_2",
+            )
+            .unwrap()
+            .unwrap();
         assert_eq!(stored["setting_value"], "60");
         assert_eq!(stored["setting_key"], "timeout"); // Unchanged
     }
@@ -345,11 +359,15 @@ mod tests {
         provider.insert("setting_3", row_data).unwrap();
 
         // Verify initial state
-        let before_delete = provider.store.get(
-            provider.namespace_id().as_str(),
-            provider.table_name().as_str(),
-            "setting_3"
-        ).unwrap().unwrap();
+        let before_delete = provider
+            .store
+            .get(
+                provider.namespace_id().as_str(),
+                provider.table_name().as_str(),
+                "setting_3",
+            )
+            .unwrap()
+            .unwrap();
         assert_eq!(before_delete["_deleted"], serde_json::json!(false));
 
         // Soft delete
@@ -357,19 +375,26 @@ mod tests {
         assert!(result.is_ok(), "delete_soft failed: {:?}", result.err());
 
         // Verify still exists but marked deleted
-        let stored = provider.store.get(
-            provider.namespace_id().as_str(),
-            provider.table_name().as_str(),
-            "setting_3"
-        ).unwrap();
-        
+        let stored = provider
+            .store
+            .get(
+                provider.namespace_id().as_str(),
+                provider.table_name().as_str(),
+                "setting_3",
+            )
+            .unwrap();
+
         assert!(stored.is_some(), "Row should still exist after soft delete");
         let stored_data = stored.unwrap();
-        
+
         // Debug: print the actual value
         eprintln!("Stored _deleted value: {:?}", stored_data["_deleted"]);
-        
-        assert_eq!(stored_data["_deleted"], serde_json::json!(true), "Row should be marked as deleted");
+
+        assert_eq!(
+            stored_data["_deleted"],
+            serde_json::json!(true),
+            "Row should be marked as deleted"
+        );
     }
 
     #[test]
@@ -388,11 +413,14 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify row is gone
-        let stored = provider.store.get(
-            provider.namespace_id().as_str(),
-            provider.table_name().as_str(),
-            "setting_4"
-        ).unwrap();
+        let stored = provider
+            .store
+            .get(
+                provider.namespace_id().as_str(),
+                provider.table_name().as_str(),
+                "setting_4",
+            )
+            .unwrap();
         assert!(stored.is_none());
     }
 

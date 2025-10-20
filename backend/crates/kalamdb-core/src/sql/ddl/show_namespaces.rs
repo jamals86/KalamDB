@@ -13,7 +13,7 @@ impl ShowNamespacesStatement {
     /// Parse a SHOW NAMESPACES statement from SQL
     pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
         let sql_upper = sql.trim().to_uppercase();
-        
+
         if sql_upper != "SHOW NAMESPACES" {
             return Err(KalamDbError::InvalidSql(
                 "Expected SHOW NAMESPACES statement".to_string(),

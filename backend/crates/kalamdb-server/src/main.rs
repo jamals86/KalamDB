@@ -5,20 +5,22 @@
 mod config;
 mod logging;
 
-use actix_web::{middleware, web, App, HttpServer};
 use actix_cors::Cors;
+use actix_web::{middleware, web, App, HttpServer};
 use anyhow::Result;
 use datafusion::catalog::schema::{MemorySchemaProvider, SchemaProvider};
 use kalamdb_api::routes;
-use kalamdb_core::services::{NamespaceService, UserTableService, SharedTableService, StreamTableService, TableDeletionService};
+use kalamdb_core::services::{
+    NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
+    UserTableService,
+};
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::storage::RocksDbInit;
 use kalamdb_core::tables::system::{
-    UsersTableProvider, StorageLocationsTableProvider,
-    LiveQueriesTableProvider, JobsTableProvider,
+    JobsTableProvider, LiveQueriesTableProvider, StorageLocationsTableProvider, UsersTableProvider,
 };
-use kalamdb_store::{UserTableStore, SharedTableStore, StreamTableStore};
+use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
 use log::info;
 use std::sync::Arc;
 
@@ -40,13 +42,19 @@ async fn main() -> Result<()> {
         config.logging.log_to_console,
     )?;
 
-    info!("Starting KalamDB Server v{} (Table-centric architecture)", env!("CARGO_PKG_VERSION"));
-    info!("Configuration loaded: host={}, port={}", config.server.host, config.server.port);
+    info!(
+        "Starting KalamDB Server v{} (Table-centric architecture)",
+        env!("CARGO_PKG_VERSION")
+    );
+    info!(
+        "Configuration loaded: host={}, port={}",
+        config.server.host, config.server.port
+    );
 
     // Initialize RocksDB
     let db_path = std::env::temp_dir().join("kalamdb_data");
     std::fs::create_dir_all(&db_path)?;
-    
+
     let db_init = RocksDbInit::new(db_path.to_str().unwrap());
     let db = db_init.open()?;
     info!("RocksDB initialized at {}", db_path.display());
@@ -61,41 +69,49 @@ async fn main() -> Result<()> {
 
     // Initialize system table providers (all use KalamSQL for RocksDB operations)
     let users_provider = Arc::new(UsersTableProvider::new(kalam_sql.clone()));
-    let storage_locations_provider = Arc::new(StorageLocationsTableProvider::new(kalam_sql.clone()));
+    let storage_locations_provider =
+        Arc::new(StorageLocationsTableProvider::new(kalam_sql.clone()));
     let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone()));
     let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.clone()));
     info!("System table providers initialized (users, storage_locations, live_queries, jobs)");
 
     // Initialize DataFusion session factory
     let session_factory = Arc::new(
-        DataFusionSessionFactory::new()
-            .expect("Failed to create DataFusion session factory")
+        DataFusionSessionFactory::new().expect("Failed to create DataFusion session factory"),
     );
     info!("DataFusion session factory initialized");
 
     // Initialize DataFusion session
     let session_context = Arc::new(session_factory.create_session());
-    
+
     // Create "system" schema in DataFusion
     // DataFusion's default catalog is named "datafusion", but we need to handle potential errors
     let system_schema = Arc::new(MemorySchemaProvider::new());
-    let catalog_name = session_context.catalog_names().first()
+    let catalog_name = session_context
+        .catalog_names()
+        .first()
         .expect("No catalogs available")
         .clone();
-    
+
     session_context
         .catalog(&catalog_name)
         .expect("Failed to get catalog")
         .register_schema("system", system_schema.clone())
         .expect("Failed to register system schema");
-    info!("System schema created in DataFusion (catalog: {})", catalog_name);
-    
+    info!(
+        "System schema created in DataFusion (catalog: {})",
+        catalog_name
+    );
+
     // Register system table providers with DataFusion (in the system schema)
     system_schema
         .register_table("users".to_string(), users_provider.clone())
         .expect("Failed to register system.users table");
     system_schema
-        .register_table("storage_locations".to_string(), storage_locations_provider.clone())
+        .register_table(
+            "storage_locations".to_string(),
+            storage_locations_provider.clone(),
+        )
         .expect("Failed to register system.storage_locations table");
     system_schema
         .register_table("live_queries".to_string(), live_queries_provider.clone())
@@ -113,8 +129,14 @@ async fn main() -> Result<()> {
 
     // Initialize table services
     let user_table_service = Arc::new(UserTableService::new(kalam_sql.clone()));
-    let shared_table_service = Arc::new(SharedTableService::new(shared_table_store.clone(), kalam_sql.clone()));
-    let stream_table_service = Arc::new(StreamTableService::new(stream_table_store.clone(), kalam_sql.clone()));
+    let shared_table_service = Arc::new(SharedTableService::new(
+        shared_table_store.clone(),
+        kalam_sql.clone(),
+    ));
+    let stream_table_service = Arc::new(StreamTableService::new(
+        stream_table_store.clone(),
+        kalam_sql.clone(),
+    ));
     info!("Table services initialized (user, shared, stream)");
 
     // Initialize TableDeletionService for DROP TABLE support
@@ -141,13 +163,15 @@ async fn main() -> Result<()> {
             shared_table_store.clone(),
             stream_table_store.clone(),
             kalam_sql.clone(),
-        )
+        ),
     );
     info!("SqlExecutor initialized with DROP TABLE support and table registration");
 
     // Load existing tables from system_tables and register with DataFusion
     let default_user_id = kalamdb_core::catalog::UserId::from("system");
-    sql_executor.load_existing_tables(default_user_id).await
+    sql_executor
+        .load_existing_tables(default_user_id)
+        .await
         .expect("Failed to load existing tables");
     info!("Existing tables loaded and registered with DataFusion");
 
@@ -164,7 +188,7 @@ async fn main() -> Result<()> {
             .allow_any_header()
             .supports_credentials()
             .max_age(3600);
-        
+
         App::new()
             .wrap(middleware::Logger::default())
             .wrap(cors)

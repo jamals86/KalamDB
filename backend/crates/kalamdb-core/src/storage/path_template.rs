@@ -31,14 +31,17 @@ impl PathTemplate {
     /// let result = PathTemplate::substitute("/data/${user_id}/${table_name}", &vars).unwrap();
     /// assert_eq!(result, "/data/user1/messages");
     /// ```
-    pub fn substitute(template: &str, variables: &HashMap<String, String>) -> Result<String, KalamDbError> {
+    pub fn substitute(
+        template: &str,
+        variables: &HashMap<String, String>,
+    ) -> Result<String, KalamDbError> {
         let mut result = template.to_string();
-        
+
         for (key, value) in variables {
             let placeholder = format!("${{{}}}", key);
             result = result.replace(&placeholder, value);
         }
-        
+
         // Check for unresolved variables
         if result.contains("${") {
             return Err(KalamDbError::Other(format!(
@@ -46,7 +49,7 @@ impl PathTemplate {
                 result
             )));
         }
-        
+
         Ok(result)
     }
 
@@ -65,14 +68,14 @@ impl PathTemplate {
         table_name: &str,
     ) -> Result<String, KalamDbError> {
         let mut vars = HashMap::new();
-        
+
         if let Some(uid) = user_id {
             vars.insert("user_id".to_string(), uid.as_ref().to_string());
         }
-        
+
         vars.insert("namespace".to_string(), namespace.to_string());
         vars.insert("table_name".to_string(), table_name.to_string());
-        
+
         Self::substitute(template, &vars)
     }
 }
@@ -86,7 +89,7 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("user_id".to_string(), "user123".to_string());
         vars.insert("table_name".to_string(), "messages".to_string());
-        
+
         let result = PathTemplate::substitute("/data/${user_id}/${table_name}", &vars).unwrap();
         assert_eq!(result, "/data/user123/messages");
     }
@@ -94,7 +97,8 @@ mod tests {
     #[test]
     fn test_user_id_substitution() {
         let user_id = UserId::new("user456");
-        let result = PathTemplate::substitute_user_id("/data/${user_id}/storage", &user_id).unwrap();
+        let result =
+            PathTemplate::substitute_user_id("/data/${user_id}/storage", &user_id).unwrap();
         assert_eq!(result, "/data/user456/storage");
     }
 
@@ -106,7 +110,8 @@ mod tests {
             Some(&user_id),
             "app",
             "messages",
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(result, "/data/user789/app/messages");
     }
 
@@ -117,7 +122,8 @@ mod tests {
             None,
             "system",
             "users",
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(result, "/data/system/users");
     }
 

@@ -15,27 +15,23 @@ use std::sync::{Arc, RwLock};
 pub struct FlushTriggerState {
     /// Table name
     pub table_name: TableName,
-    
+
     /// Column family name
     pub cf_name: String,
-    
+
     /// Flush policy for this table
     pub flush_policy: FlushPolicy,
-    
+
     /// Current row count (approximate)
     pub current_row_count: usize,
-    
+
     /// Last flush timestamp
     pub last_flush_time: DateTime<Utc>,
 }
 
 impl FlushTriggerState {
     /// Create a new flush trigger state
-    pub fn new(
-        table_name: TableName,
-        cf_name: String,
-        flush_policy: FlushPolicy,
-    ) -> Self {
+    pub fn new(table_name: TableName, cf_name: String, flush_policy: FlushPolicy) -> Self {
         Self {
             table_name,
             cf_name,
@@ -97,6 +93,12 @@ pub struct FlushTriggerMonitor {
     states: Arc<RwLock<HashMap<String, FlushTriggerState>>>,
 }
 
+impl Default for FlushTriggerMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FlushTriggerMonitor {
     /// Create a new flush trigger monitor
     pub fn new() -> Self {
@@ -132,9 +134,10 @@ impl FlushTriggerMonitor {
             return Ok(());
         }
 
-        let mut states = self.states.write().map_err(|e| {
-            KalamDbError::Other(format!("Failed to acquire write lock: {}", e))
-        })?;
+        let mut states = self
+            .states
+            .write()
+            .map_err(|e| KalamDbError::Other(format!("Failed to acquire write lock: {}", e)))?;
 
         let state = FlushTriggerState::new(table_name, cf_name.clone(), flush_policy);
         states.insert(cf_name, state);
@@ -147,9 +150,10 @@ impl FlushTriggerMonitor {
     /// # Arguments
     /// * `cf_name` - Column family name
     pub fn unregister_table(&self, cf_name: &str) -> Result<(), KalamDbError> {
-        let mut states = self.states.write().map_err(|e| {
-            KalamDbError::Other(format!("Failed to acquire write lock: {}", e))
-        })?;
+        let mut states = self
+            .states
+            .write()
+            .map_err(|e| KalamDbError::Other(format!("Failed to acquire write lock: {}", e)))?;
 
         states.remove(cf_name);
 
@@ -161,14 +165,11 @@ impl FlushTriggerMonitor {
     /// # Arguments
     /// * `cf_name` - Column family name
     /// * `row_count` - Number of rows inserted
-    pub fn on_rows_inserted(
-        &self,
-        cf_name: &str,
-        row_count: usize,
-    ) -> Result<(), KalamDbError> {
-        let mut states = self.states.write().map_err(|e| {
-            KalamDbError::Other(format!("Failed to acquire write lock: {}", e))
-        })?;
+    pub fn on_rows_inserted(&self, cf_name: &str, row_count: usize) -> Result<(), KalamDbError> {
+        let mut states = self
+            .states
+            .write()
+            .map_err(|e| KalamDbError::Other(format!("Failed to acquire write lock: {}", e)))?;
 
         if let Some(state) = states.get_mut(cf_name) {
             state.increment_row_count(row_count);
@@ -185,9 +186,10 @@ impl FlushTriggerMonitor {
     /// # Returns
     /// `true` if flush should be triggered, `false` otherwise
     pub fn should_flush(&self, cf_name: &str) -> Result<bool, KalamDbError> {
-        let states = self.states.read().map_err(|e| {
-            KalamDbError::Other(format!("Failed to acquire read lock: {}", e))
-        })?;
+        let states = self
+            .states
+            .read()
+            .map_err(|e| KalamDbError::Other(format!("Failed to acquire read lock: {}", e)))?;
 
         if let Some(state) = states.get(cf_name) {
             Ok(state.should_flush())
@@ -202,9 +204,10 @@ impl FlushTriggerMonitor {
     /// # Returns
     /// Vector of (table_name, cf_name) pairs that need flushing
     pub fn get_tables_needing_flush(&self) -> Result<Vec<(TableName, String)>, KalamDbError> {
-        let states = self.states.read().map_err(|e| {
-            KalamDbError::Other(format!("Failed to acquire read lock: {}", e))
-        })?;
+        let states = self
+            .states
+            .read()
+            .map_err(|e| KalamDbError::Other(format!("Failed to acquire read lock: {}", e)))?;
 
         let mut result = Vec::new();
         for (cf_name, state) in states.iter() {
@@ -221,9 +224,10 @@ impl FlushTriggerMonitor {
     /// # Arguments
     /// * `cf_name` - Column family name
     pub fn on_flush_completed(&self, cf_name: &str) -> Result<(), KalamDbError> {
-        let mut states = self.states.write().map_err(|e| {
-            KalamDbError::Other(format!("Failed to acquire write lock: {}", e))
-        })?;
+        let mut states = self
+            .states
+            .write()
+            .map_err(|e| KalamDbError::Other(format!("Failed to acquire write lock: {}", e)))?;
 
         if let Some(state) = states.get_mut(cf_name) {
             state.reset_after_flush();
@@ -240,9 +244,10 @@ impl FlushTriggerMonitor {
     /// # Returns
     /// Clone of the current flush trigger state
     pub fn get_state(&self, cf_name: &str) -> Result<Option<FlushTriggerState>, KalamDbError> {
-        let states = self.states.read().map_err(|e| {
-            KalamDbError::Other(format!("Failed to acquire read lock: {}", e))
-        })?;
+        let states = self
+            .states
+            .read()
+            .map_err(|e| KalamDbError::Other(format!("Failed to acquire read lock: {}", e)))?;
 
         Ok(states.get(cf_name).cloned())
     }
@@ -252,9 +257,10 @@ impl FlushTriggerMonitor {
     /// # Returns
     /// Vector of column family names
     pub fn get_registered_tables(&self) -> Result<Vec<String>, KalamDbError> {
-        let states = self.states.read().map_err(|e| {
-            KalamDbError::Other(format!("Failed to acquire read lock: {}", e))
-        })?;
+        let states = self
+            .states
+            .read()
+            .map_err(|e| KalamDbError::Other(format!("Failed to acquire read lock: {}", e)))?;
 
         Ok(states.keys().cloned().collect())
     }
@@ -338,7 +344,6 @@ mod tests {
 
     #[test]
     fn test_flush_trigger_monitor_registration() {
-        
         let monitor = FlushTriggerMonitor::new();
 
         let table_name = TableName::new("test_table");
@@ -346,7 +351,12 @@ mod tests {
         let flush_policy = FlushPolicy::row_limit(100).unwrap();
 
         // Register table (User table type - should register)
-        let result = monitor.register_table(table_name.clone(), cf_name.clone(), &TableType::User, flush_policy);
+        let result = monitor.register_table(
+            table_name.clone(),
+            cf_name.clone(),
+            &TableType::User,
+            flush_policy,
+        );
         assert!(result.is_ok());
 
         // Verify registration
@@ -365,7 +375,6 @@ mod tests {
 
     #[test]
     fn test_flush_trigger_monitor_row_tracking() {
-        
         let monitor = FlushTriggerMonitor::new();
 
         let table_name = TableName::new("test_table");
@@ -394,7 +403,6 @@ mod tests {
 
     #[test]
     fn test_get_tables_needing_flush() {
-        
         let monitor = FlushTriggerMonitor::new();
 
         // Register multiple tables with different policies
@@ -439,7 +447,6 @@ mod tests {
 
     #[test]
     fn test_get_state() {
-        
         let monitor = FlushTriggerMonitor::new();
 
         let table_name = TableName::new("test_table");
@@ -447,7 +454,12 @@ mod tests {
         let flush_policy = FlushPolicy::row_limit(100).unwrap();
 
         monitor
-            .register_table(table_name.clone(), cf_name.clone(), &TableType::User, flush_policy)
+            .register_table(
+                table_name.clone(),
+                cf_name.clone(),
+                &TableType::User,
+                flush_policy,
+            )
             .unwrap();
 
         // Get initial state
@@ -498,7 +510,12 @@ mod tests {
         let user_policy = FlushPolicy::row_limit(100).unwrap();
 
         monitor
-            .register_table(user_table.clone(), user_cf.clone(), &TableType::User, user_policy)
+            .register_table(
+                user_table.clone(),
+                user_cf.clone(),
+                &TableType::User,
+                user_policy,
+            )
             .unwrap();
 
         // User table should be registered

@@ -196,7 +196,7 @@ impl StreamTableStore {
     /// ```
     pub fn drop_table(&self, namespace_id: &str, table_name: &str) -> Result<()> {
         let cf_name = format!("stream_table:{}:{}", namespace_id, table_name);
-        
+
         let cf = self
             .db
             .cf_handle(&cf_name)
@@ -205,7 +205,7 @@ impl StreamTableStore {
         // Delete all keys by iterating and batching deletes
         let mut batch = rocksdb::WriteBatch::default();
         let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-        
+
         for item in iter {
             let (key, _) = item?;
             batch.delete_cf(cf, key);
@@ -378,62 +378,26 @@ mod tests {
 
         // Insert multiple events
         store
-            .put(
-                "app",
-                "events",
-                ts1,
-                "evt001",
-                json!({"type": "click"}),
-            )
+            .put("app", "events", ts1, "evt001", json!({"type": "click"}))
             .unwrap();
         store
-            .put(
-                "app",
-                "events",
-                ts2,
-                "evt002",
-                json!({"type": "view"}),
-            )
+            .put("app", "events", ts2, "evt002", json!({"type": "view"}))
             .unwrap();
         store
-            .put(
-                "app",
-                "events",
-                ts3,
-                "evt003",
-                json!({"type": "submit"}),
-            )
+            .put("app", "events", ts3, "evt003", json!({"type": "submit"}))
             .unwrap();
 
         // Verify data exists
-        assert!(store
-            .get("app", "events", ts1, "evt001")
-            .unwrap()
-            .is_some());
-        assert!(store
-            .get("app", "events", ts2, "evt002")
-            .unwrap()
-            .is_some());
-        assert!(store
-            .get("app", "events", ts3, "evt003")
-            .unwrap()
-            .is_some());
+        assert!(store.get("app", "events", ts1, "evt001").unwrap().is_some());
+        assert!(store.get("app", "events", ts2, "evt002").unwrap().is_some());
+        assert!(store.get("app", "events", ts3, "evt003").unwrap().is_some());
 
         // Drop the entire table
         store.drop_table("app", "events").unwrap();
 
         // Verify all data is deleted
-        assert!(store
-            .get("app", "events", ts1, "evt001")
-            .unwrap()
-            .is_none());
-        assert!(store
-            .get("app", "events", ts2, "evt002")
-            .unwrap()
-            .is_none());
-        assert!(store
-            .get("app", "events", ts3, "evt003")
-            .unwrap()
-            .is_none());
+        assert!(store.get("app", "events", ts1, "evt001").unwrap().is_none());
+        assert!(store.get("app", "events", ts2, "evt002").unwrap().is_none());
+        assert!(store.get("app", "events", ts3, "evt003").unwrap().is_none());
     }
 }

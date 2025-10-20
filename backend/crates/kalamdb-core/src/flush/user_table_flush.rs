@@ -113,16 +113,13 @@ impl UserTableFlushJob {
         );
 
         // Create job record
-        let mut job_record = JobRecord::new(
-            job_id.clone(),
-            "flush".to_string(),
-            self.node_id.clone(),
-        )
-        .with_table_name(format!(
-            "{}.{}",
-            self.namespace_id.as_str(),
-            self.table_name.as_str()
-        ));
+        let mut job_record =
+            JobRecord::new(job_id.clone(), "flush".to_string(), self.node_id.clone())
+                .with_table_name(format!(
+                    "{}.{}",
+                    self.namespace_id.as_str(),
+                    self.table_name.as_str()
+                ));
 
         // Execute flush and capture metrics
         let start_time = std::time::Instant::now();
@@ -188,10 +185,7 @@ impl UserTableFlushJob {
         // Get rows grouped by user
         let rows_by_user = self
             .store
-            .get_rows_by_user(
-                self.namespace_id.as_str(),
-                self.table_name.as_str(),
-            )
+            .get_rows_by_user(self.namespace_id.as_str(), self.table_name.as_str())
             .map_err(|e| KalamDbError::Other(format!("Failed to get rows: {}", e)))?;
 
         // Flush each user's data to separate Parquet file
@@ -278,9 +272,8 @@ impl UserTableFlushJob {
             arrays.push(array);
         }
 
-        RecordBatch::try_new(self.schema.clone(), arrays).map_err(|e| {
-            KalamDbError::Other(format!("Failed to create RecordBatch: {}", e))
-        })
+        RecordBatch::try_new(self.schema.clone(), arrays)
+            .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
     }
 
     /// Delete flushed rows from RocksDB
@@ -299,11 +292,7 @@ impl UserTableFlushJob {
         }
 
         self.store
-            .delete_batch_by_keys(
-                self.namespace_id.as_str(),
-                self.table_name.as_str(),
-                &keys,
-            )
+            .delete_batch_by_keys(self.namespace_id.as_str(), self.table_name.as_str(), &keys)
             .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed rows: {}", e)))?;
 
         log::debug!("Deleted {} flushed rows from storage", keys.len());

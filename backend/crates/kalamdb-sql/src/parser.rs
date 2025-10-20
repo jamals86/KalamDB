@@ -141,10 +141,7 @@ mod tests {
 
     #[test]
     fn test_system_table_from_name() {
-        assert_eq!(
-            SystemTable::from_name("users").unwrap(),
-            SystemTable::Users
-        );
+        assert_eq!(SystemTable::from_name("users").unwrap(), SystemTable::Users);
         assert_eq!(
             SystemTable::from_name("system_users").unwrap(),
             SystemTable::Users

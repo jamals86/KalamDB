@@ -34,10 +34,9 @@
 //! detector.delete(namespace_id, table_name, user_id, row_id, hard=false).await?;
 //! ```
 
-use crate::catalog::TableName;
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, ChangeType, LiveQueryManager};
-use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
+use kalamdb_store::{SharedTableStore, UserTableStore};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -146,7 +145,10 @@ impl UserTableChangeDetector {
 
         // Spawn async notification task (non-blocking)
         tokio::spawn(async move {
-            if let Err(e) = manager.notify_table_change(&table_name_copy, notification).await {
+            if let Err(e) = manager
+                .notify_table_change(&table_name_copy, notification)
+                .await
+            {
                 #[cfg(debug_assertions)]
                 eprintln!("Failed to notify subscribers: {}", e);
             }
@@ -200,7 +202,10 @@ impl UserTableChangeDetector {
         let table_name_copy = table_name.to_string();
 
         tokio::spawn(async move {
-            if let Err(e) = manager.notify_table_change(&table_name_copy, notification).await {
+            if let Err(e) = manager
+                .notify_table_change(&table_name_copy, notification)
+                .await
+            {
                 #[cfg(debug_assertions)]
                 eprintln!("Failed to notify subscribers: {}", e);
             }
@@ -285,9 +290,7 @@ impl SharedTableChangeDetector {
                 })?;
                 ChangeNotification::update(table_name.to_string(), old_data, new_value)
             }
-            ChangeType::Insert => {
-                ChangeNotification::insert(table_name.to_string(), new_value)
-            }
+            ChangeType::Insert => ChangeNotification::insert(table_name.to_string(), new_value),
             _ => {
                 return Err(KalamDbError::Other("Invalid change type".to_string()));
             }
@@ -298,7 +301,10 @@ impl SharedTableChangeDetector {
         let table_name_copy = table_name.to_string();
 
         tokio::spawn(async move {
-            if let Err(e) = manager.notify_table_change(&table_name_copy, notification).await {
+            if let Err(e) = manager
+                .notify_table_change(&table_name_copy, notification)
+                .await
+            {
                 #[cfg(debug_assertions)]
                 eprintln!("Failed to notify subscribers: {}", e);
             }
@@ -347,7 +353,10 @@ impl SharedTableChangeDetector {
         let table_name_copy = table_name.to_string();
 
         tokio::spawn(async move {
-            if let Err(e) = manager.notify_table_change(&table_name_copy, notification).await {
+            if let Err(e) = manager
+                .notify_table_change(&table_name_copy, notification)
+                .await
+            {
                 #[cfg(debug_assertions)]
                 eprintln!("Failed to notify subscribers: {}", e);
             }
@@ -377,8 +386,10 @@ mod tests {
 
         let user_table_store = Arc::new(UserTableStore::new(Arc::clone(&db)).unwrap());
         let kalam_sql = Arc::new(KalamSql::new(Arc::clone(&db)).unwrap());
-        let live_query_manager =
-            Arc::new(LiveQueryManager::new(kalam_sql, NodeId::new("test".to_string())));
+        let live_query_manager = Arc::new(LiveQueryManager::new(
+            kalam_sql,
+            NodeId::new("test".to_string()),
+        ));
 
         let detector = UserTableChangeDetector::new(user_table_store, live_query_manager);
 

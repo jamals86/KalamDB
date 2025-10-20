@@ -69,6 +69,9 @@ mod tests {
     #[test]
     fn test_live_queries_table_name() {
         assert_eq!(LiveQueriesTable::table_name(), "live_queries");
-        assert_eq!(LiveQueriesTable::column_family_name(), "system_live_queries");
+        assert_eq!(
+            LiveQueriesTable::column_family_name(),
+            "system_live_queries"
+        );
     }
 }

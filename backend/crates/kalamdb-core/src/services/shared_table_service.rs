@@ -2,7 +2,7 @@
 //!
 //! This service handles all shared table-related operations including:
 //! - Creating shared tables with schema validation
-//! - System column injection (_updated, _deleted) 
+//! - System column injection (_updated, _deleted)
 //! - Metadata registration in system_tables via kalamdb-sql
 //! - Column family creation for shared_table:{namespace}:{table_name}
 //! - Flush policy configuration
@@ -95,7 +95,8 @@ impl SharedTableService {
         // Validate no ${user_id} templating in shared table storage location
         if storage_location.contains("${user_id}") {
             return Err(KalamDbError::InvalidOperation(
-                "Shared table storage location cannot contain ${user_id} template variable".to_string(),
+                "Shared table storage location cannot contain ${user_id} template variable"
+                    .to_string(),
             ));
         }
 
@@ -153,7 +154,9 @@ impl SharedTableService {
         }
 
         // Check for SQL keywords
-        let keywords = ["select", "insert", "update", "delete", "table", "from", "where"];
+        let keywords = [
+            "select", "insert", "update", "delete", "table", "from", "where",
+        ];
         if keywords.contains(&name.to_lowercase().as_str()) {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Table name cannot be a SQL keyword: {}",
@@ -189,7 +192,8 @@ impl SharedTableService {
         }
 
         if !has_deleted {
-            fields.push(Arc::new(Field::new("_deleted", DataType::Boolean, false))); // Not nullable
+            fields.push(Arc::new(Field::new("_deleted", DataType::Boolean, false)));
+            // Not nullable
         }
 
         Ok(Arc::new(Schema::new(fields)))
@@ -202,7 +206,9 @@ impl SharedTableService {
     ) -> Result<FlushPolicy, KalamDbError> {
         match flush_policy {
             Some(crate::sql::ddl::create_shared_table::FlushPolicy::Rows(rows)) => {
-                Ok(FlushPolicy::RowLimit { row_limit: *rows as u32 })
+                Ok(FlushPolicy::RowLimit {
+                    row_limit: *rows as u32,
+                })
             }
             Some(crate::sql::ddl::create_shared_table::FlushPolicy::Time(seconds)) => {
                 Ok(FlushPolicy::TimeInterval {
@@ -313,8 +319,8 @@ impl SharedTableService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::test_utils::TestDb;
     use datafusion::arrow::datatypes::DataType;
+    use kalamdb_store::test_utils::TestDb;
 
     fn create_test_service() -> (SharedTableService, TestDb) {
         let test_db = TestDb::new(&[
@@ -391,9 +397,7 @@ mod tests {
     fn test_create_table_with_custom_location() {
         let (service, _test_db) = create_test_service();
 
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-        ]));
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
         let stmt = CreateSharedTableStatement {
             table_name: TableName::new("config"),
@@ -416,9 +420,7 @@ mod tests {
     fn test_shared_table_rejects_user_id_templating() {
         let (service, _test_db) = create_test_service();
 
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-        ]));
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
         let stmt = CreateSharedTableStatement {
             table_name: TableName::new("config"),
@@ -481,25 +483,35 @@ mod tests {
         let (service, _test_db) = create_test_service();
 
         // Valid names
-        assert!(service.validate_table_name(&TableName::new("config")).is_ok());
-        assert!(service.validate_table_name(&TableName::new("_private")).is_ok());
-        assert!(service.validate_table_name(&TableName::new("table_123")).is_ok());
+        assert!(service
+            .validate_table_name(&TableName::new("config"))
+            .is_ok());
+        assert!(service
+            .validate_table_name(&TableName::new("_private"))
+            .is_ok());
+        assert!(service
+            .validate_table_name(&TableName::new("table_123"))
+            .is_ok());
 
         // Invalid names: start with uppercase
-        assert!(service.validate_table_name(&TableName::new("Config")).is_err());
+        assert!(service
+            .validate_table_name(&TableName::new("Config"))
+            .is_err());
 
         // Invalid names: SQL keywords
-        assert!(service.validate_table_name(&TableName::new("select")).is_err());
-        assert!(service.validate_table_name(&TableName::new("table")).is_err());
+        assert!(service
+            .validate_table_name(&TableName::new("select"))
+            .is_err());
+        assert!(service
+            .validate_table_name(&TableName::new("table"))
+            .is_err());
     }
 
     #[test]
     fn test_create_table_if_not_exists() {
         let (service, _test_db) = create_test_service();
 
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-        ]));
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
         let stmt1 = CreateSharedTableStatement {
             table_name: TableName::new("config"),

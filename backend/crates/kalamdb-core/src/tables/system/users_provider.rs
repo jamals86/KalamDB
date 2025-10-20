@@ -54,7 +54,7 @@ impl UsersTableProvider {
             email: user.email.clone().unwrap_or_default(),
             created_at: user.created_at,
         };
-        
+
         self.kalam_sql
             .insert_user(&kalamdb_user)
             .map_err(|e| KalamDbError::Other(format!("Failed to insert user: {}", e)))
@@ -63,24 +63,25 @@ impl UsersTableProvider {
     /// Update an existing user
     pub fn update_user(&self, user: UserRecord) -> Result<(), KalamDbError> {
         // Check if user exists
-        let existing = self.kalam_sql
+        let existing = self
+            .kalam_sql
             .get_user(&user.username)
             .map_err(|e| KalamDbError::Other(format!("Failed to get user: {}", e)))?;
-        
+
         if existing.is_none() {
             return Err(KalamDbError::NotFound(format!(
                 "User not found: {}",
                 user.user_id
             )));
         }
-        
+
         let kalamdb_user = User {
             user_id: user.user_id.clone(),
             username: user.username.clone(),
             email: user.email.clone().unwrap_or_default(),
             created_at: user.created_at,
         };
-        
+
         self.kalam_sql
             .insert_user(&kalamdb_user)
             .map_err(|e| KalamDbError::Other(format!("Failed to update user: {}", e)))
@@ -96,10 +97,11 @@ impl UsersTableProvider {
 
     /// Get a user by username (kalamdb-sql uses username as key)
     pub fn get_user(&self, username: &str) -> Result<Option<UserRecord>, KalamDbError> {
-        let user = self.kalam_sql
+        let user = self
+            .kalam_sql
             .get_user(username)
             .map_err(|e| KalamDbError::Other(format!("Failed to get user: {}", e)))?;
-        
+
         Ok(user.map(|u| UserRecord {
             user_id: u.user_id,
             username: u.username,
@@ -111,16 +113,17 @@ impl UsersTableProvider {
 
     /// Scan all users and return as RecordBatch
     pub fn scan_all_users(&self) -> Result<RecordBatch, KalamDbError> {
-        let users = self.kalam_sql
+        let users = self
+            .kalam_sql
             .scan_all_users()
             .map_err(|e| KalamDbError::Other(format!("Failed to scan users: {}", e)))?;
-        
+
         let mut user_ids = StringBuilder::new();
         let mut usernames = StringBuilder::new();
         let mut emails = StringBuilder::new();
         let mut created_ats = Vec::new();
         let mut updated_ats = Vec::new();
-        
+
         for user in users {
             user_ids.append_value(&user.user_id);
             usernames.append_value(&user.username);
@@ -128,7 +131,7 @@ impl UsersTableProvider {
             created_ats.push(Some(user.created_at));
             updated_ats.push(Some(user.created_at)); // using created_at for both since updated_at not in model
         }
-        
+
         let batch = RecordBatch::try_new(
             self.schema.clone(),
             vec![
@@ -140,7 +143,7 @@ impl UsersTableProvider {
             ],
         )
         .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))?;
-        
+
         Ok(batch)
     }
 }
@@ -192,7 +195,7 @@ mod tests {
     #[test]
     fn test_insert_and_get_user() {
         let (provider, _temp_dir) = create_test_provider();
-        
+
         let user = UserRecord {
             user_id: "user1".to_string(),
             username: "testuser".to_string(),
@@ -200,9 +203,9 @@ mod tests {
             created_at: 1000,
             updated_at: 1000,
         };
-        
+
         provider.insert_user(user.clone()).unwrap();
-        
+
         let retrieved = provider.get_user("testuser").unwrap(); // Use username as key
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
@@ -214,7 +217,7 @@ mod tests {
     #[test]
     fn test_update_user() {
         let (provider, _temp_dir) = create_test_provider();
-        
+
         let user = UserRecord {
             user_id: "user1".to_string(),
             username: "testuser".to_string(),
@@ -222,9 +225,9 @@ mod tests {
             created_at: 1000,
             updated_at: 1000,
         };
-        
+
         provider.insert_user(user.clone()).unwrap();
-        
+
         let updated_user = UserRecord {
             user_id: "user1".to_string(),
             username: "testuser".to_string(),
@@ -232,9 +235,9 @@ mod tests {
             created_at: 1000,
             updated_at: 2000,
         };
-        
+
         provider.update_user(updated_user).unwrap();
-        
+
         let retrieved = provider.get_user("testuser").unwrap().unwrap();
         assert_eq!(retrieved.username, "testuser");
         assert_eq!(retrieved.email, Some("updated@example.com".to_string()));
@@ -243,7 +246,7 @@ mod tests {
     #[test]
     fn test_update_nonexistent_user() {
         let (provider, _temp_dir) = create_test_provider();
-        
+
         let user = UserRecord {
             user_id: "nonexistent".to_string(),
             username: "nonexistentuser".to_string(),
@@ -251,7 +254,7 @@ mod tests {
             created_at: 1000,
             updated_at: 1000,
         };
-        
+
         let result = provider.update_user(user);
         assert!(result.is_err());
     }
@@ -260,7 +263,7 @@ mod tests {
     #[ignore] // Delete not yet implemented in kalamdb-sql
     fn test_delete_user() {
         let (provider, _temp_dir) = create_test_provider();
-        
+
         let user = UserRecord {
             user_id: "user1".to_string(),
             username: "testuser".to_string(),
@@ -268,10 +271,10 @@ mod tests {
             created_at: 1000,
             updated_at: 1000,
         };
-        
+
         provider.insert_user(user).unwrap();
         provider.delete_user("user1").unwrap();
-        
+
         let retrieved = provider.get_user("testuser").unwrap();
         assert!(retrieved.is_none());
     }
@@ -279,7 +282,7 @@ mod tests {
     #[test]
     fn test_scan_all_users() {
         let (provider, _temp_dir) = create_test_provider();
-        
+
         let users = vec![
             UserRecord {
                 user_id: "user1".to_string(),
@@ -296,11 +299,11 @@ mod tests {
                 updated_at: 2000,
             },
         ];
-        
+
         for user in users {
             provider.insert_user(user).unwrap();
         }
-        
+
         let batch = provider.scan_all_users().unwrap();
         assert_eq!(batch.num_rows(), 2);
         assert_eq!(batch.num_columns(), 5);

@@ -22,7 +22,7 @@ impl KillLiveQueryStatement {
     /// - KILL LIVE QUERY live_id
     pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
         let sql_upper = sql.trim().to_uppercase();
-        
+
         if !sql_upper.starts_with("KILL LIVE QUERY") {
             return Err(KalamDbError::InvalidSql(
                 "Expected KILL LIVE QUERY statement".to_string(),
@@ -35,9 +35,7 @@ impl KillLiveQueryStatement {
             .strip_prefix("KILL LIVE QUERY")
             .or_else(|| sql.trim().strip_prefix("kill live query"))
             .map(|s| s.trim())
-            .ok_or_else(|| {
-                KalamDbError::InvalidSql("Live query ID is required".to_string())
-            })?;
+            .ok_or_else(|| KalamDbError::InvalidSql("Live query ID is required".to_string()))?;
 
         // Remove quotes if present
         let live_id_str = live_id_str
@@ -73,9 +71,8 @@ mod tests {
 
     #[test]
     fn test_parse_kill_live_query() {
-        let stmt = KillLiveQueryStatement::parse(
-            "KILL LIVE QUERY 'user123-conn_abc-messages-q1'"
-        ).unwrap();
+        let stmt = KillLiveQueryStatement::parse("KILL LIVE QUERY 'user123-conn_abc-messages-q1'")
+            .unwrap();
         assert_eq!(stmt.live_id.user_id(), "user123");
         assert_eq!(stmt.live_id.connection_id().unique_conn_id(), "conn_abc");
         assert_eq!(stmt.live_id.table_name(), "messages");
@@ -84,35 +81,31 @@ mod tests {
 
     #[test]
     fn test_parse_kill_live_query_double_quotes() {
-        let stmt = KillLiveQueryStatement::parse(
-            "KILL LIVE QUERY \"user456-conn_xyz-notifications-q2\""
-        ).unwrap();
+        let stmt =
+            KillLiveQueryStatement::parse("KILL LIVE QUERY \"user456-conn_xyz-notifications-q2\"")
+                .unwrap();
         assert_eq!(stmt.live_id.user_id(), "user456");
         assert_eq!(stmt.live_id.table_name(), "notifications");
     }
 
     #[test]
     fn test_parse_kill_live_query_no_quotes() {
-        let stmt = KillLiveQueryStatement::parse(
-            "KILL LIVE QUERY user789-conn_123-users-q3"
-        ).unwrap();
+        let stmt =
+            KillLiveQueryStatement::parse("KILL LIVE QUERY user789-conn_123-users-q3").unwrap();
         assert_eq!(stmt.live_id.user_id(), "user789");
         assert_eq!(stmt.live_id.table_name(), "users");
     }
 
     #[test]
     fn test_parse_kill_live_query_lowercase() {
-        let stmt = KillLiveQueryStatement::parse(
-            "kill live query 'user123-conn_abc-messages-q1'"
-        ).unwrap();
+        let stmt = KillLiveQueryStatement::parse("kill live query 'user123-conn_abc-messages-q1'")
+            .unwrap();
         assert_eq!(stmt.live_id.user_id(), "user123");
     }
 
     #[test]
     fn test_parse_kill_live_query_invalid_format() {
-        let result = KillLiveQueryStatement::parse(
-            "KILL LIVE QUERY 'invalid-format'"
-        );
+        let result = KillLiveQueryStatement::parse("KILL LIVE QUERY 'invalid-format'");
         assert!(result.is_err());
     }
 
@@ -136,17 +129,15 @@ mod tests {
 
     #[test]
     fn test_user_id_helper() {
-        let stmt = KillLiveQueryStatement::parse(
-            "KILL LIVE QUERY 'user123-conn_abc-messages-q1'"
-        ).unwrap();
+        let stmt = KillLiveQueryStatement::parse("KILL LIVE QUERY 'user123-conn_abc-messages-q1'")
+            .unwrap();
         assert_eq!(stmt.user_id(), "user123");
     }
 
     #[test]
     fn test_connection_id_helper() {
-        let stmt = KillLiveQueryStatement::parse(
-            "KILL LIVE QUERY 'user123-conn_abc-messages-q1'"
-        ).unwrap();
+        let stmt = KillLiveQueryStatement::parse("KILL LIVE QUERY 'user123-conn_abc-messages-q1'")
+            .unwrap();
         assert_eq!(stmt.connection_id().user_id(), "user123");
         assert_eq!(stmt.connection_id().unique_conn_id(), "conn_abc");
     }

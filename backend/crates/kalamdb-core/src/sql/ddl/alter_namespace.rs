@@ -13,7 +13,7 @@ use std::collections::HashMap;
 pub struct AlterNamespaceStatement {
     /// Namespace name to alter
     pub name: NamespaceId,
-    
+
     /// Options to set
     pub options: HashMap<String, JsonValue>,
 }
@@ -25,7 +25,7 @@ impl AlterNamespaceStatement {
     /// - ALTER NAMESPACE name SET OPTIONS (key1 = 'value1', key2 = 42, key3 = true)
     pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
         let sql_upper = sql.trim().to_uppercase();
-        
+
         if !sql_upper.starts_with("ALTER NAMESPACE") {
             return Err(KalamDbError::InvalidSql(
                 "Expected ALTER NAMESPACE statement".to_string(),
@@ -52,7 +52,7 @@ impl AlterNamespaceStatement {
             .ok_or_else(|| KalamDbError::InvalidSql("SET OPTIONS clause not found".to_string()))?;
 
         let name = name_part[..set_options_pos].trim();
-        
+
         if name.is_empty() {
             return Err(KalamDbError::InvalidSql(
                 "Namespace name is required".to_string(),
@@ -77,7 +77,7 @@ impl AlterNamespaceStatement {
     /// Parse options from the (key1 = value1, key2 = value2) format
     fn parse_options(options_str: &str) -> Result<HashMap<String, JsonValue>, KalamDbError> {
         let options_str = options_str.trim();
-        
+
         if !options_str.starts_with('(') || !options_str.ends_with(')') {
             return Err(KalamDbError::InvalidSql(
                 "Options must be enclosed in parentheses".to_string(),
@@ -85,17 +85,17 @@ impl AlterNamespaceStatement {
         }
 
         let inner = &options_str[1..options_str.len() - 1].trim();
-        
+
         if inner.is_empty() {
             return Ok(HashMap::new());
         }
 
         let mut options = HashMap::new();
-        
+
         // Simple parsing: split by comma (doesn't handle commas in strings, but good enough for now)
         for pair in inner.split(',') {
             let parts: Vec<&str> = pair.split('=').map(|s| s.trim()).collect();
-            
+
             if parts.len() != 2 {
                 return Err(KalamDbError::InvalidSql(format!(
                     "Invalid option format: {}",
@@ -143,31 +143,36 @@ mod tests {
     #[test]
     fn test_parse_alter_namespace() {
         let stmt = AlterNamespaceStatement::parse(
-            "ALTER NAMESPACE app SET OPTIONS (max_tables = 100, region = 'us-west')"
-        ).unwrap();
-        
+            "ALTER NAMESPACE app SET OPTIONS (max_tables = 100, region = 'us-west')",
+        )
+        .unwrap();
+
         assert_eq!(stmt.name.as_str(), "app");
         assert_eq!(stmt.options.len(), 2);
-        assert_eq!(stmt.options.get("max_tables"), Some(&JsonValue::Number(100.into())));
-        assert_eq!(stmt.options.get("region"), Some(&JsonValue::String("us-west".to_string())));
+        assert_eq!(
+            stmt.options.get("max_tables"),
+            Some(&JsonValue::Number(100.into()))
+        );
+        assert_eq!(
+            stmt.options.get("region"),
+            Some(&JsonValue::String("us-west".to_string()))
+        );
     }
 
     #[test]
     fn test_parse_alter_namespace_empty_options() {
-        let stmt = AlterNamespaceStatement::parse(
-            "ALTER NAMESPACE app SET OPTIONS ()"
-        ).unwrap();
-        
+        let stmt = AlterNamespaceStatement::parse("ALTER NAMESPACE app SET OPTIONS ()").unwrap();
+
         assert_eq!(stmt.name.as_str(), "app");
         assert!(stmt.options.is_empty());
     }
 
     #[test]
     fn test_parse_alter_namespace_boolean() {
-        let stmt = AlterNamespaceStatement::parse(
-            "ALTER NAMESPACE app SET OPTIONS (enabled = true)"
-        ).unwrap();
-        
+        let stmt =
+            AlterNamespaceStatement::parse("ALTER NAMESPACE app SET OPTIONS (enabled = true)")
+                .unwrap();
+
         assert_eq!(stmt.options.get("enabled"), Some(&JsonValue::Bool(true)));
     }
 

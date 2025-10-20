@@ -93,7 +93,9 @@ impl FlushPolicy {
 
     /// Create a time interval flush policy with validation
     pub fn time_interval(seconds: u32) -> Result<Self, String> {
-        let policy = FlushPolicy::TimeInterval { interval_seconds: seconds };
+        let policy = FlushPolicy::TimeInterval {
+            interval_seconds: seconds,
+        };
         policy.validate()?;
         Ok(policy)
     }

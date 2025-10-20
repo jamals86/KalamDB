@@ -12,7 +12,7 @@ use crate::error::KalamDbError;
 pub struct ShowTableStatsStatement {
     /// Optional namespace (if qualified name used)
     pub namespace_id: Option<NamespaceId>,
-    
+
     /// Table name to show statistics for
     pub table_name: TableName,
 }
@@ -26,7 +26,7 @@ impl ShowTableStatsStatement {
     pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
         let sql_trimmed = sql.trim();
         let sql_upper = sql_trimmed.to_uppercase();
-        
+
         if !sql_upper.starts_with("SHOW STATS FOR TABLE") {
             return Err(KalamDbError::InvalidSql(
                 "Expected SHOW STATS FOR TABLE statement".to_string(),
@@ -34,17 +34,16 @@ impl ShowTableStatsStatement {
         }
 
         // Extract table name part
-        let table_part = sql_trimmed.strip_prefix("SHOW STATS FOR TABLE")
+        let table_part = sql_trimmed
+            .strip_prefix("SHOW STATS FOR TABLE")
             .or_else(|| sql_trimmed.strip_prefix("show stats for table"))
             .map(|s| s.trim())
-            .ok_or_else(|| {
-                KalamDbError::InvalidSql("Invalid SHOW STATS syntax".to_string())
-            })?;
+            .ok_or_else(|| KalamDbError::InvalidSql("Invalid SHOW STATS syntax".to_string()))?;
 
-        let table_identifier = table_part.split_whitespace().next()
-            .ok_or_else(|| {
-                KalamDbError::InvalidSql("Table name is required".to_string())
-            })?;
+        let table_identifier = table_part
+            .split_whitespace()
+            .next()
+            .ok_or_else(|| KalamDbError::InvalidSql("Table name is required".to_string()))?;
 
         // Check for qualified name (namespace.table)
         if table_identifier.contains('.') {

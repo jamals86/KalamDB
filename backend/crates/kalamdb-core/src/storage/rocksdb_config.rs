@@ -15,7 +15,7 @@ impl RocksDbConfig {
     /// Create default RocksDB configuration
     pub fn default() -> Self {
         let mut opts = Options::default();
-        
+
         // Enable creation of missing column families
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
@@ -84,7 +84,7 @@ impl RocksDbConfig {
         opts.set_max_write_buffer_number(2);
 
         // No prefix extractor for shared tables (no user_id prefix)
-        
+
         // Standard bloom filter
         let mut block_opts = BlockBasedOptions::default();
         block_opts.set_bloom_filter(10.0, false);

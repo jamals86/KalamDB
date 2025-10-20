@@ -108,16 +108,14 @@ impl JobExecutor {
 
         // T102: Update job with completion status and metrics
         let final_job = match &result {
-            Ok(success_message) => {
-                job.with_metrics(memory_used_mb, cpu_used_percent)
-                    .with_trace(trace)
-                    .complete(Some(success_message.clone()))
-            }
-            Err(error_message) => {
-                job.with_metrics(memory_used_mb, cpu_used_percent)
-                    .with_trace(trace)
-                    .fail(error_message.clone())
-            }
+            Ok(success_message) => job
+                .with_metrics(memory_used_mb, cpu_used_percent)
+                .with_trace(trace)
+                .complete(Some(success_message.clone())),
+            Err(error_message) => job
+                .with_metrics(memory_used_mb, cpu_used_percent)
+                .with_trace(trace)
+                .fail(error_message.clone()),
         };
 
         // T102: Persist final job state

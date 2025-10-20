@@ -9,7 +9,7 @@
 
 use crate::catalog::{NamespaceId, TableMetadata, TableName};
 use crate::error::KalamDbError;
-use crate::live_query::manager::{ChangeNotification, ChangeType, LiveQueryManager};
+use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::tables::system::LiveQueriesTableProvider;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -106,7 +106,8 @@ impl StreamTableProvider {
 
     /// Get the number of events discarded due to ephemeral mode (no subscribers)
     pub fn discarded_count(&self) -> u64 {
-        self.discarded_count.load(std::sync::atomic::Ordering::Relaxed)
+        self.discarded_count
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Get the column family name for this stream table
@@ -157,23 +158,22 @@ impl StreamTableProvider {
     /// - NO system columns added (_updated, _deleted)
     /// - If ephemeral mode: check for subscribers first (T151 ✅)
     /// - After insert: notify live query manager (TODO: T154)
-    pub fn insert_event(
-        &self,
-        row_id: &str,
-        row_data: JsonValue,
-    ) -> Result<i64, KalamDbError> {
+    pub fn insert_event(&self, row_id: &str, row_data: JsonValue) -> Result<i64, KalamDbError> {
         // T151: Ephemeral mode check - only store if subscribers exist
         if self.ephemeral {
             if let Some(live_queries) = &self.live_queries {
                 // Query for active subscribers on this table
                 let subscribers = live_queries
                     .get_by_table_name(self.table_name().as_str())
-                    .map_err(|e| KalamDbError::Other(format!("Failed to check subscribers: {}", e)))?;
+                    .map_err(|e| {
+                        KalamDbError::Other(format!("Failed to check subscribers: {}", e))
+                    })?;
 
                 // If no subscribers, discard event immediately
                 if subscribers.is_empty() {
-                    self.discarded_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    
+                    self.discarded_count
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
                     // Log for monitoring (in production, use proper logging)
                     #[cfg(debug_assertions)]
                     eprintln!(
@@ -181,7 +181,7 @@ impl StreamTableProvider {
                         self.table_name().as_str(),
                         row_id
                     );
-                    
+
                     // Return timestamp but don't persist
                     return Ok(chrono::Utc::now().timestamp_millis());
                 }
@@ -238,10 +238,7 @@ impl StreamTableProvider {
     ///
     /// # Returns
     /// Vector of timestamps used for event keys
-    pub fn insert_batch(
-        &self,
-        events: Vec<(String, JsonValue)>,
-    ) -> Result<Vec<i64>, KalamDbError> {
+    pub fn insert_batch(&self, events: Vec<(String, JsonValue)>) -> Result<Vec<i64>, KalamDbError> {
         let mut timestamps = Vec::with_capacity(events.len());
 
         for (row_id, row_data) in events {
@@ -281,10 +278,7 @@ impl StreamTableProvider {
     /// Vector of (timestamp_ms, row_id, row_data) tuples
     pub fn scan_events(&self) -> Result<Vec<(i64, String, JsonValue)>, KalamDbError> {
         self.store
-            .scan(
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
-            )
+            .scan(self.namespace_id().as_str(), self.table_name().as_str())
             .map_err(|e| KalamDbError::Other(e.to_string()))
     }
 
@@ -356,9 +350,9 @@ impl TableProvider for StreamTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::TableType;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_store::test_utils::TestDb;
-    use crate::catalog::TableType;
     use serde_json::json;
 
     fn create_test_provider() -> (StreamTableProvider, TestDb) {
@@ -387,8 +381,8 @@ mod tests {
             table_metadata,
             schema,
             store,
-            Some(300), // 5 minute retention
-            false,     // not ephemeral
+            Some(300),   // 5 minute retention
+            false,       // not ephemeral
             Some(10000), // max 10k events
         );
 
@@ -454,8 +448,12 @@ mod tests {
         let (provider, _test_db) = create_test_provider();
 
         // Insert test events
-        provider.insert_event("evt001", json!({"id": 1, "event_type": "click"})).unwrap();
-        provider.insert_event("evt002", json!({"id": 2, "event_type": "view"})).unwrap();
+        provider
+            .insert_event("evt001", json!({"id": 1, "event_type": "click"}))
+            .unwrap();
+        provider
+            .insert_event("evt002", json!({"id": 2, "event_type": "view"}))
+            .unwrap();
 
         let events = provider.scan_events().unwrap();
         assert_eq!(events.len(), 2);
@@ -531,7 +529,7 @@ mod tests {
 
         assert_eq!(provider.namespace_id().as_str(), "app");
         assert_eq!(provider.table_name().as_str(), "events");
-        assert_eq!(provider.is_ephemeral(), false);
+        assert!(!provider.is_ephemeral());
         assert_eq!(provider.retention_seconds(), Some(300));
         assert_eq!(provider.max_buffer(), Some(10000));
     }
@@ -585,10 +583,8 @@ mod tests {
     fn test_ephemeral_mode_with_no_subscribers() {
         // Test ephemeral mode when no subscribers exist
         // Events should be discarded
-        let test_db = TestDb::new(&[
-            "stream_table:app:ephemeral_events2",
-            "system_live_queries",
-        ]).unwrap();
+        let test_db =
+            TestDb::new(&["stream_table:app:ephemeral_events2", "system_live_queries"]).unwrap();
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
             Field::new("event_type", DataType::Utf8, false),
@@ -637,10 +633,8 @@ mod tests {
     #[test]
     fn test_non_ephemeral_mode_always_stores() {
         // Test that non-ephemeral mode always stores events
-        let test_db = TestDb::new(&[
-            "stream_table:app:persistent_events",
-            "system_live_queries",
-        ]).unwrap();
+        let test_db =
+            TestDb::new(&["stream_table:app:persistent_events", "system_live_queries"]).unwrap();
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
             Field::new("event_type", DataType::Utf8, false),
@@ -672,8 +666,12 @@ mod tests {
         .with_live_queries(live_queries);
 
         // Insert event - should always store regardless of subscribers
-        provider.insert_event("evt001", json!({"id": 1, "event_type": "test"})).unwrap();
-        provider.insert_event("evt002", json!({"id": 2, "event_type": "test"})).unwrap();
+        provider
+            .insert_event("evt001", json!({"id": 1, "event_type": "test"}))
+            .unwrap();
+        provider
+            .insert_event("evt002", json!({"id": 2, "event_type": "test"}))
+            .unwrap();
 
         // Events should be stored
         let events = provider.scan_events().unwrap();

@@ -13,13 +13,13 @@ use std::sync::Arc;
 pub struct HybridTableProvider {
     /// Table metadata
     table_metadata: TableMetadata,
-    
+
     /// Arrow schema
     schema: SchemaRef,
-    
+
     /// Storage backend
     _backend: Arc<dyn StorageBackend>,
-    
+
     /// Parquet file paths (cold storage)
     _parquet_paths: Vec<String>,
 }
@@ -39,7 +39,7 @@ impl HybridTableProvider {
             _parquet_paths: parquet_paths,
         }
     }
-    
+
     /// Create a new hybrid table provider from a RocksDB instance (convenience method)
     pub fn from_db(
         table_metadata: TableMetadata,
@@ -68,10 +68,10 @@ mod tests {
     use crate::catalog::{NamespaceId, TableName, TableType};
     use crate::flush::FlushPolicy;
     use crate::storage::RocksDbInit;
+    use chrono::Utc;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use std::env;
     use std::fs;
-    use chrono::Utc;
 
     #[test]
     fn test_hybrid_table_provider_creation() {
@@ -97,12 +97,8 @@ mod tests {
             deleted_retention_hours: Some(720),
         };
 
-        let provider = HybridTableProvider::from_db(
-            table_metadata,
-            schema.clone(),
-            db.clone(),
-            vec![],
-        );
+        let provider =
+            HybridTableProvider::from_db(table_metadata, schema.clone(), db.clone(), vec![]);
 
         assert_eq!(provider.schema(), schema);
 

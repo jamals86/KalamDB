@@ -103,16 +103,13 @@ impl SharedTableFlushJob {
         );
 
         // Create job record
-        let mut job_record = JobRecord::new(
-            job_id.clone(),
-            "flush".to_string(),
-            self.node_id.clone(),
-        )
-        .with_table_name(format!(
-            "{}.{}",
-            self.namespace_id.as_str(),
-            self.table_name.as_str()
-        ));
+        let mut job_record =
+            JobRecord::new(job_id.clone(), "flush".to_string(), self.node_id.clone())
+                .with_table_name(format!(
+                    "{}.{}",
+                    self.namespace_id.as_str(),
+                    self.table_name.as_str()
+                ));
 
         // Execute flush and capture metrics
         let start_time = std::time::Instant::now();
@@ -144,19 +141,27 @@ impl SharedTableFlushJob {
 
         // Send flush notification to live query subscribers
         if let Some(live_query_manager) = &self.live_query_manager {
-            let table_name = format!("{}.{}", self.namespace_id.as_str(), self.table_name.as_str());
-            let parquet_files = parquet_file.as_ref().map(|f| vec![f.clone()]).unwrap_or_default();
-            
-            let notification = ChangeNotification::flush(
-                table_name.clone(),
-                rows_flushed,
-                parquet_files,
+            let table_name = format!(
+                "{}.{}",
+                self.namespace_id.as_str(),
+                self.table_name.as_str()
             );
-            
+            let parquet_files = parquet_file
+                .as_ref()
+                .map(|f| vec![f.clone()])
+                .unwrap_or_default();
+
+            let notification =
+                ChangeNotification::flush(table_name.clone(), rows_flushed, parquet_files);
+
             let manager = Arc::clone(live_query_manager);
             tokio::spawn(async move {
                 if let Err(e) = manager.notify_table_change(&table_name, notification).await {
-                    log::warn!("Failed to send flush notification for {}: {}", table_name, e);
+                    log::warn!(
+                        "Failed to send flush notification for {}: {}",
+                        table_name,
+                        e
+                    );
                 }
             });
         }
@@ -198,9 +203,8 @@ impl SharedTableFlushJob {
 
         // Ensure directory exists
         if let Some(parent) = output_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                KalamDbError::Other(format!("Failed to create directory: {}", e))
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| KalamDbError::Other(format!("Failed to create directory: {}", e)))?;
         }
 
         // Write to Parquet
@@ -270,9 +274,8 @@ impl SharedTableFlushJob {
             arrays.push(array);
         }
 
-        RecordBatch::try_new(self.schema.clone(), arrays).map_err(|e| {
-            KalamDbError::Other(format!("Failed to create RecordBatch: {}", e))
-        })
+        RecordBatch::try_new(self.schema.clone(), arrays)
+            .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
     }
 
     /// Delete flushed rows from RocksDB
@@ -292,10 +295,7 @@ impl SharedTableFlushJob {
             )
             .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed rows: {}", e)))?;
 
-        log::debug!(
-            "Deleted {} flushed rows from storage",
-            row_ids.len()
-        );
+        log::debug!("Deleted {} flushed rows from storage", row_ids.len());
         Ok(())
     }
 }
@@ -383,15 +383,9 @@ mod tests {
             "content": "Shared Message 3"
         });
 
-        store
-            .put("test_ns", "test_table", "row1", row1)
-            .unwrap();
-        store
-            .put("test_ns", "test_table", "row2", row2)
-            .unwrap();
-        store
-            .put("test_ns", "test_table", "row3", row3)
-            .unwrap();
+        store.put("test_ns", "test_table", "row1", row1).unwrap();
+        store.put("test_ns", "test_table", "row2", row2).unwrap();
+        store.put("test_ns", "test_table", "row3", row3).unwrap();
 
         let temp_storage = env::temp_dir().join("kalamdb_shared_flush_test_with_rows");
         let _ = fs::remove_dir_all(&temp_storage);
@@ -437,12 +431,8 @@ mod tests {
             "content": "Deleted Message"
         });
 
-        store
-            .put("test_ns", "test_table", "row1", row1)
-            .unwrap();
-        store
-            .put("test_ns", "test_table", "row2", row2)
-            .unwrap();
+        store.put("test_ns", "test_table", "row1", row1).unwrap();
+        store.put("test_ns", "test_table", "row2", row2).unwrap();
 
         // Soft-delete row2
         store
@@ -482,9 +472,7 @@ mod tests {
             "id": "row1",
             "content": "Test Message"
         });
-        store
-            .put("test_ns", "test_table", "row1", row1)
-            .unwrap();
+        store.put("test_ns", "test_table", "row1", row1).unwrap();
 
         let temp_storage = env::temp_dir().join("kalamdb_shared_flush_test_job_record");
         let _ = fs::remove_dir_all(&temp_storage);
@@ -498,18 +486,18 @@ mod tests {
         );
 
         let result = job.execute().unwrap();
-        
+
         // Verify job record fields
         assert_eq!(result.job_record.job_type, "flush");
         assert_eq!(result.job_record.status, "completed");
-        assert!(result.job_record.job_id.starts_with("flush-shared-test_table-"));
+        assert!(result
+            .job_record
+            .job_id
+            .starts_with("flush-shared-test_table-"));
         assert!(result.job_record.table_name.is_some());
-        assert_eq!(
-            result.job_record.table_name.unwrap(),
-            "test_ns.test_table"
-        );
+        assert_eq!(result.job_record.table_name.unwrap(), "test_ns.test_table");
         assert!(result.job_record.result.is_some());
-        
+
         // Verify result JSON contains expected fields
         let result_json = result.job_record.result.unwrap();
         assert!(result_json.contains("rows_flushed"));

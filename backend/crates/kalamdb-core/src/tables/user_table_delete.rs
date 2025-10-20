@@ -202,8 +202,15 @@ mod tests {
         let row_id = "row1";
 
         // Insert initial row
-        store.put(namespace_id.as_str(), table_name.as_str(), user_id.as_str(), row_id,
-                  json!({"name": "Alice", "age": 30})).unwrap();
+        store
+            .put(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user_id.as_str(),
+                row_id,
+                json!({"name": "Alice", "age": 30}),
+            )
+            .unwrap();
 
         // Soft delete the row
         let deleted_row_id = handler
@@ -213,11 +220,20 @@ mod tests {
         assert_eq!(deleted_row_id, row_id);
 
         // Verify the row is marked as deleted
-        let stored = store.get(namespace_id.as_str(), table_name.as_str(), user_id.as_str(), row_id)
+        let stored = store
+            .get(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user_id.as_str(),
+                row_id,
+            )
             .unwrap();
-        
+
         // Soft-deleted rows are filtered out by store.get()
-        assert!(stored.is_none(), "Soft-deleted row should not be returned by store.get()");
+        assert!(
+            stored.is_none(),
+            "Soft-deleted row should not be returned by store.get()"
+        );
     }
 
     #[test]
@@ -283,7 +299,12 @@ mod tests {
         // Verify all rows are soft-deleted (not returned by get)
         for row_id in &["row1", "row2", "row3"] {
             let result = store
-                .get(namespace_id.as_str(), table_name.as_str(), user_id.as_str(), row_id)
+                .get(
+                    namespace_id.as_str(),
+                    table_name.as_str(),
+                    user_id.as_str(),
+                    row_id,
+                )
                 .unwrap();
             assert!(result.is_none(), "Row {} should be soft-deleted", row_id);
         }
@@ -325,13 +346,23 @@ mod tests {
 
         // Verify user1's row is soft-deleted (not returned)
         let result1 = store
-            .get(namespace_id.as_str(), table_name.as_str(), user1.as_str(), "row1")
+            .get(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user1.as_str(),
+                "row1",
+            )
             .unwrap();
         assert!(result1.is_none(), "user1's row should be soft-deleted");
 
         // Verify user2's row is NOT deleted
         let result2 = store
-            .get(namespace_id.as_str(), table_name.as_str(), user2.as_str(), "row1")
+            .get(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user2.as_str(),
+                "row1",
+            )
             .unwrap();
         assert!(result2.is_some(), "user2's row should still exist");
         assert_eq!(result2.unwrap()["name"], "Bob");
@@ -363,7 +394,12 @@ mod tests {
 
         // Verify the row is completely removed
         let result = store
-            .get(namespace_id.as_str(), table_name.as_str(), user_id.as_str(), "row1")
+            .get(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user_id.as_str(),
+                "row1",
+            )
             .unwrap();
 
         assert!(result.is_none(), "Row should be completely removed");
@@ -400,7 +436,12 @@ mod tests {
 
         // Verify row is still soft-deleted (returns None)
         let result = store
-            .get(namespace_id.as_str(), table_name.as_str(), user_id.as_str(), "row1")
+            .get(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user_id.as_str(),
+                "row1",
+            )
             .unwrap();
         assert!(result.is_none(), "Row should remain soft-deleted");
     }

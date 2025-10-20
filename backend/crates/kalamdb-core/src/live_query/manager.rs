@@ -3,14 +3,14 @@
 //! This module coordinates live query subscriptions, change detection,
 //! and real-time notifications to WebSocket clients.
 
-use kalamdb_sql::KalamSql;
 use crate::error::KalamDbError;
 use crate::live_query::connection_registry::{
     ConnectionId, LiveId, LiveQuery, LiveQueryOptions, LiveQueryRegistry, NodeId, UserId,
 };
 use crate::live_query::filter::FilterCache;
 use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
-use crate::tables::system::live_queries_provider::{LiveQueryRecord, LiveQueriesTableProvider};
+use crate::tables::system::live_queries_provider::{LiveQueriesTableProvider, LiveQueryRecord};
+use kalamdb_sql::KalamSql;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -26,11 +26,13 @@ pub struct LiveQueryManager {
 impl LiveQueryManager {
     /// Create a new live query manager
     pub fn new(kalam_sql: Arc<KalamSql>, node_id: NodeId) -> Self {
-        let registry = Arc::new(tokio::sync::RwLock::new(LiveQueryRegistry::new(node_id.clone())));
+        let registry = Arc::new(tokio::sync::RwLock::new(LiveQueryRegistry::new(
+            node_id.clone(),
+        )));
         let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql));
         let filter_cache = Arc::new(tokio::sync::RwLock::new(FilterCache::new()));
         let initial_data_fetcher = Arc::new(InitialDataFetcher::new());
-        
+
         Self {
             registry,
             live_queries_provider,
@@ -58,10 +60,10 @@ impl LiveQueryManager {
         unique_conn_id: String,
     ) -> Result<ConnectionId, KalamDbError> {
         let connection_id = ConnectionId::new(user_id.as_str().to_string(), unique_conn_id);
-        
+
         let mut registry = self.registry.write().await;
         registry.register_connection(user_id, connection_id.clone());
-        
+
         Ok(connection_id)
     }
 
@@ -88,21 +90,21 @@ impl LiveQueryManager {
         // Parse SQL to extract table_name and WHERE clause
         let table_name = self.extract_table_name_from_query(&query)?;
         let mut where_clause = self.extract_where_clause(&query);
-        
+
         // Generate LiveId
         let live_id = LiveId::new(connection_id.clone(), table_name.clone(), query_id);
-        
+
         // T174: Auto-inject user_id filter for user tables (row-level security)
         // User tables: user_id.namespace.table (3 parts = 2 dots)
         // Shared tables: namespace.table (2 parts = 1 dot)
         // Simple names: table (1 part = 0 dots) - skip injection
         let dot_count = table_name.matches('.').count();
         let is_user_table = dot_count == 2;
-        
+
         if is_user_table {
             let user_id = connection_id.user_id();
             let user_filter = format!("user_id = '{}'", user_id);
-            
+
             // Inject user_id filter into WHERE clause
             where_clause = if let Some(existing_clause) = where_clause {
                 // Combine with existing filter: user_id = 'X' AND existing
@@ -112,22 +114,20 @@ impl LiveQueryManager {
                 Some(user_filter)
             };
         }
-        
+
         // Compile and cache the filter if WHERE clause exists
         if let Some(clause) = where_clause {
             let mut filter_cache = self.filter_cache.write().await;
             filter_cache.insert(live_id.to_string(), &clause)?;
         }
-        
+
         let timestamp = Self::current_timestamp_ms();
-        
+
         // Serialize options to JSON
-        let options_json = serde_json::to_string(&options)
-            .map_err(|e| KalamDbError::SerializationError(format!(
-                "Failed to serialize options: {}",
-                e
-            )))?;
-        
+        let options_json = serde_json::to_string(&options).map_err(|e| {
+            KalamDbError::SerializationError(format!("Failed to serialize options: {}", e))
+        })?;
+
         // Create record for system.live_queries
         let live_query_record = LiveQueryRecord {
             live_id: live_id.to_string(),
@@ -142,10 +142,11 @@ impl LiveQueryManager {
             changes: 0,
             node: self.node_id.as_str().to_string(),
         };
-        
+
         // Insert into system.live_queries
-        self.live_queries_provider.insert_live_query(live_query_record)?;
-        
+        self.live_queries_provider
+            .insert_live_query(live_query_record)?;
+
         // Add to in-memory registry
         let user_id = UserId::new(connection_id.user_id().to_string());
         let live_query = LiveQuery {
@@ -154,10 +155,10 @@ impl LiveQueryManager {
             options,
             changes: 0,
         };
-        
+
         let mut registry = self.registry.write().await;
         registry.register_subscription(&user_id, live_query)?;
-        
+
         Ok(live_id)
     }
 
@@ -185,17 +186,14 @@ impl LiveQueryManager {
         initial_data_options: Option<InitialDataOptions>,
     ) -> Result<SubscriptionResult, KalamDbError> {
         // First register the subscription (reuse existing method)
-        let live_id = self.register_subscription(
-            connection_id,
-            query_id,
-            query.clone(),
-            options,
-        ).await?;
-        
+        let live_id = self
+            .register_subscription(connection_id, query_id, query.clone(), options)
+            .await?;
+
         // Fetch initial data if requested
         let initial_data = if let Some(fetch_options) = initial_data_options {
             let table_name = live_id.table_name();
-            
+
             // TODO: Determine table_type from table_name
             // For now, we'll need to parse it or get it from context
             // User tables: user_id.namespace.table
@@ -205,18 +203,17 @@ impl LiveQueryManager {
             } else {
                 crate::catalog::TableType::Shared
             };
-            
-            let result = self.initial_data_fetcher.fetch_initial_data(
-                table_name,
-                table_type,
-                fetch_options,
-            ).await?;
-            
+
+            let result = self
+                .initial_data_fetcher
+                .fetch_initial_data(table_name, table_type, fetch_options)
+                .await?;
+
             Some(result)
         } else {
             None
         };
-        
+
         Ok(SubscriptionResult {
             live_id,
             initial_data,
@@ -229,21 +226,18 @@ impl LiveQueryManager {
     /// TODO: Replace with proper DataFusion SQL parsing
     fn extract_table_name_from_query(&self, query: &str) -> Result<String, KalamDbError> {
         let query_upper = query.to_uppercase();
-        let from_pos = query_upper.find(" FROM ")
-            .ok_or_else(|| KalamDbError::InvalidSql(
-                "Query must contain FROM clause".to_string()
-            ))?;
-        
-        let after_from = &query[(from_pos + 6)..];  // Skip " FROM "
+        let from_pos = query_upper.find(" FROM ").ok_or_else(|| {
+            KalamDbError::InvalidSql("Query must contain FROM clause".to_string())
+        })?;
+
+        let after_from = &query[(from_pos + 6)..]; // Skip " FROM "
         let table_name = after_from
             .split_whitespace()
             .next()
-            .ok_or_else(|| KalamDbError::InvalidSql(
-                "Invalid table name after FROM".to_string()
-            ))?
+            .ok_or_else(|| KalamDbError::InvalidSql("Invalid table name after FROM".to_string()))?
             .trim_matches(|c| c == '"' || c == '\'' || c == '`')
             .to_string();
-        
+
         Ok(table_name)
     }
 
@@ -254,14 +248,14 @@ impl LiveQueryManager {
     fn extract_where_clause(&self, query: &str) -> Option<String> {
         let query_upper = query.to_uppercase();
         let where_pos = query_upper.find(" WHERE ")?;
-        
+
         // Get everything after WHERE, handling potential ORDER BY, LIMIT, etc.
-        let after_where = &query[(where_pos + 7)..];  // Skip " WHERE "
-        
+        let after_where = &query[(where_pos + 7)..]; // Skip " WHERE "
+
         // Find the end of the WHERE clause (before ORDER BY, LIMIT, etc.)
         let end_keywords = [" ORDER BY", " LIMIT", " OFFSET", " GROUP BY"];
         let mut end_pos = after_where.len();
-        
+
         for keyword in &end_keywords {
             if let Some(pos) = after_where.to_uppercase().find(keyword) {
                 if pos < end_pos {
@@ -269,7 +263,7 @@ impl LiveQueryManager {
                 }
             }
         }
-        
+
         Some(after_where[..end_pos].trim().to_string())
     }
 
@@ -290,7 +284,7 @@ impl LiveQueryManager {
             let mut registry = self.registry.write().await;
             registry.unregister_connection(user_id, connection_id)
         };
-        
+
         // Remove cached filters for all live queries
         {
             let mut filter_cache = self.filter_cache.write().await;
@@ -298,10 +292,11 @@ impl LiveQueryManager {
                 filter_cache.remove(&live_id.to_string());
             }
         }
-        
+
         // Delete from system.live_queries
-        self.live_queries_provider.delete_by_connection_id(&connection_id.to_string())?;
-        
+        self.live_queries_provider
+            .delete_by_connection_id(&connection_id.to_string())?;
+
         Ok(live_ids)
     }
 
@@ -311,32 +306,30 @@ impl LiveQueryManager {
     /// 1. Removes cached filter
     /// 2. Removes from in-memory registry
     /// 3. Deletes from system.live_queries
-    pub async fn unregister_subscription(
-        &self,
-        live_id: &LiveId,
-    ) -> Result<(), KalamDbError> {
+    pub async fn unregister_subscription(&self, live_id: &LiveId) -> Result<(), KalamDbError> {
         // Remove cached filter first (even before checking if live_id exists)
         {
             let mut filter_cache = self.filter_cache.write().await;
             filter_cache.remove(&live_id.to_string());
         }
-        
+
         // Remove from in-memory registry
         let connection_id = {
             let mut registry = self.registry.write().await;
             registry.unregister_subscription(live_id)
         };
-        
+
         if connection_id.is_none() {
             return Err(KalamDbError::NotFound(format!(
                 "Live query not found: {}",
                 live_id
             )));
         }
-        
+
         // Delete from system.live_queries
-        self.live_queries_provider.delete_live_query(&live_id.to_string())?;
-        
+        self.live_queries_provider
+            .delete_live_query(&live_id.to_string())?;
+
         Ok(())
     }
 
@@ -345,12 +338,13 @@ impl LiveQueryManager {
     /// This should be called each time a notification is sent.
     pub async fn increment_changes(&self, live_id: &LiveId) -> Result<(), KalamDbError> {
         let timestamp = Self::current_timestamp_ms();
-        self.live_queries_provider.increment_changes(&live_id.to_string(), timestamp)?;
-        
+        self.live_queries_provider
+            .increment_changes(&live_id.to_string(), timestamp)?;
+
         // Also update in-memory counter
         let user_id = UserId::new(live_id.user_id().to_string());
         let mut registry = self.registry.write().await;
-        
+
         if let Some(user_connections) = registry.users.get_mut(&user_id) {
             if let Some(socket) = user_connections.get_socket_mut(&live_id.connection_id) {
                 if let Some(live_query) = socket.live_queries.get_mut(live_id) {
@@ -358,7 +352,7 @@ impl LiveQueryManager {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -380,17 +374,26 @@ impl LiveQueryManager {
     }
 
     /// Get all subscriptions for a user
-    pub async fn get_user_subscriptions(&self, user_id: &str) -> Result<Vec<LiveQueryRecord>, KalamDbError> {
+    pub async fn get_user_subscriptions(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<LiveQueryRecord>, KalamDbError> {
         self.live_queries_provider.get_by_user_id(user_id)
     }
 
     /// Get all subscriptions for a table
-    pub async fn get_table_subscriptions(&self, table_name: &str) -> Result<Vec<LiveQueryRecord>, KalamDbError> {
+    pub async fn get_table_subscriptions(
+        &self,
+        table_name: &str,
+    ) -> Result<Vec<LiveQueryRecord>, KalamDbError> {
         self.live_queries_provider.get_by_table_name(table_name)
     }
 
     /// Get a specific live query
-    pub async fn get_live_query(&self, live_id: &str) -> Result<Option<LiveQueryRecord>, KalamDbError> {
+    pub async fn get_live_query(
+        &self,
+        live_id: &str,
+    ) -> Result<Option<LiveQueryRecord>, KalamDbError> {
         self.live_queries_provider.get_live_query(live_id)
     }
 
@@ -442,7 +445,7 @@ impl LiveQueryManager {
     ) -> Result<usize, KalamDbError> {
         // Get filter cache for matching
         let filter_cache = self.filter_cache.read().await;
-        
+
         // Collect live_ids that need to be notified
         let live_ids_to_notify: Vec<LiveId> = {
             let registry = self.registry.read().await;
@@ -492,7 +495,7 @@ impl LiveQueryManager {
 
             ids
         }; // registry read lock is dropped here
-        
+
         // Drop filter cache read lock before acquiring write locks
         drop(filter_cache);
 
@@ -594,7 +597,7 @@ impl ChangeNotification {
 pub struct SubscriptionResult {
     /// The generated LiveId for the subscription
     pub live_id: LiveId,
-    
+
     /// Initial data returned with the subscription (if requested)
     pub initial_data: Option<InitialDataResult>,
 }
@@ -636,12 +639,15 @@ mod tests {
     async fn test_register_connection() {
         let (manager, _temp_dir) = create_test_manager().await;
         let user_id = UserId::new("user1".to_string());
-        
-        let connection_id = manager.register_connection(user_id, "conn1".to_string()).await.unwrap();
-        
+
+        let connection_id = manager
+            .register_connection(user_id, "conn1".to_string())
+            .await
+            .unwrap();
+
         assert_eq!(connection_id.user_id(), "user1");
         assert_eq!(connection_id.unique_conn_id(), "conn1");
-        
+
         let stats = manager.get_stats().await;
         assert_eq!(stats.total_connections, 1);
         assert_eq!(stats.total_subscriptions, 0);
@@ -651,20 +657,28 @@ mod tests {
     async fn test_register_subscription() {
         let (manager, _temp_dir) = create_test_manager().await;
         let user_id = UserId::new("user1".to_string());
-        
-        let connection_id = manager.register_connection(user_id.clone(), "conn1".to_string()).await.unwrap();
-        
-        let live_id = manager.register_subscription(
-            connection_id.clone(),
-            "q1".to_string(),
-            "SELECT * FROM messages WHERE id > 0".to_string(),
-            LiveQueryOptions { last_rows: Some(50) },
-        ).await.unwrap();
-        
+
+        let connection_id = manager
+            .register_connection(user_id.clone(), "conn1".to_string())
+            .await
+            .unwrap();
+
+        let live_id = manager
+            .register_subscription(
+                connection_id.clone(),
+                "q1".to_string(),
+                "SELECT * FROM messages WHERE id > 0".to_string(),
+                LiveQueryOptions {
+                    last_rows: Some(50),
+                },
+            )
+            .await
+            .unwrap();
+
         assert_eq!(live_id.connection_id(), &connection_id);
         assert_eq!(live_id.table_name(), "messages");
         assert_eq!(live_id.query_id(), "q1");
-        
+
         let stats = manager.get_stats().await;
         assert_eq!(stats.total_subscriptions, 1);
     }
@@ -672,14 +686,20 @@ mod tests {
     #[tokio::test]
     async fn test_extract_table_name() {
         let (manager, _temp_dir) = create_test_manager().await;
-        
-        let table_name = manager.extract_table_name_from_query("SELECT * FROM messages WHERE id > 0").unwrap();
+
+        let table_name = manager
+            .extract_table_name_from_query("SELECT * FROM messages WHERE id > 0")
+            .unwrap();
         assert_eq!(table_name, "messages");
-        
-        let table_name = manager.extract_table_name_from_query("select id from users").unwrap();
+
+        let table_name = manager
+            .extract_table_name_from_query("select id from users")
+            .unwrap();
         assert_eq!(table_name, "users");
-        
-        let table_name = manager.extract_table_name_from_query("SELECT * FROM \"my_table\" WHERE x = 1").unwrap();
+
+        let table_name = manager
+            .extract_table_name_from_query("SELECT * FROM \"my_table\" WHERE x = 1")
+            .unwrap();
         assert_eq!(table_name, "my_table");
     }
 
@@ -687,28 +707,41 @@ mod tests {
     async fn test_get_subscriptions_for_table() {
         let (manager, _temp_dir) = create_test_manager().await;
         let user_id = UserId::new("user1".to_string());
-        
-        let connection_id = manager.register_connection(user_id.clone(), "conn1".to_string()).await.unwrap();
-        
-        manager.register_subscription(
-            connection_id.clone(),
-            "q1".to_string(),
-            "SELECT * FROM messages".to_string(),
-            LiveQueryOptions::default(),
-        ).await.unwrap();
-        
-        manager.register_subscription(
-            connection_id.clone(),
-            "q2".to_string(),
-            "SELECT * FROM notifications".to_string(),
-            LiveQueryOptions::default(),
-        ).await.unwrap();
-        
-        let messages_subs = manager.get_subscriptions_for_table(&user_id, "messages").await;
+
+        let connection_id = manager
+            .register_connection(user_id.clone(), "conn1".to_string())
+            .await
+            .unwrap();
+
+        manager
+            .register_subscription(
+                connection_id.clone(),
+                "q1".to_string(),
+                "SELECT * FROM messages".to_string(),
+                LiveQueryOptions::default(),
+            )
+            .await
+            .unwrap();
+
+        manager
+            .register_subscription(
+                connection_id.clone(),
+                "q2".to_string(),
+                "SELECT * FROM notifications".to_string(),
+                LiveQueryOptions::default(),
+            )
+            .await
+            .unwrap();
+
+        let messages_subs = manager
+            .get_subscriptions_for_table(&user_id, "messages")
+            .await;
         assert_eq!(messages_subs.len(), 1);
         assert_eq!(messages_subs[0].table_name(), "messages");
-        
-        let notif_subs = manager.get_subscriptions_for_table(&user_id, "notifications").await;
+
+        let notif_subs = manager
+            .get_subscriptions_for_table(&user_id, "notifications")
+            .await;
         assert_eq!(notif_subs.len(), 1);
         assert_eq!(notif_subs[0].table_name(), "notifications");
     }
@@ -717,26 +750,38 @@ mod tests {
     async fn test_unregister_connection() {
         let (manager, _temp_dir) = create_test_manager().await;
         let user_id = UserId::new("user1".to_string());
-        
-        let connection_id = manager.register_connection(user_id.clone(), "conn1".to_string()).await.unwrap();
-        
-        manager.register_subscription(
-            connection_id.clone(),
-            "q1".to_string(),
-            "SELECT * FROM messages".to_string(),
-            LiveQueryOptions::default(),
-        ).await.unwrap();
-        
-        manager.register_subscription(
-            connection_id.clone(),
-            "q2".to_string(),
-            "SELECT * FROM notifications".to_string(),
-            LiveQueryOptions::default(),
-        ).await.unwrap();
-        
-        let removed_live_ids = manager.unregister_connection(&user_id, &connection_id).await.unwrap();
+
+        let connection_id = manager
+            .register_connection(user_id.clone(), "conn1".to_string())
+            .await
+            .unwrap();
+
+        manager
+            .register_subscription(
+                connection_id.clone(),
+                "q1".to_string(),
+                "SELECT * FROM messages".to_string(),
+                LiveQueryOptions::default(),
+            )
+            .await
+            .unwrap();
+
+        manager
+            .register_subscription(
+                connection_id.clone(),
+                "q2".to_string(),
+                "SELECT * FROM notifications".to_string(),
+                LiveQueryOptions::default(),
+            )
+            .await
+            .unwrap();
+
+        let removed_live_ids = manager
+            .unregister_connection(&user_id, &connection_id)
+            .await
+            .unwrap();
         assert_eq!(removed_live_ids.len(), 2);
-        
+
         let stats = manager.get_stats().await;
         assert_eq!(stats.total_connections, 0);
         assert_eq!(stats.total_subscriptions, 0);
@@ -746,18 +791,24 @@ mod tests {
     async fn test_unregister_subscription() {
         let (manager, _temp_dir) = create_test_manager().await;
         let user_id = UserId::new("user1".to_string());
-        
-        let connection_id = manager.register_connection(user_id.clone(), "conn1".to_string()).await.unwrap();
-        
-        let live_id = manager.register_subscription(
-            connection_id.clone(),
-            "q1".to_string(),
-            "SELECT * FROM messages".to_string(),
-            LiveQueryOptions::default(),
-        ).await.unwrap();
-        
+
+        let connection_id = manager
+            .register_connection(user_id.clone(), "conn1".to_string())
+            .await
+            .unwrap();
+
+        let live_id = manager
+            .register_subscription(
+                connection_id.clone(),
+                "q1".to_string(),
+                "SELECT * FROM messages".to_string(),
+                LiveQueryOptions::default(),
+            )
+            .await
+            .unwrap();
+
         manager.unregister_subscription(&live_id).await.unwrap();
-        
+
         let stats = manager.get_stats().await;
         assert_eq!(stats.total_subscriptions, 0);
     }
@@ -766,20 +817,30 @@ mod tests {
     async fn test_increment_changes() {
         let (manager, _temp_dir) = create_test_manager().await;
         let user_id = UserId::new("user1".to_string());
-        
-        let connection_id = manager.register_connection(user_id.clone(), "conn1".to_string()).await.unwrap();
-        
-        let live_id = manager.register_subscription(
-            connection_id.clone(),
-            "q1".to_string(),
-            "SELECT * FROM messages".to_string(),
-            LiveQueryOptions::default(),
-        ).await.unwrap();
-        
+
+        let connection_id = manager
+            .register_connection(user_id.clone(), "conn1".to_string())
+            .await
+            .unwrap();
+
+        let live_id = manager
+            .register_subscription(
+                connection_id.clone(),
+                "q1".to_string(),
+                "SELECT * FROM messages".to_string(),
+                LiveQueryOptions::default(),
+            )
+            .await
+            .unwrap();
+
         manager.increment_changes(&live_id).await.unwrap();
         manager.increment_changes(&live_id).await.unwrap();
-        
-        let live_query_record = manager.get_live_query(&live_id.to_string()).await.unwrap().unwrap();
+
+        let live_query_record = manager
+            .get_live_query(&live_id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(live_query_record.changes, 2);
     }
 
@@ -787,42 +848,64 @@ mod tests {
     async fn test_multi_subscription_support() {
         let (manager, _temp_dir) = create_test_manager().await;
         let user_id = UserId::new("user1".to_string());
-        
-        let connection_id = manager.register_connection(user_id.clone(), "conn1".to_string()).await.unwrap();
-        
+
+        let connection_id = manager
+            .register_connection(user_id.clone(), "conn1".to_string())
+            .await
+            .unwrap();
+
         // Multiple subscriptions on same connection
-        let live_id1 = manager.register_subscription(
-            connection_id.clone(),
-            "messages_query".to_string(),
-            "SELECT * FROM messages WHERE conversation_id = 'conv1'".to_string(),
-            LiveQueryOptions { last_rows: Some(50) },
-        ).await.unwrap();
-        
-        let live_id2 = manager.register_subscription(
-            connection_id.clone(),
-            "notifications_query".to_string(),
-            "SELECT * FROM notifications WHERE user_id = CURRENT_USER()".to_string(),
-            LiveQueryOptions { last_rows: Some(10) },
-        ).await.unwrap();
-        
-        let live_id3 = manager.register_subscription(
-            connection_id.clone(),
-            "messages_query2".to_string(),
-            "SELECT * FROM messages WHERE conversation_id = 'conv2'".to_string(),
-            LiveQueryOptions { last_rows: Some(20) },
-        ).await.unwrap();
-        
+        let live_id1 = manager
+            .register_subscription(
+                connection_id.clone(),
+                "messages_query".to_string(),
+                "SELECT * FROM messages WHERE conversation_id = 'conv1'".to_string(),
+                LiveQueryOptions {
+                    last_rows: Some(50),
+                },
+            )
+            .await
+            .unwrap();
+
+        let live_id2 = manager
+            .register_subscription(
+                connection_id.clone(),
+                "notifications_query".to_string(),
+                "SELECT * FROM notifications WHERE user_id = CURRENT_USER()".to_string(),
+                LiveQueryOptions {
+                    last_rows: Some(10),
+                },
+            )
+            .await
+            .unwrap();
+
+        let live_id3 = manager
+            .register_subscription(
+                connection_id.clone(),
+                "messages_query2".to_string(),
+                "SELECT * FROM messages WHERE conversation_id = 'conv2'".to_string(),
+                LiveQueryOptions {
+                    last_rows: Some(20),
+                },
+            )
+            .await
+            .unwrap();
+
         let stats = manager.get_stats().await;
         assert_eq!(stats.total_connections, 1);
         assert_eq!(stats.total_subscriptions, 3);
-        
+
         // Verify all subscriptions are tracked
-        let messages_subs = manager.get_subscriptions_for_table(&user_id, "messages").await;
+        let messages_subs = manager
+            .get_subscriptions_for_table(&user_id, "messages")
+            .await;
         assert_eq!(messages_subs.len(), 2); // messages_query and messages_query2
-        
-        let notif_subs = manager.get_subscriptions_for_table(&user_id, "notifications").await;
+
+        let notif_subs = manager
+            .get_subscriptions_for_table(&user_id, "notifications")
+            .await;
         assert_eq!(notif_subs.len(), 1);
-        
+
         // Verify each has unique live_id
         assert_ne!(live_id1.to_string(), live_id2.to_string());
         assert_ne!(live_id1.to_string(), live_id3.to_string());
@@ -833,22 +916,28 @@ mod tests {
     async fn test_filter_compilation_and_caching() {
         let (manager, _temp_dir) = create_test_manager().await;
         let user_id = UserId::new("user1".to_string());
-        
-        let connection_id = manager.register_connection(user_id.clone(), "conn1".to_string()).await.unwrap();
-        
+
+        let connection_id = manager
+            .register_connection(user_id.clone(), "conn1".to_string())
+            .await
+            .unwrap();
+
         // Register subscription with WHERE clause
-        let live_id = manager.register_subscription(
-            connection_id.clone(),
-            "filtered_messages".to_string(),
-            "SELECT * FROM messages WHERE user_id = 'user1' AND read = false".to_string(),
-            LiveQueryOptions::default(),
-        ).await.unwrap();
-        
+        let live_id = manager
+            .register_subscription(
+                connection_id.clone(),
+                "filtered_messages".to_string(),
+                "SELECT * FROM messages WHERE user_id = 'user1' AND read = false".to_string(),
+                LiveQueryOptions::default(),
+            )
+            .await
+            .unwrap();
+
         // Verify filter was compiled and cached
         let filter_cache = manager.filter_cache.read().await;
         let filter = filter_cache.get(&live_id.to_string());
         assert!(filter.is_some());
-        
+
         // Verify filter SQL is correct
         let filter = filter.unwrap();
         assert_eq!(filter.sql(), "user_id = 'user1' AND read = false");
@@ -858,33 +947,45 @@ mod tests {
     async fn test_notification_filtering() {
         let (manager, _temp_dir) = create_test_manager().await;
         let user_id = UserId::new("user1".to_string());
-        
-        let connection_id = manager.register_connection(user_id.clone(), "conn1".to_string()).await.unwrap();
-        
+
+        let connection_id = manager
+            .register_connection(user_id.clone(), "conn1".to_string())
+            .await
+            .unwrap();
+
         // Register subscription with filter
-        manager.register_subscription(
-            connection_id.clone(),
-            "q1".to_string(),
-            "SELECT * FROM messages WHERE user_id = 'user1'".to_string(),
-            LiveQueryOptions::default(),
-        ).await.unwrap();
-        
+        manager
+            .register_subscription(
+                connection_id.clone(),
+                "q1".to_string(),
+                "SELECT * FROM messages WHERE user_id = 'user1'".to_string(),
+                LiveQueryOptions::default(),
+            )
+            .await
+            .unwrap();
+
         // Matching notification
         let matching_change = ChangeNotification::insert(
             "messages".to_string(),
             serde_json::json!({"user_id": "user1", "text": "Hello"}),
         );
-        
-        let notified = manager.notify_table_change("messages", matching_change).await.unwrap();
+
+        let notified = manager
+            .notify_table_change("messages", matching_change)
+            .await
+            .unwrap();
         assert_eq!(notified, 1); // Should notify
-        
+
         // Non-matching notification
         let non_matching_change = ChangeNotification::insert(
             "messages".to_string(),
             serde_json::json!({"user_id": "user2", "text": "Hello"}),
         );
-        
-        let notified = manager.notify_table_change("messages", non_matching_change).await.unwrap();
+
+        let notified = manager
+            .notify_table_change("messages", non_matching_change)
+            .await
+            .unwrap();
         assert_eq!(notified, 0); // Should NOT notify (filter didn't match)
     }
 
@@ -892,26 +993,32 @@ mod tests {
     async fn test_filter_cleanup_on_unsubscribe() {
         let (manager, _temp_dir) = create_test_manager().await;
         let user_id = UserId::new("user1".to_string());
-        
-        let connection_id = manager.register_connection(user_id.clone(), "conn1".to_string()).await.unwrap();
-        
-        let live_id = manager.register_subscription(
-            connection_id.clone(),
-            "q1".to_string(),
-            "SELECT * FROM messages WHERE user_id = 'user1'".to_string(),
-            LiveQueryOptions::default(),
-        ).await.unwrap();
-        
+
+        let connection_id = manager
+            .register_connection(user_id.clone(), "conn1".to_string())
+            .await
+            .unwrap();
+
+        let live_id = manager
+            .register_subscription(
+                connection_id.clone(),
+                "q1".to_string(),
+                "SELECT * FROM messages WHERE user_id = 'user1'".to_string(),
+                LiveQueryOptions::default(),
+            )
+            .await
+            .unwrap();
+
         // Verify filter exists
         {
             let filter_cache = manager.filter_cache.read().await;
             assert!(filter_cache.get(&live_id.to_string()).is_some());
         }
-        
+
         // Try to unregister subscription (will fail due to delete not implemented in kalamdb-sql)
         // But filter cleanup happens first, so we can verify it worked
         let _ = manager.unregister_subscription(&live_id).await;
-        
+
         // Verify filter was removed (cleanup happens before DB delete)
         {
             let filter_cache = manager.filter_cache.read().await;

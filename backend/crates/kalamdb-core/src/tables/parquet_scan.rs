@@ -3,6 +3,8 @@
 //! This module implements scanning Parquet files with bloom filter optimization.
 
 use datafusion::arrow::datatypes::SchemaRef;
+
+#[cfg(test)]
 use std::sync::Arc;
 
 /// Parquet scan execution plan with bloom filter optimization (placeholder)
@@ -12,10 +14,10 @@ use std::sync::Arc;
 pub struct ParquetScanExec {
     /// Parquet file paths
     pub file_paths: Vec<String>,
-    
+
     /// Arrow schema
     schema: SchemaRef,
-    
+
     /// Bloom filter values for _updated column (optional)
     _updated_bloom_values: Option<Vec<i64>>,
 }

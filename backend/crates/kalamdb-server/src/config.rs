@@ -38,6 +38,39 @@ pub struct StorageSettings {
     pub enable_wal: bool,
     #[serde(default = "default_compression")]
     pub compression: String,
+    #[serde(default)]
+    pub rocksdb: RocksDbSettings,
+}
+
+/// RocksDB-specific settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RocksDbSettings {
+    /// Write buffer size per column family in bytes (default: 64MB)
+    #[serde(default = "default_rocksdb_write_buffer_size")]
+    pub write_buffer_size: usize,
+
+    /// Maximum number of write buffers (default: 3)
+    #[serde(default = "default_rocksdb_max_write_buffers")]
+    pub max_write_buffers: i32,
+
+    /// Block cache size for reads in bytes (default: 256MB)
+    #[serde(default = "default_rocksdb_block_cache_size")]
+    pub block_cache_size: usize,
+
+    /// Maximum number of background jobs (default: 4)
+    #[serde(default = "default_rocksdb_max_background_jobs")]
+    pub max_background_jobs: i32,
+}
+
+impl Default for RocksDbSettings {
+    fn default() -> Self {
+        Self {
+            write_buffer_size: default_rocksdb_write_buffer_size(),
+            max_write_buffers: default_rocksdb_max_write_buffers(),
+            block_cache_size: default_rocksdb_block_cache_size(),
+            max_background_jobs: default_rocksdb_max_background_jobs(),
+        }
+    }
 }
 
 /// Limits settings
@@ -80,15 +113,15 @@ pub struct DataFusionSettings {
     /// Memory limit for query execution in bytes (default: 1GB)
     #[serde(default = "default_datafusion_memory_limit")]
     pub memory_limit: usize,
-    
+
     /// Number of parallel threads for query execution (default: number of CPU cores)
     #[serde(default = "default_datafusion_parallelism")]
     pub query_parallelism: usize,
-    
+
     /// Maximum number of partitions per query (default: 16)
     #[serde(default = "default_datafusion_max_partitions")]
     pub max_partitions: usize,
-    
+
     /// Batch size for record processing (default: 8192)
     #[serde(default = "default_datafusion_batch_size")]
     pub batch_size: usize,
@@ -100,7 +133,7 @@ pub struct FlushSettings {
     /// Default row limit for flush (default: 10000 rows)
     #[serde(default = "default_flush_row_limit")]
     pub default_row_limit: usize,
-    
+
     /// Default time interval for flush in seconds (default: 300s = 5 minutes)
     #[serde(default = "default_flush_time_interval")]
     pub default_time_interval: u64,
@@ -120,7 +153,7 @@ pub struct StreamSettings {
     /// Default TTL for stream table rows in seconds (default: 10 seconds)
     #[serde(default = "default_stream_ttl")]
     pub default_ttl_seconds: u64,
-    
+
     /// Default maximum buffer size for stream tables (default: 10000 rows)
     #[serde(default = "default_stream_max_buffer")]
     pub default_max_buffer: usize,
@@ -248,18 +281,73 @@ fn default_stream_max_buffer() -> usize {
     10000
 }
 
+// RocksDB defaults
+fn default_rocksdb_write_buffer_size() -> usize {
+    64 * 1024 * 1024 // 64MB
+}
+
+fn default_rocksdb_max_write_buffers() -> i32 {
+    3
+}
+
+fn default_rocksdb_block_cache_size() -> usize {
+    256 * 1024 * 1024 // 256MB
+}
+
+fn default_rocksdb_max_background_jobs() -> i32 {
+    4
+}
+
 impl ServerConfig {
     /// Load configuration from a TOML file
     pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let content = fs::read_to_string(path.as_ref())
             .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))?;
-        
-        let config: ServerConfig = toml::from_str(&content)
+
+        let mut config: ServerConfig = toml::from_str(&content)
             .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))?;
-        
+
+        // Override with environment variables if present
+        config.apply_env_overrides()?;
+
         config.validate()?;
-        
+
         Ok(config)
+    }
+
+    /// Apply environment variable overrides for sensitive configuration
+    ///
+    /// Supported environment variables:
+    /// - KALAMDB_ROCKSDB_PATH: Override storage.rocksdb_path
+    /// - KALAMDB_LOG_FILE_PATH: Override logging.file_path
+    /// - KALAMDB_HOST: Override server.host
+    /// - KALAMDB_PORT: Override server.port
+    fn apply_env_overrides(&mut self) -> anyhow::Result<()> {
+        use std::env;
+
+        // Database path (sensitive - may contain credentials in cloud storage URLs)
+        if let Ok(path) = env::var("KALAMDB_ROCKSDB_PATH") {
+            self.storage.rocksdb_path = path;
+        }
+
+        // Log file path
+        if let Ok(path) = env::var("KALAMDB_LOG_FILE_PATH") {
+            self.logging.file_path = path;
+        }
+
+        // Server host
+        if let Ok(host) = env::var("KALAMDB_HOST") {
+            self.server.host = host;
+        }
+
+        // Server port
+        if let Ok(port_str) = env::var("KALAMDB_PORT") {
+            self.server.port = port_str
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid KALAMDB_PORT value: {}", port_str))?;
+        }
+
+        Ok(())
     }
 
     /// Validate configuration settings
@@ -332,6 +420,7 @@ impl ServerConfig {
                 rocksdb_path: "./data/rocksdb".to_string(),
                 enable_wal: true,
                 compression: "lz4".to_string(),
+                rocksdb: RocksDbSettings::default(),
             },
             limits: LimitsSettings {
                 max_message_size: 1048576,

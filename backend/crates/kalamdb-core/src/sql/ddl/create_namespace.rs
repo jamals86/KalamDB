@@ -12,7 +12,7 @@ use crate::error::KalamDbError;
 pub struct CreateNamespaceStatement {
     /// Namespace name to create
     pub name: NamespaceId,
-    
+
     /// If true, don't error if namespace already exists
     pub if_not_exists: bool,
 }
@@ -25,7 +25,7 @@ impl CreateNamespaceStatement {
     /// - CREATE NAMESPACE IF NOT EXISTS name
     pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
         let sql_upper = sql.trim().to_uppercase();
-        
+
         if !sql_upper.starts_with("CREATE NAMESPACE") {
             return Err(KalamDbError::InvalidSql(
                 "Expected CREATE NAMESPACE statement".to_string(),
@@ -33,7 +33,7 @@ impl CreateNamespaceStatement {
         }
 
         let if_not_exists = sql_upper.contains("IF NOT EXISTS");
-        
+
         // Extract namespace name
         let name_part = if if_not_exists {
             sql.trim()
@@ -54,9 +54,7 @@ impl CreateNamespaceStatement {
 
         let name = name_part
             .and_then(|s| s.split_whitespace().next())
-            .ok_or_else(|| {
-                KalamDbError::InvalidSql("Namespace name is required".to_string())
-            })?;
+            .ok_or_else(|| KalamDbError::InvalidSql("Namespace name is required".to_string()))?;
 
         Ok(Self {
             name: NamespaceId::new(name),

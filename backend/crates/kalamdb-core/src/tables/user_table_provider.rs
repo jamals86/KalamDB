@@ -174,11 +174,7 @@ impl UserTableProvider {
     ///
     /// # Returns
     /// The row ID of the updated row
-    pub fn update_row(
-        &self,
-        row_id: &str,
-        updates: JsonValue,
-    ) -> Result<String, KalamDbError> {
+    pub fn update_row(&self, row_id: &str, updates: JsonValue) -> Result<String, KalamDbError> {
         self.update_handler.update_row(
             self.namespace_id(),
             self.table_name(),
@@ -347,10 +343,7 @@ mod tests {
         assert_eq!(provider.table_name(), &TableName::new("messages"));
         assert_eq!(provider.table_type(), &TableType::User);
         assert_eq!(provider.current_user_id(), &user_id);
-        assert_eq!(
-            provider.column_family_name(),
-            "user_table:chat:messages"
-        );
+        assert_eq!(provider.column_family_name(), "user_table:chat:messages");
     }
 
     #[test]
@@ -360,13 +353,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(
-            metadata,
-            schema,
-            store,
-            user_id,
-            vec![],
-        );
+        let provider = UserTableProvider::new(metadata, schema, store, user_id, vec![]);
 
         // Test ${user_id} substitution
         assert_eq!(
@@ -394,13 +381,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(
-            metadata,
-            schema,
-            store,
-            user_id,
-            vec![],
-        );
+        let provider = UserTableProvider::new(metadata, schema, store, user_id, vec![]);
 
         let prefix = provider.user_key_prefix();
         let expected = b"user123:".to_vec();
@@ -415,13 +396,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(
-            metadata,
-            schema,
-            store,
-            user_id,
-            vec![],
-        );
+        let provider = UserTableProvider::new(metadata, schema, store, user_id, vec![]);
 
         let row_data = json!({
             "content": "Hello, World!"
@@ -429,7 +404,7 @@ mod tests {
 
         let result = provider.insert_row(row_data);
         assert!(result.is_ok(), "Insert should succeed");
-        
+
         let row_id = result.unwrap();
         assert!(!row_id.is_empty(), "Row ID should be generated");
     }
@@ -441,13 +416,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(
-            metadata,
-            schema,
-            store,
-            user_id,
-            vec![],
-        );
+        let provider = UserTableProvider::new(metadata, schema, store, user_id, vec![]);
 
         let rows = vec![
             json!({"content": "Message 1"}),
@@ -457,7 +426,7 @@ mod tests {
 
         let result = provider.insert_batch(rows);
         assert!(result.is_ok(), "Batch insert should succeed");
-        
+
         let row_ids = result.unwrap();
         assert_eq!(row_ids.len(), 3, "Should generate 3 row IDs");
     }
@@ -469,13 +438,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(
-            metadata,
-            schema,
-            store,
-            user_id,
-            vec![],
-        );
+        let provider = UserTableProvider::new(metadata, schema, store, user_id, vec![]);
 
         // Insert a row first
         let row_data = json!({"content": "Original"});
@@ -495,13 +458,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(
-            metadata,
-            schema,
-            store,
-            user_id,
-            vec![],
-        );
+        let provider = UserTableProvider::new(metadata, schema, store, user_id, vec![]);
 
         // Insert a row first
         let row_data = json!({"content": "To be deleted"});
@@ -530,13 +487,7 @@ mod tests {
             vec![],
         );
 
-        let provider2 = UserTableProvider::new(
-            metadata,
-            schema,
-            store,
-            user2_id.clone(),
-            vec![],
-        );
+        let provider2 = UserTableProvider::new(metadata, schema, store, user2_id.clone(), vec![]);
 
         // Insert data for user1
         let row_data_1 = json!({"content": "User1 message"});
@@ -549,7 +500,10 @@ mod tests {
         // Verify different key prefixes
         let prefix1 = provider1.user_key_prefix();
         let prefix2 = provider2.user_key_prefix();
-        assert_ne!(prefix1, prefix2, "Different users should have different key prefixes");
+        assert_ne!(
+            prefix1, prefix2,
+            "Different users should have different key prefixes"
+        );
 
         assert_eq!(prefix1, b"user1:".to_vec());
         assert_eq!(prefix2, b"user2:".to_vec());

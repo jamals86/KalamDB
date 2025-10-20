@@ -44,13 +44,13 @@ use std::collections::HashMap;
 pub struct SqlResponse {
     /// Overall execution status: "success" or "error"
     pub status: String,
-    
+
     /// Array of result sets, one per executed statement
     pub results: Vec<QueryResult>,
-    
+
     /// Total execution time in milliseconds
     pub execution_time_ms: u64,
-    
+
     /// Error details if status is "error", otherwise null
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorDetail>,
@@ -64,13 +64,13 @@ pub struct QueryResult {
     /// The result rows as JSON objects (each row is a key-value map)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rows: Option<Vec<HashMap<String, serde_json::Value>>>,
-    
+
     /// Number of rows affected (for INSERT/UPDATE/DELETE) or returned (for SELECT)
     pub row_count: usize,
-    
+
     /// Column names in the result set
     pub columns: Vec<String>,
-    
+
     /// Optional message for non-query statements (e.g., "Table created successfully")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -81,10 +81,10 @@ pub struct QueryResult {
 pub struct ErrorDetail {
     /// Error code (e.g., "INVALID_SQL", "TABLE_NOT_FOUND", "PERMISSION_DENIED")
     pub code: String,
-    
+
     /// Human-readable error message
     pub message: String,
-    
+
     /// Optional detailed context (e.g., line number, column position)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
@@ -100,7 +100,7 @@ impl SqlResponse {
             error: None,
         }
     }
-    
+
     /// Create an error response
     pub fn error(code: &str, message: &str, execution_time_ms: u64) -> Self {
         Self {
@@ -114,9 +114,14 @@ impl SqlResponse {
             }),
         }
     }
-    
+
     /// Create an error response with additional details
-    pub fn error_with_details(code: &str, message: &str, details: &str, execution_time_ms: u64) -> Self {
+    pub fn error_with_details(
+        code: &str,
+        message: &str,
+        details: &str,
+        execution_time_ms: u64,
+    ) -> Self {
         Self {
             status: "error".to_string(),
             results: Vec::new(),
@@ -141,7 +146,7 @@ impl QueryResult {
             message: None,
         }
     }
-    
+
     /// Create a result for a DML statement (INSERT/UPDATE/DELETE)
     pub fn with_affected_rows(row_count: usize, message: Option<String>) -> Self {
         Self {
@@ -151,7 +156,7 @@ impl QueryResult {
             message,
         }
     }
-    
+
     /// Create a result for a DDL statement (CREATE/ALTER/DROP)
     pub fn with_message(message: String) -> Self {
         Self {
@@ -172,43 +177,43 @@ mod tests {
         let mut row1 = HashMap::new();
         row1.insert("id".to_string(), serde_json::json!(1));
         row1.insert("name".to_string(), serde_json::json!("Alice"));
-        
-        let result = QueryResult::with_rows(
-            vec![row1],
-            vec!["id".to_string(), "name".to_string()],
-        );
-        
+
+        let result = QueryResult::with_rows(vec![row1], vec!["id".to_string(), "name".to_string()]);
+
         let response = SqlResponse::success(vec![result], 15);
-        
+
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("success"));
         assert!(json.contains("Alice"));
         assert!(json.contains("15"));
     }
-    
+
     #[test]
     fn test_error_response_serialization() {
         let response = SqlResponse::error("INVALID_SQL", "Syntax error", 5);
-        
+
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("error"));
         assert!(json.contains("INVALID_SQL"));
         assert!(json.contains("Syntax error"));
     }
-    
+
     #[test]
     fn test_query_result_with_message() {
         let result = QueryResult::with_message("Table created successfully".to_string());
-        
+
         assert_eq!(result.row_count, 0);
         assert!(result.rows.is_none());
-        assert_eq!(result.message, Some("Table created successfully".to_string()));
+        assert_eq!(
+            result.message,
+            Some("Table created successfully".to_string())
+        );
     }
-    
+
     #[test]
     fn test_query_result_with_affected_rows() {
         let result = QueryResult::with_affected_rows(5, Some("5 rows inserted".to_string()));
-        
+
         assert_eq!(result.row_count, 5);
         assert!(result.rows.is_none());
         assert_eq!(result.message, Some("5 rows inserted".to_string()));

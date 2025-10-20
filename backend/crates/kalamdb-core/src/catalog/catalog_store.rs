@@ -13,7 +13,7 @@
 //! matches the Phase 1.5 architecture changes. Future refactoring (T028a) will replace direct
 //! RocksDB operations with kalamdb-sql SQL interface for consistency.
 
-use crate::catalog::{NamespaceId, TableName, UserId};
+use crate::catalog::UserId;
 use crate::error::KalamDbError;
 use rocksdb::{ColumnFamily, DB};
 use serde::{Deserialize, Serialize};
@@ -45,55 +45,42 @@ impl CatalogStore {
     /// **Updated**: Uses new CF naming convention `system_{name}` per Phase 1.5 changes
     fn get_cf_handle(&self, table_name: &str) -> Result<&ColumnFamily, KalamDbError> {
         let cf_name = format!("system_{}", table_name);
-        self.db
-            .cf_handle(&cf_name)
-            .ok_or_else(|| KalamDbError::CatalogError(format!("Column family not found: {}", cf_name)))
+        self.db.cf_handle(&cf_name).ok_or_else(|| {
+            KalamDbError::CatalogError(format!("Column family not found: {}", cf_name))
+        })
     }
 
     /// Insert or update data in a system table
-    pub fn put(
-        &self,
-        table_name: &str,
-        key: &[u8],
-        value: &[u8],
-    ) -> Result<(), KalamDbError> {
+    pub fn put(&self, table_name: &str, key: &[u8], value: &[u8]) -> Result<(), KalamDbError> {
         let cf = self.get_cf_handle(table_name)?;
-        self.db
-            .put_cf(cf, key, value)
-            .map_err(|e| KalamDbError::Storage(crate::error::StorageError::Other(format!(
+        self.db.put_cf(cf, key, value).map_err(|e| {
+            KalamDbError::Storage(crate::error::StorageError::Other(format!(
                 "Failed to put data in {}: {}",
                 table_name, e
-            ))))
+            )))
+        })
     }
 
     /// Get data from a system table
-    pub fn get(
-        &self,
-        table_name: &str,
-        key: &[u8],
-    ) -> Result<Option<Vec<u8>>, KalamDbError> {
+    pub fn get(&self, table_name: &str, key: &[u8]) -> Result<Option<Vec<u8>>, KalamDbError> {
         let cf = self.get_cf_handle(table_name)?;
-        self.db
-            .get_cf(cf, key)
-            .map_err(|e| KalamDbError::Storage(crate::error::StorageError::Other(format!(
+        self.db.get_cf(cf, key).map_err(|e| {
+            KalamDbError::Storage(crate::error::StorageError::Other(format!(
                 "Failed to get data from {}: {}",
                 table_name, e
-            ))))
+            )))
+        })
     }
 
     /// Delete data from a system table
-    pub fn delete(
-        &self,
-        table_name: &str,
-        key: &[u8],
-    ) -> Result<(), KalamDbError> {
+    pub fn delete(&self, table_name: &str, key: &[u8]) -> Result<(), KalamDbError> {
         let cf = self.get_cf_handle(table_name)?;
-        self.db
-            .delete_cf(cf, key)
-            .map_err(|e| KalamDbError::Storage(crate::error::StorageError::Other(format!(
+        self.db.delete_cf(cf, key).map_err(|e| {
+            KalamDbError::Storage(crate::error::StorageError::Other(format!(
                 "Failed to delete data from {}: {}",
                 table_name, e
-            ))))
+            )))
+        })
     }
 
     /// Iterate over all entries in a system table
@@ -102,7 +89,8 @@ impl CatalogStore {
         table_name: &str,
     ) -> Result<Box<dyn Iterator<Item = (Box<[u8]>, Box<[u8]>)> + 'a>, KalamDbError> {
         let cf = self.get_cf_handle(table_name)?;
-        let iter = self.db
+        let iter = self
+            .db
             .iterator_cf(cf, rocksdb::IteratorMode::Start)
             .filter_map(|result| result.ok());
         Ok(Box::new(iter))
@@ -115,8 +103,9 @@ impl CatalogStore {
         user_data: &T,
     ) -> Result<(), KalamDbError> {
         let key = user_id.as_ref().as_bytes();
-        let value = serde_json::to_vec(user_data)
-            .map_err(|e| KalamDbError::SerializationError(format!("Failed to serialize user data: {}", e)))?;
+        let value = serde_json::to_vec(user_data).map_err(|e| {
+            KalamDbError::SerializationError(format!("Failed to serialize user data: {}", e))
+        })?;
         self.put("users", key, &value)
     }
 
@@ -129,8 +118,12 @@ impl CatalogStore {
         let value = self.get("users", key)?;
         match value {
             Some(bytes) => {
-                let user = serde_json::from_slice(&bytes)
-                    .map_err(|e| KalamDbError::SerializationError(format!("Failed to deserialize user data: {}", e)))?;
+                let user = serde_json::from_slice(&bytes).map_err(|e| {
+                    KalamDbError::SerializationError(format!(
+                        "Failed to deserialize user data: {}",
+                        e
+                    ))
+                })?;
                 Ok(Some(user))
             }
             None => Ok(None),
@@ -150,8 +143,9 @@ impl CatalogStore {
         live_query_data: &T,
     ) -> Result<(), KalamDbError> {
         let key = live_id.as_bytes();
-        let value = serde_json::to_vec(live_query_data)
-            .map_err(|e| KalamDbError::SerializationError(format!("Failed to serialize live query data: {}", e)))?;
+        let value = serde_json::to_vec(live_query_data).map_err(|e| {
+            KalamDbError::SerializationError(format!("Failed to serialize live query data: {}", e))
+        })?;
         self.put("live_queries", key, &value)
     }
 
@@ -164,8 +158,12 @@ impl CatalogStore {
         let value = self.get("live_queries", key)?;
         match value {
             Some(bytes) => {
-                let live_query = serde_json::from_slice(&bytes)
-                    .map_err(|e| KalamDbError::SerializationError(format!("Failed to deserialize live query data: {}", e)))?;
+                let live_query = serde_json::from_slice(&bytes).map_err(|e| {
+                    KalamDbError::SerializationError(format!(
+                        "Failed to deserialize live query data: {}",
+                        e
+                    ))
+                })?;
                 Ok(Some(live_query))
             }
             None => Ok(None),
@@ -185,8 +183,12 @@ impl CatalogStore {
         location_data: &T,
     ) -> Result<(), KalamDbError> {
         let key = format!("location:{}", location_name);
-        let value = serde_json::to_vec(location_data)
-            .map_err(|e| KalamDbError::SerializationError(format!("Failed to serialize storage location data: {}", e)))?;
+        let value = serde_json::to_vec(location_data).map_err(|e| {
+            KalamDbError::SerializationError(format!(
+                "Failed to serialize storage location data: {}",
+                e
+            ))
+        })?;
         self.put("storage_locations", key.as_bytes(), &value)
     }
 
@@ -199,8 +201,12 @@ impl CatalogStore {
         let value = self.get("storage_locations", key.as_bytes())?;
         match value {
             Some(bytes) => {
-                let location = serde_json::from_slice(&bytes)
-                    .map_err(|e| KalamDbError::SerializationError(format!("Failed to deserialize storage location data: {}", e)))?;
+                let location = serde_json::from_slice(&bytes).map_err(|e| {
+                    KalamDbError::SerializationError(format!(
+                        "Failed to deserialize storage location data: {}",
+                        e
+                    ))
+                })?;
                 Ok(Some(location))
             }
             None => Ok(None),
@@ -214,14 +220,11 @@ impl CatalogStore {
     }
 
     /// Insert or update a job record
-    pub fn put_job<T: Serialize>(
-        &self,
-        job_id: &str,
-        job_data: &T,
-    ) -> Result<(), KalamDbError> {
+    pub fn put_job<T: Serialize>(&self, job_id: &str, job_data: &T) -> Result<(), KalamDbError> {
         let key = format!("job:{}", job_id);
-        let value = serde_json::to_vec(job_data)
-            .map_err(|e| KalamDbError::SerializationError(format!("Failed to serialize job data: {}", e)))?;
+        let value = serde_json::to_vec(job_data).map_err(|e| {
+            KalamDbError::SerializationError(format!("Failed to serialize job data: {}", e))
+        })?;
         self.put("jobs", key.as_bytes(), &value)
     }
 
@@ -234,8 +237,12 @@ impl CatalogStore {
         let value = self.get("jobs", key.as_bytes())?;
         match value {
             Some(bytes) => {
-                let job = serde_json::from_slice(&bytes)
-                    .map_err(|e| KalamDbError::SerializationError(format!("Failed to deserialize job data: {}", e)))?;
+                let job = serde_json::from_slice(&bytes).map_err(|e| {
+                    KalamDbError::SerializationError(format!(
+                        "Failed to deserialize job data: {}",
+                        e
+                    ))
+                })?;
                 Ok(Some(job))
             }
             None => Ok(None),

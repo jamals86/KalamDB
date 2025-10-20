@@ -27,7 +27,7 @@ impl JobsTable {
                 true,
             ),
             Field::new("parameters", DataType::Utf8, true), // JSON
-            Field::new("result", DataType::Utf8, true), // JSON
+            Field::new("result", DataType::Utf8, true),     // JSON
             Field::new("trace", DataType::Utf8, true),
             Field::new("memory_used_mb", DataType::Float64, true),
             Field::new("cpu_used_percent", DataType::Float64, true),

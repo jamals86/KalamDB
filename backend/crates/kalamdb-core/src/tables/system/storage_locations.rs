@@ -61,6 +61,9 @@ mod tests {
     #[test]
     fn test_storage_locations_table_name() {
         assert_eq!(StorageLocationsTable::table_name(), "storage_locations");
-        assert_eq!(StorageLocationsTable::column_family_name(), "system_storage_locations");
+        assert_eq!(
+            StorageLocationsTable::column_family_name(),
+            "system_storage_locations"
+        );
     }
 }

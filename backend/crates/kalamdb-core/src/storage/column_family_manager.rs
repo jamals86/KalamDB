@@ -5,7 +5,7 @@
 
 use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
-use rocksdb::{ColumnFamilyDescriptor, Options, DB};
+use rocksdb::{Options, DB};
 use std::sync::Arc;
 
 /// Column family manager for RocksDB
@@ -17,14 +17,14 @@ pub struct ColumnFamilyManager {
 
 /// System column families that must be created on DB initialization
 pub const SYSTEM_COLUMN_FAMILIES: &[&str] = &[
-    "system_users",              // User management (user_id, username, email, created_at)
-    "system_live_queries",       // Live query subscriptions (live_id, connection_id, table_name, query_id, user_id, query, options, created_at, updated_at, changes, node)
-    "system_storage_locations",  // Storage location definitions (location_name, location_type, path, credentials_ref, usage_count)
-    "system_jobs",              // Background job tracking (job_id, job_type, table_name, status, start_time, end_time, parameters, result, trace, memory_used_mb, cpu_used_percent, node_id, error_message)
-    "system_namespaces",        // Namespace metadata (namespace_id, name, created_at, options, table_count)
-    "system_tables",            // Table metadata (table_id, table_name, namespace, table_type, created_at, storage_location, flush_policy, schema_version, deleted_retention_hours)
-    "system_table_schemas",     // Table schema versions (schema_id, table_id, version, arrow_schema, created_at, changes)
-    "user_table_counters",      // Per-user flush tracking (user_id, table_name, row_count)
+    "system_users",             // User management (user_id, username, email, created_at)
+    "system_live_queries", // Live query subscriptions (live_id, connection_id, table_name, query_id, user_id, query, options, created_at, updated_at, changes, node)
+    "system_storage_locations", // Storage location definitions (location_name, location_type, path, credentials_ref, usage_count)
+    "system_jobs", // Background job tracking (job_id, job_type, table_name, status, start_time, end_time, parameters, result, trace, memory_used_mb, cpu_used_percent, node_id, error_message)
+    "system_namespaces", // Namespace metadata (namespace_id, name, created_at, options, table_count)
+    "system_tables", // Table metadata (table_id, table_name, namespace, table_type, created_at, storage_location, flush_policy, schema_version, deleted_retention_hours)
+    "system_table_schemas", // Table schema versions (schema_id, table_id, version, arrow_schema, created_at, changes)
+    "user_table_counters",  // Per-user flush tracking (user_id, table_name, row_count)
 ];
 
 impl ColumnFamilyManager {
@@ -71,17 +71,13 @@ impl ColumnFamilyManager {
         // Handle special case: user_table_counters (not a regular table CF)
         if cf_name == "user_table_counters" {
             return Err(KalamDbError::CatalogError(
-                "user_table_counters is a metadata CF, not a table CF".to_string()
+                "user_table_counters is a metadata CF, not a table CF".to_string(),
             ));
         }
 
         // Handle system tables (new naming: system_{table_name})
         if let Some(table_name) = cf_name.strip_prefix("system_") {
-            return Ok((
-                TableType::System,
-                None,
-                TableName::new(table_name),
-            ));
+            return Ok((TableType::System, None, TableName::new(table_name)));
         }
 
         // Handle user/shared/stream tables (old naming: {type}_table:{namespace}:{table_name})
@@ -130,9 +126,9 @@ impl ColumnFamilyManager {
         // RocksDB's create_cf requires &mut access but Arc prevents that
         // We need to use the DB directly in the calling code instead
         // For now, this is a placeholder that will be refactored
-        
+
         Err(KalamDbError::Other(
-            "Column family creation must be done during DB initialization".to_string()
+            "Column family creation must be done during DB initialization".to_string(),
         ))
     }
 
@@ -148,9 +144,9 @@ impl ColumnFamilyManager {
         // RocksDB's drop_cf requires &mut access but Arc prevents that
         // We need to use the DB directly in the calling code instead
         // For now, this is a placeholder that will be refactored
-        
+
         Err(KalamDbError::Other(
-            "Column family deletion must be done directly on DB".to_string()
+            "Column family deletion must be done directly on DB".to_string(),
         ))
     }
 

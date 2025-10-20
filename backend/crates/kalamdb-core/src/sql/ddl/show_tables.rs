@@ -23,7 +23,7 @@ impl ShowTablesStatement {
     pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
         let sql_trimmed = sql.trim();
         let sql_upper = sql_trimmed.to_uppercase();
-        
+
         if !sql_upper.starts_with("SHOW TABLES") {
             return Err(KalamDbError::InvalidSql(
                 "Expected SHOW TABLES statement".to_string(),
@@ -35,17 +35,16 @@ impl ShowTablesStatement {
             // Extract namespace name after IN
             let in_pos = sql_upper.find(" IN ").unwrap();
             let namespace_part = sql_trimmed[in_pos + 4..].trim();
-            
+
             if namespace_part.is_empty() {
                 return Err(KalamDbError::InvalidSql(
                     "Namespace name required after IN".to_string(),
                 ));
             }
-            
-            let namespace_name = namespace_part.split_whitespace().next()
-                .ok_or_else(|| {
-                    KalamDbError::InvalidSql("Namespace name required after IN".to_string())
-                })?;
+
+            let namespace_name = namespace_part.split_whitespace().next().ok_or_else(|| {
+                KalamDbError::InvalidSql("Namespace name required after IN".to_string())
+            })?;
 
             Ok(Self {
                 namespace_id: Some(NamespaceId::new(namespace_name)),
@@ -57,9 +56,7 @@ impl ShowTablesStatement {
             ))
         } else {
             // No namespace filter - show all tables
-            Ok(Self {
-                namespace_id: None,
-            })
+            Ok(Self { namespace_id: None })
         }
     }
 }

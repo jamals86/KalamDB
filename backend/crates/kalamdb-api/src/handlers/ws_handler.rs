@@ -3,7 +3,7 @@
 //! This module provides the HTTP endpoint for establishing WebSocket connections
 //! and managing live query subscriptions.
 
-use actix_web::{get, web, HttpRequest, HttpResponse, Error};
+use actix_web::{get, web, Error, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
 use log::info;
 use uuid::Uuid;
@@ -55,12 +55,12 @@ pub async fn websocket_handler(
 ) -> Result<HttpResponse, Error> {
     // Generate unique connection ID
     let connection_id = Uuid::new_v4().to_string();
-    
+
     info!("New WebSocket connection request: {}", connection_id);
-    
+
     // Create WebSocket session actor
     let session = WebSocketSession::new(connection_id);
-    
+
     // Start WebSocket handshake
     ws::start(session, &req, stream)
 }
@@ -69,13 +69,11 @@ pub async fn websocket_handler(
 mod tests {
     use super::*;
     use actix_web::{test, App};
-    
+
     #[actix_rt::test]
     async fn test_websocket_endpoint() {
-        let app = test::init_service(
-            App::new().service(websocket_handler)
-        ).await;
-        
+        let app = test::init_service(App::new().service(websocket_handler)).await;
+
         let req = test::TestRequest::get()
             .uri("/ws")
             .insert_header(("upgrade", "websocket"))
@@ -83,7 +81,7 @@ mod tests {
             .insert_header(("sec-websocket-version", "13"))
             .insert_header(("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ=="))
             .to_request();
-        
+
         let resp = test::call_service(&app, req).await;
         assert!(resp.status().is_success() || resp.status().as_u16() == 101);
     }

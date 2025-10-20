@@ -199,8 +199,8 @@ impl StreamTableService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::test_utils::TestDb;
     use datafusion::arrow::datatypes::{DataType, Field};
+    use kalamdb_store::test_utils::TestDb;
 
     fn create_test_service() -> (StreamTableService, TestDb) {
         let test_db = TestDb::new(&[
@@ -224,7 +224,11 @@ mod tests {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
             Field::new("event_type", DataType::Utf8, false),
-            Field::new("timestamp", DataType::Timestamp(datafusion::arrow::datatypes::TimeUnit::Millisecond, None), false),
+            Field::new(
+                "timestamp",
+                DataType::Timestamp(datafusion::arrow::datatypes::TimeUnit::Millisecond, None),
+                false,
+            ),
         ]));
 
         let stmt = CreateStreamTableStatement {
@@ -280,9 +284,7 @@ mod tests {
     fn test_create_table_if_not_exists() {
         let (service, _test_db) = create_test_service();
 
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-        ]));
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
         let stmt1 = CreateStreamTableStatement {
             table_name: TableName::new("events"),

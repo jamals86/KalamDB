@@ -4,6 +4,7 @@
 //! - DESCRIBE TABLE table_name
 //! - DESCRIBE TABLE namespace.table_name
 //! - DESC TABLE table_name
+//! - DESCRIBE TABLE table_name HISTORY (show schema versions)
 
 use crate::catalog::{NamespaceId, TableName};
 use crate::error::KalamDbError;
@@ -13,9 +14,12 @@ use crate::error::KalamDbError;
 pub struct DescribeTableStatement {
     /// Optional namespace (if qualified name used)
     pub namespace_id: Option<NamespaceId>,
-    
+
     /// Table name to describe
     pub table_name: TableName,
+
+    /// If true, show schema history (all versions)
+    pub show_history: bool,
 }
 
 impl DescribeTableStatement {
@@ -26,57 +30,47 @@ impl DescribeTableStatement {
     /// - DESCRIBE TABLE namespace.table_name
     /// - DESC TABLE table_name (shorthand)
     pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
-        let sql_trimmed = sql.trim();
-        let sql_upper = sql_trimmed.to_uppercase();
+        let sql = sql.trim();
+        let sql_upper = sql.to_uppercase();
         
-        // Support both DESCRIBE and DESC
-        let has_describe = sql_upper.starts_with("DESCRIBE TABLE") || sql_upper.starts_with("DESC TABLE");
-        
-        if !has_describe {
-            return Err(KalamDbError::InvalidSql(
-                "Expected DESCRIBE TABLE or DESC TABLE statement".to_string(),
-            ));
-        }
-
-        // Extract table name part
-        let table_part = if sql_upper.starts_with("DESCRIBE TABLE") {
-            sql_trimmed.strip_prefix("DESCRIBE TABLE")
-                .or_else(|| sql_trimmed.strip_prefix("describe table"))
-                .map(|s| s.trim())
+        // Check for DESCRIBE TABLE or DESC TABLE prefix (case-insensitive)
+        let rest = if sql_upper.strip_prefix("DESCRIBE TABLE ").is_some() {
+            sql[15..].trim()  // Use original casing for table names
+        } else if sql_upper.strip_prefix("DESC TABLE ").is_some() {
+            sql[11..].trim()  // Use original casing for table names
         } else {
-            sql_trimmed.strip_prefix("DESC TABLE")
-                .or_else(|| sql_trimmed.strip_prefix("desc table"))
-                .map(|s| s.trim())
+            return Err(KalamDbError::InvalidSql(
+                "Expected DESCRIBE TABLE or DESC TABLE".to_string()
+            ));
         };
 
-        let table_part = table_part.ok_or_else(|| {
-            KalamDbError::InvalidSql("Invalid DESCRIBE TABLE syntax".to_string())
-        })?;
-
-        let table_identifier = table_part.split_whitespace().next()
-            .ok_or_else(|| {
-                KalamDbError::InvalidSql("Table name is required".to_string())
-            })?;
-
-        // Check for qualified name (namespace.table)
-        if table_identifier.contains('.') {
-            let parts: Vec<&str> = table_identifier.split('.').collect();
-            if parts.len() != 2 {
-                return Err(KalamDbError::InvalidSql(
-                    "Invalid qualified table name format".to_string(),
-                ));
-            }
-
-            Ok(Self {
-                namespace_id: Some(NamespaceId::new(parts[0])),
-                table_name: TableName::new(parts[1]),
-            })
+        // Check for HISTORY keyword at the end (case-insensitive)
+        let rest_upper = rest.to_uppercase();
+        let (table_ref, show_history) = if rest_upper.ends_with(" HISTORY") {
+            (rest[..rest.len() - 8].trim(), true)
         } else {
-            // Unqualified name
-            Ok(Self {
+            (rest, false)
+        };
+
+        // Split on . for qualified names (namespace.table)
+        let parts: Vec<&str> = table_ref.split('.').collect();
+
+        match parts.len() {
+            // Simple table name (no namespace)
+            1 => Ok(Self {
                 namespace_id: None,
-                table_name: TableName::new(table_identifier),
-            })
+                table_name: TableName::new(parts[0].trim()),
+                show_history,
+            }),
+            // Qualified name (namespace.table)
+            2 => Ok(Self {
+                namespace_id: Some(NamespaceId::new(parts[0].trim())),
+                table_name: TableName::new(parts[1].trim()),
+                show_history,
+            }),
+            _ => Err(KalamDbError::InvalidSql(
+                format!("Invalid table reference: {}", table_ref)
+            ))
         }
     }
 }
@@ -129,5 +123,35 @@ mod tests {
     fn test_parse_invalid_statement() {
         let result = DescribeTableStatement::parse("DESCRIBE NAMESPACE app");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_describe_table_history() {
+        let stmt = DescribeTableStatement::parse("DESCRIBE TABLE users HISTORY").unwrap();
+        assert!(stmt.namespace_id.is_none());
+        assert_eq!(stmt.table_name.as_str(), "users");
+        assert_eq!(stmt.show_history, true);
+    }
+
+    #[test]
+    fn test_desc_table_history() {
+        let stmt = DescribeTableStatement::parse("DESC TABLE users HISTORY").unwrap();
+        assert!(stmt.namespace_id.is_none());
+        assert_eq!(stmt.table_name.as_str(), "users");
+        assert_eq!(stmt.show_history, true);
+    }
+
+    #[test]
+    fn test_describe_qualified_table_history() {
+        let stmt = DescribeTableStatement::parse("DESCRIBE TABLE myapp.messages HISTORY").unwrap();
+        assert_eq!(stmt.namespace_id.unwrap().as_str(), "myapp");
+        assert_eq!(stmt.table_name.as_str(), "messages");
+        assert_eq!(stmt.show_history, true);
+    }
+
+    #[test]
+    fn test_describe_table_no_history() {
+        let stmt = DescribeTableStatement::parse("DESCRIBE TABLE users").unwrap();
+        assert_eq!(stmt.show_history, false);
     }
 }

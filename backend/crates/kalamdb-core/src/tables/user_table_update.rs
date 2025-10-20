@@ -87,10 +87,7 @@ impl UserTableUpdateHandler {
                 for (key, value) in updates_obj {
                     // Prevent updates to system columns
                     if key == "_updated" || key == "_deleted" {
-                        log::warn!(
-                            "Attempted to update system column '{}', ignored",
-                            key
-                        );
+                        log::warn!("Attempted to update system column '{}', ignored", key);
                         continue;
                     }
                     existing_obj.insert(key.clone(), value.clone());
@@ -142,13 +139,8 @@ impl UserTableUpdateHandler {
         // Update each row individually (UserTableStore doesn't have batch update yet)
         for (row_id, updates) in row_updates {
             // Call update_row for each row
-            let updated_id = self.update_row(
-                namespace_id,
-                table_name,
-                user_id,
-                &row_id,
-                updates,
-            )?;
+            let updated_id =
+                self.update_row(namespace_id, table_name, user_id, &row_id, updates)?;
             updated_row_ids.push(updated_id);
         }
 
@@ -187,7 +179,15 @@ mod tests {
 
         // Insert initial row
         let initial_data = serde_json::json!({"name": "Alice", "age": 30});
-        store.put(namespace_id.as_str(), table_name.as_str(), user_id.as_str(), row_id, initial_data).unwrap();
+        store
+            .put(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user_id.as_str(),
+                row_id,
+                initial_data,
+            )
+            .unwrap();
 
         // Update the row
         let updates = serde_json::json!({"age": 31, "city": "NYC"});
@@ -198,8 +198,15 @@ mod tests {
         assert_eq!(updated_row_id, row_id);
 
         // Verify the update
-        let stored = store.get(namespace_id.as_str(), table_name.as_str(), user_id.as_str(), row_id)
-            .unwrap().expect("Row should exist");
+        let stored = store
+            .get(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user_id.as_str(),
+                row_id,
+            )
+            .unwrap()
+            .expect("Row should exist");
         assert_eq!(stored["name"], "Alice"); // Unchanged
         assert_eq!(stored["age"], 31); // Updated
         assert_eq!(stored["city"], "NYC"); // New field
@@ -215,7 +222,8 @@ mod tests {
         let user_id = UserId::new("user123".to_string());
 
         let updates = serde_json::json!({"age": 31});
-        let result = handler.update_row(&namespace_id, &table_name, &user_id, "nonexistent", updates);
+        let result =
+            handler.update_row(&namespace_id, &table_name, &user_id, "nonexistent", updates);
 
         assert!(result.is_err());
         match result {
@@ -234,10 +242,24 @@ mod tests {
         let user_id = UserId::new("user123".to_string());
 
         // Insert initial rows
-        store.put(namespace_id.as_str(), table_name.as_str(), user_id.as_str(), "row1", 
-                  serde_json::json!({"name": "Alice", "age": 30})).unwrap();
-        store.put(namespace_id.as_str(), table_name.as_str(), user_id.as_str(), "row2",
-                  serde_json::json!({"name": "Bob", "age": 25})).unwrap();
+        store
+            .put(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user_id.as_str(),
+                "row1",
+                serde_json::json!({"name": "Alice", "age": 30}),
+            )
+            .unwrap();
+        store
+            .put(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user_id.as_str(),
+                "row2",
+                serde_json::json!({"name": "Bob", "age": 25}),
+            )
+            .unwrap();
 
         // Update batch
         let row_updates = vec![
@@ -252,12 +274,26 @@ mod tests {
         assert_eq!(updated_ids.len(), 2);
 
         // Verify updates
-        let stored1 = store.get(namespace_id.as_str(), table_name.as_str(), user_id.as_str(), "row1")
-            .unwrap().expect("Row1 should exist");
+        let stored1 = store
+            .get(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user_id.as_str(),
+                "row1",
+            )
+            .unwrap()
+            .expect("Row1 should exist");
         assert_eq!(stored1["age"], 31);
 
-        let stored2 = store.get(namespace_id.as_str(), table_name.as_str(), user_id.as_str(), "row2")
-            .unwrap().expect("Row2 should exist");
+        let stored2 = store
+            .get(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user_id.as_str(),
+                "row2",
+            )
+            .unwrap()
+            .expect("Row2 should exist");
         assert_eq!(stored2["age"], 26);
     }
 
@@ -270,8 +306,15 @@ mod tests {
         let row_id = "row1";
 
         // Insert initial row
-        store.put(namespace_id.as_str(), table_name.as_str(), user_id.as_str(), row_id,
-                  serde_json::json!({"name": "Alice"})).unwrap();
+        store
+            .put(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user_id.as_str(),
+                row_id,
+                serde_json::json!({"name": "Alice"}),
+            )
+            .unwrap();
 
         // Try to update system columns
         let updates = serde_json::json!({
@@ -285,8 +328,15 @@ mod tests {
             .unwrap();
 
         // Verify system columns were NOT modified by updates
-        let stored = store.get(namespace_id.as_str(), table_name.as_str(), user_id.as_str(), row_id)
-            .unwrap().expect("Row should exist");
+        let stored = store
+            .get(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user_id.as_str(),
+                row_id,
+            )
+            .unwrap()
+            .expect("Row should exist");
         assert_eq!(stored["name"], "Bob"); // User field updated
         assert_eq!(stored["_deleted"], false); // System column unchanged
         assert!(stored["_updated"].as_str().is_some()); // Timestamp auto-updated (not 9999)
@@ -301,10 +351,24 @@ mod tests {
         let user2 = UserId::new("user2".to_string());
 
         // Insert rows for different users
-        store.put(namespace_id.as_str(), table_name.as_str(), user1.as_str(), "row1",
-                  serde_json::json!({"name": "Alice"})).unwrap();
-        store.put(namespace_id.as_str(), table_name.as_str(), user2.as_str(), "row1",
-                  serde_json::json!({"name": "Bob"})).unwrap();
+        store
+            .put(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user1.as_str(),
+                "row1",
+                serde_json::json!({"name": "Alice"}),
+            )
+            .unwrap();
+        store
+            .put(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user2.as_str(),
+                "row1",
+                serde_json::json!({"name": "Bob"}),
+            )
+            .unwrap();
 
         // Update user1's row
         handler
@@ -318,8 +382,15 @@ mod tests {
             .unwrap();
 
         // Verify user2's row is unchanged
-        let stored2 = store.get(namespace_id.as_str(), table_name.as_str(), user2.as_str(), "row1")
-            .unwrap().expect("User2's row should exist");
+        let stored2 = store
+            .get(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user2.as_str(),
+                "row1",
+            )
+            .unwrap()
+            .expect("User2's row should exist");
         assert_eq!(stored2["name"], "Bob"); // Unchanged
     }
 
@@ -331,8 +402,15 @@ mod tests {
         let user_id = UserId::new("user123".to_string());
 
         // Insert initial row
-        store.put(namespace_id.as_str(), table_name.as_str(), user_id.as_str(), "row1",
-                  serde_json::json!({"name": "Alice"})).unwrap();
+        store
+            .put(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user_id.as_str(),
+                "row1",
+                serde_json::json!({"name": "Alice"}),
+            )
+            .unwrap();
 
         // Try to update with non-object
         let updates = serde_json::json!(["not", "an", "object"]);

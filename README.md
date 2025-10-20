@@ -82,51 +82,157 @@ watch_directory("user_12345/messages/")
 
 ## 🌟 Core Features
 
-### 📦 **Unified Storage + Real-time Streaming**
-Single system replaces database + message broker (Redis/Kafka). No synchronization needed.
+### ✅ **Implemented Features**
 
-### ⚡ **Sub-millisecond Writes**
-RocksDB hot storage with <1ms write latency. Periodic consolidation to Parquet for long-term efficiency.
+#### 📦 **Three Table Types**
+- **User Tables**: One table instance per user, isolated storage, perfect for personal data
+- **Shared Tables**: Single table accessible to all users, ideal for global data
+- **Stream Tables**: Ephemeral tables with TTL eviction, memory-only for real-time events
 
-### 🔍 **SQL-First Interface**
-Query everything with standard SQL via DataFusion engine. No proprietary query language.
+#### ⚡ **Sub-millisecond Writes**
+RocksDB hot storage with <1ms write latency. Configurable flush policies (row-based, time-based, or combined).
 
-### 🔒 **User-Centric Data Ownership**
-- Each user's data physically isolated in separate partitions
-- Complete conversation history in user's own storage
-- Easy data export, backup, and migration
+#### 🔍 **SQL-First Interface**
+Full SQL support via DataFusion engine:
+- DDL: CREATE/DROP NAMESPACE, CREATE TABLE (USER/SHARED/STREAM), ALTER TABLE, BACKUP/RESTORE DATABASE
+- DML: INSERT, UPDATE, DELETE, SELECT
+- System tables: Query active subscriptions, jobs, storage locations, table metadata
+
+#### 🔒 **User-Centric Data Ownership**
+- Each user's data physically isolated in separate RocksDB column families and Parquet files
+- User isolation enforced at storage layer (key prefix filtering)
+- Easy per-user data export, backup, and migration
 - Privacy and GDPR compliance by design
 
-### 📊 **Intelligent Storage Optimization**
-- AI conversations: Zero duplication (single participant)
-- Group conversations: Messages duplicated per user, large content stored once
-- 50% storage savings compared to naive duplication
+#### 🌐 **Live Query Subscriptions**
+WebSocket-based real-time updates with:
+- INSERT/UPDATE/DELETE change notifications with old and new values
+- Filtered subscriptions with SQL WHERE clauses
+- Initial data fetch with `last_rows` option
+- User isolation (users only see their own data changes)
+- Flush notifications when data moves to cold storage
 
-### 🌐 **WebSocket Real-time Updates**
-Subscribe to your own message stream. Receive notifications within 500ms of new messages.
+#### 📊 **Schema Evolution**
+- Add/drop/rename columns with ALTER TABLE
+- Schema versioning (all versions stored in system_table_schemas)
+- Backward compatibility (old Parquet files projected to current schema)
+- Prevent breaking changes (dropping required columns, altering system columns)
+
+#### 🛡️ **Backup and Restore**
+- Namespace-level backup (all tables, schemas, metadata)
+- Parquet file backup with checksum verification
+- BACKUP DATABASE / RESTORE DATABASE SQL commands
+- Job tracking in system.jobs table
+- Soft-deleted rows preserved in backups
+
+#### 📋 **Catalog Browsing**
+- SHOW TABLES [IN namespace]
+- DESCRIBE TABLE [namespace.]table_name (shows schema, flush policy, retention, storage location)
+- SHOW STATS FOR TABLE (hot/cold row counts, storage bytes)
+- information_schema.tables virtual table
+
+### 🚧 **Planned Features**
+
+#### 🔐 **Authentication & Authorization** (Phase 17)
+- WebSocket JWT authentication
+- User-based permissions
+- Rate limiting (per user, per connection)
+
+#### 📈 **Performance Optimization** (Phase 17)
+- Connection pooling for RocksDB
+- Schema caching in DataFusion
+- Query result caching for system tables
+- Parquet bloom filters on _updated column
+
+#### 📝 **Observability** (Phase 17)
+- Structured logging for all operations
+- Metrics collection (query latency, flush duration, WebSocket throughput)
+- Request/response logging with execution times
 
 ---
 
 ## 🏗️ Architecture Overview
 
+### Three-Layer Architecture
+
+KalamDB follows a clean **three-layer architecture** that ensures maintainability and testability:
+
+```
+┌──────────────────────────────────────────┐
+│         kalamdb-core (Layer 1)          │  ← Business logic, services, SQL execution
+│  - Table operations                      │
+│  - Live query management                 │
+│  - Flush/backup services                 │
+│  - DataFusion integration                │
+└───────────┬──────────────────────────────┘
+            │ uses (no direct RocksDB access)
+            ▼
+┌──────────────────────────────────────────┐
+│    kalamdb-sql + kalamdb-store (Layer 2)│  ← Data access layer
+│                                          │
+│  kalamdb-sql:                           │
+│  - System tables (namespaces, tables,   │
+│    schemas, storage_locations, jobs)    │
+│  - Metadata operations                   │
+│                                          │
+│  kalamdb-store:                         │
+│  - UserTableStore                        │
+│  - SharedTableStore                      │
+│  - StreamTableStore                      │
+│  - Parquet file operations               │
+└───────────┬──────────────────────────────┘
+            │ uses
+            ▼
+┌──────────────────────────────────────────┐
+│         RocksDB (Layer 3)               │  ← Persistence layer
+│  - Column families                       │
+│  - System tables storage                 │
+│  - Hot data buffering                    │
+└──────────────────────────────────────────┘
+```
+
+**Key Principle**: `kalamdb-core` **never** directly accesses RocksDB. All data operations flow through `kalamdb-sql` (for metadata) and `kalamdb-store` (for user/shared/stream data).
+
+### RocksDB Column Family Architecture
+
+All configuration and metadata is stored in **RocksDB system tables** (no JSON config files):
+
+```
+RocksDB Column Families:
+├── system_namespaces           # Namespace definitions
+├── system_tables               # Table metadata (name, type, flush policy, location)
+├── system_table_schemas        # Schema versions per table
+├── system_storage_locations    # Centralized storage location registry
+├── system_jobs                 # Background job tracking (flush, backup, etc.)
+├── system_live_queries         # Active WebSocket subscriptions
+├── system_users                # User authentication and permissions
+│
+├── user_table:{table_name}     # Hot data buffer (per user table)
+├── shared_table:{table_name}   # Hot data buffer (per shared table)
+├── stream_table:{table_name}   # Ephemeral data buffer (per stream table)
+└── user_table_counters         # Per-user row counts for flush triggers
+```
+
 ### Storage Layout
 
 ```
 /var/lib/kalamdb/
-├── user_alice/                          # Alice's isolated storage
-│   ├── batch-20251013-001.parquet      # Alice's messages (AI + group)
-│   ├── msg-123.bin                     # Large message content
-│   └── media-456.jpg                   # Media files
+├── rocksdb/                             # RocksDB data directory
+│   ├── system_namespaces/              # System table CFs
+│   ├── system_tables/
+│   ├── user_table:messages/            # User table hot buffers
+│   └── shared_table:analytics/         # Shared table hot buffers
 │
-├── user_bob/                            # Bob's isolated storage
-│   ├── batch-*.parquet                 # Bob's messages
-│   └── ...
+├── user/{user_id}/                      # Per-user Parquet storage
+│   ├── messages/
+│   │   ├── batch-20251020-001.parquet  # Flushed user data
+│   │   └── batch-20251020-002.parquet
+│   └── conversations/
+│       └── batch-*.parquet
 │
-└── shared/                              # Shared group content
-    └── conversations/
-        └── conv_abc123/                # Group conversation
-            ├── msg-789.bin             # Large messages (stored once)
-            └── media-101.jpg           # Media files (stored once)
+└── shared/{table_name}/                 # Shared table Parquet storage
+    ├── batch-20251020-001.parquet      # Flushed shared data
+    └── batch-20251020-002.parquet
 ```
 
 ### Data Flow
@@ -173,43 +279,123 @@ Subscribe to your own message stream. Receive notifications within 500ms of new 
 
 ## 🚀 Quick Start
 
-### Query Messages (SQL)
+### Installation
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/query \
-  -H "Authorization: Bearer <JWT_TOKEN>" \
+# Clone the repository
+git clone https://github.com/jamals86/KalamDB.git
+cd KalamDB/backend
+
+# Build the server
+cargo build --release --bin kalamdb-server
+
+# Run the server (uses config.toml or defaults)
+cargo run --release --bin kalamdb-server
+```
+
+See [Quick Start Guide](docs/QUICK_START.md) for detailed setup instructions.
+
+### Basic Usage
+
+#### 1. Create a Namespace and Table
+
+```bash
+curl -X POST http://localhost:8080/api/sql \
+  -H "X-User-Id: user1" \
   -H "Content-Type: application/json" \
   -d '{
-    "sql": "SELECT * FROM user_alice.messages WHERE conversation_id = '\''conv_123'\'' LIMIT 50"
+    "sql": "CREATE NAMESPACE IF NOT EXISTS app"
+  }'
+
+curl -X POST http://localhost:8080/api/sql \
+  -H "X-User-Id: user1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sql": "CREATE USER TABLE app.messages (id BIGINT, content TEXT, timestamp TIMESTAMP) FLUSH POLICY ROW_LIMIT 1000"
   }'
 ```
 
-### Insert Message
+#### 2. Insert and Query Data
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/query \
-  -H "Authorization: Bearer <JWT_TOKEN>" \
+# Insert data (goes to RocksDB hot buffer)
+curl -X POST http://localhost:8080/api/sql \
+  -H "X-User-Id: user1" \
   -H "Content-Type: application/json" \
   -d '{
-    "sql": "INSERT INTO conversations (conversation_id, conversation_type, from, content, metadata) VALUES ('\''conv_123'\'', '\''ai'\'', '\''user_alice'\'', '\''Hello AI!'\'', '{\"role\":\"user\"}')"
+    "sql": "INSERT INTO app.messages (id, content, timestamp) VALUES (1, '\''Hello World'\'', NOW())"
+  }'
+
+# Query data (reads from hot + cold storage)
+curl -X POST http://localhost:8080/api/sql \
+  -H "X-User-Id: user1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sql": "SELECT * FROM app.messages ORDER BY timestamp DESC LIMIT 10"
   }'
 ```
 
-### Real-time Subscription (WebSocket)
+#### 3. Subscribe to Live Updates (WebSocket)
 
 ```javascript
-const ws = new WebSocket('ws://localhost:8080/ws?token=<JWT_TOKEN>');
+const ws = new WebSocket('ws://localhost:8080/ws');
 
+// Subscribe to live queries
 ws.send(JSON.stringify({
-  type: 'subscribe',
-  userId: 'user_alice',
-  lastMsgId: 1234567890 // Resume from last known message
+  subscriptions: [{
+    query_id: "sub1",
+    sql: "SELECT * FROM app.messages WHERE timestamp > NOW() - INTERVAL '\''5 minutes'\''",
+    options: { last_rows: 10 }
+  }]
 }));
 
+// Receive real-time notifications
 ws.onmessage = (event) => {
-  const msg = JSON.parse(event.data);
-  console.log('New message:', msg);
+  const notification = JSON.parse(event.data);
+  console.log('Change detected:', notification.type, notification.data);
+  // notification.type: "INSERT" | "UPDATE" | "DELETE" | "FLUSH"
 };
+```
+
+### Common SQL Commands
+
+```sql
+-- Namespace management
+CREATE NAMESPACE app;
+DROP NAMESPACE app;
+
+-- User tables (one table per user)
+CREATE USER TABLE app.messages (
+  id BIGINT,
+  content TEXT,
+  created_at TIMESTAMP
+) FLUSH POLICY ROW_LIMIT 1000;
+
+-- Shared tables (global data)
+CREATE SHARED TABLE app.analytics (
+  event_name TEXT,
+  count BIGINT,
+  timestamp TIMESTAMP
+) FLUSH POLICY TIME_INTERVAL 300;
+
+-- Stream tables (ephemeral, memory-only)
+CREATE STREAM TABLE app.events (
+  event_id TEXT,
+  data TEXT
+) RETENTION 10 EPHEMERAL MAX_BUFFER 5000;
+
+-- Schema evolution
+ALTER TABLE app.messages ADD COLUMN author TEXT;
+ALTER TABLE app.messages DROP COLUMN author;
+
+-- Backup and restore
+BACKUP DATABASE app TO '/backups/app-20251020';
+RESTORE DATABASE app FROM '/backups/app-20251020';
+
+-- Catalog browsing
+SHOW TABLES IN app;
+DESCRIBE TABLE app.messages;
+SHOW STATS FOR TABLE app.messages;
 ```
 
 ---
@@ -292,17 +478,39 @@ From [`constitution.md`](.specify/memory/constitution.md):
 
 ## 🎯 Roadmap
 
-- [x] Complete specification design
-- [x] SQL-first API architecture
-- [x] Per-user table multi-tenancy model
-- [x] Message duplication strategy
-- [x] Media file support
-- [ ] RocksDB storage implementation
-- [ ] DataFusion SQL engine integration
-- [ ] Parquet consolidation
-- [ ] WebSocket real-time streaming
+### ✅ Completed (Phase 1-16)
+- [x] Complete specification design (002-simple-kalamdb)
+- [x] Three-layer architecture (kalamdb-core → kalamdb-sql + kalamdb-store → RocksDB)
+- [x] RocksDB storage implementation with column family architecture
+- [x] DataFusion SQL engine integration
+- [x] Three table types (User, Shared, Stream)
+- [x] Schema evolution (ALTER TABLE with versioning)
+- [x] Configurable flush policies (row-based, time-based, combined)
+- [x] Parquet consolidation (hot → cold storage)
+- [x] WebSocket live query subscriptions with change tracking
+- [x] System tables (namespaces, tables, schemas, storage_locations, live_queries, jobs, users)
+- [x] Backup and restore (namespace-level with Parquet file copy)
+- [x] Catalog browsing (SHOW TABLES, DESCRIBE TABLE, SHOW STATS)
+- [x] Integration tests and quickstart script (32 automated tests)
+
+### 🚧 In Progress (Phase 17 - Polish)
+- [ ] Enhanced error handling (✅ error types added, integration pending)
+- [ ] Configuration improvements (✅ RocksDB settings, ✅ environment variables)
+- [ ] Structured logging for all operations
+- [ ] Request/response logging (REST API + WebSocket)
+- [ ] Performance optimizations (connection pooling, schema cache, query cache)
+- [ ] Parquet bloom filters on _updated column
+- [ ] Metrics collection (query latency, flush duration, WebSocket throughput)
+- [ ] WebSocket authentication and authorization
+- [ ] Rate limiting (per user, per connection)
+- [ ] Comprehensive documentation (✅ README updated, API docs, ADRs pending)
+
+### 📅 Future (Post Phase 17)
+- [ ] Distributed replication (system.nodes table, tag-based routing)
+- [ ] Incremental backups
 - [ ] Admin web UI
 - [ ] Kubernetes deployment
+- [ ] Cloud storage backends (S3, Azure Blob, GCS)
 
 ---
 

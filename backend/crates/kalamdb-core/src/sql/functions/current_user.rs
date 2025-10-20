@@ -94,15 +94,15 @@ mod tests {
         let namespace_id = NamespaceId::new("test_namespace".to_string());
         let table_cache = TableCache::new();
         let session_state = KalamSessionState::new(user_id.clone(), namespace_id, table_cache);
-        
+
         let func_impl = CurrentUserFunction::with_session_state(&session_state);
         let func = ScalarUDF::new_from_impl(func_impl.clone());
         assert_eq!(func.name(), "CURRENT_USER");
-        
+
         // Test invocation
         let result = func_impl.invoke(&[]);
         assert!(result.is_ok());
-        
+
         if let Ok(ColumnarValue::Array(arr)) = result {
             let string_array = arr.as_any().downcast_ref::<StringArray>().unwrap();
             assert_eq!(string_array.len(), 1);
@@ -115,7 +115,9 @@ mod tests {
     #[test]
     fn test_current_user_with_arguments_fails() {
         let func_impl = CurrentUserFunction::new();
-        let args = vec![ColumnarValue::Array(Arc::new(StringArray::from(vec!["arg"])))];
+        let args = vec![ColumnarValue::Array(Arc::new(StringArray::from(vec![
+            "arg",
+        ])))];
         let result = func_impl.invoke(&args);
         assert!(result.is_err());
     }

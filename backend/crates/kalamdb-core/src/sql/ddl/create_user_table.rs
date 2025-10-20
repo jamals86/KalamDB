@@ -49,13 +49,13 @@ impl CreateUserTableStatement {
         let normalized_sql = sql
             .replace("USER TABLE", "TABLE")
             // Remove FLUSH clauses (will be parsed separately from original SQL)
-            .replace(|c| c == '\n' || c == '\r', " "); // Normalize line breaks first
-        
+            .replace(['\n', '\r'], " "); // Normalize line breaks first
+
         // Remove FLUSH clause using regex
         use regex::Regex;
         let flush_re = Regex::new(r"(?i)\s+FLUSH\s+(ROWS|SECONDS|BYTES)\s+\d+").unwrap();
         let normalized_sql = flush_re.replace_all(&normalized_sql, "").to_string();
-        
+
         let dialect = GenericDialect {};
         let statements = Parser::parse_sql(&dialect, &normalized_sql)
             .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
@@ -71,25 +71,34 @@ impl CreateUserTableStatement {
     }
 
     /// Parse the CREATE TABLE statement
-    fn parse_statement(stmt: &Statement, current_namespace: &NamespaceId, original_sql: &str) -> Result<Self, KalamDbError> {
+    fn parse_statement(
+        stmt: &Statement,
+        current_namespace: &NamespaceId,
+        original_sql: &str,
+    ) -> Result<Self, KalamDbError> {
         match stmt {
-            Statement::CreateTable { name, columns, if_not_exists, .. } => {
+            Statement::CreateTable {
+                name,
+                columns,
+                if_not_exists,
+                ..
+            } => {
                 // Extract table name
                 let table_name = Self::extract_table_name(name)?;
-                
+
                 // Extract namespace from qualified name, or use current_namespace
                 let namespace_id = if let Some(ns) = Self::extract_namespace(name) {
                     NamespaceId::new(ns)
                 } else {
                     current_namespace.clone()
                 };
-                
+
                 // Parse schema from columns
                 let schema = Self::parse_schema(columns)?;
-                
+
                 // Parse FLUSH policy from original SQL (if present)
                 let flush_policy = Self::parse_flush_policy(original_sql)?;
-                
+
                 Ok(CreateUserTableStatement {
                     table_name: TableName::new(table_name),
                     namespace_id,
@@ -111,37 +120,41 @@ impl CreateUserTableStatement {
     fn parse_flush_policy(sql: &str) -> Result<Option<crate::flush::FlushPolicy>, KalamDbError> {
         use crate::flush::FlushPolicy;
         use regex::Regex;
-        
+
         // Look for FLUSH ROWS <number>
         let rows_re = Regex::new(r"(?i)FLUSH\s+ROWS\s+(\d+)").unwrap();
         if let Some(caps) = rows_re.captures(sql) {
-            let count: u32 = caps[1].parse()
+            let count: u32 = caps[1]
+                .parse()
                 .map_err(|_| KalamDbError::InvalidSql("Invalid FLUSH ROWS value".to_string()))?;
             return Ok(Some(FlushPolicy::RowLimit { row_limit: count }));
         }
-        
+
         // Look for FLUSH SECONDS <number>
         let seconds_re = Regex::new(r"(?i)FLUSH\s+SECONDS\s+(\d+)").unwrap();
         if let Some(caps) = seconds_re.captures(sql) {
-            let secs: u32 = caps[1].parse()
+            let secs: u32 = caps[1]
+                .parse()
                 .map_err(|_| KalamDbError::InvalidSql("Invalid FLUSH SECONDS value".to_string()))?;
-            return Ok(Some(FlushPolicy::TimeInterval { interval_seconds: secs }));
+            return Ok(Some(FlushPolicy::TimeInterval {
+                interval_seconds: secs,
+            }));
         }
-        
+
         // FLUSH BYTES is not supported by current FlushPolicy - ignore it
-        
+
         Ok(None)
     }
 
     /// Extract table name from object name
-    fn extract_table_name(name: &datafusion::sql::sqlparser::ast::ObjectName) -> Result<String, KalamDbError> {
+    fn extract_table_name(
+        name: &datafusion::sql::sqlparser::ast::ObjectName,
+    ) -> Result<String, KalamDbError> {
         let parts = &name.0;
         if parts.is_empty() {
-            return Err(KalamDbError::InvalidSql(
-                "Empty table name".to_string(),
-            ));
+            return Err(KalamDbError::InvalidSql("Empty table name".to_string()));
         }
-        
+
         // Take the last part as table name (handles both "table" and "namespace.table")
         Ok(parts.last().unwrap().value.clone())
     }
@@ -166,10 +179,12 @@ impl CreateUserTableStatement {
                 Ok(Field::new(
                     col.name.value.clone(),
                     data_type,
-                    col.options.iter().any(|opt| matches!(
-                        opt.option,
-                        datafusion::sql::sqlparser::ast::ColumnOption::Null
-                    )),
+                    col.options.iter().any(|opt| {
+                        matches!(
+                            opt.option,
+                            datafusion::sql::sqlparser::ast::ColumnOption::Null
+                        )
+                    }),
                 ))
             })
             .collect();
@@ -207,18 +222,27 @@ impl CreateUserTableStatement {
     /// Validate the table name follows naming conventions
     pub fn validate_table_name(&self) -> Result<(), KalamDbError> {
         let name = self.table_name.as_str();
-        
+
         // Must start with lowercase letter
-        if !name.chars().next().map(|c| c.is_ascii_lowercase()).unwrap_or(false) {
+        if !name
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_lowercase())
+            .unwrap_or(false)
+        {
             return Err(KalamDbError::InvalidOperation(
                 "Table name must start with a lowercase letter".to_string(),
             ));
         }
 
         // Can only contain lowercase letters, digits, and underscores
-        if !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
             return Err(KalamDbError::InvalidOperation(
-                "Table name can only contain lowercase letters, digits, and underscores".to_string(),
+                "Table name can only contain lowercase letters, digits, and underscores"
+                    .to_string(),
             ));
         }
 
@@ -234,10 +258,10 @@ mod tests {
     fn test_parse_simple_create_table() {
         let sql = "CREATE TABLE messages (id BIGINT, content TEXT, created_at TIMESTAMP)";
         let namespace = NamespaceId::new("app");
-        
+
         let result = CreateUserTableStatement::parse(sql, &namespace);
         assert!(result.is_ok());
-        
+
         let stmt = result.unwrap();
         assert_eq!(stmt.table_name.as_str(), "messages");
         assert_eq!(stmt.namespace_id, namespace);
@@ -248,10 +272,10 @@ mod tests {
     fn test_parse_with_if_not_exists() {
         let sql = "CREATE TABLE IF NOT EXISTS events (id BIGINT, name TEXT)";
         let namespace = NamespaceId::new("app");
-        
+
         let result = CreateUserTableStatement::parse(sql, &namespace);
         assert!(result.is_ok());
-        
+
         let stmt = result.unwrap();
         assert!(stmt.if_not_exists);
     }
@@ -259,7 +283,7 @@ mod tests {
     #[test]
     fn test_validate_table_name() {
         let namespace = NamespaceId::new("app");
-        
+
         // Valid names
         let valid = CreateUserTableStatement {
             table_name: TableName::new("messages"),

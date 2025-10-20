@@ -25,11 +25,11 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct WebSocketSession {
     /// Unique connection identifier
     pub connection_id: String,
-    
+
     /// Client must send ping at least once per 10 seconds (CLIENT_TIMEOUT),
     /// otherwise we drop connection.
     pub hb: Instant,
-    
+
     /// List of active subscription IDs for this connection
     pub subscriptions: Vec<String>,
 }
@@ -43,7 +43,7 @@ impl WebSocketSession {
             subscriptions: Vec::new(),
         }
     }
-    
+
     /// Start the heartbeat process
     fn hb(&self, ctx: &mut ws::WebsocketContext<Self>) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
@@ -51,13 +51,13 @@ impl WebSocketSession {
             if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
                 // Heartbeat timed out
                 warn!("WebSocket Client heartbeat failed, disconnecting!");
-                
+
                 // Stop actor
                 ctx.stop();
-                
+
                 return;
             }
-            
+
             ctx.ping(b"");
         });
     }
@@ -65,19 +65,19 @@ impl WebSocketSession {
 
 impl Actor for WebSocketSession {
     type Context = ws::WebsocketContext<Self>;
-    
+
     /// Called when the actor starts
     fn started(&mut self, ctx: &mut Self::Context) {
         info!("WebSocket connection established: {}", self.connection_id);
-        
+
         // Start heartbeat process
         self.hb(ctx);
     }
-    
+
     /// Called when the actor stops
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         info!("WebSocket connection closed: {}", self.connection_id);
-        
+
         // TODO: Cleanup subscriptions from live query manager
         // This will be implemented in T085 (subscription cleanup)
     }
@@ -96,21 +96,24 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
             }
             Ok(ws::Message::Text(text)) => {
                 debug!("Received text message: {}", text);
-                
+
                 // Parse subscription request
                 match serde_json::from_str::<SubscriptionRequest>(&text) {
                     Ok(sub_req) => {
                         info!("Registering {} subscriptions", sub_req.subscriptions.len());
-                        
+
                         // Register each subscription
                         for subscription in sub_req.subscriptions {
-                            info!("Subscription registered: id={}, sql={}", subscription.id, subscription.sql);
+                            info!(
+                                "Subscription registered: id={}, sql={}",
+                                subscription.id, subscription.sql
+                            );
                             self.subscriptions.push(subscription.id.clone());
-                            
+
                             // TODO: Register in live query manager (T054)
                             // TODO: Fetch initial data if last_rows is set (T052)
                         }
-                        
+
                         // Send acknowledgment
                         let ack = serde_json::json!({
                             "type": "ack",
@@ -120,13 +123,13 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                     }
                     Err(e) => {
                         error!("Failed to parse subscription request: {}", e);
-                        
+
                         let error_msg = Notification::error(
                             "unknown".to_string(),
                             "INVALID_SUBSCRIPTION".to_string(),
                             format!("Failed to parse subscription request: {}", e),
                         );
-                        
+
                         if let Ok(json) = serde_json::to_string(&error_msg) {
                             ctx.text(json);
                         }
@@ -157,7 +160,7 @@ pub struct SendNotification(pub Notification);
 
 impl Handler<SendNotification> for WebSocketSession {
     type Result = ();
-    
+
     fn handle(&mut self, msg: SendNotification, ctx: &mut Self::Context) {
         if let Ok(json) = serde_json::to_string(&msg.0) {
             ctx.text(json);
@@ -168,14 +171,14 @@ impl Handler<SendNotification> for WebSocketSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_websocket_session_creation() {
         let session = WebSocketSession::new("test-conn-123".to_string());
         assert_eq!(session.connection_id, "test-conn-123");
         assert_eq!(session.subscriptions.len(), 0);
     }
-    
+
     #[test]
     fn test_heartbeat_constants() {
         assert_eq!(HEARTBEAT_INTERVAL, Duration::from_secs(5));

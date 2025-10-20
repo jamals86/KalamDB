@@ -66,7 +66,12 @@ impl StreamEvictionJob {
         kalam_sql: Arc<KalamSql>,
         job_executor: Arc<JobExecutor>,
     ) -> Self {
-        Self::new(stream_store, kalam_sql, job_executor, StreamEvictionConfig::default())
+        Self::new(
+            stream_store,
+            kalam_sql,
+            job_executor,
+            StreamEvictionConfig::default(),
+        )
     }
 
     /// Run eviction for all stream tables
@@ -115,7 +120,11 @@ impl StreamEvictionJob {
         let cutoff_ms = now_ms - retention_period_ms;
 
         // Execute eviction through job executor for monitoring
-        let job_id = format!("stream-evict-{}:{}", namespace_id.as_str(), table_name.as_str());
+        let job_id = format!(
+            "stream-evict-{}:{}",
+            namespace_id.as_str(),
+            table_name.as_str()
+        );
         let job_type = "stream_eviction".to_string();
         let target_resource = Some(format!("{}:{}", namespace_id.as_str(), table_name.as_str()));
 
@@ -134,7 +143,10 @@ impl StreamEvictionJob {
                     .evict_older_than(&namespace_id_str, &table_name_str, cutoff_ms)
                     .map_err(|e| format!("Eviction failed: {}", e))?;
 
-                Ok(format!("Evicted {} events (cutoff: {}ms)", deleted_count, cutoff_ms))
+                Ok(format!(
+                    "Evicted {} events (cutoff: {}ms)",
+                    deleted_count, cutoff_ms
+                ))
             },
         )?;
 
@@ -176,7 +188,11 @@ impl StreamEvictionJob {
         let stream_store = Arc::clone(&self.stream_store);
 
         // Execute eviction through job executor for monitoring
-        let job_id = format!("stream-max-buffer-{}:{}", namespace_id.as_str(), table_name.as_str());
+        let job_id = format!(
+            "stream-max-buffer-{}:{}",
+            namespace_id.as_str(),
+            table_name.as_str()
+        );
         let job_type = "stream_max_buffer".to_string();
         let target_resource = Some(format!("{}:{}", namespace_id.as_str(), table_name.as_str()));
 
@@ -195,7 +211,10 @@ impl StreamEvictionJob {
 
                 if total_count <= max_events {
                     // No eviction needed
-                    return Ok(format!("No eviction needed ({} <= {})", total_count, max_events));
+                    return Ok(format!(
+                        "No eviction needed ({} <= {})",
+                        total_count, max_events
+                    ));
                 }
 
                 // Sort by timestamp (already sorted from scan, but ensure it)
@@ -273,11 +292,8 @@ mod tests {
         let jobs_provider = Arc::new(JobsTableProvider::new(Arc::clone(&kalam_sql)));
         let job_executor = Arc::new(JobExecutor::new(jobs_provider, "test-node".to_string()));
 
-        let eviction_job = StreamEvictionJob::with_defaults(
-            Arc::clone(&stream_store),
-            kalam_sql,
-            job_executor,
-        );
+        let eviction_job =
+            StreamEvictionJob::with_defaults(Arc::clone(&stream_store), kalam_sql, job_executor);
 
         (eviction_job, stream_store, temp_dir)
     }
@@ -305,12 +321,8 @@ mod tests {
             node_id: "custom-node".to_string(),
         };
 
-        let eviction_job = StreamEvictionJob::new(
-            stream_store,
-            kalam_sql,
-            job_executor,
-            config.clone(),
-        );
+        let eviction_job =
+            StreamEvictionJob::new(stream_store, kalam_sql, job_executor, config.clone());
 
         assert_eq!(eviction_job.config().eviction_interval_secs, 30);
         assert_eq!(eviction_job.config().node_id, "custom-node");
@@ -327,13 +339,13 @@ mod tests {
         // Table doesn't exist yet - the job executor will capture the error
         // and return a Failure result, which we convert to 0 evicted
         let result = eviction_job.evict_for_table(namespace_id, table_name, retention_period_ms);
-        
+
         // The job should complete but report 0 evictions (or error)
         // Since the CF doesn't exist, evict_older_than will fail, job_fn returns Err,
         // execute_job returns Ok(JobResult::Failure(...)), and we return Ok(0)
         match result {
             Ok(count) => assert_eq!(count, 0),
-            Err(_) => {}, // Also acceptable - depends on error handling
+            Err(_) => {} // Also acceptable - depends on error handling
         }
     }
 
@@ -361,11 +373,11 @@ mod tests {
 
         // Table doesn't exist, should handle gracefully
         let result = eviction_job.evict_max_buffer(namespace_id, table_name, max_events);
-        
+
         // Should complete with 0 evictions or error
         match result {
             Ok(count) => assert_eq!(count, 0),
-            Err(_) => {}, // Also acceptable for missing table
+            Err(_) => {} // Also acceptable for missing table
         }
     }
 
@@ -373,10 +385,10 @@ mod tests {
     fn test_evict_max_buffer_naming() {
         // Verify that evict_max_buffer exists and can be called
         let (eviction_job, _stream_store, _temp_dir) = setup_eviction_job();
-        
+
         let namespace_id = NamespaceId::new("test");
         let table_name = TableName::new("events");
-        
+
         // This should not panic - method exists with correct signature
         let _ = eviction_job.evict_max_buffer(namespace_id, table_name, 50);
     }

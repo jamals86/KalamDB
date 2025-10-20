@@ -34,16 +34,16 @@ pub enum LocationType {
 pub struct StorageLocation {
     /// Unique location identifier
     pub location_name: String,
-    
+
     /// Type of storage (Filesystem or S3)
     pub location_type: LocationType,
-    
+
     /// Path template (may include ${user_id} placeholder)
     pub path: String,
-    
+
     /// Reference to credentials (for S3)
     pub credentials_ref: Option<String>,
-    
+
     /// Number of tables using this location
     #[serde(default)]
     pub usage_count: u32,
@@ -69,12 +69,22 @@ impl StorageLocation {
     ///
     /// Name must match regex: ^[a-z][a-z0-9_]*$
     pub fn validate_name(name: &str) -> Result<(), String> {
-        if !name.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
+        if !name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase())
+        {
             return Err("Location name must start with a lowercase letter".to_string());
         }
 
-        if !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
-            return Err("Location name can only contain lowercase letters, digits, and underscores".to_string());
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
+            return Err(
+                "Location name can only contain lowercase letters, digits, and underscores"
+                    .to_string(),
+            );
         }
 
         Ok(())
@@ -173,23 +183,14 @@ mod tests {
             "/data/${user_id}/tables",
         );
 
-        assert_eq!(
-            location.substitute_path("user123"),
-            "/data/user123/tables"
-        );
+        assert_eq!(location.substitute_path("user123"), "/data/user123/tables");
     }
 
     #[test]
     fn test_substitute_path_no_placeholder() {
-        let location = StorageLocation::new(
-            "shared_storage",
-            LocationType::Filesystem,
-            "/data/shared",
-        );
+        let location =
+            StorageLocation::new("shared_storage", LocationType::Filesystem, "/data/shared");
 
-        assert_eq!(
-            location.substitute_path("user123"),
-            "/data/shared"
-        );
+        assert_eq!(location.substitute_path("user123"), "/data/shared");
     }
 }

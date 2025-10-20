@@ -16,9 +16,7 @@ kalamdb-store = { path = "../kalamdb-store" }
 
 # Apache Arrow ecosystem
 arrow.workspace = true
-parquet.workspace = true
 datafusion.workspace = true
-sqlparser.workspace = true
 
 # Async
 async-trait = "0.1"

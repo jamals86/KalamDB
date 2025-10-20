@@ -12,7 +12,7 @@ use crate::error::KalamDbError;
 pub struct DropNamespaceStatement {
     /// Namespace name to drop
     pub name: NamespaceId,
-    
+
     /// If true, don't error if namespace doesn't exist
     pub if_exists: bool,
 }
@@ -25,7 +25,7 @@ impl DropNamespaceStatement {
     /// - DROP NAMESPACE IF EXISTS name
     pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
         let sql_upper = sql.trim().to_uppercase();
-        
+
         if !sql_upper.starts_with("DROP NAMESPACE") {
             return Err(KalamDbError::InvalidSql(
                 "Expected DROP NAMESPACE statement".to_string(),
@@ -33,7 +33,7 @@ impl DropNamespaceStatement {
         }
 
         let if_exists = sql_upper.contains("IF EXISTS");
-        
+
         // Extract namespace name
         let name_part = if if_exists {
             sql.trim()
@@ -54,9 +54,7 @@ impl DropNamespaceStatement {
 
         let name = name_part
             .and_then(|s| s.split_whitespace().next())
-            .ok_or_else(|| {
-                KalamDbError::InvalidSql("Namespace name is required".to_string())
-            })?;
+            .ok_or_else(|| KalamDbError::InvalidSql("Namespace name is required".to_string()))?;
 
         Ok(Self {
             name: NamespaceId::new(name),

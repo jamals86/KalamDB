@@ -9,6 +9,6 @@ pub mod trigger;
 pub mod user_table_flush;
 
 pub use policy::FlushPolicy;
-pub use shared_table_flush::{SharedTableFlushJob, FlushJobResult as SharedFlushJobResult};
+pub use shared_table_flush::{FlushJobResult as SharedFlushJobResult, SharedTableFlushJob};
 pub use trigger::{FlushTriggerMonitor, FlushTriggerState};
 pub use user_table_flush::{FlushJobResult, UserTableFlushJob};

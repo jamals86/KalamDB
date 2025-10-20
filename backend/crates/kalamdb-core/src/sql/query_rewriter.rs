@@ -19,15 +19,15 @@ impl QueryRewriter {
     /// System and stream tables are not filtered.
     pub fn rewrite_query(sql: &str) -> Result<String, String> {
         let dialect = GenericDialect {};
-        
+
         // Parse the SQL
-        let statements = Parser::parse_sql(&dialect, sql)
-            .map_err(|e| format!("Failed to parse SQL: {}", e))?;
-        
+        let statements =
+            Parser::parse_sql(&dialect, sql).map_err(|e| format!("Failed to parse SQL: {}", e))?;
+
         if statements.is_empty() {
             return Err("No SQL statement found".to_string());
         }
-        
+
         // Only rewrite SELECT statements
         let statement = &statements[0];
         match statement {
@@ -44,7 +44,9 @@ impl QueryRewriter {
     }
 
     /// Add _deleted = false filter to a query
-    fn add_deleted_filter(query: &mut datafusion::sql::sqlparser::ast::Query) -> Result<(), String> {
+    fn add_deleted_filter(
+        query: &mut datafusion::sql::sqlparser::ast::Query,
+    ) -> Result<(), String> {
         // Only process simple SELECT queries for now
         if let SetExpr::Select(select) = &mut *query.body {
             // Check if the query is on a table that needs filtering
@@ -52,7 +54,7 @@ impl QueryRewriter {
                 Self::inject_deleted_filter(select);
             }
         }
-        
+
         Ok(())
     }
 
@@ -60,14 +62,14 @@ impl QueryRewriter {
     fn should_add_filter(select: &Select) -> bool {
         // For now, add to all SELECT queries
         // In the future, we'll check the table type (exclude system and stream tables)
-        
+
         // Don't add filter if it already exists
         if let Some(ref selection) = select.selection {
             if Self::has_deleted_filter(selection) {
                 return false;
             }
         }
-        
+
         true
     }
 
@@ -110,7 +112,7 @@ mod tests {
     fn test_rewrite_simple_select() {
         let sql = "SELECT * FROM messages";
         let rewritten = QueryRewriter::rewrite_query(sql).unwrap();
-        
+
         // Verify _deleted filter was added
         assert!(rewritten.contains("_deleted"));
         assert!(rewritten.contains("false"));
@@ -120,7 +122,7 @@ mod tests {
     fn test_rewrite_with_existing_where() {
         let sql = "SELECT * FROM messages WHERE user_id = 'user1'";
         let rewritten = QueryRewriter::rewrite_query(sql).unwrap();
-        
+
         // Verify _deleted filter was added with AND
         assert!(rewritten.contains("_deleted"));
         assert!(rewritten.contains("AND"));
@@ -130,7 +132,7 @@ mod tests {
     fn test_no_duplicate_filter() {
         let sql = "SELECT * FROM messages WHERE _deleted = false";
         let rewritten = QueryRewriter::rewrite_query(sql).unwrap();
-        
+
         // Verify no duplicate filter
         let count = rewritten.matches("_deleted").count();
         assert_eq!(count, 1);
@@ -140,7 +142,7 @@ mod tests {
     fn test_non_select_passthrough() {
         let sql = "INSERT INTO messages (content) VALUES ('test')";
         let rewritten = QueryRewriter::rewrite_query(sql).unwrap();
-        
+
         // Verify INSERT is not modified
         assert!(!rewritten.contains("_deleted"));
     }

@@ -7,7 +7,7 @@
 //! - Resolving location references
 //! - Managing usage counts
 
-use crate::catalog::{StorageLocation, LocationType, UserId};
+use crate::catalog::{LocationType, StorageLocation, UserId};
 use crate::error::KalamDbError;
 use crate::tables::system::{StorageLocationRecord, StorageLocationsTableProvider};
 use std::path::Path;
@@ -48,15 +48,15 @@ impl StorageLocationService {
     ) -> Result<(), KalamDbError> {
         let location_name = location_name.into();
         let path = path.into();
-        
+
         // Validate location name format
         StorageLocation::validate_name(&location_name)?;
-        
+
         // Validate path accessibility if requested
         if validate_accessibility {
             self.validate_path_accessibility(&path, &location_type)?;
         }
-        
+
         let now = chrono::Utc::now().timestamp_millis();
         let record = StorageLocationRecord {
             location_name,
@@ -67,7 +67,7 @@ impl StorageLocationService {
             created_at: now,
             updated_at: now,
         };
-        
+
         self.provider.insert_location(record)
     }
 
@@ -86,15 +86,12 @@ impl StorageLocationService {
         validate_accessibility: bool,
     ) -> Result<(), KalamDbError> {
         let location_name = location_name.into();
-        
+
         // Get existing location
-        let mut location = self.provider
-            .get_location(&location_name)?
-            .ok_or_else(|| KalamDbError::NotFound(format!(
-                "Storage location '{}' not found",
-                location_name
-            )))?;
-        
+        let mut location = self.provider.get_location(&location_name)?.ok_or_else(|| {
+            KalamDbError::NotFound(format!("Storage location '{}' not found", location_name))
+        })?;
+
         // Update fields if provided
         if let Some(new_path) = path {
             if validate_accessibility {
@@ -107,13 +104,13 @@ impl StorageLocationService {
             }
             location.path = new_path;
         }
-        
+
         if let Some(new_creds) = credentials_ref {
             location.credentials_ref = new_creds;
         }
-        
+
         location.updated_at = chrono::Utc::now().timestamp_millis();
-        
+
         self.provider.update_location(location)
     }
 
@@ -131,7 +128,10 @@ impl StorageLocationService {
     }
 
     /// Get a storage location by name
-    pub fn get(&self, location_name: impl Into<String>) -> Result<Option<StorageLocationRecord>, KalamDbError> {
+    pub fn get(
+        &self,
+        location_name: impl Into<String>,
+    ) -> Result<Option<StorageLocationRecord>, KalamDbError> {
         let location_name = location_name.into();
         self.provider.get_location(&location_name)
     }
@@ -139,20 +139,48 @@ impl StorageLocationService {
     /// List all storage locations
     pub fn list(&self) -> Result<Vec<StorageLocationRecord>, KalamDbError> {
         let batch = self.provider.scan_all_locations()?;
-        
+
         // Extract locations from RecordBatch
         let mut locations = Vec::new();
-        
-        use datafusion::arrow::array::{Array, StringArray, Int64Array, TimestampMillisecondArray};
-        
-        let location_names = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-        let location_types = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
-        let paths = batch.column(2).as_any().downcast_ref::<StringArray>().unwrap();
-        let credentials_refs = batch.column(3).as_any().downcast_ref::<StringArray>().unwrap();
-        let usage_counts = batch.column(4).as_any().downcast_ref::<Int64Array>().unwrap();
-        let created_ats = batch.column(5).as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
-        let updated_ats = batch.column(6).as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
-        
+
+        use datafusion::arrow::array::{Array, Int64Array, StringArray, TimestampMillisecondArray};
+
+        let location_names = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let location_types = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let paths = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let credentials_refs = batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let usage_counts = batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let created_ats = batch
+            .column(5)
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .unwrap();
+        let updated_ats = batch
+            .column(6)
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .unwrap();
+
         for i in 0..batch.num_rows() {
             locations.push(StorageLocationRecord {
                 location_name: location_names.value(i).to_string(),
@@ -168,7 +196,7 @@ impl StorageLocationService {
                 updated_at: updated_ats.value(i),
             });
         }
-        
+
         Ok(locations)
     }
 
@@ -182,13 +210,10 @@ impl StorageLocationService {
     /// * `Err(_)` - Location not found
     pub fn resolve(&self, location_name: impl Into<String>) -> Result<String, KalamDbError> {
         let location_name = location_name.into();
-        let location = self.provider
-            .get_location(&location_name)?
-            .ok_or_else(|| KalamDbError::NotFound(format!(
-                "Storage location '{}' not found",
-                location_name
-            )))?;
-        
+        let location = self.provider.get_location(&location_name)?.ok_or_else(|| {
+            KalamDbError::NotFound(format!("Storage location '{}' not found", location_name))
+        })?;
+
         Ok(location.path)
     }
 
@@ -240,7 +265,7 @@ impl StorageLocationService {
                 // Remove ${user_id} placeholder for validation
                 let test_path = path.replace("${user_id}", "test_user");
                 let path_obj = Path::new(&test_path);
-                
+
                 // Check if parent directory exists
                 if let Some(parent) = path_obj.parent() {
                     if !parent.exists() {
@@ -250,20 +275,20 @@ impl StorageLocationService {
                         )));
                     }
                 }
-                
+
                 Ok(())
             }
             LocationType::S3 => {
                 // Basic S3 path validation
                 if !path.starts_with("s3://") {
                     return Err(KalamDbError::InvalidOperation(
-                        "S3 path must start with 's3://'".to_string()
+                        "S3 path must start with 's3://'".to_string(),
                     ));
                 }
-                
+
                 // TODO: Implement actual S3 connectivity check
                 // For now, just validate the format
-                
+
                 Ok(())
             }
         }
@@ -290,15 +315,17 @@ mod tests {
     #[test]
     fn test_add_location() {
         let (service, temp_dir) = setup_test_service();
-        
-        service.add(
-            "local_disk",
-            LocationType::Filesystem,
-            temp_dir.path().join("${user_id}").to_str().unwrap(),
-            None,
-            false, // Don't validate accessibility
-        ).unwrap();
-        
+
+        service
+            .add(
+                "local_disk",
+                LocationType::Filesystem,
+                temp_dir.path().join("${user_id}").to_str().unwrap(),
+                None,
+                false, // Don't validate accessibility
+            )
+            .unwrap();
+
         let location = service.get("local_disk").unwrap().unwrap();
         assert_eq!(location.location_name, "local_disk");
     }
@@ -306,25 +333,49 @@ mod tests {
     #[test]
     fn test_add_duplicate_location() {
         let (service, temp_dir) = setup_test_service();
-        
-        let path = temp_dir.path().join("${user_id}").to_str().unwrap().to_string();
-        service.add("local_disk", LocationType::Filesystem, &path, None, false).unwrap();
+
+        let path = temp_dir
+            .path()
+            .join("${user_id}")
+            .to_str()
+            .unwrap()
+            .to_string();
+        service
+            .add("local_disk", LocationType::Filesystem, &path, None, false)
+            .unwrap();
         let result = service.add("local_disk", LocationType::Filesystem, path, None, false);
-        
+
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), KalamDbError::AlreadyExists(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            KalamDbError::AlreadyExists(_)
+        ));
     }
 
     #[test]
     fn test_update_location() {
         let (service, temp_dir) = setup_test_service();
-        
-        let path = temp_dir.path().join("${user_id}").to_str().unwrap().to_string();
-        service.add("local_disk", LocationType::Filesystem, &path, None, false).unwrap();
-        
-        let new_path = temp_dir.path().join("new/${user_id}").to_str().unwrap().to_string();
-        service.update("local_disk", Some(new_path.clone()), None, false).unwrap();
-        
+
+        let path = temp_dir
+            .path()
+            .join("${user_id}")
+            .to_str()
+            .unwrap()
+            .to_string();
+        service
+            .add("local_disk", LocationType::Filesystem, &path, None, false)
+            .unwrap();
+
+        let new_path = temp_dir
+            .path()
+            .join("new/${user_id}")
+            .to_str()
+            .unwrap()
+            .to_string();
+        service
+            .update("local_disk", Some(new_path.clone()), None, false)
+            .unwrap();
+
         let location = service.get("local_disk").unwrap().unwrap();
         assert_eq!(location.path, new_path);
     }
@@ -332,11 +383,18 @@ mod tests {
     #[test]
     fn test_delete_location() {
         let (service, temp_dir) = setup_test_service();
-        
-        let path = temp_dir.path().join("${user_id}").to_str().unwrap().to_string();
-        service.add("local_disk", LocationType::Filesystem, path, None, false).unwrap();
+
+        let path = temp_dir
+            .path()
+            .join("${user_id}")
+            .to_str()
+            .unwrap()
+            .to_string();
+        service
+            .add("local_disk", LocationType::Filesystem, path, None, false)
+            .unwrap();
         service.delete("local_disk").unwrap();
-        
+
         let location = service.get("local_disk").unwrap();
         assert!(location.is_none());
     }
@@ -344,26 +402,56 @@ mod tests {
     #[test]
     fn test_delete_location_with_usage() {
         let (service, temp_dir) = setup_test_service();
-        
-        let path = temp_dir.path().join("${user_id}").to_str().unwrap().to_string();
-        service.add("local_disk", LocationType::Filesystem, path, None, false).unwrap();
+
+        let path = temp_dir
+            .path()
+            .join("${user_id}")
+            .to_str()
+            .unwrap()
+            .to_string();
+        service
+            .add("local_disk", LocationType::Filesystem, path, None, false)
+            .unwrap();
         service.increment_usage("local_disk").unwrap();
-        
+
         let result = service.delete("local_disk");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), KalamDbError::InvalidOperation(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            KalamDbError::InvalidOperation(_)
+        ));
     }
 
     #[test]
     fn test_list_locations() {
         let (service, temp_dir) = setup_test_service();
-        
-        let path1 = temp_dir.path().join("loc1/${user_id}").to_str().unwrap().to_string();
-        let path2 = temp_dir.path().join("loc2/${user_id}").to_str().unwrap().to_string();
-        
-        service.add("location1", LocationType::Filesystem, path1, None, false).unwrap();
-        service.add("location2", LocationType::S3, path2, Some("creds".to_string()), false).unwrap();
-        
+
+        let path1 = temp_dir
+            .path()
+            .join("loc1/${user_id}")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let path2 = temp_dir
+            .path()
+            .join("loc2/${user_id}")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        service
+            .add("location1", LocationType::Filesystem, path1, None, false)
+            .unwrap();
+        service
+            .add(
+                "location2",
+                LocationType::S3,
+                path2,
+                Some("creds".to_string()),
+                false,
+            )
+            .unwrap();
+
         let locations = service.list().unwrap();
         assert_eq!(locations.len(), 2);
     }
@@ -371,10 +459,17 @@ mod tests {
     #[test]
     fn test_resolve_location() {
         let (service, temp_dir) = setup_test_service();
-        
-        let path = temp_dir.path().join("${user_id}").to_str().unwrap().to_string();
-        service.add("local_disk", LocationType::Filesystem, &path, None, false).unwrap();
-        
+
+        let path = temp_dir
+            .path()
+            .join("${user_id}")
+            .to_str()
+            .unwrap()
+            .to_string();
+        service
+            .add("local_disk", LocationType::Filesystem, &path, None, false)
+            .unwrap();
+
         let resolved = service.resolve("local_disk").unwrap();
         assert_eq!(resolved, path);
     }
@@ -382,32 +477,51 @@ mod tests {
     #[test]
     fn test_resolve_for_user() {
         let (service, temp_dir) = setup_test_service();
-        
-        let path = temp_dir.path().join("${user_id}/tables").to_str().unwrap().to_string();
-        service.add("local_disk", LocationType::Filesystem, &path, None, false).unwrap();
-        
+
+        let path = temp_dir
+            .path()
+            .join("${user_id}/tables")
+            .to_str()
+            .unwrap()
+            .to_string();
+        service
+            .add("local_disk", LocationType::Filesystem, &path, None, false)
+            .unwrap();
+
         let user_id = UserId::new("user123".to_string());
         let resolved = service.resolve_for_user("local_disk", &user_id).unwrap();
-        
-        let expected = temp_dir.path().join("user123/tables").to_str().unwrap().to_string();
+
+        let expected = temp_dir
+            .path()
+            .join("user123/tables")
+            .to_str()
+            .unwrap()
+            .to_string();
         assert_eq!(resolved, expected);
     }
 
     #[test]
     fn test_usage_count_tracking() {
         let (service, temp_dir) = setup_test_service();
-        
-        let path = temp_dir.path().join("${user_id}").to_str().unwrap().to_string();
-        service.add("local_disk", LocationType::Filesystem, path, None, false).unwrap();
-        
+
+        let path = temp_dir
+            .path()
+            .join("${user_id}")
+            .to_str()
+            .unwrap()
+            .to_string();
+        service
+            .add("local_disk", LocationType::Filesystem, path, None, false)
+            .unwrap();
+
         service.increment_usage("local_disk").unwrap();
         service.increment_usage("local_disk").unwrap();
-        
+
         let location = service.get("local_disk").unwrap().unwrap();
         assert_eq!(location.usage_count, 2);
-        
+
         service.decrement_usage("local_disk").unwrap();
-        
+
         let location = service.get("local_disk").unwrap().unwrap();
         assert_eq!(location.usage_count, 1);
     }
@@ -415,7 +529,7 @@ mod tests {
     #[test]
     fn test_validate_s3_path() {
         let (service, _temp_dir) = setup_test_service();
-        
+
         // Valid S3 path
         let result = service.add(
             "s3_location",
@@ -430,7 +544,7 @@ mod tests {
     #[test]
     fn test_validate_invalid_s3_path() {
         let (service, _temp_dir) = setup_test_service();
-        
+
         // Invalid S3 path (missing s3:// prefix)
         let result = service.add(
             "s3_location",
@@ -440,6 +554,9 @@ mod tests {
             true, // Validate accessibility
         );
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), KalamDbError::InvalidOperation(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            KalamDbError::InvalidOperation(_)
+        ));
     }
 }

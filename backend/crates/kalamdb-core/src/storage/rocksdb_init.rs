@@ -69,8 +69,8 @@ impl RocksDbInit {
         }
 
         // Open the database with all column families
-        let db = DB::open_cf_descriptors(&config.db_options, path, cf_descriptors)
-            .map_err(|e| {
+        let db =
+            DB::open_cf_descriptors(&config.db_options, path, cf_descriptors).map_err(|e| {
                 KalamDbError::Storage(crate::error::StorageError::Other(format!(
                     "Failed to open RocksDB at {}: {}",
                     self.db_path, e

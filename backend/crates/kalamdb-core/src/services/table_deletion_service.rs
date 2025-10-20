@@ -26,13 +26,13 @@ use std::sync::Arc;
 pub struct TableDeletionResult {
     /// Number of Parquet files deleted
     pub files_deleted: usize,
-    
+
     /// Total bytes freed from Parquet files
     pub bytes_freed: u64,
-    
+
     /// Table type that was deleted
     pub table_type: TableType,
-    
+
     /// Job ID tracking this deletion
     pub job_id: String,
 }
@@ -86,7 +86,8 @@ impl TableDeletionService {
         let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
 
         // Check if table exists
-        let table_metadata = self.kalam_sql
+        let table_metadata = self
+            .kalam_sql
             .get_table(&table_id)
             .map_err(|e| KalamDbError::IoError(format!("Failed to get table: {}", e)))?;
 
@@ -112,7 +113,7 @@ impl TableDeletionService {
 
         // Step 3: Delete table data from RocksDB (T169)
         let data_cleanup_result = self.cleanup_table_data(namespace_id, table_name, &table_type);
-        
+
         if let Err(e) = data_cleanup_result {
             // Update job as failed
             self.fail_deletion_job(&job_id, &e.to_string())?;
@@ -121,14 +122,14 @@ impl TableDeletionService {
 
         // Step 4: Delete Parquet files (T170)
         let parquet_result = self.cleanup_parquet_files(&table, &table_type);
-        
+
         let (files_deleted, bytes_freed) = match parquet_result {
             Ok(stats) => stats,
             Err(e) => {
                 // Attempt rollback: restore metadata
                 log::error!("Parquet cleanup failed: {}, attempting rollback", e);
                 self.fail_deletion_job(&job_id, &format!("Parquet cleanup failed: {}", e))?;
-                
+
                 // Note: Data deletion is idempotent, no need to restore
                 // Just fail the operation
                 return Err(e);
@@ -137,7 +138,7 @@ impl TableDeletionService {
 
         // Step 5: Delete metadata (T171)
         let metadata_result = self.cleanup_metadata(&table_id);
-        
+
         if let Err(e) = metadata_result {
             // Log warning but don't rollback (data is already deleted)
             log::warn!("Metadata cleanup failed but data is deleted: {}", e);
@@ -166,7 +167,8 @@ impl TableDeletionService {
 
     /// Check for active subscriptions (T168)
     fn check_active_subscriptions(&self, table_name: &TableName) -> Result<(), KalamDbError> {
-        let live_queries = self.kalam_sql
+        let live_queries = self
+            .kalam_sql
             .scan_all_live_queries()
             .map_err(|e| KalamDbError::IoError(format!("Failed to scan live queries: {}", e)))?;
 
@@ -178,10 +180,12 @@ impl TableDeletionService {
         if !active_subscriptions.is_empty() {
             let subscription_details: Vec<String> = active_subscriptions
                 .iter()
-                .map(|lq| format!(
-                    "connection_id={}, user_id={}, query_id={}",
-                    lq.connection_id, lq.user_id, lq.query_id
-                ))
+                .map(|lq| {
+                    format!(
+                        "connection_id={}, user_id={}, query_id={}",
+                        lq.connection_id, lq.user_id, lq.query_id
+                    )
+                })
                 .collect();
 
             return Err(KalamDbError::Conflict(format!(
@@ -203,27 +207,24 @@ impl TableDeletionService {
         table_type: &TableType,
     ) -> Result<(), KalamDbError> {
         match table_type {
-            TableType::User => {
-                self.user_table_store
-                    .drop_table(namespace_id.as_str(), table_name.as_str())
-                    .map_err(|e| {
-                        KalamDbError::IoError(format!("Failed to drop user table data: {}", e))
-                    })
-            }
-            TableType::Shared => {
-                self.shared_table_store
-                    .drop_table(namespace_id.as_str(), table_name.as_str())
-                    .map_err(|e| {
-                        KalamDbError::IoError(format!("Failed to drop shared table data: {}", e))
-                    })
-            }
-            TableType::Stream => {
-                self.stream_table_store
-                    .drop_table(namespace_id.as_str(), table_name.as_str())
-                    .map_err(|e| {
-                        KalamDbError::IoError(format!("Failed to drop stream table data: {}", e))
-                    })
-            }
+            TableType::User => self
+                .user_table_store
+                .drop_table(namespace_id.as_str(), table_name.as_str())
+                .map_err(|e| {
+                    KalamDbError::IoError(format!("Failed to drop user table data: {}", e))
+                }),
+            TableType::Shared => self
+                .shared_table_store
+                .drop_table(namespace_id.as_str(), table_name.as_str())
+                .map_err(|e| {
+                    KalamDbError::IoError(format!("Failed to drop shared table data: {}", e))
+                }),
+            TableType::Stream => self
+                .stream_table_store
+                .drop_table(namespace_id.as_str(), table_name.as_str())
+                .map_err(|e| {
+                    KalamDbError::IoError(format!("Failed to drop stream table data: {}", e))
+                }),
             TableType::System => {
                 // System tables cannot be dropped
                 Err(KalamDbError::PermissionDenied(
@@ -245,13 +246,10 @@ impl TableDeletionService {
         }
 
         let storage_path = Path::new(&table.storage_location);
-        
+
         // Check if path exists
         if !storage_path.exists() {
-            log::warn!(
-                "Storage path does not exist: {}",
-                table.storage_location
-            );
+            log::warn!("Storage path does not exist: {}", table.storage_location);
             return Ok((0, 0));
         }
 
@@ -262,13 +260,21 @@ impl TableDeletionService {
             TableType::User => {
                 // User tables: iterate directories and delete batch-*.parquet files
                 // Pattern: ${storage_path}/${user_id}/batch-*.parquet
-                self.cleanup_user_parquet_files(storage_path, &mut files_deleted, &mut bytes_freed)?;
+                self.cleanup_user_parquet_files(
+                    storage_path,
+                    &mut files_deleted,
+                    &mut bytes_freed,
+                )?;
             }
             TableType::Shared => {
                 // Shared tables: delete files in shared/${table_name}/ directory
                 // Pattern: ${storage_path}/shared/${table_name}/batch-*.parquet
                 let table_path = storage_path.join("shared").join(&table.table_name);
-                self.cleanup_directory_parquet_files(&table_path, &mut files_deleted, &mut bytes_freed)?;
+                self.cleanup_directory_parquet_files(
+                    &table_path,
+                    &mut files_deleted,
+                    &mut bytes_freed,
+                )?;
             }
             _ => {}
         }
@@ -288,15 +294,17 @@ impl TableDeletionService {
         }
 
         // Iterate over user directories
-        let entries = fs::read_dir(storage_path)
-            .map_err(|e| KalamDbError::IoError(format!("Failed to read storage directory: {}", e)))?;
+        let entries = fs::read_dir(storage_path).map_err(|e| {
+            KalamDbError::IoError(format!("Failed to read storage directory: {}", e))
+        })?;
 
         for entry in entries {
-            let entry = entry
-                .map_err(|e| KalamDbError::IoError(format!("Failed to read directory entry: {}", e)))?;
-            
+            let entry = entry.map_err(|e| {
+                KalamDbError::IoError(format!("Failed to read directory entry: {}", e))
+            })?;
+
             let path = entry.path();
-            
+
             if path.is_dir() {
                 // This should be a user_id directory
                 self.cleanup_directory_parquet_files(&path, files_deleted, bytes_freed)?;
@@ -325,11 +333,11 @@ impl TableDeletionService {
             .map_err(|e| KalamDbError::IoError(format!("Failed to read directory: {}", e)))?;
 
         for entry in entries {
-            let entry = entry
-                .map_err(|e| KalamDbError::IoError(format!("Failed to read entry: {}", e)))?;
-            
+            let entry =
+                entry.map_err(|e| KalamDbError::IoError(format!("Failed to read entry: {}", e)))?;
+
             let path = entry.path();
-            
+
             // Only delete .parquet files that match the batch-* pattern
             if path.is_file()
                 && path.extension().and_then(|s| s.to_str()) == Some("parquet")
@@ -347,9 +355,9 @@ impl TableDeletionService {
                 // Delete the file
                 fs::remove_file(&path)
                     .map_err(|e| KalamDbError::IoError(format!("Failed to delete file: {}", e)))?;
-                
+
                 *files_deleted += 1;
-                
+
                 log::info!("Deleted Parquet file: {}", path.display());
             }
         }
@@ -362,9 +370,7 @@ impl TableDeletionService {
         // Delete table schemas
         self.kalam_sql
             .delete_table_schemas_for_table(table_id)
-            .map_err(|e| {
-                KalamDbError::IoError(format!("Failed to delete table schemas: {}", e))
-            })?;
+            .map_err(|e| KalamDbError::IoError(format!("Failed to delete table schemas: {}", e)))?;
 
         // Delete table metadata
         self.kalam_sql
@@ -377,11 +383,10 @@ impl TableDeletionService {
     /// Decrement storage location usage count (T172)
     fn decrement_storage_usage(&self, location_name: &str) -> Result<(), KalamDbError> {
         // Get current storage location
-        let mut location = self.kalam_sql
+        let mut location = self
+            .kalam_sql
             .get_storage_location(location_name)
-            .map_err(|e| {
-                KalamDbError::IoError(format!("Failed to get storage location: {}", e))
-            })?
+            .map_err(|e| KalamDbError::IoError(format!("Failed to get storage location: {}", e)))?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!("Storage location '{}' not found", location_name))
             })?;
@@ -448,7 +453,8 @@ impl TableDeletionService {
         files_deleted: usize,
         bytes_freed: u64,
     ) -> Result<(), KalamDbError> {
-        let job = self.kalam_sql
+        let job = self
+            .kalam_sql
             .get_job(job_id)
             .map_err(|e| KalamDbError::IoError(format!("Failed to get job: {}", e)))?
             .ok_or_else(|| KalamDbError::NotFound(format!("Job '{}' not found", job_id)))?;
@@ -475,7 +481,8 @@ impl TableDeletionService {
 
     /// Fail deletion job (T173, T174)
     fn fail_deletion_job(&self, job_id: &str, error_message: &str) -> Result<(), KalamDbError> {
-        let job = self.kalam_sql
+        let job = self
+            .kalam_sql
             .get_job(job_id)
             .map_err(|e| KalamDbError::IoError(format!("Failed to get job: {}", e)))?;
 
@@ -512,7 +519,7 @@ mod tests {
             "system_tables",
             "system_table_schemas",
         ];
-        
+
         let test_db = TestDb::new(&cf_names).unwrap();
         let db = Arc::clone(&test_db.db);
 
@@ -529,7 +536,7 @@ mod tests {
     #[test]
     fn test_drop_nonexistent_table_with_if_exists() {
         let (service, _db) = create_test_service();
-        
+
         let result = service.drop_table(
             &NamespaceId::new("test"),
             &TableName::new("nonexistent"),
@@ -544,7 +551,7 @@ mod tests {
     #[test]
     fn test_drop_nonexistent_table_without_if_exists() {
         let (service, _db) = create_test_service();
-        
+
         let result = service.drop_table(
             &NamespaceId::new("test"),
             &TableName::new("nonexistent"),
@@ -559,16 +566,16 @@ mod tests {
     #[test]
     fn test_check_active_subscriptions_empty() {
         let (service, _db) = create_test_service();
-        
+
         let result = service.check_active_subscriptions(&TableName::new("messages"));
-        
+
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_cleanup_table_data_user_table() {
         let (service, _db) = create_test_service();
-        
+
         // This will fail because the column family doesn't exist yet
         // In a real scenario, the table would be created first
         let result = service.cleanup_table_data(
@@ -584,7 +591,7 @@ mod tests {
     #[test]
     fn test_cannot_drop_system_table() {
         let (service, _db) = create_test_service();
-        
+
         let result = service.cleanup_table_data(
             &NamespaceId::new("system"),
             &TableName::new("users"),

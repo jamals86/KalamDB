@@ -94,7 +94,11 @@ pub async fn drop_namespace(server: &TestServer, namespace: &str) -> SqlResponse
 /// ```no_run
 /// fixtures::create_messages_table(&server, "app", Some("user123")).await;
 /// ```
-pub async fn create_messages_table(server: &TestServer, namespace: &str, user_id: Option<&str>) -> SqlResponse {
+pub async fn create_messages_table(
+    server: &TestServer,
+    namespace: &str,
+    user_id: Option<&str>,
+) -> SqlResponse {
     let sql = format!(
         r#"CREATE USER TABLE {}.messages (
             id INT AUTO_INCREMENT,
@@ -191,11 +195,7 @@ pub async fn create_stream_table(
 /// * `server` - Test server instance
 /// * `namespace` - Namespace name
 /// * `table_name` - Table name
-pub async fn drop_table(
-    server: &TestServer,
-    namespace: &str,
-    table_name: &str,
-) -> SqlResponse {
+pub async fn drop_table(server: &TestServer, namespace: &str, table_name: &str) -> SqlResponse {
     let sql = format!("DROP TABLE {}.{}", namespace, table_name);
     server.execute_sql(&sql).await
 }
@@ -219,7 +219,7 @@ pub async fn insert_sample_messages(
     count: usize,
 ) -> Vec<SqlResponse> {
     let mut responses = Vec::new();
-    
+
     for i in 0..count {
         let sql = format!(
             r#"INSERT INTO {}.messages (user_id, content) VALUES ('{}', 'Message {}')"#,
@@ -227,7 +227,7 @@ pub async fn insert_sample_messages(
         );
         responses.push(server.execute_sql(&sql).await);
     }
-    
+
     responses
 }
 
@@ -280,11 +280,7 @@ pub async fn update_message(
 /// * `server` - Test server instance
 /// * `namespace` - Namespace name
 /// * `id` - Message ID
-pub async fn delete_message(
-    server: &TestServer,
-    namespace: &str,
-    id: i32,
-) -> SqlResponse {
+pub async fn delete_message(server: &TestServer, namespace: &str, id: i32) -> SqlResponse {
     let sql = format!(r#"DELETE FROM {}.messages WHERE id = {}"#, namespace, id);
     server.execute_sql(&sql).await
 }
@@ -335,8 +331,8 @@ pub fn generate_user_data(count: usize) -> Vec<(String, String, String)> {
 ///
 /// * `count` - Number of events to generate
 pub fn generate_stream_events(count: usize) -> Vec<(String, String)> {
-    let event_types = vec!["login", "logout", "purchase", "view", "click"];
-    
+    let event_types = ["login", "logout", "purchase", "view", "click"];
+
     (0..count)
         .map(|i| {
             let event_type = event_types[i % event_types.len()].to_string();
@@ -344,8 +340,9 @@ pub fn generate_stream_events(count: usize) -> Vec<(String, String)> {
                 "user_id": format!("user{}", i % 10),
                 "timestamp": chrono::Utc::now().to_rfc3339(),
                 "data": format!("payload_{}", i)
-            }).to_string();
-            
+            })
+            .to_string();
+
             (event_type, payload)
         })
         .collect()
@@ -412,7 +409,7 @@ mod tests {
     async fn test_create_messages_table() {
         let server = TestServer::new().await;
         create_namespace(&server, "app").await;
-        
+
         let response = create_messages_table(&server, "app", Some("user123")).await;
         assert_eq!(response.status, "success");
         assert!(server.table_exists("app", "messages").await);
@@ -423,10 +420,10 @@ mod tests {
         let server = TestServer::new().await;
         create_namespace(&server, "app").await;
         create_messages_table(&server, "app", Some("user123")).await;
-        
+
         let responses = insert_sample_messages(&server, "app", "user123", 5).await;
         assert_eq!(responses.len(), 5);
-        
+
         for response in responses {
             assert_eq!(response.status, "success");
         }
@@ -446,7 +443,7 @@ mod tests {
         let server = TestServer::new().await;
         let result = setup_complete_environment(&server, "test_env").await;
         assert!(result.is_ok());
-        
+
         // Verify all components exist
         assert!(server.namespace_exists("test_env").await);
         assert!(server.table_exists("test_env", "messages").await);

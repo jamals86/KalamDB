@@ -63,7 +63,7 @@ impl UserTableService {
     ) -> Result<TableMetadata, KalamDbError> {
         // Validate table name
         TableMetadata::validate_table_name(stmt.table_name.as_str())
-            .map_err(|e| KalamDbError::InvalidOperation(e))?;
+            .map_err(KalamDbError::InvalidOperation)?;
 
         // Check if table already exists
         if self.table_exists(&stmt.namespace_id, &stmt.table_name)? {
@@ -90,10 +90,8 @@ impl UserTableService {
         let schema = self.inject_system_columns(schema, TableType::User)?;
 
         // 3. Storage location resolution
-        let storage_location = self.resolve_storage_location(
-            &stmt.storage_location,
-            storage_location_service,
-        )?;
+        let storage_location =
+            self.resolve_storage_location(&stmt.storage_location, storage_location_service)?;
 
         // 4. Create schema file (schema_v1.json, manifest.json, current.json)
         self.create_schema_files(
@@ -105,7 +103,7 @@ impl UserTableService {
         )?;
 
         // Note: Column family creation must be done separately via DB instance
-        // because Arc<DB> doesn't allow mutable operations. 
+        // because Arc<DB> doesn't allow mutable operations.
         // The caller should use:
         // db.create_cf(ColumnFamilyManager::column_family_name(...), &opts)
 
@@ -128,7 +126,10 @@ impl UserTableService {
     ///
     /// Adds a snowflake ID field named "id" as the first column if no field named "id" exists.
     /// Uses Int64 type for snowflake IDs.
-    fn inject_auto_increment_field(&self, schema: Arc<Schema>) -> Result<Arc<Schema>, KalamDbError> {
+    fn inject_auto_increment_field(
+        &self,
+        schema: Arc<Schema>,
+    ) -> Result<Arc<Schema>, KalamDbError> {
         // Check if "id" field already exists
         if schema.field_with_name("id").is_ok() {
             // ID field already exists, no injection needed
@@ -180,7 +181,8 @@ impl UserTableService {
         }
 
         if !has_deleted {
-            fields.push(Arc::new(Field::new("_deleted", DataType::Boolean, false))); // Not nullable
+            fields.push(Arc::new(Field::new("_deleted", DataType::Boolean, false)));
+            // Not nullable
         }
 
         Ok(Arc::new(Schema::new(fields)))
@@ -199,7 +201,8 @@ impl UserTableService {
                 // Validate that path contains ${user_id} template variable
                 if !path.contains("${user_id}") {
                     return Err(KalamDbError::InvalidOperation(
-                        "User table storage location must contain ${user_id} template variable".to_string(),
+                        "User table storage location must contain ${user_id} template variable"
+                            .to_string(),
                     ));
                 }
                 Ok(path.clone())
@@ -208,7 +211,8 @@ impl UserTableService {
                 // Resolve location reference via storage location service
                 let _service = storage_location_service.ok_or_else(|| {
                     KalamDbError::InvalidOperation(
-                        "Storage location service required to resolve location references".to_string(),
+                        "Storage location service required to resolve location references"
+                            .to_string(),
                     )
                 })?;
 
@@ -241,7 +245,7 @@ impl UserTableService {
     ) -> Result<(), KalamDbError> {
         // Create schema with options wrapper
         let schema_with_options = ArrowSchemaWithOptions::new(schema.clone());
-        
+
         // Save schema to RocksDB via kalamdb-sql (system_table_schemas CF)
         let schema_json = schema_with_options.to_json()?;
         let schema_str = serde_json::to_string(&schema_json)
@@ -263,15 +267,8 @@ impl UserTableService {
     ///
     /// Returns the name that should be used when creating the column family.
     /// The caller must create the CF using the DB instance directly.
-    pub fn get_column_family_name(
-        namespace: &NamespaceId,
-        table_name: &TableName,
-    ) -> String {
-        ColumnFamilyManager::column_family_name(
-            TableType::User,
-            Some(namespace),
-            table_name,
-        )
+    pub fn get_column_family_name(namespace: &NamespaceId, table_name: &TableName) -> String {
+        ColumnFamilyManager::column_family_name(TableType::User, Some(namespace), table_name)
     }
 
     /// Check if a table exists
@@ -300,12 +297,9 @@ mod tests {
     use kalamdb_store::test_utils::TestDb;
 
     fn setup_test_service() -> UserTableService {
-        let test_db = TestDb::new(&[
-            "system_table_schemas",
-            "system_namespaces",
-            "system_tables"
-        ]).unwrap();
-        
+        let test_db =
+            TestDb::new(&["system_table_schemas", "system_namespaces", "system_tables"]).unwrap();
+
         let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
         UserTableService::new(kalam_sql)
     }
@@ -354,7 +348,9 @@ mod tests {
             Field::new("name", DataType::Utf8, false),
         ]));
 
-        let result = service.inject_system_columns(schema, TableType::User).unwrap();
+        let result = service
+            .inject_system_columns(schema, TableType::User)
+            .unwrap();
         assert_eq!(result.fields().len(), 4); // id, name, _updated, _deleted
         assert_eq!(result.field(2).name(), "_updated");
         assert_eq!(result.field(3).name(), "_deleted");
@@ -372,7 +368,9 @@ mod tests {
         ]));
 
         // Stream tables should NOT get system columns
-        let result = service.inject_system_columns(schema.clone(), TableType::Stream).unwrap();
+        let result = service
+            .inject_system_columns(schema.clone(), TableType::Stream)
+            .unwrap();
         assert_eq!(result.fields().len(), 2); // No change
         assert_eq!(result.field(0).name(), "id");
         assert_eq!(result.field(1).name(), "event");
@@ -392,7 +390,9 @@ mod tests {
     fn test_resolve_storage_location_path() {
         let service = setup_test_service();
 
-        let location = Some(StorageLocation::Path("/data/${user_id}/messages".to_string()));
+        let location = Some(StorageLocation::Path(
+            "/data/${user_id}/messages".to_string(),
+        ));
         let result = service.resolve_storage_location(&location, None).unwrap();
         assert_eq!(result, "/data/${user_id}/messages");
     }

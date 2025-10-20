@@ -13,12 +13,14 @@ Things to add to the spec:
 - Default catalog for system tables is system, no need for a different one
 - instead of relying on rocksdb with features like column-families, make the project generic so we can add any
     type of storage like sled/redis or anything else
-- Maybe its better to have a crate like kalamdb-commons which will be included in all other crates for:
+- Maybe its better to have a crate like kalamdb-commons which will be included in all other crates for (Also add this to the requirements to always keep this in mind):
     - models like user_id/namespace_id/..
     - ids
     - system helpers
     - System tables names instead of having multiple places where we name them
     - Any system things that is shared between or needed in -sql/-store/-core
+    - Also kalamdb-server configs which all other crates might need their models as well
+    - Errors like: backend/crates/kalamdb-core/src/error.rs
 - Make sure the user can't listen to a shared table since this will ruin performance
 - Add crate for kalamdb-live which is responsible for live subscribers logic and it's communicate with the kalamdb-store and kalamdb-sql
 - Instead of having something like this: let cf_name = format!("user_table:{}:{}", namespace_id, table_name); let cf_name = format!("shared_table:{}:{}", namespace_id, table_name);
@@ -32,6 +34,13 @@ Things to add to the spec:
     Instead of from("system") we should pass the exact user_id
 - ShowBackupStatement for example has the same str: "SHOW BACKUP FOR DATABASE" multiple times, change the code to have it as an enum one time
 - In API query result, also return the time took for the query to process, this need to be an option in the configuration toml
+- Whenever flushing to parquet store also a column in the parquet
+    that indicate which schema version is this
+    Check what other columns i need when writing to parquet file 
+    or if it's better to indicate this in the file itself, or if there ability
+    to have attributes or properties inside the parquet itself
+
+
 
 Features:
 - Add CLI tool which is using the API and you can login with specific user to do the actions inside of it, this should be a separate binary
@@ -44,4 +53,4 @@ Features:
 - Raft Cluster - System tables should be replicated to all nodes
 - Raft Cluster - User tables each shard should have a group in the cluster and replicated accordingly
 - User can easily download his data
-
+- compaction jobs that runs per user whenever he has many parquet files in the system

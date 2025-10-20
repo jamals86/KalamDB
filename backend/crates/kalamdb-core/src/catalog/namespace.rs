@@ -30,14 +30,14 @@ use std::collections::HashMap;
 pub struct Namespace {
     /// Unique namespace identifier
     pub name: NamespaceId,
-    
+
     /// When the namespace was created
     pub created_at: DateTime<Utc>,
-    
+
     /// Custom namespace configuration
     #[serde(default)]
     pub options: HashMap<String, serde_json::Value>,
-    
+
     /// Number of tables in this namespace
     #[serde(default)]
     pub table_count: u32,
@@ -63,12 +63,22 @@ impl Namespace {
             return Err("Namespace name 'system' is reserved".to_string());
         }
 
-        if !name.chars().next().map_or(false, |c| c.is_ascii_lowercase()) {
+        if !name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase())
+        {
             return Err("Namespace name must start with a lowercase letter".to_string());
         }
 
-        if !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
-            return Err("Namespace name can only contain lowercase letters, digits, and underscores".to_string());
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
+            return Err(
+                "Namespace name can only contain lowercase letters, digits, and underscores"
+                    .to_string(),
+            );
         }
 
         Ok(())

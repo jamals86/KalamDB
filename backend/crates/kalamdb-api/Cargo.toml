@@ -26,18 +26,8 @@ serde_json.workspace = true
 # UUID generation
 uuid.workspace = true
 
-# Time handling
-chrono.workspace = true
-
 # Logging
 log.workspace = true
-
-# Error handling
-thiserror.workspace = true
-anyhow.workspace = true
-
-# Async runtime
-tokio.workspace = true
 
 [dev-dependencies]
 # Testing utilities

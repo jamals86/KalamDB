@@ -3,19 +3,19 @@
 //! This module provides a DataFusion TableProvider for the information_schema.tables
 //! virtual table, which exposes all table metadata from system.tables.
 
-use kalamdb_sql::KalamSql;
 use crate::error::KalamDbError;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    ArrayRef, Int32Array, Int64Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+    ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::memory::MemoryExec;
+use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_sql::KalamSql;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -35,22 +35,24 @@ impl InformationSchemaTablesProvider {
             Field::new("table_type", DataType::Utf8, false),
             Field::new("table_id", DataType::Utf8, false),
             Field::new("namespace", DataType::Utf8, false),
-            Field::new("created_at", DataType::Timestamp(TimeUnit::Millisecond, None), false),
+            Field::new(
+                "created_at",
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                false,
+            ),
             Field::new("storage_location", DataType::Utf8, false),
             Field::new("flush_policy", DataType::Utf8, false),
             Field::new("schema_version", DataType::Int32, false),
             Field::new("deleted_retention_hours", DataType::Int32, false),
         ]));
 
-        Self {
-            kalam_sql,
-            schema,
-        }
+        Self { kalam_sql, schema }
     }
 
     /// Scan all tables and return as RecordBatch
     pub fn scan_all_tables(&self) -> Result<RecordBatch, KalamDbError> {
-        let tables = self.kalam_sql
+        let tables = self
+            .kalam_sql
             .scan_all_tables()
             .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
 
@@ -69,13 +71,13 @@ impl InformationSchemaTablesProvider {
         for table in tables {
             // SQL standard information_schema uses "def" as default catalog
             table_catalogs.append_value("def");
-            
+
             // table_schema is the namespace/database name
             table_schemas.append_value(&table.namespace);
-            
+
             // table_name
             table_names.append_value(&table.table_name);
-            
+
             // table_type: Convert KalamDB type to SQL standard
             let standard_type = match table.table_type.as_str() {
                 "user" | "shared" => "BASE TABLE",
@@ -84,7 +86,7 @@ impl InformationSchemaTablesProvider {
                 _ => "BASE TABLE",
             };
             table_types.append_value(standard_type);
-            
+
             // KalamDB-specific columns
             table_ids.append_value(&table.table_id);
             namespaces.append_value(&table.namespace);
@@ -138,15 +140,13 @@ impl TableProvider for InformationSchemaTablesProvider {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let batch = self.scan_all_tables().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to scan tables: {}", e))
-        })?;
+        let batch = self
+            .scan_all_tables()
+            .map_err(|e| DataFusionError::Execution(format!("Failed to scan tables: {}", e)))?;
 
         let schema = if let Some(proj) = projection {
-            let projected_fields: Vec<_> = proj
-                .iter()
-                .map(|&i| self.schema.field(i).clone())
-                .collect();
+            let projected_fields: Vec<_> =
+                proj.iter().map(|&i| self.schema.field(i).clone()).collect();
             Arc::new(Schema::new(projected_fields))
         } else {
             self.schema.clone()
@@ -159,14 +159,14 @@ impl TableProvider for InformationSchemaTablesProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use datafusion::prelude::SessionContext;
+    
+    
 
     #[tokio::test]
     async fn test_information_schema_tables_provider() {
         // This test requires actual KalamSql setup
         // For now, just verify the provider can be constructed
-        
+
         // Note: In real tests, we would:
         // 1. Create KalamSql with test database
         // 2. Insert test tables

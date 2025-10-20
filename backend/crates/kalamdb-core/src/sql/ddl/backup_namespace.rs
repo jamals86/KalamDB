@@ -12,10 +12,10 @@ use crate::error::KalamDbError;
 pub struct BackupDatabaseStatement {
     /// Namespace ID to backup
     pub namespace_id: NamespaceId,
-    
+
     /// Backup destination path
     pub backup_path: String,
-    
+
     /// If true, don't error if namespace doesn't exist
     pub if_exists: bool,
 }
@@ -29,7 +29,7 @@ impl BackupDatabaseStatement {
     pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
         let sql_trimmed = sql.trim();
         let sql_upper = sql_trimmed.to_uppercase();
-        
+
         if !sql_upper.starts_with("BACKUP DATABASE") {
             return Err(KalamDbError::InvalidSql(
                 "Expected BACKUP DATABASE statement".to_string(),
@@ -37,7 +37,7 @@ impl BackupDatabaseStatement {
         }
 
         let if_exists = sql_upper.contains("IF EXISTS");
-        
+
         // Extract namespace name and path
         let remaining = if if_exists {
             sql_trimmed
@@ -74,7 +74,7 @@ impl BackupDatabaseStatement {
         }
 
         let path_part = remaining[to_pos + 4..].trim(); // Skip " TO "
-        
+
         // Extract path from quotes
         let backup_path = if path_part.starts_with('\'') && path_part.ends_with('\'') {
             path_part[1..path_part.len() - 1].to_string()
@@ -114,7 +114,9 @@ mod tests {
 
     #[test]
     fn test_parse_backup_database_if_exists() {
-        let stmt = BackupDatabaseStatement::parse("BACKUP DATABASE IF EXISTS app TO '/backups/app'").unwrap();
+        let stmt =
+            BackupDatabaseStatement::parse("BACKUP DATABASE IF EXISTS app TO '/backups/app'")
+                .unwrap();
         assert_eq!(stmt.namespace_id.as_str(), "app");
         assert_eq!(stmt.backup_path, "/backups/app");
         assert!(stmt.if_exists);
@@ -122,13 +124,15 @@ mod tests {
 
     #[test]
     fn test_parse_backup_database_double_quotes() {
-        let stmt = BackupDatabaseStatement::parse("BACKUP DATABASE app TO \"/backups/app\"").unwrap();
+        let stmt =
+            BackupDatabaseStatement::parse("BACKUP DATABASE app TO \"/backups/app\"").unwrap();
         assert_eq!(stmt.backup_path, "/backups/app");
     }
 
     #[test]
     fn test_parse_backup_database_lowercase() {
-        let stmt = BackupDatabaseStatement::parse("backup database myapp to '/backups/myapp'").unwrap();
+        let stmt =
+            BackupDatabaseStatement::parse("backup database myapp to '/backups/myapp'").unwrap();
         assert_eq!(stmt.namespace_id.as_str(), "myapp");
         assert_eq!(stmt.backup_path, "/backups/myapp");
     }

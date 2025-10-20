@@ -120,10 +120,10 @@ impl TableCache {
         // TODO: Query SELECT * FROM system.tables
         // TODO: For each table row, construct TableMetadata and insert into cache
         // TODO: Query SELECT * FROM system.namespaces to validate namespace references
-        
+
         log::warn!("TableCache::load_from_rocksdb() not fully implemented - requires system_tables query support in kalamdb-sql");
         log::info!("Table cache will be populated dynamically as tables are created/accessed");
-        
+
         Ok(0)
     }
 }

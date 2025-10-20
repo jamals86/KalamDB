@@ -91,11 +91,6 @@ impl ConnectionId {
         })
     }
 
-    /// Serialize to string format
-    pub fn to_string(&self) -> String {
-        format!("{}-{}", self.user_id, self.unique_conn_id)
-    }
-
     /// Get user_id component
     pub fn user_id(&self) -> &str {
         &self.user_id
@@ -150,17 +145,6 @@ impl LiveId {
         })
     }
 
-    /// Serialize to string format
-    pub fn to_string(&self) -> String {
-        format!(
-            "{}-{}-{}-{}",
-            self.connection_id.user_id,
-            self.connection_id.unique_conn_id,
-            self.table_name,
-            self.query_id
-        )
-    }
-
     /// Get connection_id component
     pub fn connection_id(&self) -> &ConnectionId {
         &self.connection_id
@@ -197,16 +181,12 @@ impl fmt::Display for LiveId {
 
 /// Live query options
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct LiveQueryOptions {
     /// Number of last rows to fetch for initial data
     pub last_rows: Option<u32>,
 }
 
-impl Default for LiveQueryOptions {
-    fn default() -> Self {
-        Self { last_rows: None }
-    }
-}
 
 /// Live query subscription
 #[derive(Debug, Clone)]
@@ -236,7 +216,8 @@ impl UserConnectionSocket {
 
     /// Add a live query subscription
     pub fn add_live_query(&mut self, live_query: LiveQuery) {
-        self.live_queries.insert(live_query.live_id.clone(), live_query);
+        self.live_queries
+            .insert(live_query.live_id.clone(), live_query);
     }
 
     /// Remove a live query subscription
@@ -287,7 +268,10 @@ impl UserConnections {
     }
 
     /// Get a mutable connection socket
-    pub fn get_socket_mut(&mut self, connection_id: &ConnectionId) -> Option<&mut UserConnectionSocket> {
+    pub fn get_socket_mut(
+        &mut self,
+        connection_id: &ConnectionId,
+    ) -> Option<&mut UserConnectionSocket> {
         self.sockets.get_mut(connection_id)
     }
 
@@ -323,27 +307,38 @@ impl LiveQueryRegistry {
         let socket = UserConnectionSocket::new(connection_id);
         self.users
             .entry(user_id)
-            .or_insert_with(UserConnections::new)
+            .or_default()
             .add_socket(socket);
     }
 
     /// Register a live query subscription
-    pub fn register_subscription(&mut self, user_id: &UserId, live_query: LiveQuery) -> Result<(), KalamDbError> {
-        let user_connections = self.users.get_mut(user_id).ok_or_else(|| {
-            KalamDbError::NotFound(format!("User not connected: {}", user_id))
-        })?;
+    pub fn register_subscription(
+        &mut self,
+        user_id: &UserId,
+        live_query: LiveQuery,
+    ) -> Result<(), KalamDbError> {
+        let user_connections = self
+            .users
+            .get_mut(user_id)
+            .ok_or_else(|| KalamDbError::NotFound(format!("User not connected: {}", user_id)))?;
 
         let connection_id = &live_query.live_id.connection_id;
-        let socket = user_connections.get_socket_mut(connection_id).ok_or_else(|| {
-            KalamDbError::NotFound(format!("Connection not found: {}", connection_id))
-        })?;
+        let socket = user_connections
+            .get_socket_mut(connection_id)
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!("Connection not found: {}", connection_id))
+            })?;
 
         socket.add_live_query(live_query);
         Ok(())
     }
 
     /// Get all subscriptions for a specific table and user
-    pub fn get_subscriptions_for_table(&self, user_id: &UserId, table_name: &str) -> Vec<&LiveQuery> {
+    pub fn get_subscriptions_for_table(
+        &self,
+        user_id: &UserId,
+        table_name: &str,
+    ) -> Vec<&LiveQuery> {
         if let Some(user_connections) = self.users.get(user_id) {
             user_connections
                 .sockets
@@ -356,7 +351,11 @@ impl LiveQueryRegistry {
     }
 
     /// Unregister a WebSocket connection and return all its live query IDs
-    pub fn unregister_connection(&mut self, user_id: &UserId, connection_id: &ConnectionId) -> Vec<LiveId> {
+    pub fn unregister_connection(
+        &mut self,
+        user_id: &UserId,
+        connection_id: &ConnectionId,
+    ) -> Vec<LiveId> {
         if let Some(user_connections) = self.users.get_mut(user_id) {
             if let Some(socket) = user_connections.remove_socket(connection_id) {
                 return socket.live_query_ids();
@@ -440,9 +439,9 @@ mod tests {
         let mut registry = LiveQueryRegistry::new(NodeId::new("node1".to_string()));
         let user_id = UserId::new("user1".to_string());
         let conn_id = ConnectionId::new("user1".to_string(), "conn1".to_string());
-        
+
         registry.register_connection(user_id.clone(), conn_id.clone());
-        
+
         assert_eq!(registry.total_connections(), 1);
         assert_eq!(registry.total_subscriptions(), 0);
     }
@@ -452,9 +451,9 @@ mod tests {
         let mut registry = LiveQueryRegistry::new(NodeId::new("node1".to_string()));
         let user_id = UserId::new("user1".to_string());
         let conn_id = ConnectionId::new("user1".to_string(), "conn1".to_string());
-        
+
         registry.register_connection(user_id.clone(), conn_id.clone());
-        
+
         let live_id = LiveId::new(conn_id.clone(), "messages".to_string(), "q1".to_string());
         let live_query = LiveQuery {
             live_id: live_id.clone(),
@@ -462,9 +461,11 @@ mod tests {
             options: LiveQueryOptions::default(),
             changes: 0,
         };
-        
-        registry.register_subscription(&user_id, live_query).unwrap();
-        
+
+        registry
+            .register_subscription(&user_id, live_query)
+            .unwrap();
+
         assert_eq!(registry.total_subscriptions(), 1);
     }
 
@@ -473,9 +474,9 @@ mod tests {
         let mut registry = LiveQueryRegistry::new(NodeId::new("node1".to_string()));
         let user_id = UserId::new("user1".to_string());
         let conn_id = ConnectionId::new("user1".to_string(), "conn1".to_string());
-        
+
         registry.register_connection(user_id.clone(), conn_id.clone());
-        
+
         let live_id1 = LiveId::new(conn_id.clone(), "messages".to_string(), "q1".to_string());
         let live_query1 = LiveQuery {
             live_id: live_id1.clone(),
@@ -483,18 +484,26 @@ mod tests {
             options: LiveQueryOptions::default(),
             changes: 0,
         };
-        
-        let live_id2 = LiveId::new(conn_id.clone(), "notifications".to_string(), "q2".to_string());
+
+        let live_id2 = LiveId::new(
+            conn_id.clone(),
+            "notifications".to_string(),
+            "q2".to_string(),
+        );
         let live_query2 = LiveQuery {
             live_id: live_id2.clone(),
             query: "SELECT * FROM notifications".to_string(),
             options: LiveQueryOptions::default(),
             changes: 0,
         };
-        
-        registry.register_subscription(&user_id, live_query1).unwrap();
-        registry.register_subscription(&user_id, live_query2).unwrap();
-        
+
+        registry
+            .register_subscription(&user_id, live_query1)
+            .unwrap();
+        registry
+            .register_subscription(&user_id, live_query2)
+            .unwrap();
+
         let messages_subs = registry.get_subscriptions_for_table(&user_id, "messages");
         assert_eq!(messages_subs.len(), 1);
         assert_eq!(messages_subs[0].live_id.table_name(), "messages");
@@ -505,9 +514,9 @@ mod tests {
         let mut registry = LiveQueryRegistry::new(NodeId::new("node1".to_string()));
         let user_id = UserId::new("user1".to_string());
         let conn_id = ConnectionId::new("user1".to_string(), "conn1".to_string());
-        
+
         registry.register_connection(user_id.clone(), conn_id.clone());
-        
+
         let live_id1 = LiveId::new(conn_id.clone(), "messages".to_string(), "q1".to_string());
         let live_query1 = LiveQuery {
             live_id: live_id1.clone(),
@@ -515,18 +524,26 @@ mod tests {
             options: LiveQueryOptions::default(),
             changes: 0,
         };
-        
-        let live_id2 = LiveId::new(conn_id.clone(), "notifications".to_string(), "q2".to_string());
+
+        let live_id2 = LiveId::new(
+            conn_id.clone(),
+            "notifications".to_string(),
+            "q2".to_string(),
+        );
         let live_query2 = LiveQuery {
             live_id: live_id2.clone(),
             query: "SELECT * FROM notifications".to_string(),
             options: LiveQueryOptions::default(),
             changes: 0,
         };
-        
-        registry.register_subscription(&user_id, live_query1).unwrap();
-        registry.register_subscription(&user_id, live_query2).unwrap();
-        
+
+        registry
+            .register_subscription(&user_id, live_query1)
+            .unwrap();
+        registry
+            .register_subscription(&user_id, live_query2)
+            .unwrap();
+
         let removed_live_ids = registry.unregister_connection(&user_id, &conn_id);
         assert_eq!(removed_live_ids.len(), 2);
         assert_eq!(registry.total_connections(), 0);
@@ -538,9 +555,9 @@ mod tests {
         let mut registry = LiveQueryRegistry::new(NodeId::new("node1".to_string()));
         let user_id = UserId::new("user1".to_string());
         let conn_id = ConnectionId::new("user1".to_string(), "conn1".to_string());
-        
+
         registry.register_connection(user_id.clone(), conn_id.clone());
-        
+
         let live_id = LiveId::new(conn_id.clone(), "messages".to_string(), "q1".to_string());
         let live_query = LiveQuery {
             live_id: live_id.clone(),
@@ -548,9 +565,11 @@ mod tests {
             options: LiveQueryOptions::default(),
             changes: 0,
         };
-        
-        registry.register_subscription(&user_id, live_query).unwrap();
-        
+
+        registry
+            .register_subscription(&user_id, live_query)
+            .unwrap();
+
         let removed_conn_id = registry.unregister_subscription(&live_id);
         assert!(removed_conn_id.is_some());
         assert_eq!(registry.total_subscriptions(), 0);
@@ -560,7 +579,7 @@ mod tests {
     fn test_user_connection_socket() {
         let conn_id = ConnectionId::new("user1".to_string(), "conn1".to_string());
         let mut socket = UserConnectionSocket::new(conn_id.clone());
-        
+
         let live_id = LiveId::new(conn_id.clone(), "messages".to_string(), "q1".to_string());
         let live_query = LiveQuery {
             live_id: live_id.clone(),
@@ -568,12 +587,12 @@ mod tests {
             options: LiveQueryOptions::default(),
             changes: 0,
         };
-        
+
         socket.add_live_query(live_query);
-        
+
         let table_queries = socket.live_queries_for_table("messages");
         assert_eq!(table_queries.len(), 1);
-        
+
         let removed = socket.remove_live_query(&live_id);
         assert!(removed.is_some());
         assert_eq!(socket.live_queries.len(), 0);

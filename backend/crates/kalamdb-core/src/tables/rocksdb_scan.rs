@@ -13,13 +13,13 @@ use std::sync::Arc;
 pub struct RocksDbScanExec {
     /// RocksDB instance
     _db: Arc<DB>,
-    
+
     /// Column family name
     _cf_name: String,
-    
+
     /// Arrow schema
     schema: SchemaRef,
-    
+
     /// Key prefix for filtering (optional)
     _key_prefix: Option<Vec<u8>>,
 }
@@ -67,12 +67,8 @@ mod tests {
             Field::new("content", DataType::Utf8, true),
         ]));
 
-        let scan = RocksDbScanExec::new(
-            db.clone(),
-            "system_users".to_string(),
-            schema.clone(),
-            None,
-        );
+        let scan =
+            RocksDbScanExec::new(db.clone(), "system_users".to_string(), schema.clone(), None);
 
         assert_eq!(scan.schema(), schema);
 

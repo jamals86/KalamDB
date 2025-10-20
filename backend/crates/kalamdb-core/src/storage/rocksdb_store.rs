@@ -1,5 +1,5 @@
 // RocksDB storage implementation
-use rocksdb::{DB, Options, WriteOptions, IteratorMode, DBCompressionType};
+use rocksdb::{DBCompressionType, IteratorMode, Options, WriteOptions, DB};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -23,10 +23,10 @@ impl RocksDbStore {
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
-        
+
         // Enable WAL for durability
         opts.set_use_fsync(!enable_wal);
-        
+
         // Set compression based on config
         let compression_type = match compression.to_lowercase().as_str() {
             "snappy" => DBCompressionType::Snappy,
@@ -36,15 +36,13 @@ impl RocksDbStore {
             _ => DBCompressionType::None,
         };
         opts.set_compression_type(compression_type);
-        
+
         // Optimize for SSD
         opts.set_level_compaction_dynamic_level_bytes(true);
-        
+
         let db = DB::open(&opts, path)?;
-        
-        Ok(Self {
-            db: Arc::new(db),
-        })
+
+        Ok(Self { db: Arc::new(db) })
     }
 
     /// Put a key-value pair into the database
@@ -79,20 +77,26 @@ impl RocksDbStore {
 
     /// Iterate over all key-value pairs
     pub fn iter(&self) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_ {
-        self.db.iterator(IteratorMode::Start)
+        self.db
+            .iterator(IteratorMode::Start)
             .map(|result| result.unwrap())
     }
 
     /// Iterate over keys with a specific prefix
-    pub fn iter_prefix<'a>(&'a self, prefix: &'a [u8]) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + 'a {
-        self.db.iterator(IteratorMode::From(prefix, rocksdb::Direction::Forward))
+    pub fn iter_prefix<'a>(
+        &'a self,
+        prefix: &'a [u8],
+    ) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + 'a {
+        self.db
+            .iterator(IteratorMode::From(prefix, rocksdb::Direction::Forward))
             .map(|result| result.unwrap())
             .take_while(move |(key, _)| key.starts_with(prefix))
     }
 
     /// Get approximate number of keys
     pub fn approximate_keys(&self) -> Result<u64, rocksdb::Error> {
-        self.db.property_int_value("rocksdb.estimate-num-keys")
+        self.db
+            .property_int_value("rocksdb.estimate-num-keys")
             .map(|opt| opt.unwrap_or(0))
     }
 
@@ -201,7 +205,7 @@ mod tests {
         let (db, _temp_dir) = create_test_db();
 
         db.put(b"key1", b"value1").unwrap();
-        
+
         let db_clone = db.clone();
         let value = db_clone.get(b"key1").unwrap();
 

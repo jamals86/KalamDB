@@ -12,10 +12,10 @@ use crate::error::KalamDbError;
 pub struct RestoreDatabaseStatement {
     /// Namespace ID to restore
     pub namespace_id: NamespaceId,
-    
+
     /// Backup source path
     pub backup_path: String,
-    
+
     /// If true, don't error if namespace already exists
     pub if_not_exists: bool,
 }
@@ -29,7 +29,7 @@ impl RestoreDatabaseStatement {
     pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
         let sql_trimmed = sql.trim();
         let sql_upper = sql_trimmed.to_uppercase();
-        
+
         if !sql_upper.starts_with("RESTORE DATABASE") {
             return Err(KalamDbError::InvalidSql(
                 "Expected RESTORE DATABASE statement".to_string(),
@@ -37,7 +37,7 @@ impl RestoreDatabaseStatement {
         }
 
         let if_not_exists = sql_upper.contains("IF NOT EXISTS");
-        
+
         // Extract namespace name and path
         let remaining = if if_not_exists {
             sql_trimmed
@@ -74,7 +74,7 @@ impl RestoreDatabaseStatement {
         }
 
         let path_part = remaining[from_pos + 6..].trim(); // Skip " FROM "
-        
+
         // Extract path from quotes
         let backup_path = if path_part.starts_with('\'') && path_part.ends_with('\'') {
             path_part[1..path_part.len() - 1].to_string()
@@ -106,7 +106,8 @@ mod tests {
 
     #[test]
     fn test_parse_restore_database() {
-        let stmt = RestoreDatabaseStatement::parse("RESTORE DATABASE app FROM '/backups/app'").unwrap();
+        let stmt =
+            RestoreDatabaseStatement::parse("RESTORE DATABASE app FROM '/backups/app'").unwrap();
         assert_eq!(stmt.namespace_id.as_str(), "app");
         assert_eq!(stmt.backup_path, "/backups/app");
         assert!(!stmt.if_not_exists);
@@ -114,7 +115,10 @@ mod tests {
 
     #[test]
     fn test_parse_restore_database_if_not_exists() {
-        let stmt = RestoreDatabaseStatement::parse("RESTORE DATABASE IF NOT EXISTS app FROM '/backups/app'").unwrap();
+        let stmt = RestoreDatabaseStatement::parse(
+            "RESTORE DATABASE IF NOT EXISTS app FROM '/backups/app'",
+        )
+        .unwrap();
         assert_eq!(stmt.namespace_id.as_str(), "app");
         assert_eq!(stmt.backup_path, "/backups/app");
         assert!(stmt.if_not_exists);
@@ -122,13 +126,15 @@ mod tests {
 
     #[test]
     fn test_parse_restore_database_double_quotes() {
-        let stmt = RestoreDatabaseStatement::parse("RESTORE DATABASE app FROM \"/backups/app\"").unwrap();
+        let stmt =
+            RestoreDatabaseStatement::parse("RESTORE DATABASE app FROM \"/backups/app\"").unwrap();
         assert_eq!(stmt.backup_path, "/backups/app");
     }
 
     #[test]
     fn test_parse_restore_database_lowercase() {
-        let stmt = RestoreDatabaseStatement::parse("restore database myapp from '/backups/myapp'").unwrap();
+        let stmt = RestoreDatabaseStatement::parse("restore database myapp from '/backups/myapp'")
+            .unwrap();
         assert_eq!(stmt.namespace_id.as_str(), "myapp");
         assert_eq!(stmt.backup_path, "/backups/myapp");
     }
