@@ -5,8 +5,17 @@ Things to add to the spec:
     - The api should access a sql with: { "sql": "SELECT * FROM system.storage_locations WHERE last_updated = $1","params": ["jamal-saad-4442"]}
     - In the backend datafusion shall compile it once and use it from the cached one
     - Registering tables from user's session - Improve this by also keeping some tables in a cache in memory maybe a user will keep query his own table for a period of time, in this way we can manage this to free cached tables whenever they stop being used
-- Add automatic flushing triggering in the system, with how it's planned to be
-- Make sure storage path for parquet files should use a templating of a path with parameters: {storageLocation}, {userId}, {shard}, {tableName}, {namespace} this is configured by the user, the shard is a function which the user can set, currently it can be defined by the system with a to z for now
+
+- Add automatic flushing triggering in the system currently we can create a table with flushing but flushing jobs running is not implemented at all, i want them:
+    1) scheduler to init the flushing job which
+    2) group by userid
+    3) write them into a storage location
+    4) storage location can be defined for now inside config.toml as a fallback location which is currently ./data/storage
+    5) the location will have these parameters: {storageLocation}, {userId}, {shard}, {tableName}, {namespace} this is configured by the user, the shard is a function which the user can set, currently it can be defined by the system with a to z for now
+    6) there will be 2 relative paths one for user_tables and one for shared tables
+    7) example user tables template to start with: {storageLocation}/{namespace}/users/{tableName}/
+    8) shared table: {storageLocation}/{namespace}/{tableName}/
+
 
 - Implement manual flushing of a table (Will also be used when shutting down the server for backup or maintanance) using SQL command
 - I could create a user table in a namespace not found, before creating a user/shared/stream tables the namespace should always exists, its not only an alias here
