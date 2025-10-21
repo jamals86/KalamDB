@@ -39,30 +39,55 @@ pub struct QueryRequest {
 /// Response from SQL query execution.
 ///
 /// Contains query results, execution metadata, and optional error information.
+/// Matches the server's SqlResponse structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryResponse {
     /// Query execution status ("success" or "error")
     pub status: String,
 
-    /// Result rows (array of objects)
+    /// Array of result sets, one per executed statement
     #[serde(default)]
-    pub data: Vec<JsonValue>,
-
-    /// Number of rows affected (for INSERT/UPDATE/DELETE)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rows_affected: Option<u64>,
+    pub results: Vec<QueryResult>,
 
     /// Query execution time in milliseconds
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub execution_time_ms: Option<f64>,
+    pub execution_time_ms: Option<u64>,
 
-    /// Error message (if status == "error")
+    /// Error details if status is "error"
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+    pub error: Option<ErrorDetail>,
+}
 
-    /// Additional metadata
-    #[serde(flatten)]
-    pub metadata: std::collections::HashMap<String, JsonValue>,
+/// Individual query result within a SQL response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryResult {
+    /// The result rows as JSON objects
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rows: Option<Vec<std::collections::HashMap<String, JsonValue>>>,
+
+    /// Number of rows affected or returned
+    pub row_count: usize,
+
+    /// Column names in the result set
+    pub columns: Vec<String>,
+
+    /// Optional message for non-query statements
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// Error details for failed SQL execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorDetail {
+    /// Error code
+    pub code: String,
+
+    /// Human-readable error message
+    pub message: String,
+
+    /// Optional additional details
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
 }
 
 /// Change event received via WebSocket subscription.

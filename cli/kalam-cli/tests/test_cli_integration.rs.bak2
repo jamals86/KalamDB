@@ -111,7 +111,10 @@ async fn cleanup_test_data() -> Result<(), Box<dyn std::error::Error>> {
 /// Helper to create a CLI command with default test settings
 fn create_cli_command() -> Command {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
-    cmd.arg("--user-id").arg("test_user");
+    cmd.arg("-u")
+        .arg(SERVER_URL)
+        .arg("--user-id")
+        .arg("test_user");
     cmd
 }
 
@@ -124,11 +127,9 @@ async fn test_cli_connection_and_prompt() {
         return;
     }
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--help");
 
     cmd.assert()
@@ -155,9 +156,7 @@ async fn test_cli_basic_query_execution() {
 
     // Execute query via CLI
     let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(SERVER_URL)
-        .arg("--command")
+    cmd.arg("--command")
         .arg("SELECT * FROM test_cli.messages")
         .timeout(TEST_TIMEOUT);
 
@@ -193,11 +192,9 @@ async fn test_cli_table_output_formatting() {
     .unwrap();
 
     // Query with table format (default)
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--command")
         .arg("SELECT * FROM test_cli.messages")
         .timeout(TEST_TIMEOUT);
@@ -230,11 +227,9 @@ async fn test_cli_json_output_format() {
         .unwrap();
 
     // Query with JSON format
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--json")
         .arg("--command")
         .arg("SELECT * FROM test_cli.messages WHERE content = 'JSON Test'")
@@ -268,11 +263,9 @@ async fn test_cli_csv_output_format() {
         .unwrap();
 
     // Query with CSV format
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--csv")
         .arg("--command")
         .arg("SELECT content FROM test_cli.messages WHERE content LIKE 'CSV%'")
@@ -313,11 +306,9 @@ SELECT * FROM batch_test.items;"#,
     .unwrap();
 
     // Execute batch file
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--file")
         .arg(sql_file.to_str().unwrap())
         .timeout(TEST_TIMEOUT);
@@ -344,11 +335,9 @@ async fn test_cli_syntax_error_handling() {
         return;
     }
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--command")
         .arg("INVALID SQL SYNTAX HERE")
         .timeout(TEST_TIMEOUT);
@@ -371,7 +360,7 @@ async fn test_cli_syntax_error_handling() {
 #[tokio::test]
 async fn test_cli_connection_failure_handling() {
     // Try to connect to non-existent server
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg("http://localhost:9999") // Non-existent port
         .arg("--command")
@@ -396,7 +385,7 @@ async fn test_cli_connection_failure_handling() {
 /// T050: Test help command
 #[tokio::test]
 async fn test_cli_help_command() {
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("--help");
 
     cmd.assert()
@@ -410,7 +399,7 @@ async fn test_cli_help_command() {
 /// T051: Test version flag
 #[tokio::test]
 async fn test_cli_version() {
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("--version");
 
     cmd.assert()
@@ -456,11 +445,9 @@ async fn test_cli_list_tables() {
 
     setup_test_data().await.unwrap();
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--command")
         .arg("\\dt")
         .timeout(TEST_TIMEOUT);
@@ -488,11 +475,9 @@ async fn test_cli_describe_table() {
 
     setup_test_data().await.unwrap();
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--command")
         .arg("\\d test_cli.messages")
         .timeout(TEST_TIMEOUT);
@@ -522,11 +507,9 @@ async fn test_cli_live_query_basic() {
 
     // Note: This is a simplified test since interactive subscriptions are complex
     // In a real scenario, would need to test WebSocket connection and message handling
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--command")
         .arg("SUBSCRIBE TO SELECT * FROM test_cli.messages")
         .timeout(Duration::from_secs(3));
@@ -556,11 +539,9 @@ async fn test_cli_live_query_with_filter() {
 
     setup_test_data().await.unwrap();
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--command")
         .arg("SUBSCRIBE TO SELECT * FROM test_cli.messages WHERE id > 10")
         .timeout(Duration::from_secs(3));
@@ -588,7 +569,7 @@ async fn test_cli_subscription_pause_resume() {
 
     // Note: Testing pause/resume requires interactive input simulation
     // This test verifies the CLI accepts the subscription command
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("--help");
 
     let output = cmd.output().unwrap();
@@ -611,11 +592,9 @@ async fn test_cli_unsubscribe() {
 
     setup_test_data().await.unwrap();
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--command")
         .arg("UNSUBSCRIBE")
         .timeout(Duration::from_secs(3));
@@ -688,7 +667,7 @@ timeout = 30
     )
     .unwrap();
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("--config")
         .arg(config_path.to_str().unwrap())
         .arg("--command")
@@ -729,7 +708,7 @@ format = "csv"
     .unwrap();
 
     // CLI args should override config
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("--config")
         .arg(config_path.to_str().unwrap())
         .arg("-u")
@@ -764,11 +743,9 @@ async fn test_cli_jwt_authentication() {
 
     // Note: This test assumes JWT auth is optional on localhost
     // In production, would need to obtain valid token first
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--command")
         .arg("SELECT 1 as auth_test")
         .timeout(TEST_TIMEOUT);
@@ -790,11 +767,9 @@ async fn test_cli_invalid_token() {
         return;
     }
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--token")
         .arg("invalid.jwt.token")
         .arg("--command")
@@ -822,11 +797,9 @@ async fn test_cli_localhost_auth_bypass() {
     }
 
     // Localhost connections should work without token
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--command")
         .arg("SELECT 'localhost' as test")
         .timeout(TEST_TIMEOUT);
@@ -881,11 +854,9 @@ async fn test_cli_explicit_flush() {
 
     setup_test_data().await.unwrap();
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--command")
         .arg("FLUSH TABLE test_cli.messages")
         .timeout(TEST_TIMEOUT);
@@ -914,11 +885,9 @@ async fn test_cli_color_output() {
     setup_test_data().await.unwrap();
 
     // Test with color enabled
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--color")
         .arg("--command")
         .arg("SELECT 'color' as test")
@@ -928,11 +897,9 @@ async fn test_cli_color_output() {
     assert!(output.status.success(), "Color command should succeed");
 
     // Test with color disabled
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--no-color")
         .arg("--command")
         .arg("SELECT 'nocolor' as test")
@@ -953,11 +920,9 @@ async fn test_cli_session_timeout() {
     }
 
     // Test with custom timeout
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--timeout")
         .arg("5")
         .arg("--command")
@@ -973,7 +938,7 @@ async fn test_cli_session_timeout() {
 async fn test_cli_command_history() {
     // History is handled by rustyline in interactive mode
     // For non-interactive tests, we verify the CLI supports it
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("--help");
 
     let output = cmd.output().unwrap();
@@ -991,7 +956,7 @@ async fn test_cli_command_history() {
 async fn test_cli_tab_completion() {
     // Tab completion is handled by rustyline in interactive mode
     // For non-interactive tests, we verify the CLI supports it
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("--help");
 
     let output = cmd.output().unwrap();
@@ -1015,11 +980,9 @@ async fn test_cli_multiline_query() {
     // Multi-line query with newlines
     let multi_line_query = "SELECT \n  id, \n  content \nFROM \n  test_cli.messages \nLIMIT 5";
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--command")
         .arg(multi_line_query)
         .timeout(TEST_TIMEOUT);
@@ -1044,11 +1007,9 @@ async fn test_cli_query_with_comments() {
 
     let query_with_comments = "-- This is a comment\nSELECT 1 as test -- inline comment";
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--command")
         .arg(query_with_comments)
         .timeout(TEST_TIMEOUT);
@@ -1069,11 +1030,9 @@ async fn test_cli_empty_query() {
         return;
     }
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--command")
         .arg("   ")
         .timeout(TEST_TIMEOUT);
@@ -1107,11 +1066,9 @@ async fn test_cli_result_pagination() {
     }
 
     // Query all rows
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--command")
         .arg("SELECT * FROM test_cli.messages")
         .timeout(TEST_TIMEOUT);
@@ -1136,11 +1093,9 @@ async fn test_cli_verbose_output() {
         return;
     }
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--verbose")
         .arg("--command")
         .arg("SELECT 1 as verbose_test")

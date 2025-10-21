@@ -24,7 +24,7 @@ impl OutputFormatter {
     /// Format a query response
     pub fn format_response(&self, response: &QueryResponse) -> Result<String> {
         if let Some(ref error) = response.error {
-            return Ok(self.format_error(error));
+            return Ok(self.format_error(&error.message));
         }
 
         match self.format {
@@ -36,24 +36,26 @@ impl OutputFormatter {
 
     /// Format as table
     fn format_table(&self, response: &QueryResponse) -> Result<String> {
-        if response.data.is_empty() {
-            let rows = response.rows_affected.unwrap_or(0);
-            return Ok(format!("Query executed successfully ({} rows affected)", rows));
+        if response.results.is_empty() {
+            return Ok("Query executed successfully (0 rows affected)".to_string());
         }
 
-        // Convert JSON rows to table
-        let rows = &response.data;
-        if rows.is_empty() {
-            return Ok("No results".to_string());
+        let result = &response.results[0];
+        
+        // Check if this is a message-only result (DDL statements)
+        if let Some(ref message) = result.message {
+            return Ok(message.clone());
         }
 
-        // Extract columns from first row
-        let first = &rows[0];
-        let columns: Vec<String> = if let JsonValue::Object(map) = first {
-            map.keys().cloned().collect()
-        } else {
-            return Ok("Invalid response format".to_string());
-        };
+        // Handle data results
+        if let Some(ref rows) = result.rows {
+            if rows.is_empty() {
+                return Ok("No results".to_string());
+            }
+
+            // Convert rows to table format
+            let first = &rows[0];
+            let columns: Vec<String> = first.keys().cloned().collect();
 
         // Build simple text table (tabled requires complex setup, use basic formatting)
         let mut output = String::new();
@@ -66,21 +68,22 @@ impl OutputFormatter {
 
         // Data rows
         for row in rows {
-            if let JsonValue::Object(map) = row {
-                let values: Vec<String> = columns
-                    .iter()
-                    .map(|col| {
-                        map.get(col)
-                            .map(|v| self.format_json_value(v))
-                            .unwrap_or_else(|| "NULL".to_string())
-                    })
-                    .collect();
-                output.push_str(&values.join(" | "));
-                output.push('\n');
-            }
+            let values: Vec<String> = columns
+                .iter()
+                .map(|col| {
+                    row.get(col)
+                        .map(|v| self.format_json_value(v))
+                        .unwrap_or_else(|| "NULL".to_string())
+                })
+                .collect();
+            output.push_str(&values.join(" | "));
+            output.push('\n');
         }
 
         Ok(output)
+        } else {
+            Ok(format!("Query executed successfully ({} rows affected)", result.row_count))
+        }
     }
 
     /// Format as JSON
@@ -92,36 +95,41 @@ impl OutputFormatter {
 
     /// Format as CSV
     fn format_csv(&self, response: &QueryResponse) -> Result<String> {
-        if response.data.is_empty() {
+        if response.results.is_empty() {
             return Ok("".to_string());
         }
 
-        let rows = &response.data;
+        let result = &response.results[0];
+        
+        // Handle message-only results
+        if result.rows.is_none() {
+            return Ok("".to_string());
+        }
+
+        let rows = result.rows.as_ref().unwrap();
+        if rows.is_empty() {
+            return Ok("".to_string());
+        }
+
         let first = &rows[0];
 
         // Extract columns
-        let columns: Vec<String> = if let JsonValue::Object(map) = first {
-            map.keys().cloned().collect()
-        } else {
-            return Ok("".to_string());
-        };
+        let columns: Vec<String> = first.keys().cloned().collect();
 
         // Build CSV
         let mut output = columns.join(",") + "\n";
 
         for row in rows {
-            if let JsonValue::Object(map) = row {
-                let values: Vec<String> = columns
-                    .iter()
-                    .map(|col| {
-                        map.get(col)
-                            .map(|v| self.format_csv_value(v))
-                            .unwrap_or_else(|| "".to_string())
-                    })
-                    .collect();
-                output.push_str(&values.join(","));
-                output.push('\n');
-            }
+            let values: Vec<String> = columns
+                .iter()
+                .map(|col| {
+                    row.get(col)
+                        .map(|v| self.format_csv_value(v))
+                        .unwrap_or_else(|| "".to_string())
+                })
+                .collect();
+            output.push_str(&values.join(","));
+            output.push('\n');
         }
 
         Ok(output)
