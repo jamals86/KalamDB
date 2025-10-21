@@ -5,7 +5,11 @@ Things to add to the spec:
     - The api should access a sql with: { "sql": "SELECT * FROM system.storage_locations WHERE last_updated = $1","params": ["jamal-saad-4442"]}
     - In the backend datafusion shall compile it once and use it from the cached one
     - Registering tables from user's session - Improve this by also keeping some tables in a cache in memory maybe a user will keep query his own table for a period of time, in this way we can manage this to free cached tables whenever they stop being used
+- Add automatic flushing triggering in the system, with how it's planned to be
+- Make sure storage path for parquet files should use a templating of a path with parameters: {storageLocation}, {userId}, {shard}, {tableName}, {namespace} this is configured by the user, the shard is a function which the user can set, currently it can be defined by the system with a to z for now
 
+- Implement manual flushing of a table (Will also be used when shutting down the server for backup or maintanance) using SQL command
+- I could create a user table in a namespace not found, before creating a user/shared/stream tables the namespace should always exists, its not only an alias here
 - Update all crates/libraries to the latest versions
 - Rename the system.storage_locations to system.storages only, rename this in everywhere
 - System tables providers which is located in: kalamdb-core\src\tables\system, has similar structure, i prefer having a parent class for all of them and impelemnts the same logic one time only
