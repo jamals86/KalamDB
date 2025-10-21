@@ -6,10 +6,12 @@ use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_core::catalog::UserId;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::{ExecutionResult, SqlExecutor};
+use log::warn;
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::models::{QueryResult, SqlRequest, SqlResponse};
+use crate::rate_limiter::RateLimiter;
 
 /// POST /api/sql - Execute SQL statement(s)
 ///
@@ -55,6 +57,7 @@ pub async fn execute_sql(
     http_req: HttpRequest,
     req: web::Json<SqlRequest>,
     session_factory: web::Data<Arc<DataFusionSessionFactory>>,
+    rate_limiter: web::Data<Arc<RateLimiter>>,
 ) -> impl Responder {
     let start_time = Instant::now();
 
@@ -64,6 +67,22 @@ pub async fn execute_sql(
         .get("X-USER-ID")
         .and_then(|h| h.to_str().ok())
         .map(UserId::from);
+
+    // Rate limiting: Check if user can execute query
+    if let Some(ref uid) = user_id {
+        if !rate_limiter.check_query_rate(uid) {
+            let execution_time_ms = start_time.elapsed().as_millis() as u64;
+            warn!(
+                "Rate limit exceeded for user: {} (queries per second)",
+                uid.as_ref()
+            );
+            return HttpResponse::TooManyRequests().json(SqlResponse::error(
+                "RATE_LIMIT_EXCEEDED",
+                "Too many queries per second. Please slow down.",
+                execution_time_ms,
+            ));
+        }
+    }
 
     // Split SQL by semicolons to handle multiple statements
     let statements: Vec<&str> = req
@@ -204,16 +223,20 @@ fn record_batch_to_query_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rate_limiter::RateLimiter;
     use actix_web::{test, App};
+    use jsonwebtoken::Algorithm;
 
     #[actix_rt::test]
     async fn test_execute_sql_endpoint() {
         // Create a test session factory
         let session_factory = Arc::new(DataFusionSessionFactory::new().unwrap());
+        let rate_limiter = Arc::new(RateLimiter::new());
 
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(session_factory))
+                .app_data(web::Data::new(rate_limiter))
                 .service(execute_sql),
         )
         .await;
@@ -240,10 +263,12 @@ mod tests {
     #[actix_rt::test]
     async fn test_execute_sql_empty_query() {
         let session_factory = Arc::new(DataFusionSessionFactory::new().unwrap());
+        let rate_limiter = Arc::new(RateLimiter::new());
 
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(session_factory))
+                .app_data(web::Data::new(rate_limiter))
                 .service(execute_sql),
         )
         .await;
@@ -264,10 +289,12 @@ mod tests {
     #[actix_rt::test]
     async fn test_execute_sql_multiple_statements() {
         let session_factory = Arc::new(DataFusionSessionFactory::new().unwrap());
+        let rate_limiter = Arc::new(RateLimiter::new());
 
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(session_factory))
+                .app_data(web::Data::new(rate_limiter))
                 .service(execute_sql),
         )
         .await;

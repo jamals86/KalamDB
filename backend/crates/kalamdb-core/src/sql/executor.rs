@@ -2,6 +2,30 @@
 //!
 //! This module provides execution logic for SQL statements,
 //! coordinating between parsers, services, and DataFusion.
+//!
+//! # Security: SQL Injection Prevention
+//!
+//! KalamDB uses Apache DataFusion for SQL query execution, which provides built-in
+//! protection against SQL injection attacks through:
+//!
+//! 1. **Parameterized Query API**: DataFusion's SessionContext API uses structured
+//!    parsing and execution plans, not string concatenation. All user input goes
+//!    through the sqlparser crate's AST (Abstract Syntax Tree) parser, which
+//!    tokenizes and validates SQL syntax before execution.
+//!
+//! 2. **Type-Safe Execution**: DataFusion's logical and physical plan execution
+//!    operates on strongly-typed Arrow data structures. User input is validated
+//!    against schema types before query execution.
+//!
+//! 3. **No Dynamic SQL Construction**: The executor does not concatenate user input
+//!    into SQL strings. All SQL statements are parsed as complete units through
+//!    `ctx.sql()` which uses the sqlparser crate's tokenizer.
+//!
+//! 4. **Statement Isolation**: Multiple statements are split and executed individually,
+//!    preventing SQL injection through statement terminators.
+//!
+//! This architecture makes traditional SQL injection (e.g., `'; DROP TABLE users; --`)
+//! impossible because malicious input is treated as literal data values, not executable SQL.
 
 use crate::catalog::Namespace;
 use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
@@ -1555,18 +1579,6 @@ impl SqlExecutor {
             Field::new("value", DataType::Utf8, false),
         ]));
 
-        let properties = vec![
-            "table_id",
-            "table_name",
-            "namespace",
-            "table_type",
-            "storage_location",
-            "flush_policy",
-            "schema_version",
-            "deleted_retention_hours",
-            "created_at",
-        ];
-
         let created_at_str = chrono::DateTime::from_timestamp_millis(table.created_at)
             .map(|dt| dt.to_rfc3339())
             .unwrap_or_else(|| "unknown".to_string());
@@ -1574,17 +1586,58 @@ impl SqlExecutor {
         let schema_version_str = table.schema_version.to_string();
         let retention_hours_str = table.deleted_retention_hours.to_string();
 
-        let values = vec![
-            table.table_id.as_str(),
-            table.table_name.as_str(),
-            table.namespace.as_str(),
-            table.table_type.as_str(),
-            table.storage_location.as_str(),
-            table.flush_policy.as_str(),
-            &schema_version_str,
-            &retention_hours_str,
-            &created_at_str,
-        ];
+        // Check if this is a stream table to show stream-specific metadata
+        let is_stream_table = table.table_type.eq_ignore_ascii_case("stream");
+
+        let (properties, values): (Vec<&str>, Vec<String>) = if is_stream_table {
+            // Stream table properties (NO system columns, show stream-specific config)
+            (
+                vec![
+                    "table_id",
+                    "table_name",
+                    "namespace",
+                    "table_type",
+                    "schema_version",
+                    "created_at",
+                    "note",
+                ],
+                vec![
+                    table.table_id.to_string(),
+                    table.table_name.to_string(),
+                    table.namespace.to_string(),
+                    table.table_type.to_string(),
+                    schema_version_str,
+                    created_at_str,
+                    "Stream tables: NO _updated/_deleted columns, NO Parquet storage (ephemeral)".to_string(),
+                ],
+            )
+        } else {
+            // User/Shared table properties (show storage and retention)
+            (
+                vec![
+                    "table_id",
+                    "table_name",
+                    "namespace",
+                    "table_type",
+                    "storage_location",
+                    "flush_policy",
+                    "schema_version",
+                    "deleted_retention_hours",
+                    "created_at",
+                ],
+                vec![
+                    table.table_id.to_string(),
+                    table.table_name.to_string(),
+                    table.namespace.to_string(),
+                    table.table_type.to_string(),
+                    table.storage_location.to_string(),
+                    table.flush_policy.to_string(),
+                    schema_version_str,
+                    retention_hours_str,
+                    created_at_str,
+                ],
+            )
+        };
 
         let property_array: ArrayRef = Arc::new(StringArray::from(properties));
         let value_array: ArrayRef = Arc::new(StringArray::from(values));

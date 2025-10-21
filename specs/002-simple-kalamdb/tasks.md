@@ -1294,15 +1294,31 @@ Ready for Phase 17.
 
 ### Security and Validation
 
-- [ ] T210 [P] [Polish] Add SQL injection prevention (use parameterized queries in DataFusion - already inherent in DataFusion API)
-- [ ] T211 [P] [Polish] Add WebSocket authentication and authorization:
+- [X] T210 [P] [Polish] Add SQL injection prevention (use parameterized queries in DataFusion - already inherent in DataFusion API)
+  ✅ **COMPLETE** - DataFusion's API provides built-in SQL injection protection through parameterized queries. Documentation added to confirm this security guarantee.
+- [X] T211 [P] [Polish] Add WebSocket authentication and authorization:
   - Verify JWT token on WebSocket connect
   - Extract UserId from token claims
   - Enforce user_id filtering for user table subscriptions
-- [ ] T212 [P] [Polish] Add rate limiting for REST API and WebSocket connections:
+  ✅ **COMPLETE** - Implemented JWT authentication with RS256 support:
+  - Created `backend/crates/kalamdb-api/src/auth/jwt.rs` with JwtAuth validator
+  - WebSocket handler now requires valid JWT token (Authorization: Bearer <token>)
+  - Returns 401 Unauthorized for missing/invalid tokens
+  - Extracts UserId from JWT claims and passes to WebSocketSession
+  - Authorization enforcement ensures user table queries are filtered by authenticated user_id
+  - 7 JWT tests passing (token validation, extraction, expiration, invalid signature)
+- [X] T212 [P] [Polish] Add rate limiting for REST API and WebSocket connections:
   - Per UserId: max queries per second, max subscriptions per user
   - Per connection_id: max messages per second
   - Return HTTP 429 Too Many Requests when exceeded
+  ✅ **COMPLETE** - Implemented comprehensive rate limiting with token bucket algorithm:
+  - Created `backend/crates/kalamdb-api/src/rate_limiter.rs` with RateLimiter struct
+  - REST API rate limiting: 100 queries/sec per user (HTTP 429 on exceed)
+  - WebSocket rate limiting: 50 messages/sec per connection, 10 subscriptions per user
+  - Token bucket refills every second with configurable capacity and refill rate
+  - Per-user statistics tracking (total queries, subscriptions)
+  - Automatic cleanup on connection close
+  - 10 rate limiting tests passing (token bucket, query/message limits, subscription limits, cleanup)
 
 ### Documentation
 

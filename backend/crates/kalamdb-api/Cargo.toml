@@ -26,6 +26,12 @@ serde_json.workspace = true
 # UUID generation
 uuid.workspace = true
 
+# JWT authentication
+jsonwebtoken.workspace = true
+
+# Time handling
+chrono.workspace = true
+
 # Logging
 log.workspace = true
 
