@@ -1,10 +1,12 @@
 Things to add to the spec:
 - Include TODO's found in the codebase, maybe some needs to be added to the plan and tasks
+
 - Add support for parametrized queries from the client /api/sql which then will improve the query planning/optimization
     - Example for this will be: SELECT * FROM messages WHERE user_id = $1 AND created_at > $2
     - The api should access a sql with: { "sql": "SELECT * FROM system.storage_locations WHERE last_updated = $1","params": ["jamal-saad-4442"]}
     - In the backend datafusion shall compile it once and use it from the cached one
     - Registering tables from user's session - Improve this by also keeping some tables in a cache in memory maybe a user will keep query his own table for a period of time, in this way we can manage this to free cached tables whenever they stop being used
+
 
 - Add automatic flushing triggering in the system currently we can create a table with flushing but flushing jobs running is not implemented at all, i want them:
     1) scheduler to init the flushing job which
@@ -15,6 +17,7 @@ Things to add to the spec:
     6) there will be 2 relative paths one for user_tables and one for shared tables
     7) example user tables template to start with: {storageLocation}/{namespace}/users/{tableName}/
     8) shared table: {storageLocation}/{namespace}/{tableName}/
+
 
 
 - Implement manual flushing of a table (Will also be used when shutting down the server for backup or maintanance) using SQL command
@@ -39,6 +42,10 @@ Things to add to the spec:
 - Default catalog for system tables is system, no need for a different one
 - instead of relying on rocksdb with features like column-families, make the project generic so we can add any
     type of storage like sled/redis or anything else
+
+
+
+
 - Maybe its better to have a crate like kalamdb-commons which will be included in all other crates for (Also add this to the requirements to always keep this in mind):
     - models like user_id/namespace_id/..
     - ids
@@ -48,6 +55,9 @@ Things to add to the spec:
     - Also kalamdb-server configs which all other crates might need their models as well
     - Errors like: backend/crates/kalamdb-core/src/error.rs
 - Inside backend\crates\kalamdb-sql\src\models.rs use the same namespace_id and table_id there instead of string's
+
+
+
 - Make sure the user can't listen to a shared table since this will ruin performance
 - Add a new config which the amdin can choose if to allow localhost to query the database without auth, and also which userId will be used from localhost by default it will be system
     Other hostnames must specify a valid jwt with inside it the userid included
@@ -117,6 +127,7 @@ Features:
 - Raft Cluster - System tables should be replicated to all nodes
 - Raft Cluster - User tables each shard should have a group in the cluster and replicated accordingly
 - User can easily download his data
+- Parallel writers with sharding per user
 - compaction jobs that runs per user whenever he has many parquet files in the system
 - Add an optimizre which runs in the background and check if the queries/design is all correctly functioning like:
     - If a table is a shared table and has many rows
