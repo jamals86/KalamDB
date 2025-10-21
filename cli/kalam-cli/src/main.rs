@@ -59,6 +59,10 @@ struct Cli {
     #[arg(long = "apikey")]
     api_key: Option<String>,
 
+    /// User ID for X-USER-ID header
+    #[arg(long = "user-id")]
+    user_id: Option<String>,
+
     /// Execute SQL from file and exit
     #[arg(short = 'f', long = "file")]
     file: Option<PathBuf>,
@@ -146,8 +150,9 @@ async fn main() -> Result<()> {
     let api_key = cli
         .api_key
         .or_else(|| config.auth.as_ref().and_then(|a| a.api_key.clone()));
+    let user_id = cli.user_id;
 
-    let mut session = CLISession::new(server_url, jwt_token, api_key, format, !cli.no_color)
+    let mut session = CLISession::new(server_url, jwt_token, api_key, user_id, format, !cli.no_color)
         .await?;
 
     // Execute based on mode

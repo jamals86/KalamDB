@@ -65,7 +65,7 @@ impl UserTableStore {
     /// See SharedTableStore::create_column_family for safety documentation.
     /// The same reasoning applies here.
     pub fn create_column_family(&self, namespace_id: &str, table_name: &str) -> Result<()> {
-        let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
+        let cf_name = Self::cf_name(namespace_id, table_name);
 
         // Check if CF already exists
         if self.db.cf_handle(&cf_name).is_some() {

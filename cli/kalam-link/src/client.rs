@@ -79,6 +79,7 @@ pub struct KalamLinkClientBuilder {
     timeout: Duration,
     auth: AuthProvider,
     max_retries: u32,
+    user_id: Option<String>,
 }
 
 impl KalamLinkClientBuilder {
@@ -88,6 +89,7 @@ impl KalamLinkClientBuilder {
             timeout: Duration::from_secs(30),
             auth: AuthProvider::none(),
             max_retries: 3,
+            user_id: None,
         }
     }
 
@@ -121,6 +123,12 @@ impl KalamLinkClientBuilder {
         self
     }
 
+    /// Set user ID for X-USER-ID header
+    pub fn user_id(mut self, user_id: impl Into<String>) -> Self {
+        self.user_id = Some(user_id.into());
+        self
+    }
+
     /// Build the client
     pub fn build(self) -> Result<KalamLinkClient> {
         let base_url = self
@@ -133,7 +141,7 @@ impl KalamLinkClientBuilder {
             .map_err(|e| KalamLinkError::ConfigurationError(e.to_string()))?;
 
         let query_executor =
-            QueryExecutor::new(base_url.clone(), http_client.clone(), self.auth.clone());
+            QueryExecutor::new(base_url.clone(), http_client.clone(), self.auth.clone(), self.user_id.clone());
 
         Ok(KalamLinkClient {
             base_url,

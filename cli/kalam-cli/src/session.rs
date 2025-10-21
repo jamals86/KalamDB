@@ -58,6 +58,7 @@ impl CLISession {
         server_url: String,
         jwt_token: Option<String>,
         api_key: Option<String>,
+        user_id: Option<String>,
         format: crate::OutputFormat,
         color: bool,
     ) -> Result<Self> {
@@ -73,6 +74,11 @@ impl CLISession {
             (None, Some(key)) => builder.api_key(key),
             (None, None) => builder,
         };
+
+        // Add user ID if provided
+        if let Some(uid) = user_id {
+            builder = builder.user_id(uid);
+        }
 
         let client = builder.build()?;
 
