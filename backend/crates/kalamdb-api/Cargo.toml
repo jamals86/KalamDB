@@ -7,7 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-# Core library
+# Internal crates
+kalamdb-commons = { path = "../kalamdb-commons" }
 kalamdb-core = { path = "../kalamdb-core" }
 
 # Apache Arrow

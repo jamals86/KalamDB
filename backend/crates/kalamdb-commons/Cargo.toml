@@ -1,0 +1,19 @@
+[package]
+name = "kalamdb-commons"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["KalamDB Team"]
+license = "MIT OR Apache-2.0"
+description = "Shared types, constants, and utilities for KalamDB"
+keywords = ["kalamdb", "database", "types"]
+categories = ["database"]
+
+[dependencies]
+# NO EXTERNAL DEPENDENCIES
+# This crate must remain dependency-free to prevent circular dependencies
+# between kalamdb-core, kalamdb-sql, kalamdb-store, and kalamdb-live
+
+[lib]
+name = "kalamdb_commons"
+path = "src/lib.rs"

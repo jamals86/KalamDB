@@ -21,11 +21,15 @@
 //! - **Stream Tables**: Ephemeral events with key format `{timestamp_ms}:{row_id}`
 
 pub mod key_encoding;
+pub mod rocksdb_impl;
 pub mod shared_table_store;
+pub mod storage_trait;
 pub mod stream_table_store;
 pub mod user_table_store;
 
+pub use rocksdb_impl::RocksDBBackend;
 pub use shared_table_store::SharedTableStore;
+pub use storage_trait::{Operation, Partition, StorageBackend, StorageError};
 pub use stream_table_store::StreamTableStore;
 pub use user_table_store::UserTableStore;
 

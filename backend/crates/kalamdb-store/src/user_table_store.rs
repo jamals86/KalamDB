@@ -33,7 +33,7 @@ impl UserTableStore {
     }
 
     fn cf_name(namespace_id: &str, table_name: &str) -> String {
-        format!("user_table:{}:{}", namespace_id, table_name)
+        format!("{}{}:{}", kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX, namespace_id, table_name)
     }
 
     fn ensure_cf(&self, namespace_id: &str, table_name: &str) -> Result<&ColumnFamily> {
@@ -108,10 +108,10 @@ impl UserTableStore {
         // Inject system columns
         if let Some(obj) = row_data.as_object_mut() {
             obj.insert(
-                "_updated".to_string(),
+                kalamdb_commons::constants::SystemColumnNames::UPDATED.to_string(),
                 JsonValue::String(Utc::now().to_rfc3339()),
             );
-            obj.insert("_deleted".to_string(), JsonValue::Bool(false));
+            obj.insert(kalamdb_commons::constants::SystemColumnNames::DELETED.to_string(), JsonValue::Bool(false));
         }
 
         let cf = self.ensure_cf(namespace_id, table_name)?;
@@ -148,7 +148,7 @@ impl UserTableStore {
 
                 // Filter out soft-deleted rows
                 if let Some(obj) = row_data.as_object() {
-                    if let Some(deleted) = obj.get("_deleted") {
+                    if let Some(deleted) = obj.get(kalamdb_commons::constants::SystemColumnNames::DELETED) {
                         if deleted.as_bool() == Some(true) {
                             return Ok(None);
                         }
@@ -216,9 +216,9 @@ impl UserTableStore {
                 let mut row_data: JsonValue = serde_json::from_slice(&bytes)?;
 
                 if let Some(obj) = row_data.as_object_mut() {
-                    obj.insert("_deleted".to_string(), JsonValue::Bool(true));
+                    obj.insert(kalamdb_commons::constants::SystemColumnNames::DELETED.to_string(), JsonValue::Bool(true));
                     obj.insert(
-                        "_updated".to_string(),
+                        kalamdb_commons::constants::SystemColumnNames::UPDATED.to_string(),
                         JsonValue::String(Utc::now().to_rfc3339()),
                     );
                 }
@@ -264,7 +264,7 @@ impl UserTableStore {
 
             // Filter out soft-deleted rows
             if let Some(obj) = row_data.as_object() {
-                if let Some(deleted) = obj.get("_deleted") {
+                if let Some(deleted) = obj.get(kalamdb_commons::constants::SystemColumnNames::DELETED) {
                     if deleted.as_bool() == Some(true) {
                         continue;
                     }
@@ -509,8 +509,8 @@ mod tests {
         let retrieved_data = retrieved.unwrap();
         assert_eq!(retrieved_data["message_id"], "msg001");
         assert_eq!(retrieved_data["content"], "Hello, world!");
-        assert!(retrieved_data["_updated"].is_string());
-        assert_eq!(retrieved_data["_deleted"], false);
+        assert!(retrieved_data[kalamdb_commons::constants::SystemColumnNames::UPDATED].is_string());
+        assert_eq!(retrieved_data[kalamdb_commons::constants::SystemColumnNames::DELETED], false);
     }
 
     #[test]

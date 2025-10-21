@@ -1,11 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/kalamdb-commons",
     "crates/kalamdb-core",
     "crates/kalamdb-sql",
     "crates/kalamdb-store",
     "crates/kalamdb-api",
     "crates/kalamdb-server",
+    "crates/kalamdb-live",
 ]
 
 [workspace.package]

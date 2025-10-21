@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+# Internal crates
+kalamdb-commons = { path = "../kalamdb-commons" }
+
 # Database
 rocksdb = { workspace = true }
 

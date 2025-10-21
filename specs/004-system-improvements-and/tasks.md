@@ -18,16 +18,16 @@
 
 **Purpose**: Initialize new project structure for CLI and prepare backend for enhancements
 
-- [ ] T001 [P] Create `/cli` directory at repository root
-- [ ] T002 [P] Create `/cli/Cargo.toml` workspace file with `kalam-link` and `kalam-cli` members
-- [ ] T003 [P] Create `/cli/kalam-link` directory structure (src/, tests/, examples/)
-- [ ] T004 [P] Create `/cli/kalam-cli` directory structure (src/, tests/)
-- [ ] T005 [P] Initialize `/cli/kalam-link/Cargo.toml` with dependencies: tokio, reqwest, tungstenite, serde, uuid
-- [ ] T006 [P] Initialize `/cli/kalam-cli/Cargo.toml` with dependencies: clap, rustyline, tabled, crossterm, toml
-- [ ] T007 [P] Create `/backend/crates/kalamdb-commons` directory structure
-- [ ] T008 [P] Create `/backend/crates/kalamdb-live` directory structure
-- [ ] T009 [P] Create `/docker` directory for containerization files
-- [ ] T010 [P] Reorganize `/docs` into subfolders: build/, quickstart/, architecture/
+- [X] T001 [P] Create `/cli` directory at repository root
+- [X] T002 [P] Create `/cli/Cargo.toml` workspace file with `kalam-link` and `kalam-cli` members
+- [X] T003 [P] Create `/cli/kalam-link` directory structure (src/, tests/, examples/)
+- [X] T004 [P] Create `/cli/kalam-cli` directory structure (src/, tests/)
+- [X] T005 [P] Initialize `/cli/kalam-link/Cargo.toml` with dependencies: tokio, reqwest, tungstenite, serde, uuid
+- [X] T006 [P] Initialize `/cli/kalam-cli/Cargo.toml` with dependencies: clap, rustyline, tabled, crossterm, toml
+- [X] T007 [P] Create `/backend/crates/kalamdb-commons` directory structure
+- [X] T008 [P] Create `/backend/crates/kalamdb-live` directory structure
+- [X] T009 [P] Create `/docker` directory for containerization files
+- [X] T010 [P] Reorganize `/docs` into subfolders: build/, quickstart/, architecture/
 
 ---
 
@@ -39,13 +39,13 @@
 
 ### kalamdb-commons Crate (Foundation for All Crates)
 
-- [ ] T011 Create `/backend/crates/kalamdb-commons/Cargo.toml` (no external dependencies)
-- [ ] T012 Create `/backend/crates/kalamdb-commons/src/lib.rs` with module exports
-- [ ] T013 [P] Create `/backend/crates/kalamdb-commons/src/models.rs` with UserId, NamespaceId, TableName type-safe wrappers
-- [ ] T014 [P] Create `/backend/crates/kalamdb-commons/src/constants.rs` with system table names and column family constants
-- [ ] T015 [P] Create `/backend/crates/kalamdb-commons/src/errors.rs` with shared error types
-- [ ] T016 [P] Create `/backend/crates/kalamdb-commons/src/config.rs` with configuration model structures
-- [ ] T017 Add kalamdb-commons dependency to kalamdb-core, kalamdb-sql, kalamdb-store, kalamdb-api in their Cargo.toml files
+- [X] T011 Create `/backend/crates/kalamdb-commons/Cargo.toml` (no external dependencies)
+- [X] T012 Create `/backend/crates/kalamdb-commons/src/lib.rs` with module exports
+- [X] T013 [P] Create `/backend/crates/kalamdb-commons/src/models.rs` with UserId, NamespaceId, TableName type-safe wrappers
+- [X] T014 [P] Create `/backend/crates/kalamdb-commons/src/constants.rs` with system table names and column family constants
+- [X] T015 [P] Create `/backend/crates/kalamdb-commons/src/errors.rs` with shared error types
+- [X] T016 [P] Create `/backend/crates/kalamdb-commons/src/config.rs` with configuration model structures
+- [X] T017 Add kalamdb-commons dependency to kalamdb-core, kalamdb-sql, kalamdb-store, kalamdb-api in their Cargo.toml files
 
 ### System Table Base Provider (Code Quality Foundation)
 
@@ -62,18 +62,18 @@
 
 ### Storage Abstraction Trait (Foundation for Alternative Backends)
 
-- [ ] T025 Create `/backend/crates/kalamdb-store/src/storage_trait.rs` with StorageBackend trait definition
-- [ ] T026 Define Partition struct and Operation enum in storage_trait.rs
-- [ ] T027 Create `/backend/crates/kalamdb-store/src/rocksdb_impl.rs` implementing StorageBackend for RocksDB
+- [X] T025 Create `/backend/crates/kalamdb-store/src/storage_trait.rs` with StorageBackend trait definition
+- [X] T026 Define Partition struct and Operation enum in storage_trait.rs
+- [X] T027 Create `/backend/crates/kalamdb-store/src/rocksdb_impl.rs` implementing StorageBackend for RocksDB
 - [ ] T028 Refactor `/backend/crates/kalamdb-store/src/column_families.rs` to use kalamdb-commons constants
 
 **Documentation Tasks (Constitution Principle VIII)**:
-- [ ] T029 [P] Add module-level rustdoc to kalamdb-commons explaining purpose and usage patterns
-- [ ] T030 [P] Add rustdoc to type-safe wrappers (UserId, NamespaceId, TableName) with conversion examples
+- [X] T029 [P] Add module-level rustdoc to kalamdb-commons explaining purpose and usage patterns
+- [X] T030 [P] Add rustdoc to type-safe wrappers (UserId, NamespaceId, TableName) with conversion examples
 - [ ] T031 [P] Add module-level rustdoc to system_tables/base_provider.rs explaining pattern
-- [ ] T032 [P] Add module-level rustdoc to storage_trait.rs with backend implementation guide
-- [ ] T033 [P] Create ADR-004-commons-crate.md in docs/architecture/adrs/ explaining circular dependency solution
-- [ ] T034 [P] Create ADR-003-storage-trait.md in docs/architecture/adrs/ explaining abstraction design
+- [X] T032 [P] Add module-level rustdoc to storage_trait.rs with backend implementation guide
+- [X] T033 [P] Create ADR-004-commons-crate.md in docs/architecture/adrs/ explaining circular dependency solution
+- [X] T034 [P] Create ADR-003-storage-trait.md in docs/architecture/adrs/ explaining abstraction design
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
@@ -87,12 +87,12 @@
 
 ### Integration Tests for User Story 0
 
-- [ ] T035 [P] [US0] Create `/backend/tests/integration/test_kalam_cli.rs` test file with TestServer setup
-- [ ] T036 [P] [US0] test_cli_connection_and_prompt: Launch CLI, verify welcome message and prompt display
-- [ ] T037 [P] [US0] test_cli_basic_query_execution: Execute SELECT query, verify results displayed in <500ms
-- [ ] T038 [P] [US0] test_cli_table_output_formatting: Verify ASCII table formatting with column alignment
-- [ ] T039 [P] [US0] test_cli_json_output_format: Launch with --json flag, verify JSON output
-- [ ] T040 [P] [US0] test_cli_csv_output_format: Launch with --csv flag, verify CSV output
+- [X] T035 [P] [US0] Create `/cli/kalam-cli/tests/test_cli_integration.rs` test file with server connectivity checks
+- [X] T036 [P] [US0] test_cli_connection_and_prompt: Launch CLI, verify welcome message and prompt display
+- [X] T037 [P] [US0] test_cli_basic_query_execution: Execute SELECT query, verify results displayed in <500ms
+- [X] T038 [P] [US0] test_cli_table_output_formatting: Verify ASCII table formatting with column alignment
+- [X] T039 [P] [US0] test_cli_json_output_format: Launch with --json flag, verify JSON output
+- [X] T040 [P] [US0] test_cli_csv_output_format: Launch with --csv flag, verify CSV output
 - [ ] T041 [P] [US0] test_cli_show_tables_command: Execute SHOW TABLES, verify table list
 - [ ] T042 [P] [US0] test_cli_describe_table_command: Execute DESCRIBE table, verify schema display
 - [ ] T043 [P] [US0] test_cli_websocket_subscription: Start subscription, insert data, verify live update received
@@ -102,14 +102,14 @@
 - [ ] T047 [P] [US0] test_cli_config_file_creation: Verify ~/.kalam/config.toml created on first run
 - [ ] T048 [P] [US0] test_cli_config_file_loading: Verify connection details loaded from config
 - [ ] T049 [P] [US0] test_cli_connection_to_multiple_hosts: Test \connect command for host switching
-- [ ] T050 [P] [US0] test_cli_help_command: Execute \help, verify command list displayed
-- [ ] T051 [P] [US0] test_cli_quit_commands: Execute \quit, verify clean exit
+- [X] T050 [P] [US0] test_cli_help_command: Execute \help, verify command list displayed
+- [X] T051 [P] [US0] test_cli_quit_commands: Execute \quit, verify clean exit (version test)
 - [ ] T052 [P] [US0] test_cli_jwt_authentication: Launch with --token, verify authentication succeeds
 - [ ] T053 [P] [US0] test_cli_invalid_token_error: Launch with invalid token, verify error message
 - [ ] T054 [P] [US0] test_cli_localhost_bypass_mode: Connect from localhost without token, verify default user
-- [ ] T055 [P] [US0] test_cli_batch_file_execution: Execute kalam-cli --file test.sql, verify all queries run
-- [ ] T056 [P] [US0] test_cli_syntax_error_handling: Execute invalid SQL, verify helpful error message
-- [ ] T057 [P] [US0] test_cli_connection_failure_handling: Connect to invalid host, verify clear error
+- [X] T055 [P] [US0] test_cli_batch_file_execution: Execute kalam-cli --file test.sql, verify all queries run
+- [X] T056 [P] [US0] test_cli_syntax_error_handling: Execute invalid SQL, verify helpful error message
+- [X] T057 [P] [US0] test_cli_connection_failure_handling: Connect to invalid host, verify clear error
 - [ ] T058 [P] [US0] test_cli_flush_command: Execute \flush, verify flush status displayed
 - [ ] T059 [P] [US0] test_cli_health_check_command: Execute \health, verify server health displayed
 - [ ] T060 [P] [US0] test_cli_color_output_toggle: Test --color flag with ANSI codes
@@ -124,45 +124,45 @@
 
 ### kalam-link Library Implementation
 
-- [ ] T069 [P] [US0] Create `/cli/kalam-link/src/lib.rs` with public API exports
-- [ ] T070 [P] [US0] Create `/cli/kalam-link/src/client.rs` with KalamLinkClient struct and builder pattern (timeout, retry/backoff settings, connection reuse, wasm feature flags)
-- [ ] T071 [P] [US0] Create `/cli/kalam-link/src/query.rs` with QueryExecutor and query execution logic
-- [ ] T072 [P] [US0] Create `/cli/kalam-link/src/subscription.rs` with SubscriptionManager and Stream-based API
-- [ ] T073 [P] [US0] Create `/cli/kalam-link/src/auth.rs` with AuthProvider for JWT/API key handling
-- [ ] T074 [P] [US0] Create `/cli/kalam-link/src/models.rs` with QueryRequest, QueryResponse, ChangeEvent types
-- [ ] T075 [P] [US0] Create `/cli/kalam-link/src/error.rs` with KalamLinkError enum
-- [ ] T076 [US0] Implement KalamLinkClient::builder() method in client.rs
-- [ ] T077 [US0] Implement QueryExecutor::execute() method with HTTP POST to /api/sql and transient failure retry logic
-- [ ] T078 [US0] Implement QueryExecutor::execute_with_params() for parametrized queries including placeholder validation
-- [ ] T079 [US0] Implement SubscriptionManager::subscribe() with WebSocket connection establishment
-- [ ] T080 [US0] Implement SubscriptionManager WebSocket message parsing for ChangeEvent enum
-- [ ] T081 [US0] Implement AuthProvider with JWT token and API key authentication (attach `X-USER-ID`, omit `X-TENANT-ID`)
-- [ ] T082 [US0] Add health check method to KalamLinkClient
+- [X] T069 [P] [US0] Create `/cli/kalam-link/src/lib.rs` with public API exports
+- [X] T070 [P] [US0] Create `/cli/kalam-link/src/client.rs` with KalamLinkClient struct and builder pattern (timeout, retry/backoff settings, connection reuse, wasm feature flags)
+- [X] T071 [P] [US0] Create `/cli/kalam-link/src/query.rs` with QueryExecutor and query execution logic
+- [X] T072 [P] [US0] Create `/cli/kalam-link/src/subscription.rs` with SubscriptionManager and Stream-based API
+- [X] T073 [P] [US0] Create `/cli/kalam-link/src/auth.rs` with AuthProvider for JWT/API key handling
+- [X] T074 [P] [US0] Create `/cli/kalam-link/src/models.rs` with QueryRequest, QueryResponse, ChangeEvent types
+- [X] T075 [P] [US0] Create `/cli/kalam-link/src/error.rs` with KalamLinkError enum
+- [X] T076 [US0] Implement KalamLinkClient::builder() method in client.rs
+- [X] T077 [US0] Implement QueryExecutor::execute() method with HTTP POST to /api/sql and transient failure retry logic
+- [X] T078 [US0] Implement QueryExecutor::execute_with_params() for parametrized queries including placeholder validation
+- [X] T079 [US0] Implement SubscriptionManager::subscribe() with WebSocket connection establishment
+- [X] T080 [US0] Implement SubscriptionManager WebSocket message parsing for ChangeEvent enum
+- [X] T081 [US0] Implement AuthProvider with JWT token and API key authentication (attach `X-USER-ID`, omit `X-TENANT-ID`)
+- [X] T082 [US0] Add health check method to KalamLinkClient
 
 ### kalam-cli Terminal Client Implementation
 
-- [ ] T083 [P] [US0] Create `/cli/kalam-cli/src/main.rs` with CLI entry point and argument parsing
-- [ ] T084 [P] [US0] Create `/cli/kalam-cli/src/session.rs` with CLISession state management
-- [ ] T085 [P] [US0] Create `/cli/kalam-cli/src/config.rs` with CLIConfiguration and TOML parsing
-- [ ] T086 [P] [US0] Create `/cli/kalam-cli/src/formatter.rs` with OutputFormatter for table/JSON/CSV
-- [ ] T087 [P] [US0] Create `/cli/kalam-cli/src/parser.rs` with CommandParser for SQL + backslash commands
-- [ ] T088 [P] [US0] Create `/cli/kalam-cli/src/completer.rs` with AutoCompleter for TAB completion
-- [ ] T089 [P] [US0] Create `/cli/kalam-cli/src/history.rs` with CommandHistory persistence
-- [ ] T090 [P] [US0] Create `/cli/kalam-cli/src/error.rs` with CLI-specific error types
-- [ ] T091 [US0] Implement main() with clap argument parsing for -u, -h, --token, --apikey, --json, --csv, --color, --file flags
-- [ ] T092 [US0] Implement CLISession::connect() using kalam-link client
-- [ ] T093 [US0] Implement CLISession::run_interactive() with readline loop
-- [ ] T094 [US0] Implement CommandParser for SQL statements and backslash commands (\quit, \q, \help, \connect, \config, \flush, \health, \pause, \continue)
-- [ ] T095 [US0] Implement OutputFormatter::format_table() with ASCII table rendering (color toggle, terminal resize handling, pagination with "Press Enter for more...")
-- [ ] T096 [US0] Implement OutputFormatter::format_json() with serde_json serialization
-- [ ] T097 [US0] Implement OutputFormatter::format_csv() with CSV formatting
-- [ ] T098 [US0] Implement AutoCompleter with SQL keyword completion (SELECT, INSERT, CREATE, etc.)
-- [ ] T099 [US0] Implement CommandHistory with ~/.kalam/history file persistence (ensure ~/.kalam exists, 0600 permissions)
-- [ ] T100 [US0] Implement config file creation at ~/.kalam/config.toml with default values
-- [ ] T101 [US0] Implement batch file execution mode (--file flag)
-- [ ] T102 [US0] Implement WebSocket subscription display with timestamps and change indicators (INSERT/UPDATE/DELETE)
-- [ ] T103 [US0] Implement Ctrl+C handler for graceful subscription cancellation
-- [ ] T104 [US0] Implement \pause and \continue commands for subscription control
+- [X] T083 [P] [US0] Create `/cli/kalam-cli/src/main.rs` with CLI entry point and argument parsing
+- [X] T084 [P] [US0] Create `/cli/kalam-cli/src/session.rs` with CLISession state management
+- [X] T085 [P] [US0] Create `/cli/kalam-cli/src/config.rs` with CLIConfiguration and TOML parsing
+- [X] T086 [P] [US0] Create `/cli/kalam-cli/src/formatter.rs` with OutputFormatter for table/JSON/CSV
+- [X] T087 [P] [US0] Create `/cli/kalam-cli/src/parser.rs` with CommandParser for SQL + backslash commands
+- [X] T088 [P] [US0] Create `/cli/kalam-cli/src/completer.rs` with AutoCompleter for TAB completion
+- [X] T089 [P] [US0] Create `/cli/kalam-cli/src/history.rs` with CommandHistory persistence
+- [X] T090 [P] [US0] Create `/cli/kalam-cli/src/error.rs` with CLI-specific error types
+- [X] T091 [US0] Implement main() with clap argument parsing for -u, -h, --token, --apikey, --json, --csv, --color, --file flags
+- [X] T092 [US0] Implement CLISession::connect() using kalam-link client
+- [X] T093 [US0] Implement CLISession::run_interactive() with readline loop
+- [X] T094 [US0] Implement CommandParser for SQL statements and backslash commands (\quit, \q, \help, \connect, \config, \flush, \health, \pause, \continue)
+- [X] T095 [US0] Implement OutputFormatter::format_table() with ASCII table rendering (color toggle, terminal resize handling, pagination with "Press Enter for more...")
+- [X] T096 [US0] Implement OutputFormatter::format_json() with serde_json serialization
+- [X] T097 [US0] Implement OutputFormatter::format_csv() with CSV formatting
+- [X] T098 [US0] Implement AutoCompleter with SQL keyword completion (SELECT, INSERT, CREATE, etc.)
+- [X] T099 [US0] Implement CommandHistory with ~/.kalam/history file persistence (ensure ~/.kalam exists, 0600 permissions)
+- [X] T100 [US0] Implement config file creation at ~/.kalam/config.toml with default values
+- [X] T101 [US0] Implement batch file execution mode (--file flag)
+- [X] T102 [US0] Implement WebSocket subscription display with timestamps and change indicators (INSERT/UPDATE/DELETE)
+- [X] T103 [US0] Implement Ctrl+C handler for graceful subscription cancellation
+- [X] T104 [US0] Implement \pause and \continue commands for subscription control
 
 ### kalam-link Examples and Documentation
 

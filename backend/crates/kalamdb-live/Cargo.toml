@@ -1,0 +1,39 @@
+[package]
+name = "kalamdb-live"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Live query subscription management for KalamDB"
+
+[dependencies]
+# Internal crates
+kalamdb-commons = { path = "../kalamdb-commons" }
+
+# Apache Arrow ecosystem (for expression caching)
+datafusion.workspace = true
+
+# Actor framework
+actix.workspace = true
+
+# Async runtime
+tokio.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Logging
+log.workspace = true
+
+# UUID generation
+uuid.workspace = true
+
+[lib]
+name = "kalamdb_live"
+path = "src/lib.rs"

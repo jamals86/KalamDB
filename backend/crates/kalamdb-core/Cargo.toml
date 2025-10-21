@@ -11,6 +11,7 @@ repository.workspace = true
 rocksdb.workspace = true
 
 # Internal crates
+kalamdb-commons = { path = "../kalamdb-commons" }
 kalamdb-sql = { path = "../kalamdb-sql" }
 kalamdb-store = { path = "../kalamdb-store" }
 
