@@ -22,6 +22,16 @@ Database users need to execute queries efficiently with dynamic parameters while
 3. **Given** a query with invalid parameter count, **When** submitted to the API, **Then** the system returns a clear error message indicating parameter mismatch
 4. **Given** query results are being returned, **When** the query execution configuration enables timing, **Then** the response includes the query execution duration
 
+**Integration Tests** (backend/tests/integration/test_parametrized_queries.rs):
+
+1. **test_parametrized_query_execution**: Create user table, execute parametrized SELECT with $1, $2 placeholders, verify results match parameter values
+2. **test_execution_plan_caching**: Execute same query structure twice with different parameters, verify second execution is faster (plan cached)
+3. **test_parameter_count_mismatch**: Submit query with 2 placeholders but 1 parameter value, verify error message includes "parameter mismatch"
+4. **test_parameter_type_validation**: Submit parametrized INSERT with wrong type (string for INT column), verify type error returned
+5. **test_query_timing_in_response**: Enable timing in config, execute parametrized query, verify response includes execution_time_ms field
+6. **test_parametrized_insert_update_delete**: Test parametrized INSERT, UPDATE, DELETE operations with parameter substitution
+7. **test_concurrent_parametrized_queries**: Execute multiple parametrized queries concurrently, verify no cache contention or errors
+
 ---
 
 ### User Story 2 - Automatic Table Flushing with Scheduled Jobs (Priority: P1)
@@ -40,6 +50,16 @@ Database administrators need user table data automatically persisted to storage 
 4. **Given** a sharding strategy is configured, **When** data is flushed, **Then** data is distributed across shards according to the configured function
 5. **Given** flush configuration specifies separate paths for user tables vs shared tables, **When** flush executes for each table type, **Then** data is written to the appropriate directory structure
 
+**Integration Tests** (backend/tests/integration/test_automatic_flushing.rs):
+
+1. **test_scheduled_flush_interval**: Create table with 5-second flush interval, insert data, wait for scheduler, verify Parquet files created at storage location
+2. **test_multi_user_flush_grouping**: Insert data from user1 and user2, trigger flush, verify separate Parquet files at {storageLocation}/users/user1/ and /users/user2/
+3. **test_storage_path_template_substitution**: Create table with template path containing {namespace}, {userId}, {tableName}, flush data, verify actual paths match substituted template
+4. **test_sharding_strategy_distribution**: Configure alphabetic sharding (a-z), insert data across multiple shards, flush, verify files distributed to correct shard directories
+5. **test_user_vs_shared_table_paths**: Create user table and shared table, insert data, flush both, verify user data at users/{userId}/ and shared data at {namespace}/{table}/
+6. **test_flush_job_status_tracking**: Trigger flush, query system.jobs table, verify flush job recorded with status, metrics, and storage location
+7. **test_scheduler_recovery_after_restart**: Insert data, shutdown server before flush, restart, verify scheduler triggers pending flush
+
 ---
 
 ### User Story 3 - Manual Table Flushing via SQL Command (Priority: P2)
@@ -56,6 +76,16 @@ Database administrators need to manually trigger immediate table flushing for ma
 2. **Given** multiple tables exist, **When** administrator executes `FLUSH ALL TABLES`, **Then** all tables with buffered data are flushed sequentially
 3. **Given** a flush operation completes, **When** the SQL command returns, **Then** the response includes the number of records flushed and the target storage location
 4. **Given** the server is shutting down, **When** the shutdown sequence initiates, **Then** automatic flush of all tables executes before the process terminates
+
+**Integration Tests** (backend/tests/integration/test_manual_flushing.rs):
+
+1. **test_flush_table_command**: Create user table, insert 100 rows, execute FLUSH TABLE namespace.table_name, verify Parquet file created and buffer cleared
+2. **test_flush_all_tables_command**: Create 3 tables with buffered data, execute FLUSH ALL TABLES, verify all tables flushed and response includes count for each table
+3. **test_flush_response_includes_metrics**: Execute FLUSH TABLE, verify response includes records_flushed count and storage_location path
+4. **test_concurrent_flush_prevention**: Trigger FLUSH TABLE in one thread, attempt FLUSH same table in another thread, verify second request queued/rejected with appropriate message
+5. **test_flush_empty_table**: Execute FLUSH TABLE on table with no buffered data, verify response indicates 0 records flushed with success status
+6. **test_shutdown_automatic_flush**: Insert data into multiple tables, initiate server shutdown, verify all tables flushed before process terminates (check Parquet files exist)
+7. **test_flush_table_synchronous_operation**: Execute FLUSH TABLE, measure response time, verify command blocks until flush completes (not async fire-and-forget)
 
 ---
 
@@ -74,6 +104,16 @@ Database users who repeatedly query their own tables should experience faster qu
 3. **Given** a user session has multiple cached table registrations, **When** tables remain unused beyond a configured timeout, **Then** those registrations are automatically evicted from the cache
 4. **Given** a table's schema is modified, **When** a query attempts to use a cached registration, **Then** the system detects the schema change and re-registers the table with the updated schema
 
+**Integration Tests** (backend/tests/integration/test_session_caching.rs):
+
+1. **test_first_query_caches_registration**: Create user table, execute SELECT query, measure execution time, execute same SELECT again, verify second query is faster (cached registration)
+2. **test_cached_registration_reuse**: Execute 10 sequential queries on same table in one session, verify only first query performs registration (inspect debug logs or metrics)
+3. **test_cache_eviction_after_timeout**: Configure short cache timeout (30s), query table, wait beyond timeout, query again, verify re-registration occurred
+4. **test_schema_change_invalidates_cache**: Query table, execute ALTER TABLE ADD COLUMN, query table again, verify cache invalidated and new schema loaded
+5. **test_multi_table_session_cache**: Create 5 tables, query all 5 in sequence, query all 5 again, verify cached registrations for all tables (faster second round)
+6. **test_cache_isolation_between_sessions**: Query table in session1, query same table in session2, verify each session maintains independent cache
+7. **test_dropped_table_cache_cleanup**: Query table, DROP TABLE, attempt query again, verify cache entry removed and appropriate error returned
+
 ---
 
 ### User Story 5 - Namespace Validation for Table Creation (Priority: P2)
@@ -89,6 +129,16 @@ Database users should be prevented from creating tables in non-existent namespac
 1. **Given** a user attempts to create a table, **When** they specify a namespace that doesn't exist, **Then** the system returns an error: "Namespace 'X' does not exist. Create it first with CREATE NAMESPACE."
 2. **Given** a namespace exists, **When** a user creates a table within that namespace, **Then** the table is successfully created
 3. **Given** validation applies to all table types, **When** creating user, shared, or stream tables, **Then** namespace existence is validated for each type
+
+**Integration Tests** (backend/tests/integration/test_namespace_validation.rs):
+
+1. **test_create_table_nonexistent_namespace_error**: Attempt CREATE USER TABLE in namespace "nonexistent", verify error contains "Namespace 'nonexistent' does not exist"
+2. **test_create_table_after_namespace_creation**: Attempt CREATE TABLE in nonexistent namespace (fails), CREATE NAMESPACE, retry CREATE TABLE (succeeds)
+3. **test_user_table_namespace_validation**: Attempt CREATE USER TABLE without namespace, verify validation error with guidance message
+4. **test_shared_table_namespace_validation**: Attempt CREATE SHARED TABLE in nonexistent namespace, verify same validation applies
+5. **test_stream_table_namespace_validation**: Attempt CREATE STREAM TABLE in nonexistent namespace, verify same validation applies
+6. **test_namespace_validation_race_condition**: Create namespace, immediately create table in concurrent thread, verify no race condition errors
+7. **test_error_message_includes_guidance**: Attempt table creation in nonexistent namespace, verify error includes "Create it first with CREATE NAMESPACE" guidance
 
 ---
 
@@ -119,6 +169,16 @@ Development teams need a clean, maintainable codebase with reduced duplication, 
 15. **Given** live query filtering uses expressions, **When** implementing filter checks, **Then** DataFusion expression objects are used and cached for performance
 16. **Given** SQL functions are needed, **When** implementing custom functions, **Then** DataFusion's built-in function infrastructure is leveraged where possible
 
+**Integration Tests** (backend/tests/integration/test_code_quality.rs):
+
+1. **test_system_table_providers_use_common_base**: Verify all system table providers inherit from common base implementation (code inspection/reflection test)
+2. **test_type_safe_wrappers_usage**: Create tables using type-safe wrappers (NamespaceId, TableName), verify operations succeed without raw string errors
+3. **test_column_family_helper_functions**: Verify column family names generated through centralized helpers match expected patterns
+4. **test_kalamdb_commons_models_accessible**: Import and use UserId, NamespaceId, TableName from kalamdb-commons crate in integration test
+5. **test_system_catalog_consistency**: Query system tables, verify all use "system" catalog prefix consistently
+6. **test_local_vs_temporary_server_config**: Run subset of tests against local server (if available) and temporary server, verify both work
+7. **test_binary_size_optimization**: Build release binary, verify test-only dependencies not included (check binary size is within limits)
+
 ---
 
 ### User Story 7 - Storage Backend Abstraction and Architecture Cleanup (Priority: P3)
@@ -135,6 +195,16 @@ Development teams need the ability to support alternative storage backends beyon
 2. **Given** RocksDB is the current backend, **When** examining implementations, **Then** RocksDB operations implement the storage trait without exposing RocksDB-specific details
 3. **Given** system tables have a naming convention, **When** renaming occurs, **Then** "system.storage_locations" is renamed to "system.storages" consistently across all code and documentation
 4. **Given** column families are used for organization, **When** considering alternative backends, **Then** the abstraction layer provides equivalent partitioning mechanisms for non-RocksDB backends
+
+**Integration Tests** (backend/tests/integration/test_storage_abstraction.rs):
+
+1. **test_storage_trait_interface_exists**: Verify storage trait defines get, put, delete, scan, batch operations (code inspection test)
+2. **test_rocksdb_implements_storage_trait**: Verify RocksDB backend implements storage trait without exposing RocksDB types in public API
+3. **test_system_storages_table_renamed**: Query system.storages table, verify it exists and system.storage_locations does not (naming consistency)
+4. **test_storage_operations_through_abstraction**: Perform insert/update/delete/select operations, verify they use storage abstraction layer (no direct RocksDB calls)
+5. **test_column_family_abstraction**: Create multiple tables, verify column family concepts work through abstraction (prepare for non-RocksDB backends)
+6. **test_alternative_backend_compatibility**: If alternative backend available (Sled/Redis), run basic CRUD tests through storage trait
+7. **test_storage_backend_error_handling**: Trigger storage errors (disk full simulation), verify abstraction layer handles errors gracefully
 
 ---
 
@@ -154,6 +224,16 @@ Users and operators need well-organized documentation with clear categories and 
 4. **Given** a Dockerfile exists, **When** building the image, **Then** the resulting container includes the server binary and required dependencies
 5. **Given** deployment scenarios exist, **When** providing orchestration, **Then** a docker-compose.yml in /docker folder enables single-command system startup
 6. **Given** docker-compose configuration exists, **When** running the system, **Then** all services (database server, storage volumes, networking) are properly configured
+
+**Integration Tests** (backend/tests/integration/test_documentation_and_deployment.rs):
+
+1. **test_docs_folder_organization**: Verify /docs contains build/, quickstart/, architecture/ subfolders with no orphan files in root
+2. **test_dockerfile_builds_successfully**: Run docker build on /docker/Dockerfile, verify image builds without errors
+3. **test_docker_image_starts_server**: Build Docker image, run container, verify server starts and responds to health check endpoint
+4. **test_docker_compose_brings_up_stack**: Execute docker-compose up, verify all services start (database, volumes, networking)
+5. **test_docker_container_environment_variables**: Start container with custom env vars (config overrides), verify server uses provided configuration
+6. **test_docker_volume_persistence**: Start container, create namespace/table, stop container, restart with same volumes, verify data persists
+7. **test_docker_image_size_within_limits**: Build Docker image, verify size is under 100MB (excluding data volumes)
 
 ---
 
@@ -175,6 +255,118 @@ Database users need more flexible API capabilities including batch SQL execution
 6. **Given** system.jobs exists, **When** queried, **Then** it includes parameters array, result string, trace string, and resource metrics (memory_used, cpu_used)
 7. **Given** users query tables, **When** DESCRIBE TABLE is executed, **Then** the output includes current schema version and reference to schema history in system.table_schemas
 8. **Given** administrators monitor tables, **When** SHOW TABLE STATS is executed, **Then** row counts, storage size, and buffer status are displayed
+
+**Integration Tests** (backend/tests/integration/test_enhanced_api_features.rs):
+
+1. **test_batch_sql_execution**: Submit request with 3 semicolon-separated SQL statements, verify all execute in sequence with individual results returned
+2. **test_batch_sql_partial_failure**: Submit batch with one invalid statement, verify execution stops at failure point with clear error indicating which statement failed
+3. **test_websocket_initial_data_fetch**: Create table, insert 100 rows, subscribe with "last_rows": 50, verify immediate response with 50 most recent rows
+4. **test_drop_table_with_active_subscriptions**: Create WebSocket subscription, attempt DROP TABLE, verify error includes active subscription count
+5. **test_kill_live_query_command**: Create subscription, query system.live_queries for live_id, execute KILL LIVE QUERY, verify subscription disconnected
+6. **test_system_live_queries_enhanced_fields**: Create subscription with options, query system.live_queries, verify options (JSON), changes counter, node fields populated
+7. **test_system_jobs_enhanced_fields**: Trigger flush job, query system.jobs, verify parameters, result, trace, memory_used, cpu_used fields populated
+8. **test_describe_table_schema_history**: Create table, ALTER TABLE twice, DESCRIBE TABLE, verify output includes current_schema_version and history reference
+9. **test_show_table_stats_command**: Insert data, flush, execute SHOW TABLE STATS, verify output includes buffered/flushed row counts, storage size, last flush timestamp
+10. **test_shared_table_subscription_prevention**: Create shared table, attempt WebSocket subscription, verify error "Live query subscriptions not supported on shared tables"
+
+---
+
+### User Story 10 - User Management SQL Commands (Priority: P2)
+
+Database administrators need SQL commands to manage users in the system.users table for user registration, updates, and removal. Standard SQL syntax should be used for consistency with existing table operations.
+
+**Why this priority**: User management is a fundamental administrative task. While the system.users table exists, providing standard SQL commands (INSERT/UPDATE/DELETE) makes user administration consistent with other database operations and easier for administrators familiar with SQL.
+
+**Independent Test**: Can be fully tested by executing INSERT USER, UPDATE USER, and DELETE USER SQL commands via the `/api/sql` endpoint, then querying system.users to verify changes were persisted correctly.
+
+**Acceptance Scenarios**:
+
+1. **Given** an administrator needs to add a user, **When** they execute `INSERT INTO system.users (user_id, username, metadata) VALUES ('user123', 'john_doe', '{"role": "admin"}')`, **Then** the user is created in system.users table
+2. **Given** an administrator needs to update user information, **When** they execute `UPDATE system.users SET username = 'jane_doe', metadata = '{"role": "user"}' WHERE user_id = 'user123'`, **Then** the user record is updated
+3. **Given** an administrator needs to remove a user, **When** they execute `DELETE FROM system.users WHERE user_id = 'user123'`, **Then** the user is removed from system.users table
+4. **Given** a user_id already exists, **When** an administrator attempts to INSERT with the same user_id, **Then** the system returns error "User with user_id 'X' already exists"
+5. **Given** an administrator updates a non-existent user, **When** UPDATE is executed, **Then** the system returns error "User with user_id 'X' not found"
+6. **Given** metadata is provided in INSERT/UPDATE, **When** the SQL executes, **Then** JSON metadata is validated and stored correctly
+7. **Given** an administrator queries users, **When** they execute `SELECT * FROM system.users WHERE username LIKE '%john%'`, **Then** matching users are returned with all fields (user_id, username, metadata, created_at, updated_at)
+
+**Integration Tests** (backend/tests/integration/test_user_management_sql.rs):
+
+1. **test_insert_user_into_system_users**: Execute INSERT INTO system.users with user_id, username, metadata, verify user created and queryable
+2. **test_update_user_in_system_users**: Insert user, execute UPDATE to modify username and metadata, verify changes persisted
+3. **test_delete_user_from_system_users**: Insert user, execute DELETE FROM system.users, query to verify user removed
+4. **test_duplicate_user_id_validation**: Insert user with user_id "user123", attempt INSERT with same user_id, verify error "User with user_id 'user123' already exists"
+5. **test_update_nonexistent_user_error**: Execute UPDATE for user_id that doesn't exist, verify error "User with user_id 'X' not found"
+6. **test_json_metadata_validation**: Insert user with malformed JSON metadata '{"invalid}', verify error indicates JSON validation failure
+7. **test_automatic_timestamps**: Insert user, verify created_at set automatically; UPDATE user, verify updated_at changes to current time
+8. **test_partial_update_preserves_fields**: Insert user with username and metadata, UPDATE only username, verify metadata unchanged
+9. **test_required_fields_validation**: Attempt INSERT without user_id or username, verify NOT NULL constraint error
+10. **test_select_with_filtering**: Insert multiple users, execute SELECT with WHERE username LIKE filter, verify only matching users returned
+
+---
+
+### User Story 11 - Live Query Change Detection Integration Testing (Priority: P1)
+
+Developers need to verify that live query subscriptions correctly detect and deliver all data changes (INSERT, UPDATE, DELETE) in real-time across concurrent operations. The system must handle realistic scenarios like AI agents writing messages while multiple clients are listening.
+
+**Why this priority**: Live queries are a core feature of KalamDB. Comprehensive integration testing ensures the WebSocket subscription system reliably delivers all changes without loss, duplication, or ordering issues under concurrent load.
+
+**Independent Test**: Can be fully tested by creating a messages table, establishing a WebSocket subscription in one thread, performing INSERT/UPDATE/DELETE operations from another thread, and verifying the listener receives all changes with correct change types and data.
+
+**Acceptance Scenarios**:
+
+1. **Given** a messages table exists with WebSocket subscription active, **When** INSERT operations occur from a separate thread, **Then** the listener receives all INSERT notifications with complete message data
+2. **Given** an active subscription is listening for changes, **When** UPDATE operations modify existing messages, **Then** the listener receives UPDATE notifications with both old and new values
+3. **Given** a subscription is monitoring messages, **When** DELETE operations soft-delete messages, **Then** the listener receives DELETE notifications with the deleted message data and _deleted=true
+4. **Given** multiple concurrent writers insert messages simultaneously, **When** the listener monitors the table, **Then** all INSERT notifications are received without loss or duplication
+5. **Given** a realistic AI scenario with agents writing messages, **When** human clients subscribe to conversation updates, **Then** all AI-generated messages are delivered in real-time with correct timestamps
+6. **Given** mixed operations occur (INSERT, UPDATE, DELETE) in rapid succession, **When** monitored by a subscription, **Then** all changes are delivered in correct chronological order
+7. **Given** a subscription has been active for extended duration, **When** the system.live_queries table is queried, **Then** the changes counter accurately reflects the total notifications delivered
+
+**Integration Tests** (backend/tests/integration/test_live_query_changes.rs):
+
+1. **test_live_query_detects_inserts**: Create messages table, start WebSocket subscription in spawned thread, INSERT 100 messages from main thread, verify listener receives all 100 INSERT notifications
+2. **test_live_query_detects_updates**: Subscribe to messages table, INSERT 50 messages, UPDATE all 50 messages, verify listener receives 50 INSERT + 50 UPDATE notifications with old/new values
+3. **test_live_query_detects_deletes**: Subscribe to messages, INSERT 30 messages, DELETE 15 messages (soft delete), verify listener receives 30 INSERT + 15 DELETE notifications with _deleted=true
+4. **test_concurrent_writers_no_message_loss**: Create 5 writer threads each inserting 20 messages concurrently, verify single listener receives all 100 messages without loss or duplication
+5. **test_ai_message_scenario**: Simulate AI agent writing messages (INSERT with AI metadata), human client subscribing to conversation_id filter, verify all AI messages delivered in real-time
+6. **test_mixed_operations_ordering**: Perform sequence: INSERT msg1, UPDATE msg1, INSERT msg2, DELETE msg1, verify listener receives changes in exact order
+7. **test_changes_counter_accuracy**: Subscribe to table, trigger 50 changes (INSERT/UPDATE/DELETE), query system.live_queries, verify changes field = 50
+8. **test_multiple_listeners_same_table**: Create 3 concurrent WebSocket subscriptions to same table, INSERT 20 messages, verify each listener receives all 20 notifications independently
+9. **test_listener_reconnect_no_data_loss**: Subscribe to table, INSERT 10 messages, disconnect/reconnect WebSocket, INSERT 10 more messages, verify no messages lost during reconnection
+10. **test_high_frequency_changes**: INSERT 1000 messages as fast as possible, verify listener receives all 1000 notifications with correct sequence numbers
+
+---
+
+### User Story 12 - Memory Leak and Performance Stress Testing (Priority: P1)
+
+Operations teams need confidence that the system handles sustained high load without memory leaks, resource exhaustion, or performance degradation. The system must maintain stability under concurrent writers, high insert rates, and multiple active subscriptions.
+
+**Why this priority**: Production stability requires verification that the system doesn't accumulate memory, leak connections, or degrade under load. Stress testing identifies resource management issues before production deployment.
+
+**Independent Test**: Can be fully tested by spawning 10 concurrent writer threads performing continuous inserts, 20 concurrent WebSocket subscriptions listening for changes, running for extended duration (5+ minutes), and monitoring memory usage, CPU utilization, and WebSocket connection stability.
+
+**Acceptance Scenarios**:
+
+1. **Given** 10 concurrent writer threads continuously insert data, **When** the system runs for 5 minutes, **Then** memory usage remains stable without continuous growth indicating leaks
+2. **Given** 20 active WebSocket subscriptions are monitoring a table, **When** high-frequency inserts occur (1000+ rows/second), **Then** all subscriptions receive notifications without dropping connections
+3. **Given** sustained write load from multiple threads, **When** monitoring system resources, **Then** CPU usage stays within reasonable limits (< 80% on average) and responds to queries
+4. **Given** long-running stress test with writers and listeners, **When** checking WebSocket connections, **Then** no connections are leaked or left in zombie state
+5. **Given** extreme load with 10 writers and 20 listeners, **When** monitoring memory at 1-minute intervals, **Then** memory usage stabilizes and does not grow linearly with time
+6. **Given** the system is under stress, **When** normal queries are executed, **Then** query response times remain within acceptable limits (< 500ms for simple SELECT)
+7. **Given** stress test completes and all threads terminate, **When** checking system resources, **Then** memory is properly released and returns to baseline levels
+
+**Integration Tests** (backend/tests/integration/test_stress_and_memory.rs):
+
+1. **test_memory_stability_under_write_load**: Spawn 10 writer threads inserting 10,000 rows each, measure memory every 30 seconds, verify memory growth < 10% over baseline
+2. **test_concurrent_writers_and_listeners**: Start 10 writers + 20 WebSocket listeners, run for 5 minutes, verify no WebSocket disconnections and all messages delivered
+3. **test_cpu_usage_under_load**: Run sustained write load (1000 inserts/sec), measure CPU usage, verify average < 80% and system remains responsive
+4. **test_websocket_connection_leak_detection**: Create 50 WebSocket subscriptions, close 25, verify server properly releases connections (check via system.live_queries and netstat)
+5. **test_memory_release_after_stress**: Run heavy load test, stop all writers/listeners, wait 60 seconds, verify memory returns to within 5% of baseline
+6. **test_query_performance_under_stress**: While stress test runs (10 writers, 20 listeners), execute SELECT queries, verify response times < 500ms at p95
+7. **test_flush_operations_during_stress**: Run stress test with continuous writes, trigger periodic manual flushes, verify no memory accumulation from unflushed buffers
+8. **test_actor_system_stability**: Monitor actor system (flush jobs, live query actors) during stress test, verify no actor mailbox overflow or stuck actors
+9. **test_rocksdb_memory_bounds**: Configure RocksDB memory limits, run stress test, verify RocksDB respects bounds and doesn't cause OOM
+10. **test_graceful_degradation**: Gradually increase load until system reaches capacity, verify it degrades gracefully (slower responses) rather than crashing
 
 ---
 
@@ -212,6 +404,14 @@ Database users need more flexible API capabilities including batch SQL execution
 - What occurs when SHOW TABLE STATS is executed for a table that has never been flushed?
 - How does the system prevent subscription attempts on shared tables disguised through views or aliases?
 - What happens when kalamdb-sql receives SQL that would violate stateless operation (e.g., session state mutation)?
+- What occurs when INSERT INTO system.users is executed without providing required fields (user_id or username)?
+- How does UPDATE system.users handle partial updates when some fields are not specified in SET clause?
+- What happens when DELETE FROM system.users attempts to remove a user that has active data in user tables?
+- How does the system handle UPDATE operations with malformed JSON in the metadata field?
+- What occurs when INSERT attempts to add a user with empty string user_id or username?
+- How does SELECT FROM system.users perform with thousands of users in the table?
+- What happens when concurrent INSERT operations attempt to create the same user_id simultaneously?
+- How does UPDATE handle setting metadata to NULL vs empty JSON object '{}'?
 
 ## Requirements *(mandatory)*
 
@@ -373,6 +573,62 @@ Database users need more flexible API capabilities including batch SQL execution
 - **FR-130**: kalamdb-sql MUST be designed as stateless and idempotent to support future Raft consensus replication
 - **FR-131**: kalamdb-sql architecture MUST support optional change event emission for future cluster replication
 
+#### User Management SQL Commands
+
+- **FR-132**: System MUST support standard SQL INSERT syntax for adding users: `INSERT INTO system.users (user_id, username, metadata) VALUES (...)`
+- **FR-133**: System MUST support standard SQL UPDATE syntax for modifying users: `UPDATE system.users SET username = '...', metadata = '...' WHERE user_id = '...'`
+- **FR-134**: System MUST support standard SQL DELETE syntax for removing users: `DELETE FROM system.users WHERE user_id = '...'`
+- **FR-135**: System MUST validate user_id uniqueness on INSERT and return error "User with user_id 'X' already exists" for duplicates
+- **FR-136**: System MUST validate user existence on UPDATE and return error "User with user_id 'X' not found" if user doesn't exist
+- **FR-137**: System MUST validate user existence on DELETE and return error "User with user_id 'X' not found" if user doesn't exist
+- **FR-138**: System MUST validate metadata field as valid JSON when provided in INSERT or UPDATE operations
+- **FR-139**: System MUST automatically set created_at timestamp on INSERT using current server time
+- **FR-140**: System MUST automatically update updated_at timestamp on UPDATE using current server time
+- **FR-141**: System MUST support SELECT queries on system.users with filtering (WHERE), ordering (ORDER BY), and limiting (LIMIT)
+- **FR-142**: System MUST support partial updates where only specified fields are modified (e.g., UPDATE only username without changing metadata)
+- **FR-143**: username field MUST be required (NOT NULL) on INSERT operations
+- **FR-144**: user_id field MUST be required (NOT NULL) on INSERT operations
+- **FR-145**: metadata field MUST be optional (nullable) and default to NULL if not provided
+
+#### Integration Testing Requirements
+
+- **FR-146**: Each user story MUST have a dedicated integration test file following the naming convention test_{feature_name}.rs
+- **FR-147**: Integration tests MUST use the common TestServer harness from backend/tests/integration/common/mod.rs
+- **FR-148**: Integration tests MUST execute SQL commands via the /api/sql endpoint to test end-to-end functionality
+- **FR-149**: Integration tests MUST verify both success cases and error cases with appropriate error messages
+- **FR-150**: Integration tests MUST clean up test data and server resources after execution
+- **FR-151**: Each acceptance scenario in a user story MUST have at least one corresponding integration test
+- **FR-152**: Integration tests MUST be executable against both temporary test servers and local development servers
+- **FR-153**: Integration tests MUST include performance validation where success criteria specify timing requirements
+- **FR-154**: Integration tests MUST verify data persistence by querying after operations complete
+- **FR-155**: Integration test documentation MUST reference the specific user story and acceptance scenarios being tested
+
+#### Live Query Change Detection Testing
+
+- **FR-156**: Integration tests MUST verify INSERT operation notifications are received by active WebSocket subscriptions
+- **FR-157**: Integration tests MUST verify UPDATE operation notifications include both old and new values
+- **FR-158**: Integration tests MUST verify DELETE operation notifications include deleted row data and _deleted flag
+- **FR-159**: Integration tests MUST verify concurrent writers do not cause message loss or duplication in subscriptions
+- **FR-160**: Integration tests MUST simulate realistic AI agent scenarios with human client subscriptions
+- **FR-161**: Integration tests MUST verify notification ordering matches the chronological order of operations
+- **FR-162**: Integration tests MUST validate the changes counter in system.live_queries accurately reflects delivered notifications
+- **FR-163**: Integration tests MUST verify multiple concurrent subscriptions to the same table operate independently
+- **FR-164**: Integration tests MUST test subscription reconnection scenarios without data loss
+- **FR-165**: Integration tests MUST validate high-frequency change delivery (1000+ notifications) without errors
+
+#### Memory Leak and Performance Stress Testing
+
+- **FR-166**: Stress tests MUST monitor memory usage at regular intervals during sustained load
+- **FR-167**: Stress tests MUST verify memory growth does not exceed 10% over baseline during extended operations
+- **FR-168**: Stress tests MUST validate WebSocket connections remain stable under high load (no unexpected disconnections)
+- **FR-169**: Stress tests MUST verify CPU usage remains reasonable (< 80% average) during sustained write operations
+- **FR-170**: Stress tests MUST validate WebSocket connection cleanup (no connection leaks after subscription termination)
+- **FR-171**: Stress tests MUST verify memory is properly released after stress operations complete
+- **FR-172**: Stress tests MUST validate query performance remains acceptable (< 500ms p95) during concurrent load
+- **FR-173**: Stress tests MUST verify flush operations during stress do not cause memory accumulation
+- **FR-174**: Stress tests MUST monitor actor system health (no mailbox overflow or stuck actors)
+- **FR-175**: Stress tests MUST validate system degrades gracefully (slower responses) rather than crashing under extreme load
+
 #### Data Organization and Query Optimization
 
 - **FR-057**: All scan operations on user-partitioned data MUST filter by user_id at the storage level
@@ -408,6 +664,10 @@ Database users need more flexible API capabilities including batch SQL execution
 - **SchemaHistory**: Queryable record of all schema versions for a table accessible through system.table_schemas
 - **TableStatistics**: Metrics about a table including row counts, storage size, and buffer status
 - **StatelessSQLEngine**: Design pattern for kalamdb-sql ensuring operations are idempotent and replayable for future cluster replication
+- **UserManagementCommand**: SQL command (INSERT/UPDATE/DELETE) for managing user records in system.users table
+- **UserRecord**: Data structure representing a user in system.users with user_id, username, metadata, created_at, and updated_at fields
+- **IntegrationTestSuite**: Comprehensive test suite organized by user story, using TestServer harness and executing via /api/sql endpoint
+- **TestServer**: Common test harness providing server lifecycle management, SQL execution, and cleanup utilities for integration testing
 
 ## Success Criteria *(mandatory)*
 
@@ -453,6 +713,26 @@ Database users need more flexible API capabilities including batch SQL execution
 - **SC-038**: SHOW TABLE STATS executes and returns accurate metrics within 50ms
 - **SC-039**: Shared table subscription prevention blocks 100% of attempts with clear error messages
 - **SC-040**: kalamdb-sql stateless design enables identical query results across cluster nodes (verifiable through testing)
+- **SC-041**: User INSERT operations complete within 10ms and are immediately queryable
+- **SC-042**: User UPDATE operations modify only specified fields and complete within 10ms
+- **SC-043**: User DELETE operations remove users successfully and return appropriate errors for non-existent users
+- **SC-044**: User uniqueness validation prevents duplicate user_id with clear error messages 100% of the time
+- **SC-045**: JSON metadata validation rejects invalid JSON with clear error messages 100% of the time
+- **SC-046**: Timestamp fields (created_at, updated_at) are automatically managed with accurate server time
+- **SC-047**: Each user story has a complete integration test file with all acceptance scenarios covered
+- **SC-048**: Integration tests achieve at least 90% code coverage for new functionality
+- **SC-049**: All integration tests pass consistently on both Windows and Linux platforms
+- **SC-050**: Integration tests execute within reasonable time limits (full suite under 5 minutes)
+- **SC-051**: Live query subscriptions deliver 100% of INSERT notifications without loss or duplication
+- **SC-052**: Live query UPDATE notifications include both old and new values in 100% of cases
+- **SC-053**: Live query DELETE notifications correctly identify soft-deleted rows with _deleted flag
+- **SC-054**: Concurrent writers with live query listeners maintain ordering and deliver all changes within 50ms
+- **SC-055**: system.live_queries changes counter matches actual delivered notifications with 100% accuracy
+- **SC-056**: Memory usage during stress test (10 writers, 20 listeners, 5 minutes) grows less than 10% over baseline
+- **SC-057**: WebSocket connections under stress test (100,000+ notifications) maintain 99.9% uptime without unexpected disconnections
+- **SC-058**: Query performance during stress test maintains p95 response time under 500ms
+- **SC-059**: Memory is fully released (within 5% of baseline) within 60 seconds after stress test completion
+- **SC-060**: System under extreme load degrades gracefully with slower responses rather than crashes or errors
 
 ### Documentation Success Criteria (Constitution Principle VIII)
 
