@@ -7,6 +7,176 @@
 
 ## User Scenarios & Testing *(mandatory)*
 
+### User Story 0 - Kalam CLI: Interactive Command-Line Client (Priority: P0)
+
+Database developers, administrators, and users need an interactive command-line client similar to `mysql` or `psql` for querying, managing, and subscribing to KalamDB data streams. The CLI should provide a familiar SQL shell experience with modern features like live query subscriptions, real-time data streaming, and SQL keyword auto-completion.
+
+**Why this priority**: A command-line interface is essential for development, debugging, testing, and administration. It's the primary tool developers use to interact with databases during development and troubleshooting. Without a CLI, the only way to interact with KalamDB is through HTTP API calls or WebSocket connections, which is cumbersome for interactive work.
+
+**Independent Test**: Can be fully tested by launching `kalam-cli` with connection parameters, executing SQL queries (SELECT, INSERT, CREATE TABLE), establishing WebSocket subscriptions with `SUBSCRIBE TO`, verifying all responses are displayed correctly in tabular or JSON format, and testing auto-completion of SQL keywords.
+
+**Acceptance Scenarios**:
+
+1. **Given** a user has KalamDB server running, **When** they execute `kalam-cli -u jamal -h http://localhost:8080 --token <jwt>`, **Then** the CLI connects successfully and displays a welcome prompt with user and server information
+2. **Given** the CLI is connected, **When** a user types a SQL query like `SELECT * FROM messages LIMIT 10;`, **Then** the query executes and results are displayed in formatted table output
+3. **Given** the CLI supports multiple output formats, **When** a user launches with `--json` flag or `--csv` flag, **Then** query results are formatted in the specified format instead of tables
+4. **Given** a user wants to see available tables, **When** they execute `SHOW TABLES;`, **Then** all tables accessible to the user are listed in tabular format
+5. **Given** a user wants to understand a table structure, **When** they execute `DESCRIBE messages;`, **Then** the table schema is displayed with columns, types, and nullable information
+6. **Given** a user needs real-time updates, **When** they execute `SUBSCRIBE TO messages WHERE user_id = 'jamal';`, **Then** a WebSocket connection is established and live updates stream to the console
+7. **Given** a live subscription is active, **When** data changes occur in the subscribed table, **Then** updates are displayed with timestamps and change indicators (INSERT/UPDATE/DELETE)
+8. **Given** a live subscription is streaming, **When** the user presses Ctrl+C, **Then** the subscription stops and the CLI returns to the normal prompt
+9. **Given** the CLI needs configuration, **When** a user runs the CLI for the first time, **Then** it creates a default config file at `~/.kalam/config.toml` with connection defaults
+10. **Given** a user has a config file, **When** they launch `kalam-cli` without parameters, **Then** connection details are loaded from the config file
+11. **Given** the CLI is running, **When** a user types `\quit` or `\q`, **Then** the CLI exits gracefully and closes all connections
+12. **Given** the user needs help, **When** they type `\help`, **Then** all available commands and their descriptions are displayed
+13. **Given** authentication is required, **When** the user provides `--token <jwt>` or `--apikey <key>`, **Then** the CLI authenticates using the provided credential
+14. **Given** the CLI supports batch execution, **When** a user provides a SQL file with `kalam-cli --file queries.sql`, **Then** all queries in the file execute sequentially and output is displayed
+15. **Given** a user is typing a SQL command, **When** they press TAB after typing "SEL", **Then** the CLI auto-completes to "SELECT"
+16. **Given** a user is typing a SQL command, **When** they press TAB after a partial keyword, **Then** the CLI shows a list of matching SQL keywords (SELECT, INSERT, CREATE, etc.)
+
+**Integration Tests** (backend/tests/integration/test_kalam_cli.rs):
+
+1. **test_cli_connection_and_prompt**: Launch CLI with connection parameters, verify welcome message displays, verify prompt shows "kalam>" 
+2. **test_cli_basic_query_execution**: Connect CLI, execute `SELECT 1 as test;`, verify result displays "test | 1" in table format
+3. **test_cli_table_output_formatting**: Create table, insert 5 rows, SELECT them, verify formatted table output with proper column alignment and borders
+4. **test_cli_json_output_format**: Launch CLI with `--json` flag, execute SELECT query, verify output is valid JSON array with row objects
+5. **test_cli_csv_output_format**: Launch CLI with `--csv` flag, execute SELECT query, verify output is comma-separated with header row
+6. **test_cli_show_tables_command**: Create 3 tables, execute `SHOW TABLES;`, verify all table names appear in output
+7. **test_cli_describe_table_command**: Create table with multiple columns, execute `DESCRIBE table_name;`, verify schema details (name, type, nullable) displayed
+8. **test_cli_websocket_subscription**: Create messages table, start CLI subscription with `SUBSCRIBE TO messages;`, insert message in separate thread, verify CLI displays live update
+9. **test_cli_subscription_with_filter**: Subscribe with `SUBSCRIBE TO messages WHERE user_id='jamal';`, insert messages for different users, verify only matching messages displayed
+10. **test_cli_subscription_cancel**: Start subscription, press Ctrl+C (simulate SIGINT), verify subscription stops and prompt returns
+11. **test_cli_subscription_pause_resume**: Start subscription, type `\pause`, verify streaming stops, type `\continue`, verify streaming resumes
+12. **test_cli_config_file_creation**: Delete `~/.kalam/config.toml`, launch CLI with connection params, verify config file created with provided values
+13. **test_cli_config_file_loading**: Create config file with connection details, launch CLI without params, verify connection uses config values
+14. **test_cli_connection_to_multiple_hosts**: Launch CLI with `-h http://host1`, execute query, then use `\connect -h http://host2`, verify connection switches
+15. **test_cli_help_command**: Execute `\help`, verify output includes list of SQL commands and backslash commands
+16. **test_cli_quit_commands**: Execute `\quit`, verify CLI exits with code 0 and no errors
+17. **test_cli_jwt_authentication**: Launch CLI with `--token <valid_jwt>`, execute query, verify authentication succeeds
+18. **test_cli_invalid_token_error**: Launch CLI with `--token invalid`, verify error message indicates authentication failure
+19. **test_cli_localhost_bypass_mode**: Configure server for localhost bypass, launch CLI from localhost without token, verify queries execute as default user
+20. **test_cli_batch_file_execution**: Create `test.sql` with 3 queries, execute `kalam-cli --file test.sql`, verify all queries run and output displays
+21. **test_cli_syntax_error_handling**: Execute invalid SQL `SELEC * FROM;`, verify error message displays with helpful context
+22. **test_cli_connection_failure_handling**: Launch CLI with invalid host `http://nonexistent:9999`, verify clear connection error message
+23. **test_cli_flush_command**: Insert data into table, execute `\flush`, verify flush operation completes and displays status
+24. **test_cli_health_check_command**: Execute `\health`, verify server health status displays with uptime and version info
+25. **test_cli_color_output_toggle**: Launch with `--color=true`, execute query, verify ANSI color codes in output; launch with `--color=false`, verify no color codes
+26. **test_cli_subscription_last_rows**: Subscribe with "last_rows" option in config, verify initial data fetch before streaming begins
+27. **test_cli_multiple_sessions**: Launch 2 CLI instances concurrently, execute queries in both, verify sessions are isolated
+28. **test_cli_session_timeout_handling**: Establish connection, wait beyond session timeout, execute query, verify reconnection or clear timeout error
+29. **test_cli_interactive_history**: Execute 3 queries, press UP arrow key, verify previous queries are accessible via history
+30. **test_cli_autocomplete_select**: Type "SEL" and press TAB, verify auto-completion to "SELECT"
+31. **test_cli_autocomplete_multiple_matches**: Type "CRE" and press TAB, verify suggestions show "CREATE"
+32. **test_cli_autocomplete_sql_keywords**: Press TAB on empty line, verify list includes SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, SHOW, DESCRIBE
+33. **test_kalam_link_independent_usage**: Use kalam-link crate directly (without CLI) to execute query, verify connection and query execution work independently
+34. **test_kalam_link_websocket_subscription**: Use kalam-link crate directly to establish WebSocket subscription, verify events are received
+
+---
+
+### CLI Functional Requirements (Embedded)
+
+#### Project Structure and Architecture
+
+- **FR-CLI-001**: CLI project MUST be located in `/cli` folder at the repository root (same level as `/backend`)
+- **FR-CLI-002**: CLI project MUST consist of two crates: `kalam-link` (connection library) and `kalam-cli` (interactive terminal)
+- **FR-CLI-003**: `kalam-link` crate MUST be a standalone library providing all connection, authentication, query execution, and subscription functionality
+- **FR-CLI-004**: `kalam-link` MUST be designed to compile to WebAssembly for future use in browser-based Rust SDK
+- **FR-CLI-005**: `kalam-link` MUST NOT depend on terminal-specific libraries or CLI-specific functionality
+- **FR-CLI-006**: `kalam-cli` MUST depend on `kalam-link` for all database communication logic
+- **FR-CLI-007**: `kalam-cli` MUST contain ONLY user interface, terminal rendering, command parsing, and output formatting logic
+- **FR-CLI-008**: `kalam-cli` MUST NOT contain any direct HTTP request or WebSocket connection code (all via `kalam-link`)
+
+#### Command-Line Interface and Configuration
+
+- **FR-CLI-009**: CLI MUST accept command-line flags: `-u/--user`, `-h/--host`, `--token`, `--apikey`, `--json`, `--csv`, `--color`, `--file`
+- **FR-CLI-010**: CLI MUST NOT support `--tenant` flag (multi-tenancy not required)
+- **FR-CLI-011**: CLI MUST create a default configuration file at `~/.kalam/config.toml` on first run if it doesn't exist
+- **FR-CLI-012**: Configuration file MUST support sections: `[connection]` (host, user, token) and `[output]` (format, color)
+- **FR-CLI-013**: Configuration file MUST NOT include tenant_id field
+- **FR-CLI-014**: CLI MUST display a welcome message on successful connection showing username and server URL (no tenant)
+- **FR-CLI-015**: CLI MUST display an interactive prompt in the format: `kalam>` for user input
+
+#### Query Execution and Output Formatting
+
+- **FR-CLI-016**: CLI MUST delegate all SQL query execution to `kalam-link` crate's query execution methods
+- **FR-CLI-017**: CLI MUST format query results as ASCII tables by default with aligned columns and borders
+- **FR-CLI-018**: CLI MUST support `--json` flag to output query results as JSON arrays
+- **FR-CLI-019**: CLI MUST support `--csv` flag to output query results as comma-separated values with header row
+- **FR-CLI-020**: CLI MUST support `SHOW TABLES;` command delegating to `kalam-link` for execution
+- **FR-CLI-021**: CLI MUST support `DESCRIBE <table>;` command delegating to `kalam-link` for execution
+
+#### WebSocket Subscriptions and Live Queries
+
+- **FR-CLI-022**: CLI MUST support `SUBSCRIBE TO <table> WHERE <condition>;` command
+- **FR-CLI-023**: All WebSocket subscription logic MUST be handled by `kalam-link` crate
+- **FR-CLI-024**: `kalam-link` MUST provide callback or async stream interface for receiving subscription events
+- **FR-CLI-025**: CLI MUST render subscription events in real-time with timestamps and change type indicators
+- **FR-CLI-026**: CLI MUST support Ctrl+C to gracefully stop active subscriptions (cleanup via `kalam-link`)
+
+#### Interactive Commands and Auto-completion
+
+- **FR-CLI-027**: CLI MUST support backslash commands: `\quit`, `\q`, `\help`, `\connect`, `\config`, `\flush`, `\health`, `\pause`, `\continue`
+- **FR-CLI-028**: CLI MUST support TAB key for auto-completion of SQL keywords
+- **FR-CLI-029**: Auto-completion MUST suggest SQL keywords: SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, SHOW, DESCRIBE, SUBSCRIBE, FROM, WHERE, ORDER BY, GROUP BY, LIMIT, OFFSET, JOIN, INNER, LEFT, RIGHT, OUTER
+- **FR-CLI-030**: Auto-completion MUST match partial input (e.g., "SEL" + TAB → "SELECT")
+- **FR-CLI-031**: When multiple keywords match, CLI MUST display a list of suggestions
+- **FR-CLI-032**: CLI MUST support `\quit` and `\q` commands to exit the application gracefully
+- **FR-CLI-033**: CLI MUST support `\help` command to display all available SQL and backslash commands
+- **FR-CLI-034**: CLI MUST support `\connect` command to switch connection to a different host or user
+- **FR-CLI-035**: CLI MUST support `\config` command to display current session configuration
+- **FR-CLI-036**: CLI MUST support `\flush` command delegating to `kalam-link` to trigger table flush operations
+- **FR-CLI-037**: CLI MUST support `\health` command delegating to `kalam-link` to query server health
+- **FR-CLI-038**: CLI MUST support `\pause` and `\continue` commands to control active subscription streaming
+
+#### Batch Execution and File Handling
+
+- **FR-CLI-039**: CLI MUST support `--file <path>` flag to execute SQL queries from a file in batch mode
+- **FR-CLI-040**: Batch file execution MUST process queries sequentially using `kalam-link` and display results for each query
+
+#### Authentication and Security
+
+- **FR-CLI-041**: All authentication logic MUST be implemented in `kalam-link` crate
+- **FR-CLI-042**: `kalam-link` MUST support JWT token authentication via token parameter
+- **FR-CLI-043**: `kalam-link` MUST support API key authentication via apikey parameter
+- **FR-CLI-044**: `kalam-link` MUST include `X-USER-ID` header in all API requests based on provided user_id
+- **FR-CLI-045**: `kalam-link` MUST NOT include `X-TENANT-ID` header (multi-tenancy not supported)
+- **FR-CLI-046**: CLI MUST display clear error messages for authentication failures received from `kalam-link`
+
+#### Error Handling and User Experience
+
+- **FR-CLI-047**: CLI MUST display clear error messages for connection failures returned from `kalam-link`
+- **FR-CLI-048**: CLI MUST display clear error messages for query syntax errors returned from `kalam-link`
+- **FR-CLI-049**: CLI MUST implement readline-like functionality with command history and arrow key navigation
+- **FR-CLI-050**: CLI MUST persist command history across sessions in `~/.kalam/history`
+
+#### Technical Stack and Dependencies
+
+- **FR-CLI-051**: `kalam-link` MUST use `tokio` for async runtime
+- **FR-CLI-052**: `kalam-link` MUST use `reqwest` for HTTP requests
+- **FR-CLI-053**: `kalam-link` MUST use `tungstenite` or `tokio-tungstenite` for WebSocket connections
+- **FR-CLI-054**: `kalam-link` MUST be compatible with WebAssembly compilation target (wasm32-unknown-unknown)
+- **FR-CLI-055**: `kalam-cli` MUST use `ratatui` or `crossterm` for terminal UI rendering
+- **FR-CLI-056**: `kalam-cli` MUST use `rustyline` or similar for readline functionality and command history
+- **FR-CLI-057**: `kalam-cli` MUST use `toml` crate for configuration file parsing
+- **FR-CLI-058**: `kalam-cli` MUST use `tabled` or `prettytable-rs` for ASCII table formatting
+- **FR-CLI-059**: `kalam-cli` MUST use `clap` for command-line argument parsing
+
+#### Connection Management and Resilience
+
+- **FR-CLI-060**: `kalam-link` MUST handle connection timeouts and implement retry logic for network failures
+- **FR-CLI-061**: `kalam-link` MUST provide health check method for validating server connectivity
+- **FR-CLI-062**: `kalam-link` MUST support connection pooling or reuse for multiple sequential queries
+- **FR-CLI-063**: CLI MUST validate configuration values and provide helpful error messages for invalid config
+
+#### Output Formatting and Display
+
+- **FR-CLI-064**: CLI MUST support configurable color output via `--color` flag and config file (true/false)
+- **FR-CLI-065**: CLI MUST handle terminal resize events gracefully during table rendering
+- **FR-CLI-066**: CLI MUST paginate large result sets automatically (default: 1000 rows per page)
+- **FR-CLI-067**: CLI MUST display "Press Enter for more..." prompt for paginated results
+
+---
+
 ### User Story 1 - Parametrized Query Execution with Caching (Priority: P1)
 
 Database users need to execute queries efficiently with dynamic parameters while maintaining security and performance. The system should compile queries once and reuse the execution plan for subsequent calls with different parameter values.
@@ -372,6 +542,33 @@ Operations teams need confidence that the system handles sustained high load wit
 
 ### Edge Cases
 
+- **CLI Edge Cases**:
+  - What happens when CLI is launched without network connectivity to the server?
+  - How does CLI handle server shutdown while a subscription is active?
+  - What occurs when the terminal window is resized during table output rendering?
+  - How does CLI handle very wide tables that exceed terminal width?
+  - What happens when config file contains malformed TOML syntax?
+  - How does CLI behave when `~/.kalam/` directory doesn't exist or isn't writable?
+  - What occurs when command history file becomes corrupted?
+  - How does CLI handle authentication token expiration during an active session?
+  - What happens when a user executes a long-running query and tries to cancel with Ctrl+C?
+  - How does CLI display query results with special characters or Unicode that the terminal doesn't support?
+  - What occurs when multiple CLI instances try to write to the same config or history file simultaneously?
+  - How does CLI handle WebSocket ping/pong timeout during an active subscription?
+  - What happens when TAB is pressed with no partial input (empty line)?
+  - How does auto-completion behave when multiple keywords share the same prefix (e.g., "CREATE" and "CREATE TABLE")?
+  - What occurs when a user types a complete keyword and presses TAB again?
+
+- **kalam-link Edge Cases**:
+  - How does `kalam-link` handle API endpoint URL changes without code recompilation?
+  - What happens when `kalam-link` receives malformed JSON from the server?
+  - How does `kalam-link` handle WebSocket connection upgrade failures?
+  - What occurs when a WebSocket connection is established but no ping/pong is received?
+  - How does `kalam-link` behave in WebAssembly context when attempting to access file system or OS-specific features?
+  - What happens when JWT token is valid but user_id in token doesn't exist on server?
+  - How does `kalam-link` handle HTTP redirect responses?
+  - What occurs when `kalam-link` is used concurrently from multiple threads?
+
 - What happens when a parametrized query is submitted with a parameter count that doesn't match the placeholder count?
 - How does the system handle flush operations when storage location is unavailable or disk space is exhausted?
 - What occurs if a manual flush is triggered while an automatic flush is already in progress for the same table?
@@ -639,6 +836,18 @@ Operations teams need confidence that the system handles sustained high load wit
 
 ### Key Entities
 
+- **KalamLink**: Standalone Rust library crate providing all KalamDB connection, query execution, authentication, and subscription functionality (WebAssembly compatible)
+- **KalamLinkClient**: Main client struct in `kalam-link` managing HTTP connections, authentication state, and WebSocket subscriptions
+- **QueryExecutor**: Component in `kalam-link` responsible for sending SQL queries via REST API and parsing responses
+- **SubscriptionManager**: Component in `kalam-link` managing WebSocket connections for live query subscriptions with event streaming
+- **AuthProvider**: Component in `kalam-link` handling JWT/API key authentication and header injection
+- **KalamCLI**: Interactive command-line interface binary that uses `kalam-link` for all database operations
+- **CLISession**: CLI session state managing user configuration, connection, and active subscriptions (via `kalam-link`)
+- **CLIConfiguration**: User configuration stored in `~/.kalam/config.toml` with connection defaults and output preferences (no tenant)
+- **OutputFormatter**: CLI component rendering query results in different formats (table, JSON, CSV) - does NOT exist in `kalam-link`
+- **CommandParser**: CLI component parsing user input into SQL queries or backslash commands
+- **AutoCompleter**: CLI component providing TAB completion for SQL keywords (SELECT, INSERT, CREATE, etc.)
+- **CommandHistory**: Persistent storage of user-entered commands accessible via arrow keys across CLI sessions
 - **ParametrizedQuery**: Represents a SQL query with positional parameter placeholders and the array of parameter values to be substituted
 - **QueryExecutionPlan**: A compiled and optimized execution plan for a specific query structure, cached for reuse with different parameter values
 - **FlushJob**: Represents a scheduled or manual operation to persist buffered table data to Parquet files in storage locations
@@ -673,6 +882,21 @@ Operations teams need confidence that the system handles sustained high load wit
 
 ### Measurable Outcomes
 
+- **SC-CLI-001**: CLI establishes connection to KalamDB server (via `kalam-link`) and displays prompt within 2 seconds
+- **SC-CLI-002**: SQL query results for simple SELECT statements (< 1000 rows) are displayed within 500ms including network, `kalam-link` processing, and formatting time
+- **SC-CLI-003**: CLI successfully formats query results as ASCII tables with aligned columns for result sets up to 10,000 rows
+- **SC-CLI-004**: WebSocket subscriptions (via `kalam-link`) are established within 1 second and display first live update within 100ms of server event
+- **SC-CLI-005**: CLI handles at least 1000 live updates per second without dropping messages or UI freezing
+- **SC-CLI-006**: Command history stores and retrieves at least 1000 previous commands across sessions
+- **SC-CLI-007**: Batch file execution processes at least 100 SQL queries from a file within 30 seconds
+- **SC-CLI-008**: CLI binary size is under 20MB (release build, stripped)
+- **SC-CLI-009**: Memory usage remains stable under 50MB during interactive sessions with subscriptions
+- **SC-CLI-010**: CLI successfully reconnects (via `kalam-link`) after network interruption with clear user notification
+- **SC-CLI-011**: `kalam-link` crate compiles successfully to wasm32-unknown-unknown target without errors
+- **SC-CLI-012**: `kalam-link` can be used independently (without CLI) to execute queries and subscriptions programmatically
+- **SC-CLI-013**: Auto-completion suggestions appear within 50ms of TAB key press
+- **SC-CLI-014**: Auto-completion correctly suggests all supported SQL keywords (at least 20 keywords)
+- **SC-CLI-015**: CLI project is located in `/cli` folder at repository root, completely separate from `/backend`
 - **SC-001**: Parametrized queries with cached execution plans execute at least 40% faster than non-parametrized equivalent queries with identical logic
 - **SC-002**: Session-level table registration caching reduces query execution time for repeated table access by at least 30% compared to per-query registration
 - **SC-003**: Automatic flush jobs complete successfully for tables with up to 1 million buffered records within 5 minutes
@@ -744,7 +968,17 @@ Operations teams need confidence that the system handles sustained high load wit
 
 ## Assumptions
 
-1. **DataFusion Integration**: The project uses Apache DataFusion for query compilation and execution, and its query plan caching capabilities are available
+1. **CLI Project Location**: The `/cli` folder at repository root is the designated location for all client tooling (not inside `/backend`)
+2. **kalam-link WebAssembly Compatibility**: The `kalam-link` crate will be designed from the start with WebAssembly compilation as a target requirement
+3. **No Multi-Tenancy**: KalamDB does not require tenant isolation; all operations are scoped by user_id only (no tenant_id)
+4. **CLI Platform Support**: The CLI will be built for macOS, Linux, and Windows platforms with standard terminal emulators
+5. **Terminal Capabilities**: Users have ANSI-compatible terminal emulators supporting basic cursor movement and color codes
+6. **Rust Ecosystem**: Established Rust crates (tokio, reqwest, tungstenite, crossterm, rustyline, tabled) are mature and suitable for CLI development
+7. **Single User Session**: Initial CLI implementation supports one user session per CLI instance (no multi-user switching)
+8. **File System Access**: Users have read/write permissions to their home directory for config and history files
+9. **Network Requirements**: CLI users have direct HTTP/WebSocket network access to KalamDB server (no proxy considerations in initial version)
+10. **Auto-completion Scope**: Basic SQL keyword completion is sufficient; table name and column name completion are future enhancements
+11. **DataFusion Integration**: The project uses Apache DataFusion for query compilation and execution, and its query plan caching capabilities are available
 2. **Storage Format**: Parquet is the established format for persisted data; flush operations continue using this format
 3. **RocksDB Usage**: The system currently uses RocksDB for buffering data before flush; this remains the buffer storage mechanism
 4. **Authentication**: JWT-based authentication is already implemented; localhost bypass is an additional configuration option
@@ -766,24 +1000,35 @@ Operations teams need confidence that the system handles sustained high load wit
 
 The following items are explicitly NOT included in this feature specification:
 
-1. **Distributed Query Execution**: This feature focuses on single-node optimization; distributed query planning across Raft cluster nodes is separate
-2. **Advanced Sharding Strategies**: Only alphabetic sharding is included; sophisticated sharding functions (consistent hashing, range-based, custom user functions) are future enhancements
-3. **Query Result Caching**: This feature caches execution plans only; caching actual query results is a separate performance optimization
-4. **Automatic Schema Migration**: Session cache invalidation detects schema changes but does not automatically migrate data; migration remains a separate concern
-5. **Compaction Jobs**: Merging multiple Parquet files in storage is mentioned in notes but is a separate background maintenance feature
-6. **User File Storage**: The `user_files` table concept mentioned in notes is a distinct feature, not part of this specification
-7. **Workflow Triggers (KFlows)**: Event-driven workflows listening to streams are a separate feature area
-8. **Raft Replication Logic**: While flush jobs must work in a Raft environment, the replication protocol itself is not part of this feature
-9. **CLI Tool Development**: The command-line interface mentioned in notes is a separate tool, not part of the database server improvements
-10. **Client SDK Development**: Rust/WebAssembly SDK and TypeScript SDK are separate client-side projects
-11. **Index Support**: Column-level indexes (BLOOM, SORTED) mentioned in notes are a separate query optimization feature
-12. **Auto-increment Columns**: Automatic ID generation is a separate DDL enhancement
-13. **Example Projects**: TypeScript TODO app example is separate documentation/sample code
-14. **Binary Distribution**: Auto-deploy to GitHub releases is CI/CD pipeline work, not feature development
-15. **Kubernetes/Helm Charts**: Container orchestration beyond docker-compose is separate infrastructure work
+1. **Multi-Tenancy Support**: Tenant isolation and tenant_id scoping are not included; all operations are user-scoped only
+2. **Advanced Auto-completion**: Table name, column name, and context-aware SQL completion are future enhancements; only keyword completion is included
+3. **kalam-link Full SDK Features**: Initial `kalam-link` focuses on core connectivity; advanced features like connection pooling, query result caching, and offline mode are future enhancements
+4. **Browser WebAssembly Client**: While `kalam-link` is designed for WebAssembly compatibility, the actual browser client and JavaScript bindings are separate projects
+5. **Visual Query Builder**: GUI-based query construction is a future CLI enhancement
+6. **Multi-Subscription Management**: CLI limits to one active subscription at a time initially; concurrent subscription UI is a future enhancement
+7. **Distributed Query Execution**: This feature focuses on single-node optimization; distributed query planning across Raft cluster nodes is separate
+8. **Advanced Sharding Strategies**: Only alphabetic sharding is included; sophisticated sharding functions (consistent hashing, range-based, custom user functions) are future enhancements
+9. **Query Result Caching**: This feature caches execution plans only; caching actual query results is a separate performance optimization
+10. **Automatic Schema Migration**: Session cache invalidation detects schema changes but does not automatically migrate data; migration remains a separate concern
+11. **Compaction Jobs**: Merging multiple Parquet files in storage is mentioned in notes but is a separate background maintenance feature
+12. **User File Storage**: The `user_files` table concept mentioned in notes is a distinct feature, not part of this specification
+13. **Workflow Triggers (KFlows)**: Event-driven workflows listening to streams are a separate feature area
+14. **Raft Replication Logic**: While flush jobs must work in a Raft environment, the replication protocol itself is not part of this feature
+15. **Client SDK Development**: TypeScript SDK and Python SDK are separate client-side projects (only `kalam-link` Rust library is included)
+16. **Index Support**: Column-level indexes (BLOOM, SORTED) mentioned in notes are a separate query optimization feature
+17. **Auto-increment Columns**: Automatic ID generation is a separate DDL enhancement
+18. **Example Projects**: TypeScript TODO app example is separate documentation/sample code
+19. **Binary Distribution**: Auto-deploy to GitHub releases is CI/CD pipeline work, not feature development
+20. **Kubernetes/Helm Charts**: Container orchestration beyond docker-compose is separate infrastructure work
 
 ## Dependencies
 
+- **kalam-link Crate**: Self-contained library with no dependency on KalamDB internals; communicates via public REST/WebSocket APIs only
+- **REST API Endpoint**: `kalam-link` requires `/v1/api/sql` endpoint to be functional for query execution
+- **WebSocket Endpoint**: `kalam-link` requires `/v1/ws` endpoint to be functional for live subscriptions
+- **JWT Authentication**: `kalam-link` depends on server JWT validation for secure connections
+- **Health Endpoint**: `kalam-link` depends on `/v1/health` endpoint for connection validation
+- **kalam-cli Dependency**: CLI binary depends on `kalam-link` crate for all database communication (no direct HTTP/WebSocket code)
 - **Existing Configuration System**: Requires `config.toml` parsing and validation infrastructure
 - **DataFusion Query Engine**: Depends on DataFusion APIs for query compilation, execution plans, and parameter binding
 - **RocksDB Storage Layer**: Requires RocksDB column families for buffering user and shared table data
@@ -795,6 +1040,46 @@ The following items are explicitly NOT included in this feature specification:
 - **WebSocket Subscription System**: Preventing shared table subscriptions requires access to subscription logic
 
 ## Risks and Mitigations
+
+### Risk: kalam-link WebAssembly Compatibility
+**Impact**: Dependencies or features in `kalam-link` may not be compatible with WebAssembly compilation target  
+**Mitigation**: Design `kalam-link` with wasm32-unknown-unknown target from day one; avoid OS-specific dependencies; use wasm-compatible async runtime (tokio with wasm feature); test WebAssembly compilation in CI/CD; use conditional compilation for platform-specific features
+
+### Risk: CLI and kalam-link Architecture Coupling
+**Impact**: Tight coupling between CLI and `kalam-link` could make the library difficult to use independently in other contexts  
+**Mitigation**: Define clear API boundaries; `kalam-link` provides callback/stream interfaces for events; CLI consumes but doesn't dictate `kalam-link` design; document `kalam-link` API independently; create integration tests using `kalam-link` without CLI
+
+### Risk: Auto-completion Performance
+**Impact**: TAB completion may cause UI lag if keyword matching is not optimized  
+**Mitigation**: Use pre-built trie or hash-based keyword lookup; limit completion suggestions to reasonable count (e.g., 20); implement async completion to avoid blocking UI; profile completion performance
+
+### Risk: CLI WebSocket Connection Stability
+**Impact**: Unstable WebSocket connections could cause subscription interruptions and data loss in live query streaming  
+**Mitigation**: Implement automatic reconnection with exponential backoff; buffer missed events during disconnection; display clear connection status to user; implement heartbeat/ping-pong to detect stale connections early
+
+### Risk: Terminal Compatibility Issues
+**Impact**: CLI rendering may break on different terminal emulators or operating systems  
+**Mitigation**: Use well-tested terminal libraries (crossterm/ratatui); test on major platforms (macOS, Linux, Windows); provide fallback plain-text mode; document terminal requirements
+
+### Risk: Large Result Set Performance
+**Impact**: Displaying very large query results (100k+ rows) in the terminal could freeze the UI or consume excessive memory  
+**Mitigation**: Implement pagination with automatic "Press Enter for more" prompts; limit default display to 1000 rows with option to show more; stream results instead of buffering all in memory; add `LIMIT` suggestion in help text
+
+### Risk: Config File Security
+**Impact**: Storing JWT tokens in plain-text config file at `~/.kalam/config.toml` exposes credentials  
+**Mitigation**: Set restrictive file permissions (0600) on config file; support environment variables for sensitive values (KALAM_TOKEN); add warning about token storage in documentation; consider OS keychain integration in future
+
+### Risk: Command History Injection
+**Impact**: Malicious commands stored in history could execute unintended operations if replayed  
+**Mitigation**: Sanitize history file on read; warn before executing potentially destructive commands (DROP, DELETE) even from history; allow `\history clear` command
+
+### Risk: Concurrent Subscription Management
+**Impact**: Managing multiple concurrent subscriptions in a single CLI session could cause UI corruption or event mixing  
+**Mitigation**: For initial implementation, limit to one active subscription at a time; display clear "subscription active" indicator; properly clean up subscription state on cancel
+
+### Risk: Cross-Platform Build Complexity
+**Impact**: Building CLI for multiple platforms (macOS, Linux, Windows) with different terminal capabilities increases maintenance burden  
+**Mitigation**: Use cross-compilation in CI/CD; automate release builds for all platforms; test on each platform; use platform-agnostic libraries where possible
 
 ### Risk: Query Plan Cache Memory Growth
 **Impact**: Unbounded query plan cache could exhaust server memory with diverse query patterns  
