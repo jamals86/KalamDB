@@ -1,7 +1,7 @@
 meta {
-  name: QUERY USER TABLE
+  name: SELECT USER TABLE (Auto-inc)
   type: http
-  seq: 6
+  seq: 8
 }
 
 post {
@@ -17,6 +17,6 @@ headers {
 
 body:json {
   {
-  "sql": "select * from jamal.files ORDER BY name DESC limit 1"
+    "sql": "SELECT * FROM jamal.files_inc22"
   }
 }

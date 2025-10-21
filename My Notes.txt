@@ -1,5 +1,11 @@
 Things to add to the spec:
 - Include TODO's found in the codebase, maybe some needs to be added to the plan and tasks
+- Add support for parametrized queries from the client /api/sql which then will improve the query planning/optimization
+    - Example for this will be: SELECT * FROM messages WHERE user_id = $1 AND created_at > $2
+    - The api should access a sql with: { "sql": "SELECT * FROM system.storage_locations WHERE last_updated = $1","params": ["jamal-saad-4442"]}
+    - In the backend datafusion shall compile it once and use it from the cached one
+    - Registering tables from user's session - Improve this by also keeping some tables in a cache in memory maybe a user will keep query his own table for a period of time, in this way we can manage this to free cached tables whenever they stop being used
+
 - Re-write the README it has things outdated now
     - Remove the parquet mentioning that much it can be mentioned only once max
     - Add also mention that the websocket is directly opened to the server no need for another service in the middle
@@ -69,9 +75,16 @@ Things to add to the spec:
     - Update note
     - Subscribe to the notes changes from the server
     - Add them into local storage for later
+- Support when creating a table to have auto-increment syntax, so that whenever the value is empty then 
+- Both: kalamdb-core\src\tables\shared_table_provider.rs and kalamdb-core\src\tables\user_table_provider.rs have so many similarities like validation of insert columns combine them both into one validator
+    - Maybe it's better to move the validation to be inside kalamdb-sql since it belong there
+- Make sure that system table names are defined one time and used instead of each place we write them again as a string, maybe it's better to have one enum for all of them
 
 Features:
 - Add CLI tool which is using the API and you can login with specific user to do the actions inside of it, this should be a separate binary
+    - This CLI Tool should use the kalamdb-client-sdk which is written in rust and will be compiled as webassembly
+    - The client-sdk should also support query caching in the future (So instead than sending sql queries we can send object to prevent always parsing it)
+    - For now we can only support typescript-sdk only
 - Make the project has a generic serdes models, so we can change the serialization from the json
 - A new table called user_files which is a table per user for storing files and their references in the storage location we have
 - KFlows - Add a workflow triggers which also listen to streams, actions being done and write to the database

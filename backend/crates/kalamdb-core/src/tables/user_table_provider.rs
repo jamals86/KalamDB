@@ -172,6 +172,73 @@ impl UserTableProvider {
         )
     }
 
+    /// Validate that INSERT rows comply with schema constraints
+    ///
+    /// Checks:
+    /// - NOT NULL constraints (non-nullable columns must have values)
+    /// - Data type compatibility (basic type checking)
+    ///
+    /// This validation happens BEFORE the actual insert to ensure data consistency.
+    fn validate_insert_rows(&self, rows: &[JsonValue]) -> Result<(), String> {
+        for (row_idx, row) in rows.iter().enumerate() {
+            let obj = row
+                .as_object()
+                .ok_or_else(|| format!("Row {} is not a JSON object", row_idx))?;
+
+            // Check each field in the schema
+            for field in self.schema.fields() {
+                let field_name = field.name();
+                
+                // Skip system columns - they're auto-populated
+                if field_name == "_updated" || field_name == "_deleted" {
+                    continue;
+                }
+
+                // Skip auto-generated columns - they're handled by prepare_insert_rows
+                if field_name == "id" || field_name == "created_at" {
+                    continue;
+                }
+
+                let value = obj.get(field_name);
+
+                // Check NOT NULL constraint
+                if !field.is_nullable() {
+                    match value {
+                        None | Some(JsonValue::Null) => {
+                            return Err(format!(
+                                "Row {}: Column '{}' is declared as non-nullable but received NULL value. Please provide a value for this column.",
+                                row_idx, field_name
+                            ));
+                        }
+                        _ => {} // Has a value, constraint satisfied
+                    }
+                }
+
+                // Optional: Basic type validation
+                if let Some(val) = value {
+                    if !val.is_null() {
+                        let type_valid = match field.data_type() {
+                            DataType::Int32 | DataType::Int64 => val.is_i64() || val.is_u64(),
+                            DataType::Float64 => val.is_f64() || val.is_i64() || val.is_u64(),
+                            DataType::Utf8 => val.is_string(),
+                            DataType::Boolean => val.is_boolean(),
+                            _ => true, // Skip validation for other types
+                        };
+
+                        if !type_valid {
+                            return Err(format!(
+                                "Row {}: Column '{}' has incompatible type. Expected {:?}, got {:?}",
+                                row_idx, field_name, field.data_type(), val
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Populate generated columns (id, created_at) when they are missing from the INSERT payload
     fn prepare_insert_rows(&self, rows: &mut [JsonValue]) -> Result<(), String> {
         let has_id = self.schema.field_with_name("id").is_ok();
@@ -437,6 +504,10 @@ impl TableProvider for UserTableProvider {
             let mut json_rows = arrow_batch_to_json(&batch).map_err(|e| {
                 DataFusionError::Execution(format!("Arrow to JSON conversion failed: {}", e))
             })?;
+
+            // Validate schema constraints (NOT NULL, etc.) before insert
+            self.validate_insert_rows(&json_rows)
+                .map_err(|e| DataFusionError::Execution(format!("Schema validation failed: {}", e)))?;
 
             // Populate auto-increment IDs when missing
             self.prepare_insert_rows(&mut json_rows)

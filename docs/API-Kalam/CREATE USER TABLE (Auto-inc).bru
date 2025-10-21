@@ -1,5 +1,5 @@
 meta {
-  name: QUERY USER TABLE
+  name: CREATE USER TABLE (Auto-inc)
   type: http
   seq: 6
 }
@@ -17,6 +17,6 @@ headers {
 
 body:json {
   {
-  "sql": "select * from jamal.files ORDER BY name DESC limit 1"
+  "sql": "CREATE USER TABLE jamal.files_inc22 (uuid BIGINT, test TEXT, name TEXT)"
   }
 }

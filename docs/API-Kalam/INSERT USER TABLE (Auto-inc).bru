@@ -1,7 +1,7 @@
 meta {
-  name: QUERY USER TABLE
+  name: INSERT USER TABLE (Auto-inc)
   type: http
-  seq: 6
+  seq: 7
 }
 
 post {
@@ -17,6 +17,6 @@ headers {
 
 body:json {
   {
-  "sql": "select * from jamal.files ORDER BY name DESC limit 1"
+    "sql": "INSERT INTO jamal.files_inc22 (name) VALUES ('document1.pdf')"
   }
 }

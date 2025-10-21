@@ -36,7 +36,14 @@ pub fn init_logging(level: &str, file_path: &str, log_to_console: bool) -> anyho
 
     if log_to_console {
         // Setup dual logging: colored console + plain file
-        let base_config = fern::Dispatch::new().level(level_filter);
+        let base_config = fern::Dispatch::new()
+            .level(level_filter)
+            // Filter out noisy third-party debug logs
+            .level_for("sqlparser", LevelFilter::Debug)
+            .level_for("datafusion", LevelFilter::Debug)
+            .level_for("arrow", LevelFilter::Debug)
+            .level_for("parquet", LevelFilter::Debug)
+            .level_for("object_store", LevelFilter::Debug);
 
         // Console output with colors
         let console_config = fern::Dispatch::new()

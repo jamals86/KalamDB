@@ -54,6 +54,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::prelude::SessionContext;
+use datafusion::sql::sqlparser;
 use kalamdb_sql::KalamSql;
 use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::sync::Arc;
@@ -374,8 +375,9 @@ impl SqlExecutor {
         } else if sql_upper.starts_with("DELETE") {
             return self.execute_delete(sql, user_id).await;
         } else if sql_upper.starts_with("SELECT") || sql_upper.starts_with("INSERT") {
-            // Delegate SELECT/INSERT to DataFusion
-            return self.execute_datafusion_query(sql, user_id).await;
+            // Extract referenced tables from SQL and load only those
+            let referenced_tables = Self::extract_table_references(sql);
+            return self.execute_datafusion_query_with_tables(sql, user_id, referenced_tables).await;
         }
 
         // Otherwise, unsupported
@@ -383,6 +385,170 @@ impl SqlExecutor {
             "Unsupported SQL statement: {}",
             sql.lines().next().unwrap_or("")
         )))
+    }
+
+    /// Extract table references from SQL query
+    ///
+    /// Returns a set of fully qualified table names (namespace.table_name) or "system.*" for system tables.
+    /// If parsing fails or no tables found, returns None (will load all tables as fallback).
+    fn extract_table_references(sql: &str) -> Option<std::collections::HashSet<String>> {
+        use sqlparser::ast::{Statement, TableFactor};
+        use sqlparser::dialect::GenericDialect;
+        use sqlparser::parser::Parser;
+
+        let dialect = GenericDialect {};
+        let parsed = Parser::parse_sql(&dialect, sql).ok()?;
+        
+        let mut tables = std::collections::HashSet::new();
+        
+        for statement in parsed {
+            match statement {
+                Statement::Query(query) => {
+                    // Extract from SELECT body
+                    Self::extract_tables_from_set_expr(&query.body, &mut tables);
+                }
+                Statement::Insert(insert) => {
+                    // INSERT INTO table_name
+                    let table_str = insert.table_name.to_string();
+                    tables.insert(table_str);
+                }
+                _ => {}
+            }
+        }
+        
+        if tables.is_empty() {
+            None
+        } else {
+            Some(tables)
+        }
+    }
+
+    /// Helper to recursively extract table names from SetExpr
+    fn extract_tables_from_set_expr(
+        set_expr: &sqlparser::ast::SetExpr,
+        tables: &mut std::collections::HashSet<String>,
+    ) {
+        use sqlparser::ast::SetExpr;
+
+        match set_expr {
+            SetExpr::Select(select) => {
+                // Extract from FROM clause
+                for table_with_joins in &select.from {
+                    Self::extract_table_from_factor(&table_with_joins.relation, tables);
+                    
+                    // Also check JOINs
+                    for join in &table_with_joins.joins {
+                        Self::extract_table_from_factor(&join.relation, tables);
+                    }
+                }
+            }
+            SetExpr::Query(query) => {
+                // Recursive for subqueries
+                Self::extract_tables_from_set_expr(&query.body, tables);
+            }
+            SetExpr::SetOperation { left, right, .. } => {
+                // UNION, INTERSECT, EXCEPT
+                Self::extract_tables_from_set_expr(left, tables);
+                Self::extract_tables_from_set_expr(right, tables);
+            }
+            _ => {}
+        }
+    }
+
+    /// Helper to extract table name from TableFactor
+    fn extract_table_from_factor(
+        factor: &sqlparser::ast::TableFactor,
+        tables: &mut std::collections::HashSet<String>,
+    ) {
+        use sqlparser::ast::TableFactor;
+
+        match factor {
+            TableFactor::Table { name, .. } => {
+                let table_str = name.to_string();
+                tables.insert(table_str);
+            }
+            TableFactor::Derived { subquery, .. } => {
+                // Subquery - extract from it
+                Self::extract_tables_from_set_expr(&subquery.body, tables);
+            }
+            TableFactor::TableFunction { .. } | TableFactor::UNNEST { .. } => {
+                // Skip table functions for now
+            }
+            TableFactor::NestedJoin { table_with_joins, .. } => {
+                // Nested join
+                Self::extract_table_from_factor(&table_with_joins.relation, tables);
+                for join in &table_with_joins.joins {
+                    Self::extract_table_from_factor(&join.relation, tables);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Check if a query only accesses system tables (no user/shared/stream tables)
+    ///
+    /// This allows us to use a lightweight session that doesn't load all user tables.
+    fn is_system_only_query(sql_upper: &str) -> bool {
+        // Check if query contains FROM or JOIN with system.* tables only
+        // Simple heuristic: if it contains "FROM SYSTEM." or "JOIN SYSTEM." and no other FROM/JOIN
+        let has_system_table = sql_upper.contains("FROM SYSTEM.") || sql_upper.contains("JOIN SYSTEM.");
+        
+        if !has_system_table {
+            return false;
+        }
+
+        // Check if there are any non-system table references
+        // This is a simple check - could be more sophisticated
+        let words: Vec<&str> = sql_upper.split_whitespace().collect();
+        for i in 0..words.len() {
+            if (words[i] == "FROM" || words[i] == "JOIN") && i + 1 < words.len() {
+                let table_ref = words[i + 1];
+                // If it's not a system.* reference and not a subquery, it's a user table
+                if !table_ref.starts_with("SYSTEM.") && !table_ref.starts_with("(") {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
+    /// Execute a query that only accesses system tables (optimized - no user table loading)
+    async fn execute_system_query(
+        &self,
+        sql: &str,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        // Create a lightweight session with ONLY system tables registered
+        let session = self.session_factory.create_session();
+        
+        let kalam_sql = self
+            .kalam_sql
+            .as_ref()
+            .ok_or_else(|| KalamDbError::InvalidOperation("KalamSQL not configured".to_string()))?;
+
+        // Register only system tables (no user table scanning!)
+        self.register_system_tables_in_session(&session, kalam_sql)?;
+
+        // Execute SQL via DataFusion
+        let df = session
+            .sql(sql)
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Error planning query: {}", e)))?;
+
+        // Collect results
+        let batches = df
+            .collect()
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Error executing query: {}", e)))?;
+
+        // Return batches
+        if batches.is_empty() {
+            Ok(ExecutionResult::RecordBatches(vec![]))
+        } else if batches.len() == 1 {
+            Ok(ExecutionResult::RecordBatch(batches[0].clone()))
+        } else {
+            Ok(ExecutionResult::RecordBatches(batches))
+        }
     }
 
     /// Create a fresh SessionContext for a specific user with only their tables registered
@@ -436,12 +602,46 @@ impl SqlExecutor {
             )
             .map_err(|e| KalamDbError::Other(format!("Failed to register system.users: {}", e)))?;
 
+        // Register additional system tables
+        use crate::tables::system::{
+            JobsTableProvider, LiveQueriesTableProvider, StorageLocationsTableProvider,
+        };
+
+        system_schema
+            .register_table(
+                "storage_locations".to_string(),
+                Arc::new(StorageLocationsTableProvider::new(kalam_sql.clone())),
+            )
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to register system.storage_locations: {}",
+                    e
+                ))
+            })?;
+
+        system_schema
+            .register_table(
+                "live_queries".to_string(),
+                Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone())),
+            )
+            .map_err(|e| {
+                KalamDbError::Other(format!("Failed to register system.live_queries: {}", e))
+            })?;
+
+        system_schema
+            .register_table(
+                "jobs".to_string(),
+                Arc::new(JobsTableProvider::new(kalam_sql.clone())),
+            )
+            .map_err(|e| KalamDbError::Other(format!("Failed to register system.jobs: {}", e)))?;
+
         Ok(())
     }
 
     async fn create_user_session_context(
         &self,
         user_id: &UserId,
+        table_filter: Option<&std::collections::HashSet<String>>,
     ) -> Result<SessionContext, KalamDbError> {
         use datafusion::catalog::schema::MemorySchemaProvider;
 
@@ -462,14 +662,30 @@ impl SqlExecutor {
             .catalog(catalog_name)
             .ok_or_else(|| KalamDbError::Other(format!("Catalog '{}' not found", catalog_name)))?;
 
-        // Get all tables from system.tables
+        // Get tables from system.tables - either all or filtered
         let all_tables = kalam_sql
             .scan_all_tables()
             .map_err(|e| KalamDbError::Other(format!("Failed to scan system.tables: {}", e)))?;
 
+        // Filter tables based on table_filter if provided
+        let tables_to_load: Vec<_> = if let Some(filter) = table_filter {
+            all_tables
+                .into_iter()
+                .filter(|t| {
+                    // Build fully qualified name: namespace.table_name
+                    let qualified = format!("{}.{}", t.namespace, t.table_name);
+                    filter.contains(&qualified)
+                        || filter.contains(&t.table_name)  // Also match unqualified
+                        || filter.contains(&format!("system.{}", t.table_name))  // System table reference
+                })
+                .collect()
+        } else {
+            all_tables
+        };
+
         // Create namespaces for all unique namespaces in the tables
         let unique_namespaces: std::collections::HashSet<_> =
-            all_tables.iter().map(|t| t.namespace.as_str()).collect();
+            tables_to_load.iter().map(|t| t.namespace.as_str()).collect();
 
         for namespace_str in unique_namespaces {
             if catalog.schema(namespace_str).is_none() {
@@ -486,7 +702,7 @@ impl SqlExecutor {
         }
 
         // Register shared tables (no user isolation needed)
-        for table in all_tables.iter().filter(|t| t.table_type == "shared") {
+        for table in tables_to_load.iter().filter(|t| t.table_type == "shared") {
             let table_name = TableName::new(&table.table_name);
             let namespace_id = NamespaceId::new(&table.namespace);
             let table_id = format!("{}:{}", table.namespace, table.table_name);
@@ -579,7 +795,7 @@ impl SqlExecutor {
         }
 
         // Register user tables with the current user_id (ensures data isolation)
-        for table in all_tables.iter().filter(|t| t.table_type == "user") {
+        for table in tables_to_load.iter().filter(|t| t.table_type == "user") {
             let table_name = TableName::new(&table.table_name);
             let namespace_id = NamespaceId::new(&table.namespace);
             let table_id = format!("{}:{}", table.namespace, table.table_name);
@@ -679,7 +895,7 @@ impl SqlExecutor {
 
         // Register stream tables
         // Stream tables are NOT user-specific - they are append-only event streams shared across users
-        for table in all_tables.iter().filter(|t| t.table_type == "stream") {
+        for table in tables_to_load.iter().filter(|t| t.table_type == "stream") {
             let table_name = TableName::new(&table.table_name);
             let namespace_id = NamespaceId::new(&table.namespace);
             let table_id = format!("{}:{}", table.namespace, table.table_name);
@@ -781,7 +997,45 @@ impl SqlExecutor {
         Ok(user_session)
     }
 
-    /// Execute query via DataFusion
+    /// Execute query via DataFusion with selective table loading
+    ///
+    /// Loads only the tables referenced in the SQL query for better performance.
+    /// If table extraction fails, falls back to loading all tables.
+    async fn execute_datafusion_query_with_tables(
+        &self,
+        sql: &str,
+        user_id: Option<&UserId>,
+        table_refs: Option<std::collections::HashSet<String>>,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        let anonymous_user = UserId::from("anonymous");
+        let uid = user_id.unwrap_or(&anonymous_user);
+        
+        // Create session with selective table loading
+        let session = self.create_user_session_context(uid, table_refs.as_ref()).await?;
+
+        // Execute SQL via DataFusion
+        let df = session
+            .sql(sql)
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Error planning query: {}", e)))?;
+
+        // Collect results
+        let batches = df
+            .collect()
+            .await
+            .map_err(|e| KalamDbError::Other(format!("Error executing query: {}", e)))?;
+
+        // Return batches
+        if batches.is_empty() {
+            Ok(ExecutionResult::RecordBatches(vec![]))
+        } else if batches.len() == 1 {
+            Ok(ExecutionResult::RecordBatch(batches[0].clone()))
+        } else {
+            Ok(ExecutionResult::RecordBatches(batches))
+        }
+    }
+
+    /// Execute query via DataFusion (legacy - loads all tables)
     ///
     /// Always creates a fresh SessionContext to ensure tables are up-to-date after CREATE TABLE operations.
     /// For queries with user_id, creates per-user providers with data isolation.
@@ -795,7 +1049,7 @@ impl SqlExecutor {
         // This ensures newly created tables are available
         let anonymous_user = UserId::from("anonymous");
         let uid = user_id.unwrap_or(&anonymous_user);
-        let session = self.create_user_session_context(uid).await?;
+        let session = self.create_user_session_context(uid, None).await?;
 
         // Execute SQL via DataFusion
         let df = session
@@ -1241,7 +1495,13 @@ impl SqlExecutor {
         let effective_user_id = user_id
             .cloned()
             .unwrap_or_else(|| UserId::from("anonymous"));
-        let session = self.create_user_session_context(&effective_user_id).await?;
+        
+        // For UPDATE, only load the table being updated
+        let table_name = format!("{}.{}", update_info.namespace, update_info.table);
+        let mut table_refs = std::collections::HashSet::new();
+        table_refs.insert(table_name);
+        
+        let session = self.create_user_session_context(&effective_user_id, Some(&table_refs)).await?;
 
         // Get table provider from the appropriate session
         let table_ref = datafusion::sql::TableReference::parse_str(&format!(
@@ -1374,7 +1634,13 @@ impl SqlExecutor {
         let effective_user_id = user_id
             .cloned()
             .unwrap_or_else(|| UserId::from("anonymous"));
-        let session = self.create_user_session_context(&effective_user_id).await?;
+        
+        // For DELETE, only load the table being deleted from
+        let table_name = format!("{}.{}", delete_info.namespace, delete_info.table);
+        let mut table_refs = std::collections::HashSet::new();
+        table_refs.insert(table_name);
+        
+        let session = self.create_user_session_context(&effective_user_id, Some(&table_refs)).await?;
 
         // Get table provider from the appropriate session
         let table_ref = datafusion::sql::TableReference::parse_str(&format!(
