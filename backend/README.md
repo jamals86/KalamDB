@@ -25,6 +25,8 @@ cargo build
 
 **Note**: First build takes 10-20 minutes as it compiles RocksDB, Arrow, and Parquet from source.
 
+**Known Issue**: If you encounter chrono/arrow-arith compilation errors, see [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) for the fix.
+
 ### Configure
 
 Copy the example configuration and customize it:
@@ -178,6 +180,23 @@ level = "debug"
 **Phase 2 Next**: Implement foundational components (config, logging, models, storage)
 
 See `specs/001-build-a-rust/tasks.md` for the complete task list.
+
+## Known Issues & Troubleshooting
+
+### Arrow 52.2.0 + Chrono 0.4.40+ Conflict (RESOLVED)
+
+If you encounter compilation errors with `arrow-arith` and `chrono::quarter()`, this has been fixed by pinning chrono to 0.4.39.
+
+**Verification**:
+```bash
+# PowerShell (Windows)
+pwsh -File scripts/verify-chrono-version.ps1
+
+# Bash (Linux/macOS)
+bash scripts/verify-chrono-version.sh
+```
+
+For details, see [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
 
 ## License
 

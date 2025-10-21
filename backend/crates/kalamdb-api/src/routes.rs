@@ -1,15 +1,19 @@
-// Routes module - SQL-only API
-use actix_web::web;
+//! API routes configuration
+//!
+//! This module configures all HTTP and WebSocket routes for the KalamDB API.
+
 use crate::handlers;
+use actix_web::web;
 
-/// Configure API routes for SQL-only API
-/// 
-/// Only one endpoint is exposed:
-/// - POST /api/v1/query - Execute SQL INSERT or SELECT statements
+/// Configure API routes for KalamDB
+///
+/// Exposes the following endpoints:
+/// - POST /api/sql - Execute SQL statements
+/// - GET /ws - WebSocket connection for live query subscriptions
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
-    cfg.service(
-        web::scope("/api/v1")
-            .route("/query", web::post().to(handlers::query::query_messages))
-    );
+    cfg
+        // REST API endpoints
+        .service(handlers::execute_sql)
+        // WebSocket endpoint
+        .service(handlers::websocket_handler);
 }
-

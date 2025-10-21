@@ -1,0 +1,22 @@
+meta {
+  name: CREATE NAMESPACE
+  type: http
+  seq: 4
+}
+
+post {
+  url: http://localhost:8080/api/sql
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-USER-ID: jamal86
+}
+
+body:json {
+  {
+    "sql": "CREATE NAMESPACE jamal"
+  }
+}

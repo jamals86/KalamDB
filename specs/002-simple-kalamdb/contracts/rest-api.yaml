@@ -1,0 +1,225 @@
+openapi: 3.0.3
+info:
+  title: KalamDB REST API
+  description: |
+    Simple SQL execution API for KalamDB. 
+    Single endpoint accepts SQL statements and returns results.
+  version: 1.0.0
+  contact:
+    name: KalamDB Team
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+security:
+  - BearerAuth: []
+
+paths:
+  /api/sql:
+    post:
+      summary: Execute SQL statement(s)
+      description: |
+        Execute one or more SQL statements. Multiple statements can be separated by semicolons.
+        Supports DDL (CREATE/ALTER/DROP), DML (INSERT/UPDATE/DELETE), and DQL (SELECT).
+      operationId: executeSql
+      tags:
+        - SQL Execution
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SqlRequest'
+            examples:
+              create_namespace:
+                summary: Create namespace
+                value:
+                  sql: "CREATE NAMESPACE app;"
+              create_user_table:
+                summary: Create user table
+                value:
+                  sql: |
+                    CREATE USER TABLE app.messages (
+                      id BIGINT AUTO_INCREMENT,
+                      text STRING,
+                      created_at TIMESTAMP
+                    ) LOCATION '/data/${user_id}/messages' 
+                    FLUSH POLICY ROW_LIMIT 10000;
+              insert_data:
+                summary: Insert data
+                value:
+                  sql: "INSERT INTO app.messages (text, created_at) VALUES ('Hello', NOW());"
+              query_data:
+                summary: Query data
+                value:
+                  sql: "SELECT * FROM app.messages WHERE _deleted = false LIMIT 100;"
+              multiple_statements:
+                summary: Multiple statements
+                value:
+                  sql: |
+                    CREATE NAMESPACE app;
+                    CREATE USER TABLE app.messages (id BIGINT, text STRING);
+                    INSERT INTO app.messages (id, text) VALUES (1, 'Hello');
+      responses:
+        '200':
+          description: SQL execution successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SqlResponse'
+              examples:
+                ddl_success:
+                  summary: DDL success
+                  value:
+                    status: success
+                    results:
+                      - rows: []
+                        execution_time_ms: 15
+                query_success:
+                  summary: Query success
+                  value:
+                    status: success
+                    results:
+                      - rows:
+                          - id: 1
+                            text: "Hello"
+                            created_at: "2025-10-15T10:00:00Z"
+                            _updated: "2025-10-15T10:00:00Z"
+                            _deleted: false
+                        execution_time_ms: 8
+                multiple_results:
+                  summary: Multiple statements
+                  value:
+                    status: success
+                    results:
+                      - rows: []
+                        execution_time_ms: 12
+                      - rows: []
+                        execution_time_ms: 8
+                      - rows: []
+                        execution_time_ms: 5
+        '400':
+          description: Invalid SQL syntax or validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                syntax_error:
+                  summary: SQL syntax error
+                  value:
+                    status: error
+                    error:
+                      message: "SQL syntax error"
+                      details: "Expected keyword TABLE after CREATE, found TABEL at line 1:14"
+                validation_error:
+                  summary: Validation error
+                  value:
+                    status: error
+                    error:
+                      message: "Validation error"
+                      details: "Namespace 'app' does not exist"
+        '401':
+          description: Unauthorized - missing or invalid JWT token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missing_token:
+                  summary: Missing token
+                  value:
+                    status: error
+                    error:
+                      message: "Unauthorized"
+                      details: "Missing Authorization header"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                internal_error:
+                  summary: Internal error
+                  value:
+                    status: error
+                    error:
+                      message: "Internal server error"
+                      details: "Failed to write to RocksDB: IO error"
+
+components:
+  schemas:
+    SqlRequest:
+      type: object
+      required:
+        - sql
+      properties:
+        sql:
+          type: string
+          description: |
+            SQL statement(s) to execute. Multiple statements separated by semicolons.
+          example: "SELECT * FROM app.messages WHERE _deleted = false;"
+
+    SqlResponse:
+      type: object
+      required:
+        - status
+        - results
+      properties:
+        status:
+          type: string
+          enum: [success]
+          description: Response status
+        results:
+          type: array
+          description: Results for each statement executed
+          items:
+            type: object
+            properties:
+              rows:
+                type: array
+                description: Query result rows (empty for DDL/DML)
+                items:
+                  type: object
+                  additionalProperties: true
+              execution_time_ms:
+                type: number
+                format: double
+                description: Statement execution time in milliseconds
+
+    ErrorResponse:
+      type: object
+      required:
+        - status
+        - error
+      properties:
+        status:
+          type: string
+          enum: [error]
+          description: Response status
+        error:
+          type: object
+          required:
+            - message
+          properties:
+            message:
+              type: string
+              description: Error message
+            details:
+              type: string
+              description: Detailed error information
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT token with user_id claim. 
+        Example: Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+tags:
+  - name: SQL Execution
+    description: Execute SQL statements

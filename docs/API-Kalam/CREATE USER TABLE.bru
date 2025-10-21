@@ -1,0 +1,22 @@
+meta {
+  name: CREATE USER TABLE
+  type: http
+  seq: 5
+}
+
+post {
+  url: http://localhost:8080/api/sql
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-USER-ID: jamal86
+}
+
+body:json {
+  {
+  "sql": "CREATE USER TABLE jamal.files (id BIGINT, name TEXT)"
+  }
+}

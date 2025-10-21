@@ -1,58 +1,131 @@
 # KalamDB Server Configuration
+# This is an example configuration file with all available settings.
+# Copy this file to config.toml and adjust values for your environment.
 #
-# Copy this file to config.toml and customize for your environment
-# Default values are shown below
+# NOTE: Runtime configuration only!
+# - Namespace and storage location configuration is stored in system tables (via kalamdb-sql)
+# - This file contains only server runtime settings (ports, paths, limits, etc.)
 
 [server]
-# Server host and port
+# Server bind address (default: 127.0.0.1)
 host = "127.0.0.1"
+
+# Server port (default: 8080)
 port = 8080
 
-# Number of worker threads (0 = use CPU count)
+# Number of worker threads (0 = number of CPU cores)
 workers = 0
 
 [storage]
-# RocksDB storage path
+# RocksDB data directory path (relative or absolute)
 rocksdb_path = "./data/rocksdb"
 
-# Enable WAL for durability
+# Enable Write-Ahead Log for durability (default: true)
 enable_wal = true
 
-# Compression type: "none", "snappy", "zlib", "lz4", "zstd"
-compression = "lz4"
+# Compression algorithm: none, snappy, zlib, lz4, zstd (default: snappy)
+compression = "snappy"
+
+[storage.rocksdb]
+# Write buffer size per column family in bytes (default: 64MB)
+# Larger values improve write throughput but use more memory
+write_buffer_size = 67108864
+
+# Maximum number of write buffers (default: 3)
+# Allows writes to continue while buffers are being flushed
+max_write_buffers = 3
+
+# Block cache size for reads in bytes (default: 256MB)
+# Larger values improve read performance for hot data
+block_cache_size = 268435456
+
+# Maximum number of background compaction/flush jobs (default: 4)
+max_background_jobs = 4
+
+[datafusion]
+# Memory limit for query execution in bytes (default: 1GB)
+# Queries exceeding this limit will be terminated
+memory_limit = 1073741824
+
+# Number of parallel threads for query execution (default: number of CPU cores)
+# Set to 0 to auto-detect CPU count
+query_parallelism = 0
+
+# Maximum number of partitions per query (default: 16)
+# Higher values increase parallelism but use more resources
+max_partitions = 16
+
+# Batch size for record processing (default: 8192 rows)
+# Larger batches improve throughput but use more memory
+batch_size = 8192
+
+[flush]
+# Default row limit for flush policies (default: 10000 rows)
+# Tables without explicit flush policy will use this value
+default_row_limit = 10000
+
+# Default time interval for flush in seconds (default: 300s = 5 minutes)
+# Tables will flush to Parquet after this duration
+default_time_interval = 300
+
+[retention]
+# Default retention hours for soft-deleted rows (default: 168 hours = 7 days)
+# Rows with _deleted=true will be kept in Parquet files for this duration
+default_deleted_retention_hours = 168
+
+[stream]
+# Default TTL for stream table rows in seconds (default: 10 seconds)
+# Stream tables are ephemeral - rows expire after this duration
+default_ttl_seconds = 10
+
+# Default maximum buffer size for stream tables (default: 10000 rows)
+# Oldest rows are evicted when buffer exceeds this limit
+default_max_buffer = 10000
 
 [limits]
-# Maximum message content size in bytes (default: 1MB)
+# Maximum message size for REST API requests in bytes (default: 1MB)
 max_message_size = 1048576
 
-# Maximum messages to return in a single query
+# Maximum rows that can be returned in a single query (default: 1000)
 max_query_limit = 1000
 
-# Default query limit if not specified
+# Default LIMIT for queries without explicit LIMIT clause (default: 50)
 default_query_limit = 50
 
 [logging]
-# Log level: "error", "warn", "info", "debug", "trace"
+# Log level: error, warn, info, debug, trace (default: info)
 level = "info"
 
-# Log file path (use absolute or relative path)
+# Log file path (relative or absolute)
 file_path = "./logs/app.log"
 
-# Also log to console (with colors)
-# Console format: [timestamp] [LEVEL] - thread - module:line - message (with colors)
-# File format:    [timestamp] [LEVEL] [thread - module:line] - message (plain text)
+# Also log to console/stdout (default: true)
 log_to_console = true
 
-# Note: The 'format' field is deprecated - console always uses colored format,
-# file always uses plain text format
-# format = "compact"
+# Log format: compact, pretty, json (default: compact)
+format = "compact"
 
 [performance]
-# Request timeout in seconds
+# Request timeout in seconds (default: 30s)
+# Requests exceeding this duration will be terminated
 request_timeout = 30
 
-# Keep-alive timeout in seconds
+# Keep-alive timeout in seconds (default: 75s)
 keepalive_timeout = 75
 
-# Maximum number of concurrent connections
+# Maximum concurrent connections (default: 25000)
+# Includes both REST API and WebSocket connections
 max_connections = 25000
+
+[rate_limit]
+# Maximum SQL queries per second per user (default: 100)
+# Prevents query flooding from a single user
+max_queries_per_sec = 100
+
+# Maximum WebSocket messages per second per connection (default: 50)
+# Prevents message flooding on WebSocket connections
+max_messages_per_sec = 50
+
+# Maximum concurrent live query subscriptions per user (default: 10)
+# Limits total active subscriptions to prevent resource exhaustion
+max_subscriptions_per_user = 10

@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Snowflake ID generator for time-ordered unique identifiers
-/// 
+///
 /// Format (64 bits):
 /// - 41 bits: timestamp in milliseconds since custom epoch
 /// - 10 bits: machine/worker ID
@@ -11,11 +11,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct SnowflakeGenerator {
     /// Machine/worker ID (0-1023)
     worker_id: u16,
-    
+
     /// Custom epoch (milliseconds since Unix epoch)
     /// Default: 2024-01-01 00:00:00 UTC (1704067200000)
     epoch: u64,
-    
+
     /// State protected by mutex
     state: Mutex<GeneratorState>,
 }
@@ -23,7 +23,7 @@ pub struct SnowflakeGenerator {
 struct GeneratorState {
     /// Last timestamp used
     last_timestamp: u64,
-    
+
     /// Sequence number (0-4095)
     sequence: u16,
 }
@@ -180,12 +180,12 @@ mod tests {
         let gen = SnowflakeGenerator::new(1);
         let id = gen.next_id().unwrap();
         let timestamp = gen.extract_timestamp(id);
-        
+
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64;
-        
+
         // Timestamp should be within 1 second of now
         assert!((timestamp as i64 - now as i64).abs() < 1000);
     }
@@ -196,21 +196,21 @@ mod tests {
         let gen = SnowflakeGenerator::new(worker_id);
         let id = gen.next_id().unwrap();
         let extracted = gen.extract_worker_id(id);
-        
+
         assert_eq!(extracted, worker_id);
     }
 
     #[test]
     fn test_extract_sequence() {
         let gen = SnowflakeGenerator::new(1);
-        
+
         // Generate multiple IDs in same millisecond
         let id1 = gen.next_id().unwrap();
         let id2 = gen.next_id().unwrap();
-        
+
         let seq1 = gen.extract_sequence(id1);
         let seq2 = gen.extract_sequence(id2);
-        
+
         // Sequences should be different (likely seq2 = seq1 + 1)
         assert!(seq2 >= seq1);
     }

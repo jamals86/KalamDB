@@ -1,8 +1,22 @@
-// Storage module
-pub mod message_store;
-pub mod query;
+//! Storage module for data persistence
+//!
+//! This module provides storage backends including RocksDB for fast writes
+//! and Parquet for analytics-ready persistence.
+
+pub mod backend;
+pub mod column_family_manager;
+pub mod filesystem_backend;
+pub mod parquet_writer;
+pub mod path_template;
+pub mod rocksdb_config;
+pub mod rocksdb_init;
 pub mod rocksdb_store;
 
-pub use message_store::MessageStore;
-pub use query::QueryParams;
+pub use backend::{RocksDbBackend, StorageBackend};
+pub use column_family_manager::{ColumnFamilyManager, SYSTEM_COLUMN_FAMILIES};
+pub use filesystem_backend::FilesystemBackend;
+pub use parquet_writer::ParquetWriter;
+pub use path_template::PathTemplate;
+pub use rocksdb_config::RocksDbConfig;
+pub use rocksdb_init::RocksDbInit;
 pub use rocksdb_store::RocksDbStore;

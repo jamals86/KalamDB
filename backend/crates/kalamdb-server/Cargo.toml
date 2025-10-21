@@ -10,16 +10,24 @@ repository.workspace = true
 # Core library
 kalamdb-core = { path = "../kalamdb-core" }
 kalamdb-api = { path = "../kalamdb-api" }
+kalamdb-sql = { path = "../kalamdb-sql" }
+kalamdb-store = { path = "../kalamdb-store" }
+
+# DataFusion for system schema registration
+datafusion.workspace = true
 
 # Async runtime
 tokio.workspace = true
 
 # Web framework
 actix-web.workspace = true
-actix-rt.workspace = true
+actix-cors.workspace = true
 
 # Configuration
 toml.workspace = true
+
+# JWT authentication
+jsonwebtoken = "9.2"
 
 # Logging
 log.workspace = true
@@ -44,21 +52,30 @@ name = "kalamdb-server"
 path = "src/main.rs"
 
 [[test]]
-name = "test_message_storage"
-path = "../../tests/integration/test_message_storage.rs"
+name = "test_shared_tables"
+path = "../../tests/integration/test_shared_tables.rs"
 
 [[test]]
-name = "test_api_messages"
-path = "../../tests/integration/test_api_messages.rs"
+name = "test_user_tables"
+path = "../../tests/integration/test_user_tables.rs"
 
 [[test]]
-name = "test_query_messages"
-path = "../../tests/integration/test_query_messages.rs"
+name = "test_stream_tables"
+path = "../../tests/integration/test_stream_tables.rs"
 
 [[test]]
-name = "test_api_query"
-path = "../../tests/integration/test_api_query.rs"
+name = "test_quickstart"
+path = "../../tests/integration/test_quickstart.rs"
+
+[[test]]
+name = "test_system_tables"
+path = "../../tests/integration/test_system_tables.rs"
+
+[[test]]
+name = "test_flush_operations"
+path = "../../tests/integration/test_flush_operations.rs"
 
 [dev-dependencies]
 tempfile = "3"
 serde_json.workspace = true
+actix-http = "3.4"

@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "crates/kalamdb-core",
+    "crates/kalamdb-sql",
+    "crates/kalamdb-store",
     "crates/kalamdb-api",
     "crates/kalamdb-server",
 ]
@@ -30,20 +32,46 @@ env_logger = "0.11"
 tokio = { version = "1.48.0", features = ["full"] }
 
 # Time handling
-chrono = { version = "0.4", features = ["serde"] }
+# Pinned to 0.4.39 to avoid conflict with arrow-arith 52.2.0's ChronoDateExt::quarter()
+# chrono 0.4.40+ added Datelike::quarter() which creates ambiguity
+# See: https://github.com/apache/arrow-rs/issues/7196
+chrono = { version = "=0.4.39", features = ["serde"] }
 
 # Storage - using minimal features to avoid build issues on Windows
 rocksdb = { version = "0.24.0", default-features = false, features = ["snappy"] }
 
+# Apache Arrow ecosystem  
+# NOTE: Arrow 52.2.0 has a known issue with chrono 0.4.42 (quarter() method ambiguity)
+# Using chrono 0.4.38 as workaround until arrow-arith is fixed
+arrow = { version = "52.0", features = ["prettyprint"] }
+parquet = { version = "52.0", features = ["arrow", "async"] }
+datafusion = { version = "40.0" }
+sqlparser = { version = "0.49" }
+
 # Web framework
 actix-web = "4.4"
 actix-rt = "2.9"
+actix-web-actors = "4.3.0"  # For WebSocket support
+actix = "0.13"  # Actor framework
+actix-cors = "0.7"  # CORS middleware
+
+# UUID generation
+uuid = { version = "1.10", features = ["v4", "serde"] }
+
+# JWT authentication
+jsonwebtoken = "9.2"
 
 # Configuration
 toml = "0.9.8"
 
 # System
 num_cpus = "1.16"
+
+# Testing
+tempfile = "3.8"
+
+# Benchmarking
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [profile.release]
 opt-level = 3

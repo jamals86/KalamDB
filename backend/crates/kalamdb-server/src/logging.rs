@@ -37,7 +37,13 @@ pub fn init_logging(level: &str, file_path: &str, log_to_console: bool) -> anyho
     if log_to_console {
         // Setup dual logging: colored console + plain file
         let base_config = fern::Dispatch::new()
-            .level(level_filter);
+            .level(level_filter)
+            // Filter out noisy third-party debug logs
+            .level_for("sqlparser", LevelFilter::Debug)
+            .level_for("datafusion", LevelFilter::Debug)
+            .level_for("arrow", LevelFilter::Debug)
+            .level_for("parquet", LevelFilter::Debug)
+            .level_for("object_store", LevelFilter::Debug);
 
         // Console output with colors
         let console_config = fern::Dispatch::new()
@@ -81,7 +87,11 @@ pub fn init_logging(level: &str, file_path: &str, log_to_console: bool) -> anyho
             .chain(file_config)
             .apply()?;
 
-        log::info!("Logging initialized: level={}, console=yes, file={}", level, file_path);
+        log::info!(
+            "Logging initialized: level={}, console=yes, file={}",
+            level,
+            file_path
+        );
     } else {
         // File only output without colors
         fern::Dispatch::new()
@@ -120,7 +130,7 @@ fn parse_log_level(level: &str) -> anyhow::Result<LevelFilter> {
 /// Initialize simple logging for development (console only)
 pub fn init_simple_logging() -> anyhow::Result<()> {
     use env_logger::Builder;
-    
+
     Builder::from_default_env()
         .filter_level(LevelFilter::Info)
         .format(|buf, record| {
@@ -133,7 +143,7 @@ pub fn init_simple_logging() -> anyhow::Result<()> {
             )
         })
         .try_init()?;
-    
+
     Ok(())
 }
 

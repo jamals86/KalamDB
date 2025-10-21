@@ -5,12 +5,34 @@ This guide provides detailed instructions for setting up KalamDB for development
 ## Table of Contents
 
 - [System Requirements](#system-requirements)
+- [Platform-Specific Setup Guides](#platform-specific-setup-guides)
 - [Windows Setup](#windows-setup)
 - [macOS Setup](#macos-setup)
 - [Linux Setup](#linux-setup)
 - [Verify Installation](#verify-installation)
 - [Build and Run](#build-and-run)
 - [Troubleshooting](#troubleshooting)
+
+---
+
+## Platform-Specific Setup Guides
+
+For detailed, platform-specific setup instructions with comprehensive troubleshooting:
+
+- 📖 **[macOS Setup Guide](../backend/docs/macos.md)** - Complete guide for macOS (Intel & Apple Silicon)
+  - Includes fix for `libclang.dylib` loading issues
+  - Xcode Command Line Tools setup
+  - Homebrew and LLVM configuration
+  
+- 📖 **[Linux Setup Guide](../backend/docs/linux.md)** - Covers Ubuntu, Debian, Fedora, Arch, and more
+  - Distribution-specific package installation
+  - LLVM and build tools setup
+  - Performance optimization tips
+  
+- 📖 **[Windows Setup Guide](../backend/docs/windows.md)** - Complete Windows setup with Visual Studio
+  - Visual Studio Build Tools installation
+  - LLVM/Clang configuration
+  - PowerShell commands and troubleshooting
 
 ---
 
@@ -163,11 +185,16 @@ echo 'export PATH="/opt/homebrew/opt/llvm/bin:$PATH"' >> ~/.zshrc
 echo 'export LDFLAGS="-L/opt/homebrew/opt/llvm/lib"' >> ~/.zshrc
 echo 'export CPPFLAGS="-I/opt/homebrew/opt/llvm/include"' >> ~/.zshrc
 
+# Configure dynamic linker for RocksDB (CRITICAL for macOS)
+echo 'export DYLD_FALLBACK_LIBRARY_PATH="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib:$DYLD_FALLBACK_LIBRARY_PATH"' >> ~/.zshrc
+
 # Reload shell configuration
 source ~/.zshrc
 ```
 
 **Note for Intel Macs**: Replace `/opt/homebrew` with `/usr/local` in the paths above.
+
+**Why DYLD_FALLBACK_LIBRARY_PATH?** This environment variable is critical for RocksDB compilation on macOS. Without it, you may encounter `libclang.dylib` loading errors. See the [macOS Setup Guide](../backend/docs/macos.md#step-5-configure-dynamic-linker-for-rocksdb) for details.
 
 ### Step 3: Install Rust
 
@@ -520,7 +547,11 @@ $env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
 
 **macOS**:
 ```bash
-export LLVM_CONFIG_PATH="/opt/homebrew/opt/llvm/bin/llvm-config"
+# Set dynamic library fallback path (CRITICAL for RocksDB)
+export DYLD_FALLBACK_LIBRARY_PATH="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib:$DYLD_FALLBACK_LIBRARY_PATH"
+
+# Make permanent (add to ~/.zshrc)
+echo 'export DYLD_FALLBACK_LIBRARY_PATH="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib:$DYLD_FALLBACK_LIBRARY_PATH"' >> ~/.zshrc
 ```
 
 **Linux**:
@@ -528,6 +559,8 @@ export LLVM_CONFIG_PATH="/opt/homebrew/opt/llvm/bin/llvm-config"
 sudo apt install libclang-dev  # Ubuntu/Debian
 sudo dnf install clang-devel   # Fedora/RHEL
 ```
+
+**See also:** [macOS libclang troubleshooting](../backend/docs/macos.md#issue-library-not-loaded-rpathlibc langdylib)
 
 #### 3. "failed to run custom build command for `rocksdb`"
 
@@ -655,10 +688,14 @@ sudo dnf install openssl-devel clang-devel cmake
 
 If you encounter issues not covered here:
 
-1. **Check GitHub Issues**: [KalamDB Issues](https://github.com/jamals86/KalamDB/issues)
-2. **Search Rust Forums**: Many dependency issues are common across Rust projects
-3. **Enable Verbose Output**: `cargo build -vv` for detailed error messages
-4. **Check Dependencies**: Ensure all system dependencies are installed
+1. **Platform-Specific Guides**: See detailed troubleshooting in:
+   - [macOS Setup Guide](../backend/docs/macos.md#troubleshooting)
+   - [Linux Setup Guide](../backend/docs/linux.md#troubleshooting)
+   - [Windows Setup Guide](../backend/docs/windows.md#troubleshooting)
+2. **Check GitHub Issues**: [KalamDB Issues](https://github.com/jamals86/KalamDB/issues)
+3. **Search Rust Forums**: Many dependency issues are common across Rust projects
+4. **Enable Verbose Output**: `cargo build -vv` for detailed error messages
+5. **Check Dependencies**: Ensure all system dependencies are installed
 
 ---
 

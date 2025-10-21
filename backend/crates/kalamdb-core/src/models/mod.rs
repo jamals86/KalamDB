@@ -1,4 +1,2 @@
 // Models module
-pub mod message;
-
-pub use message::Message;
+// Message model removed - will be replaced with table-centric architecture

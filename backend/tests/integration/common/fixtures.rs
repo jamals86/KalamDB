@@ -1,0 +1,489 @@
+//! Test fixtures for KalamDB integration tests.
+//!
+//! This module provides reusable fixtures for creating test data:
+//! - Namespaces with various configurations
+//! - User tables with different schemas and flush policies
+//! - Shared tables for multi-user scenarios
+//! - Stream tables for event processing
+//! - Sample data generators for testing queries
+//!
+//! # Usage
+//!
+//! ```no_run
+//! use integration::common::fixtures;
+//!
+//! #[actix_web::test]
+//! async fn test_example() {
+//!     let server = TestServer::new().await;
+//!     
+//!     // Create namespace
+//!     fixtures::create_namespace(&server, "app").await;
+//!     
+//!     // Create user table with sample data
+//!     fixtures::create_messages_table(&server, "app").await;
+//!     fixtures::insert_sample_messages(&server, "app", "user123", 10).await;
+//!     
+//!     // Run your test...
+//! }
+//! ```
+
+use crate::common::TestServer;
+use anyhow::Result;
+use kalamdb_api::models::SqlResponse;
+use serde_json::json;
+
+/// Create a namespace with default options.
+///
+/// # Arguments
+///
+/// * `server` - Test server instance
+/// * `namespace` - Name of the namespace to create
+///
+/// # Example
+///
+/// ```no_run
+/// fixtures::create_namespace(&server, "app").await;
+/// ```
+pub async fn create_namespace(server: &TestServer, namespace: &str) -> SqlResponse {
+    let sql = format!("CREATE NAMESPACE {}", namespace);
+    server.execute_sql(&sql).await
+}
+
+/// Create a namespace with specific options.
+///
+/// # Arguments
+///
+/// * `server` - Test server instance
+/// * `namespace` - Name of the namespace
+/// * `options` - JSON options for the namespace
+pub async fn create_namespace_with_options(
+    server: &TestServer,
+    namespace: &str,
+    options: &str,
+) -> SqlResponse {
+    let sql = format!("CREATE NAMESPACE {} WITH OPTIONS {}", namespace, options);
+    server.execute_sql(&sql).await
+}
+
+/// Drop a namespace (with CASCADE to drop all tables).
+///
+/// # Arguments
+///
+/// * `server` - Test server instance
+/// * `namespace` - Name of the namespace to drop
+pub async fn drop_namespace(server: &TestServer, namespace: &str) -> SqlResponse {
+    let sql = format!("DROP NAMESPACE {} CASCADE", namespace);
+    server.execute_sql(&sql).await
+}
+
+/// Create a simple user table for messages.
+///
+/// Schema:
+/// - id: INT (auto-increment)
+/// - user_id: VARCHAR (for filtering)
+/// - content: VARCHAR
+/// - created_at: TIMESTAMP
+///
+/// # Arguments
+///
+/// * `server` - Test server instance
+/// * `namespace` - Namespace name
+///
+/// # Example
+///
+/// ```no_run
+/// fixtures::create_messages_table(&server, "app", Some("user123")).await;
+/// ```
+pub async fn create_messages_table(
+    server: &TestServer,
+    namespace: &str,
+    user_id: Option<&str>,
+) -> SqlResponse {
+    let sql = format!(
+        r#"CREATE USER TABLE {}.messages (
+            id INT AUTO_INCREMENT,
+            user_id VARCHAR NOT NULL,
+            content VARCHAR NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) FLUSH ROWS 100"#,
+        namespace
+    );
+    server.execute_sql_with_user(&sql, user_id).await
+}
+
+/// Create a user table with custom flush policy.
+///
+/// # Arguments
+///
+/// * `server` - Test server instance
+/// * `namespace` - Namespace name
+/// * `table_name` - Table name
+/// * `flush_rows` - Number of rows before flush
+pub async fn create_user_table_with_flush(
+    server: &TestServer,
+    namespace: &str,
+    table_name: &str,
+    flush_rows: u32,
+) -> SqlResponse {
+    let sql = format!(
+        r#"CREATE USER TABLE {}.{} (
+            id INT AUTO_INCREMENT,
+            user_id VARCHAR NOT NULL,
+            data VARCHAR,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) FLUSH ROWS {}"#,
+        namespace, table_name, flush_rows
+    );
+    server.execute_sql(&sql).await
+}
+
+/// Create a shared table (accessible to all users).
+///
+/// # Arguments
+///
+/// * `server` - Test server instance
+/// * `namespace` - Namespace name
+/// * `table_name` - Table name
+pub async fn create_shared_table(
+    server: &TestServer,
+    namespace: &str,
+    table_name: &str,
+) -> SqlResponse {
+    let columns = if table_name == "config" {
+        r#"
+            name TEXT NOT NULL,
+            value TEXT,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        "#
+    } else {
+        r#"
+            conversation_id TEXT NOT NULL,
+            title TEXT,
+            status TEXT,
+            participant_count INTEGER,
+            created_at TIMESTAMP
+        "#
+    };
+
+    let sql = format!(
+        "CREATE SHARED TABLE {}.{} ({}) FLUSH ROWS 50",
+        namespace, table_name, columns
+    );
+    server.execute_sql(&sql).await
+}
+
+/// Create a stream table for event processing.
+///
+/// # Arguments
+///
+/// * `server` - Test server instance
+/// * `namespace` - Namespace name
+/// * `table_name` - Table name
+/// * `ttl_seconds` - TTL in seconds for automatic eviction
+pub async fn create_stream_table(
+    server: &TestServer,
+    namespace: &str,
+    table_name: &str,
+    ttl_seconds: u32,
+) -> SqlResponse {
+    let sql = format!(
+        r#"CREATE TABLE {}.{} (
+            event_id TEXT NOT NULL,
+            event_type TEXT,
+            payload TEXT,
+            timestamp TIMESTAMP
+        ) TYPE STREAM TTL {} SECONDS"#,
+        namespace, table_name, ttl_seconds
+    );
+    server.execute_sql(&sql).await
+}
+
+/// Drop a table.
+///
+/// # Arguments
+///
+/// * `server` - Test server instance
+/// * `namespace` - Namespace name
+/// * `table_name` - Table name
+pub async fn drop_table(server: &TestServer, namespace: &str, table_name: &str) -> SqlResponse {
+    let lookup_sql = format!(
+        "SELECT table_type FROM system.tables WHERE namespace = '{}' AND table_name = '{}'",
+        namespace, table_name
+    );
+    let lookup_response = server.execute_sql(&lookup_sql).await;
+
+    let table_type = if lookup_response.status == "success" {
+        lookup_response
+            .results
+            .get(0)
+            .and_then(|result| result.rows.as_ref())
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("table_type"))
+            .and_then(|value| value.as_str())
+            .map(|s| s.to_string())
+    } else {
+        None
+    };
+
+    let drop_sql = match table_type.as_deref() {
+        Some("user") => format!("DROP USER TABLE {}.{}", namespace, table_name),
+        Some("shared") => format!("DROP SHARED TABLE {}.{}", namespace, table_name),
+        Some("stream") => format!("DROP STREAM TABLE {}.{}", namespace, table_name),
+        _ => format!("DROP TABLE {}.{}", namespace, table_name),
+    };
+
+    server.execute_sql(&drop_sql).await
+}
+
+/// Insert sample messages into a messages table.
+///
+/// # Arguments
+///
+/// * `server` - Test server instance
+/// * `namespace` - Namespace name
+/// * `user_id` - User ID for the messages
+/// * `count` - Number of messages to insert
+///
+/// # Returns
+///
+/// Vector of SqlResponse for each INSERT operation
+pub async fn insert_sample_messages(
+    server: &TestServer,
+    namespace: &str,
+    user_id: &str,
+    count: usize,
+) -> Vec<SqlResponse> {
+    let mut responses = Vec::new();
+
+    for i in 0..count {
+        let sql = format!(
+            r#"INSERT INTO {}.messages (user_id, content) VALUES ('{}', 'Message {}')"#,
+            namespace, user_id, i
+        );
+        responses.push(server.execute_sql(&sql).await);
+    }
+
+    responses
+}
+
+/// Insert a single message.
+///
+/// # Arguments
+///
+/// * `server` - Test server instance
+/// * `namespace` - Namespace name
+/// * `user_id` - User ID
+/// * `content` - Message content
+pub async fn insert_message(
+    server: &TestServer,
+    namespace: &str,
+    user_id: &str,
+    content: &str,
+) -> SqlResponse {
+    let sql = format!(
+        r#"INSERT INTO {}.messages (user_id, content) VALUES ('{}', '{}')"#,
+        namespace, user_id, content
+    );
+    server.execute_sql(&sql).await
+}
+
+/// Update a message by ID.
+///
+/// # Arguments
+///
+/// * `server` - Test server instance
+/// * `namespace` - Namespace name
+/// * `id` - Message ID
+/// * `new_content` - New content
+pub async fn update_message(
+    server: &TestServer,
+    namespace: &str,
+    id: i32,
+    new_content: &str,
+) -> SqlResponse {
+    let sql = format!(
+        r#"UPDATE {}.messages SET content = '{}' WHERE id = {}"#,
+        namespace, new_content, id
+    );
+    server.execute_sql(&sql).await
+}
+
+/// Delete a message by ID (soft delete).
+///
+/// # Arguments
+///
+/// * `server` - Test server instance
+/// * `namespace` - Namespace name
+/// * `id` - Message ID
+pub async fn delete_message(server: &TestServer, namespace: &str, id: i32) -> SqlResponse {
+    let sql = format!(r#"DELETE FROM {}.messages WHERE id = {}"#, namespace, id);
+    server.execute_sql(&sql).await
+}
+
+/// Query all messages for a user.
+///
+/// # Arguments
+///
+/// * `server` - Test server instance
+/// * `namespace` - Namespace name
+/// * `user_id` - User ID
+pub async fn query_user_messages(
+    server: &TestServer,
+    namespace: &str,
+    user_id: &str,
+) -> SqlResponse {
+    let sql = format!(
+        r#"SELECT * FROM {}.messages WHERE user_id = '{}' ORDER BY created_at DESC"#,
+        namespace, user_id
+    );
+    server.execute_sql(&sql).await
+}
+
+/// Generate sample user data.
+///
+/// Returns a vector of (user_id, username, email) tuples.
+///
+/// # Arguments
+///
+/// * `count` - Number of users to generate
+pub fn generate_user_data(count: usize) -> Vec<(String, String, String)> {
+    (0..count)
+        .map(|i| {
+            (
+                format!("user{}", i),
+                format!("testuser{}", i),
+                format!("user{}@example.com", i),
+            )
+        })
+        .collect()
+}
+
+/// Generate sample event data.
+///
+/// Returns a vector of (event_type, payload) tuples.
+///
+/// # Arguments
+///
+/// * `count` - Number of events to generate
+pub fn generate_stream_events(count: usize) -> Vec<(String, String)> {
+    let event_types = ["login", "logout", "purchase", "view", "click"];
+
+    (0..count)
+        .map(|i| {
+            let event_type = event_types[i % event_types.len()].to_string();
+            let payload = json!({
+                "user_id": format!("user{}", i % 10),
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "data": format!("payload_{}", i)
+            })
+            .to_string();
+
+            (event_type, payload)
+        })
+        .collect()
+}
+
+/// Create a complete test environment with namespace and tables.
+///
+/// Creates:
+/// - Namespace
+/// - User messages table
+/// - Shared configuration table
+/// - Stream events table
+///
+/// # Arguments
+///
+/// * `server` - Test server instance
+/// * `namespace` - Namespace name
+///
+/// # Returns
+///
+/// Result indicating success or failure
+pub async fn setup_complete_environment(server: &TestServer, namespace: &str) -> Result<()> {
+    // Create namespace
+    let resp = create_namespace(server, namespace).await;
+    if resp.status != "success" {
+        anyhow::bail!("Failed to create namespace: {:?}", resp.error);
+    }
+
+    // Create user table
+    let resp = create_messages_table(server, namespace, Some("user123")).await;
+    if resp.status != "success" {
+        anyhow::bail!("Failed to create messages table: {:?}", resp.error);
+    }
+
+    // Create shared table
+    let resp = create_shared_table(server, namespace, "config").await;
+    if resp.status != "success" {
+        anyhow::bail!("Failed to create shared table: {:?}", resp.error);
+    }
+
+    // Create stream table
+    let resp = create_stream_table(server, namespace, "events", 3600).await;
+    if resp.status != "success" {
+        anyhow::bail!("Failed to create stream table: {:?}", resp.error);
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::TestServer;
+
+    #[actix_web::test]
+    async fn test_create_namespace() {
+        let server = TestServer::new().await;
+        let response = create_namespace(&server, "test_ns").await;
+        assert_eq!(response.status, "success");
+        assert!(server.namespace_exists("test_ns").await);
+    }
+
+    #[actix_web::test]
+    async fn test_create_messages_table() {
+        let server = TestServer::new().await;
+        create_namespace(&server, "app").await;
+
+        let response = create_messages_table(&server, "app", Some("user123")).await;
+        assert_eq!(response.status, "success");
+        assert!(server.table_exists("app", "messages").await);
+    }
+
+    #[actix_web::test]
+    async fn test_insert_sample_messages() {
+        let server = TestServer::new().await;
+        create_namespace(&server, "app").await;
+        create_messages_table(&server, "app", Some("user123")).await;
+
+        let responses = insert_sample_messages(&server, "app", "user123", 5).await;
+        assert_eq!(responses.len(), 5);
+
+        for response in responses {
+            assert_eq!(response.status, "success");
+        }
+    }
+
+    #[actix_web::test]
+    async fn test_generate_user_data() {
+        let users = generate_user_data(5);
+        assert_eq!(users.len(), 5);
+        assert_eq!(users[0].0, "user0");
+        assert_eq!(users[0].1, "testuser0");
+        assert_eq!(users[0].2, "user0@example.com");
+    }
+
+    #[actix_web::test]
+    async fn test_setup_complete_environment() {
+        let server = TestServer::new().await;
+        let result = setup_complete_environment(&server, "test_env").await;
+        assert!(result.is_ok());
+
+        // Verify all components exist
+        assert!(server.namespace_exists("test_env").await);
+        assert!(server.table_exists("test_env", "messages").await);
+        assert!(server.table_exists("test_env", "config").await);
+        assert!(server.table_exists("test_env", "events").await);
+    }
+}
