@@ -64,6 +64,8 @@ pub struct TestServer {
     pub sql_executor: Arc<SqlExecutor>,
     /// Namespace service for namespace operations
     pub namespace_service: Arc<NamespaceService>,
+    /// DataFusion session factory (needed for fallback SQL execution)
+    pub session_factory: Arc<DataFusionSessionFactory>,
 }
 
 impl TestServer {
@@ -192,6 +194,7 @@ impl TestServer {
             kalam_sql,
             sql_executor,
             namespace_service,
+            session_factory,
         }
     }
 
@@ -252,6 +255,8 @@ impl TestServer {
     /// `SqlResponse` containing status, results, and any errors
     pub async fn execute_sql_with_user(&self, sql: &str, user_id: Option<&str>) -> SqlResponse {
         let user_id_obj = user_id.map(kalamdb_core::catalog::UserId::from);
+        
+        // Try custom DDL/DML execution first (same as REST API)
         match self.sql_executor.execute(sql, user_id_obj.as_ref()).await {
             Ok(result) => {
                 use kalamdb_core::sql::ExecutionResult;
@@ -283,6 +288,53 @@ impl TestServer {
                             error: None,
                         }
                     }
+                }
+            }
+            Err(kalamdb_core::error::KalamDbError::InvalidSql(_)) => {
+                // Not a custom DDL, fall back to DataFusion (same as REST API)
+                // This ensures integration tests use the SAME code path as /api/sql
+                match self.session_factory.create_session().sql(sql).await {
+                    Ok(df) => match df.collect().await {
+                        Ok(batches) => {
+                            if batches.is_empty() {
+                                SqlResponse {
+                                    status: "success".to_string(),
+                                    results: vec![],
+                                    execution_time_ms: 0,
+                                    error: None,
+                                }
+                            } else {
+                                let results: Vec<_> =
+                                    batches.iter().map(record_batch_to_query_result).collect();
+                                SqlResponse {
+                                    status: "success".to_string(),
+                                    results,
+                                    execution_time_ms: 0,
+                                    error: None,
+                                }
+                            }
+                        }
+                        Err(e) => SqlResponse {
+                            status: "error".to_string(),
+                            results: vec![],
+                            execution_time_ms: 0,
+                            error: Some(kalamdb_api::models::ErrorDetail {
+                                code: "SQL_EXECUTION_ERROR".to_string(),
+                                message: format!("Error executing query: {}", e),
+                                details: Some(sql.to_string()),
+                            }),
+                        },
+                    },
+                    Err(e) => SqlResponse {
+                        status: "error".to_string(),
+                        results: vec![],
+                        execution_time_ms: 0,
+                        error: Some(kalamdb_api::models::ErrorDetail {
+                            code: "SQL_PARSE_ERROR".to_string(),
+                            message: format!("Error parsing SQL: {}", e),
+                            details: Some(sql.to_string()),
+                        }),
+                    },
                 }
             }
             Err(e) => SqlResponse {

@@ -14,6 +14,7 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
+use datafusion::physical_plan::memory::MemoryExec;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_sql::KalamSql;
 use serde::{Deserialize, Serialize};
@@ -324,15 +325,22 @@ impl TableProvider for LiveQueriesTableProvider {
     async fn scan(
         &self,
         _state: &SessionState,
-        _projection: Option<&Vec<usize>>,
+        projection: Option<&Vec<usize>>,
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // For now, we'll return an error indicating that scanning is not yet implemented
-        // This will be implemented in a future task with proper ExecutionPlan
-        Err(DataFusionError::NotImplemented(
-            "System.live_queries table scanning not yet implemented. Use get_live_query() or scan_all_live_queries() methods instead.".to_string()
-        ))
+        // Scan all live queries using the helper method
+        let batch = self.scan_all_live_queries().map_err(|e| {
+            DataFusionError::Execution(format!("Failed to scan live queries: {}", e))
+        })?;
+
+        // Create a single partition with the batch
+        let partitions = vec![vec![batch]];
+
+        // Create a MemoryExec plan
+        let exec = MemoryExec::try_new(&partitions, self.schema.clone(), projection.cloned())?;
+
+        Ok(Arc::new(exec))
     }
 }
 

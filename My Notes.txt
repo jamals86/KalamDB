@@ -6,6 +6,9 @@ Things to add to the spec:
     - In the backend datafusion shall compile it once and use it from the cached one
     - Registering tables from user's session - Improve this by also keeping some tables in a cache in memory maybe a user will keep query his own table for a period of time, in this way we can manage this to free cached tables whenever they stop being used
 
+- Update all crates/libraries to the latest versions
+- Rename the system.storage_locations to system.storages only, rename this in everywhere
+- System tables providers which is located in: kalamdb-core\src\tables\system, has similar structure, i prefer having a parent class for all of them and impelemnts the same logic one time only
 - Re-write the README it has things outdated now
     - Remove the parquet mentioning that much it can be mentioned only once max
     - Add also mention that the websocket is directly opened to the server no need for another service in the middle
@@ -54,7 +57,14 @@ Things to add to the spec:
     to have attributes or properties inside the parquet itself
 - An option when creating a table to have an index for a specific column
     Create statement should include that index with it as well for example this query:
-    
+    CREATE USER TABLE messages (
+        id BIGINT,
+        conversation_id STRING,
+        content STRING,
+        INDEX (conversation_id) USING BLOOM (fpp = 0.01, num_items = 10000),
+        INDEX (created_at) USING SORTED ASC
+    );
+
 - In buffer we also add an index for the user_id for the buffered data, in order to have queries faster
     Also we cna implement indexes as well, but now user_id is enough, so that:
     1) each table will have another column_family

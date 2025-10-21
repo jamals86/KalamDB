@@ -67,6 +67,10 @@ path = "../../tests/integration/test_stream_tables.rs"
 name = "test_quickstart"
 path = "../../tests/integration/test_quickstart.rs"
 
+[[test]]
+name = "test_system_tables"
+path = "../../tests/integration/test_system_tables.rs"
+
 [dev-dependencies]
 tempfile = "3"
 serde_json.workspace = true
