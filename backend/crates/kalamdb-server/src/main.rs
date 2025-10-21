@@ -9,6 +9,8 @@ use actix_cors::Cors;
 use actix_web::{middleware, web, App, HttpServer};
 use anyhow::Result;
 use datafusion::catalog::schema::{MemorySchemaProvider, SchemaProvider};
+use kalamdb_api::auth::jwt::JwtAuth;
+use kalamdb_api::rate_limiter::RateLimiter;
 use kalamdb_api::routes;
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
@@ -178,6 +180,19 @@ async fn main() -> Result<()> {
         .expect("Failed to load existing tables");
     info!("Existing tables loaded and registered with DataFusion");
 
+    // Initialize JWT authentication
+    // Note: For production, use RS256 with proper key management
+    // For development/testing, we use HS256 with a symmetric key
+    let jwt_secret = "kalamdb-dev-secret-key-change-in-production".to_string();
+    // Use HS256 (HMAC with SHA-256) - requires jsonwebtoken crate
+    use jsonwebtoken::Algorithm;
+    let jwt_auth = Arc::new(JwtAuth::new(jwt_secret, Algorithm::HS256));
+    info!("JWT authentication initialized (HS256)");
+
+    // Initialize rate limiter with default config
+    let rate_limiter = Arc::new(RateLimiter::new());
+    info!("Rate limiter initialized (100 queries/sec, 50 messages/sec, 10 max subscriptions)");
+
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     info!("Starting HTTP server on {}", bind_addr);
     info!("Endpoints: POST /api/sql, GET /ws");
@@ -197,6 +212,8 @@ async fn main() -> Result<()> {
             .wrap(cors)
             .app_data(web::Data::new(session_factory.clone()))
             .app_data(web::Data::new(sql_executor.clone()))
+            .app_data(web::Data::new(jwt_auth.clone()))
+            .app_data(web::Data::new(rate_limiter.clone()))
             .configure(routes::configure_routes)
     })
     .bind(&bind_addr)?

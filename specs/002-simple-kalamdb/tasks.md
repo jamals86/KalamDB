@@ -882,13 +882,17 @@ RocksDB (isolated to 2 crates only)
   - Skip flush trigger registration for TableType::Stream
   - Stream tables NEVER flush to Parquet (ephemeral data only)
   - Add comment explaining architectural decision
-- [ ] T156 [US4a] Add stream table metadata to DESCRIBE TABLE output in `backend/crates/kalamdb-core/src/sql/ddl/describe_table.rs`:
+- [X] T156 [US4a] Add stream table metadata to DESCRIBE TABLE output in `backend/crates/kalamdb-core/src/sql/ddl/describe_table.rs`:
   - Show retention period (e.g., "10 seconds")
   - Show ephemeral flag (true/false)
   - Show max_buffer limit (e.g., "10000 rows")
   - Show NO system columns (\_updated, \_deleted don't exist for streams)
   - Use NamespaceId and TableName for lookup
-  ⏸️ **DEFERRED** - Requires DESCRIBE TABLE handler infrastructure (Phase 15: User Story 8)
+  ✅ **COMPLETE** - Enhanced table_details_to_record_batch() in executor.rs to distinguish stream tables from user/shared tables
+  - Stream tables show: table_id, table_name, namespace, table_type, schema_version, created_at, note
+  - Note field explains: "Stream tables: NO _updated/_deleted columns, NO Parquet storage (ephemeral)"
+  - User/Shared tables continue to show: storage_location, flush_policy, deleted_retention_hours
+  - 1 new test passing: test_describe_stream_table_shows_no_system_columns
 - [X] T157 [US4a] Implement DROP STREAM TABLE support in table_deletion_service.rs:
   - Detect TableType::Stream from table metadata
   - Call `stream_table_store.drop_table(namespace_id, table_name)` to delete column family

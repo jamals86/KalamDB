@@ -10,6 +10,7 @@ Things to add to the spec:
     - Also scanning user's table should be done with a user_id
     - Stream table as well
 - Add code documentation on scan() functions since they are essential for our design
+- Check the logic where we query user's table, currently it register the table first and then query it or un-register it, check the workflow here and try to improve performance and the session initialization
 - make tests run either on local server or on temporary server like its doing now
 - Double check if we can use kalamdb-store with kalamdb-sql instead of calling rocksdb directly from kalamdb-sql
 - Check if ddls can be included inside kalamdb-sql as well since they belong there, if it's not all maybe the names or models only
@@ -24,6 +25,7 @@ Things to add to the spec:
     - Any system things that is shared between or needed in -sql/-store/-core
     - Also kalamdb-server configs which all other crates might need their models as well
     - Errors like: backend/crates/kalamdb-core/src/error.rs
+- Inside backend\crates\kalamdb-sql\src\models.rs use the same namespace_id and table_id there instead of string's
 - Make sure the user can't listen to a shared table since this will ruin performance
 - Add crate for kalamdb-live which is responsible for live subscribers logic and it's communicate with the kalamdb-store and kalamdb-sql
 - Instead of having something like this: let cf_name = format!("user_table:{}:{}", namespace_id, table_name); let cf_name = format!("shared_table:{}:{}", namespace_id, table_name);
@@ -57,6 +59,14 @@ Things to add to the spec:
 - Check both user_table_store and shared_table_store and maybe the streams store and also the system tables
     and check if there anything we can improve with polymorphisim
     to write less code there, since all of them looks similar
+- Check if there is any crates included is not needed anymore the point here to lower the binary size
+- Check that libraries used for testing is not included in released binary
+- Create an examples folder in the main repo and add to it a sample typescript project which is a TODO App
+    - Add note
+    - Delete note
+    - Update note
+    - Subscribe to the notes changes from the server
+    - Add them into local storage for later
 
 Features:
 - Add CLI tool which is using the API and you can login with specific user to do the actions inside of it, this should be a separate binary
@@ -74,3 +84,10 @@ Features:
     - If a table is a shared table and has many rows
     - If a user table is getting big
     - more will come later, the archeticture should support this
+
+
+Tools & Utilities:
+- Build as a docker container Dokerfile
+- An example of running with docker-compose
+- Auto-deploy to github as an executables
+- 

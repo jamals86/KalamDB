@@ -26,6 +26,9 @@ actix-cors.workspace = true
 # Configuration
 toml.workspace = true
 
+# JWT authentication
+jsonwebtoken = "9.2"
+
 # Logging
 log.workspace = true
 env_logger.workspace = true

@@ -277,6 +277,17 @@ impl SqlExecutor {
                     store.clone(),
                 ));
 
+                // Check if table already exists
+                let table_exists = df_schema.table_exist(table_name.as_str());
+                
+                if table_exists {
+                    // Deregister the old table first
+                    df_schema.deregister_table(table_name.as_str())
+                        .map_err(|e| {
+                            KalamDbError::Other(format!("Failed to deregister shared table: {}", e))
+                        })?;
+                }
+
                 df_schema
                     .register_table(table_name.as_str().to_string(), provider)
                     .map_err(|e| {
@@ -296,6 +307,17 @@ impl SqlExecutor {
                     false, // ephemeral - TODO: get from table metadata
                     None,  // max_buffer - TODO: get from table metadata
                 ));
+
+                // Check if table already exists
+                let table_exists = df_schema.table_exist(table_name.as_str());
+                
+                if table_exists {
+                    // Deregister the old table first
+                    df_schema.deregister_table(table_name.as_str())
+                        .map_err(|e| {
+                            KalamDbError::Other(format!("Failed to deregister stream table: {}", e))
+                        })?;
+                }
 
                 df_schema
                     .register_table(table_name.as_str().to_string(), provider)
@@ -526,13 +548,31 @@ impl SqlExecutor {
                     ))
                 })?;
 
-            // Also register without namespace prefix
-            user_session
-                .register_table(table_name.as_str(), provider)
+            // Get the namespace schema and register there as well
+            let df_schema = catalog.schema(namespace_id.as_str()).ok_or_else(|| {
+                KalamDbError::Other(format!("Schema '{}' not found", namespace_id.as_str()))
+            })?;
+            
+            // Check if table already exists and deregister it first
+            if df_schema.table_exist(table_name.as_str()) {
+                df_schema.deregister_table(table_name.as_str())
+                    .map_err(|e| {
+                        KalamDbError::Other(format!(
+                            "Failed to deregister existing shared table {} in schema {}: {}",
+                            table_name.as_str(),
+                            namespace_id.as_str(),
+                            e
+                        ))
+                    })?;
+            }
+            
+            df_schema
+                .register_table(table_name.as_str().to_string(), provider)
                 .map_err(|e| {
                     KalamDbError::Other(format!(
-                        "Failed to register shared table {}: {}",
+                        "Failed to register shared table {} in schema {}: {}",
                         table_name.as_str(),
+                        namespace_id.as_str(),
                         e
                     ))
                 })?;
@@ -607,13 +647,31 @@ impl SqlExecutor {
                     ))
                 })?;
 
-            // Also register without namespace prefix
-            user_session
-                .register_table(table_name.as_str(), provider)
+            // Get the namespace schema and register there as well
+            let df_schema = catalog.schema(namespace_id.as_str()).ok_or_else(|| {
+                KalamDbError::Other(format!("Schema '{}' not found", namespace_id.as_str()))
+            })?;
+            
+            // Check if table already exists and deregister it first
+            if df_schema.table_exist(table_name.as_str()) {
+                df_schema.deregister_table(table_name.as_str())
+                    .map_err(|e| {
+                        KalamDbError::Other(format!(
+                            "Failed to deregister existing user table {} in schema {}: {}",
+                            table_name.as_str(),
+                            namespace_id.as_str(),
+                            e
+                        ))
+                    })?;
+            }
+            
+            df_schema
+                .register_table(table_name.as_str().to_string(), provider)
                 .map_err(|e| {
                     KalamDbError::Other(format!(
-                        "Failed to register user table {}: {}",
+                        "Failed to register user table {} in schema {}: {}",
                         table_name.as_str(),
+                        namespace_id.as_str(),
                         e
                     ))
                 })?;
@@ -690,13 +748,31 @@ impl SqlExecutor {
                     ))
                 })?;
 
-            // Also register without namespace prefix
-            user_session
-                .register_table(table_name.as_str(), provider)
+            // Get the namespace schema and register there as well
+            let df_schema = catalog.schema(namespace_id.as_str()).ok_or_else(|| {
+                KalamDbError::Other(format!("Schema '{}' not found", namespace_id.as_str()))
+            })?;
+            
+            // Check if table already exists and deregister it first
+            if df_schema.table_exist(table_name.as_str()) {
+                df_schema.deregister_table(table_name.as_str())
+                    .map_err(|e| {
+                        KalamDbError::Other(format!(
+                            "Failed to deregister existing stream table {} in schema {}: {}",
+                            table_name.as_str(),
+                            namespace_id.as_str(),
+                            e
+                        ))
+                    })?;
+            }
+            
+            df_schema
+                .register_table(table_name.as_str().to_string(), provider)
                 .map_err(|e| {
                     KalamDbError::Other(format!(
-                        "Failed to register stream table {}: {}",
+                        "Failed to register stream table {} in schema {}: {}",
                         table_name.as_str(),
+                        namespace_id.as_str(),
                         e
                     ))
                 })?;
@@ -1792,6 +1868,105 @@ mod tests {
                 assert!(msg.contains("updated successfully"));
             }
             _ => panic!("Expected Success result"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_describe_stream_table_shows_no_system_columns() {
+        // Create test database with necessary column families
+        let test_db = TestDb::new(&["system_namespaces", "system_tables", "system_table_schemas"]).unwrap();
+        let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
+        let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
+        let session_context = Arc::new(SessionContext::new());
+
+        let user_table_store = Arc::new(kalamdb_store::UserTableStore::new(test_db.db.clone()).unwrap());
+        let user_table_service = Arc::new(crate::services::UserTableService::new(
+            kalam_sql.clone(),
+            user_table_store.clone(),
+        ));
+        let shared_table_store = Arc::new(kalamdb_store::SharedTableStore::new(test_db.db.clone()).unwrap());
+        let shared_table_service = Arc::new(crate::services::SharedTableService::new(
+            shared_table_store.clone(),
+            kalam_sql.clone(),
+        ));
+        let stream_table_store = Arc::new(kalamdb_store::StreamTableStore::new(test_db.db.clone()).unwrap());
+        let stream_table_service = Arc::new(crate::services::StreamTableService::new(
+            stream_table_store.clone(),
+            kalam_sql.clone(),
+        ));
+
+        let executor = SqlExecutor::new(
+            namespace_service,
+            session_context,
+            user_table_service,
+            shared_table_service,
+            stream_table_service,
+        )
+        .with_stores(
+            user_table_store,
+            shared_table_store,
+            stream_table_store,
+            kalam_sql.clone(),
+        );
+
+        // Create a test stream table entry in system_tables
+        let table = kalamdb_sql::models::Table {
+            table_id: "app:events".to_string(),
+            table_name: "events".to_string(),
+            namespace: "app".to_string(),
+            table_type: "Stream".to_string(),
+            created_at: chrono::Utc::now().timestamp_millis(),
+            storage_location: String::new(),
+            flush_policy: String::new(),
+            schema_version: 1,
+            deleted_retention_hours: 0,
+        };
+        
+        kalam_sql.insert_table(&table).unwrap();
+
+        // Execute DESCRIBE TABLE
+        let result = executor
+            .execute("DESCRIBE TABLE app.events", None)
+            .await
+            .unwrap();
+
+        // Verify stream table shows appropriate properties
+        match result {
+            ExecutionResult::RecordBatch(batch) => {
+                assert_eq!(batch.num_columns(), 2);
+                assert!(batch.num_rows() > 0);
+                
+                // Convert to string to check content
+                let properties_col = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                
+                let values_col = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                
+                // Check that table_type is Stream
+                let mut found_stream_type = false;
+                let mut found_note = false;
+                for i in 0..batch.num_rows() {
+                    if properties_col.value(i) == "table_type" {
+                        assert_eq!(values_col.value(i), "Stream");
+                        found_stream_type = true;
+                    }
+                    if properties_col.value(i) == "note" {
+                        assert!(values_col.value(i).contains("NO _updated/_deleted"));
+                        assert!(values_col.value(i).contains("ephemeral"));
+                        found_note = true;
+                    }
+                }
+                assert!(found_stream_type, "Should show table_type = Stream");
+                assert!(found_note, "Should show note about NO system columns");
+            }
+            _ => panic!("Expected RecordBatch result"),
         }
     }
 
