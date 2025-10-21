@@ -17,6 +17,6 @@ headers {
 
 body:json {
   {
-  "sql": "select * from jamal.files ORDER BY name DESC limit 1"
+  "sql": "select count(id) as cnt from jamal.files"
   }
 }

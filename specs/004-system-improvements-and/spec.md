@@ -157,6 +157,27 @@ Users and operators need well-organized documentation with clear categories and 
 
 ---
 
+### User Story 9 - Enhanced API Features and Live Query Improvements (Priority: P2)
+
+Database users need more flexible API capabilities including batch SQL execution, enhanced live query features, and improved system observability. These enhancements build on the base functionality to provide better developer experience and operational control.
+
+**Why this priority**: These are quality-of-life improvements that enhance developer productivity and operational capabilities without changing core architecture. They address common patterns and pain points discovered during usage.
+
+**Independent Test**: Can be fully tested by submitting batch SQL requests, creating WebSocket subscriptions with initial data fetch, monitoring enhanced system tables, and executing administrative commands.
+
+**Acceptance Scenarios**:
+
+1. **Given** a user needs to execute multiple related SQL commands, **When** they submit a request with semicolon-separated statements to `/api/sql`, **Then** all statements execute in sequence and individual results are returned
+2. **Given** a user establishes a WebSocket subscription, **When** they specify "last_rows": N in subscription options, **Then** they immediately receive the last N rows before real-time updates begin
+3. **Given** a table has active live query subscriptions, **When** an administrator attempts to DROP TABLE, **Then** the operation fails with error listing the active subscription count
+4. **Given** an administrator needs to terminate a subscription, **When** they execute `KILL LIVE QUERY <live_id>`, **Then** the specified subscription is disconnected and removed from system.live_queries
+5. **Given** system.live_queries exists, **When** queried, **Then** it includes options (JSON), changes counter, and node identifier fields
+6. **Given** system.jobs exists, **When** queried, **Then** it includes parameters array, result string, trace string, and resource metrics (memory_used, cpu_used)
+7. **Given** users query tables, **When** DESCRIBE TABLE is executed, **Then** the output includes current schema version and reference to schema history in system.table_schemas
+8. **Given** administrators monitor tables, **When** SHOW TABLE STATS is executed, **Then** row counts, storage size, and buffer status are displayed
+
+---
+
 ### Edge Cases
 
 - What happens when a parametrized query is submitted with a parameter count that doesn't match the placeholder count?
@@ -180,6 +201,17 @@ Users and operators need well-organized documentation with clear categories and 
 - How does the Docker container handle configuration file updates without rebuilding the image?
 - What happens when persistent volumes in docker-compose contain data from incompatible schema versions?
 - How does the Docker image behave when required environment variables are not provided?
+- What occurs when a batch SQL request contains one valid and one invalid statement - are all results returned?
+- How does the system handle WebSocket "last_rows" request when the table has fewer rows than requested?
+- What happens when KILL LIVE QUERY is executed for a subscription that has already disconnected?
+- How does DROP TABLE behave when active subscriptions exist but the subscription count is zero (race condition)?
+- What occurs when system.live_queries is queried while subscriptions are being created/destroyed rapidly?
+- How does the system handle job parameters that contain special characters or very long strings?
+- What happens when a job completes but the trace information is unavailable (null case)?
+- How does DESCRIBE TABLE display schema history when there are hundreds of schema versions?
+- What occurs when SHOW TABLE STATS is executed for a table that has never been flushed?
+- How does the system prevent subscription attempts on shared tables disguised through views or aliases?
+- What happens when kalamdb-sql receives SQL that would violate stateless operation (e.g., session state mutation)?
 
 ## Requirements *(mandatory)*
 
@@ -312,6 +344,35 @@ Users and operators need well-organized documentation with clear categories and 
 - **FR-055**: When localhost bypass is enabled, configuration MUST specify default user_id for localhost connections (defaulting to "system")
 - **FR-056**: Non-localhost connections MUST always require valid JWT with user_id claim
 
+#### Enhanced API Features and Live Query Improvements
+
+- **FR-106**: System MUST accept multiple SQL statements separated by semicolons in a single `/api/sql` request
+- **FR-107**: Multiple SQL statements MUST execute in sequence, with each statement's result returned separately
+- **FR-108**: If any statement in a batch fails, subsequent statements MUST NOT execute and the error MUST be clearly indicated
+- **FR-109**: WebSocket subscription options MUST support "last_rows" parameter to fetch initial data
+- **FR-110**: When "last_rows": N is specified, system MUST immediately return the N most recent rows matching the subscription filter
+- **FR-111**: Initial data fetch MUST complete before real-time change notifications begin
+- **FR-112**: System MUST track active subscriptions per table to enable dependency checking
+- **FR-113**: DROP TABLE command MUST fail if active live query subscriptions exist for that table
+- **FR-114**: DROP TABLE error message MUST include the count of active subscriptions preventing the operation
+- **FR-115**: System MUST support SQL command: `KILL LIVE QUERY <live_id>` to manually terminate subscriptions
+- **FR-116**: KILL LIVE QUERY MUST disconnect the WebSocket subscription and remove it from system.live_queries
+- **FR-117**: system.live_queries table MUST include an "options" column storing JSON-encoded subscription options
+- **FR-118**: system.live_queries table MUST include a "changes" column tracking total notifications delivered
+- **FR-119**: system.live_queries table MUST include a "node" column identifying which cluster node owns the WebSocket connection
+- **FR-120**: system.jobs table MUST include a "parameters" column storing an array of job input parameters
+- **FR-121**: system.jobs table MUST include a "result" column storing the job outcome as a string
+- **FR-122**: system.jobs table MUST include a "trace" column storing execution context/location information
+- **FR-123**: system.jobs table MUST include "memory_used" and "cpu_used" columns for resource tracking
+- **FR-124**: DESCRIBE TABLE output MUST include current_schema_version field
+- **FR-125**: DESCRIBE TABLE output MUST reference system.table_schemas for viewing schema history
+- **FR-126**: System MUST support SQL command: `SHOW TABLE STATS <table_name>` returning row counts and storage metrics
+- **FR-127**: SHOW TABLE STATS MUST display: buffered row count, flushed row count, total storage size, last flush timestamp
+- **FR-128**: System MUST prevent subscription creation on shared tables to protect against performance issues
+- **FR-129**: When shared table subscription is attempted, system MUST return error: "Live query subscriptions not supported on shared tables"
+- **FR-130**: kalamdb-sql MUST be designed as stateless and idempotent to support future Raft consensus replication
+- **FR-131**: kalamdb-sql architecture MUST support optional change event emission for future cluster replication
+
 #### Data Organization and Query Optimization
 
 - **FR-057**: All scan operations on user-partitioned data MUST filter by user_id at the storage level
@@ -339,6 +400,14 @@ Users and operators need well-organized documentation with clear categories and 
 - **DocumentationCategory**: Logical grouping of documentation files (build, quickstart, architecture) for organized navigation
 - **DockerImage**: Containerized KalamDB server with runtime dependencies, built via multi-stage Dockerfile
 - **DockerCompose**: Orchestration configuration defining services, volumes, networks, and environment for KalamDB deployment
+- **BatchSQLRequest**: API request containing multiple semicolon-separated SQL statements to be executed sequentially
+- **BatchSQLResponse**: API response containing ordered results for each statement in a batch execution
+- **SubscriptionOptions**: Configuration for WebSocket subscriptions including "last_rows" for initial data fetch
+- **ActiveSubscriptionTracker**: Component tracking live query subscriptions per table to enable dependency checking for DDL operations
+- **EnhancedSystemTable**: Updated system tables (live_queries, jobs) with additional columns for observability and cluster awareness
+- **SchemaHistory**: Queryable record of all schema versions for a table accessible through system.table_schemas
+- **TableStatistics**: Metrics about a table including row counts, storage size, and buffer status
+- **StatelessSQLEngine**: Design pattern for kalamdb-sql ensuring operations are idempotent and replayable for future cluster replication
 
 ## Success Criteria *(mandatory)*
 
@@ -374,6 +443,16 @@ Users and operators need well-organized documentation with clear categories and 
 - **SC-028**: Docker image builds successfully and starts KalamDB server within 30 seconds
 - **SC-029**: docker-compose brings up fully functional KalamDB system with single command
 - **SC-030**: Docker image size is under 100MB (excluding data volumes)
+- **SC-031**: Batch SQL execution completes all statements successfully with correct result ordering 100% of the time
+- **SC-032**: WebSocket subscriptions with "last_rows" fetch complete initial data within 500ms for N ≤ 1000
+- **SC-033**: DROP TABLE dependency checking correctly identifies and prevents drops with active subscriptions 100% of the time
+- **SC-034**: KILL LIVE QUERY command terminates subscriptions within 2 seconds
+- **SC-035**: Enhanced system.live_queries columns (options, changes, node) are populated accurately for all subscriptions
+- **SC-036**: Enhanced system.jobs columns (parameters, result, trace, memory_used, cpu_used) capture data for at least 95% of jobs
+- **SC-037**: DESCRIBE TABLE with schema history returns results within 100ms
+- **SC-038**: SHOW TABLE STATS executes and returns accurate metrics within 50ms
+- **SC-039**: Shared table subscription prevention blocks 100% of attempts with clear error messages
+- **SC-040**: kalamdb-sql stateless design enables identical query results across cluster nodes (verifiable through testing)
 
 ### Documentation Success Criteria (Constitution Principle VIII)
 

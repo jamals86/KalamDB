@@ -48,6 +48,25 @@
 - Cleanup of outdated/redundant documentation
 - Dockerfile creation in /docker folder
 - docker-compose.yml for system orchestration
+
+**Third round additions** per old spec (002-simple-kalamdb) comparison:
+
+**New User Story 9**: Enhanced API Features and Live Query Improvements
+- Multiple SQL statements in single request (semicolon separated) - FR-106 to FR-108
+- WebSocket initial data fetch ("last_rows" option) - FR-109 to FR-111
+- DROP TABLE safety checks (prevent with active subscriptions) - FR-112 to FR-114
+- KILL LIVE QUERY command for manual subscription termination - FR-115 to FR-116
+- Enhanced system.live_queries fields (options, changes, node) - FR-117 to FR-119
+- Enhanced system.jobs fields (parameters, result, trace, resources) - FR-120 to FR-123
+- DESCRIBE TABLE showing schema history - FR-124 to FR-125
+- SHOW TABLE STATS command - FR-126 to FR-127
+- Prevent shared table subscriptions (performance protection) - FR-128 to FR-129
+- kalamdb-sql stateless/idempotent design (Raft-ready) - FR-130 to FR-131
+
+**Updated Totals**:
+- User Stories: 9 (was 8)
+- Functional Requirements: 131 (was 105)
+- Success Criteria: 40 (was 30)
 - Multi-stage builds and volume configuration
 
 **New Functional Requirements**: FR-077 through FR-105 (29 additional requirements)
