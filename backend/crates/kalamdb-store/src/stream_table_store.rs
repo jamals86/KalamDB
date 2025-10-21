@@ -45,7 +45,7 @@ impl StreamTableStore {
     ///
     /// See SharedTableStore::create_column_family for safety documentation.
     pub fn create_column_family(&self, namespace_id: &str, table_name: &str) -> Result<()> {
-        let cf_name = format!("{}{}:", ColumnFamilyNames::STREAM_TABLE_PREFIX{}:{}", namespace_id, table_name);
+        let cf_name = format!("{}{}:{}", ColumnFamilyNames::STREAM_TABLE_PREFIX, namespace_id, table_name);
 
         // Check if CF already exists
         if self.db.cf_handle(&cf_name).is_some() {
@@ -81,7 +81,7 @@ impl StreamTableStore {
         row_id: &str,
         row_data: JsonValue,
     ) -> Result<()> {
-        let cf_name = format!("{}{}:", ColumnFamilyNames::STREAM_TABLE_PREFIX{}:{}", namespace_id, table_name);
+        let cf_name = format!("{}{}:{}", ColumnFamilyNames::STREAM_TABLE_PREFIX, namespace_id, table_name);
         let cf = self
             .db
             .cf_handle(&cf_name)
@@ -102,7 +102,7 @@ impl StreamTableStore {
         timestamp_ms: i64,
         row_id: &str,
     ) -> Result<Option<JsonValue>> {
-        let cf_name = format!("{}{}:", ColumnFamilyNames::STREAM_TABLE_PREFIX{}:{}", namespace_id, table_name);
+        let cf_name = format!("{}{}:{}", ColumnFamilyNames::STREAM_TABLE_PREFIX, namespace_id, table_name);
         let cf = self
             .db
             .cf_handle(&cf_name)
@@ -128,7 +128,7 @@ impl StreamTableStore {
         timestamp_ms: i64,
         row_id: &str,
     ) -> Result<()> {
-        let cf_name = format!("{}{}:", ColumnFamilyNames::STREAM_TABLE_PREFIX{}:{}", namespace_id, table_name);
+        let cf_name = format!("{}{}:{}", ColumnFamilyNames::STREAM_TABLE_PREFIX, namespace_id, table_name);
         let cf = self
             .db
             .cf_handle(&cf_name)
@@ -147,7 +147,7 @@ impl StreamTableStore {
         namespace_id: &str,
         table_name: &str,
     ) -> Result<Vec<(i64, String, JsonValue)>> {
-        let cf_name = format!("{}{}:", ColumnFamilyNames::STREAM_TABLE_PREFIX{}:{}", namespace_id, table_name);
+        let cf_name = format!("{}{}:{}", ColumnFamilyNames::STREAM_TABLE_PREFIX, namespace_id, table_name);
         let cf = self
             .db
             .cf_handle(&cf_name)
@@ -183,7 +183,7 @@ impl StreamTableStore {
         table_name: &str,
         cutoff_timestamp_ms: i64,
     ) -> Result<usize> {
-        let cf_name = format!("{}{}:", ColumnFamilyNames::STREAM_TABLE_PREFIX{}:{}", namespace_id, table_name);
+        let cf_name = format!("{}{}:{}", ColumnFamilyNames::STREAM_TABLE_PREFIX, namespace_id, table_name);
         let cf = self
             .db
             .cf_handle(&cf_name)
@@ -229,7 +229,7 @@ impl StreamTableStore {
     /// store.drop_table("app", "events").unwrap();
     /// ```
     pub fn drop_table(&self, namespace_id: &str, table_name: &str) -> Result<()> {
-        let cf_name = format!("{}{}:", ColumnFamilyNames::STREAM_TABLE_PREFIX{}:{}", namespace_id, table_name);
+        let cf_name = format!("{}{}:{}", ColumnFamilyNames::STREAM_TABLE_PREFIX, namespace_id, table_name);
 
         let cf = self
             .db
