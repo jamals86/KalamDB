@@ -75,3 +75,190 @@ When ready to upgrade DataFusion (Phase 3+):
 ### Last Updated
 
 2025-10-17
+
+---
+
+## USER Table Column Family Naming Bug
+
+**Status**: ✅ **FIXED** (2025-10-21)  
+**Affects**: All USER table operations (INSERT/SELECT/UPDATE/DELETE)  
+**Severity**: Critical  
+**Root Cause**: Internal implementation bug
+
+### Problem
+
+CREATE USER TABLE would succeed, but INSERT operations would fail with:
+
+```
+Column family not found even after creation attempt: user_test_cli:messages
+```
+
+### Cause
+
+Column family naming was inconsistent in `UserTableStore`:
+- `cf_name()` helper used `USER_TABLE_PREFIX` constant = `"user_"` → generated names like `user_test_cli:messages`
+- `create_column_family()` used hard-coded `"user_table:"` → generated names like `user_table:test_cli:messages`
+
+The mismatch caused:
+1. `create_column_family()` to create CF with name `user_table:namespace:table`
+2. `ensure_cf()` to look for CF with name `user_namespace:table`
+3. Column family not found even though it was created
+
+### Solution
+
+**Fixed in**: `backend/crates/kalamdb-store/src/user_table_store.rs`
+
+Changed `create_column_family()` to use `Self::cf_name()` helper instead of hard-coded string:
+
+```rust
+// Before:
+let cf_name = format!("user_table:{}:{}", namespace_id, table_name);
+
+// After:
+let cf_name = Self::cf_name(namespace_id, table_name);
+```
+
+This ensures consistent naming using the `USER_TABLE_PREFIX` constant.
+
+### Impact
+
+- ✅ USER table CREATE operations now work correctly
+- ✅ INSERT/UPDATE/DELETE operations succeed
+- ⚠️  **Note**: SELECT queries from USER tables require additional fix (see next issue)
+
+### Last Updated
+
+2025-10-21
+
+---
+
+## DataFusion User Table Query Returns 0 Rows
+
+**Status**: 🔴 **OPEN** (Critical)  
+**Affects**: All SELECT queries on USER tables  
+**Severity**: Critical  
+**Root Cause**: Missing user context in DataFusion table scans
+
+### Problem
+
+SELECT queries on USER tables return 0 rows even when data exists:
+
+```bash
+# Data exists in RocksDB:
+curl -X POST http://localhost:8080/api/sql \
+  -H "X-USER-ID: test_user" \
+  -d '{"sql": "INSERT INTO app.messages (content) VALUES ('\''Hello'\'')"}'
+# ✅ Success
+
+# But SELECT returns 0 rows:
+curl -X POST http://localhost:8080/api/sql \
+  -H "X-USER-ID: test_user" \
+  -d '{"sql": "SELECT * FROM app.messages"}'
+# ❌ Returns: {"rows": [], "row_count": 0}
+```
+
+### Cause
+
+USER tables store data with keys formatted as `{user_id}:{row_id}` for multi-tenant isolation. However, DataFusion's table scan doesn't know which `user_id` to filter by:
+
+1. **HTTP Request** → includes `X-USER-ID: test_user` header
+2. **SQL Executor** → extracts SQL but **loses user_id context**
+3. **DataFusion TableProvider** → scans RocksDB without user filter
+4. **Result** → returns 0 rows because it can't match keys without `user_id` prefix
+
+**Architecture Gap**: The `X-USER-ID` header is available in the HTTP handler but not passed through to the DataFusion execution context.
+
+### Solution (Required)
+
+Need to implement **user-scoped table scanning** in DataFusion:
+
+**Option 1: Pass user_id to TableProvider** (Recommended)
+1. Extract `user_id` from `X-USER-ID` header in SQL handler
+2. Store in execution context (SessionState or custom context)
+3. Pass to `UserTableProvider::scan()` method
+4. Filter RocksDB iterator to only return keys matching `{user_id}:*` prefix
+
+**Option 2: Custom TableProvider per user**
+- Create separate `UserTableProvider` instance per user
+- Cache providers in session
+- More complex but better encapsulation
+
+### Implementation Steps
+
+1. **Update SQL Handler** (`kalamdb-api/src/handlers/sql.rs`):
+   ```rust
+   // Extract user_id from X-USER-ID header
+   let user_id = extract_user_id_from_header(&req)?;
+   
+   // Pass to SQL executor
+   sql_executor.execute_with_context(sql, user_id).await
+   ```
+
+2. **Update SqlExecutor** (`kalamdb-core/src/sql/executor.rs`):
+   ```rust
+   pub async fn execute_with_context(
+       &self,
+       sql: &str,
+       user_id: UserId,
+   ) -> Result<QueryResponse> {
+       // Store user_id in SessionState config or custom RuntimeEnv
+       let ctx = self.create_context_with_user(user_id)?;
+       ctx.sql(sql).await?
+   }
+   ```
+
+3. **Update UserTableProvider** (`kalamdb-core/src/tables/user_table_provider.rs`):
+   ```rust
+   async fn scan(
+       &self,
+       state: &SessionState,
+       // ... other params
+   ) -> Result<Arc<dyn ExecutionPlan>> {
+       // Extract user_id from SessionState
+       let user_id = state.config().get_extension::<UserId>()?;
+       
+       // Pass to UserTableStore for filtered scan
+       self.store.scan_for_user(namespace, table, &user_id)
+   }
+   ```
+
+4. **Update UserTableStore** (`kalamdb-store/src/user_table_store.rs`):
+   ```rust
+   pub fn scan_for_user(
+       &self,
+       namespace: &str,
+       table: &str,
+       user_id: &UserId,
+   ) -> Result<impl Iterator<Item = (String, JsonValue)>> {
+       let cf = self.ensure_cf(namespace, table)?;
+       let prefix = format!("{}:", user_id);
+       
+       // Use prefix iterator
+       let iter = self.db.prefix_iterator_cf(cf, &prefix);
+       // ... return filtered results
+   }
+   ```
+
+### Workarounds
+
+**None available** - This is a fundamental architecture issue that must be fixed for USER tables to work.
+
+### Impact
+
+- ❌ All SELECT queries on USER tables fail (return 0 rows)
+- ❌ CLI integration tests failing (20/34 passing, 14/34 failing)
+- ❌ USER table feature is non-functional for query operations
+- ✅ INSERT/UPDATE/DELETE work (they don't go through DataFusion)
+- ✅ STREAM and SHARED tables unaffected (no user_id in key)
+
+### References
+
+- USER table key format: `specs/002-simple-kalamdb/data-model.md`
+- DataFusion SessionState: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionState.html
+- RocksDB prefix iterator: https://github.com/rust-rocksdb/rust-rocksdb#prefix-iterators
+
+### Last Updated
+
+2025-10-21
+
+````

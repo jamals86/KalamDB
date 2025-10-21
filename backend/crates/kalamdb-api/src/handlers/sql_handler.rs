@@ -134,53 +134,41 @@ pub async fn execute_sql(
 }
 
 /// Execute a single SQL statement
-/// First tries custom DDL commands (CREATE NAMESPACE, etc.)
-/// Falls back to DataFusion for standard SQL
+/// Uses SqlExecutor for all SQL (custom DDL and standard DataFusion SQL)
 async fn execute_single_statement(
     sql: &str,
-    session_factory: &Arc<DataFusionSessionFactory>,
+    _session_factory: &Arc<DataFusionSessionFactory>,
     sql_executor: Option<&Arc<SqlExecutor>>,
     user_id: Option<&UserId>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
-    // Try custom DDL commands first
-    if let Some(sql_executor) = sql_executor {
-        match sql_executor.execute(sql, user_id).await {
-            Ok(result) => {
-                // Convert ExecutionResult to QueryResult
-                match result {
-                    ExecutionResult::Success(message) => {
-                        return Ok(QueryResult::with_message(message));
-                    }
-                    ExecutionResult::RecordBatch(batch) => {
-                        return record_batch_to_query_result(vec![batch]);
-                    }
-                    ExecutionResult::RecordBatches(batches) => {
-                        return record_batch_to_query_result(batches);
-                    }
+    // Require sql_executor - all SQL goes through it now
+    let sql_executor = sql_executor.ok_or_else(|| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "SQL executor not configured",
+        )) as Box<dyn std::error::Error>
+    })?;
+
+    // Execute through SqlExecutor (handles both custom DDL and DataFusion)
+    match sql_executor.execute(sql, user_id).await {
+        Ok(result) => {
+            // Convert ExecutionResult to QueryResult
+            match result {
+                ExecutionResult::Success(message) => {
+                    Ok(QueryResult::with_message(message))
+                }
+                ExecutionResult::RecordBatch(batch) => {
+                    record_batch_to_query_result(vec![batch])
+                }
+                ExecutionResult::RecordBatches(batches) => {
+                    record_batch_to_query_result(batches)
                 }
             }
-            Err(kalamdb_core::error::KalamDbError::InvalidSql(_)) => {
-                // Not a custom DDL, fall through to DataFusion
-            }
-            Err(e) => {
-                // Other error from custom DDL
-                return Err(Box::new(e));
-            }
+        }
+        Err(e) => {
+            Err(Box::new(e))
         }
     }
-
-    // Fall back to DataFusion for standard SQL
-    let ctx = session_factory.create_session();
-    let df = ctx.sql(sql).await?;
-    let batches = df.collect().await?;
-
-    if batches.is_empty() {
-        return Ok(QueryResult::with_message(
-            "Query executed successfully".to_string(),
-        ));
-    }
-
-    record_batch_to_query_result(batches)
 }
 
 /// Convert Arrow RecordBatches to QueryResult
