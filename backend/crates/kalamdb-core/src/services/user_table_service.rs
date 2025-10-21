@@ -305,13 +305,20 @@ impl UserTableService {
     /// Check if a table exists
     pub fn table_exists(
         &self,
-        _namespace: &NamespaceId,
-        _table_name: &TableName,
+        namespace: &NamespaceId,
+        table_name: &TableName,
     ) -> Result<bool, KalamDbError> {
-        // TODO: Query system_table_schemas to check if schema exists
-        // For now, always return false - full implementation requires kalamdb-sql query
-        log::warn!("table_exists() not fully implemented - requires system_table_schemas query");
-        Ok(false)
+        // Query system.tables using KalamSQL
+        let table_id = format!("{}:{}", namespace.as_str(), table_name.as_str());
+        
+        match self.kalam_sql.get_table(&table_id) {
+            Ok(Some(_)) => Ok(true),
+            Ok(None) => Ok(false),
+            Err(e) => Err(KalamDbError::Other(format!(
+                "Failed to check if table exists: {}",
+                e
+            ))),
+        }
     }
 
     /// Substitute ${user_id} in path template

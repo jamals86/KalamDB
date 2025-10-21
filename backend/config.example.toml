@@ -23,8 +23,8 @@ rocksdb_path = "./data/rocksdb"
 # Enable Write-Ahead Log for durability (default: true)
 enable_wal = true
 
-# Compression algorithm: none, snappy, zlib, lz4, zstd (default: lz4)
-compression = "lz4"
+# Compression algorithm: none, snappy, zlib, lz4, zstd (default: snappy)
+compression = "snappy"
 
 [storage.rocksdb]
 # Write buffer size per column family in bytes (default: 64MB)
@@ -116,3 +116,16 @@ keepalive_timeout = 75
 # Maximum concurrent connections (default: 25000)
 # Includes both REST API and WebSocket connections
 max_connections = 25000
+
+[rate_limit]
+# Maximum SQL queries per second per user (default: 100)
+# Prevents query flooding from a single user
+max_queries_per_sec = 100
+
+# Maximum WebSocket messages per second per connection (default: 50)
+# Prevents message flooding on WebSocket connections
+max_messages_per_sec = 50
+
+# Maximum concurrent live query subscriptions per user (default: 10)
+# Limits total active subscriptions to prevent resource exhaustion
+max_subscriptions_per_user = 10

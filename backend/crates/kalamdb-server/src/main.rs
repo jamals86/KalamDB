@@ -53,8 +53,8 @@ async fn main() -> Result<()> {
         config.server.host, config.server.port
     );
 
-    // Initialize RocksDB
-    let db_path = std::env::temp_dir().join("kalamdb_data");
+    // Initialize RocksDB using path from config
+    let db_path = std::path::PathBuf::from(&config.storage.rocksdb_path);
     std::fs::create_dir_all(&db_path)?;
 
     let db_init = RocksDbInit::new(db_path.to_str().unwrap());
@@ -189,9 +189,20 @@ async fn main() -> Result<()> {
     let jwt_auth = Arc::new(JwtAuth::new(jwt_secret, Algorithm::HS256));
     info!("JWT authentication initialized (HS256)");
 
-    // Initialize rate limiter with default config
-    let rate_limiter = Arc::new(RateLimiter::new());
-    info!("Rate limiter initialized (100 queries/sec, 50 messages/sec, 10 max subscriptions)");
+    // Initialize rate limiter with config values
+    let rate_limit_config = kalamdb_api::rate_limiter::RateLimitConfig {
+        max_queries_per_user: config.rate_limit.max_queries_per_sec,
+        max_subscriptions_per_user: config.rate_limit.max_subscriptions_per_user,
+        max_messages_per_connection: config.rate_limit.max_messages_per_sec,
+        window: std::time::Duration::from_secs(1),
+    };
+    let rate_limiter = Arc::new(RateLimiter::with_config(rate_limit_config));
+    info!(
+        "Rate limiter initialized ({} queries/sec, {} messages/sec, {} max subscriptions)",
+        config.rate_limit.max_queries_per_sec,
+        config.rate_limit.max_messages_per_sec,
+        config.rate_limit.max_subscriptions_per_user
+    );
 
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     info!("Starting HTTP server on {}", bind_addr);

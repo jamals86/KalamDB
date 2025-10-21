@@ -27,6 +27,8 @@ Things to add to the spec:
     - Errors like: backend/crates/kalamdb-core/src/error.rs
 - Inside backend\crates\kalamdb-sql\src\models.rs use the same namespace_id and table_id there instead of string's
 - Make sure the user can't listen to a shared table since this will ruin performance
+- Add a new config which the amdin can choose if to allow localhost to query the database without auth, and also which userId will be used from localhost by default it will be system
+    Other hostnames must specify a valid jwt with inside it the userid included
 - Add crate for kalamdb-live which is responsible for live subscribers logic and it's communicate with the kalamdb-store and kalamdb-sql
 - Instead of having something like this: let cf_name = format!("user_table:{}:{}", namespace_id, table_name); let cf_name = format!("shared_table:{}:{}", namespace_id, table_name);
     make this a helper class which deals with naming, for system/shared/user

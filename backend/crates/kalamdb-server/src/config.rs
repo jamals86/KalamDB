@@ -19,6 +19,8 @@ pub struct ServerConfig {
     pub retention: RetentionSettings,
     #[serde(default)]
     pub stream: StreamSettings,
+    #[serde(default)]
+    pub rate_limit: RateLimitSettings,
 }
 
 /// Server settings
@@ -159,6 +161,22 @@ pub struct StreamSettings {
     pub default_max_buffer: usize,
 }
 
+/// Rate limiter settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitSettings {
+    /// Maximum queries per second per user (default: 100)
+    #[serde(default = "default_rate_limit_queries_per_sec")]
+    pub max_queries_per_sec: u32,
+
+    /// Maximum WebSocket messages per second per connection (default: 50)
+    #[serde(default = "default_rate_limit_messages_per_sec")]
+    pub max_messages_per_sec: u32,
+
+    /// Maximum concurrent subscriptions per user (default: 10)
+    #[serde(default = "default_rate_limit_max_subscriptions")]
+    pub max_subscriptions_per_user: u32,
+}
+
 impl Default for DataFusionSettings {
     fn default() -> Self {
         Self {
@@ -192,6 +210,16 @@ impl Default for StreamSettings {
         Self {
             default_ttl_seconds: default_stream_ttl(),
             default_max_buffer: default_stream_max_buffer(),
+        }
+    }
+}
+
+impl Default for RateLimitSettings {
+    fn default() -> Self {
+        Self {
+            max_queries_per_sec: default_rate_limit_queries_per_sec(),
+            max_messages_per_sec: default_rate_limit_messages_per_sec(),
+            max_subscriptions_per_user: default_rate_limit_max_subscriptions(),
         }
     }
 }
@@ -279,6 +307,19 @@ fn default_stream_ttl() -> u64 {
 
 fn default_stream_max_buffer() -> usize {
     10000
+}
+
+// Rate limiter defaults
+fn default_rate_limit_queries_per_sec() -> u32 {
+    100 // 100 queries per second per user
+}
+
+fn default_rate_limit_messages_per_sec() -> u32 {
+    50 // 50 messages per second per WebSocket connection
+}
+
+fn default_rate_limit_max_subscriptions() -> u32 {
+    10 // 10 concurrent subscriptions per user
 }
 
 // RocksDB defaults
@@ -442,6 +483,7 @@ impl ServerConfig {
             flush: FlushSettings::default(),
             retention: RetentionSettings::default(),
             stream: StreamSettings::default(),
+            rate_limit: RateLimitSettings::default(),
         }
     }
 }
