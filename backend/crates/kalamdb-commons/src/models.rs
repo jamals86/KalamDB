@@ -167,6 +167,46 @@ impl AsRef<str> for TableName {
     }
 }
 
+/// Enum representing the type of storage backend in KalamDB.
+///
+/// - **Filesystem**: Local or network filesystem storage
+/// - **S3**: Amazon S3 or S3-compatible object storage
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StorageType {
+    /// Local or network filesystem storage
+    Filesystem,
+    /// Amazon S3 or S3-compatible object storage
+    S3,
+}
+
+impl StorageType {
+    /// Returns the storage type as a string.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StorageType::Filesystem => "filesystem",
+            StorageType::S3 => "s3",
+        }
+    }
+}
+
+impl fmt::Display for StorageType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl TryFrom<&str> for StorageType {
+    type Error = String;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s.to_lowercase().as_str() {
+            "filesystem" => Ok(StorageType::Filesystem),
+            "s3" => Ok(StorageType::S3),
+            _ => Err(format!("Invalid storage type: {}", s)),
+        }
+    }
+}
+
 /// Enum representing the type of table in KalamDB.
 ///
 /// - **USER**: Per-user table with user_id-based partitioning (key format: `{user_id}:{row_id}`)

@@ -47,8 +47,32 @@ Notes:
 12) add CLEAR CACHE; which clears the session caching, the query caching or any caches added in the future
 
 
+13) Remove storage_locations it's the same as system.storages also we need to add the same columns from it: credentials
+
 
 The KalamDB should have similar sql syntax as postgress and MySQL so whenever i ask about syntax you search how Postgress and MySQL writes this syntax and do things in their architecture
 Also the CLI tool for KalamDb should be similar as well
 Error messages and returned syntax from SQL queries/api and cli output should be also similar
 Always prefer simple and clear archeticture and logic, the the design should be simple and scalable without so much complexity its a simple database
+
+
+
+Storages for tables:
+1) Each table (shared/user) - A reference to the storage location by Id if it's not specified then we will use the local as the storage
+2) the system can have multiple storages defined in it with the name local, by default when installing a new system there wil be a default storage which is ./data/storage
+3) Whenever we view the storages table we should see the default first with id="local"
+4) Storage table should have storageId, storageName, description, type ...
+5) The type can be s3 or filesystem, should be an enum might add more in the future
+6) each storage location must have 3 type of directories:
+	- Storage directory: ./data/storage (For the local one we have this as empty, then we will look at the config.toml then) other cases it can be: s3://bucketId/ for example
+	- Shared Tables dir (Relative to the storage dir), for example: {namespace}/shared/{tableName}
+	Note: Shared Tables must have the variables in this order: {namespace} then the {tableName}
+	
+	- User Tables dir (Relative to the storage dir) it must contain {userId} in it, for example: {namespace}/users/{tableName}/{shard}/{userId}
+	Note: User tables dir must have these variables in order: {namespace} then after it should be the {tableName} then {shard} if the user wants shards then the {userId}
+7) Inside user's table add another columns:
+	- storage_mode	table - which will use the tables own storage, region - which will look at the storage_id in the user's table defined here
+	- storage_id 	which will be used when we have a user table with an option called
+8) If a user table when it was created with an option:  "use_user_storage": true, then we will look at the user's define storage_id if it's set there to storage_mode = table then we will fallback to the user's table storage_id which was defined when creating the table
+9) User's table should always have a storage_id defined in it
+10) deleting a storage should only be done when no table is using this storage only

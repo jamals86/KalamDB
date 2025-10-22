@@ -137,6 +137,32 @@ impl RocksDbConfig {
         opts
     }
 
+    /// Create column family options for system.jobs table (T158n, T158o)
+    ///
+    /// The system.jobs table is queried frequently for:
+    /// - Crash recovery (startup)
+    /// - Duplicate flush prevention (every flush trigger)
+    /// - Graceful shutdown (every shutdown)
+    ///
+    /// This justifies a larger block cache (256MB) for optimal query performance.
+    pub fn system_jobs_cf_options() -> Options {
+        let mut opts = Options::default();
+
+        // Same write buffer as other system tables
+        opts.set_write_buffer_size(32 * 1024 * 1024); // 32MB
+        opts.set_max_write_buffer_number(2);
+
+        // 256MB block cache for fast queries (T158o)
+        let cache = Cache::new_lru_cache(256 * 1024 * 1024);
+        let mut block_opts = BlockBasedOptions::default();
+        block_opts.set_block_cache(&cache);
+        block_opts.set_block_size(16 * 1024); // 16KB blocks
+        block_opts.set_bloom_filter(10.0, false); // Bloom filter for job_id lookups
+        opts.set_block_based_table_factory(&block_opts);
+
+        opts
+    }
+
     /// Get column family options based on table type
     pub fn cf_options_for_table_type(table_type: crate::catalog::TableType) -> Options {
         match table_type {

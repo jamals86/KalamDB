@@ -320,6 +320,50 @@ impl RocksDbAdapter {
         Ok(())
     }
 
+    // Storage operations
+
+    /// Get a storage by ID
+    pub fn get_storage(&self, storage_id: &str) -> Result<Option<Storage>> {
+        let cf = self
+            .db
+            .cf_handle("system_storages")
+            .ok_or_else(|| anyhow!("system_storages CF not found"))?;
+
+        let key = format!("storage:{}", storage_id);
+        match self.db.get_cf(&cf, key.as_bytes())? {
+            Some(value) => {
+                let storage: Storage = serde_json::from_slice(&value)?;
+                Ok(Some(storage))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Insert a new storage
+    pub fn insert_storage(&self, storage: &Storage) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle("system_storages")
+            .ok_or_else(|| anyhow!("system_storages CF not found"))?;
+
+        let key = format!("storage:{}", storage.storage_id);
+        let value = serde_json::to_vec(storage)?;
+        self.db.put_cf(&cf, key.as_bytes(), &value)?;
+        Ok(())
+    }
+
+    /// Delete a storage by ID
+    pub fn delete_storage(&self, storage_id: &str) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle("system_storages")
+            .ok_or_else(|| anyhow!("system_storages CF not found"))?;
+
+        let key = format!("storage:{}", storage_id);
+        self.db.delete_cf(&cf, key.as_bytes())?;
+        Ok(())
+    }
+
     // Scan operations for all system tables
 
     /// Scan all users
@@ -455,6 +499,25 @@ impl RocksDbAdapter {
         Ok(schemas)
     }
 
+    /// Scan all storages
+    pub fn scan_all_storages(&self) -> Result<Vec<Storage>> {
+        let cf = self
+            .db
+            .cf_handle("system_storages")
+            .ok_or_else(|| anyhow!("system_storages CF not found"))?;
+
+        let mut storages = Vec::new();
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+
+        for item in iter {
+            let (_, value) = item?;
+            let storage: Storage = serde_json::from_slice(&value)?;
+            storages.push(storage);
+        }
+
+        Ok(storages)
+    }
+
     // Additional CRUD operations for table deletion and updates
 
     /// Delete a table by table_id
@@ -513,6 +576,11 @@ impl RocksDbAdapter {
     /// Update a table
     pub fn update_table(&self, table: &Table) -> Result<()> {
         self.insert_table(table) // Same as insert (upsert)
+    }
+
+    /// Update a storage
+    pub fn update_storage(&self, storage: &Storage) -> Result<()> {
+        self.insert_storage(storage) // Same as insert (upsert)
     }
 
     /// Get all table schemas for a given table_id

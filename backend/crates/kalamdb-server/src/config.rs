@@ -30,12 +30,18 @@ pub struct ServerSettings {
     pub port: u16,
     #[serde(default = "default_workers")]
     pub workers: usize,
+    /// Timeout in seconds to wait for flush jobs to complete during graceful shutdown (T158j)
+    #[serde(default = "default_flush_job_shutdown_timeout")]
+    pub flush_job_shutdown_timeout_seconds: u32,
 }
 
 /// Storage settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageSettings {
     pub rocksdb_path: String,
+    /// Default path for 'local' storage when base_directory='' (T164a)
+    #[serde(default = "default_storage_path")]
+    pub default_storage_path: String,
     #[serde(default = "default_true")]
     pub enable_wal: bool,
     #[serde(default = "default_compression")]
@@ -229,12 +235,20 @@ fn default_workers() -> usize {
     0
 }
 
+fn default_flush_job_shutdown_timeout() -> u32 {
+    300 // 5 minutes (T158j)
+}
+
 fn default_true() -> bool {
     true
 }
 
 fn default_compression() -> String {
     "lz4".to_string()
+}
+
+fn default_storage_path() -> String {
+    "./data/storage".to_string() // T164a: Default path for 'local' storage
 }
 
 fn default_max_message_size() -> usize {
@@ -456,9 +470,11 @@ impl ServerConfig {
                 host: "127.0.0.1".to_string(),
                 port: 8080,
                 workers: 0,
+                flush_job_shutdown_timeout_seconds: default_flush_job_shutdown_timeout(),
             },
             storage: StorageSettings {
                 rocksdb_path: "./data/rocksdb".to_string(),
+                default_storage_path: default_storage_path(),
                 enable_wal: true,
                 compression: "lz4".to_string(),
                 rocksdb: RocksDbSettings::default(),

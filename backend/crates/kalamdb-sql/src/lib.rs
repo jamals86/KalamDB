@@ -244,6 +244,28 @@ impl KalamSql {
         self.adapter.scan_all_table_schemas()
     }
 
+    /// Scan all storages
+    ///
+    /// Returns a vector of all storages in the system.
+    pub fn scan_all_storages(&self) -> Result<Vec<Storage>> {
+        self.adapter.scan_all_storages()
+    }
+
+    /// Get a storage by ID
+    pub fn get_storage(&self, storage_id: &str) -> Result<Option<Storage>> {
+        self.adapter.get_storage(storage_id)
+    }
+
+    /// Insert a new storage
+    pub fn insert_storage(&self, storage: &Storage) -> Result<()> {
+        self.adapter.insert_storage(storage)
+    }
+
+    /// Delete a storage by ID
+    pub fn delete_storage(&self, storage_id: &str) -> Result<()> {
+        self.adapter.delete_storage(storage_id)
+    }
+
     // Additional CRUD operations for table deletion and updates
 
     /// Delete a table by table_id

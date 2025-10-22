@@ -54,6 +54,8 @@ impl UsersTableProvider {
             username: user.username.clone(),
             email: user.email.clone().unwrap_or_default(),
             created_at: user.created_at,
+            storage_mode: Some("table".to_string()), // T163c: Default to 'table' mode
+            storage_id: None, // T163c: NULL by default
         };
 
         self.kalam_sql
@@ -81,6 +83,8 @@ impl UsersTableProvider {
             username: user.username.clone(),
             email: user.email.clone().unwrap_or_default(),
             created_at: user.created_at,
+            storage_mode: Some("table".to_string()), // T163c: Default to 'table' mode
+            storage_id: None, // T163c: NULL by default
         };
 
         self.kalam_sql

@@ -1324,6 +1324,25 @@ impl SqlExecutor {
             let schema = stmt.schema.clone();
             let flush_policy = stmt.flush_policy.clone();
             let deleted_retention_hours = stmt.deleted_retention_hours;
+            // Extract storage fields before stmt is moved
+            let stmt_storage_id = stmt.storage_id.clone();
+            let stmt_use_user_storage = stmt.use_user_storage;
+
+            // T167b: Validate storage_id exists in system.storages
+            // T167a: Default to 'local' if not specified
+            let storage_id = stmt_storage_id.unwrap_or_else(|| "local".to_string());
+            
+            // T167c: NOT NULL enforcement - storage_id must exist
+            if let Some(kalam_sql) = &self.kalam_sql {
+                let storage_exists = kalam_sql
+                    .get_storage(&storage_id)
+                    .is_ok();
+                if !storage_exists {
+                    return Err(KalamDbError::InvalidOperation(
+                        format!("Storage '{}' does not exist in system.storages", storage_id)
+                    ));
+                }
+            }
 
             let metadata = self.user_table_service.create_table(stmt, None)?;
 
@@ -1337,6 +1356,8 @@ impl SqlExecutor {
                     table_type: "user".to_string(),
                     created_at: chrono::Utc::now().timestamp_millis(),
                     storage_location: metadata.storage_location.clone(),
+                    storage_id: Some(storage_id.clone()),
+                    use_user_storage: stmt_use_user_storage,
                     flush_policy: serde_json::to_string(&flush_policy.unwrap_or_default())
                         .unwrap_or_else(|_| "{}".to_string()),
                     schema_version: 1,
@@ -1388,6 +1409,8 @@ impl SqlExecutor {
                     table_type: "stream".to_string(),
                     created_at: chrono::Utc::now().timestamp_millis(),
                     storage_location: metadata.storage_location.clone(),
+                    storage_id: Some("local".to_string()), // Stream tables always use local storage
+                    use_user_storage: false, // Stream tables don't support user storage
                     flush_policy: serde_json::to_string(&metadata.flush_policy)
                         .unwrap_or_else(|_| "{}".to_string()),
                     schema_version: 1,
@@ -1459,6 +1482,8 @@ impl SqlExecutor {
                         table_type: "shared".to_string(),
                         created_at: chrono::Utc::now().timestamp_millis(),
                         storage_location: metadata.storage_location.clone(),
+                        storage_id: Some("local".to_string()), // Shared tables always use local storage
+                        use_user_storage: false, // Shared tables don't support user storage
                         flush_policy: flush_policy_json,
                         schema_version: 1,
                         deleted_retention_hours: deleted_retention
@@ -2249,6 +2274,8 @@ mod tests {
             table_type: "Stream".to_string(),
             created_at: chrono::Utc::now().timestamp_millis(),
             storage_location: String::new(),
+            storage_id: Some("local".to_string()),
+            use_user_storage: false,
             flush_policy: String::new(),
             schema_version: 1,
             deleted_retention_hours: 0,

@@ -65,6 +65,28 @@ async fn main() -> Result<()> {
     let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(db.clone())?);
     info!("KalamSQL initialized");
 
+    // T164: Create default 'local' storage if system.storages is empty
+    let storages = kalam_sql.scan_all_storages()?;
+    if storages.is_empty() {
+        info!("No storages found, creating default 'local' storage");
+        let now = chrono::Utc::now().timestamp_millis();
+        let default_storage = kalamdb_sql::Storage {
+            storage_id: "local".to_string(),
+            storage_name: "Local Filesystem".to_string(),
+            description: Some("Default local filesystem storage".to_string()),
+            storage_type: "filesystem".to_string(),
+            base_directory: "".to_string(), // Empty means use default_storage_path from config
+            shared_tables_template: "{namespace}/{tableName}".to_string(),
+            user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+        kalam_sql.insert_storage(&default_storage)?;
+        info!("Default 'local' storage created successfully");
+    } else {
+        info!("Found {} existing storage(s)", storages.len());
+    }
+
     // Initialize NamespaceService (uses KalamSQL for RocksDB persistence)
     let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
     info!("NamespaceService initialized");
@@ -204,12 +226,46 @@ async fn main() -> Result<()> {
         config.rate_limit.max_subscriptions_per_user
     );
 
+    // T156: Initialize FlushScheduler for automatic table flushing
+    use kalamdb_core::jobs::TokioJobManager;
+    use kalamdb_core::scheduler::FlushScheduler;
+    
+    let job_manager = Arc::new(TokioJobManager::new());
+    let flush_scheduler = Arc::new(
+        FlushScheduler::new(
+            job_manager,
+            std::time::Duration::from_secs(5), // Check triggers every 5 seconds
+        )
+        .with_jobs_provider(jobs_provider.clone())
+    );
+    
+    // Resume incomplete jobs from previous session (crash recovery)
+    match flush_scheduler.resume_incomplete_jobs().await {
+        Ok(count) => {
+            if count > 0 {
+                info!("Resumed {} incomplete flush jobs from previous session", count);
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to resume incomplete jobs: {}", e);
+        }
+    }
+    
+    // Start the flush scheduler
+    flush_scheduler.start().await
+        .expect("Failed to start flush scheduler");
+    info!("FlushScheduler started (checking triggers every 5 seconds)");
+
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     info!("Starting HTTP server on {}", bind_addr);
     info!("Endpoints: POST /api/sql, GET /ws");
 
+    // Clone flush_scheduler for shutdown handler
+    let flush_scheduler_shutdown = flush_scheduler.clone();
+    let shutdown_timeout_secs = config.server.flush_job_shutdown_timeout_seconds;
+
     // Start HTTP server
-    HttpServer::new(move || {
+    let server = HttpServer::new(move || {
         // Configure CORS for web browser clients
         let cors = Cors::default()
             .allow_any_origin()
@@ -233,8 +289,46 @@ async fn main() -> Result<()> {
     } else {
         config.server.workers
     })
-    .run()
-    .await?;
+    .run();
+
+    // Get server handle for graceful shutdown
+    let server_handle = server.handle();
+    
+    // Spawn server task
+    let server_task = tokio::spawn(server);
+    
+    // Wait for Ctrl+C or SIGTERM
+    tokio::select! {
+        result = server_task => {
+            if let Err(e) = result {
+                log::error!("Server task failed: {}", e);
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            info!("Received Ctrl+C, initiating graceful shutdown...");
+            
+            // Stop accepting new connections
+            server_handle.stop(true).await;
+            
+            // Wait for active flush jobs to complete (T158h, T158i)
+            info!("Waiting up to {}s for active flush jobs to complete...", shutdown_timeout_secs);
+            let timeout = std::time::Duration::from_secs(shutdown_timeout_secs as u64);
+            
+            match flush_scheduler_shutdown.wait_for_active_jobs(timeout).await {
+                Ok(_) => {
+                    info!("All flush jobs completed successfully");
+                }
+                Err(e) => {
+                    log::warn!("Flush jobs did not complete within timeout: {}", e);
+                }
+            }
+            
+            // Stop the scheduler
+            if let Err(e) = flush_scheduler_shutdown.stop().await {
+                log::error!("Error stopping flush scheduler: {}", e);
+            }
+        }
+    }
 
     info!("Server shutdown complete");
     Ok(())

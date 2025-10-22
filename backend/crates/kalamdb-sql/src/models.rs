@@ -11,6 +11,10 @@ pub struct User {
     pub username: String,
     pub email: String,
     pub created_at: i64, // Unix timestamp
+    /// Storage mode: 'table' (use table's storage) or 'region' (use user's storage)
+    pub storage_mode: Option<String>, // T163c: ENUM ('table', 'region'), NULL defaults to 'table'
+    /// Storage ID for user-level storage (used when storage_mode='region')
+    pub storage_id: Option<String>, // T163c: FK to system.storages
 }
 
 /// Live query subscription in system_live_queries table
@@ -78,6 +82,8 @@ pub struct Table {
     pub table_type: String, // "user", "shared", "system", "stream"
     pub created_at: i64,
     pub storage_location: String,
+    pub storage_id: Option<String>, // T167: FK to system.storages
+    pub use_user_storage: bool, // T168: Allow per-user storage override
     pub flush_policy: String, // JSON
     pub schema_version: i32,
     pub deleted_retention_hours: i32,
@@ -94,6 +100,20 @@ pub struct TableSchema {
     pub changes: String, // JSON array of schema changes
 }
 
+/// Storage configuration in system_storages table
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Storage {
+    pub storage_id: String, // PK
+    pub storage_name: String,
+    pub description: Option<String>,
+    pub storage_type: String, // "filesystem" or "s3"
+    pub base_directory: String,
+    pub shared_tables_template: String,
+    pub user_tables_template: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,6 +125,8 @@ mod tests {
             username: "alice".to_string(),
             email: "alice@example.com".to_string(),
             created_at: 1697500000,
+            storage_mode: Some("table".to_string()),
+            storage_id: None,
         };
 
         let json = serde_json::to_string(&user).unwrap();

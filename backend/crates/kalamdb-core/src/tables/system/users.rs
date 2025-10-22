@@ -15,6 +15,8 @@ impl UsersTable {
             Field::new("user_id", DataType::Utf8, false),
             Field::new("username", DataType::Utf8, false),
             Field::new("email", DataType::Utf8, true),
+            Field::new("storage_mode", DataType::Utf8, true), // T163c: 'table' or 'region'
+            Field::new("storage_id", DataType::Utf8, true), // T163c: FK to system.storages
             Field::new(
                 "created_at",
                 DataType::Timestamp(TimeUnit::Millisecond, None),
@@ -46,7 +48,7 @@ mod tests {
     #[test]
     fn test_users_table_schema() {
         let schema = UsersTable::schema();
-        assert_eq!(schema.fields().len(), 5);
+        assert_eq!(schema.fields().len(), 7);
         assert_eq!(schema.field(0).name(), "user_id");
         assert_eq!(schema.field(1).name(), "username");
         assert_eq!(schema.field(2).name(), "email");

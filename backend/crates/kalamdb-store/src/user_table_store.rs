@@ -468,6 +468,51 @@ impl UserTableStore {
         self.db.write(batch)?;
         Ok(())
     }
+    
+    /// Create a RocksDB snapshot for consistent reads during flush operations
+    /// 
+    /// The snapshot provides a consistent view of the database at the time it was created,
+    /// preventing data loss from concurrent inserts during the flush process.
+    /// 
+    /// # Returns
+    /// 
+    /// A RocksDB Snapshot that can be used with `scan_with_snapshot`
+    /// 
+    /// # T151a: RocksDB snapshot for read consistency
+    pub fn create_snapshot(&self) -> rocksdb::Snapshot<'_> {
+        self.db.snapshot()
+    }
+    
+    /// Scan table using a snapshot for consistent iteration
+    /// 
+    /// This method provides a consistent view of the table data using the provided snapshot.
+    /// It's designed for flush operations where we need to ensure no rows are missed due to
+    /// concurrent writes.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `snapshot` - RocksDB snapshot created with `create_snapshot()`
+    /// * `namespace_id` - Namespace identifier
+    /// * `table_name` - Table name
+    /// 
+    /// # Returns
+    /// 
+    /// A RocksDB iterator over (key_bytes, value_bytes) pairs from the snapshot.
+    /// Returns an empty iterator if the column family doesn't exist.
+    /// 
+    /// # T151b: Sequential scan with snapshot for streaming flush
+    pub fn scan_with_snapshot<'a>(
+        &'a self,
+        snapshot: &'a rocksdb::Snapshot,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> Result<rocksdb::DBIteratorWithThreadMode<'a, rocksdb::DB>> {
+        let cf_name = Self::cf_name(namespace_id, table_name);
+        let cf = self.db.cf_handle(&cf_name)
+            .with_context(|| format!("Column family not found: {}", cf_name))?;
+        
+        Ok(snapshot.iterator_cf(cf, IteratorMode::Start))
+    }
 }
 
 #[cfg(test)]

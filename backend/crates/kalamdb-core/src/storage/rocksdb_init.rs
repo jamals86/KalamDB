@@ -53,6 +53,9 @@ impl RocksDbInit {
         for cf_name in &existing_cfs {
             let opts = if cf_name == "default" {
                 RocksDbConfig::default().db_options
+            } else if cf_name == "system_jobs" {
+                // T158n, T158o: Special optimization for system.jobs with 256MB block cache
+                RocksDbConfig::system_jobs_cf_options()
             } else if cf_name.starts_with("system_") || cf_name == "user_table_counters" {
                 RocksDbConfig::system_table_cf_options()
             } else if cf_name.starts_with("user_table:") {

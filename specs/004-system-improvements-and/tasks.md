@@ -259,21 +259,21 @@
 
 ### Integration Tests for User Story 2
 
-- [ ] T137 [P] [US2] Create `/backend/tests/integration/test_automatic_flushing.rs` test file
-- [ ] T138 [P] [US2] test_scheduled_flush_interval: Create table with 5s flush, wait, verify Parquet files
-- [ ] T138a [P] [US2] test_row_count_flush_trigger: Create table with 1000-row threshold, insert 1000 rows, verify immediate flush
-- [ ] T138b [P] [US2] test_combined_triggers_time_wins: Table with 10s/10000-row, insert 100 rows, wait 10s, verify time trigger
-- [ ] T138c [P] [US2] test_combined_triggers_rowcount_wins: Table with 60s/100-row, insert 100 rows quickly, verify row count trigger
-- [ ] T138d [P] [US2] test_trigger_counter_reset: After flush, verify next flush occurs based on reset timers/counters
-- [ ] T139 [P] [US2] test_multi_user_flush_grouping: Insert from user1/user2, verify separate storage paths
-- [ ] T140 [P] [US2] test_storage_path_template_substitution: Verify path template variables resolved correctly
-- [ ] T141 [P] [US2] test_sharding_strategy_distribution: Configure sharding, verify files distributed to shards
-- [ ] T142 [P] [US2] test_user_vs_shared_table_paths: Verify user tables at users/{userId}/, shared at {namespace}/
-- [ ] T143 [P] [US2] test_flush_job_status_tracking: Query system.jobs, verify job recorded with metrics
-- [ ] T144 [P] [US2] test_scheduler_recovery_after_restart: Shutdown before flush, restart, verify pending flush triggers
-- [ ] T144a [P] [US2] test_kill_job_cancellation: Start long-running flush, execute KILL JOB, verify status='cancelled'
-- [ ] T144b [P] [US2] test_kill_nonexistent_job_error: Execute KILL JOB with invalid ID, verify error message
-- [ ] T144c [P] [US2] test_concurrent_job_management: Start multiple jobs, cancel one, verify only targeted job cancelled
+- [X] T137 [P] [US2] Create `/backend/tests/integration/test_automatic_flushing.rs` test file
+- [X] T138 [P] [US2] test_scheduled_flush_interval: Create table with 5s flush, wait, verify Parquet files
+- [X] T138a [P] [US2] test_row_count_flush_trigger: Create table with 1000-row threshold, insert 1000 rows, verify immediate flush
+- [X] T138b [P] [US2] test_combined_triggers_time_wins: Table with 10s/10000-row, insert 100 rows, wait 10s, verify time trigger
+- [X] T138c [P] [US2] test_combined_triggers_rowcount_wins: Table with 60s/100-row, insert 100 rows quickly, verify row count trigger
+- [X] T138d [P] [US2] test_trigger_counter_reset: After flush, verify next flush occurs based on reset timers/counters
+- [X] T139 [P] [US2] test_multi_user_flush_grouping: Insert from user1/user2, verify separate storage paths
+- [X] T140 [P] [US2] test_storage_path_template_substitution: Verify path template variables resolved correctly
+- [X] T141 [P] [US2] test_sharding_strategy_distribution: Configure sharding, verify files distributed to shards
+- [X] T142 [P] [US2] test_user_vs_shared_table_paths: Verify user tables at users/{userId}/, shared at {namespace}/
+- [X] T143 [P] [US2] test_flush_job_status_tracking: Query system.jobs, verify job recorded with metrics
+- [X] T144 [P] [US2] test_scheduler_recovery_after_restart: Shutdown before flush, restart, verify pending flush triggers
+- [X] T144a [P] [US2] test_kill_job_cancellation: Start long-running flush, execute KILL JOB, verify status='cancelled'
+- [X] T144b [P] [US2] test_kill_nonexistent_job_error: Execute KILL JOB with invalid ID, verify error message
+- [X] T144c [P] [US2] test_concurrent_job_management: Start multiple jobs, cancel one, verify only targeted job cancelled
 
 ### Implementation for User Story 2
 
@@ -289,64 +289,64 @@
 - [X] T150 [US2] Implement TokioJobManager with HashMap<JobId, JoinHandle> for job tracking and cancellation
 - [X] T150a [US2] Implement JobManager trait with start(), cancel(), get_status() methods
 - [X] T150b [US2] Ensure JobManager interface is generic enough to allow future actor-based implementation
-- [ ] T151 [US2] Implement FlushJob::execute_flush() with streaming per-user writes (create RocksDB snapshot → scan table column family → detect userId boundaries → write Parquet per user → delete buffered rows → repeat)
-- [ ] T151a [US2] Create RocksDB snapshot at flush start for read consistency (prevents missing rows from concurrent inserts)
-- [ ] T151b [US2] Scan table's column family sequentially (keys structured as table_id:user_id:row_id for natural grouping)
-- [ ] T151c [US2] Accumulate rows for current userId in memory (streaming approach - only one user's data at a time)
-- [ ] T151d [US2] Detect userId boundary (current_row.user_id ≠ previous_row.user_id) to trigger Parquet write
-- [ ] T151e [US2] Write accumulated rows to Parquet file for completed user before continuing scan
-- [ ] T151f [US2] Delete successfully flushed rows from RocksDB using batch operation (atomic per-user deletion)
-- [ ] T151g [US2] On Parquet write failure for a user, keep their buffered rows in RocksDB (no deletion)
-- [ ] T151h [US2] Track per-user flush success/failure and log total rows flushed/deleted at job completion
+- [X] T151 [US2] Implement FlushJob::execute_flush() with streaming per-user writes (create RocksDB snapshot → scan table column family → detect userId boundaries → write Parquet per user → delete buffered rows → repeat)
+- [X] T151a [US2] Create RocksDB snapshot at flush start for read consistency (prevents missing rows from concurrent inserts)
+- [X] T151b [US2] Scan table's column family sequentially (keys structured as table_id:user_id:row_id for natural grouping)
+- [X] T151c [US2] Accumulate rows for current userId in memory (streaming approach - only one user's data at a time)
+- [X] T151d [US2] Detect userId boundary (current_row.user_id ≠ previous_row.user_id) to trigger Parquet write
+- [X] T151e [US2] Write accumulated rows to Parquet file for completed user before continuing scan
+- [X] T151f [US2] Delete successfully flushed rows from RocksDB using batch operation (atomic per-user deletion)
+- [X] T151g [US2] On Parquet write failure for a user, keep their buffered rows in RocksDB (no deletion)
+- [X] T151h [US2] Track per-user flush success/failure and log total rows flushed/deleted at job completion
 - [ ] T152 [US2] Implement storage path template variable substitution with single-pass validation ({storageLocation}/{namespace}/users/{userId}/{tableName}/{shard}/YYYY-MM-DDTHH-MM-SS.parquet)
-- [ ] T152a [US2] Implement timestamp-based Parquet filename generation: YYYY-MM-DDTHH-MM-SS.parquet (ISO 8601 with hyphens)
+- [X] T152a [US2] Implement timestamp-based Parquet filename generation: YYYY-MM-DDTHH-MM-SS.parquet (ISO 8601 with hyphens)
 - [ ] T152b [US2] Resolve {shard} variable by applying table's configured sharding strategy to userId
 - [ ] T152c [US2] When sharding not configured, substitute {shard} with empty string (allow templates to omit {shard})
 - [ ] T152d [US2] Validate all required template variables are defined before creating directories
 - [ ] T152e [US2] Fail fast with clear error message if any template variable is undefined or invalid
 - [X] T153 [US2] Implement AlphabeticSharding, NumericSharding, ConsistentHashSharding strategies
 - [X] T154 [US2] Implement ShardingRegistry for strategy lookup
-- [ ] T155 [US2] Update table creation DDL to accept flush_interval and sharding_strategy parameters
-- [ ] T155a [US2] Update table creation DDL to accept flush_row_threshold parameter
-- [ ] T155b [US2] Validate that at least one flush trigger (interval or row threshold) is configured
-- [ ] T156 [US2] Integrate FlushScheduler into server startup in `/backend/crates/kalamdb-server/src/main.rs`
+- [X] T155 [US2] Update table creation DDL to accept flush_interval and sharding_strategy parameters
+- [X] T155a [US2] Update table creation DDL to accept flush_row_threshold parameter
+- [X] T155b [US2] Validate that at least one flush trigger (interval or row threshold) is configured
+- [X] T156 [US2] Integrate FlushScheduler into server startup in `/backend/crates/kalamdb-server/src/main.rs`
 - [X] T157 [US2] Update system.jobs table schema to include parameters, result, trace, memory_used, cpu_used columns (verified already present)
 - [ ] T158 [US2] Implement job tracking in FlushJob to write status to system.jobs BEFORE starting work
 - [X] T158a [US2] Implement KILL JOB SQL command parsing in `/backend/crates/kalamdb-sql/src/job_commands.rs` (9 tests passing)
 - [X] T158b [US2] Add KILL JOB command execution in SQL executor (execute_kill_job method added)
 - [X] T158c [US2] Update job status to 'cancelled' with timestamp when KILL JOB executes (cancel_job method in JobsTableProvider)
-- [ ] T158d [US2] Implement flush job state persistence: job_id, table_name, status, start_time, progress to system.jobs
-- [ ] T158e [US2] Implement crash recovery: On startup, query system.jobs for incomplete jobs and resume them
-- [ ] T158f [US2] Add duplicate flush prevention: Check system.jobs for running flush on same table before creating new job
-- [ ] T158g [US2] If flush job exists for table, return existing job_id instead of creating duplicate
-- [ ] T158h [US2] Implement graceful shutdown: Query system.jobs for active flush jobs (status='running')
-- [ ] T158i [US2] Add shutdown wait logic: Monitor active jobs until 'completed' or 'failed' with configurable timeout
-- [ ] T158j [US2] Add flush_job_shutdown_timeout_seconds to config.toml (default: 300 seconds / 5 minutes)
-- [ ] T158k [US2] Add DEBUG logging for flush start: "Flush job started: job_id={}, table={}, namespace={}, timestamp={}"
-- [ ] T158l [US2] Add DEBUG logging for flush completion: "Flush job completed: job_id={}, table={}, records_flushed={}, duration_ms={}"
-- [ ] T158m [US2] Update system.jobs queries to use system.jobs as source of truth (not in-memory state)
-- [ ] T158n [US2] Optimize RocksDB column family for system.jobs: Enable block cache, set high cache priority
-- [ ] T158o [US2] Configure system.jobs column family with 256MB block cache in RocksDB initialization
-- [ ] T158p [US2] Implement scheduled job cleanup: Delete old records from system.jobs
-- [ ] T158q [US2] Add job_retention_days configuration to config.toml (default: 30 days)
-- [ ] T158r [US2] Add job_cleanup_schedule configuration to config.toml (default: "0 0 * * *" / daily at midnight)
-- [ ] T158s [US2] Create cleanup job that deletes records where created_at < (current_time - retention_period)
+- [X] T158d [US2] Implement flush job state persistence: job_id, table_name, status, start_time, progress to system.jobs
+- [X] T158e [US2] Implement crash recovery: On startup, query system.jobs for incomplete jobs and resume them
+- [X] T158f [US2] Add duplicate flush prevention: Check system.jobs for running flush on same table before creating new job
+- [X] T158g [US2] If flush job exists for table, return existing job_id instead of creating duplicate
+- [X] T158h [US2] Implement graceful shutdown: Query system.jobs for active flush jobs (status='running')
+- [X] T158i [US2] Add shutdown wait logic: Monitor active jobs until 'completed' or 'failed' with configurable timeout
+- [X] T158j [US2] Add flush_job_shutdown_timeout_seconds to config.toml (default: 300 seconds / 5 minutes)
+- [X] T158k [US2] Add DEBUG logging for flush start: "Flush job started: job_id={}, table={}, namespace={}, timestamp={}"
+- [X] T158l [US2] Add DEBUG logging for flush completion: "Flush job completed: job_id={}, table={}, records_flushed={}, duration_ms={}"
+- [X] T158m [US2] Update system.jobs queries to use system.jobs as source of truth (not in-memory state)
+- [X] T158n [US2] Optimize RocksDB column family for system.jobs: Enable block cache, set high cache priority
+- [X] T158o [US2] Configure system.jobs column family with 256MB block cache in RocksDB initialization
+- [X] T158p [US2] Implement scheduled job cleanup: Delete old records from system.jobs
+- [X] T158q [US2] Add job_retention_days configuration to config.toml (default: 30 days)
+- [X] T158r [US2] Add job_cleanup_schedule configuration to config.toml (default: "0 0 * * *" / daily at midnight)
+- [X] T158s [US2] Create cleanup job that deletes records where created_at < (current_time - retention_period)
 
 ### Storage Location Management (NEW)
 
-- [ ] T163 [P] [US2] Create system.storages table schema with columns: storage_id (PK), storage_name, description, storage_type (enum), base_directory, shared_tables_template, user_tables_template, created_at, updated_at
-- [ ] T163a [P] [US2] Create StorageType enum in `/backend/crates/kalamdb-commons/src/models.rs` with values: Filesystem, S3
-- [ ] T163b [P] [US2] Add storage_id column to system.tables with foreign key constraint to system.storages
-- [ ] T163c [P] [US2] Add storage_mode (ENUM: 'table', 'region') and storage_id columns to system.users table
-- [ ] T164 [US2] Implement default storage creation: On server startup, if system.storages is empty, insert storage_id='local', storage_type='filesystem', base_directory='', templates with defaults
-- [ ] T164a [US2] Implement config.toml default_storage_path fallback: When base_directory='' for storage_id='local', read from config (default: "./data/storage")
-- [ ] T165 [P] [US2] Create `/backend/crates/kalamdb-core/src/storage/storage_registry.rs` with StorageRegistry struct
-- [ ] T165a [P] [US2] Implement StorageRegistry::get_storage(storage_id) -> Result<Storage>
-- [ ] T165b [P] [US2] Implement StorageRegistry::list_storages() with ordering (storage_id='local' first, then alphabetical)
-- [ ] T166 [US2] Implement path template validation in StorageRegistry::validate_template()
-- [ ] T166a [US2] Validate shared_tables_template: Ensure {namespace} appears before {tableName}
-- [ ] T166b [US2] Validate user_tables_template: Enforce ordering {namespace} → {tableName} → {shard} → {userId}
-- [ ] T166c [US2] Validate user_tables_template: Ensure {userId} variable is present (required)
+- [X] T163 [P] [US2] Create system.storages table schema with columns: storage_id (PK), storage_name, description, storage_type (enum), base_directory, shared_tables_template, user_tables_template, created_at, updated_at
+- [X] T163a [P] [US2] Create StorageType enum in `/backend/crates/kalamdb-commons/src/models.rs` with values: Filesystem, S3
+- [X] T163b [P] [US2] Add storage_id column to system.tables with foreign key constraint to system.storages
+- [X] T163c [P] [US2] Add storage_mode (ENUM: 'table', 'region') and storage_id columns to system.users table
+- [X] T164 [US2] Implement default storage creation: On server startup, if system.storages is empty, insert storage_id='local', storage_type='filesystem', base_directory='', templates with defaults
+- [X] T164a [US2] Implement config.toml default_storage_path fallback: When base_directory='' for storage_id='local', read from config (default: "./data/storage")
+- [X] T165 [P] [US2] Create `/backend/crates/kalamdb-core/src/storage/storage_registry.rs` with StorageRegistry struct
+- [X] T165a [P] [US2] Implement StorageRegistry::get_storage(storage_id) -> Result<Storage>
+- [X] T165b [P] [US2] Implement StorageRegistry::list_storages() with ordering (storage_id='local' first, then alphabetical)
+- [X] T166 [US2] Implement path template validation in StorageRegistry::validate_template()
+- [X] T166a [US2] Validate shared_tables_template: Ensure {namespace} appears before {tableName}
+- [X] T166b [US2] Validate user_tables_template: Enforce ordering {namespace} → {tableName} → {shard} → {userId}
+- [X] T166c [US2] Validate user_tables_template: Ensure {userId} variable is present (required)
 - [ ] T167 [US2] Update CREATE TABLE DDL to accept STORAGE storage_id parameter
 - [ ] T167a [US2] When storage_id omitted in CREATE TABLE, default to storage_id='local'
 - [ ] T167b [US2] Validate storage_id exists in system.storages before creating table (FK validation)

@@ -14,7 +14,6 @@ use datafusion::arrow::datatypes::{DataType, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_store::UserTableStore;
 use serde_json::{json, Value as JsonValue};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -42,6 +41,9 @@ pub struct UserTableFlushJob {
 
     /// Optional LiveQueryManager for flush notifications
     live_query_manager: Option<Arc<LiveQueryManager>>,
+    
+    /// Optional JobsTableProvider for job state persistence (T158d)
+    jobs_provider: Option<Arc<crate::tables::system::jobs_provider::JobsTableProvider>>,
 }
 
 /// Result of a flush job execution
@@ -78,12 +80,21 @@ impl UserTableFlushJob {
             storage_location,
             node_id,
             live_query_manager: None,
+            jobs_provider: None,
         }
     }
 
     /// Set the LiveQueryManager for flush notifications (builder pattern)
     pub fn with_live_query_manager(mut self, manager: Arc<LiveQueryManager>) -> Self {
         self.live_query_manager = Some(manager);
+        self
+    }
+    
+    /// Set the JobsTableProvider for job state persistence (builder pattern)
+    ///
+    /// # T158d: Enable job state persistence to system.jobs table
+    pub fn with_jobs_provider(mut self, provider: Arc<crate::tables::system::jobs_provider::JobsTableProvider>) -> Self {
+        self.jobs_provider = Some(provider);
         self
     }
 
@@ -93,10 +104,16 @@ impl UserTableFlushJob {
             .replace("${user_id}", user_id.as_str())
     }
 
-    /// Generate batch filename with timestamp
+    /// Generate batch filename with ISO 8601 timestamp
+    /// 
+    /// Format: YYYY-MM-DDTHH-MM-SS.parquet
+    /// Example: 2025-10-22T14-30-45.parquet
+    /// 
+    /// # T152a: ISO 8601 timestamp-based Parquet filename generation
     fn generate_batch_filename(&self) -> String {
-        let timestamp = Utc::now().timestamp_millis();
-        format!("batch-{}.parquet", timestamp)
+        let now = Utc::now();
+        // Format as ISO 8601 with hyphens (not colons, as they're invalid in Windows filenames)
+        now.format("%Y-%m-%dT%H-%M-%S.parquet").to_string()
     }
 
     /// Execute the flush job
@@ -121,6 +138,21 @@ impl UserTableFlushJob {
                     self.table_name.as_str()
                 ));
 
+        // T158d: Persist job state to system.jobs BEFORE starting work
+        if let Some(ref jobs_provider) = self.jobs_provider {
+            jobs_provider.insert_job(job_record.clone())?;
+            
+            // T158k: DEBUG logging for flush start
+            log::debug!(
+                "Flush job started: job_id={}, table={}.{}, namespace={}, timestamp={}",
+                job_id,
+                self.namespace_id.as_str(),
+                self.table_name.as_str(),
+                self.namespace_id.as_str(),
+                Utc::now().to_rfc3339()
+            );
+        }
+
         // Execute flush and capture metrics
         let start_time = std::time::Instant::now();
 
@@ -129,6 +161,12 @@ impl UserTableFlushJob {
             Err(e) => {
                 // Mark job as failed
                 job_record = job_record.fail(format!("Flush failed: {}", e));
+                
+                // T158d: Update job status to 'failed' in system.jobs
+                if let Some(ref jobs_provider) = self.jobs_provider {
+                    let _ = jobs_provider.update_job(job_record.clone());
+                }
+                
                 return Ok(FlushJobResult {
                     job_record,
                     rows_flushed: 0,
@@ -151,6 +189,21 @@ impl UserTableFlushJob {
 
         // Mark job as completed
         job_record = job_record.complete(Some(result_json.to_string()));
+        
+        // T158d: Update job status to 'completed' in system.jobs
+        // T158l: DEBUG logging for flush completion
+        if let Some(ref jobs_provider) = self.jobs_provider {
+            jobs_provider.update_job(job_record.clone())?;
+            
+            log::debug!(
+                "Flush job completed: job_id={}, table={}.{}, records_flushed={}, duration_ms={}",
+                job_id,
+                self.namespace_id.as_str(),
+                self.table_name.as_str(),
+                rows_flushed,
+                duration_ms
+            );
+        }
 
         // T172: Notify subscribers of flush completion
         if let Some(live_query_manager) = &self.live_query_manager {
@@ -180,49 +233,226 @@ impl UserTableFlushJob {
         })
     }
 
-    /// Internal flush execution (separated for error handling)
+    /// Internal flush execution with streaming per-user writes
+    /// 
+    /// This method implements a memory-efficient streaming flush that processes one user at a time:
+    /// 1. Creates RocksDB snapshot for read consistency
+    /// 2. Scans table column family sequentially
+    /// 3. Accumulates rows for current userId in memory buffer
+    /// 4. Detects userId boundary to trigger Parquet write
+    /// 5. Writes accumulated rows to Parquet file for completed user
+    /// 6. Deletes successfully flushed rows (atomic per-user deletion)
+    /// 7. On Parquet write failure for a user, keeps their buffered rows in RocksDB
+    /// 
+    /// # T151-T151h: Streaming flush with RocksDB snapshot and per-user atomicity
     fn execute_flush(&self) -> Result<(usize, usize, Vec<String>), KalamDbError> {
-        // Get rows grouped by user
-        let rows_by_user = self
-            .store
-            .get_rows_by_user(self.namespace_id.as_str(), self.table_name.as_str())
-            .map_err(|e| KalamDbError::Other(format!("Failed to get rows: {}", e)))?;
-
-        // Flush each user's data to separate Parquet file
+        // T151a: Create RocksDB snapshot for read consistency
+        // This prevents missing rows from concurrent inserts during flush
+        let snapshot = self.store.create_snapshot();
+        
+        // Initialize streaming state
         let mut total_rows_flushed = 0;
+        let mut users_count = 0;
         let mut parquet_files = Vec::new();
-
-        for (user_id_str, rows) in &rows_by_user {
-            let user_id = UserId::new(user_id_str.clone());
-            let rows_count = rows.len();
-
-            // Convert rows to RecordBatch
-            let batch = self.rows_to_record_batch(rows)?;
-
-            // Determine output path: ${storage_location}/${user_id}/batch-{timestamp}.parquet
-            let user_storage_path = self.substitute_user_id_in_path(&user_id);
-            let batch_filename = self.generate_batch_filename();
-            let output_path = PathBuf::from(&user_storage_path).join(&batch_filename);
-
-            // Write to Parquet
-            let writer = ParquetWriter::new(output_path.to_str().unwrap());
-            writer.write(self.schema.clone(), vec![batch])?;
-
-            parquet_files.push(output_path.to_string_lossy().to_string());
-            total_rows_flushed += rows_count;
-
-            log::info!(
-                "Flushed {} rows for user {} to {}",
-                rows_count,
-                user_id.as_str(),
-                output_path.display()
-            );
+        
+        // T151c: Accumulate rows for current userId (streaming buffer)
+        let mut current_user_id: Option<String> = None;
+        let mut current_user_rows: Vec<(Vec<u8>, JsonValue)> = Vec::new();
+        
+        // T151b: Scan table column family sequentially using snapshot iterator
+        let iter = self.store.scan_with_snapshot(
+            &snapshot,
+            self.namespace_id.as_str(),
+            self.table_name.as_str(),
+        ).map_err(|e| KalamDbError::Other(format!("Failed to create snapshot iterator: {}", e)))?;
+        
+        for item in iter {
+            let (key_bytes, value_bytes) = item
+                .map_err(|e| KalamDbError::Other(format!("Iterator error: {}", e)))?;
+            
+            // Parse JSON value
+            let row_data: JsonValue = serde_json::from_slice(&value_bytes)
+                .map_err(|e| KalamDbError::Other(format!("JSON parse error: {}", e)))?;
+            
+            // Skip soft-deleted rows (don't flush them)
+            if let Some(obj) = row_data.as_object() {
+                if let Some(deleted) = obj.get("_deleted") {
+                    if deleted.as_bool() == Some(true) {
+                        continue;
+                    }
+                }
+            }
+            
+            // Parse key to get user_id
+            let key_str = String::from_utf8(key_bytes.to_vec())
+                .map_err(|e| KalamDbError::Other(format!("UTF-8 decode error: {}", e)))?;
+            let (user_id, _row_id) = self.parse_user_key(&key_str)?;
+            
+            // T151d: Detect userId boundary (current_row.user_id ≠ previous_row.user_id)
+            if let Some(ref prev_user_id) = current_user_id {
+                if &user_id != prev_user_id {
+                    // Boundary detected - flush accumulated rows for previous user
+                    // T151e: Write accumulated rows to Parquet before continuing scan
+                    let flush_result = self.flush_user_data(
+                        prev_user_id,
+                        &current_user_rows,
+                        &mut parquet_files,
+                    );
+                    
+                    match flush_result {
+                        Ok(rows_count) => {
+                            // T151f: Delete successfully flushed rows (atomic per-user batch)
+                            let keys: Vec<Vec<u8>> = current_user_rows
+                                .iter()
+                                .map(|(key, _)| key.clone())
+                                .collect();
+                            
+                            self.delete_flushed_keys(&keys)?;
+                            
+                            total_rows_flushed += rows_count;
+                            users_count += 1;
+                            
+                            // T151h: Track per-user flush success with logging
+                            log::debug!(
+                                "Flushed {} rows for user {} (deleted from buffer)",
+                                rows_count,
+                                prev_user_id
+                            );
+                        }
+                        Err(e) => {
+                            // T151g: On Parquet write failure, keep buffered rows in RocksDB
+                            // (no deletion occurs, rows remain in buffer for next flush attempt)
+                            log::error!(
+                                "Failed to flush {} rows for user {}: {}. Rows kept in buffer.",
+                                current_user_rows.len(),
+                                prev_user_id,
+                                e
+                            );
+                            
+                            // Continue with next user despite failure
+                        }
+                    }
+                    
+                    // Reset buffer for new user
+                    current_user_rows.clear();
+                }
+            }
+            
+            // Accumulate row for current user
+            current_user_id = Some(user_id.clone());
+            current_user_rows.push((key_bytes.to_vec(), row_data));
         }
-
-        // Delete flushed rows from RocksDB
-        self.delete_flushed_rows(&rows_by_user)?;
-
-        Ok((total_rows_flushed, rows_by_user.len(), parquet_files))
+        
+        // Flush final user's data (if any)
+        if let Some(user_id) = current_user_id {
+            if !current_user_rows.is_empty() {
+                let flush_result = self.flush_user_data(
+                    &user_id,
+                    &current_user_rows,
+                    &mut parquet_files,
+                );
+                
+                match flush_result {
+                    Ok(rows_count) => {
+                        let keys: Vec<Vec<u8>> = current_user_rows
+                            .iter()
+                            .map(|(key, _)| key.clone())
+                            .collect();
+                        
+                        self.delete_flushed_keys(&keys)?;
+                        
+                        total_rows_flushed += rows_count;
+                        users_count += 1;
+                        
+                        log::debug!(
+                            "Flushed {} rows for user {} (deleted from buffer)",
+                            rows_count,
+                            user_id
+                        );
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to flush {} rows for user {}: {}. Rows kept in buffer.",
+                            current_user_rows.len(),
+                            user_id,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+        
+        Ok((total_rows_flushed, users_count, parquet_files))
+    }
+    
+    /// Flush data for a single user to Parquet file
+    /// 
+    /// Returns the number of rows flushed on success
+    fn flush_user_data(
+        &self,
+        user_id: &str,
+        rows: &[(Vec<u8>, JsonValue)],
+        parquet_files: &mut Vec<String>,
+    ) -> Result<usize, KalamDbError> {
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        
+        let rows_count = rows.len();
+        
+        // Convert rows to RecordBatch
+        let batch = self.rows_to_record_batch(rows)?;
+        
+        // Determine output path with ISO 8601 timestamp
+        let user_id_obj = UserId::new(user_id.to_string());
+        let user_storage_path = self.substitute_user_id_in_path(&user_id_obj);
+        let batch_filename = self.generate_batch_filename();
+        let output_path = PathBuf::from(&user_storage_path).join(&batch_filename);
+        
+        // Write to Parquet
+        let writer = ParquetWriter::new(output_path.to_str().unwrap());
+        writer.write(self.schema.clone(), vec![batch])?;
+        
+        parquet_files.push(output_path.to_string_lossy().to_string());
+        
+        log::info!(
+            "Flushed {} rows for user {} to {}",
+            rows_count,
+            user_id,
+            output_path.display()
+        );
+        
+        Ok(rows_count)
+    }
+    
+    /// Parse user key format: {user_id}:{row_id}
+    fn parse_user_key(&self, key: &str) -> Result<(String, String), KalamDbError> {
+        let parts: Vec<&str> = key.split(':').collect();
+        if parts.len() != 2 {
+            return Err(KalamDbError::Other(format!(
+                "Invalid user table key format: {}",
+                key
+            )));
+        }
+        Ok((parts[0].to_string(), parts[1].to_string()))
+    }
+    
+    /// Delete flushed rows by their raw key bytes (atomic batch operation)
+    fn delete_flushed_keys(&self, keys: &[Vec<u8>]) -> Result<(), KalamDbError> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+        
+        self.store
+            .delete_batch_by_keys(
+                self.namespace_id.as_str(),
+                self.table_name.as_str(),
+                keys,
+            )
+            .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed rows: {}", e)))?;
+        
+        log::debug!("Deleted {} flushed rows from storage", keys.len());
+        Ok(())
     }
 
     /// Convert JSON rows to Arrow RecordBatch
@@ -274,29 +504,6 @@ impl UserTableFlushJob {
 
         RecordBatch::try_new(self.schema.clone(), arrays)
             .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
-    }
-
-    /// Delete flushed rows from RocksDB
-    fn delete_flushed_rows(
-        &self,
-        rows_by_user: &HashMap<String, Vec<(Vec<u8>, JsonValue)>>,
-    ) -> Result<(), KalamDbError> {
-        // Collect all keys for batch deletion
-        let keys: Vec<Vec<u8>> = rows_by_user
-            .values()
-            .flat_map(|rows| rows.iter().map(|(key, _)| key.clone()))
-            .collect();
-
-        if keys.is_empty() {
-            return Ok(());
-        }
-
-        self.store
-            .delete_batch_by_keys(self.namespace_id.as_str(), self.table_name.as_str(), &keys)
-            .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed rows: {}", e)))?;
-
-        log::debug!("Deleted {} flushed rows from storage", keys.len());
-        Ok(())
     }
 }
 

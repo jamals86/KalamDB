@@ -33,6 +33,10 @@ pub struct CreateUserTableStatement {
     pub schema: Arc<Schema>,
     /// Storage location (path or reference)
     pub storage_location: Option<StorageLocation>,
+    /// Storage ID (T167) - References system.storages
+    pub storage_id: Option<String>,
+    /// Use user-specific storage (T168) - Allow per-user storage override
+    pub use_user_storage: bool,
     /// Flush policy
     pub flush_policy: Option<FlushPolicy>,
     /// Deleted row retention in hours
@@ -99,11 +103,19 @@ impl CreateUserTableStatement {
                 // Parse FLUSH policy from original SQL (if present)
                 let flush_policy = Self::parse_flush_policy(original_sql)?;
 
+                // Parse STORAGE clause from original SQL (T167)
+                let storage_id = Self::parse_storage_clause(original_sql)?;
+                
+                // Parse USE_USER_STORAGE flag from original SQL (T168)
+                let use_user_storage = Self::parse_use_user_storage(original_sql);
+
                 Ok(CreateUserTableStatement {
                     table_name: TableName::new(table_name),
                     namespace_id,
                     schema,
                     storage_location: None,
+                    storage_id,
+                    use_user_storage,
                     flush_policy,
                     deleted_retention_hours: None,
                     if_not_exists: *if_not_exists,
@@ -115,35 +127,139 @@ impl CreateUserTableStatement {
         }
     }
 
-    /// Parse FLUSH policy from SQL text
-    /// Supports: FLUSH ROWS 100, FLUSH SECONDS 60, FLUSH BYTES 1048576
+    /// Parse FLUSH policy from SQL text (T155, T155a, T155b)
+    /// 
+    /// Supported syntax:
+    /// - FLUSH INTERVAL <seconds>s             -> TimeInterval
+    /// - FLUSH ROW_THRESHOLD <count>           -> RowLimit
+    /// - FLUSH INTERVAL <seconds>s ROW_THRESHOLD <count> -> Combined
+    /// 
+    /// Legacy syntax also supported:
+    /// - FLUSH ROWS <count>    -> RowLimit
+    /// - FLUSH SECONDS <secs>  -> TimeInterval
     fn parse_flush_policy(sql: &str) -> Result<Option<crate::flush::FlushPolicy>, KalamDbError> {
         use crate::flush::FlushPolicy;
         use regex::Regex;
 
-        // Look for FLUSH ROWS <number>
+        // New syntax: FLUSH INTERVAL <seconds>s ROW_THRESHOLD <count>
+        let interval_re = Regex::new(r"(?i)FLUSH\s+INTERVAL\s+(\d+)s").unwrap();
+        let row_threshold_re = Regex::new(r"(?i)ROW_THRESHOLD\s+(\d+)").unwrap();
+
+        let interval_match = interval_re.captures(sql);
+        let row_threshold_match = row_threshold_re.captures(sql);
+
+        match (interval_match, row_threshold_match) {
+            (Some(interval_caps), Some(row_caps)) => {
+                // Both parameters provided - Combined policy
+                let interval_seconds: u32 = interval_caps[1]
+                    .parse()
+                    .map_err(|_| KalamDbError::InvalidSql("Invalid FLUSH INTERVAL value".to_string()))?;
+                let row_limit: u32 = row_caps[1]
+                    .parse()
+                    .map_err(|_| KalamDbError::InvalidSql("Invalid ROW_THRESHOLD value".to_string()))?;
+                
+                let policy = FlushPolicy::Combined {
+                    interval_seconds,
+                    row_limit,
+                };
+                
+                // T155b: Validate policy parameters
+                policy.validate().map_err(|e| KalamDbError::InvalidSql(e))?;
+                
+                return Ok(Some(policy));
+            }
+            (Some(interval_caps), None) => {
+                // Only interval provided - TimeInterval policy
+                let interval_seconds: u32 = interval_caps[1]
+                    .parse()
+                    .map_err(|_| KalamDbError::InvalidSql("Invalid FLUSH INTERVAL value".to_string()))?;
+                
+                let policy = FlushPolicy::TimeInterval { interval_seconds };
+                policy.validate().map_err(|e| KalamDbError::InvalidSql(e))?;
+                
+                return Ok(Some(policy));
+            }
+            (None, Some(row_caps)) => {
+                // Only row threshold provided - RowLimit policy
+                let row_limit: u32 = row_caps[1]
+                    .parse()
+                    .map_err(|_| KalamDbError::InvalidSql("Invalid ROW_THRESHOLD value".to_string()))?;
+                
+                let policy = FlushPolicy::RowLimit { row_limit };
+                policy.validate().map_err(|e| KalamDbError::InvalidSql(e))?;
+                
+                return Ok(Some(policy));
+            }
+            (None, None) => {
+                // No new syntax found - try legacy syntax
+            }
+        }
+
+        // Legacy syntax: FLUSH ROWS <number>
         let rows_re = Regex::new(r"(?i)FLUSH\s+ROWS\s+(\d+)").unwrap();
         if let Some(caps) = rows_re.captures(sql) {
             let count: u32 = caps[1]
                 .parse()
                 .map_err(|_| KalamDbError::InvalidSql("Invalid FLUSH ROWS value".to_string()))?;
-            return Ok(Some(FlushPolicy::RowLimit { row_limit: count }));
+            let policy = FlushPolicy::RowLimit { row_limit: count };
+            policy.validate().map_err(|e| KalamDbError::InvalidSql(e))?;
+            return Ok(Some(policy));
         }
 
-        // Look for FLUSH SECONDS <number>
+        // Legacy syntax: FLUSH SECONDS <number>
         let seconds_re = Regex::new(r"(?i)FLUSH\s+SECONDS\s+(\d+)").unwrap();
         if let Some(caps) = seconds_re.captures(sql) {
             let secs: u32 = caps[1]
                 .parse()
                 .map_err(|_| KalamDbError::InvalidSql("Invalid FLUSH SECONDS value".to_string()))?;
-            return Ok(Some(FlushPolicy::TimeInterval {
+            let policy = FlushPolicy::TimeInterval {
                 interval_seconds: secs,
-            }));
+            };
+            policy.validate().map_err(|e| KalamDbError::InvalidSql(e))?;
+            return Ok(Some(policy));
         }
 
-        // FLUSH BYTES is not supported by current FlushPolicy - ignore it
-
+        // No flush policy specified - this is OK for user tables
         Ok(None)
+    }
+
+    /// Parse STORAGE clause from SQL (T167)
+    ///
+    /// Syntax: STORAGE <storage_id>
+    ///
+    /// # Examples
+    /// - `STORAGE local`
+    /// - `STORAGE s3_prod`
+    fn parse_storage_clause(sql: &str) -> Result<Option<String>, KalamDbError> {
+        use regex::Regex;
+        
+        // Match: STORAGE <identifier>
+        let storage_re = Regex::new(r"(?i)STORAGE\s+([a-z0-9_]+)").unwrap();
+        
+        if let Some(caps) = storage_re.captures(sql) {
+            let storage_id = caps[1].to_string();
+            Ok(Some(storage_id))
+        } else {
+            // T167a: Default to 'local' when omitted
+            Ok(None)
+        }
+    }
+
+    /// Parse USE_USER_STORAGE flag from SQL (T168)
+    ///
+    /// Syntax: USE_USER_STORAGE or USE_USER_STORAGE TRUE
+    ///
+    /// # Examples
+    /// - `USE_USER_STORAGE` -> true
+    /// - `USE_USER_STORAGE TRUE` -> true
+    /// - No clause -> false (default)
+    fn parse_use_user_storage(sql: &str) -> bool {
+        use regex::Regex;
+        
+        // Match: USE_USER_STORAGE (optionally followed by TRUE)
+        let use_user_storage_re = Regex::new(r"(?i)USE_USER_STORAGE(\s+TRUE)?").unwrap();
+        
+        use_user_storage_re.is_match(sql)
     }
 
     /// Extract table name from object name
@@ -290,6 +406,8 @@ mod tests {
             namespace_id: namespace.clone(),
             schema: Arc::new(Schema::empty()),
             storage_location: None,
+            storage_id: None,
+            use_user_storage: false,
             flush_policy: None,
             deleted_retention_hours: None,
             if_not_exists: false,
@@ -302,6 +420,8 @@ mod tests {
             namespace_id: namespace.clone(),
             schema: Arc::new(Schema::empty()),
             storage_location: None,
+            storage_id: None,
+            use_user_storage: false,
             flush_policy: None,
             deleted_retention_hours: None,
             if_not_exists: false,
@@ -314,6 +434,8 @@ mod tests {
             namespace_id: namespace.clone(),
             schema: Arc::new(Schema::empty()),
             storage_location: None,
+            storage_id: None,
+            use_user_storage: false,
             flush_policy: None,
             deleted_retention_hours: None,
             if_not_exists: false,

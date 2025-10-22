@@ -20,6 +20,10 @@ workers = 0
 # RocksDB data directory path (relative or absolute)
 rocksdb_path = "./data/rocksdb"
 
+# Default storage path for 'local' storage (when base_directory='')
+# Used for table flushes to Parquet files (default: "./data/storage")
+default_storage_path = "./data/storage"
+
 # Enable Write-Ahead Log for durability (default: true)
 enable_wal = true
 
@@ -67,6 +71,19 @@ default_row_limit = 10000
 # Default time interval for flush in seconds (default: 300s = 5 minutes)
 # Tables will flush to Parquet after this duration
 default_time_interval = 300
+
+# T158j: Flush job shutdown timeout in seconds (default: 300s = 5 minutes)
+# Server waits this duration for active flush jobs to complete during shutdown
+flush_job_shutdown_timeout_seconds = 300
+
+# T158q: Job retention days (default: 30 days)
+# Job records older than this are deleted during cleanup
+job_retention_days = 30
+
+# T158r: Job cleanup schedule (cron format, default: daily at midnight UTC)
+# Format: "second minute hour day_of_month month day_of_week"
+# Example: "0 0 * * *" = daily at midnight
+job_cleanup_schedule = "0 0 * * *"
 
 [retention]
 # Default retention hours for soft-deleted rows (default: 168 hours = 7 days)

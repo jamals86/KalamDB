@@ -168,6 +168,8 @@ impl StreamTableService {
             table_type: "Stream".to_string(),
             created_at: chrono::Utc::now().timestamp(),
             storage_location: String::new(), // Stream tables don't use Parquet
+            storage_id: Some("local".to_string()),
+            use_user_storage: false,
             flush_policy: String::new(),     // Stream tables don't flush to Parquet
             schema_version: 1,
             deleted_retention_hours: 0, // Stream tables don't have soft deletes

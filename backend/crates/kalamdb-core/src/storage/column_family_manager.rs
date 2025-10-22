@@ -22,6 +22,7 @@ pub const SYSTEM_COLUMN_FAMILIES: &[&str] = &[
     "system_storage_locations", // Storage location definitions (location_name, location_type, path, credentials_ref, usage_count)
     "system_jobs", // Background job tracking (job_id, job_type, table_name, status, start_time, end_time, parameters, result, trace, memory_used_mb, cpu_used_percent, node_id, error_message)
     "system_namespaces", // Namespace metadata (namespace_id, name, created_at, options, table_count)
+    "system_storages", // Storage backend configurations (storage_id, storage_name, description, storage_type, base_directory, shared_tables_template, user_tables_template, created_at, updated_at)
     "system_tables", // Table metadata (table_id, table_name, namespace, table_type, created_at, storage_location, flush_policy, schema_version, deleted_retention_hours)
     "system_table_schemas", // Table schema versions (schema_id, table_id, version, arrow_schema, created_at, changes)
     "user_table_counters",  // Per-user flush tracking (user_id, table_name, row_count)

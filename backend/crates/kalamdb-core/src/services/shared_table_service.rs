@@ -348,6 +348,8 @@ impl SharedTableService {
             table_type: "Shared".to_string(),
             created_at: chrono::Utc::now().timestamp(),
             storage_location: storage_location.to_string(),
+            storage_id: Some("local".to_string()),
+            use_user_storage: false,
             flush_policy: flush_policy_str,
             schema_version: 1,
             deleted_retention_hours: deleted_retention.map(|s| (s / 3600) as i32).unwrap_or(0),
