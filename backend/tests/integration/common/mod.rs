@@ -121,7 +121,9 @@ impl TestServer {
             Arc::new(kalamdb_sql::KalamSql::new(db.clone()).expect("Failed to create KalamSQL"));
 
         // Create default 'local' storage if system.storages is empty
-        let storages = kalam_sql.scan_all_storages().expect("Failed to scan storages");
+        let storages = kalam_sql
+            .scan_all_storages()
+            .expect("Failed to scan storages");
         if storages.is_empty() {
             let now = chrono::Utc::now().timestamp_millis();
             let default_storage = kalamdb_sql::Storage {
@@ -135,7 +137,9 @@ impl TestServer {
                 created_at: now,
                 updated_at: now,
             };
-            kalam_sql.insert_storage(&default_storage).expect("Failed to create default storage");
+            kalam_sql
+                .insert_storage(&default_storage)
+                .expect("Failed to create default storage");
         }
 
         // Initialize stores (needed by some services)
@@ -236,8 +240,9 @@ impl TestServer {
             .expect("Failed to register system.jobs");
 
         // Initialize StorageRegistry for template validation
-        let storage_registry =
-            Arc::new(kalamdb_core::storage::StorageRegistry::new(kalam_sql.clone()));
+        let storage_registry = Arc::new(kalamdb_core::storage::StorageRegistry::new(
+            kalam_sql.clone(),
+        ));
 
         // Initialize SqlExecutor with builder pattern
         let sql_executor = Arc::new(
@@ -331,7 +336,7 @@ impl TestServer {
     /// `SqlResponse` containing status, results, and any errors
     pub async fn execute_sql_with_user(&self, sql: &str, user_id: Option<&str>) -> SqlResponse {
         let user_id_obj = user_id.map(kalamdb_core::catalog::UserId::from);
-        
+
         // Try custom DDL/DML execution first (same as REST API)
         match self.sql_executor.execute(sql, user_id_obj.as_ref()).await {
             Ok(result) => {

@@ -83,8 +83,8 @@ pub struct Table {
     pub created_at: i64,
     pub storage_location: String,
     pub storage_id: Option<String>, // T167: FK to system.storages
-    pub use_user_storage: bool, // T168: Allow per-user storage override
-    pub flush_policy: String, // JSON
+    pub use_user_storage: bool,     // T168: Allow per-user storage override
+    pub flush_policy: String,       // JSON
     pub schema_version: i32,
     pub deleted_retention_hours: i32,
 }

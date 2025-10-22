@@ -27,9 +27,9 @@ pub struct RateLimitConfig {
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
-            max_queries_per_user: 10,           // 10 queries/second per user
-            max_subscriptions_per_user: 100,     // 100 total subscriptions per user
-            max_messages_per_connection: 100,    // 100 messages/second per connection
+            max_queries_per_user: 10,         // 10 queries/second per user
+            max_subscriptions_per_user: 100,  // 100 total subscriptions per user
+            max_messages_per_connection: 100, // 100 messages/second per connection
             window: Duration::from_secs(1),
         }
     }

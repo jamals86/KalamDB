@@ -126,7 +126,9 @@ impl JobManager for TokioJobManager {
         &self,
         job_id: String,
         job_type: String,
-        job_future: std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'static>>,
+        job_future: std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'static>,
+        >,
     ) -> Result<(), KalamDbError> {
         // Check for duplicate job_id
         {
@@ -326,9 +328,11 @@ mod tests {
 
         // Start job
         manager
-            .start_job(job_id.clone(), "test".to_string(), Box::pin(async {
-                Ok("success".to_string())
-            }))
+            .start_job(
+                job_id.clone(),
+                "test".to_string(),
+                Box::pin(async { Ok("success".to_string()) }),
+            )
             .await
             .unwrap();
 
@@ -350,10 +354,14 @@ mod tests {
 
         // Start long-running job
         manager
-            .start_job(job_id.clone(), "test".to_string(), Box::pin(async {
-                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-                Ok("success".to_string())
-            }))
+            .start_job(
+                job_id.clone(),
+                "test".to_string(),
+                Box::pin(async {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+                    Ok("success".to_string())
+                }),
+            )
             .await
             .unwrap();
 
@@ -372,18 +380,24 @@ mod tests {
 
         // Start first job
         manager
-            .start_job(job_id.clone(), "test".to_string(), Box::pin(async {
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                Ok("success".to_string())
-            }))
+            .start_job(
+                job_id.clone(),
+                "test".to_string(),
+                Box::pin(async {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    Ok("success".to_string())
+                }),
+            )
             .await
             .unwrap();
 
         // Try to start duplicate
         let result = manager
-            .start_job(job_id.clone(), "test".to_string(), Box::pin(async {
-                Ok("success".to_string())
-            }))
+            .start_job(
+                job_id.clone(),
+                "test".to_string(),
+                Box::pin(async { Ok("success".to_string()) }),
+            )
             .await;
 
         assert!(result.is_err());
@@ -397,10 +411,14 @@ mod tests {
         for i in 0..3 {
             let job_id = format!("test-job-{}", i);
             manager
-                .start_job(job_id, "test".to_string(), Box::pin(async move {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                    Ok("success".to_string())
-                }))
+                .start_job(
+                    job_id,
+                    "test".to_string(),
+                    Box::pin(async move {
+                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        Ok("success".to_string())
+                    }),
+                )
                 .await
                 .unwrap();
         }

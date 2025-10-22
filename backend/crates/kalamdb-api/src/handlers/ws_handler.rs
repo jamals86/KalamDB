@@ -70,69 +70,62 @@ pub async fn websocket_handler_v1(
         .and_then(|h| h.to_str().ok());
 
     let user_id = match auth_header {
-        Some(header) => {
-            match JwtAuth::extract_token(header) {
-                Ok(token) => {
-                    match jwt_auth.validate_token(token) {
-                        Ok(claims) => {
-                            info!(
-                                "WebSocket connection authenticated: connection_id={}, user_id={}",
-                                connection_id, claims.user_id
-                            );
-                            Some(claims.user_id())
-                        }
-                        Err(JwtError::Expired) => {
-                            warn!(
-                                "WebSocket connection rejected: token expired (connection_id={})",
-                                connection_id
-                            );
-                            return Ok(HttpResponse::Unauthorized()
-                                .json(serde_json::json!({
-                                    "error": "TOKEN_EXPIRED",
-                                    "message": "JWT token has expired"
-                                })));
-                        }
-                        Err(e) => {
-                            error!(
-                                "WebSocket connection rejected: invalid token (connection_id={}, error={})",
-                                connection_id, e
-                            );
-                            return Ok(HttpResponse::Unauthorized()
-                                .json(serde_json::json!({
-                                    "error": "INVALID_TOKEN",
-                                    "message": format!("JWT validation failed: {}", e)
-                                })));
-                        }
-                    }
+        Some(header) => match JwtAuth::extract_token(header) {
+            Ok(token) => match jwt_auth.validate_token(token) {
+                Ok(claims) => {
+                    info!(
+                        "WebSocket connection authenticated: connection_id={}, user_id={}",
+                        connection_id, claims.user_id
+                    );
+                    Some(claims.user_id())
+                }
+                Err(JwtError::Expired) => {
+                    warn!(
+                        "WebSocket connection rejected: token expired (connection_id={})",
+                        connection_id
+                    );
+                    return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+                        "error": "TOKEN_EXPIRED",
+                        "message": "JWT token has expired"
+                    })));
                 }
                 Err(e) => {
                     error!(
-                        "WebSocket connection rejected: {} (connection_id={})",
-                        e, connection_id
+                        "WebSocket connection rejected: invalid token (connection_id={}, error={})",
+                        connection_id, e
                     );
-                    return Ok(HttpResponse::Unauthorized()
-                        .json(serde_json::json!({
-                            "error": "INVALID_AUTHORIZATION",
-                            "message": format!("{}", e)
-                        })));
+                    return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+                        "error": "INVALID_TOKEN",
+                        "message": format!("JWT validation failed: {}", e)
+                    })));
                 }
+            },
+            Err(e) => {
+                error!(
+                    "WebSocket connection rejected: {} (connection_id={})",
+                    e, connection_id
+                );
+                return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+                    "error": "INVALID_AUTHORIZATION",
+                    "message": format!("{}", e)
+                })));
             }
-        }
+        },
         None => {
             warn!(
                 "WebSocket connection rejected: missing Authorization header (connection_id={})",
                 connection_id
             );
-            return Ok(HttpResponse::Unauthorized()
-                .json(serde_json::json!({
-                    "error": "MISSING_AUTHORIZATION",
-                    "message": "Authorization header is required"
-                })));
+            return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+                "error": "MISSING_AUTHORIZATION",
+                "message": "Authorization header is required"
+            })));
         }
     };
 
     // Create WebSocket session actor with authenticated user_id and rate limiter
-    let session = WebSocketSession::new(connection_id, user_id, Some(rate_limiter.get_ref().clone()));
+    let session =
+        WebSocketSession::new(connection_id, user_id, Some(rate_limiter.get_ref().clone()));
 
     // Start WebSocket handshake
     ws::start(session, &req, stream)

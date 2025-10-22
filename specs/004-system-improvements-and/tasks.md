@@ -101,28 +101,28 @@
 
 ### System Table Base Provider (Code Quality Foundation)
 
-- [ ] T018 Create `/backend/crates/kalamdb-core/src/system_tables/base_provider.rs` with SystemTableProvider base trait
-- [ ] T019 Refactor `/backend/crates/kalamdb-core/src/system_tables/jobs.rs` to use base provider
-- [ ] T020 Refactor `/backend/crates/kalamdb-core/src/system_tables/users.rs` to use base provider
-- [ ] T021 Refactor existing system table providers to use centralized base implementation
+- [X] T018 Create `/backend/crates/kalamdb-core/src/system_tables/base_provider.rs` with SystemTableProvider base trait
+- [X] T019 Refactor `/backend/crates/kalamdb-core/src/system_tables/jobs.rs` to use base provider
+- [X] T020 Refactor `/backend/crates/kalamdb-core/src/system_tables/users.rs` to use base provider
+- [X] T021 Refactor existing system table providers to use centralized base implementation
 
 ### DDL Consolidation (Architecture Cleanup)
 
-- [ ] T022 Create `/backend/crates/kalamdb-sql/src/ddl.rs` for consolidated DDL definitions
-- [ ] T023 Move CREATE NAMESPACE, CREATE TABLE, DROP TABLE definitions from kalamdb-core to kalamdb-sql/src/ddl.rs
-- [ ] T024 Update imports across kalamdb-core and kalamdb-api to reference kalamdb-sql for DDL
+- [X] T022 Create `/backend/crates/kalamdb-sql/src/ddl.rs` for consolidated DDL definitions
+- [X] T023 Move CREATE NAMESPACE, CREATE TABLE, DROP TABLE definitions from kalamdb-core to kalamdb-sql/src/ddl.rs
+- [X] T024 Update imports across kalamdb-core and kalamdb-api to reference kalamdb-sql for DDL
 
 ### Storage Abstraction Trait (Foundation for Alternative Backends)
 
 - [X] T025 Create `/backend/crates/kalamdb-store/src/storage_trait.rs` with StorageBackend trait definition
 - [X] T026 Define Partition struct and Operation enum in storage_trait.rs
 - [X] T027 Create `/backend/crates/kalamdb-store/src/rocksdb_impl.rs` implementing StorageBackend for RocksDB
-- [ ] T028 Refactor `/backend/crates/kalamdb-store/src/column_families.rs` to use kalamdb-commons constants
+- [X] T028 Refactor `/backend/crates/kalamdb-store/src/column_families.rs` to use kalamdb-commons constants
 
 **Documentation Tasks (Constitution Principle VIII)**:
 - [X] T029 [P] Add module-level rustdoc to kalamdb-commons explaining purpose and usage patterns
 - [X] T030 [P] Add rustdoc to type-safe wrappers (UserId, NamespaceId, TableName) with conversion examples
-- [ ] T031 [P] Add module-level rustdoc to system_tables/base_provider.rs explaining pattern
+- [X] T031 [P] Add module-level rustdoc to system_tables/base_provider.rs explaining pattern
 - [X] T032 [P] Add module-level rustdoc to storage_trait.rs with backend implementation guide
 - [X] T033 [P] Create ADR-004-commons-crate.md in docs/architecture/adrs/ explaining circular dependency solution
 - [X] T034 [P] Create ADR-003-storage-trait.md in docs/architecture/adrs/ explaining abstraction design
@@ -503,31 +503,32 @@
 - [X] T166a [US2] Validate shared_tables_template: Ensure {namespace} appears before {tableName}
 - [X] T166b [US2] Validate user_tables_template: Enforce ordering {namespace} → {tableName} → {shard} → {userId}
 - [X] T166c [US2] Validate user_tables_template: Ensure {userId} variable is present (required)
-- [ ] T167 [US2] Update CREATE TABLE DDL to accept STORAGE storage_id parameter
-- [ ] T167a [US2] When storage_id omitted in CREATE TABLE, default to storage_id='local'
-- [ ] T167b [US2] Validate storage_id exists in system.storages before creating table (FK validation)
-- [ ] T167c [US2] For user tables, enforce NOT NULL constraint on storage_id
-- [ ] T168 [US2] Update CREATE TABLE DDL to accept USE_USER_STORAGE boolean option
-- [ ] T168a [US2] Store use_user_storage flag in system.tables metadata
-- [ ] T169 [US2] Implement storage lookup chain in FlushJob::resolve_storage_for_user()
-- [ ] T169a [US2] Step 1: If table.use_user_storage=false, return table.storage_id
-- [ ] T169b [US2] Step 2: If table.use_user_storage=true, query user.storage_mode
-- [ ] T169c [US2] Step 3: If user.storage_mode='region', return user.storage_id
-- [ ] T169d [US2] Step 4: If user.storage_mode='table', fallback to table.storage_id
-- [ ] T169e [US2] Step 5: If table.storage_id is NULL, fallback to storage_id='local'
-- [ ] T170 [US2] Update FlushJob path template resolution to use storage from StorageRegistry
-- [ ] T170a [US2] Replace hardcoded {storageLocation} with Storage.base_directory
-- [ ] T170b [US2] Use Storage.user_tables_template or Storage.shared_tables_template based on table type
-- [ ] T170c [US2] Validate template variable ordering during path generation
+- [X] T167 [US2] Update CREATE TABLE DDL to accept STORAGE storage_id parameter
+- [X] T167a [US2] When storage_id omitted in CREATE TABLE, default to storage_id='local'
+- [X] T167b [US2] Validate storage_id exists in system.storages before creating table (FK validation)
+- [X] T167c [US2] For user tables, enforce NOT NULL constraint on storage_id
+- [X] T168 [US2] Update CREATE TABLE DDL to accept USE_USER_STORAGE boolean option
+- [X] T168a [US2] Store use_user_storage flag in system.tables metadata
+**NOTE**: T167-T168a completed with TABLE_TYPE, OWNER_ID, STORAGE, and USE_USER_STORAGE clause parsing. Integration tests: 35/35 passing (100% ✅). Major fixes: DROP STORAGE validation, template ordering, referential integrity checks, system.storages table registration. Type system unified: kalamdb-core catalog types now have From<kalamdb_commons::types> implementations for seamless conversion.
+- [X] T169 [US2] Implement storage lookup chain in FlushJob::resolve_storage_for_user() ✅ **COMPLETE** - StorageRegistry::resolve_storage_for_user() implemented with 5-step lookup chain (use_user_storage → user.storage_mode → table.storage_id → 'local' fallback)
+- [X] T169a [US2] Step 1: If table.use_user_storage=false, return table.storage_id
+- [X] T169b [US2] Step 2: If table.use_user_storage=true, query user.storage_mode
+- [X] T169c [US2] Step 3: If user.storage_mode='region', return user.storage_id
+- [X] T169d [US2] Step 4: If user.storage_mode='table', fallback to table.storage_id
+- [X] T169e [US2] Step 5: If table.storage_id is NULL, fallback to storage_id='local'
+- [X] T170 [US2] Update FlushJob path template resolution to use storage from StorageRegistry ✅ **COMPLETE** - UserTableFlushJob now has storage_registry field and resolve_storage_path_for_user() method with dynamic template resolution
+- [X] T170a [US2] Replace hardcoded {storageLocation} with Storage.base_directory
+- [X] T170b [US2] Use Storage.user_tables_template or Storage.shared_tables_template based on table type
+- [X] T170c [US2] Validate template variable ordering during path generation
 - [ ] T171 [US2] Implement S3 storage backend in `/backend/crates/kalamdb-store/src/s3_storage.rs`
 - [ ] T171a [US2] Add aws-sdk-s3 dependency to kalamdb-store/Cargo.toml
 - [ ] T171b [US2] Implement S3Storage::write_parquet() using aws-sdk-s3 PutObject
 - [ ] T171c [US2] Implement S3Storage::read_parquet() using aws-sdk-s3 GetObject
-- [ ] T172 [US2] Implement DELETE FROM system.storages with referential integrity protection
-- [ ] T172a [US2] Query system.tables for COUNT(*) WHERE storage_id = target_storage_id
-- [ ] T172b [US2] If count > 0, return error: "Cannot delete storage '<name>': N table(s) still reference it"
-- [ ] T172c [US2] Include list of up to 10 table names in error message
-- [ ] T172d [US2] Add special protection: Prevent deletion of storage_id='local' (hardcoded check)
+- [X] T172 [US2] Implement DELETE FROM system.storages with referential integrity protection ✅ **COMPLETE** - execute_drop_storage() validates storage existence, checks table references, prevents 'local' deletion
+- [X] T172a [US2] Query system.tables for COUNT(*) WHERE storage_id = target_storage_id
+- [X] T172b [US2] If count > 0, return error: "Cannot delete storage '<name>': N table(s) still reference it"
+- [X] T172c [US2] Include list of up to 10 table names in error message
+- [X] T172d [US2] Add special protection: Prevent deletion of storage_id='local' (hardcoded check)
 - [X] T173 [P] [US2] Create SQL commands for storage management in `/backend/crates/kalamdb-sql/src/storage_commands.rs`
 - [X] T173a [P] [US2] Implement CREATE STORAGE command parsing (FIXED: word boundary matching, PATH/BUCKET syntax, quoted/unquoted TYPE)
 - [X] T173b [P] [US2] Implement ALTER STORAGE command parsing (update templates, description)

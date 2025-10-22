@@ -4,7 +4,7 @@
 //! as the underlying storage engine. It maps the generic partition concept to
 //! RocksDB column families.
 
-use crate::storage_trait::{Operation, Partition, StorageBackend, StorageError, Result};
+use crate::storage_trait::{Operation, Partition, Result, StorageBackend, StorageError};
 use rocksdb::{ColumnFamily, IteratorMode, Options, DB};
 use std::sync::Arc;
 
@@ -81,7 +81,11 @@ impl StorageBackend for RocksDBBackend {
 
         for op in operations {
             match op {
-                Operation::Put { partition, key, value } => {
+                Operation::Put {
+                    partition,
+                    key,
+                    value,
+                } => {
                     let cf = self.get_cf(&partition)?;
                     batch.put_cf(cf, key, value);
                 }
@@ -169,7 +173,7 @@ impl StorageBackend for RocksDBBackend {
         // RocksDB doesn't have a direct cf_names() method on Arc<DB>
         // We need to iterate through CFs differently
         let mut partitions = Vec::new();
-        
+
         // Try to get all column family handles
         // The default CF always exists, so we skip it
         for name in ["default"].iter() {
@@ -177,7 +181,7 @@ impl StorageBackend for RocksDBBackend {
                 partitions.push(Partition::new(*name));
             }
         }
-        
+
         // This is a limitation - we can't easily enumerate all CFs from Arc<DB>
         // In practice, the application should track CF names separately
         // For now, return empty list (excluding default)

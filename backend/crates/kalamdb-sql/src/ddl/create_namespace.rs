@@ -4,8 +4,9 @@
 //! - CREATE NAMESPACE app
 //! - CREATE NAMESPACE IF NOT EXISTS app
 
-use crate::catalog::NamespaceId;
-use crate::error::KalamDbError;
+use crate::ddl::DdlResult;
+use anyhow::anyhow;
+use kalamdb_commons::models::NamespaceId;
 
 /// CREATE NAMESPACE statement
 #[derive(Debug, Clone, PartialEq)]
@@ -23,13 +24,11 @@ impl CreateNamespaceStatement {
     /// Supports syntax:
     /// - CREATE NAMESPACE name
     /// - CREATE NAMESPACE IF NOT EXISTS name
-    pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
+    pub fn parse(sql: &str) -> DdlResult<Self> {
         let sql_upper = sql.trim().to_uppercase();
 
         if !sql_upper.starts_with("CREATE NAMESPACE") {
-            return Err(KalamDbError::InvalidSql(
-                "Expected CREATE NAMESPACE statement".to_string(),
-            ));
+            return Err(anyhow!("Expected CREATE NAMESPACE statement"));
         }
 
         let if_not_exists = sql_upper.contains("IF NOT EXISTS");
@@ -54,7 +53,7 @@ impl CreateNamespaceStatement {
 
         let name = name_part
             .and_then(|s| s.split_whitespace().next())
-            .ok_or_else(|| KalamDbError::InvalidSql("Namespace name is required".to_string()))?;
+            .ok_or_else(|| anyhow!("Namespace name is required"))?;
 
         Ok(Self {
             name: NamespaceId::new(name),

@@ -69,16 +69,16 @@ pub type Result<T> = std::result::Result<T, StorageError>;
 pub enum StorageError {
     /// Partition (column family, tree, namespace) not found
     PartitionNotFound(String),
-    
+
     /// Generic I/O error from underlying storage
     IoError(String),
-    
+
     /// Serialization/deserialization error
     SerializationError(String),
-    
+
     /// Operation not supported by this backend
     Unsupported(String),
-    
+
     /// Other errors
     Other(String),
 }
@@ -113,9 +113,7 @@ pub struct Partition {
 impl Partition {
     /// Creates a new partition with the given name.
     pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-        }
+        Self { name: name.into() }
     }
 
     /// Returns the partition name.
@@ -153,12 +151,9 @@ pub enum Operation {
         key: Vec<u8>,
         value: Vec<u8>,
     },
-    
+
     /// Delete a key
-    Delete {
-        partition: Partition,
-        key: Vec<u8>,
-    },
+    Delete { partition: Partition, key: Vec<u8> },
 }
 
 /// Trait for pluggable storage backend implementations.
@@ -253,7 +248,11 @@ mod tests {
         };
 
         match op {
-            Operation::Put { partition, key, value } => {
+            Operation::Put {
+                partition,
+                key,
+                value,
+            } => {
                 assert_eq!(partition.name(), "test");
                 assert_eq!(key, b"key1");
                 assert_eq!(value, b"value1");

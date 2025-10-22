@@ -9,14 +9,14 @@
 use crate::catalog::StorageLocation;
 use crate::error::KalamDbError;
 use crate::tables::system::storage_locations::StorageLocationsTable;
+use crate::tables::system::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::error::Result as DataFusionResult;
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::memory::MemoryExec;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_sql::KalamSql;
 use serde::{Deserialize, Serialize};
@@ -306,6 +306,20 @@ impl StorageLocationsTableProvider {
     }
 }
 
+impl SystemTableProviderExt for StorageLocationsTableProvider {
+    fn table_name(&self) -> &'static str {
+        kalamdb_commons::constants::SystemTableNames::STORAGE_LOCATIONS
+    }
+
+    fn schema_ref(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    fn load_batch(&self) -> Result<RecordBatch, KalamDbError> {
+        self.scan_all_locations()
+    }
+}
+
 #[async_trait]
 impl TableProvider for StorageLocationsTableProvider {
     fn as_any(&self) -> &dyn Any {
@@ -327,18 +341,7 @@ impl TableProvider for StorageLocationsTableProvider {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // Scan all storage locations using the helper method
-        let batch = self.scan_all_locations().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to scan storage locations: {}", e))
-        })?;
-
-        // Create a single partition with the batch
-        let partitions = vec![vec![batch]];
-
-        // Create a MemoryExec plan
-        let exec = MemoryExec::try_new(&partitions, self.schema.clone(), projection.cloned())?;
-
-        Ok(Arc::new(exec))
+        self.into_memory_exec(projection)
     }
 }
 

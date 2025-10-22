@@ -36,8 +36,8 @@ impl CreateStreamTableStatement {
         // Preprocess SQL to remove "STREAM" keyword and TTL/BUFFER_SIZE clauses for standard SQL parser
         // "CREATE STREAM TABLE ... TTL 3600 BUFFER_SIZE 1000" -> "CREATE TABLE ..."
         // Normalize whitespace and remove stream-specific keywords before parsing
-    let mut normalized_sql = sql.replace(['\n', '\r'], " ");
-    normalized_sql = normalized_sql.replace("STREAM TABLE", "TABLE");
+        let mut normalized_sql = sql.replace(['\n', '\r'], " ");
+        normalized_sql = normalized_sql.replace("STREAM TABLE", "TABLE");
 
         // Remove stream-specific modifiers using regex
         use regex::Regex;

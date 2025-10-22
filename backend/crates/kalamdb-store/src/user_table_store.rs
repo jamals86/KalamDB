@@ -33,7 +33,12 @@ impl UserTableStore {
     }
 
     fn cf_name(namespace_id: &str, table_name: &str) -> String {
-        format!("{}{}:{}", kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX, namespace_id, table_name)
+        format!(
+            "{}{}:{}",
+            kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX,
+            namespace_id,
+            table_name
+        )
     }
 
     fn ensure_cf(&self, namespace_id: &str, table_name: &str) -> Result<&ColumnFamily> {
@@ -111,7 +116,10 @@ impl UserTableStore {
                 kalamdb_commons::constants::SystemColumnNames::UPDATED.to_string(),
                 JsonValue::String(Utc::now().to_rfc3339()),
             );
-            obj.insert(kalamdb_commons::constants::SystemColumnNames::DELETED.to_string(), JsonValue::Bool(false));
+            obj.insert(
+                kalamdb_commons::constants::SystemColumnNames::DELETED.to_string(),
+                JsonValue::Bool(false),
+            );
         }
 
         let cf = self.ensure_cf(namespace_id, table_name)?;
@@ -148,7 +156,9 @@ impl UserTableStore {
 
                 // Filter out soft-deleted rows
                 if let Some(obj) = row_data.as_object() {
-                    if let Some(deleted) = obj.get(kalamdb_commons::constants::SystemColumnNames::DELETED) {
+                    if let Some(deleted) =
+                        obj.get(kalamdb_commons::constants::SystemColumnNames::DELETED)
+                    {
                         if deleted.as_bool() == Some(true) {
                             return Ok(None);
                         }
@@ -216,7 +226,10 @@ impl UserTableStore {
                 let mut row_data: JsonValue = serde_json::from_slice(&bytes)?;
 
                 if let Some(obj) = row_data.as_object_mut() {
-                    obj.insert(kalamdb_commons::constants::SystemColumnNames::DELETED.to_string(), JsonValue::Bool(true));
+                    obj.insert(
+                        kalamdb_commons::constants::SystemColumnNames::DELETED.to_string(),
+                        JsonValue::Bool(true),
+                    );
                     obj.insert(
                         kalamdb_commons::constants::SystemColumnNames::UPDATED.to_string(),
                         JsonValue::String(Utc::now().to_rfc3339()),
@@ -264,7 +277,9 @@ impl UserTableStore {
 
             // Filter out soft-deleted rows
             if let Some(obj) = row_data.as_object() {
-                if let Some(deleted) = obj.get(kalamdb_commons::constants::SystemColumnNames::DELETED) {
+                if let Some(deleted) =
+                    obj.get(kalamdb_commons::constants::SystemColumnNames::DELETED)
+                {
                     if deleted.as_bool() == Some(true) {
                         continue;
                     }
@@ -468,38 +483,38 @@ impl UserTableStore {
         self.db.write(batch)?;
         Ok(())
     }
-    
+
     /// Create a RocksDB snapshot for consistent reads during flush operations
-    /// 
+    ///
     /// The snapshot provides a consistent view of the database at the time it was created,
     /// preventing data loss from concurrent inserts during the flush process.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A RocksDB Snapshot that can be used with `scan_with_snapshot`
-    /// 
+    ///
     /// # T151a: RocksDB snapshot for read consistency
     pub fn create_snapshot(&self) -> rocksdb::Snapshot<'_> {
         self.db.snapshot()
     }
-    
+
     /// Scan table using a snapshot for consistent iteration
-    /// 
+    ///
     /// This method provides a consistent view of the table data using the provided snapshot.
     /// It's designed for flush operations where we need to ensure no rows are missed due to
     /// concurrent writes.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `snapshot` - RocksDB snapshot created with `create_snapshot()`
     /// * `namespace_id` - Namespace identifier
     /// * `table_name` - Table name
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A RocksDB iterator over (key_bytes, value_bytes) pairs from the snapshot.
     /// Returns an empty iterator if the column family doesn't exist.
-    /// 
+    ///
     /// # T151b: Sequential scan with snapshot for streaming flush
     pub fn scan_with_snapshot<'a>(
         &'a self,
@@ -508,9 +523,11 @@ impl UserTableStore {
         table_name: &str,
     ) -> Result<rocksdb::DBIteratorWithThreadMode<'a, rocksdb::DB>> {
         let cf_name = Self::cf_name(namespace_id, table_name);
-        let cf = self.db.cf_handle(&cf_name)
+        let cf = self
+            .db
+            .cf_handle(&cf_name)
             .with_context(|| format!("Column family not found: {}", cf_name))?;
-        
+
         Ok(snapshot.iterator_cf(cf, IteratorMode::Start))
     }
 }
@@ -555,7 +572,10 @@ mod tests {
         assert_eq!(retrieved_data["message_id"], "msg001");
         assert_eq!(retrieved_data["content"], "Hello, world!");
         assert!(retrieved_data[kalamdb_commons::constants::SystemColumnNames::UPDATED].is_string());
-        assert_eq!(retrieved_data[kalamdb_commons::constants::SystemColumnNames::DELETED], false);
+        assert_eq!(
+            retrieved_data[kalamdb_commons::constants::SystemColumnNames::DELETED],
+            false
+        );
     }
 
     #[test]

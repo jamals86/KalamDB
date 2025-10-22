@@ -3,14 +3,15 @@
 //! Parses CREATE USER TABLE statements with schema, LOCATION clause,
 //! LOCATION REFERENCE, FLUSH POLICY, and deleted_retention options.
 
-use crate::catalog::{NamespaceId, TableName};
-use crate::error::KalamDbError;
-use crate::flush::FlushPolicy;
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use datafusion::sql::sqlparser::ast::{ColumnDef, DataType as SQLDataType, Statement};
-use datafusion::sql::sqlparser::dialect::GenericDialect;
-use datafusion::sql::sqlparser::parser::Parser;
+use crate::ddl::DdlResult;
+use anyhow::anyhow;
+use arrow::datatypes::{DataType, Field, Schema};
+use kalamdb_commons::models::{NamespaceId, TableName};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use sqlparser::ast::{ColumnDef, DataType as SQLDataType, Statement};
+use sqlparser::dialect::GenericDialect;
+use sqlparser::parser::Parser;
 use std::sync::Arc;
 
 /// Storage location specification for a user table
@@ -20,6 +21,70 @@ pub enum StorageLocation {
     Path(String),
     /// Reference to a predefined storage location
     Reference(String),
+}
+
+/// Flush policy extracted from CREATE USER TABLE statements.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum UserTableFlushPolicy {
+    /// Flush after N rows inserted
+    RowLimit { row_limit: u32 },
+    /// Flush every N seconds
+    TimeInterval { interval_seconds: u32 },
+    /// Flush when either limit is reached
+    Combined {
+        row_limit: u32,
+        interval_seconds: u32,
+    },
+}
+
+impl UserTableFlushPolicy {
+    fn validate(&self) -> Result<(), String> {
+        match self {
+            UserTableFlushPolicy::RowLimit { row_limit } => {
+                if *row_limit == 0 {
+                    return Err("Row limit must be greater than 0".to_string());
+                }
+                if *row_limit >= 1_000_000 {
+                    return Err("Row limit must be less than 1,000,000".to_string());
+                }
+                Ok(())
+            }
+            UserTableFlushPolicy::TimeInterval { interval_seconds } => {
+                if *interval_seconds == 0 {
+                    return Err("Interval must be greater than 0".to_string());
+                }
+                if *interval_seconds >= 86_400 {
+                    return Err("Interval must be less than 86400 seconds (24 hours)".to_string());
+                }
+                Ok(())
+            }
+            UserTableFlushPolicy::Combined {
+                row_limit,
+                interval_seconds,
+            } => {
+                if *row_limit == 0 {
+                    return Err("Row limit must be greater than 0".to_string());
+                }
+                if *row_limit >= 1_000_000 {
+                    return Err("Row limit must be less than 1,000,000".to_string());
+                }
+                if *interval_seconds == 0 {
+                    return Err("Interval must be greater than 0".to_string());
+                }
+                if *interval_seconds >= 86_400 {
+                    return Err("Interval must be less than 86400 seconds (24 hours)".to_string());
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl Default for UserTableFlushPolicy {
+    fn default() -> Self {
+        UserTableFlushPolicy::RowLimit { row_limit: 10_000 }
+    }
 }
 
 /// CREATE USER TABLE statement
@@ -38,7 +103,7 @@ pub struct CreateUserTableStatement {
     /// Use user-specific storage (T168) - Allow per-user storage override
     pub use_user_storage: bool,
     /// Flush policy
-    pub flush_policy: Option<FlushPolicy>,
+    pub flush_policy: Option<UserTableFlushPolicy>,
     /// Deleted row retention in hours
     pub deleted_retention_hours: Option<u32>,
     /// If true, don't error if table already exists
@@ -47,7 +112,7 @@ pub struct CreateUserTableStatement {
 
 impl CreateUserTableStatement {
     /// Parse a CREATE USER TABLE statement from SQL
-    pub fn parse(sql: &str, current_namespace: &NamespaceId) -> Result<Self, KalamDbError> {
+    pub fn parse(sql: &str, current_namespace: &NamespaceId) -> DdlResult<Self> {
         // Preprocess SQL to remove "USER" keyword and FLUSH clause for standard SQL parser
         // "CREATE USER TABLE ... FLUSH ROWS 100" -> "CREATE TABLE ..."
         let mut normalized_sql = sql
@@ -73,13 +138,11 @@ impl CreateUserTableStatement {
         }
 
         let dialect = GenericDialect {};
-        let statements = Parser::parse_sql(&dialect, &normalized_sql)
-            .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+        let statements =
+            Parser::parse_sql(&dialect, &normalized_sql).map_err(|e| anyhow!(e.to_string()))?;
 
         if statements.is_empty() {
-            return Err(KalamDbError::InvalidSql(
-                "No SQL statement found".to_string(),
-            ));
+            return Err(anyhow!("No SQL statement found"));
         }
 
         let stmt = &statements[0];
@@ -91,7 +154,7 @@ impl CreateUserTableStatement {
         stmt: &Statement,
         current_namespace: &NamespaceId,
         original_sql: &str,
-    ) -> Result<Self, KalamDbError> {
+    ) -> DdlResult<Self> {
         match stmt {
             Statement::CreateTable {
                 name,
@@ -117,7 +180,7 @@ impl CreateUserTableStatement {
 
                 // Parse STORAGE clause from original SQL (T167)
                 let storage_id = Self::parse_storage_clause(original_sql)?;
-                
+
                 // Parse USE_USER_STORAGE flag from original SQL (T168)
                 let use_user_storage = Self::parse_use_user_storage(original_sql);
 
@@ -133,26 +196,21 @@ impl CreateUserTableStatement {
                     if_not_exists: *if_not_exists,
                 })
             }
-            _ => Err(KalamDbError::InvalidSql(
-                "Expected CREATE TABLE statement".to_string(),
-            )),
+            _ => Err(anyhow!("Expected CREATE TABLE statement")),
         }
     }
 
     /// Parse FLUSH policy from SQL text (T155, T155a, T155b)
-    /// 
+    ///
     /// Supported syntax:
     /// - FLUSH INTERVAL <seconds>s             -> TimeInterval
     /// - FLUSH ROW_THRESHOLD <count>           -> RowLimit
     /// - FLUSH INTERVAL <seconds>s ROW_THRESHOLD <count> -> Combined
-    /// 
+    ///
     /// Legacy syntax also supported:
     /// - FLUSH ROWS <count>    -> RowLimit
     /// - FLUSH SECONDS <secs>  -> TimeInterval
-    fn parse_flush_policy(sql: &str) -> Result<Option<crate::flush::FlushPolicy>, KalamDbError> {
-        use crate::flush::FlushPolicy;
-        use regex::Regex;
-
+    fn parse_flush_policy(sql: &str) -> DdlResult<Option<UserTableFlushPolicy>> {
         // New syntax: FLUSH INTERVAL <seconds>s ROW_THRESHOLD <count>
         let interval_re = Regex::new(r"(?i)FLUSH\s+INTERVAL\s+(\d+)s").unwrap();
         let row_threshold_re = Regex::new(r"(?i)ROW_THRESHOLD\s+(\d+)").unwrap();
@@ -165,41 +223,41 @@ impl CreateUserTableStatement {
                 // Both parameters provided - Combined policy
                 let interval_seconds: u32 = interval_caps[1]
                     .parse()
-                    .map_err(|_| KalamDbError::InvalidSql("Invalid FLUSH INTERVAL value".to_string()))?;
+                    .map_err(|_| anyhow!("Invalid FLUSH INTERVAL value"))?;
                 let row_limit: u32 = row_caps[1]
                     .parse()
-                    .map_err(|_| KalamDbError::InvalidSql("Invalid ROW_THRESHOLD value".to_string()))?;
-                
-                let policy = FlushPolicy::Combined {
+                    .map_err(|_| anyhow!("Invalid ROW_THRESHOLD value"))?;
+
+                let policy = UserTableFlushPolicy::Combined {
                     interval_seconds,
                     row_limit,
                 };
-                
+
                 // T155b: Validate policy parameters
-                policy.validate().map_err(|e| KalamDbError::InvalidSql(e))?;
-                
+                policy.validate().map_err(|e| anyhow!(e))?;
+
                 return Ok(Some(policy));
             }
             (Some(interval_caps), None) => {
                 // Only interval provided - TimeInterval policy
                 let interval_seconds: u32 = interval_caps[1]
                     .parse()
-                    .map_err(|_| KalamDbError::InvalidSql("Invalid FLUSH INTERVAL value".to_string()))?;
-                
-                let policy = FlushPolicy::TimeInterval { interval_seconds };
-                policy.validate().map_err(|e| KalamDbError::InvalidSql(e))?;
-                
+                    .map_err(|_| anyhow!("Invalid FLUSH INTERVAL value"))?;
+
+                let policy = UserTableFlushPolicy::TimeInterval { interval_seconds };
+                policy.validate().map_err(|e| anyhow!(e))?;
+
                 return Ok(Some(policy));
             }
             (None, Some(row_caps)) => {
                 // Only row threshold provided - RowLimit policy
                 let row_limit: u32 = row_caps[1]
                     .parse()
-                    .map_err(|_| KalamDbError::InvalidSql("Invalid ROW_THRESHOLD value".to_string()))?;
-                
-                let policy = FlushPolicy::RowLimit { row_limit };
-                policy.validate().map_err(|e| KalamDbError::InvalidSql(e))?;
-                
+                    .map_err(|_| anyhow!("Invalid ROW_THRESHOLD value"))?;
+
+                let policy = UserTableFlushPolicy::RowLimit { row_limit };
+                policy.validate().map_err(|e| anyhow!(e))?;
+
                 return Ok(Some(policy));
             }
             (None, None) => {
@@ -212,9 +270,9 @@ impl CreateUserTableStatement {
         if let Some(caps) = rows_re.captures(sql) {
             let count: u32 = caps[1]
                 .parse()
-                .map_err(|_| KalamDbError::InvalidSql("Invalid FLUSH ROWS value".to_string()))?;
-            let policy = FlushPolicy::RowLimit { row_limit: count };
-            policy.validate().map_err(|e| KalamDbError::InvalidSql(e))?;
+                .map_err(|_| anyhow!("Invalid FLUSH ROWS value"))?;
+            let policy = UserTableFlushPolicy::RowLimit { row_limit: count };
+            policy.validate().map_err(|e| anyhow!(e))?;
             return Ok(Some(policy));
         }
 
@@ -223,11 +281,11 @@ impl CreateUserTableStatement {
         if let Some(caps) = seconds_re.captures(sql) {
             let secs: u32 = caps[1]
                 .parse()
-                .map_err(|_| KalamDbError::InvalidSql("Invalid FLUSH SECONDS value".to_string()))?;
-            let policy = FlushPolicy::TimeInterval {
+                .map_err(|_| anyhow!("Invalid FLUSH SECONDS value"))?;
+            let policy = UserTableFlushPolicy::TimeInterval {
                 interval_seconds: secs,
             };
-            policy.validate().map_err(|e| KalamDbError::InvalidSql(e))?;
+            policy.validate().map_err(|e| anyhow!(e))?;
             return Ok(Some(policy));
         }
 
@@ -242,14 +300,19 @@ impl CreateUserTableStatement {
     /// # Examples
     /// - `STORAGE local`
     /// - `STORAGE s3_prod`
-    fn parse_storage_clause(sql: &str) -> Result<Option<String>, KalamDbError> {
-        use regex::Regex;
-        
-        // Match: STORAGE <identifier>
-        let storage_re = Regex::new(r"(?i)STORAGE\s+([a-z0-9_]+)").unwrap();
-        
+    fn parse_storage_clause(sql: &str) -> DdlResult<Option<String>> {
+        // Match: STORAGE <identifier> or STORAGE 'identifier' or STORAGE "identifier"
+        let storage_re =
+            Regex::new(r#"(?i)STORAGE\s+(?:'([^']+)'|"([^"]+)"|([a-z0-9_]+))"#).unwrap();
+
         if let Some(caps) = storage_re.captures(sql) {
-            let storage_id = caps[1].to_string();
+            // Try each capture group (single quote, double quote, or unquoted)
+            let storage_id = caps
+                .get(1)
+                .or_else(|| caps.get(2))
+                .or_else(|| caps.get(3))
+                .map(|m| m.as_str().to_string())
+                .ok_or_else(|| anyhow!("Invalid STORAGE clause"))?;
             Ok(Some(storage_id))
         } else {
             // T167a: Default to 'local' when omitted
@@ -266,21 +329,17 @@ impl CreateUserTableStatement {
     /// - `USE_USER_STORAGE TRUE` -> true
     /// - No clause -> false (default)
     fn parse_use_user_storage(sql: &str) -> bool {
-        use regex::Regex;
-        
         // Match: USE_USER_STORAGE (optionally followed by TRUE)
         let use_user_storage_re = Regex::new(r"(?i)USE_USER_STORAGE(\s+TRUE)?").unwrap();
-        
+
         use_user_storage_re.is_match(sql)
     }
 
     /// Extract table name from object name
-    fn extract_table_name(
-        name: &datafusion::sql::sqlparser::ast::ObjectName,
-    ) -> Result<String, KalamDbError> {
+    fn extract_table_name(name: &sqlparser::ast::ObjectName) -> DdlResult<String> {
         let parts = &name.0;
         if parts.is_empty() {
-            return Err(KalamDbError::InvalidSql("Empty table name".to_string()));
+            return Err(anyhow!("Empty table name"));
         }
 
         // Take the last part as table name (handles both "table" and "namespace.table")
@@ -288,7 +347,7 @@ impl CreateUserTableStatement {
     }
 
     /// Extract namespace from object name if qualified, otherwise return None
-    fn extract_namespace(name: &datafusion::sql::sqlparser::ast::ObjectName) -> Option<String> {
+    fn extract_namespace(name: &sqlparser::ast::ObjectName) -> Option<String> {
         let parts = &name.0;
         if parts.len() >= 2 {
             // Qualified name like "app.messages" - first part is namespace
@@ -299,20 +358,17 @@ impl CreateUserTableStatement {
     }
 
     /// Parse schema from column definitions
-    fn parse_schema(columns: &[ColumnDef]) -> Result<Arc<Schema>, KalamDbError> {
-        let fields: Result<Vec<Field>, KalamDbError> = columns
+    fn parse_schema(columns: &[ColumnDef]) -> DdlResult<Arc<Schema>> {
+        let fields: DdlResult<Vec<Field>> = columns
             .iter()
             .map(|col| {
                 let data_type = Self::convert_sql_type(&col.data_type)?;
                 Ok(Field::new(
                     col.name.value.clone(),
                     data_type,
-                    col.options.iter().any(|opt| {
-                        matches!(
-                            opt.option,
-                            datafusion::sql::sqlparser::ast::ColumnOption::Null
-                        )
-                    }),
+                    col.options
+                        .iter()
+                        .any(|opt| matches!(opt.option, sqlparser::ast::ColumnOption::Null)),
                 ))
             })
             .collect();
@@ -321,7 +377,7 @@ impl CreateUserTableStatement {
     }
 
     /// Convert SQL data type to Arrow data type
-    fn convert_sql_type(sql_type: &SQLDataType) -> Result<DataType, KalamDbError> {
+    fn convert_sql_type(sql_type: &SQLDataType) -> DdlResult<DataType> {
         match sql_type {
             SQLDataType::BigInt(_) | SQLDataType::Int8(_) => Ok(DataType::Int64),
             SQLDataType::Int(_) | SQLDataType::Integer(_) | SQLDataType::Int4(_) => {
@@ -335,20 +391,17 @@ impl CreateUserTableStatement {
             SQLDataType::Float(_) | SQLDataType::Real => Ok(DataType::Float32),
             SQLDataType::Double | SQLDataType::DoublePrecision => Ok(DataType::Float64),
             SQLDataType::Timestamp(_, _) => Ok(DataType::Timestamp(
-                datafusion::arrow::datatypes::TimeUnit::Millisecond,
+                arrow::datatypes::TimeUnit::Millisecond,
                 None,
             )),
             SQLDataType::Date => Ok(DataType::Date32),
             SQLDataType::Binary(_) | SQLDataType::Bytea => Ok(DataType::Binary),
-            _ => Err(KalamDbError::InvalidSql(format!(
-                "Unsupported data type: {:?}",
-                sql_type
-            ))),
+            _ => Err(anyhow!("Unsupported data type: {:?}", sql_type)),
         }
     }
 
     /// Validate the table name follows naming conventions
-    pub fn validate_table_name(&self) -> Result<(), KalamDbError> {
+    pub fn validate_table_name(&self) -> DdlResult<()> {
         let name = self.table_name.as_str();
 
         // Must start with lowercase letter
@@ -358,9 +411,7 @@ impl CreateUserTableStatement {
             .map(|c| c.is_ascii_lowercase())
             .unwrap_or(false)
         {
-            return Err(KalamDbError::InvalidOperation(
-                "Table name must start with a lowercase letter".to_string(),
-            ));
+            return Err(anyhow!("Table name must start with a lowercase letter"));
         }
 
         // Can only contain lowercase letters, digits, and underscores
@@ -368,9 +419,8 @@ impl CreateUserTableStatement {
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
         {
-            return Err(KalamDbError::InvalidOperation(
+            return Err(anyhow!(
                 "Table name can only contain lowercase letters, digits, and underscores"
-                    .to_string(),
             ));
         }
 
@@ -475,13 +525,13 @@ mod tests {
     fn test_parse_schema() {
         let columns = vec![
             ColumnDef {
-                name: datafusion::sql::sqlparser::ast::Ident::new("id"),
+                name: sqlparser::ast::Ident::new("id"),
                 data_type: SQLDataType::BigInt(None),
                 collation: None,
                 options: vec![],
             },
             ColumnDef {
-                name: datafusion::sql::sqlparser::ast::Ident::new("name"),
+                name: sqlparser::ast::Ident::new("name"),
                 data_type: SQLDataType::Text,
                 collation: None,
                 options: vec![],

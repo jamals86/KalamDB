@@ -8,14 +8,14 @@
 
 use crate::error::KalamDbError;
 use crate::tables::system::users::UsersTable;
+use crate::tables::system::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, TimestampMillisecondArray};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::error::Result as DataFusionResult;
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::memory::MemoryExec;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_sql::{KalamSql, User};
 use serde::{Deserialize, Serialize};
@@ -55,7 +55,7 @@ impl UsersTableProvider {
             email: user.email.clone().unwrap_or_default(),
             created_at: user.created_at,
             storage_mode: Some("table".to_string()), // T163c: Default to 'table' mode
-            storage_id: None, // T163c: NULL by default
+            storage_id: None,                        // T163c: NULL by default
         };
 
         self.kalam_sql
@@ -84,7 +84,7 @@ impl UsersTableProvider {
             email: user.email.clone().unwrap_or_default(),
             created_at: user.created_at,
             storage_mode: Some("table".to_string()), // T163c: Default to 'table' mode
-            storage_id: None, // T163c: NULL by default
+            storage_id: None,                        // T163c: NULL by default
         };
 
         self.kalam_sql
@@ -159,6 +159,20 @@ impl UsersTableProvider {
     }
 }
 
+impl SystemTableProviderExt for UsersTableProvider {
+    fn table_name(&self) -> &'static str {
+        kalamdb_commons::constants::SystemTableNames::USERS
+    }
+
+    fn schema_ref(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    fn load_batch(&self) -> Result<RecordBatch, KalamDbError> {
+        self.scan_all_users()
+    }
+}
+
 #[async_trait]
 impl TableProvider for UsersTableProvider {
     fn as_any(&self) -> &dyn Any {
@@ -180,17 +194,7 @@ impl TableProvider for UsersTableProvider {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let batch = self.scan_all_users().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to load system.users records: {}", e))
-        })?;
-
-        let partitions = vec![vec![batch]];
-        let exec = MemoryExec::try_new(&partitions, self.schema.clone(), projection.cloned())
-            .map_err(|e| {
-                DataFusionError::Execution(format!("Failed to build MemoryExec: {}", e))
-            })?;
-
-        Ok(Arc::new(exec))
+        self.into_memory_exec(projection)
     }
 }
 

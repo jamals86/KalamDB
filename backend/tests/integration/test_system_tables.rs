@@ -43,7 +43,7 @@ async fn test_01_list_system_tables() {
     // Verify we have at least one table
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
         assert!(rows.len() >= 1, "Expected at least 1 user table");
-        
+
         // Verify the messages table exists
         let messages_found = rows.iter().any(|row| {
             row.get("table_name")
@@ -51,7 +51,7 @@ async fn test_01_list_system_tables() {
                 .map(|s| s == "messages")
                 .unwrap_or(false)
         });
-        
+
         assert!(messages_found, "messages table should be in system.tables");
     } else {
         panic!("No rows returned from system.tables query");
@@ -91,8 +91,7 @@ async fn test_02_query_system_table_schemas() {
         assert_eq!(
             response.status, "success",
             "Failed to query {}: {:?}",
-            table,
-            response.error
+            table, response.error
         );
     }
 }
@@ -103,7 +102,9 @@ async fn test_03_query_system_users_basic() {
 
     // Test basic query on system.users
     let response = server
-        .execute_sql("SELECT user_id, username, email FROM system.users WHERE user_id = 'nonexistent'")
+        .execute_sql(
+            "SELECT user_id, username, email FROM system.users WHERE user_id = 'nonexistent'",
+        )
         .await;
 
     assert_eq!(
@@ -202,10 +203,7 @@ async fn test_05_query_system_tables() {
         assert!(config_row.is_some(), "config table not found");
 
         if let Some(row) = config_row {
-            let table_type = row
-                .get("table_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let table_type = row.get("table_type").and_then(|v| v.as_str()).unwrap_or("");
             assert_eq!(table_type, "shared", "config should be shared table");
         }
     }
@@ -291,7 +289,9 @@ async fn test_07_insert_users_into_system_table() {
 
     // Verify the user was inserted
     let response = server
-        .execute_sql("SELECT user_id, username, email FROM system.users WHERE user_id = 'test_user_001'")
+        .execute_sql(
+            "SELECT user_id, username, email FROM system.users WHERE user_id = 'test_user_001'",
+        )
         .await;
 
     assert_eq!(
@@ -408,12 +408,12 @@ async fn test_09_query_table_schemas() {
 
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(rows.len(), 1, "Expected 1 table row");
-        
+
         let schema_version = rows[0]
             .get("schema_version")
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
-        
+
         assert!(schema_version >= 1, "Schema version should be at least 1");
     } else {
         panic!("No table found");
@@ -659,7 +659,9 @@ async fn test_14_update_system_users() {
 
     // Update the username
     let response = server
-        .execute_sql("UPDATE system.users SET username = 'newname' WHERE user_id = 'update_test_user'")
+        .execute_sql(
+            "UPDATE system.users SET username = 'newname' WHERE user_id = 'update_test_user'",
+        )
         .await;
 
     // Note: UPDATE on system tables may not be implemented yet
@@ -679,7 +681,9 @@ async fn test_14_update_system_users() {
 
     // Verify the update
     let response = server
-        .execute_sql("SELECT user_id, username FROM system.users WHERE user_id = 'update_test_user'")
+        .execute_sql(
+            "SELECT user_id, username FROM system.users WHERE user_id = 'update_test_user'",
+        )
         .await;
 
     assert_eq!(response.status, "success");
@@ -746,10 +750,7 @@ async fn test_15_update_multiple_users() {
 
         for row in rows.iter() {
             let email = row.get("email").and_then(|v| v.as_str()).unwrap();
-            assert_eq!(
-                email, "updated@example.com",
-                "Email should be updated"
-            );
+            assert_eq!(email, "updated@example.com", "Email should be updated");
         }
     }
 }
@@ -837,7 +838,9 @@ async fn test_17_update_storage_location() {
 
     // Verify the update
     let response = server
-        .execute_sql("SELECT path FROM system.storage_locations WHERE location_name = 'update-storage'")
+        .execute_sql(
+            "SELECT path FROM system.storage_locations WHERE location_name = 'update-storage'",
+        )
         .await;
 
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {

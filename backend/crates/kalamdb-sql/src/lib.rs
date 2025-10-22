@@ -32,6 +32,7 @@
 //! ```
 
 pub mod adapter;
+pub mod ddl;
 pub mod executor;
 pub mod job_commands;
 pub mod models;

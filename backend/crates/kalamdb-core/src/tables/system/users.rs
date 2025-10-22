@@ -16,7 +16,7 @@ impl UsersTable {
             Field::new("username", DataType::Utf8, false),
             Field::new("email", DataType::Utf8, true),
             Field::new("storage_mode", DataType::Utf8, true), // T163c: 'table' or 'region'
-            Field::new("storage_id", DataType::Utf8, true), // T163c: FK to system.storages
+            Field::new("storage_id", DataType::Utf8, true),   // T163c: FK to system.storages
             Field::new(
                 "created_at",
                 DataType::Timestamp(TimeUnit::Millisecond, None),

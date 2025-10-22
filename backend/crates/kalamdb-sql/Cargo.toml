@@ -12,6 +12,7 @@ kalamdb-commons = { path = "../kalamdb-commons" }
 
 # Database
 rocksdb = { workspace = true }
+arrow = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
@@ -20,6 +21,7 @@ bincode = "1.3"
 
 # SQL parsing
 sqlparser = { workspace = true }
+regex = "1.11"
 
 # Error handling
 anyhow = { workspace = true }

@@ -149,9 +149,7 @@ async fn execute_single_statement(
             Ok(result) => {
                 // Convert ExecutionResult to QueryResult
                 match result {
-                    ExecutionResult::Success(message) => {
-                        Ok(QueryResult::with_message(message))
-                    }
+                    ExecutionResult::Success(message) => Ok(QueryResult::with_message(message)),
                     ExecutionResult::RecordBatch(batch) => {
                         record_batch_to_query_result(vec![batch])
                     }
@@ -160,9 +158,7 @@ async fn execute_single_statement(
                     }
                 }
             }
-            Err(e) => {
-                Err(Box::new(e))
-            }
+            Err(e) => Err(Box::new(e)),
         }
     } else {
         // Fallback for testing: use DataFusion directly for simple queries

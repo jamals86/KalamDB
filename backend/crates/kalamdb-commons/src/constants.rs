@@ -30,6 +30,9 @@ impl SystemTableNames {
     /// System tables catalog: `system.tables`
     pub const TABLES: &'static str = "system.tables";
 
+    /// Legacy storage locations table: `system.storage_locations`
+    pub const STORAGE_LOCATIONS: &'static str = "system.storage_locations";
+
     /// Table schema versions: `system.table_schemas`
     pub const TABLE_SCHEMAS: &'static str = "system.table_schemas";
 
@@ -68,7 +71,10 @@ impl ColumnFamilyNames {
     /// System table schemas column family
     pub const SYSTEM_TABLE_SCHEMAS: &'static str = "system_table_schemas";
 
-    /// System storage locations column family
+    /// Legacy storage locations column family
+    pub const SYSTEM_STORAGE_LOCATIONS: &'static str = "system_storage_locations";
+
+    /// System storages column family
     pub const SYSTEM_STORAGES: &'static str = "system_storages";
 
     /// System live queries column family

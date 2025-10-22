@@ -41,9 +41,9 @@ impl StorageRegistry {
     /// # }
     /// ```
     pub fn get_storage(&self, storage_id: &str) -> Result<Option<Storage>, KalamDbError> {
-        self.kalam_sql
-            .get_storage(storage_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e)))
+        self.kalam_sql.get_storage(storage_id).map_err(|e| {
+            KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e))
+        })
     }
 
     /// List all storage configurations
@@ -121,7 +121,11 @@ impl StorageRegistry {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn validate_template(&self, template: &str, is_user_table: bool) -> Result<(), KalamDbError> {
+    pub fn validate_template(
+        &self,
+        template: &str,
+        is_user_table: bool,
+    ) -> Result<(), KalamDbError> {
         if is_user_table {
             // User table template validation
             self.validate_user_table_template(template)
@@ -144,7 +148,8 @@ impl StorageRegistry {
                     Ok(())
                 } else {
                     Err(KalamDbError::InvalidOperation(
-                        "Shared table template: {namespace} must appear before {tableName}".to_string(),
+                        "Shared table template: {namespace} must appear before {tableName}"
+                            .to_string(),
                     ))
                 }
             }
@@ -186,7 +191,8 @@ impl StorageRegistry {
             if let Some(tn_pos) = table_name_pos {
                 if ns_pos >= tn_pos {
                     return Err(KalamDbError::InvalidOperation(
-                        "User table template: {namespace} must appear before {tableName}".to_string(),
+                        "User table template: {namespace} must appear before {tableName}"
+                            .to_string(),
                     ));
                 }
             }
@@ -303,8 +309,12 @@ mod tests {
         let registry = create_mock_registry();
 
         // Valid shared table templates
-        assert!(registry.validate_template("{namespace}/{tableName}", false).is_ok());
-        assert!(registry.validate_template("{namespace}/tables/{tableName}", false).is_ok());
+        assert!(registry
+            .validate_template("{namespace}/{tableName}", false)
+            .is_ok());
+        assert!(registry
+            .validate_template("{namespace}/tables/{tableName}", false)
+            .is_ok());
     }
 
     #[test]
@@ -312,7 +322,9 @@ mod tests {
         let registry = create_mock_registry();
 
         // Invalid: {tableName} before {namespace}
-        assert!(registry.validate_template("{tableName}/{namespace}", false).is_err());
+        assert!(registry
+            .validate_template("{tableName}/{namespace}", false)
+            .is_err());
     }
 
     #[test]
@@ -320,7 +332,9 @@ mod tests {
         let registry = create_mock_registry();
 
         // Valid user table templates
-        assert!(registry.validate_template("{namespace}/{tableName}/{userId}", true).is_ok());
+        assert!(registry
+            .validate_template("{namespace}/{tableName}/{userId}", true)
+            .is_ok());
         assert!(registry
             .validate_template("{namespace}/{tableName}/{shard}/{userId}", true)
             .is_ok());
@@ -331,7 +345,9 @@ mod tests {
         let registry = create_mock_registry();
 
         // Invalid: {userId} missing
-        assert!(registry.validate_template("{namespace}/{tableName}", true).is_err());
+        assert!(registry
+            .validate_template("{namespace}/{tableName}", true)
+            .is_err());
     }
 
     #[test]
@@ -339,7 +355,9 @@ mod tests {
         let registry = create_mock_registry();
 
         // Invalid: {userId} before {tableName}
-        assert!(registry.validate_template("{namespace}/{userId}/{tableName}", true).is_err());
+        assert!(registry
+            .validate_template("{namespace}/{userId}/{tableName}", true)
+            .is_err());
 
         // Invalid: {shard} before {tableName}
         assert!(registry
@@ -373,8 +391,7 @@ mod tests {
             .expect("Failed to open RocksDB for storage registry tests");
 
         let kalam_sql = Arc::new(
-            KalamSql::new(db)
-                .expect("Failed to create KalamSQL for storage registry tests"),
+            KalamSql::new(db).expect("Failed to create KalamSQL for storage registry tests"),
         );
 
         StorageRegistry::new(kalam_sql)
