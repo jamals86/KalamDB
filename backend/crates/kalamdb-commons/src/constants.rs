@@ -8,10 +8,10 @@
 //! ## Example Usage
 //!
 //! ```rust
-//! use kalamdb_commons::constants::SYSTEM_TABLES;
+//! use kalamdb_commons::constants::SystemTableNames;
 //!
-//! assert_eq!(SYSTEM_TABLES.USERS, "system.users");
-//! assert_eq!(SYSTEM_TABLES.NAMESPACES, "system.namespaces");
+//! assert_eq!(SystemTableNames::USERS, "system.users");
+//! assert_eq!(SystemTableNames::NAMESPACES, "system.namespaces");
 //! ```
 
 /// System table names used throughout KalamDB.
