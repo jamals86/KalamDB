@@ -50,6 +50,9 @@ Notes:
 13) Remove storage_locations it's the same as system.storages also we need to add the same columns from it: credentials
 14) change the /api/sql to /v1/api/sql and also /v1/ws, /v1/api/healthcheck so that we have consistent versioning in the future
 15) divide the main.rs file into multiple files
+16) All parsers which is responsible for parsing SQL statemenets like cREATE STORAGE and other commands should be moved to kalamdb-sql
+        Should this be moved to kalamdb-sql -> backend/crates/kalamdb-core/src/sql/executor.rs
+
 
 The KalamDB should have similar sql syntax as postgress and MySQL so whenever i ask about syntax you search how Postgress and MySQL writes this syntax and do things in their architecture
 Also the CLI tool for KalamDb should be similar as well

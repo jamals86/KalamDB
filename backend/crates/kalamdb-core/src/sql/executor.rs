@@ -1226,7 +1226,7 @@ impl SqlExecutor {
         use kalamdb_sql::CreateStorageStatement;
         
         let stmt = CreateStorageStatement::parse(sql)
-            .map_err(|e| KalamDbError::InvalidSql(e))?;
+            .map_err(|e| KalamDbError::InvalidOperation(format!("CREATE STORAGE parse error: {}", e)))?;
 
         let kalam_sql = self
             .kalam_sql
@@ -1244,10 +1244,14 @@ impl SqlExecutor {
             )));
         }
 
-        // Validate templates using StorageRegistry
+        // Validate templates using StorageRegistry (only if provided)
         if let Some(storage_registry) = &self.storage_registry {
-            storage_registry.validate_template(&stmt.shared_tables_template, false)?;
-            storage_registry.validate_template(&stmt.user_tables_template, true)?;
+            if !stmt.shared_tables_template.is_empty() {
+                storage_registry.validate_template(&stmt.shared_tables_template, false)?;
+            }
+            if !stmt.user_tables_template.is_empty() {
+                storage_registry.validate_template(&stmt.user_tables_template, true)?;
+            }
         }
 
         // Create storage record
@@ -1279,7 +1283,7 @@ impl SqlExecutor {
         use kalamdb_sql::AlterStorageStatement;
         
         let stmt = AlterStorageStatement::parse(sql)
-            .map_err(|e| KalamDbError::InvalidSql(e))?;
+            .map_err(|e| KalamDbError::InvalidOperation(format!("ALTER STORAGE parse error: {}", e)))?;
 
         let kalam_sql = self
             .kalam_sql
@@ -1334,7 +1338,7 @@ impl SqlExecutor {
         use kalamdb_sql::DropStorageStatement;
         
         let stmt = DropStorageStatement::parse(sql)
-            .map_err(|e| KalamDbError::InvalidSql(e))?;
+            .map_err(|e| KalamDbError::InvalidOperation(format!("DROP STORAGE parse error: {}", e)))?;
 
         let kalam_sql = self
             .kalam_sql
@@ -1535,7 +1539,15 @@ impl SqlExecutor {
             .cloned()
             .unwrap_or_else(|| crate::catalog::UserId::from("system"));
 
-        if sql_upper.contains("USER TABLE") || sql_upper.contains("${USER_ID}") {
+        // Check for TABLE_TYPE clause to determine table type
+        let has_table_type_user = sql_upper.contains("TABLE_TYPE") && 
+            (sql_upper.contains("TABLE_TYPE USER") || sql_upper.contains("TABLE_TYPE 'USER'") || sql_upper.contains("TABLE_TYPE \"USER\""));
+        let has_table_type_shared = sql_upper.contains("TABLE_TYPE") && 
+            (sql_upper.contains("TABLE_TYPE SHARED") || sql_upper.contains("TABLE_TYPE 'SHARED'") || sql_upper.contains("TABLE_TYPE \"SHARED\""));
+        let has_table_type_stream = sql_upper.contains("TABLE_TYPE") && 
+            (sql_upper.contains("TABLE_TYPE STREAM") || sql_upper.contains("TABLE_TYPE 'STREAM'") || sql_upper.contains("TABLE_TYPE \"STREAM\""));
+
+        if sql_upper.contains("USER TABLE") || sql_upper.contains("${USER_ID}") || has_table_type_user {
             // User table - requires user_id
             let actual_user_id = user_id.ok_or_else(|| {
                 KalamDbError::InvalidOperation(
@@ -1614,6 +1626,7 @@ impl SqlExecutor {
         } else if sql_upper.contains("STREAM TABLE")
             || sql_upper.contains("TTL")
             || sql_upper.contains("BUFFER_SIZE")
+            || has_table_type_stream
         {
             // Stream table
             let stmt = CreateStreamTableStatement::parse(sql, &namespace_id)?;
@@ -1666,8 +1679,8 @@ impl SqlExecutor {
             Ok(ExecutionResult::Success(
                 "Stream table created successfully".to_string(),
             ))
-        } else {
-            // Default to shared table (most common case)
+        } else if has_table_type_shared {
+            // Shared table specified via TABLE_TYPE
             let stmt = CreateSharedTableStatement::parse(sql, &namespace_id)?;
             let table_name = stmt.table_name.clone();
             let namespace_id = stmt.namespace_id.clone(); // Use the namespace from the statement
@@ -1744,6 +1757,62 @@ impl SqlExecutor {
                     "Table {}.{} already exists (skipped)",
                     namespace_id, table_name
                 )))
+            }
+        } else {
+            // No TABLE_TYPE specified - default to shared table (most common case)
+            let stmt = CreateSharedTableStatement::parse(sql, &namespace_id)?;
+            let table_name = stmt.table_name.clone();
+            let namespace_id = stmt.namespace_id.clone();
+            let schema = stmt.schema.clone();
+            let flush_policy = stmt.flush_policy.clone();
+            let deleted_retention = stmt.deleted_retention;
+
+            let (metadata, was_created) = self.shared_table_service.create_table(stmt)?;
+
+            if was_created {
+                if let Some(kalam_sql) = &self.kalam_sql {
+                    let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
+                    let flush_policy_json = if let Some(fp) = flush_policy {
+                        match fp {
+                            crate::sql::ddl::create_shared_table::FlushPolicy::Rows(n) => {
+                                serde_json::json!({"type": "row_limit", "row_limit": n}).to_string()
+                            }
+                            crate::sql::ddl::create_shared_table::FlushPolicy::Time(s) => {
+                                serde_json::json!({"type": "time_interval", "interval_seconds": s}).to_string()
+                            }
+                            crate::sql::ddl::create_shared_table::FlushPolicy::Combined { rows, seconds } => {
+                                serde_json::json!({"type": "combined", "row_limit": rows, "interval_seconds": seconds}).to_string()
+                            }
+                        }
+                    } else {
+                        "{}".to_string()
+                    };
+
+                    let table = kalamdb_sql::models::Table {
+                        table_id,
+                        table_name: table_name.as_str().to_string(),
+                        namespace: namespace_id.as_str().to_string(),
+                        table_type: "shared".to_string(),
+                        created_at: chrono::Utc::now().timestamp_millis(),
+                        storage_location: metadata.storage_location.clone(),
+                        storage_id: Some("local".to_string()),
+                        use_user_storage: false,
+                        flush_policy: flush_policy_json,
+                        schema_version: 1,
+                        deleted_retention_hours: deleted_retention.map(|s| (s / 3600) as i32).unwrap_or(0),
+                    };
+                    kalam_sql.insert_table(&table).map_err(|e| {
+                        KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
+                    })?;
+                }
+
+                if self.shared_table_store.is_some() {
+                    self.register_table_with_datafusion(&namespace_id, &table_name, crate::catalog::TableType::Shared, schema, default_user_id).await?;
+                }
+
+                Ok(ExecutionResult::Success("Table created successfully".to_string()))
+            } else {
+                Ok(ExecutionResult::Success(format!("Table {}.{} already exists (skipped)", namespace_id, table_name)))
             }
         }
     }

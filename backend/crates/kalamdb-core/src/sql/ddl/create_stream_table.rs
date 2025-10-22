@@ -36,8 +36,8 @@ impl CreateStreamTableStatement {
         // Preprocess SQL to remove "STREAM" keyword and TTL/BUFFER_SIZE clauses for standard SQL parser
         // "CREATE STREAM TABLE ... TTL 3600 BUFFER_SIZE 1000" -> "CREATE TABLE ..."
         // Normalize whitespace and remove stream-specific keywords before parsing
-        let normalized_sql = sql.replace(['\n', '\r'], " ");
-        let normalized_sql = normalized_sql.replace("STREAM TABLE", "TABLE");
+    let mut normalized_sql = sql.replace(['\n', '\r'], " ");
+    normalized_sql = normalized_sql.replace("STREAM TABLE", "TABLE");
 
         // Remove stream-specific modifiers using regex
         use regex::Regex;
@@ -45,9 +45,19 @@ impl CreateStreamTableStatement {
         let ttl_re = Regex::new(r"(?i)\s+TTL\s+\d+(\s+SECONDS)?").unwrap();
         let buffer_re = Regex::new(r"(?i)\s+BUFFER_SIZE\s+\d+").unwrap();
 
-        let normalized_sql = type_re.replace_all(&normalized_sql, "").to_string();
-        let normalized_sql = ttl_re.replace_all(&normalized_sql, "").to_string();
-        let normalized_sql = buffer_re.replace_all(&normalized_sql, "").to_string();
+        normalized_sql = type_re.replace_all(&normalized_sql, "").to_string();
+        normalized_sql = ttl_re.replace_all(&normalized_sql, "").to_string();
+        normalized_sql = buffer_re.replace_all(&normalized_sql, "").to_string();
+
+        // Remove KalamDB-specific clauses such as TABLE_TYPE or OWNER_ID before parsing.
+        for pattern in [
+            r#"(?i)\s+TABLE_TYPE\s+['\"]?[a-z0-9_]+['\"]?"#,
+            r#"(?i)\s+OWNER_ID\s+['\"][^'\"]+['\"]"#,
+            r#"(?i)\s+STORAGE\s+['\"]?[a-z0-9_]+['\"]?"#,
+        ] {
+            let re = Regex::new(pattern).unwrap();
+            normalized_sql = re.replace_all(&normalized_sql, "").to_string();
+        }
 
         let dialect = GenericDialect {};
         let statements = Parser::parse_sql(&dialect, &normalized_sql)

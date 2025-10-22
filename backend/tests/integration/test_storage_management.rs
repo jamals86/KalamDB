@@ -109,7 +109,7 @@ async fn test_03_create_storage_filesystem() {
         DESCRIPTION 'Cold storage for archived data'
         PATH '/data/archive'
         SHARED_TABLES_TEMPLATE '/data/archive/shared/{namespace}/{tableName}'
-        USER_TABLES_TEMPLATE '/data/archive/users/{userId}/{namespace}/{tableName}'
+        USER_TABLES_TEMPLATE '/data/archive/users/{namespace}/{tableName}/{userId}'
     "#;
 
     let response = server.execute_sql(sql).await;
@@ -173,7 +173,7 @@ async fn test_04_create_storage_s3() {
         BUCKET 'kalamdb-main'
         REGION 'us-west-2'
         SHARED_TABLES_TEMPLATE 's3://kalamdb-main/shared/{namespace}/{tableName}'
-        USER_TABLES_TEMPLATE 's3://kalamdb-main/users/{userId}/{namespace}/{tableName}'
+        USER_TABLES_TEMPLATE 's3://kalamdb-main/users/{namespace}/{tableName}/{userId}'
     "#;
 
     let response = server.execute_sql(sql).await;
@@ -308,7 +308,7 @@ async fn test_07_alter_storage_all_fields() {
         SET NAME = 'Updated Storage'
         SET DESCRIPTION = 'Updated description'
         SET SHARED_TABLES_TEMPLATE = '/data/temp/shared/{namespace}/{tableName}'
-        SET USER_TABLES_TEMPLATE = '/data/temp/users/{userId}/{namespace}/{tableName}'
+        SET USER_TABLES_TEMPLATE = '/data/temp/users/{namespace}/{tableName}/{userId}'
     "#;
 
     let response = server.execute_sql(alter_sql).await;
@@ -335,7 +335,7 @@ async fn test_07_alter_storage_all_fields() {
         );
         assert_eq!(
             storage.get("user_tables_template").and_then(|v| v.as_str()),
-            Some("/data/temp/users/{userId}/{namespace}/{tableName}")
+            Some("/data/temp/users/{namespace}/{tableName}/{userId}")
         );
     } else {
         panic!("No rows returned for temp_storage");
@@ -557,7 +557,7 @@ async fn test_14_template_validation_invalid_order() {
         TYPE filesystem
         NAME 'Invalid Order Storage'
         PATH '/data/invalid'
-        USER_TABLES_TEMPLATE '/data/{userId}/{namespace}/{tableName}'
+        USER_TABLES_TEMPLATE '/data/{namespace}/{tableName}/{userId}'
     "#;
 
     let response = server.execute_sql(sql).await;

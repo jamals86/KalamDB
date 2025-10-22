@@ -41,7 +41,7 @@ impl QueryExecutor {
             params,
         };
 
-        let url = format!("{}/api/sql", self.base_url);
+        let url = format!("{}/v1/api/sql", self.base_url);
         let mut req_builder = self.http_client.post(&url).json(&request);
 
         // Apply authentication

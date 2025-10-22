@@ -1,4 +1,4 @@
-//! SQL execution handler for the `/api/sql` REST API endpoint
+//! SQL execution handler for the `/v1/api/sql` REST API endpoint
 //!
 //! This module provides HTTP handlers for executing SQL statements via the REST API.
 
@@ -13,7 +13,7 @@ use std::time::Instant;
 use crate::models::{QueryResult, SqlRequest, SqlResponse};
 use crate::rate_limiter::RateLimiter;
 
-/// POST /api/sql - Execute SQL statement(s)
+/// POST /v1/api/sql - Execute SQL statement(s)
 ///
 /// Accepts a JSON payload with a `sql` field containing one or more SQL statements.
 /// Multiple statements can be separated by semicolons and will be executed sequentially.
@@ -52,8 +52,8 @@ use crate::rate_limiter::RateLimiter;
 ///   }
 /// }
 /// ```
-#[post("/api/sql")]
-pub async fn execute_sql(
+#[post("/sql")]
+pub async fn execute_sql_v1(
     http_req: HttpRequest,
     req: web::Json<SqlRequest>,
     session_factory: web::Data<Arc<DataFusionSessionFactory>>,
@@ -227,7 +227,7 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(session_factory))
                 .app_data(web::Data::new(rate_limiter))
-                .service(execute_sql),
+                .service(execute_sql_v1),
         )
         .await;
 
@@ -236,7 +236,7 @@ mod tests {
         };
 
         let req = test::TestRequest::post()
-            .uri("/api/sql")
+            .uri("/sql")
             .set_json(&req_body)
             .to_request();
 
@@ -259,7 +259,7 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(session_factory))
                 .app_data(web::Data::new(rate_limiter))
-                .service(execute_sql),
+                .service(execute_sql_v1),
         )
         .await;
 
@@ -268,7 +268,7 @@ mod tests {
         };
 
         let req = test::TestRequest::post()
-            .uri("/api/sql")
+            .uri("/sql")
             .set_json(&req_body)
             .to_request();
 
@@ -285,7 +285,7 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(session_factory))
                 .app_data(web::Data::new(rate_limiter))
-                .service(execute_sql),
+                .service(execute_sql_v1),
         )
         .await;
 
@@ -294,7 +294,7 @@ mod tests {
         };
 
         let req = test::TestRequest::post()
-            .uri("/api/sql")
+            .uri("/sql")
             .set_json(&req_body)
             .to_request();
 

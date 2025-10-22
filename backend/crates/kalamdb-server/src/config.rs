@@ -30,6 +30,9 @@ pub struct ServerSettings {
     pub port: u16,
     #[serde(default = "default_workers")]
     pub workers: usize,
+    /// API version prefix for endpoints (default: "v1")
+    #[serde(default = "default_api_version")]
+    pub api_version: String,
     /// Timeout in seconds to wait for flush jobs to complete during graceful shutdown (T158j)
     #[serde(default = "default_flush_job_shutdown_timeout")]
     pub flush_job_shutdown_timeout_seconds: u32,
@@ -233,6 +236,10 @@ impl Default for RateLimitSettings {
 // Default value functions
 fn default_workers() -> usize {
     0
+}
+
+fn default_api_version() -> String {
+    "v1".to_string()
 }
 
 fn default_flush_job_shutdown_timeout() -> u32 {
@@ -470,6 +477,7 @@ impl ServerConfig {
                 host: "127.0.0.1".to_string(),
                 port: 8080,
                 workers: 0,
+                api_version: default_api_version(),
                 flush_job_shutdown_timeout_seconds: default_flush_job_shutdown_timeout(),
             },
             storage: StorageSettings {

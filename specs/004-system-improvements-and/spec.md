@@ -77,6 +77,89 @@
 
 ## User Scenarios & Testing *(mandatory)*
 
+### User Story 14 - API Versioning and Server Refactoring (Priority: P0)
+
+System administrators and developers need consistent API versioning for future compatibility, credentials support in storage configuration, organized server code structure, and consolidated SQL parsing architecture.
+
+**Why this priority**: API versioning is foundational for backward compatibility and future evolution. This must be in place before other features to prevent breaking changes. Storage credentials are essential for S3/cloud storage. Code organization improvements (main.rs split, SQL parser consolidation) improve maintainability and reduce technical debt.
+
+**Independent Test**: Can be tested by accessing endpoints at /v1/api/sql, /v1/ws, /v1/api/healthcheck and verifying responses; creating storage with credentials column populated; verifying main.rs split into logical modules; confirming SQL parsers (including executor.rs) moved to kalamdb-sql.
+
+**Acceptance Scenarios**:
+
+1. **Given** an API client needs to query the database, **When** they send requests to /v1/api/sql, **Then** the endpoint responds correctly with query results
+2. **Given** a WebSocket client needs live subscriptions, **When** they connect to /v1/ws, **Then** the connection establishes successfully
+3. **Given** a monitoring service checks server health, **When** they access /v1/api/healthcheck, **Then** the endpoint returns health status
+4. **Given** an administrator creates S3 storage, **When** they provide credentials, **Then** the credentials column stores authentication information securely
+5. **Given** system.storages includes credentials, **When** querying the table, **Then** credentials are included alongside other storage metadata
+6. **Given** the server codebase exists, **When** reviewing main.rs, **Then** it is split into logical modules (config, routes, middleware, lifecycle) for better organization
+7. **Given** SQL parsing functionality exists, **When** reviewing kalamdb-core, **Then** all SQL parsers (including executor.rs) are relocated to kalamdb-sql where they belong architecturally
+
+**Integration Tests** (backend/tests/integration/test_api_versioning.rs):
+
+1. **test_v1_sql_endpoint**: POST to /v1/api/sql with query, verify 200 OK and results
+2. **test_v1_websocket_endpoint**: Connect to /v1/ws, verify WebSocket handshake succeeds
+3. **test_v1_healthcheck_endpoint**: GET /v1/api/healthcheck, verify health status response
+4. **test_storage_credentials_column**: Create storage with credentials, verify stored correctly
+5. **test_storage_query_includes_credentials**: Query system.storages, verify credentials field present
+6. **test_main_rs_module_structure**: Verify main.rs imports from config.rs, routes.rs, middleware.rs, lifecycle.rs
+7. **test_executor_moved_to_kalamdb_sql**: Verify backend/crates/kalamdb-sql/src/executor.rs exists and kalamdb-core no longer has SQL parsing logic
+8. **test_sql_keywords_enum_centralized**: Verify all SQL keywords defined in single keywords.rs file as enums
+9. **test_sqlparser_rs_integration**: Execute standard SQL (SELECT, INSERT), verify parsed via sqlparser-rs
+10. **test_custom_statement_extension**: Execute CREATE STORAGE, verify custom sqlparser-rs extension works
+11. **test_postgres_mysql_syntax_compatibility**: Execute PostgreSQL/MySQL-style commands, verify compatibility
+12. **test_error_message_postgres_style**: Trigger table not found error, verify "ERROR: relation 'X' does not exist" format
+13. **test_cli_output_psql_style**: Execute SELECT in CLI, verify table borders and formatting match psql/mysql style
+
+---
+
+### API Versioning and Refactoring Functional Requirements (Embedded)
+
+#### API Versioning
+
+- **FR-VER-001**: All REST API endpoints MUST be prefixed with /v1/ for version 1
+- **FR-VER-002**: SQL query endpoint MUST be accessible at /v1/api/sql
+- **FR-VER-003**: WebSocket endpoint MUST be accessible at /v1/ws
+- **FR-VER-004**: Health check endpoint MUST be accessible at /v1/api/healthcheck
+- **FR-VER-005**: ~~Legacy unversioned endpoints~~ NOT APPLICABLE - v1 is the initial version, no legacy endpoints exist
+- **FR-VER-006**: kalam-link client MUST use versioned endpoints in all requests
+- **FR-VER-007**: API version MUST be configurable in config.toml for future version migrations
+
+#### Storage Credentials Support
+
+- **FR-VER-008**: system.storages table MUST include credentials column (TEXT, nullable)
+- **FR-VER-009**: credentials column MUST store JSON-encoded authentication information (access_key, secret_key, etc.)
+- **FR-VER-010**: CREATE STORAGE command MUST accept CREDENTIALS parameter for S3/cloud storage
+- **FR-VER-011**: Credentials MUST be encrypted at rest (or stored in secure vault in production)
+- **FR-VER-012**: Query system.storages MUST NOT expose credentials in plain text (mask or omit from results)
+- **FR-VER-013**: Flush jobs using S3 storage MUST retrieve credentials from system.storages
+
+#### Server Code Organization
+
+- **FR-VER-014**: backend/crates/kalamdb-server/src/main.rs MUST be refactored into multiple modules
+- **FR-VER-015**: Configuration initialization logic MUST be in src/config.rs
+- **FR-VER-016**: HTTP route definitions MUST be in src/routes.rs
+- **FR-VER-017**: Middleware setup (auth, logging, CORS) MUST be in src/middleware.rs
+- **FR-VER-018**: Server lifecycle (startup, shutdown, signal handling) MUST be in src/lifecycle.rs
+- **FR-VER-019**: main.rs MUST be a thin entry point that orchestrates modules
+
+#### SQL Parser Consolidation
+
+- **FR-VER-020**: All SQL statement parsing MUST be located in kalamdb-sql crate
+- **FR-VER-021**: backend/crates/kalamdb-core/src/sql/executor.rs MUST be moved to backend/crates/kalamdb-sql/src/executor.rs
+- **FR-VER-022**: CREATE STORAGE, ALTER STORAGE, FLUSH TABLE parsers MUST be in kalamdb-sql
+- **FR-VER-023**: kalamdb-core MUST NOT contain any SQL parsing logic (only execution coordination)
+- **FR-VER-024**: kalamdb-sql MUST export all parsers through a unified API
+- **FR-VER-025**: All SQL keywords MUST be defined in a single centralized file as enums in kalamdb-sql
+- **FR-VER-026**: System MUST use sqlparser-rs for standard SQL parsing (SELECT, INSERT, UPDATE, DELETE, CREATE TABLE, etc.)
+- **FR-VER-027**: KalamDB-specific commands (CREATE STORAGE, FLUSH TABLE, KILL JOB) MUST extend sqlparser-rs with custom statement types
+- **FR-VER-028**: SQL syntax MUST follow PostgreSQL and MySQL conventions where applicable for familiarity
+- **FR-VER-029**: Error messages MUST match PostgreSQL/MySQL style for consistency (e.g., "ERROR: relation 'tablename' does not exist")
+- **FR-VER-030**: CLI output formatting MUST match psql/mysql style (table borders, alignment, row counts)
+- **FR-VER-031**: Parser code MUST be clean with minimal duplication and clear separation of concerns
+
+---
+
 ### User Story 0 - Kalam CLI: Interactive Command-Line Client (Priority: P0)
 
 Database developers, administrators, and users need an interactive command-line client similar to `mysql` or `psql` for querying, managing, and subscribing to KalamDB data streams. The CLI should provide a familiar SQL shell experience with modern features like live query subscriptions, real-time data streaming, and SQL keyword auto-completion.
@@ -823,7 +906,7 @@ Developers and operators need reliable server startup, better CLI user experienc
 #### Storage Location Management
 
 - **FR-021i**: System MUST maintain a system.storages table registering all available storage locations
-- **FR-021j**: system.storages schema MUST include: storage_id (PRIMARY KEY), storage_name, description, storage_type (enum), base_directory, shared_tables_template, user_tables_template, created_at, updated_at
+- **FR-021j**: system.storages schema MUST include: storage_id (PRIMARY KEY), storage_name, description, storage_type (enum), base_directory, credentials (TEXT, nullable, JSON), shared_tables_template, user_tables_template, created_at, updated_at
 - **FR-021k**: storage_type MUST be an enum with values: "filesystem", "s3" (extensible for future backends like Azure Blob, GCS)
 - **FR-021l**: On fresh installation, system MUST automatically create default storage with storage_id="local", storage_type="filesystem", base_directory="" (reads from config.toml)
 - **FR-021m**: When base_directory is empty string for storage_id="local", system MUST read storage location from config.toml default_storage_path (default: "./data/storage")
@@ -858,6 +941,10 @@ Developers and operators need reliable server startup, better CLI user experienc
 - **FR-021aj**: Error message MUST include list of tables using the storage (up to 10 table names)
 - **FR-021ak**: system.storages with storage_id='local' MUST NOT be deleteable (special protection)
 - **FR-021al**: System MUST validate storage_id references exist in system.storages when creating tables (foreign key validation)
+- **FR-021am**: Credentials in system.storages MUST be stored as JSON text (e.g., {"access_key": "...", "secret_key": "..."})
+- **FR-021an**: CREATE STORAGE command MUST accept CREDENTIALS parameter with JSON string
+- **FR-021ao**: When querying system.storages, credentials SHOULD be masked or omitted for security (except for authorized admins)
+- **FR-021ap**: Flush jobs using S3 storage MUST retrieve and parse credentials from system.storages.credentials column
 
 - **FR-022**: System MUST track flush job status using a Tokio-based job registry (HashMap<JobId, JoinHandle>) for observability and cancellation
 - **FR-022a**: System MUST implement a JobManager trait to provide a generic interface for job lifecycle management (start, cancel, get_status)

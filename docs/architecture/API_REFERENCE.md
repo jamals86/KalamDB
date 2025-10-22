@@ -391,6 +391,185 @@ DROP TABLE IF EXISTS app.messages;
 
 ---
 
+### Storage Management
+
+KalamDB supports multiple storage backends for flushing table data to Parquet files. Storage backends can be managed dynamically via SQL commands.
+
+#### CREATE STORAGE
+
+Define a new storage backend for table data.
+
+**Filesystem Storage**:
+```sql
+CREATE STORAGE archive
+TYPE filesystem
+NAME 'Archive Storage'
+DESCRIPTION 'Cold storage for archived data'
+PATH '/data/archive'
+SHARED_TABLES_TEMPLATE '{namespace}/{tableName}'
+USER_TABLES_TEMPLATE '{namespace}/{tableName}/{userId}';
+```
+
+**S3 Storage**:
+```sql
+CREATE STORAGE s3_prod
+TYPE s3
+NAME 'S3 Production Storage'
+DESCRIPTION 'Primary production S3 bucket'
+BUCKET 'kalamdb-prod'
+REGION 'us-west-2'
+SHARED_TABLES_TEMPLATE 's3://kalamdb-prod/shared/{namespace}/{tableName}'
+USER_TABLES_TEMPLATE 's3://kalamdb-prod/users/{userId}/{namespace}/{tableName}';
+```
+
+**Parameters**:
+- `storage_id` (required): Unique identifier for the storage backend
+- `TYPE` (required): Storage type - `filesystem` or `s3`
+- `NAME` (required): Human-readable name
+- `DESCRIPTION` (optional): Description of the storage backend
+- **For filesystem**:
+  - `PATH`: Base directory path
+- **For S3**:
+  - `BUCKET`: S3 bucket name
+  - `REGION`: AWS region
+- `SHARED_TABLES_TEMPLATE` (required): Path template for shared tables
+- `USER_TABLES_TEMPLATE` (required): Path template for user tables
+
+**Template Variables**:
+- `{namespace}`: Namespace identifier
+- `{tableName}`: Table name
+- `{userId}`: User identifier (required for user tables)
+- `{shard}`: Shard identifier (optional)
+
+**Template Ordering Rules**:
+- **Shared tables**: `{namespace}` must appear before `{tableName}`
+- **User tables**: Must include `{userId}` and follow ordering: `{namespace}` → `{tableName}` → `{userId}` → `{shard}`
+
+**Response**:
+```json
+{
+  "status": "success",
+  "message": "Storage 'archive' created successfully"
+}
+```
+
+**Errors**:
+- `400` - Invalid storage type
+- `400` - Invalid template (wrong variable ordering)
+- `400` - Duplicate storage_id
+- `400` - Missing required parameters
+
+#### ALTER STORAGE
+
+Update an existing storage backend configuration.
+
+```sql
+ALTER STORAGE archive
+SET NAME = 'Updated Archive Storage'
+SET DESCRIPTION = 'Long-term cold storage'
+SET SHARED_TABLES_TEMPLATE = '{namespace}/v2/{tableName}'
+SET USER_TABLES_TEMPLATE = '{namespace}/v2/{tableName}/{userId}';
+```
+
+**Note**: You can update any field except `storage_id` and `storage_type`. Template changes are validated before application.
+
+**Response**:
+```json
+{
+  "status": "success",
+  "message": "Storage 'archive' updated successfully"
+}
+```
+
+#### DROP STORAGE
+
+Delete a storage backend. Protected by referential integrity - cannot delete if tables reference it.
+
+```sql
+DROP STORAGE old_storage;
+```
+
+**Response**:
+```json
+{
+  "status": "success",
+  "message": "Storage 'old_storage' deleted successfully"
+}
+```
+
+**Errors**:
+- `400` - Storage not found
+- `400` - Cannot delete 'local' storage (protected)
+- `400` - Cannot delete storage: N table(s) still reference it
+
+#### SHOW STORAGES
+
+List all registered storage backends.
+
+```sql
+SHOW STORAGES;
+```
+
+**Response**:
+```json
+{
+  "status": "success",
+  "results": [
+    {
+      "storage_id": "local",
+      "storage_name": "Local Filesystem",
+      "description": "Default local filesystem storage",
+      "storage_type": "filesystem",
+      "base_directory": "",
+      "shared_tables_template": "{namespace}/{tableName}",
+      "user_tables_template": "{namespace}/{tableName}/{userId}",
+      "created_at": 1729612800000,
+      "updated_at": 1729612800000
+    },
+    {
+      "storage_id": "s3_prod",
+      "storage_name": "S3 Production Storage",
+      "description": "Primary production S3 bucket",
+      "storage_type": "s3",
+      "base_directory": "s3://kalamdb-prod",
+      "shared_tables_template": "s3://kalamdb-prod/shared/{namespace}/{tableName}",
+      "user_tables_template": "s3://kalamdb-prod/users/{userId}/{namespace}/{tableName}",
+      "created_at": 1729612900000,
+      "updated_at": 1729612900000
+    }
+  ]
+}
+```
+
+**Note**: Results are ordered with 'local' first, then alphabetically by storage_id.
+
+#### Using Storage with Tables
+
+Specify storage backend when creating tables:
+
+```sql
+-- Use specific storage for a table
+CREATE USER TABLE app.messages (
+    id BIGINT,
+    content TEXT
+) TABLE_TYPE user
+OWNER_ID 'alice'
+USE_USER_STORAGE 's3_prod';
+
+-- Use default 'local' storage (implicit)
+CREATE SHARED TABLE app.shared_data (
+    id BIGINT,
+    data TEXT
+) TABLE_TYPE shared;
+```
+
+**Storage Lookup Chain** (for user tables):
+1. If `USE_USER_STORAGE` specified in CREATE TABLE → use that storage
+2. If user has `storage_id` preference → use user's preferred storage
+3. Otherwise → use 'local' storage (default)
+
+---
+
 ### Backup and Restore
 
 #### BACKUP DATABASE

@@ -50,7 +50,7 @@ impl CreateUserTableStatement {
     pub fn parse(sql: &str, current_namespace: &NamespaceId) -> Result<Self, KalamDbError> {
         // Preprocess SQL to remove "USER" keyword and FLUSH clause for standard SQL parser
         // "CREATE USER TABLE ... FLUSH ROWS 100" -> "CREATE TABLE ..."
-        let normalized_sql = sql
+        let mut normalized_sql = sql
             .replace("USER TABLE", "TABLE")
             // Remove FLUSH clauses (will be parsed separately from original SQL)
             .replace(['\n', '\r'], " "); // Normalize line breaks first
@@ -58,7 +58,19 @@ impl CreateUserTableStatement {
         // Remove FLUSH clause using regex
         use regex::Regex;
         let flush_re = Regex::new(r"(?i)\s+FLUSH\s+(ROWS|SECONDS|BYTES)\s+\d+").unwrap();
-        let normalized_sql = flush_re.replace_all(&normalized_sql, "").to_string();
+        normalized_sql = flush_re.replace_all(&normalized_sql, "").to_string();
+
+        // Remove KalamDB-specific clauses the generic parser does not understand.
+        // These are parsed from the original SQL later in the pipeline.
+        for pattern in [
+            r#"(?i)\s+TABLE_TYPE\s+['\"]?[a-z0-9_]+['\"]?"#,
+            r#"(?i)\s+OWNER_ID\s+['\"][^'\"]+['\"]"#,
+            r#"(?i)\s+STORAGE\s+['\"]?[a-z0-9_]+['\"]?"#,
+            r#"(?i)\s+USE_USER_STORAGE(\s+['\"][^'\"]+['\"]|\s+TRUE|\s+FALSE)?"#,
+        ] {
+            let re = Regex::new(pattern).unwrap();
+            normalized_sql = re.replace_all(&normalized_sql, "").to_string();
+        }
 
         let dialect = GenericDialect {};
         let statements = Parser::parse_sql(&dialect, &normalized_sql)

@@ -13,7 +13,7 @@ use crate::actors::WebSocketSession;
 use crate::auth::{JwtAuth, JwtError};
 use crate::rate_limiter::RateLimiter;
 
-/// GET /ws - Establish WebSocket connection
+/// GET /v1/ws - Establish WebSocket connection
 ///
 /// This endpoint upgrades an HTTP request to a WebSocket connection.
 /// Clients can then send subscription requests to receive real-time updates.
@@ -52,7 +52,7 @@ use crate::rate_limiter::RateLimiter;
 /// }
 /// ```
 #[get("/ws")]
-pub async fn websocket_handler(
+pub async fn websocket_handler_v1(
     req: HttpRequest,
     stream: web::Payload,
     jwt_auth: web::Data<JwtAuth>,
@@ -155,7 +155,7 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(jwt_auth))
                 .app_data(web::Data::new(rate_limiter))
-                .service(websocket_handler),
+                .service(websocket_handler_v1),
         )
         .await;
 

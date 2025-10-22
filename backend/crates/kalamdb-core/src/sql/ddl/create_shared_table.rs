@@ -46,14 +46,24 @@ impl CreateSharedTableStatement {
     pub fn parse(sql: &str, current_namespace: &NamespaceId) -> Result<Self, KalamDbError> {
         // Preprocess SQL to remove "SHARED" keyword and FLUSH clause for standard SQL parser
         // "CREATE SHARED TABLE ... FLUSH ROWS 100" -> "CREATE TABLE ..."
-        let normalized_sql = sql
+        let mut normalized_sql = sql
             .replace("SHARED TABLE", "TABLE")
             .replace(['\n', '\r'], " "); // Normalize line breaks
 
         // Remove FLUSH clause using regex
         use regex::Regex;
         let flush_re = Regex::new(r"(?i)\s+FLUSH\s+(ROWS|SECONDS|BYTES)\s+\d+").unwrap();
-        let normalized_sql = flush_re.replace_all(&normalized_sql, "").to_string();
+        normalized_sql = flush_re.replace_all(&normalized_sql, "").to_string();
+
+        // Remove KalamDB-specific clauses (e.g., TABLE_TYPE, OWNER_ID) before parsing.
+        for pattern in [
+            r#"(?i)\s+TABLE_TYPE\s+['\"]?[a-z0-9_]+['\"]?"#,
+            r#"(?i)\s+OWNER_ID\s+['\"][^'\"]+['\"]"#,
+            r#"(?i)\s+STORAGE\s+['\"]?[a-z0-9_]+['\"]?"#,
+        ] {
+            let re = Regex::new(pattern).unwrap();
+            normalized_sql = re.replace_all(&normalized_sql, "").to_string();
+        }
 
         let dialect = GenericDialect {};
         let statements = Parser::parse_sql(&dialect, &normalized_sql)

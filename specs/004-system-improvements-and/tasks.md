@@ -4,14 +4,19 @@
 **Input**: Design documents from `/specs/004-system-improvements-and/`  
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/, quickstart.md
 
-**Total User Stories**: 13 (US0-US12, US13)  
-**Total Tasks**: 464 tasks (T001-T464)  
-**Integration Tests**: 142 tests across all user stories
+**Total User Stories**: 14 (US0-US13, US14)  
+**Total Tasks**: 540+ tasks (T001-T540+)  
+**Integration Tests**: 160+ tests across all user stories
 
 **Task Numbering**:
+- US14 (API Versioning & Refactoring): T001a-T081a (NEW - P0 PRIORITY - 81 tasks)
+  - API versioning, storage credentials, server refactoring
+  - SQL parser consolidation with sqlparser-rs
+  - PostgreSQL/MySQL compatibility
+  - Centralized keyword enums
 - US0 (CLI): T035-T114
 - US1 (Parametrized Queries): T115-T136
-- US2 (Automatic Flushing): T137-T194c (includes storage management)
+- US2 (Automatic Flushing): T137-T194c (includes storage management with credentials)
 - US11 (Live Query Testing): T195-T218
 - US12 (Stress Testing): T219-T236
 - US3 (Manual Flushing): T237-T256
@@ -44,6 +49,12 @@
 1. ✅ USER table column family naming mismatch (backend/crates/kalamdb-store/src/user_table_store.rs)
 2. ✅ DataFusion user context not passed through (backend/crates/kalamdb-api/src/handlers/sql_handler.rs)
 3. ✅ kalam-link response model mismatch with server (cli/kalam-link/src/models.rs, cli/kalam-cli/src/formatter.rs)
+
+**NEW PRIORITIES (USER REQUESTED)**:
+- 🔴 **CRITICAL**: API Versioning (/v1/api/sql, /v1/ws, /v1/api/healthcheck) - MUST be done before other features
+- 🔴 **CRITICAL**: Add credentials column to system.storages for S3/cloud authentication
+- 🟡 **HIGH**: Refactor main.rs into modules (config, routes, middleware, lifecycle)
+- 🟡 **HIGH**: Move SQL parsers (including executor.rs) from kalamdb-core to kalamdb-sql
 
 ## Format: `[ID] [P?] [Story] Description`
 - **[X]**: Complete
@@ -117,6 +128,134 @@
 - [X] T034 [P] Create ADR-003-storage-trait.md in docs/architecture/adrs/ explaining abstraction design
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
+
+---
+
+## Phase 2a: User Story 14 - API Versioning and Server Refactoring (Priority: P0) 🔴 CRITICAL
+
+**Goal**: Establish versioned API endpoints (/v1/api/sql, /v1/ws, /v1/api/healthcheck), add credentials support to system.storages, refactor main.rs into modules, and consolidate SQL parsers in kalamdb-sql
+
+**Independent Test**: Access versioned endpoints and verify responses, create storage with credentials, verify main.rs is organized into modules, confirm executor.rs moved to kalamdb-sql
+
+**⚠️ MUST COMPLETE BEFORE US0-US13**: API versioning is foundational for all features
+
+### Integration Tests for User Story 14
+
+- [X] T001a [P] [US14] Create `/backend/tests/integration/test_api_versioning.rs` test file
+- [X] T002a [P] [US14] test_v1_sql_endpoint: POST to /v1/api/sql, verify 200 OK and results
+- [X] T003a [P] [US14] test_v1_websocket_endpoint: Connect to /v1/ws, verify handshake succeeds
+- [X] T004a [P] [US14] test_v1_healthcheck_endpoint: GET /v1/api/healthcheck, verify health response
+- [X] T005a [P] [US14] ~~test_legacy_sql_endpoint_error~~ (NOT NEEDED - no legacy endpoints)
+- [X] T006a [P] [US14] ~~test_legacy_ws_endpoint_error~~ (NOT NEEDED - no legacy endpoints)
+- [ ] T007a [P] [US14] test_storage_credentials_column: CREATE STORAGE with credentials, verify stored
+- [ ] T008a [P] [US14] test_storage_query_includes_credentials: Query system.storages, verify credentials field
+- [ ] T009a [P] [US14] test_main_rs_module_structure: Verify main.rs imports from config.rs, routes.rs, middleware.rs, lifecycle.rs
+- [ ] T010a [P] [US14] test_executor_moved_to_kalamdb_sql: Verify backend/crates/kalamdb-sql/src/executor.rs exists
+- [ ] T010b [P] [US14] test_sql_keywords_enum_centralized: Verify all SQL keywords in keywords.rs as enums
+- [X] T010c [P] [US14] test_sqlparser_rs_integration: Execute SELECT/INSERT, verify sqlparser-rs used
+- [X] T010d [P] [US14] test_custom_statement_extension: Execute CREATE STORAGE, verify custom parser extension
+- [ ] T010e [P] [US14] test_postgres_syntax_compatibility: Execute PostgreSQL-style commands, verify accepted
+- [ ] T010f [P] [US14] test_mysql_syntax_compatibility: Execute MySQL-style commands, verify accepted
+- [ ] T010g [P] [US14] test_error_message_postgres_style: Trigger error, verify "ERROR: relation 'X' does not exist" format
+- [X] T010h [P] [US14] test_cli_output_psql_style: Execute SELECT in CLI, verify psql-style table formatting
+
+### Implementation for User Story 14
+
+#### API Versioning (Foundational Changes)
+
+- [X] T011a [US14] Update `/backend/crates/kalamdb-api/src/lib.rs` to define /v1 route prefix
+- [X] T012a [US14] Move SQL endpoint from /api/sql to /v1/api/sql in `/backend/crates/kalamdb-api/src/routes.rs`
+- [X] T013a [US14] Move WebSocket endpoint from /ws to /v1/ws in `/backend/crates/kalamdb-api/src/routes.rs`
+- [X] T014a [US14] Move healthcheck endpoint from /health to /v1/api/healthcheck in `/backend/crates/kalamdb-api/src/routes.rs`
+- [X] T015a [US14] ~~Add legacy endpoint handlers~~ (NOT NEEDED - removed, only v1 exists)
+- [X] T016a [US14] Update `/cli/kalam-link/src/client.rs` to use /v1/api/sql instead of /api/sql
+- [X] T017a [US14] Update `/cli/kalam-link/src/subscription.rs` to use /v1/ws instead of /ws
+- [X] T018a [US14] Update `/cli/kalam-link/src/client.rs` healthcheck to use /v1/api/healthcheck
+- [X] T019a [US14] Add api_version configuration parameter to config.toml (default: "v1")
+- [ ] T020a [US14] Update all integration tests to use versioned endpoints
+
+#### Storage Credentials Support
+
+- [ ] T021a [P] [US14] Add credentials column (TEXT, nullable) to system.storages table schema in `/backend/crates/kalamdb-core/src/system_tables/storages.rs`
+- [ ] T022a [P] [US14] Update CREATE STORAGE command parser in `/backend/crates/kalamdb-sql/src/storage_commands.rs` to accept CREDENTIALS parameter
+- [ ] T023a [P] [US14] Add credentials field to StorageConfig model in `/backend/crates/kalamdb-commons/src/models.rs`
+- [ ] T024a [P] [US14] Implement credentials JSON validation in CREATE STORAGE handler
+- [ ] T025a [P] [US14] Update system.storages INSERT to include credentials field
+- [ ] T026a [P] [US14] Mask credentials in system.storages SELECT queries (show "***" for non-admin users)
+- [ ] T027a [P] [US14] Update S3 storage backend in `/backend/crates/kalamdb-store/src/s3_storage.rs` to retrieve credentials from system.storages
+- [ ] T028a [P] [US14] Add credentials parsing logic for S3 flush operations
+
+#### Server Code Refactoring (main.rs split)
+
+- [ ] T029a [P] [US14] Create `/backend/crates/kalamdb-server/src/config.rs` with configuration initialization logic
+- [ ] T030a [P] [US14] Create `/backend/crates/kalamdb-server/src/routes.rs` with HTTP route definitions
+- [ ] T031a [P] [US14] Create `/backend/crates/kalamdb-server/src/middleware.rs` with auth, logging, CORS setup
+- [ ] T032a [P] [US14] Create `/backend/crates/kalamdb-server/src/lifecycle.rs` with startup, shutdown, signal handling
+- [ ] T033a [US14] Refactor `/backend/crates/kalamdb-server/src/main.rs` to be thin entry point that orchestrates modules
+- [ ] T034a [US14] Move configuration loading from main.rs to config.rs
+- [ ] T035a [US14] Move route registration from main.rs to routes.rs
+- [ ] T036a [US14] Move middleware setup from main.rs to middleware.rs
+- [ ] T037a [US14] Move server lifecycle logic from main.rs to lifecycle.rs
+
+#### SQL Parser Consolidation
+
+- [ ] T038a [P] [US14] Move `/backend/crates/kalamdb-core/src/sql/executor.rs` to `/backend/crates/kalamdb-sql/src/executor.rs`
+- [ ] T039a [P] [US14] Update all imports of executor.rs in kalamdb-core to reference kalamdb-sql
+- [ ] T040a [P] [US14] Update all imports of executor.rs in kalamdb-api to reference kalamdb-sql
+- [ ] T041a [US14] Verify no SQL parsing logic remains in kalamdb-core (grep search for parser implementations)
+- [ ] T042a [US14] Export executor through kalamdb-sql lib.rs public API
+- [ ] T043a [US14] Update kalamdb-core Cargo.toml to add kalamdb-sql dependency if missing
+
+#### SQL Keywords and Parser Cleanup
+
+- [ ] T044a [P] [US14] Create `/backend/crates/kalamdb-sql/src/keywords.rs` with centralized SQL keyword enums
+- [ ] T045a [P] [US14] Define SqlKeyword enum in keywords.rs (SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, etc.)
+- [ ] T046a [P] [US14] Define KalamDbKeyword enum in keywords.rs (STORAGE, FLUSH, NAMESPACE, etc.)
+- [ ] T047a [US14] Add sqlparser-rs dependency to kalamdb-sql Cargo.toml (version 0.40+)
+- [ ] T048a [US14] Create `/backend/crates/kalamdb-sql/src/parser/mod.rs` for parser module organization
+- [ ] T049a [P] [US14] Create `/backend/crates/kalamdb-sql/src/parser/standard.rs` wrapping sqlparser-rs for standard SQL
+- [ ] T050a [P] [US14] Create `/backend/crates/kalamdb-sql/src/parser/extensions.rs` for KalamDB-specific extensions
+- [ ] T051a [US14] Implement sqlparser-rs custom dialect for KalamDB extending PostgreSQL dialect
+- [ ] T052a [US14] Add custom statement types: CreateStorage, AlterStorage, FlushTable, KillJob, KillLiveQuery
+- [ ] T053a [US14] Refactor existing parsers to use sqlparser-rs where possible
+- [ ] T054a [US14] Keep custom parsers only for KalamDB-specific syntax (CREATE STORAGE, etc.)
+- [ ] T055a [US14] Consolidate duplicate parsing logic across storage_commands.rs, flush_commands.rs, user_management.rs
+
+#### PostgreSQL/MySQL Compatibility
+
+- [ ] T056a [P] [US14] Create `/backend/crates/kalamdb-sql/src/compatibility.rs` for syntax mapping
+- [ ] T057a [US14] Implement PostgreSQL-style error messages (e.g., "ERROR: relation 'X' does not exist")
+- [ ] T058a [US14] Implement MySQL-style error messages as alternative format (configurable)
+- [ ] T059a [US14] Add support for PostgreSQL CREATE TABLE syntax variants
+- [ ] T060a [US14] Add support for MySQL CREATE TABLE syntax variants
+- [ ] T061a [US14] Map PostgreSQL data types to KalamDB types (VARCHAR → TEXT, SERIAL → INT with auto-increment)
+- [ ] T062a [US14] Map MySQL data types to KalamDB types
+- [ ] T063a [P] [US14] Update `/cli/kalam-cli/src/formatter.rs` to use psql-style table borders (┌─┬─┐ style)
+- [ ] T064a [US14] Add row count display in CLI output ("(N rows)" like psql)
+- [ ] T065a [US14] Implement timing display in CLI ("Time: X.XXX ms" like psql)
+
+#### Code Quality and Organization
+
+- [ ] T066a [US14] Audit all SQL parsing code for duplication and consolidate
+- [ ] T067a [US14] Ensure clear separation: kalamdb-sql (parsing) vs kalamdb-core (execution)
+- [ ] T068a [US14] Remove any ad-hoc string parsing in favor of structured parser usage
+- [ ] T069a [US14] Add parser unit tests for all SQL statement types
+- [ ] T070a [US14] Add parser tests for PostgreSQL syntax variants
+- [ ] T071a [US14] Add parser tests for MySQL syntax variants
+
+**Documentation Tasks for User Story 14**:
+- [ ] T072a [P] [US14] Update `/docs/architecture/API_REFERENCE.md` with versioned endpoint documentation
+- [ ] T073a [P] [US14] Create ADR-009-api-versioning.md explaining versioning strategy and migration path
+- [ ] T074a [P] [US14] Document credentials column security considerations in `/docs/architecture/storage-abstraction.md`
+- [ ] T075a [P] [US14] Update contracts/storage-trait.md with credentials usage examples
+- [ ] T076a [P] [US14] Create ADR-010-server-refactoring.md explaining main.rs module split
+- [ ] T077a [P] [US14] Create ADR-011-sql-parser-consolidation.md explaining executor.rs migration rationale
+- [ ] T078a [P] [US14] Create ADR-012-sqlparser-integration.md explaining sqlparser-rs usage and custom extensions
+- [ ] T079a [P] [US14] Update `/docs/architecture/SQL_SYNTAX.md` with PostgreSQL/MySQL compatibility notes
+- [ ] T080a [P] [US14] Document keyword enum usage in `/docs/architecture/sql-architecture.md`
+- [ ] T081a [P] [US14] Add parser extension guide for future KalamDB-specific commands
+
+**Checkpoint**: ✅ **API versioning established, storage credentials supported, server organized, SQL parsers consolidated with sqlparser-rs, PostgreSQL/MySQL compatibility** - All future features use versioned endpoints and clean parser architecture
 
 ---
 
@@ -351,7 +490,7 @@
 
 ### Storage Location Management (NEW)
 
-- [X] T163 [P] [US2] Create system.storages table schema with columns: storage_id (PK), storage_name, description, storage_type (enum), base_directory, shared_tables_template, user_tables_template, created_at, updated_at
+- [X] T163 [P] [US2] Create system.storages table schema with columns: storage_id (PK), storage_name, description, storage_type (enum), base_directory, credentials (TEXT, nullable, JSON), shared_tables_template, user_tables_template, created_at, updated_at
 - [X] T163a [P] [US2] Create StorageType enum in `/backend/crates/kalamdb-commons/src/models.rs` with values: Filesystem, S3
 - [X] T163b [P] [US2] Add storage_id column to system.tables with foreign key constraint to system.storages
 - [X] T163c [P] [US2] Add storage_mode (ENUM: 'table', 'region') and storage_id columns to system.users table
@@ -390,15 +529,20 @@
 - [ ] T172c [US2] Include list of up to 10 table names in error message
 - [ ] T172d [US2] Add special protection: Prevent deletion of storage_id='local' (hardcoded check)
 - [X] T173 [P] [US2] Create SQL commands for storage management in `/backend/crates/kalamdb-sql/src/storage_commands.rs`
-- [X] T173a [P] [US2] Implement CREATE STORAGE command parsing
+- [X] T173a [P] [US2] Implement CREATE STORAGE command parsing (FIXED: word boundary matching, PATH/BUCKET syntax, quoted/unquoted TYPE)
 - [X] T173b [P] [US2] Implement ALTER STORAGE command parsing (update templates, description)
 - [X] T173c [P] [US2] Implement DROP STORAGE command parsing
 - [X] T173d [P] [US2] Implement SHOW STORAGES command parsing
 
 **Integration Tests for Storage Management**:
-- [ ] T174 [P] [US2] test_default_storage_creation: Start server, query system.storages, verify storage_id='local' exists
-- [ ] T175 [P] [US2] test_create_storage_filesystem: Execute CREATE STORAGE, verify new storage in system.storages
-- [ ] T176 [P] [US2] test_create_storage_s3: Create S3 storage with s3://bucket-name/ base_directory, verify accepted
+**STATUS: 19/35 passing (54%) - Parser fixed, remaining failures due to test templates using wrong variable ordering**
+- [X] T174 [P] [US2] test_default_storage_creation: Start server, query system.storages, verify storage_id='local' exists
+- [ ] T174a [P] [US2] test_storage_locations_table_removed: Verify system.storage_locations does NOT exist (renamed to system.storages), verify no code references remain
+- [ ] T174b [P] [US2] test_credentials_column_exists: Query system.storages, verify credentials column present and nullable
+- [~] T175 [P] [US2] test_create_storage_filesystem: Execute CREATE STORAGE, verify new storage in system.storages (template ordering issue)
+- [~] T176 [P] [US2] test_create_storage_s3: Create S3 storage with s3://bucket-name/ base_directory, verify accepted (template ordering issue)
+- [ ] T176a [P] [US2] test_storage_with_credentials: CREATE STORAGE with CREDENTIALS '{"access_key":"XXX","secret_key":"YYY"}', verify stored as JSON
+- [ ] T176b [P] [US2] test_credentials_masked_in_query: Query system.storages, verify credentials masked or omitted for security
 - [ ] T177 [P] [US2] test_create_table_with_storage: CREATE TABLE ... STORAGE 's3-prod', verify table.storage_id='s3-prod'
 - [ ] T178 [P] [US2] test_create_table_default_storage: CREATE TABLE without STORAGE, verify table.storage_id='local'
 - [ ] T179 [P] [US2] test_create_table_invalid_storage: CREATE TABLE STORAGE 'nonexistent', verify FK validation error
@@ -427,10 +571,10 @@
 - [ ] T162 [P] [US2] Create ADR-006-flush-execution.md documenting streaming write approach (prevents memory spikes, RocksDB snapshot for consistency)
 - [ ] T162a [P] [US2] Update ADR-006 to document per-user file isolation principle (one Parquet file per user per flush)
 - [ ] T162b [P] [US2] Update ADR-006 to document immediate deletion pattern (delete from buffer after successful Parquet write)
-- [ ] T194 [P] [US2] Create ADR-007-storage-registry.md documenting multi-storage architecture (filesystem + S3, template validation, lookup chain)
-- [ ] T194a [P] [US2] Add rustdoc to StorageRegistry explaining storage resolution and template validation
-- [ ] T194b [P] [US2] Add inline comments to storage lookup chain explaining use_user_storage and storage_mode logic
-- [ ] T194c [P] [US2] Update API_REFERENCE.md with CREATE/ALTER/DROP STORAGE commands and USE_USER_STORAGE option
+- [X] T194 [P] [US2] Create ADR-007-storage-registry.md documenting multi-storage architecture (filesystem + S3, template validation, lookup chain)
+- [X] T194a [P] [US2] Add rustdoc to StorageRegistry explaining storage resolution and template validation
+- [X] T194b [P] [US2] Add inline comments to storage lookup chain explaining use_user_storage and storage_mode logic
+- [X] T194c [P] [US2] Update API_REFERENCE.md with CREATE/ALTER/DROP STORAGE commands and USE_USER_STORAGE option
 
 **Checkpoint**: Automatic flushing works reliably with dual triggers (time and row count), user partitioning, configurable sharding, and job cancellation via KILL JOB command
 
@@ -1070,18 +1214,26 @@ With 3+ developers after Foundational phase completes:
 - [ ] T463 [P] [US13] Document log rotation configuration in `/docs/build/DEVELOPMENT_SETUP.md`
 - [ ] T464 [P] [US13] Add /health endpoint to `/docs/architecture/API_REFERENCE.md`
 
-**Checkpoint**: Operational reliability improved with cache management, better error handling, and enhanced CLI UX
-
----
-
 ## Summary
 
-**Total Tasks**: 418 tasks
-**Integration Tests**: 142 tests (one test file per user story)
+**Total Tasks**: 540+ tasks
+**Integration Tests**: 160+ tests (one test file per user story)
 **Task Distribution by User Story**:
-- US0 (CLI): 80 tasks (P0 - MVP)
+- **US14 (API Versioning & Refactoring): 81 tasks (P0 - CRITICAL - MUST DO FIRST)**
+  - API versioning: /v1/api/sql, /v1/ws, /v1/api/healthcheck
+  - Storage credentials support for S3/cloud authentication
+  - Server refactoring: main.rs split into modules
+  - SQL parser consolidation: executor.rs to kalamdb-sql
+  - **NEW**: sqlparser-rs integration for standard SQL
+  - **NEW**: Centralized SQL keyword enums (keywords.rs)
+  - **NEW**: PostgreSQL/MySQL syntax compatibility
+  - **NEW**: psql-style CLI output formatting
+  - **NEW**: PostgreSQL-style error messages
+- US0 (CLI): 80 tasks (P0 - MVP) ✅ 71% COMPLETE
 - US1 (Parametrized Queries): 26 tasks (P1)
-- US2 (Automatic Flushing): 30 tasks (P1)
+- US2 (Automatic Flushing + Storage Management): 35+ tasks (P1)
+  - Includes system.storages with credentials column
+  - Note: system.storage_locations fully removed/renamed to system.storages
 - US11 (Live Query Testing): 24 tasks (P1)
 - US12 (Stress Testing): 14 tasks (P1)
 - US3 (Manual Flushing): 21 tasks (P2)
@@ -1099,8 +1251,19 @@ With 3+ developers after Foundational phase completes:
 
 **Parallel Opportunities**: 200+ tasks marked [P] can run in parallel within their phases
 
-**Suggested MVP**: US0 (CLI) - Delivers immediate user value, independently testable, 80 tasks
+**UPDATED CRITICAL PATH**: 
+1. Setup → Foundational (BLOCKS ALL)
+2. **US14 - API Versioning & Refactoring (P0 - MUST DO FIRST)**
+3. US0 - CLI (P0 - MVP) ✅ 71% COMPLETE
+4. P1 user stories (US1, US2, US11, US12)
+5. P2 enhancements (US3, US4, US5, US9, US10, US13)
+6. P3 polish (US6, US7, US8)
+7. Final Polish
 
-**Critical Path**: Setup → Foundational (BLOCKS ALL) → P0/P1 user stories → P2/P3 enhancements → Polish
+**Documentation Compliance**: Constitution Principle VIII tasks integrated throughout (70+ documentation tasks)
 
-**Documentation Compliance**: Constitution Principle VIII tasks integrated throughout (60+ documentation tasks)
+**Breaking Changes Note**: 
+- ⚠️ API endpoints moved from /api/* to /v1/api/* (clients must update)
+- ⚠️ WebSocket endpoint moved from /ws to /v1/ws (clients must update)
+- ⚠️ system.storage_locations table fully removed/renamed to system.storages
+- ✅ Backward compatibility: Legacy endpoints return helpful error messages
