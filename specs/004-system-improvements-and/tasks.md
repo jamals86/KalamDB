@@ -4,9 +4,26 @@
 **Input**: Design documents from `/specs/004-system-improvements-and/`  
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/, quickstart.md
 
-**Total User Stories**: 13 (US0-US12)  
-**Total Tasks**: 434 tasks (T001-T340 plus 16 new flush operation tasks T158d-T158s)  
+**Total User Stories**: 13 (US0-US12, US13)  
+**Total Tasks**: 464 tasks (T001-T464)  
 **Integration Tests**: 142 tests across all user stories
+
+**Task Numbering**:
+- US0 (CLI): T035-T114
+- US1 (Parametrized Queries): T115-T136
+- US2 (Automatic Flushing): T137-T194c (includes storage management)
+- US11 (Live Query Testing): T195-T218
+- US12 (Stress Testing): T219-T236
+- US3 (Manual Flushing): T237-T256
+- US4 (Session Caching): T257-T274
+- US5 (Namespace Validation): T275-T288
+- US9 (Enhanced API): T289-T316
+- US10 (User Management): T317-T351
+- US6 (Code Quality): T352-T370
+- US7 (Storage Abstraction): T371-T385
+- US8 (Docs & Docker): T386-T409
+- Polish & Cross-Cutting: T410-T426
+- US13 (Operational Improvements): T427-T464
 
 ## Phase 3 Status: ✅ COMPLETE (71% test coverage - core functionality working)
 
@@ -311,7 +328,7 @@
 - [X] T155b [US2] Validate that at least one flush trigger (interval or row threshold) is configured
 - [X] T156 [US2] Integrate FlushScheduler into server startup in `/backend/crates/kalamdb-server/src/main.rs`
 - [X] T157 [US2] Update system.jobs table schema to include parameters, result, trace, memory_used, cpu_used columns (verified already present)
-- [ ] T158 [US2] Implement job tracking in FlushJob to write status to system.jobs BEFORE starting work
+- [~] T158 [US2] [OBSOLETE] Implement job tracking in FlushJob to write status to system.jobs BEFORE starting work (replaced by T158d-T158s which provide more granular implementation with crash recovery, duplicate prevention, and shutdown coordination)
 - [X] T158a [US2] Implement KILL JOB SQL command parsing in `/backend/crates/kalamdb-sql/src/job_commands.rs` (9 tests passing)
 - [X] T158b [US2] Add KILL JOB command execution in SQL executor (execute_kill_job method added)
 - [X] T158c [US2] Update job status to 'cancelled' with timestamp when KILL JOB executes (cancel_job method in JobsTableProvider)
@@ -427,37 +444,37 @@
 
 ### Integration Tests for User Story 11
 
-- [ ] T163 [P] [US11] Create `/backend/tests/integration/test_live_query_changes.rs` test file
-- [ ] T164 [P] [US11] test_live_query_detects_inserts: Subscribe, INSERT 100 rows, verify 100 notifications
-- [ ] T165 [P] [US11] test_live_query_detects_updates: Subscribe, INSERT + UPDATE, verify old/new values
-- [ ] T166 [P] [US11] test_live_query_detects_deletes: Subscribe, INSERT + DELETE, verify _deleted flag
-- [ ] T167 [P] [US11] test_concurrent_writers_no_message_loss: 5 writers, verify no loss/duplication
-- [ ] T168 [P] [US11] test_ai_message_scenario: Simulate AI agent writes, verify human client receives all
-- [ ] T169 [P] [US11] test_mixed_operations_ordering: INSERT+UPDATE+DELETE sequence, verify chronological order
-- [ ] T170 [P] [US11] test_changes_counter_accuracy: Trigger 50 changes, verify system.live_queries changes=50
-- [ ] T171 [P] [US11] test_multiple_listeners_same_table: 3 subscriptions, verify independent notification delivery
-- [ ] T172 [P] [US11] test_listener_reconnect_no_data_loss: Disconnect/reconnect WebSocket, verify no loss
-- [ ] T173 [P] [US11] test_high_frequency_changes: INSERT 1000 rows rapidly, verify all 1000 notifications
+- [ ] T195 [P] [US11] Create `/backend/tests/integration/test_live_query_changes.rs` test file
+- [ ] T196 [P] [US11] test_live_query_detects_inserts: Subscribe, INSERT 100 rows, verify 100 notifications
+- [ ] T197 [P] [US11] test_live_query_detects_updates: Subscribe, INSERT + UPDATE, verify old/new values
+- [ ] T198 [P] [US11] test_live_query_detects_deletes: Subscribe, INSERT + DELETE, verify _deleted flag
+- [ ] T199 [P] [US11] test_concurrent_writers_no_message_loss: 5 writers, verify no loss/duplication
+- [ ] T200 [P] [US11] test_ai_message_scenario: Simulate AI agent writes, verify human client receives all
+- [ ] T201 [P] [US11] test_mixed_operations_ordering: INSERT+UPDATE+DELETE sequence, verify chronological order
+- [ ] T202 [P] [US11] test_changes_counter_accuracy: Trigger 50 changes, verify system.live_queries changes=50
+- [ ] T203 [P] [US11] test_multiple_listeners_same_table: 3 subscriptions, verify independent notification delivery
+- [ ] T204 [P] [US11] test_listener_reconnect_no_data_loss: Disconnect/reconnect WebSocket, verify no loss
+- [ ] T205 [P] [US11] test_high_frequency_changes: INSERT 1000 rows rapidly, verify all 1000 notifications
 
 ### Implementation for User Story 11
 
 **Note**: Most live query infrastructure already exists. This phase focuses on testing and kalamdb-live crate enhancements.
 
-- [ ] T174 [P] [US11] Create `/backend/crates/kalamdb-live/Cargo.toml` with dependencies
-- [ ] T175 [P] [US11] Create `/backend/crates/kalamdb-live/src/lib.rs` with module exports
-- [ ] T176 [P] [US11] Create `/backend/crates/kalamdb-live/src/subscription.rs` with LiveQuerySubscription struct
-- [ ] T177 [P] [US11] Create `/backend/crates/kalamdb-live/src/manager.rs` with subscription lifecycle management
-- [ ] T178 [P] [US11] Create `/backend/crates/kalamdb-live/src/notifier.rs` with client notification logic
-- [ ] T179 [P] [US11] Create `/backend/crates/kalamdb-live/src/expression_cache.rs` with CachedExpression
-- [ ] T180 [US11] Implement LiveQuerySubscription with filter_sql and cached_expr fields
-- [ ] T181 [US11] Implement expression caching using DataFusion Expr compilation
-- [ ] T182 [US11] Implement changes counter increment on each notification
-- [ ] T183 [US11] Update system.live_queries table to include options, changes, node columns
-- [ ] T184 [US11] Integrate kalamdb-live crate into WebSocket subscription handling
+- [ ] T206 [P] [US11] Create `/backend/crates/kalamdb-live/Cargo.toml` with dependencies
+- [ ] T207 [P] [US11] Create `/backend/crates/kalamdb-live/src/lib.rs` with module exports
+- [ ] T208 [P] [US11] Create `/backend/crates/kalamdb-live/src/subscription.rs` with LiveQuerySubscription struct
+- [ ] T209 [P] [US11] Create `/backend/crates/kalamdb-live/src/manager.rs` with subscription lifecycle management
+- [ ] T210 [P] [US11] Create `/backend/crates/kalamdb-live/src/notifier.rs` with client notification logic
+- [ ] T211 [P] [US11] Create `/backend/crates/kalamdb-live/src/expression_cache.rs` with CachedExpression
+- [ ] T212 [US11] Implement LiveQuerySubscription with filter_sql and cached_expr fields
+- [ ] T213 [US11] Implement expression caching using DataFusion Expr compilation
+- [ ] T214 [US11] Implement changes counter increment on each notification
+- [ ] T215 [US11] Update system.live_queries table to include options, changes, node columns
+- [ ] T216 [US11] Integrate kalamdb-live crate into WebSocket subscription handling
 
 **Documentation Tasks for User Story 11**:
-- [ ] T185 [P] [US11] Add rustdoc to LiveQuerySubscription explaining lifecycle and caching
-- [ ] T186 [P] [US11] Add rustdoc to CachedExpression explaining DataFusion integration
+- [ ] T217 [P] [US11] Add rustdoc to LiveQuerySubscription explaining lifecycle and caching
+- [ ] T218 [P] [US11] Add rustdoc to CachedExpression explaining DataFusion integration
 
 **Checkpoint**: Live query subscriptions reliably detect and deliver all change notifications
 
@@ -471,31 +488,31 @@
 
 ### Integration Tests for User Story 12
 
-- [ ] T187 [P] [US12] Create `/backend/tests/integration/test_stress_and_memory.rs` test file
-- [ ] T188 [P] [US12] test_memory_stability_under_write_load: 10 writers, measure memory every 30s, verify <10% growth
-- [ ] T189 [P] [US12] test_concurrent_writers_and_listeners: 10 writers + 20 listeners for 5 min, verify no disconnections
-- [ ] T190 [P] [US12] test_cpu_usage_under_load: Sustained 1000 inserts/sec, verify CPU <80%
-- [ ] T191 [P] [US12] test_websocket_connection_leak_detection: Create 50 subscriptions, close 25, verify cleanup
-- [ ] T192 [P] [US12] test_memory_release_after_stress: Run stress, stop all, wait 60s, verify memory returns to baseline
-- [ ] T193 [P] [US12] test_query_performance_under_stress: Execute SELECT queries during stress, verify <500ms p95
-- [ ] T194 [P] [US12] test_flush_operations_during_stress: Stress test + periodic flushes, verify no accumulation
-- [ ] T195 [P] [US12] test_actor_system_stability: Monitor flush/live query actors, verify no mailbox overflow
-- [ ] T196 [P] [US12] test_graceful_degradation: Increase load until capacity, verify graceful slowdown not crash
+- [ ] T219 [P] [US12] Create `/backend/tests/integration/test_stress_and_memory.rs` test file
+- [ ] T220 [P] [US12] test_memory_stability_under_write_load: 10 writers, measure memory every 30s, verify <10% growth
+- [ ] T221 [P] [US12] test_concurrent_writers_and_listeners: 10 writers + 20 listeners for 5 min, verify no disconnections
+- [ ] T222 [P] [US12] test_cpu_usage_under_load: Sustained 1000 inserts/sec, verify CPU <80%
+- [ ] T223 [P] [US12] test_websocket_connection_leak_detection: Create 50 subscriptions, close 25, verify cleanup
+- [ ] T224 [P] [US12] test_memory_release_after_stress: Run stress, stop all, wait 60s, verify memory returns to baseline
+- [ ] T225 [P] [US12] test_query_performance_under_stress: Execute SELECT queries during stress, verify <500ms p95
+- [ ] T226 [P] [US12] test_flush_operations_during_stress: Stress test + periodic flushes, verify no accumulation
+- [ ] T227 [P] [US12] test_actor_system_stability: Monitor flush/live query actors, verify no mailbox overflow
+- [ ] T228 [P] [US12] test_graceful_degradation: Increase load until capacity, verify graceful slowdown not crash
 
 ### Implementation for User Story 12
 
 **Note**: This is primarily a testing phase. Implementations are test utilities and monitoring.
 
-- [ ] T197 [P] [US12] Create stress test utilities in `/backend/tests/integration/common/stress_utils.rs`
-- [ ] T198 [P] [US12] Implement concurrent writer thread spawning with configurable insert rate
-- [ ] T199 [P] [US12] Implement WebSocket subscription spawning with connection monitoring
-- [ ] T200 [P] [US12] Implement memory monitoring with periodic measurement and comparison
-- [ ] T201 [P] [US12] Implement CPU usage measurement using system metrics
-- [ ] T202 [P] [US12] Add benchmarks to `/backend/benches/stress.rs` for repeatable stress testing
+- [ ] T229 [P] [US12] Create stress test utilities in `/backend/tests/integration/common/stress_utils.rs`
+- [ ] T230 [P] [US12] Implement concurrent writer thread spawning with configurable insert rate
+- [ ] T231 [P] [US12] Implement WebSocket subscription spawning with connection monitoring
+- [ ] T232 [P] [US12] Implement memory monitoring with periodic measurement and comparison
+- [ ] T233 [P] [US12] Implement CPU usage measurement using system metrics
+- [ ] T234 [P] [US12] Add benchmarks to `/backend/benches/stress.rs` for repeatable stress testing
 
 **Documentation Tasks for User Story 12**:
-- [ ] T203 [P] [US12] Document stress testing methodology in `/docs/architecture/testing-strategy.md`
-- [ ] T204 [P] [US12] Add inline comments to stress test utilities explaining measurement approach
+- [ ] T235 [P] [US12] Document stress testing methodology in `/docs/architecture/testing-strategy.md`
+- [ ] T236 [P] [US12] Add inline comments to stress test utilities explaining measurement approach
 
 **Checkpoint**: System proven stable under sustained high load with predictable resource usage
 
@@ -509,31 +526,31 @@
 
 ### Integration Tests for User Story 3
 
-- [ ] T205 [P] [US3] Create `/backend/tests/integration/test_manual_flushing.rs` test file
-- [ ] T206 [P] [US3] test_flush_table_returns_job_id: FLUSH TABLE, verify job_id returned immediately (< 100ms)
-- [ ] T206a [P] [US3] test_flush_job_completes_asynchronously: FLUSH TABLE, poll system.jobs, verify status progression
-- [ ] T207 [P] [US3] test_flush_all_tables_multiple_jobs: Create 3 tables, FLUSH ALL TABLES, verify array of job_ids returned
-- [ ] T208 [P] [US3] test_flush_job_result_includes_metrics: After flush completes, query system.jobs, verify records_flushed and storage_location in result
-- [ ] T210 [P] [US3] test_flush_empty_table: FLUSH empty table, verify job completes with 0 records in result
-- [ ] T209 [P] [US3] test_concurrent_flush_same_table: Trigger concurrent FLUSH on same table, verify both succeed or in-progress detection
-- [ ] T211 [P] [US3] test_shutdown_waits_for_flush_jobs: FLUSH TABLE, initiate shutdown, verify flush completes before exit
-- [ ] T211a [P] [US3] test_flush_job_failure_handling: Simulate flush error, verify job status='failed' and error in result
+- [ ] T237 [P] [US3] Create `/backend/tests/integration/test_manual_flushing.rs` test file
+- [ ] T238 [P] [US3] test_flush_table_returns_job_id: FLUSH TABLE, verify job_id returned immediately (< 100ms)
+- [ ] T239 [P] [US3] test_flush_job_completes_asynchronously: FLUSH TABLE, poll system.jobs, verify status progression
+- [ ] T240 [P] [US3] test_flush_all_tables_multiple_jobs: Create 3 tables, FLUSH ALL TABLES, verify array of job_ids returned
+- [ ] T241 [P] [US3] test_flush_job_result_includes_metrics: After flush completes, query system.jobs, verify records_flushed and storage_location in result
+- [ ] T242 [P] [US3] test_flush_empty_table: FLUSH empty table, verify job completes with 0 records in result
+- [ ] T243 [P] [US3] test_concurrent_flush_same_table: Trigger concurrent FLUSH on same table, verify both succeed or in-progress detection
+- [ ] T244 [P] [US3] test_shutdown_waits_for_flush_jobs: FLUSH TABLE, initiate shutdown, verify flush completes before exit
+- [ ] T245 [P] [US3] test_flush_job_failure_handling: Simulate flush error, verify job status='failed' and error in result
 
 ### Implementation for User Story 3
 
-- [ ] T213 [P] [US3] Create `/backend/crates/kalamdb-sql/src/flush_commands.rs` with FLUSH TABLE/ALL parsing
-- [ ] T214 [US3] Implement FLUSH TABLE SQL command parsing in flush_commands.rs
-- [ ] T215 [US3] Implement FLUSH ALL TABLES SQL command parsing
-- [ ] T216 [US3] Add flush command execution logic to kalamdb-sql query processor (asynchronous, returns job_id)
-- [ ] T217 [US3] Implement asynchronous flush job creation with JobManager, return job_id immediately
-- [ ] T217a [US3] Update flush job to write records_flushed and storage_location to system.jobs result field
-- [ ] T218 [US3] Implement concurrent flush handling (allow both jobs or detect in-progress)
-- [ ] T219 [US3] Add shutdown hook in `/backend/crates/kalamdb-server/src/main.rs` to wait for pending flush jobs before exit
-- [ ] T219a [US3] Add configurable flush job timeout during shutdown (default: 60s) in config.toml
+- [ ] T246 [P] [US3] Create `/backend/crates/kalamdb-sql/src/flush_commands.rs` with FLUSH TABLE/ALL parsing
+- [ ] T247 [US3] Implement FLUSH TABLE SQL command parsing in flush_commands.rs
+- [ ] T248 [US3] Implement FLUSH ALL TABLES SQL command parsing
+- [ ] T249 [US3] Add flush command execution logic to kalamdb-sql query processor (asynchronous, returns job_id)
+- [ ] T250 [US3] Implement asynchronous flush job creation with JobManager, return job_id immediately
+- [ ] T251 [US3] Update flush job to write records_flushed and storage_location to system.jobs result field
+- [ ] T252 [US3] Implement concurrent flush handling (allow both jobs or detect in-progress)
+- [ ] T253 [US3] Add shutdown hook in `/backend/crates/kalamdb-server/src/main.rs` to wait for pending flush jobs before exit
+- [ ] T254 [US3] Add configurable flush job timeout during shutdown (default: 60s) in config.toml
 
 **Documentation Tasks for User Story 3**:
-- [ ] T220 [P] [US3] Add rustdoc to flush_commands.rs explaining asynchronous FLUSH TABLE behavior and job monitoring
-- [ ] T221 [P] [US3] Update `/docs/architecture/SQL_SYNTAX.md` with FLUSH TABLE documentation (asynchronous, job_id response)
+- [ ] T255 [P] [US3] Add rustdoc to flush_commands.rs explaining asynchronous FLUSH TABLE behavior and job monitoring
+- [ ] T256 [P] [US3] Update `/docs/architecture/SQL_SYNTAX.md` with FLUSH TABLE documentation (asynchronous, job_id response)
 
 **Checkpoint**: Manual flush control works asynchronously with job_id tracking and graceful shutdown handling
 
@@ -547,29 +564,29 @@
 
 ### Integration Tests for User Story 4
 
-- [ ] T222 [P] [US4] Create `/backend/tests/integration/test_session_caching.rs` test file
-- [ ] T223 [P] [US4] test_first_query_caches_registration: Execute SELECT twice, verify second is faster
-- [ ] T224 [P] [US4] test_cached_registration_reuse: Execute 10 queries, verify only first does registration
-- [ ] T225 [P] [US4] test_cache_eviction_after_timeout: Configure 30s timeout, wait, verify re-registration
-- [ ] T226 [P] [US4] test_schema_change_invalidates_cache: Query, ALTER TABLE, query again, verify cache invalidation
-- [ ] T227 [P] [US4] test_multi_table_session_cache: Query 5 tables twice, verify all cached
-- [ ] T228 [P] [US4] test_cache_isolation_between_sessions: Verify independent caches per session
-- [ ] T229 [P] [US4] test_dropped_table_cache_cleanup: Query, DROP TABLE, query again, verify error and cleanup
+- [ ] T257 [P] [US4] Create `/backend/tests/integration/test_session_caching.rs` test file
+- [ ] T258 [P] [US4] test_first_query_caches_registration: Execute SELECT twice, verify second is faster
+- [ ] T259 [P] [US4] test_cached_registration_reuse: Execute 10 queries, verify only first does registration
+- [ ] T260 [P] [US4] test_cache_eviction_after_timeout: Configure 30s timeout, wait, verify re-registration
+- [ ] T261 [P] [US4] test_schema_change_invalidates_cache: Query, ALTER TABLE, query again, verify cache invalidation
+- [ ] T262 [P] [US4] test_multi_table_session_cache: Query 5 tables twice, verify all cached
+- [ ] T263 [P] [US4] test_cache_isolation_between_sessions: Verify independent caches per session
+- [ ] T264 [P] [US4] test_dropped_table_cache_cleanup: Query, DROP TABLE, query again, verify error and cleanup
 
 ### Implementation for User Story 4
 
-- [ ] T230 [P] [US4] Create `/backend/crates/kalamdb-sql/src/session_cache.rs` with SessionCache struct
-- [ ] T231 [US4] Implement SessionCache with LruCache<TableKey, CachedRegistration>
-- [ ] T232 [US4] Implement hybrid LRU + TTL eviction policy in SessionCache
-- [ ] T233 [US4] Implement schema version tracking in CachedRegistration
-- [ ] T234 [US4] Implement cache invalidation on schema changes (ALTER TABLE detection)
-- [ ] T235 [US4] Integrate SessionCache into user session context in kalamdb-sql
-- [ ] T236 [US4] Add session cache configuration to config.toml (max_size, ttl)
+- [ ] T265 [P] [US4] Create `/backend/crates/kalamdb-sql/src/session_cache.rs` with SessionCache struct
+- [ ] T266 [US4] Implement SessionCache with LruCache<TableKey, CachedRegistration>
+- [ ] T267 [US4] Implement hybrid LRU + TTL eviction policy in SessionCache
+- [ ] T268 [US4] Implement schema version tracking in CachedRegistration
+- [ ] T269 [US4] Implement cache invalidation on schema changes (ALTER TABLE detection)
+- [ ] T270 [US4] Integrate SessionCache into user session context in kalamdb-sql
+- [ ] T271 [US4] Add session cache configuration to config.toml (max_size, ttl)
 
 **Documentation Tasks for User Story 4**:
-- [ ] T237 [P] [US4] Add rustdoc to SessionCache explaining LRU+TTL policy and usage
-- [ ] T238 [P] [US4] Add inline comments to eviction logic explaining policy decisions
-- [ ] T239 [P] [US4] Create ADR-006-session-cache.md explaining caching strategy
+- [ ] T272 [P] [US4] Add rustdoc to SessionCache explaining LRU+TTL policy and usage
+- [ ] T273 [P] [US4] Add inline comments to eviction logic explaining policy decisions
+- [ ] T274 [P] [US4] Create ADR-008-session-cache.md explaining caching strategy
 
 **Checkpoint**: Session-level caching provides 30% performance improvement for repeated table access
 
@@ -583,25 +600,25 @@
 
 ### Integration Tests for User Story 5
 
-- [ ] T240 [P] [US5] Create `/backend/tests/integration/test_namespace_validation.rs` test file
-- [ ] T241 [P] [US5] test_create_table_nonexistent_namespace_error: Verify error message with guidance
-- [ ] T242 [P] [US5] test_create_table_after_namespace_creation: Fail, CREATE NAMESPACE, retry success
-- [ ] T243 [P] [US5] test_user_table_namespace_validation: Verify CREATE USER TABLE validates namespace
-- [ ] T244 [P] [US5] test_shared_table_namespace_validation: Verify CREATE SHARED TABLE validates namespace
-- [ ] T245 [P] [US5] test_stream_table_namespace_validation: Verify CREATE STREAM TABLE validates namespace
-- [ ] T246 [P] [US5] test_namespace_validation_race_condition: Concurrent namespace create + table create
-- [ ] T247 [P] [US5] test_error_message_includes_guidance: Verify error includes "Create it first with CREATE NAMESPACE"
+- [ ] T275 [P] [US5] Create `/backend/tests/integration/test_namespace_validation.rs` test file
+- [ ] T276 [P] [US5] test_create_table_nonexistent_namespace_error: Verify error message with guidance
+- [ ] T277 [P] [US5] test_create_table_after_namespace_creation: Fail, CREATE NAMESPACE, retry success
+- [ ] T278 [P] [US5] test_user_table_namespace_validation: Verify CREATE USER TABLE validates namespace
+- [ ] T279 [P] [US5] test_shared_table_namespace_validation: Verify CREATE SHARED TABLE validates namespace
+- [ ] T280 [P] [US5] test_stream_table_namespace_validation: Verify CREATE STREAM TABLE validates namespace
+- [ ] T281 [P] [US5] test_namespace_validation_race_condition: Concurrent namespace create + table create
+- [ ] T282 [P] [US5] test_error_message_includes_guidance: Verify error includes "Create it first with CREATE NAMESPACE"
 
 ### Implementation for User Story 5
 
-- [ ] T248 [US5] Add namespace existence validation to CREATE TABLE in `/backend/crates/kalamdb-sql/src/ddl.rs`
-- [ ] T249 [US5] Implement namespace_exists() check before table creation
-- [ ] T250 [US5] Add descriptive error message with guidance for non-existent namespace
-- [ ] T251 [US5] Apply validation to all table types (USER, SHARED, STREAM)
-- [ ] T252 [US5] Add transaction protection to prevent race conditions
+- [ ] T283 [US5] Add namespace existence validation to CREATE TABLE in `/backend/crates/kalamdb-sql/src/ddl.rs`
+- [ ] T284 [US5] Implement namespace_exists() check before table creation
+- [ ] T285 [US5] Add descriptive error message with guidance for non-existent namespace
+- [ ] T286 [US5] Apply validation to all table types (USER, SHARED, STREAM)
+- [ ] T287 [US5] Add transaction protection to prevent race conditions
 
 **Documentation Tasks for User Story 5**:
-- [ ] T253 [P] [US5] Add inline comments to namespace validation logic explaining race condition prevention
+- [ ] T288 [P] [US5] Add inline comments to namespace validation logic explaining race condition prevention
 
 **Checkpoint**: Namespace validation prevents table creation errors with helpful guidance
 
@@ -615,41 +632,41 @@
 
 ### Integration Tests for User Story 9
 
-- [ ] T254 [P] [US9] Create `/backend/tests/integration/test_enhanced_api_features.rs` test file
-- [ ] T255 [P] [US9] test_batch_sql_sequential_execution: Submit 3 statements (CREATE/INSERT/SELECT), verify all execute
-- [ ] T256 [P] [US9] test_batch_sql_partial_failure_commits_previous: Submit INSERT (ok), INSERT (ok), invalid SELECT (fails), verify first 2 committed
+- [ ] T289 [P] [US9] Create `/backend/tests/integration/test_enhanced_api_features.rs` test file
+- [ ] T290 [P] [US9] test_batch_sql_sequential_execution: Submit 3 statements (CREATE/INSERT/SELECT), verify all execute
+- [ ] T291 [P] [US9] test_batch_sql_partial_failure_commits_previous: Submit INSERT (ok), INSERT (ok), invalid SELECT (fails), verify first 2 committed
 - [ ] T256a [P] [US9] test_batch_sql_error_indicates_statement_number: Submit batch with error in statement 3, verify error includes "Statement 3 failed:"
 - [ ] T256b [P] [US9] test_batch_sql_explicit_transaction: Submit batch with BEGIN, INSERT, INSERT, COMMIT, verify transactional behavior
-- [ ] T257 [P] [US9] test_websocket_initial_data_fetch: Subscribe with last_rows:50, verify initial 50 rows
-- [ ] T258 [P] [US9] test_drop_table_with_active_subscriptions: Create subscription, DROP TABLE, verify error
-- [ ] T259 [P] [US9] test_kill_live_query_command: Create subscription, KILL LIVE QUERY, verify disconnection
-- [ ] T260 [P] [US9] test_system_live_queries_enhanced_fields: Query system.live_queries, verify options/changes/node
-- [ ] T261 [P] [US9] test_system_jobs_enhanced_fields: Query system.jobs, verify parameters/result/trace/memory/cpu
-- [ ] T262 [P] [US9] test_describe_table_schema_history: DESCRIBE TABLE, verify schema_version and history reference
-- [ ] T263 [P] [US9] test_show_table_stats_command: SHOW TABLE STATS, verify row counts and storage metrics
-- [ ] T264 [P] [US9] test_shared_table_subscription_prevention: Subscribe to shared table, verify error
+- [ ] T292 [P] [US9] test_websocket_initial_data_fetch: Subscribe with last_rows:50, verify initial 50 rows
+- [ ] T293 [P] [US9] test_drop_table_with_active_subscriptions: Create subscription, DROP TABLE, verify error
+- [ ] T294 [P] [US9] test_kill_live_query_command: Create subscription, KILL LIVE QUERY, verify disconnection
+- [ ] T295 [P] [US9] test_system_live_queries_enhanced_fields: Query system.live_queries, verify options/changes/node
+- [ ] T296 [P] [US9] test_system_jobs_enhanced_fields: Query system.jobs, verify parameters/result/trace/memory/cpu
+- [ ] T297 [P] [US9] test_describe_table_schema_history: DESCRIBE TABLE, verify schema_version and history reference
+- [ ] T298 [P] [US9] test_show_table_stats_command: SHOW TABLE STATS, verify row counts and storage metrics
+- [ ] T299 [P] [US9] test_shared_table_subscription_prevention: Subscribe to shared table, verify error
 
 ### Implementation for User Story 9
 
-- [ ] T265 [P] [US9] Create `/backend/crates/kalamdb-sql/src/batch_execution.rs` for multi-statement parsing
-- [ ] T266 [US9] Implement sequential non-transactional batch SQL execution (each statement commits independently)
-- [ ] T266a [US9] Implement batch failure handling (stop at failure, return statement number in error)
-- [ ] T267 [US9] Update `/backend/crates/kalamdb-api/src/sql_endpoint.rs` to handle batch requests
-- [ ] T268 [US9] Add last_rows parameter support to WebSocket subscription options
-- [ ] T269 [US9] Implement initial data fetch for subscriptions with last_rows>0
-- [ ] T270 [US9] Create KILL LIVE QUERY command parsing in kalamdb-sql
-- [ ] T271 [US9] Implement subscription termination logic for KILL LIVE QUERY
-- [ ] T272 [US9] Update system.live_queries schema to add options (JSONB), changes (BIGINT), node (TEXT) columns
-- [ ] T273 [US9] Update system.jobs schema to add parameters (JSONB), result (TEXT), trace (TEXT), memory_used (BIGINT), cpu_used (BIGINT) columns
-- [ ] T274 [US9] Create system.table_schemas table for schema version history
-- [ ] T275 [US9] Update DESCRIBE TABLE to include schema_version and history reference
-- [ ] T276 [US9] Create SHOW TABLE STATS command parsing and execution
-- [ ] T277 [US9] Implement DROP TABLE dependency checking for active subscriptions
-- [ ] T278 [US9] Add shared table subscription prevention in WebSocket handler
+- [ ] T300 [P] [US9] Create `/backend/crates/kalamdb-sql/src/batch_execution.rs` for multi-statement parsing
+- [ ] T301 [US9] Implement sequential non-transactional batch SQL execution (each statement commits independently)
+- [ ] T302 [US9] Implement batch failure handling (stop at failure, return statement number in error)
+- [ ] T303 [US9] Update `/backend/crates/kalamdb-api/src/sql_endpoint.rs` to handle batch requests
+- [ ] T304 [US9] Add last_rows parameter support to WebSocket subscription options
+- [ ] T305 [US9] Implement initial data fetch for subscriptions with last_rows>0
+- [ ] T306 [US9] Create KILL LIVE QUERY command parsing in kalamdb-sql
+- [ ] T307 [US9] Implement subscription termination logic for KILL LIVE QUERY
+- [ ] T308 [US9] Update system.live_queries schema to add options (JSONB), changes (BIGINT), node (TEXT) columns
+- [ ] T309 [US9] Update system.jobs schema to add parameters (JSONB), result (TEXT), trace (TEXT), memory_used (BIGINT), cpu_used (BIGINT) columns
+- [ ] T310 [US9] Create system.table_schemas table for schema version history
+- [ ] T311 [US9] Update DESCRIBE TABLE to include schema_version and history reference
+- [ ] T312 [US9] Create SHOW TABLE STATS command parsing and execution
+- [ ] T313 [US9] Implement DROP TABLE dependency checking for active subscriptions
+- [ ] T314 [US9] Add shared table subscription prevention in WebSocket handler
 
 **Documentation Tasks for User Story 9**:
-- [ ] T279 [P] [US9] Update contracts/sql-commands.md with batch SQL semantics (sequential, non-transactional)
-- [ ] T280 [P] [US9] Update contracts/system-tables-schema.md with enhanced schema documentation
+- [ ] T315 [P] [US9] Update contracts/sql-commands.md with batch SQL semantics (sequential, non-transactional)
+- [ ] T316 [P] [US9] Update contracts/system-tables-schema.md with enhanced schema documentation
 
 **Checkpoint**: Enhanced API features provide better observability and control with predictable batch execution semantics
 
@@ -663,46 +680,46 @@
 
 ### Integration Tests for User Story 10
 
-- [ ] T281 [P] [US10] Create `/backend/tests/integration/test_user_management_sql.rs` test file
-- [ ] T282 [P] [US10] test_insert_user_into_system_users: INSERT user, verify created with deleted_at=NULL
-- [ ] T283 [P] [US10] test_update_user_in_system_users: INSERT, UPDATE username/metadata, verify persisted
-- [ ] T284 [P] [US10] test_soft_delete_user: INSERT, DELETE, verify deleted_at set and user still in database
-- [ ] T284a [P] [US10] test_soft_deleted_user_excluded_from_queries: DELETE user, SELECT *, verify excluded
-- [ ] T284b [P] [US10] test_query_deleted_users_explicitly: DELETE user, SELECT WHERE deleted_at IS NOT NULL, verify appears
-- [ ] T284c [P] [US10] test_restore_deleted_user: DELETE user, UPDATE deleted_at=NULL, verify restored
-- [ ] T284d [P] [US10] test_grace_period_cleanup: DELETE user with 1-day grace, advance time 2 days, verify permanent removal
-- [ ] T284e [P] [US10] test_user_tables_accessible_during_grace_period: Create user table, DELETE user, verify table accessible
-- [ ] T285 [P] [US10] test_duplicate_user_id_validation: INSERT twice with same user_id, verify error
-- [ ] T286 [P] [US10] test_update_nonexistent_user_error: UPDATE non-existent user, verify error
-- [ ] T287 [P] [US10] test_json_metadata_validation: INSERT with malformed JSON, verify validation error
-- [ ] T288 [P] [US10] test_automatic_timestamps: Verify created_at, updated_at, deleted_at automatically managed
-- [ ] T289 [P] [US10] test_partial_update_preserves_fields: UPDATE only username, verify metadata unchanged
-- [ ] T290 [P] [US10] test_required_fields_validation: INSERT without user_id or username, verify error
-- [ ] T291 [P] [US10] test_select_with_filtering: INSERT multiple users, SELECT with WHERE filter, verify non-deleted only
+- [ ] T317 [P] [US10] Create `/backend/tests/integration/test_user_management_sql.rs` test file
+- [ ] T318 [P] [US10] test_insert_user_into_system_users: INSERT user, verify created with deleted_at=NULL
+- [ ] T319 [P] [US10] test_update_user_in_system_users: INSERT, UPDATE username/metadata, verify persisted
+- [ ] T320 [P] [US10] test_soft_delete_user: INSERT, DELETE, verify deleted_at set and user still in database
+- [ ] T321 [P] [US10] test_soft_deleted_user_excluded_from_queries: DELETE user, SELECT *, verify excluded
+- [ ] T322 [P] [US10] test_query_deleted_users_explicitly: DELETE user, SELECT WHERE deleted_at IS NOT NULL, verify appears
+- [ ] T323 [P] [US10] test_restore_deleted_user: DELETE user, UPDATE deleted_at=NULL, verify restored
+- [ ] T324 [P] [US10] test_grace_period_cleanup: DELETE user with 1-day grace, advance time 2 days, verify permanent removal
+- [ ] T325 [P] [US10] test_user_tables_accessible_during_grace_period: Create user table, DELETE user, verify table accessible
+- [ ] T326 [P] [US10] test_duplicate_user_id_validation: INSERT twice with same user_id, verify error
+- [ ] T327 [P] [US10] test_update_nonexistent_user_error: UPDATE non-existent user, verify error
+- [ ] T328 [P] [US10] test_json_metadata_validation: INSERT with malformed JSON, verify validation error
+- [ ] T329 [P] [US10] test_automatic_timestamps: Verify created_at, updated_at, deleted_at automatically managed
+- [ ] T330 [P] [US10] test_partial_update_preserves_fields: UPDATE only username, verify metadata unchanged
+- [ ] T331 [P] [US10] test_required_fields_validation: INSERT without user_id or username, verify error
+- [ ] T332 [P] [US10] test_select_with_filtering: INSERT multiple users, SELECT with WHERE filter, verify non-deleted only
 
 ### Implementation for User Story 10
 
-- [ ] T292 [P] [US10] Create `/backend/crates/kalamdb-sql/src/user_management.rs` for user CRUD operations
-- [ ] T293 [US10] Implement INSERT INTO system.users command parsing and execution
-- [ ] T294 [US10] Implement UPDATE system.users command parsing and execution
-- [ ] T295 [US10] Implement soft DELETE FROM system.users (set deleted_at timestamp)
-- [ ] T295a [US10] Add deleted_at column (TIMESTAMP, nullable) to system.users schema
-- [ ] T295b [US10] Modify default SELECT queries to exclude soft-deleted users (WHERE deleted_at IS NULL)
-- [ ] T295c [US10] Implement scheduled cleanup job for expired grace period users
-- [ ] T295d [US10] Add user_deletion_grace_period_days configuration to config.toml (default: 30)
-- [ ] T295e [US10] Implement user restoration logic (UPDATE deleted_at=NULL cancels cleanup)
-- [ ] T296 [US10] Add user_id uniqueness validation for INSERT operations
-- [ ] T297 [US10] Add user existence validation for UPDATE and DELETE operations
-- [ ] T298 [US10] Add JSON metadata validation for INSERT and UPDATE
-- [ ] T299 [US10] Implement automatic created_at timestamp on INSERT
-- [ ] T300 [US10] Implement automatic updated_at timestamp on UPDATE
-- [ ] T300a [US10] Implement automatic deleted_at timestamp on DELETE
-- [ ] T301 [US10] Add required field validation (user_id, username NOT NULL)
+- [ ] T333 [P] [US10] Create `/backend/crates/kalamdb-sql/src/user_management.rs` for user CRUD operations
+- [ ] T334 [US10] Implement INSERT INTO system.users command parsing and execution
+- [ ] T335 [US10] Implement UPDATE system.users command parsing and execution
+- [ ] T336 [US10] Implement soft DELETE FROM system.users (set deleted_at timestamp)
+- [ ] T337 [US10] Add deleted_at column (TIMESTAMP, nullable) to system.users schema
+- [ ] T338 [US10] Modify default SELECT queries to exclude soft-deleted users (WHERE deleted_at IS NULL)
+- [ ] T339 [US10] Implement scheduled cleanup job for expired grace period users
+- [ ] T340 [US10] Add user_deletion_grace_period_days configuration to config.toml (default: 30)
+- [ ] T341 [US10] Implement user restoration logic (UPDATE deleted_at=NULL cancels cleanup)
+- [ ] T342 [US10] Add user_id uniqueness validation for INSERT operations
+- [ ] T343 [US10] Add user existence validation for UPDATE and DELETE operations
+- [ ] T344 [US10] Add JSON metadata validation for INSERT and UPDATE
+- [ ] T345 [US10] Implement automatic created_at timestamp on INSERT
+- [ ] T346 [US10] Implement automatic updated_at timestamp on UPDATE
+- [ ] T347 [US10] Implement automatic deleted_at timestamp on DELETE
+- [ ] T348 [US10] Add required field validation (user_id, username NOT NULL)
 
 **Documentation Tasks for User Story 10**:
-- [ ] T302 [P] [US10] Add rustdoc to user_management.rs explaining soft delete with grace period
-- [ ] T302a [P] [US10] Update contracts/system-tables-schema.md with deleted_at column and soft delete behavior
-- [ ] T303 [P] [US10] Update contracts/sql-commands.md with user management examples
+- [ ] T349 [P] [US10] Add rustdoc to user_management.rs explaining soft delete with grace period
+- [ ] T350 [P] [US10] Update contracts/system-tables-schema.md with deleted_at column and soft delete behavior
+- [ ] T351 [P] [US10] Update contracts/sql-commands.md with user management examples
 
 **Checkpoint**: User management via SQL commands works with proper validation
 
@@ -716,32 +733,32 @@
 
 ### Integration Tests for User Story 6
 
-- [ ] T304 [P] [US6] Create `/backend/tests/integration/test_code_quality.rs` test file
-- [ ] T305 [P] [US6] test_system_table_providers_use_common_base: Verify inheritance from base provider
-- [ ] T306 [P] [US6] test_type_safe_wrappers_usage: Create tables with UserId/NamespaceId/TableName wrappers
-- [ ] T307 [P] [US6] test_column_family_helper_functions: Verify centralized CF name generation
-- [ ] T308 [P] [US6] test_kalamdb_commons_models_accessible: Import and use commons types in test
-- [ ] T309 [P] [US6] test_system_catalog_consistency: Query system tables, verify "system" catalog
-- [ ] T310 [P] [US6] test_binary_size_optimization: Build release, verify test deps not included
+- [ ] T352 [P] [US6] Create `/backend/tests/integration/test_code_quality.rs` test file
+- [ ] T353 [P] [US6] test_system_table_providers_use_common_base: Verify inheritance from base provider
+- [ ] T354 [P] [US6] test_type_safe_wrappers_usage: Create tables with UserId/NamespaceId/TableName wrappers
+- [ ] T355 [P] [US6] test_column_family_helper_functions: Verify centralized CF name generation
+- [ ] T356 [P] [US6] test_kalamdb_commons_models_accessible: Import and use commons types in test
+- [ ] T357 [P] [US6] test_system_catalog_consistency: Query system tables, verify "system" catalog
+- [ ] T358 [P] [US6] test_binary_size_optimization: Build release, verify test deps not included
 
 ### Implementation for User Story 6
 
 **Note**: Many code quality tasks completed in Foundational phase (T011-T034). This phase handles remaining items.
 
-- [ ] T311 [P] [US6] Update all Cargo.toml files with latest compatible dependency versions
-- [ ] T312 [P] [US6] Update `/README.md` to reflect current architecture with WebSocket info
-- [ ] T313 [P] [US6] Remove Parquet-specific details from README (mention once)
+- [ ] T359 [P] [US6] Update all Cargo.toml files with latest compatible dependency versions
+- [ ] T360 [P] [US6] Update `/README.md` to reflect current architecture with WebSocket info
+- [ ] T361 [P] [US6] Remove Parquet-specific details from README (mention once)
 - [ ] T314 [P] [US6] Refactor kalamdb-sql to remove any remaining direct RocksDB calls
 - [ ] T315 [P] [US6] Add "system" catalog consistently to all system table queries
 - [ ] T316 [P] [US6] Configure test framework to support local vs temporary server configuration
 - [ ] T317 [P] [US6] Audit release build configuration to exclude test-only dependencies
-- [ ] T318 [US6] Consolidate remaining duplicated validation logic in system table providers
-- [ ] T319 [US6] Migrate remaining DDL definitions to kalamdb-sql/src/ddl.rs if any missed
+- [ ] T366 [US6] Consolidate remaining duplicated validation logic in system table providers
+- [ ] T367 [US6] Migrate remaining DDL definitions to kalamdb-sql/src/ddl.rs if any missed
 
 **Documentation Tasks for User Story 6**:
-- [ ] T320 [P] [US6] Review and update all rustdoc comments for completeness
-- [ ] T321 [P] [US6] Add inline comments to scan() functions explaining purpose and usage
-- [ ] T322 [P] [US6] Verify all type-safe wrappers have usage examples in rustdoc
+- [ ] T416 [P] [US6] Review and update all rustdoc comments for completeness
+- [ ] T417 [P] [US6] Add inline comments to scan() functions explaining purpose and usage
+- [ ] T418 [P] [US6] Verify all type-safe wrappers have usage examples in rustdoc
 
 **Checkpoint**: Code quality improved with reduced duplication and updated dependencies
 
@@ -755,28 +772,28 @@
 
 ### Integration Tests for User Story 7
 
-- [ ] T323 [P] [US7] Create `/backend/tests/integration/test_storage_abstraction.rs` test file
-- [ ] T324 [P] [US7] test_storage_trait_interface_exists: Verify trait defines required operations
-- [ ] T325 [P] [US7] test_rocksdb_implements_storage_trait: Verify RocksDB backend implements trait
-- [ ] T326 [P] [US7] test_system_storages_table_renamed: Query system.storages, verify old name gone
-- [ ] T327 [P] [US7] test_storage_operations_through_abstraction: Perform CRUD, verify no direct RocksDB calls
-- [ ] T328 [P] [US7] test_column_family_abstraction: Verify CF concepts work through Partition abstraction
-- [ ] T329 [P] [US7] test_storage_backend_error_handling: Trigger storage errors, verify graceful handling
+- [ ] T419 [P] [US7] Create `/backend/tests/integration/test_storage_abstraction.rs` test file
+- [ ] T420 [P] [US7] test_storage_trait_interface_exists: Verify trait defines required operations
+- [ ] T421 [P] [US7] test_rocksdb_implements_storage_trait: Verify RocksDB backend implements trait
+- [ ] T422 [P] [US7] test_system_storages_table_renamed: Query system.storages, verify old name gone
+- [ ] T423 [P] [US7] test_storage_operations_through_abstraction: Perform CRUD, verify no direct RocksDB calls
+- [ ] T424 [P] [US7] test_column_family_abstraction: Verify CF concepts work through Partition abstraction
+- [ ] T425 [P] [US7] test_storage_backend_error_handling: Trigger storage errors, verify graceful handling
 
 ### Implementation for User Story 7
 
 **Note**: Storage trait defined in Foundational phase (T025-T028). This phase completes migration.
 
-- [ ] T330 [US7] Migrate all remaining storage operations in kalamdb-core to use StorageBackend trait
-- [ ] T331 [US7] Migrate all remaining storage operations in kalamdb-sql to use StorageBackend trait
-- [ ] T332 [US7] Rename system.storage_locations table to system.storages in database schema
-- [ ] T333 [US7] Update all references to storage_locations in code to use "storages"
-- [ ] T334 [US7] Update all SQL queries referencing storage_locations to use system.storages
-- [ ] T335 [US7] Verify no direct RocksDB calls remain outside kalamdb-store crate
+- [ ] T426 [US7] Migrate all remaining storage operations in kalamdb-core to use StorageBackend trait
+- [ ] T379 [US7] Migrate all remaining storage operations in kalamdb-sql to use StorageBackend trait
+- [ ] T380 [US7] Rename system.storage_locations table to system.storages in database schema
+- [ ] T381 [US7] Update all references to storage_locations in code to use "storages"
+- [ ] T382 [US7] Update all SQL queries referencing storage_locations to use system.storages
+- [ ] T383 [US7] Verify no direct RocksDB calls remain outside kalamdb-store crate
 
 **Documentation Tasks for User Story 7**:
-- [ ] T336 [P] [US7] Update contracts/storage-trait.md with migration guide
-- [ ] T337 [P] [US7] Document Partition abstraction for non-RocksDB backends
+- [ ] T384 [P] [US7] Update contracts/storage-trait.md with migration guide
+- [ ] T385 [P] [US7] Document Partition abstraction for non-RocksDB backends
 
 **Checkpoint**: Storage abstraction complete, system ready for alternative backends
 
@@ -790,35 +807,35 @@
 
 ### Integration Tests for User Story 8
 
-- [ ] T338 [P] [US8] Create `/backend/tests/integration/test_documentation_and_deployment.rs` test file
-- [ ] T339 [P] [US8] test_docs_folder_organization: Verify build/, quickstart/, architecture/ subfolders exist
-- [ ] T340 [P] [US8] test_dockerfile_builds_successfully: Run docker build, verify success
-- [ ] T341 [P] [US8] test_docker_image_starts_server: Build image, run container, verify server responds
-- [ ] T342 [P] [US8] test_docker_compose_brings_up_stack: Run docker-compose up, verify all services start
-- [ ] T343 [P] [US8] test_docker_container_environment_variables: Start with env vars, verify config override
-- [ ] T344 [P] [US8] test_docker_volume_persistence: Create data, stop, restart, verify persistence
-- [ ] T345 [P] [US8] test_docker_image_size_within_limits: Verify image size <100MB
+- [ ] T386 [P] [US8] Create `/backend/tests/integration/test_documentation_and_deployment.rs` test file
+- [ ] T387 [P] [US8] test_docs_folder_organization: Verify build/, quickstart/, architecture/ subfolders exist
+- [ ] T388 [P] [US8] test_dockerfile_builds_successfully: Run docker build, verify success
+- [ ] T389 [P] [US8] test_docker_image_starts_server: Build image, run container, verify server responds
+- [ ] T390 [P] [US8] test_docker_compose_brings_up_stack: Run docker-compose up, verify all services start
+- [ ] T391 [P] [US8] test_docker_container_environment_variables: Start with env vars, verify config override
+- [ ] T392 [P] [US8] test_docker_volume_persistence: Create data, stop, restart, verify persistence
+- [ ] T393 [P] [US8] test_docker_image_size_within_limits: Verify image size <100MB
 
 ### Implementation for User Story 8
 
-- [ ] T346 [P] [US8] Create `/docs/build/` directory and move build-related docs
-- [ ] T347 [P] [US8] Create `/docs/quickstart/` directory and move getting started guides
-- [ ] T348 [P] [US8] Create `/docs/architecture/` directory and move system design docs
-- [ ] T349 [P] [US8] Create `/docs/architecture/adrs/` directory for Architecture Decision Records
-- [ ] T350 [P] [US8] Review and remove outdated/redundant documentation files
-- [ ] T351 [P] [US8] Create `/docker/Dockerfile` with multi-stage build (Debian builder + distroless runtime)
-- [ ] T352 [P] [US8] Create `/docker/docker-compose.yml` with service orchestration
-- [ ] T353 [P] [US8] Create `/docker/.dockerignore` to exclude unnecessary files
-- [ ] T354 [P] [US8] Create `/docker/README.md` with Docker deployment instructions
-- [ ] T355 [US8] Configure Dockerfile with environment variable support for config overrides
-- [ ] T356 [US8] Configure docker-compose with volume mounts for data persistence
-- [ ] T357 [US8] Configure docker-compose with networking and port exposure
+- [ ] T394 [P] [US8] Create `/docs/build/` directory and move build-related docs
+- [ ] T395 [P] [US8] Create `/docs/quickstart/` directory and move getting started guides
+- [ ] T396 [P] [US8] Create `/docs/architecture/` directory and move system design docs
+- [ ] T397 [P] [US8] Create `/docs/architecture/adrs/` directory for Architecture Decision Records
+- [ ] T398 [P] [US8] Review and remove outdated/redundant documentation files
+- [ ] T399 [P] [US8] Create `/docker/Dockerfile` with multi-stage build (Debian builder + distroless runtime)
+- [ ] T400 [P] [US8] Create `/docker/docker-compose.yml` with service orchestration
+- [ ] T401 [P] [US8] Create `/docker/.dockerignore` to exclude unnecessary files
+- [ ] T402 [P] [US8] Create `/docker/README.md` with Docker deployment instructions
+- [ ] T403 [US8] Configure Dockerfile with environment variable support for config overrides
+- [ ] T404 [US8] Configure docker-compose with volume mounts for data persistence
+- [ ] T405 [US8] Configure docker-compose with networking and port exposure
 
 **Documentation Tasks for User Story 8**:
-- [ ] T358 [P] [US8] Create `/docs/quickstart/cli-usage.md` from quickstart.md content
-- [ ] T359 [P] [US8] Create `/docs/quickstart/docker-quickstart.md` with Docker deployment guide
-- [ ] T360 [P] [US8] Create `/docs/architecture/flush-architecture.md` explaining flush job design
-- [ ] T361 [P] [US8] Create `/docs/architecture/storage-abstraction.md` explaining storage trait
+- [ ] T406 [P] [US8] Create `/docs/quickstart/cli-usage.md` from quickstart.md content
+- [ ] T407 [P] [US8] Create `/docs/quickstart/docker-quickstart.md` with Docker deployment guide
+- [ ] T408 [P] [US8] Create `/docs/architecture/flush-architecture.md` explaining flush job design
+- [ ] T409 [P] [US8] Create `/docs/architecture/storage-abstraction.md` explaining storage trait
 
 **Checkpoint**: Documentation organized and Docker deployment infrastructure complete
 
@@ -828,27 +845,27 @@
 
 **Purpose**: Final improvements affecting multiple user stories
 
-- [ ] T362 [P] Performance profiling and optimization across query execution, flush operations, WebSocket subscriptions
-- [ ] T363 [P] Security audit of authentication, authorization, and input validation
-- [ ] T364 [P] Error message consistency review across all endpoints
-- [ ] T365 [P] Logging improvements for debugging and operational visibility
-- [ ] T366 [P] Add benchmarks to `/backend/benches/` for query cache, session cache, flush operations
-- [ ] T367 [P] Run quickstart.md validation to ensure all examples work
-- [ ] T368 [P] Cross-platform testing (Linux, macOS, Windows) for CLI and server
+- [ ] T410 [P] Performance profiling and optimization across query execution, flush operations, WebSocket subscriptions
+- [ ] T411 [P] Security audit of authentication, authorization, and input validation
+- [ ] T412 [P] Error message consistency review across all endpoints
+- [ ] T413 [P] Logging improvements for debugging and operational visibility
+- [ ] T414 [P] Add benchmarks to `/backend/benches/` for query cache, session cache, flush operations
+- [ ] T415 [P] Run quickstart.md validation to ensure all examples work
+- [ ] T416 [P] Cross-platform testing (Linux, macOS, Windows) for CLI and server
 
 **Documentation Review (Constitution Principle VIII)**:
-- [ ] T369 Review all module-level rustdoc comments for completeness across all crates
-- [ ] T370 Verify all public APIs have examples and proper documentation
-- [ ] T371 Audit inline comments for complex algorithms and architectural patterns
-- [ ] T372 Ensure all Architecture Decision Records (ADRs) are complete and linked
-- [ ] T373 Code review checklist verification for documentation compliance
-- [ ] T374 Validate all contracts/ documentation matches implementation
+- [ ] T417 Review all module-level rustdoc comments for completeness across all crates
+- [ ] T418 Verify all public APIs have examples and proper documentation
+- [ ] T419 Audit inline comments for complex algorithms and architectural patterns
+- [ ] T420 Ensure all Architecture Decision Records (ADRs) are complete and linked
+- [ ] T421 Code review checklist verification for documentation compliance
+- [ ] T422 Validate all contracts/ documentation matches implementation
 
 **Final Tasks**:
-- [ ] T375 Code cleanup and refactoring for consistency
-- [ ] T376 Final integration test run for all 130 tests
-- [ ] T377 Update CHANGELOG.md with all feature additions
-- [ ] T378 Prepare release notes
+- [ ] T423 Code cleanup and refactoring for consistency
+- [ ] T424 Final integration test run for all 130 tests
+- [ ] T425 Update CHANGELOG.md with all feature additions
+- [ ] T426 Prepare release notes
 
 ---
 
@@ -1001,7 +1018,7 @@ With 3+ developers after Foundational phase completes:
 
 ---
 
-## Phase 13: User Story 13 - Operational Improvements and Bug Fixes (Priority: P2)
+## Phase 17: User Story 13 - Operational Improvements and Bug Fixes (Priority: P2)
 
 **Goal**: Add CLEAR CACHE command, server port validation, CLI progress indicators, dynamic auto-completion, log rotation, and fix storage path bugs
 
@@ -1009,49 +1026,49 @@ With 3+ developers after Foundational phase completes:
 
 ### Integration Tests for User Story 13
 
-- [ ] T303 [P] [US13] Create `/backend/tests/integration/test_operational_improvements.rs` test file
-- [ ] T304 [P] [US13] test_clear_cache_command: Execute queries to populate caches, CLEAR CACHE, verify caches emptied
-- [ ] T305 [P] [US13] test_port_already_in_use: Start server on port, attempt second on same port, verify error before RocksDB init
-- [ ] T306 [P] [US13] test_cli_progress_indicator: Execute long query, verify progress indicator with elapsed time
-- [ ] T307 [P] [US13] test_cli_table_autocomplete: Type partial table name + TAB, verify suggestions from system.tables
-- [ ] T308 [P] [US13] test_select_column_order_preserved: SELECT with specific order, verify CLI preserves exact order
-- [ ] T309 [P] [US13] test_log_rotation_triggers: Generate logs exceeding limit, verify rotation to archive
-- [ ] T310 [P] [US13] test_rocksdb_wal_log_limit: Perform writes, verify only configured WAL files preserved
-- [ ] T311 [P] [US13] test_user_table_deletion_path_substitution: Delete user table, verify no "${user_id}" literal
-- [ ] T312 [P] [US13] test_shared_table_storage_folder_creation: Create shared table, verify storage folder exists
-- [ ] T313 [P] [US13] test_health_endpoint: GET /health, verify {"status", "uptime_seconds", "version"}
-- [ ] T314 [P] [US13] test_cli_connection_check: Stop server, start CLI, verify error message
-- [ ] T315 [P] [US13] test_cli_healthcheck_on_startup: Start CLI with server running, verify connection success
+- [ ] T427 [P] [US13] Create `/backend/tests/integration/test_operational_improvements.rs` test file
+- [ ] T428 [P] [US13] test_clear_cache_command: Execute queries to populate caches, CLEAR CACHE, verify caches emptied
+- [ ] T429 [P] [US13] test_port_already_in_use: Start server on port, attempt second on same port, verify error before RocksDB init
+- [ ] T430 [P] [US13] test_cli_progress_indicator: Execute long query, verify progress indicator with elapsed time
+- [ ] T431 [P] [US13] test_cli_table_autocomplete: Type partial table name + TAB, verify suggestions from system.tables
+- [ ] T432 [P] [US13] test_select_column_order_preserved: SELECT with specific order, verify CLI preserves exact order
+- [ ] T433 [P] [US13] test_log_rotation_triggers: Generate logs exceeding limit, verify rotation to archive
+- [ ] T434 [P] [US13] test_rocksdb_wal_log_limit: Perform writes, verify only configured WAL files preserved
+- [ ] T435 [P] [US13] test_user_table_deletion_path_substitution: Delete user table, verify no "${user_id}" literal
+- [ ] T436 [P] [US13] test_shared_table_storage_folder_creation: Create shared table, verify storage folder exists
+- [ ] T437 [P] [US13] test_health_endpoint: GET /health, verify {"status", "uptime_seconds", "version"}
+- [ ] T438 [P] [US13] test_cli_connection_check: Stop server, start CLI, verify error message
+- [ ] T439 [P] [US13] test_cli_healthcheck_on_startup: Start CLI with server running, verify connection success
 
 ### Implementation for User Story 13
 
-- [ ] T316 [P] [US13] Create `/backend/crates/kalamdb-sql/src/cache_commands.rs` for CLEAR CACHE parsing
-- [ ] T317 [US13] Implement CLEAR CACHE command parsing in cache_commands.rs
-- [ ] T318 [US13] Implement session cache clearing logic in kalamdb-core
-- [ ] T319 [US13] Implement query plan cache clearing logic in kalamdb-sql
-- [ ] T320 [US13] Add CLEAR CACHE response with cache entry counts by type
-- [ ] T321 [US13] Add port availability check in `/backend/crates/kalamdb-server/src/main.rs` before RocksDB init
-- [ ] T322 [US13] Implement graceful error message for port conflicts (include port number and process info if available)
-- [ ] T323 [P] [US13] Add loading indicator to `/cli/kalam-cli/src/executor.rs` for queries >200ms
-- [ ] T324 [P] [US13] Implement elapsed time display in loading indicator (0.1s precision)
-- [ ] T325 [P] [US13] Update auto-completion in `/cli/kalam-cli/src/completer.rs` to fetch from system.tables
-- [ ] T326 [P] [US13] Add schema-qualified table name support to auto-completion (namespace.table_name)
-- [ ] T327 [P] [US13] Update `/cli/kalam-cli/src/formatter.rs` to preserve SELECT column order
-- [ ] T328 [US13] Add log rotation configuration to config.toml (max_file_size, max_age, max_files)
-- [ ] T329 [US13] Implement log rotation in `/backend/crates/kalamdb-server/src/logging.rs`
-- [ ] T330 [US13] Add RocksDB WAL log retention configuration to config.toml (wal_log_count)
-- [ ] T331 [US13] Configure RocksDB WAL retention in `/backend/crates/kalamdb-store/src/rocksdb_store.rs`
-- [ ] T332 [US13] Fix storage path variable substitution in `/backend/crates/kalamdb-core/src/services/table_deletion_service.rs`
-- [ ] T333 [US13] Add storage folder creation on shared table creation in kalamdb-sql DDL handlers
-- [ ] T334 [P] [US13] Create `/backend/crates/kalamdb-api/src/handlers/health_handler.rs`
-- [ ] T335 [P] [US13] Implement /health endpoint returning status, uptime, version
-- [ ] T336 [P] [US13] Add health check method to `/cli/kalam-link/src/client.rs`
-- [ ] T337 [P] [US13] Add startup health check to `/cli/kalam-cli/src/main.rs`
+- [ ] T440 [P] [US13] Create `/backend/crates/kalamdb-sql/src/cache_commands.rs` for CLEAR CACHE parsing
+- [ ] T441 [US13] Implement CLEAR CACHE command parsing in cache_commands.rs
+- [ ] T442 [US13] Implement session cache clearing logic in kalamdb-core
+- [ ] T443 [US13] Implement query plan cache clearing logic in kalamdb-sql
+- [ ] T444 [US13] Add CLEAR CACHE response with cache entry counts by type
+- [ ] T445 [US13] Add port availability check in `/backend/crates/kalamdb-server/src/main.rs` before RocksDB init
+- [ ] T446 [US13] Implement graceful error message for port conflicts (include port number and process info if available)
+- [ ] T447 [P] [US13] Add loading indicator to `/cli/kalam-cli/src/executor.rs` for queries >200ms
+- [ ] T448 [P] [US13] Implement elapsed time display in loading indicator (0.1s precision)
+- [ ] T449 [P] [US13] Update auto-completion in `/cli/kalam-cli/src/completer.rs` to fetch from system.tables
+- [ ] T450 [P] [US13] Add schema-qualified table name support to auto-completion (namespace.table_name)
+- [ ] T451 [P] [US13] Update `/cli/kalam-cli/src/formatter.rs` to preserve SELECT column order
+- [ ] T452 [US13] Add log rotation configuration to config.toml (max_file_size, max_age, max_files)
+- [ ] T453 [US13] Implement log rotation in `/backend/crates/kalamdb-server/src/logging.rs`
+- [ ] T454 [US13] Add RocksDB WAL log retention configuration to config.toml (wal_log_count)
+- [ ] T455 [US13] Configure RocksDB WAL retention in `/backend/crates/kalamdb-store/src/rocksdb_store.rs`
+- [ ] T456 [US13] Fix storage path variable substitution in `/backend/crates/kalamdb-core/src/services/table_deletion_service.rs`
+- [ ] T457 [US13] Add storage folder creation on shared table creation in kalamdb-sql DDL handlers
+- [ ] T458 [P] [US13] Create `/backend/crates/kalamdb-api/src/handlers/health_handler.rs`
+- [ ] T459 [P] [US13] Implement /health endpoint returning status, uptime, version
+- [ ] T460 [P] [US13] Add health check method to `/cli/kalam-link/src/client.rs`
+- [ ] T461 [P] [US13] Add startup health check to `/cli/kalam-cli/src/main.rs`
 
 **Documentation Tasks for User Story 13**:
-- [ ] T338 [P] [US13] Update `/docs/architecture/SQL_SYNTAX.md` with CLEAR CACHE documentation
-- [ ] T339 [P] [US13] Document log rotation configuration in `/docs/build/DEVELOPMENT_SETUP.md`
-- [ ] T340 [P] [US13] Add /health endpoint to `/docs/architecture/API_REFERENCE.md`
+- [ ] T462 [P] [US13] Update `/docs/architecture/SQL_SYNTAX.md` with CLEAR CACHE documentation
+- [ ] T463 [P] [US13] Document log rotation configuration in `/docs/build/DEVELOPMENT_SETUP.md`
+- [ ] T464 [P] [US13] Add /health endpoint to `/docs/architecture/API_REFERENCE.md`
 
 **Checkpoint**: Operational reliability improved with cache management, better error handling, and enhanced CLI UX
 
