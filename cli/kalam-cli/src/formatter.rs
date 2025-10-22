@@ -54,66 +54,78 @@ impl OutputFormatter {
         // Handle data results
         if let Some(ref rows) = result.rows {
             let columns: Vec<String> = if rows.is_empty() {
-                // For empty results, use columns from result metadata
                 result.columns.clone()
             } else {
-                // Get columns from first row
                 rows[0].keys().cloned().collect()
             };
 
-            // Calculate column widths for alignment
             let mut col_widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
-            
-            // Update widths based on data
             for row in rows {
                 for (i, col) in columns.iter().enumerate() {
-                    let value = row.get(col)
+                    let value = row
+                        .get(col)
                         .map(|v| self.format_json_value(v))
                         .unwrap_or_else(|| "NULL".to_string());
                     col_widths[i] = col_widths[i].max(value.len());
                 }
             }
 
-            // Build aligned text table
             let mut output = String::new();
 
-            // Header row with proper spacing
-            let header_parts: Vec<String> = columns.iter()
-                .zip(col_widths.iter())
-                .map(|(col, width)| format!("{:width$}", col, width = width))
-                .collect();
-            output.push_str(&header_parts.join(" | "));
-            output.push('\n');
-            
-            // Separator line
-            let total_width: usize = col_widths.iter().sum::<usize>() + (columns.len() - 1) * 3;
-            output.push_str(&"-".repeat(total_width));
+            // Top border
+            output.push('┌');
+            for (idx, width) in col_widths.iter().enumerate() {
+                output.push_str(&"─".repeat(width + 2));
+                output.push(if idx == col_widths.len() - 1 { '┐' } else { '┬' });
+            }
             output.push('\n');
 
-            // Data rows with proper spacing
+            // Header row
+            output.push('│');
+            for (i, col) in columns.iter().enumerate() {
+                output.push(' ');
+                output.push_str(&format!("{:width$}", col, width = col_widths[i]));
+                output.push(' ');
+                output.push('│');
+            }
+            output.push('\n');
+
+            // Header separator
+            output.push('├');
+            for (idx, width) in col_widths.iter().enumerate() {
+                output.push_str(&"─".repeat(width + 2));
+                output.push(if idx == col_widths.len() - 1 { '┤' } else { '┼' });
+            }
+            output.push('\n');
+
+            // Data rows
             for row in rows {
-                let value_parts: Vec<String> = columns.iter()
-                    .zip(col_widths.iter())
-                    .map(|(col, width)| {
-                        let value = row.get(col)
-                            .map(|v| self.format_json_value(v))
-                            .unwrap_or_else(|| "NULL".to_string());
-                        format!("{:width$}", value, width = width)
-                    })
-                    .collect();
-                output.push_str(&value_parts.join(" | "));
+                output.push('│');
+                for (i, col) in columns.iter().enumerate() {
+                    let value = row
+                        .get(col)
+                        .map(|v| self.format_json_value(v))
+                        .unwrap_or_else(|| "NULL".to_string());
+                    output.push(' ');
+                    output.push_str(&format!("{:width$}", value, width = col_widths[i]));
+                    output.push(' ');
+                    output.push('│');
+                }
                 output.push('\n');
             }
 
-            // Add row count summary (MySQL/PostgreSQL style)
-            let row_count = rows.len();
-            if row_count == 0 {
-                output.push_str(&format!("Empty set ({:.2} sec)", exec_time));
-            } else if row_count == 1 {
-                output.push_str(&format!("1 row in set ({:.2} sec)", exec_time));
-            } else {
-                output.push_str(&format!("{} rows in set ({:.2} sec)", row_count, exec_time));
+            // Bottom border
+            output.push('└');
+            for (idx, width) in col_widths.iter().enumerate() {
+                output.push_str(&"─".repeat(width + 2));
+                output.push(if idx == col_widths.len() - 1 { '┘' } else { '┴' });
             }
+            output.push('\n');
+
+            let row_count = rows.len();
+            let row_label = if row_count == 1 { "row" } else { "rows" };
+            output.push_str(&format!("({} {})\n", row_count, row_label));
+            output.push_str(&format!("Time: {:.3} s", exec_time));
 
             Ok(output)
         } else {

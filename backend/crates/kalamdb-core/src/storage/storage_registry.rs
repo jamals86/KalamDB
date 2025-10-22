@@ -3,7 +3,9 @@
 //! Provides centralized access to storage configurations and path template validation.
 
 use crate::error::KalamDbError;
+use kalamdb_commons::models::{StorageConfig, StorageType};
 use kalamdb_sql::{KalamSql, Storage};
+use std::convert::TryFrom;
 use std::sync::Arc;
 
 /// Registry for managing storage backends
@@ -44,6 +46,31 @@ impl StorageRegistry {
         self.kalam_sql.get_storage(storage_id).map_err(|e| {
             KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e))
         })
+    }
+
+    /// Get a typed storage configuration (including credentials).
+    pub fn get_storage_config(
+        &self,
+        storage_id: &str,
+    ) -> Result<Option<StorageConfig>, KalamDbError> {
+        match self.get_storage(storage_id)? {
+            Some(storage) => {
+                let storage_type = StorageType::try_from(storage.storage_type.as_str())
+                    .map_err(|e| KalamDbError::Other(e))?;
+
+                let config = StorageConfig::new(
+                    storage.storage_id,
+                    storage_type,
+                    storage.base_directory,
+                    storage.shared_tables_template,
+                    storage.user_tables_template,
+                    storage.credentials,
+                );
+
+                Ok(Some(config))
+            }
+            None => Ok(None),
+        }
     }
 
     /// List all storage configurations

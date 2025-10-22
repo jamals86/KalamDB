@@ -44,6 +44,50 @@ use kalamdb_core::sql::executor::SqlExecutor;
 use std::sync::Arc;
 use tempfile::TempDir;
 
+/// HTTP test server wrapper - simplified to avoid complex type signatures
+pub struct HttpTestServer {
+    /// Note: We store the TestServer and recreate services on each test call
+    /// This avoids complex generic type parameters
+    pub _env: TestServer,
+}
+
+impl HttpTestServer {
+    /// Execute a request against the test server
+    pub async fn execute_request(&self, req: actix_web::test::TestRequest) -> actix_web::dev::ServiceResponse {
+        use actix_web::{test, App};
+        use kalamdb_api::auth::jwt::JwtAuth;
+        use kalamdb_api::rate_limiter::RateLimiter;
+        use std::sync::Arc;
+        use jsonwebtoken::Algorithm;
+
+        let jwt_auth = Arc::new(JwtAuth::new(
+            "kalamdb-dev-secret-key-change-in-production".to_string(),
+            Algorithm::HS256,
+        ));
+        let rate_limiter = Arc::new(RateLimiter::new());
+
+        let app = test::init_service(
+            App::new()
+                .app_data(actix_web::web::Data::new(self._env.session_factory.clone()))
+                .app_data(actix_web::web::Data::new(self._env.sql_executor.clone()))
+                .app_data(actix_web::web::Data::new(jwt_auth))
+                .app_data(actix_web::web::Data::new(rate_limiter))
+                .configure(kalamdb_api::routes::configure_routes),
+        )
+        .await;
+
+        let req = req.to_request();
+        test::call_service(&app, req).await
+    }
+}
+
+/// Spin up an Actix test application wired with KalamDB services.
+pub async fn start_test_server() -> HttpTestServer {
+    // Reuse internal TestServer utilities for database + executor setup
+    let env = TestServer::new().await;
+    HttpTestServer { _env: env }
+}
+
 pub mod fixtures;
 pub mod websocket;
 
@@ -132,6 +176,7 @@ impl TestServer {
                 description: Some("Default local filesystem storage".to_string()),
                 storage_type: "filesystem".to_string(),
                 base_directory: "".to_string(),
+                credentials: None,
                 shared_tables_template: "{namespace}/{tableName}".to_string(),
                 user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
                 created_at: now,
@@ -337,6 +382,15 @@ impl TestServer {
     pub async fn execute_sql_with_user(&self, sql: &str, user_id: Option<&str>) -> SqlResponse {
         let user_id_obj = user_id.map(kalamdb_core::catalog::UserId::from);
 
+        let is_admin = user_id_obj
+            .as_ref()
+            .map(|id| {
+                let lower = id.as_ref().to_lowercase();
+                lower == "admin" || lower == "system"
+            })
+            .unwrap_or(false);
+        let mask_credentials = !is_admin;
+
         // Try custom DDL/DML execution first (same as REST API)
         match self.sql_executor.execute(sql, user_id_obj.as_ref()).await {
             Ok(result) => {
@@ -350,7 +404,8 @@ impl TestServer {
                     },
                     ExecutionResult::RecordBatch(batch) => {
                         // Convert single batch to JSON
-                        let query_result = record_batch_to_query_result(&batch);
+                        let query_result =
+                            record_batch_to_query_result(&batch, mask_credentials);
                         SqlResponse {
                             status: "success".to_string(),
                             results: vec![query_result],
@@ -361,7 +416,10 @@ impl TestServer {
                     ExecutionResult::RecordBatches(batches) => {
                         // Convert multiple batches to JSON
                         let results: Vec<_> =
-                            batches.iter().map(record_batch_to_query_result).collect();
+                            batches
+                                .iter()
+                                .map(|batch| record_batch_to_query_result(batch, mask_credentials))
+                                .collect();
                         SqlResponse {
                             status: "success".to_string(),
                             results,
@@ -373,7 +431,7 @@ impl TestServer {
             }
             Err(kalamdb_core::error::KalamDbError::InvalidSql(_)) => {
                 // Not a custom DDL, fall back to DataFusion (same as REST API)
-                // This ensures integration tests use the SAME code path as /api/sql
+                // This ensures integration tests use the SAME code path as /v1/api/sql
                 match self.session_factory.create_session().sql(sql).await {
                     Ok(df) => match df.collect().await {
                         Ok(batches) => {
@@ -386,7 +444,15 @@ impl TestServer {
                                 }
                             } else {
                                 let results: Vec<_> =
-                                    batches.iter().map(record_batch_to_query_result).collect();
+                                    batches
+                                        .iter()
+                                        .map(|batch| {
+                                            record_batch_to_query_result(
+                                                batch,
+                                                mask_credentials,
+                                            )
+                                        })
+                                        .collect();
                                 SqlResponse {
                                     status: "success".to_string(),
                                     results,
@@ -435,6 +501,7 @@ impl TestServer {
 /// Convert Arrow RecordBatch to QueryResult for JSON response
 fn record_batch_to_query_result(
     batch: &datafusion::arrow::record_batch::RecordBatch,
+    mask_credentials: bool,
 ) -> kalamdb_api::models::QueryResult {
     use datafusion::arrow::array::*;
     use datafusion::arrow::datatypes::DataType;
@@ -510,6 +577,14 @@ fn record_batch_to_query_result(
             };
 
             row_map.insert(field.name().clone(), value);
+        }
+
+        if mask_credentials {
+            if let Some(value) = row_map.get_mut("credentials") {
+                if !value.is_null() {
+                    *value = serde_json::Value::String("***".to_string());
+                }
+            }
         }
 
         rows.push(row_map);

@@ -12,6 +12,7 @@ use chrono::Utc;
 use datafusion::arrow::array::{ArrayRef, BooleanArray, Int64Array, StringArray};
 use datafusion::arrow::datatypes::{DataType, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
+use kalamdb_commons::models::StorageType;
 use kalamdb_store::UserTableStore;
 use serde_json::{json, Value as JsonValue};
 use std::path::PathBuf;
@@ -131,42 +132,69 @@ impl UserTableFlushJob {
     /// 4. Validate template variable ordering
     /// 
     /// Fallback to hardcoded storage_location if registry not configured.
-    fn resolve_storage_path_for_user(&self, user_id: &UserId) -> Result<String, KalamDbError> {
-        // T170: Use StorageRegistry if available
+    /// Resolve storage path for a user using template substitution
+    ///
+    /// # T161c: Template path resolution algorithm
+    /// 1. Lookup storage definition via StorageRegistry (or fallback to legacy path)
+    /// 2. Get user_tables_template from Storage (e.g., "{namespace}/{tableName}/{userId}")
+    /// 3. Single-pass substitution of template variables:
+    ///    - {namespace} → namespace_id.as_str()
+    ///    - {tableName} → table_name.as_str()
+    ///    - {userId} → user_id.as_str()
+    ///    - {shard} → computed shard number (future: from sharding strategy)
+    /// 4. Combine base_directory + resolved_template
+    /// 5. Validation happens at CREATE STORAGE time (not at flush time)
+    ///
+    /// # Examples
+    /// Template: "data/{namespace}/{tableName}/users/{userId}"
+    /// Resolved: "data/prod/events/users/user123"
+    ///
+    /// Template: "{userId}/tables/{tableName}"
+    /// Resolved: "user456/tables/messages"
+    fn resolve_storage_path_for_user(
+        &self,
+        user_id: &UserId,
+    ) -> Result<(String, Option<JsonValue>), KalamDbError> {
         if let Some(ref registry) = self.storage_registry {
-            // TODO: Get table_id to resolve storage
-            // For now, use 'local' storage as default
             let storage = registry
-                .get_storage("local")
-                .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))?
-                .ok_or_else(|| {
-                    KalamDbError::NotFound("Storage 'local' not found".to_string())
-                })?;
+                .get_storage_config("local")?
+                .ok_or_else(|| KalamDbError::NotFound("Storage 'local' not found".to_string()))?;
 
-            // T170a: Use Storage.base_directory
-            let base_dir = &storage.base_directory;
-
-            // T170b: Use Storage.user_tables_template
-            let template = &storage.user_tables_template;
-
-            // Substitute template variables
-            let path = template
+            let path = storage
+                .user_tables_template()
                 .replace("{namespace}", self.namespace_id.as_str())
                 .replace("{tableName}", self.table_name.as_str())
                 .replace("{userId}", user_id.as_str())
-                .replace("{shard}", ""); // TODO: Get shard from sharding strategy
+                .replace("{shard}", "");
 
-            // Combine base directory and template path
-            let full_path = if base_dir.is_empty() {
+            let full_path = if storage.base_directory().is_empty() {
                 path
             } else {
-                format!("{}/{}", base_dir.trim_end_matches('/'), path.trim_start_matches('/'))
+                format!(
+                    "{}/{}",
+                    storage.base_directory().trim_end_matches('/'),
+                    path.trim_start_matches('/')
+                )
             };
 
-            Ok(full_path)
+            let credentials = if matches!(storage.storage_type(), StorageType::S3) {
+                match storage.credentials() {
+                    Some(raw) => Some(
+                        serde_json::from_str::<JsonValue>(raw)
+                            .map_err(|e| KalamDbError::Other(format!(
+                                "Invalid S3 credentials JSON: {}",
+                                e
+                            )))?,
+                    ),
+                    None => None,
+                }
+            } else {
+                None
+            };
+
+            Ok((full_path, credentials))
         } else {
-            // Fallback to legacy behavior
-            Ok(self.substitute_user_id_in_path(user_id))
+            Ok((self.substitute_user_id_in_path(user_id), None))
         }
     }
 
@@ -453,6 +481,20 @@ impl UserTableFlushJob {
     /// Flush data for a single user to Parquet file
     ///
     /// Returns the number of rows flushed on success
+    /// Flush accumulated rows for a single user to Parquet file
+    ///
+    /// # T161a: Per-user file isolation principle
+    /// Each user's data is written to a separate Parquet file to enable:
+    /// - Row-level access control (filter files by userId at query time)
+    /// - Efficient user data deletion (drop entire Parquet file)
+    /// - Parallel query execution (read different users concurrently)
+    ///
+    /// # T161b: Parquet file naming convention
+    /// Filenames use ISO 8601 timestamps: YYYY-MM-DDTHH-MM-SS.parquet
+    /// Example: 2025-10-22T14-30-45.parquet
+    /// - Chronologically sortable (lexicographic order = time order)
+    /// - Cross-platform compatible (no colons, uses hyphens)
+    /// - Collision-resistant (second-level precision + UUID job_id)
     fn flush_user_data(
         &self,
         user_id: &str,
@@ -468,9 +510,13 @@ impl UserTableFlushJob {
         // Convert rows to RecordBatch
         let batch = self.rows_to_record_batch(rows)?;
 
-        // Determine output path with ISO 8601 timestamp (T170)
+        // T161c: Template path resolution (single-pass substitution)
+        // Resolve storage path using StorageRegistry template or legacy path
         let user_id_obj = UserId::new(user_id.to_string());
-        let user_storage_path = self.resolve_storage_path_for_user(&user_id_obj)?;
+        let (user_storage_path, _s3_credentials) =
+            self.resolve_storage_path_for_user(&user_id_obj)?;
+        
+        // T161b: Generate ISO 8601 timestamp-based filename
         let batch_filename = self.generate_batch_filename();
         let output_path = PathBuf::from(&user_storage_path).join(&batch_filename);
 

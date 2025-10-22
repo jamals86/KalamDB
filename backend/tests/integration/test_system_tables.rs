@@ -10,7 +10,7 @@
 //! 7. Update rows in system.users
 //! 8. Add/delete/update storage locations in system.storage_locations
 //!
-//! Uses the REST API `/api/sql` endpoint to test end-to-end functionality.
+//! Uses the REST API `/v1/api/sql` endpoint to test end-to-end functionality.
 
 mod common;
 

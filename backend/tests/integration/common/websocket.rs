@@ -211,11 +211,11 @@ impl WebSocketClient {
     /// # Arguments
     ///
     /// * `query_id` - Query ID to wait for
-    /// * `timeout` - Maximum time to wait
+    /// * `_timeout` - Maximum time to wait (unused in mock implementation)
     pub async fn wait_for_initial_data(
         &mut self,
         query_id: &str,
-        timeout: Duration,
+        _timeout: Duration,
     ) -> Result<InitialDataMessage> {
         // In a real implementation, parse initial data message
         Ok(InitialDataMessage {

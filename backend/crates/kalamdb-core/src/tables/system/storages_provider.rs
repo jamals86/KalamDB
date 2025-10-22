@@ -36,6 +36,7 @@ impl SystemStoragesProvider {
         let mut descriptions = Vec::new();
         let mut storage_types = Vec::new();
         let mut base_directories = Vec::new();
+        let mut credentials = Vec::new();
         let mut shared_tables_templates = Vec::new();
         let mut user_tables_templates = Vec::new();
         let mut created_ats = Vec::new();
@@ -47,6 +48,7 @@ impl SystemStoragesProvider {
             descriptions.push(storage.description);
             storage_types.push(storage.storage_type);
             base_directories.push(storage.base_directory);
+            credentials.push(storage.credentials);
             shared_tables_templates.push(storage.shared_tables_template);
             user_tables_templates.push(storage.user_tables_template);
             created_ats.push(storage.created_at);
@@ -61,6 +63,7 @@ impl SystemStoragesProvider {
                 Arc::new(StringArray::from(descriptions)) as ArrayRef,
                 Arc::new(StringArray::from(storage_types)) as ArrayRef,
                 Arc::new(StringArray::from(base_directories)) as ArrayRef,
+                Arc::new(StringArray::from(credentials)) as ArrayRef,
                 Arc::new(StringArray::from(shared_tables_templates)) as ArrayRef,
                 Arc::new(StringArray::from(user_tables_templates)) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,

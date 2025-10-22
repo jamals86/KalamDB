@@ -379,7 +379,7 @@ impl SqlExecutor {
         } else if sql_upper.starts_with("SHOW TABLES") {
             return self.execute_show_tables(sql).await;
         } else if sql_upper.starts_with("SHOW STORAGES") {
-            return self.execute_show_storages(sql).await;
+            return self.execute_show_storages(sql, user_id).await;
         } else if sql_upper.starts_with("SHOW STATS") {
             return self.execute_show_table_stats(sql).await;
         } else if sql_upper.starts_with("DESCRIBE TABLE") || sql_upper.starts_with("DESC TABLE") {
@@ -1206,7 +1206,11 @@ impl SqlExecutor {
     }
 
     /// Execute SHOW STORAGES
-    async fn execute_show_storages(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_show_storages(
+        &self,
+        sql: &str,
+        user_id: Option<&UserId>,
+    ) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::ShowStoragesStatement;
 
         let _stmt = ShowStoragesStatement::parse(sql).map_err(|e| KalamDbError::InvalidSql(e))?;
@@ -1234,7 +1238,8 @@ impl SqlExecutor {
         });
 
         // Convert to RecordBatch
-        let batch = Self::storages_to_record_batch(sorted_storages)?;
+        let mask_credentials = !Self::is_admin(user_id);
+        let batch = Self::storages_to_record_batch(sorted_storages, mask_credentials)?;
 
         Ok(ExecutionResult::RecordBatch(batch))
     }
@@ -1273,6 +1278,33 @@ impl SqlExecutor {
             }
         }
 
+        // Validate credentials JSON (if provided)
+        let normalized_credentials = if let Some(raw) = stmt.credentials.as_ref() {
+            let value: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Invalid credentials JSON: {}",
+                    e
+                ))
+            })?;
+
+            if !value.is_object() {
+                return Err(KalamDbError::InvalidOperation(
+                    "Credentials must be a JSON object".to_string(),
+                ));
+            }
+
+            Some(
+                serde_json::to_string(&value).map_err(|e| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Failed to normalize credentials JSON: {}",
+                        e
+                    ))
+                })?,
+            )
+        } else {
+            None
+        };
+
         // Create storage record
         let storage = kalamdb_sql::Storage {
             storage_id: stmt.storage_id.clone(),
@@ -1280,6 +1312,7 @@ impl SqlExecutor {
             description: stmt.description,
             storage_type: stmt.storage_type,
             base_directory: stmt.base_directory,
+            credentials: normalized_credentials,
             shared_tables_template: stmt.shared_tables_template,
             user_tables_template: stmt.user_tables_template,
             created_at: chrono::Utc::now().timestamp(),
@@ -2394,12 +2427,14 @@ impl SqlExecutor {
     /// Convert storage list to RecordBatch for SHOW STORAGES
     fn storages_to_record_batch(
         storages: Vec<kalamdb_sql::Storage>,
+        mask_credentials: bool,
     ) -> Result<RecordBatch, KalamDbError> {
         let schema = Arc::new(Schema::new(vec![
             Field::new("storage_id", DataType::Utf8, false),
             Field::new("storage_name", DataType::Utf8, false),
             Field::new("storage_type", DataType::Utf8, false),
             Field::new("base_directory", DataType::Utf8, false),
+            Field::new("credentials", DataType::Utf8, true),
             Field::new("description", DataType::Utf8, true),
         ]));
 
@@ -2431,6 +2466,17 @@ impl SqlExecutor {
                 .collect::<Vec<_>>(),
         ));
 
+        let credentials_values: Vec<Option<String>> = storages
+            .iter()
+            .map(|s| match (&s.credentials, mask_credentials) {
+                (Some(_), true) => Some("***".to_string()),
+                (Some(value), false) => Some(value.clone()),
+                (None, _) => None,
+            })
+            .collect();
+
+        let credentials: ArrayRef = Arc::new(StringArray::from(credentials_values));
+
         let descriptions: ArrayRef = Arc::new(StringArray::from(
             storages
                 .iter()
@@ -2438,8 +2484,25 @@ impl SqlExecutor {
                 .collect::<Vec<_>>(),
         ));
 
-        RecordBatch::try_new(schema, vec![ids, names, types, directories, descriptions])
+        RecordBatch::try_new(schema, vec![
+            ids,
+            names,
+            types,
+            directories,
+            credentials,
+            descriptions,
+        ])
             .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
+    }
+
+    fn is_admin(user_id: Option<&UserId>) -> bool {
+        match user_id {
+            Some(id) => {
+                let id_str = id.as_ref().to_lowercase();
+                id_str == "admin" || id_str == "system"
+            }
+            None => false,
+        }
     }
 
     /// Convert table details to RecordBatch for DESCRIBE TABLE

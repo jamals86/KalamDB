@@ -34,6 +34,7 @@
 pub mod adapter;
 pub mod ddl;
 pub mod executor;
+pub mod keywords;
 pub mod job_commands;
 pub mod models;
 pub mod parser;
@@ -42,6 +43,7 @@ pub mod storage_commands;
 
 pub use adapter::RocksDbAdapter;
 pub use executor::SqlExecutor;
+pub use keywords::{KalamDbKeyword, SqlKeyword};
 pub use job_commands::{parse_job_command, JobCommand};
 pub use models::*;
 pub use parser::SqlParser;

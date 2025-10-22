@@ -10,7 +10,7 @@
 //! 7. Storage lookup chain (default storage, namespace storage, table storage)
 //! 8. Error handling (duplicate storage_id, invalid templates, deleting in-use storage)
 //!
-//! Uses the REST API `/api/sql` endpoint to test end-to-end functionality.
+//! Uses the REST API `/v1/api/sql` endpoint to test end-to-end functionality.
 
 mod common;
 
@@ -859,7 +859,6 @@ async fn test_20_storage_with_namespace() {
     server.execute_sql(create_storage).await;
 
     // Create namespace with storage reference
-    let create_ns = "CREATE NAMESPACE storage_ns";
     fixtures::create_namespace(&server, "storage_ns").await;
 
     // Create shared table in namespace (implicitly uses namespace's storage or default)

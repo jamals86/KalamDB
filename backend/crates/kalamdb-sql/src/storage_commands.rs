@@ -53,6 +53,9 @@ pub struct CreateStorageStatement {
 
     /// Template for user table paths
     pub user_tables_template: String,
+
+    /// Optional credentials JSON for secure storage backends
+    pub credentials: Option<String>,
 }
 
 impl CreateStorageStatement {
@@ -130,6 +133,7 @@ impl CreateStorageStatement {
             base_directory,
             shared_tables_template,
             user_tables_template,
+            credentials: Self::extract_keyword_value(&normalized, "CREDENTIALS").ok(),
         })
     }
 
@@ -432,6 +436,7 @@ mod tests {
             stmt.user_tables_template,
             "{namespace}/{tableName}/{userId}/"
         );
+        assert_eq!(stmt.credentials, None);
     }
 
     #[test]
@@ -443,6 +448,7 @@ mod tests {
                 BASE_DIRECTORY 's3://my-bucket/'
                 SHARED_TABLES_TEMPLATE '{namespace}/{tableName}/'
                 USER_TABLES_TEMPLATE '{namespace}/{tableName}/{userId}/'
+                CREDENTIALS '{"access_key":"ABC","secret_key":"XYZ"}'
         "#;
 
         let stmt = CreateStorageStatement::parse(sql).unwrap();
@@ -450,6 +456,10 @@ mod tests {
         assert_eq!(stmt.storage_type, "s3");
         assert_eq!(stmt.base_directory, "s3://my-bucket/");
         assert_eq!(stmt.description, None);
+        assert_eq!(
+            stmt.credentials,
+            Some("{\"access_key\":\"ABC\",\"secret_key\":\"XYZ\"}".to_string())
+        );
     }
 
     #[test]

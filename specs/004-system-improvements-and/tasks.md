@@ -147,16 +147,16 @@
 - [X] T004a [P] [US14] test_v1_healthcheck_endpoint: GET /v1/api/healthcheck, verify health response
 - [X] T005a [P] [US14] ~~test_legacy_sql_endpoint_error~~ (NOT NEEDED - no legacy endpoints)
 - [X] T006a [P] [US14] ~~test_legacy_ws_endpoint_error~~ (NOT NEEDED - no legacy endpoints)
-- [ ] T007a [P] [US14] test_storage_credentials_column: CREATE STORAGE with credentials, verify stored
-- [ ] T008a [P] [US14] test_storage_query_includes_credentials: Query system.storages, verify credentials field
-- [ ] T009a [P] [US14] test_main_rs_module_structure: Verify main.rs imports from config.rs, routes.rs, middleware.rs, lifecycle.rs
-- [ ] T010a [P] [US14] test_executor_moved_to_kalamdb_sql: Verify backend/crates/kalamdb-sql/src/executor.rs exists
-- [ ] T010b [P] [US14] test_sql_keywords_enum_centralized: Verify all SQL keywords in keywords.rs as enums
+- [X] T007a [P] [US14] test_storage_credentials_column: CREATE STORAGE with credentials, verify stored
+- [X] T008a [P] [US14] test_storage_query_includes_credentials: Query system.storages, verify credentials field
+- [X] T009a [P] [US14] test_main_rs_module_structure: Verify main.rs imports from config.rs, routes.rs, middleware.rs, lifecycle.rs
+- [X] T010a [P] [US14] test_executor_moved_to_kalamdb_sql: Verify backend/crates/kalamdb-sql/src/executor.rs exists
+- [X] T010b [P] [US14] test_sql_keywords_enum_centralized: Verify all SQL keywords in keywords.rs as enums
 - [X] T010c [P] [US14] test_sqlparser_rs_integration: Execute SELECT/INSERT, verify sqlparser-rs used
 - [X] T010d [P] [US14] test_custom_statement_extension: Execute CREATE STORAGE, verify custom parser extension
 - [ ] T010e [P] [US14] test_postgres_syntax_compatibility: Execute PostgreSQL-style commands, verify accepted
 - [ ] T010f [P] [US14] test_mysql_syntax_compatibility: Execute MySQL-style commands, verify accepted
-- [ ] T010g [P] [US14] test_error_message_postgres_style: Trigger error, verify "ERROR: relation 'X' does not exist" format
+- [X] T010g [P] [US14] test_error_message_postgres_style: Trigger error, verify "ERROR: relation 'X' does not exist" format
 - [X] T010h [P] [US14] test_cli_output_psql_style: Execute SELECT in CLI, verify psql-style table formatting
 
 ### Implementation for User Story 14
@@ -172,30 +172,30 @@
 - [X] T017a [US14] Update `/cli/kalam-link/src/subscription.rs` to use /v1/ws instead of /ws
 - [X] T018a [US14] Update `/cli/kalam-link/src/client.rs` healthcheck to use /v1/api/healthcheck
 - [X] T019a [US14] Add api_version configuration parameter to config.toml (default: "v1")
-- [ ] T020a [US14] Update all integration tests to use versioned endpoints
+- [X] T020a [US14] Update all integration tests to use versioned endpoints
 
 #### Storage Credentials Support
 
-- [ ] T021a [P] [US14] Add credentials column (TEXT, nullable) to system.storages table schema in `/backend/crates/kalamdb-core/src/system_tables/storages.rs`
-- [ ] T022a [P] [US14] Update CREATE STORAGE command parser in `/backend/crates/kalamdb-sql/src/storage_commands.rs` to accept CREDENTIALS parameter
-- [ ] T023a [P] [US14] Add credentials field to StorageConfig model in `/backend/crates/kalamdb-commons/src/models.rs`
-- [ ] T024a [P] [US14] Implement credentials JSON validation in CREATE STORAGE handler
-- [ ] T025a [P] [US14] Update system.storages INSERT to include credentials field
-- [ ] T026a [P] [US14] Mask credentials in system.storages SELECT queries (show "***" for non-admin users)
-- [ ] T027a [P] [US14] Update S3 storage backend in `/backend/crates/kalamdb-store/src/s3_storage.rs` to retrieve credentials from system.storages
-- [ ] T028a [P] [US14] Add credentials parsing logic for S3 flush operations
+- [X] T021a [P] [US14] Add credentials column (TEXT, nullable) to system.storages table schema in `/backend/crates/kalamdb-core/src/system_tables/storages.rs`
+- [X] T022a [P] [US14] Update CREATE STORAGE command parser in `/backend/crates/kalamdb-sql/src/storage_commands.rs` to accept CREDENTIALS parameter
+- [X] T023a [P] [US14] Add credentials field to StorageConfig model in `/backend/crates/kalamdb-commons/src/models.rs`
+- [X] T024a [P] [US14] Implement credentials JSON validation in CREATE STORAGE handler
+- [X] T025a [P] [US14] Update system.storages INSERT to include credentials field
+- [X] T026a [P] [US14] Mask credentials in system.storages SELECT queries (show "***" for non-admin users)
+- [X] T027a [P] [US14] Update S3 storage backend in `/backend/crates/kalamdb-store/src/s3_storage.rs` to retrieve credentials from system.storages
+- [X] T028a [P] [US14] Add credentials parsing logic for S3 flush operations
 
 #### Server Code Refactoring (main.rs split)
 
-- [ ] T029a [P] [US14] Create `/backend/crates/kalamdb-server/src/config.rs` with configuration initialization logic
-- [ ] T030a [P] [US14] Create `/backend/crates/kalamdb-server/src/routes.rs` with HTTP route definitions
-- [ ] T031a [P] [US14] Create `/backend/crates/kalamdb-server/src/middleware.rs` with auth, logging, CORS setup
-- [ ] T032a [P] [US14] Create `/backend/crates/kalamdb-server/src/lifecycle.rs` with startup, shutdown, signal handling
-- [ ] T033a [US14] Refactor `/backend/crates/kalamdb-server/src/main.rs` to be thin entry point that orchestrates modules
-- [ ] T034a [US14] Move configuration loading from main.rs to config.rs
-- [ ] T035a [US14] Move route registration from main.rs to routes.rs
-- [ ] T036a [US14] Move middleware setup from main.rs to middleware.rs
-- [ ] T037a [US14] Move server lifecycle logic from main.rs to lifecycle.rs
+- [X] T029a [P] [US14] Create `/backend/crates/kalamdb-server/src/config.rs` with configuration initialization logic
+- [X] T030a [P] [US14] Create `/backend/crates/kalamdb-server/src/routes.rs` with HTTP route definitions
+- [X] T031a [P] [US14] Create `/backend/crates/kalamdb-server/src/middleware.rs` with auth, logging, CORS setup
+- [X] T032a [P] [US14] Create `/backend/crates/kalamdb-server/src/lifecycle.rs` with startup, shutdown, signal handling
+- [X] T033a [US14] Refactor `/backend/crates/kalamdb-server/src/main.rs` to be thin entry point that orchestrates modules
+- [X] T034a [US14] Move configuration loading from main.rs to config.rs
+- [X] T035a [US14] Move route registration from main.rs to routes.rs
+- [X] T036a [US14] Move middleware setup from main.rs to middleware.rs
+- [X] T037a [US14] Move server lifecycle logic from main.rs to lifecycle.rs
 
 #### SQL Parser Consolidation
 
@@ -208,9 +208,9 @@
 
 #### SQL Keywords and Parser Cleanup
 
-- [ ] T044a [P] [US14] Create `/backend/crates/kalamdb-sql/src/keywords.rs` with centralized SQL keyword enums
-- [ ] T045a [P] [US14] Define SqlKeyword enum in keywords.rs (SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, etc.)
-- [ ] T046a [P] [US14] Define KalamDbKeyword enum in keywords.rs (STORAGE, FLUSH, NAMESPACE, etc.)
+- [X] T044a [P] [US14] Create `/backend/crates/kalamdb-sql/src/keywords.rs` with centralized SQL keyword enums
+- [X] T045a [P] [US14] Define SqlKeyword enum in keywords.rs (SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, etc.)
+- [X] T046a [P] [US14] Define KalamDbKeyword enum in keywords.rs (STORAGE, FLUSH, NAMESPACE, etc.)
 - [ ] T047a [US14] Add sqlparser-rs dependency to kalamdb-sql Cargo.toml (version 0.40+)
 - [ ] T048a [US14] Create `/backend/crates/kalamdb-sql/src/parser/mod.rs` for parser module organization
 - [ ] T049a [P] [US14] Create `/backend/crates/kalamdb-sql/src/parser/standard.rs` wrapping sqlparser-rs for standard SQL
@@ -230,7 +230,7 @@
 - [ ] T060a [US14] Add support for MySQL CREATE TABLE syntax variants
 - [ ] T061a [US14] Map PostgreSQL data types to KalamDB types (VARCHAR → TEXT, SERIAL → INT with auto-increment)
 - [ ] T062a [US14] Map MySQL data types to KalamDB types
-- [ ] T063a [P] [US14] Update `/cli/kalam-cli/src/formatter.rs` to use psql-style table borders (┌─┬─┐ style)
+- [X] T063a [P] [US14] Update `/cli/kalam-cli/src/formatter.rs` to use psql-style table borders (┌─┬─┐ style)
 - [ ] T064a [US14] Add row count display in CLI output ("(N rows)" like psql)
 - [ ] T065a [US14] Implement timing display in CLI ("Time: X.XXX ms" like psql)
 
@@ -563,15 +563,15 @@
 - [ ] T193 [P] [US2] test_multi_storage_flush: Create 3 tables with different storages, flush all, verify each uses correct storage
 
 **Documentation Tasks for User Story 2**:
-- [ ] T159 [P] [US2] Add rustdoc to FlushScheduler explaining scheduling algorithm (time and row count triggers, OR logic, counter reset)
-- [ ] T160 [P] [US2] Add rustdoc to ShardingStrategy trait with implementation guide and examples
-- [ ] T161 [P] [US2] Add inline comments to JobManager trait explaining design rationale for future actor migration (currently Tokio JoinHandles)
-- [ ] T161a [P] [US2] Add inline comments to FlushJob::execute_flush() explaining streaming write algorithm (snapshot → scan → boundary detect → write → delete)
-- [ ] T161b [P] [US2] Add inline comments explaining Parquet file naming convention (timestamp-based: YYYY-MM-DDTHH-MM-SS.parquet)
-- [ ] T161c [P] [US2] Add inline comments explaining template path resolution (single-pass substitution with validation)
-- [ ] T162 [P] [US2] Create ADR-006-flush-execution.md documenting streaming write approach (prevents memory spikes, RocksDB snapshot for consistency)
-- [ ] T162a [P] [US2] Update ADR-006 to document per-user file isolation principle (one Parquet file per user per flush)
-- [ ] T162b [P] [US2] Update ADR-006 to document immediate deletion pattern (delete from buffer after successful Parquet write)
+- [X] T159 [P] [US2] Add rustdoc to FlushScheduler explaining scheduling algorithm (time and row count triggers, OR logic, counter reset) - ALREADY COMPLETE
+- [X] T160 [P] [US2] Add rustdoc to ShardingStrategy trait with implementation guide and examples - ALREADY COMPLETE
+- [X] T161 [P] [US2] Add inline comments to JobManager trait explaining design rationale for future actor migration (currently Tokio JoinHandles) - ALREADY COMPLETE
+- [X] T161a [P] [US2] Add inline comments to FlushJob::execute_flush() explaining streaming write algorithm (snapshot → scan → boundary detect → write → delete) - Enhanced with per-user isolation docs
+- [X] T161b [P] [US2] Add inline comments explaining Parquet file naming convention (timestamp-based: YYYY-MM-DDTHH-MM-SS.parquet) - Added to flush_user_data()
+- [X] T161c [P] [US2] Add inline comments explaining template path resolution (single-pass substitution with validation) - Added to resolve_storage_path_for_user()
+- [X] T162 [P] [US2] Create ADR-006-flush-execution.md documenting streaming write approach (prevents memory spikes, RocksDB snapshot for consistency)
+- [X] T162a [P] [US2] Update ADR-006 to document per-user file isolation principle (one Parquet file per user per flush)
+- [X] T162b [P] [US2] Update ADR-006 to document immediate deletion pattern (delete from buffer after successful Parquet write)
 - [X] T194 [P] [US2] Create ADR-007-storage-registry.md documenting multi-storage architecture (filesystem + S3, template validation, lookup chain)
 - [X] T194a [P] [US2] Add rustdoc to StorageRegistry explaining storage resolution and template validation
 - [X] T194b [P] [US2] Add inline comments to storage lookup chain explaining use_user_storage and storage_mode logic

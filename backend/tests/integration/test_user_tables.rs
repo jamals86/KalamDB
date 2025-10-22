@@ -8,7 +8,7 @@
 //! - SELECT queries with user data filtering
 //! - User data isolation (user1 can't see user2's data)
 //!
-//! Uses the REST API `/api/sql` endpoint to test end-to-end functionality.
+//! Uses the REST API `/v1/api/sql` endpoint to test end-to-end functionality.
 
 mod common;
 

@@ -42,7 +42,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 async fn is_server_running() -> bool {
     // Try a simple SQL query instead of health endpoint
     reqwest::Client::new()
-        .post(format!("{}/api/sql", SERVER_URL))
+        .post(format!("{}/v1/api/sql", SERVER_URL))
         .json(&json!({ "sql": "SELECT 1" }))
         .timeout(Duration::from_secs(2))
         .send()
@@ -55,7 +55,7 @@ async fn is_server_running() -> bool {
 async fn execute_sql(sql: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     let response = client
-        .post(format!("{}/api/sql", SERVER_URL))
+        .post(format!("{}/v1/api/sql", SERVER_URL))
         .header("X-USER-ID", "test_user")
         .json(&json!({ "sql": sql }))
         .send()
@@ -445,7 +445,7 @@ async fn test_server_health_check() {
 
     let client = reqwest::Client::new();
     let response = client
-        .post(format!("{}/api/sql", SERVER_URL))
+        .post(format!("{}/v1/api/sql", SERVER_URL))
         .json(&json!({ "sql": "SELECT 1" }))
         .send()
         .await
@@ -880,7 +880,7 @@ async fn test_cli_health_check() {
     // Server doesn't have /api/health, so test via SQL query
     let client = reqwest::Client::new();
     let response = client
-        .post(format!("{}/api/sql", SERVER_URL))
+        .post(format!("{}/v1/api/sql", SERVER_URL))
         .json(&json!({ "sql": "SELECT 1 as health_check" }))
         .send()
         .await

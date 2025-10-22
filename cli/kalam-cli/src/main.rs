@@ -15,21 +15,15 @@
 //! kalam-cli -u http://localhost:3000 --json -c "SELECT * FROM users"
 //! ```
 
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use std::path::PathBuf;
 
-mod config;
-mod error;
-mod formatter;
-mod history;
-mod parser;
-mod session;
-mod completer;
-
-use crate::{
-    config::CLIConfiguration,
-    error::{CLIError, Result},
-    session::CLISession,
+use kalam_cli::{
+    CLIConfiguration,
+    CLISession,
+    CLIError,
+    OutputFormat,
+    Result,
 };
 
 /// Kalam CLI - Terminal client for KalamDB
@@ -94,16 +88,6 @@ struct Cli {
     /// Enable verbose logging
     #[arg(short = 'v', long = "verbose")]
     verbose: bool,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum OutputFormat {
-    /// Formatted table output
-    Table,
-    /// JSON output
-    Json,
-    /// CSV output
-    Csv,
 }
 
 #[tokio::main]
