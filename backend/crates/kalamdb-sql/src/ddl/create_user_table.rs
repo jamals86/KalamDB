@@ -3,13 +3,14 @@
 //! Parses CREATE USER TABLE statements with schema, LOCATION clause,
 //! LOCATION REFERENCE, FLUSH POLICY, and deleted_retention options.
 
+use crate::compatibility::map_sql_type_to_arrow;
 use crate::ddl::DdlResult;
 use anyhow::anyhow;
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::datatypes::{Field, Schema};
 use kalamdb_commons::models::{NamespaceId, TableName};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use sqlparser::ast::{ColumnDef, DataType as SQLDataType, Statement};
+use sqlparser::ast::{ColumnDef, Statement};
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 use std::sync::Arc;
@@ -362,7 +363,8 @@ impl CreateUserTableStatement {
         let fields: DdlResult<Vec<Field>> = columns
             .iter()
             .map(|col| {
-                let data_type = Self::convert_sql_type(&col.data_type)?;
+                let data_type =
+                    map_sql_type_to_arrow(&col.data_type).map_err(|e| anyhow!(e.to_string()))?;
                 Ok(Field::new(
                     col.name.value.clone(),
                     data_type,
@@ -374,30 +376,6 @@ impl CreateUserTableStatement {
             .collect();
 
         Ok(Arc::new(Schema::new(fields?)))
-    }
-
-    /// Convert SQL data type to Arrow data type
-    fn convert_sql_type(sql_type: &SQLDataType) -> DdlResult<DataType> {
-        match sql_type {
-            SQLDataType::BigInt(_) | SQLDataType::Int8(_) => Ok(DataType::Int64),
-            SQLDataType::Int(_) | SQLDataType::Integer(_) | SQLDataType::Int4(_) => {
-                Ok(DataType::Int32)
-            }
-            SQLDataType::SmallInt(_) | SQLDataType::Int2(_) => Ok(DataType::Int16),
-            SQLDataType::Boolean => Ok(DataType::Boolean),
-            SQLDataType::Text | SQLDataType::String(_) | SQLDataType::Varchar(_) => {
-                Ok(DataType::Utf8)
-            }
-            SQLDataType::Float(_) | SQLDataType::Real => Ok(DataType::Float32),
-            SQLDataType::Double | SQLDataType::DoublePrecision => Ok(DataType::Float64),
-            SQLDataType::Timestamp(_, _) => Ok(DataType::Timestamp(
-                arrow::datatypes::TimeUnit::Millisecond,
-                None,
-            )),
-            SQLDataType::Date => Ok(DataType::Date32),
-            SQLDataType::Binary(_) | SQLDataType::Bytea => Ok(DataType::Binary),
-            _ => Err(anyhow!("Unsupported data type: {:?}", sql_type)),
-        }
     }
 
     /// Validate the table name follows naming conventions
@@ -431,6 +409,8 @@ impl CreateUserTableStatement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::datatypes::DataType;
+    use sqlparser::ast::DataType as SQLDataType;
 
     #[test]
     fn test_parse_simple_create_table() {
@@ -508,15 +488,15 @@ mod tests {
     #[test]
     fn test_convert_sql_types() {
         assert_eq!(
-            CreateUserTableStatement::convert_sql_type(&SQLDataType::BigInt(None)).unwrap(),
+            map_sql_type_to_arrow(&SQLDataType::BigInt(None)).unwrap(),
             DataType::Int64
         );
         assert_eq!(
-            CreateUserTableStatement::convert_sql_type(&SQLDataType::Text).unwrap(),
+            map_sql_type_to_arrow(&SQLDataType::Text).unwrap(),
             DataType::Utf8
         );
         assert_eq!(
-            CreateUserTableStatement::convert_sql_type(&SQLDataType::Boolean).unwrap(),
+            map_sql_type_to_arrow(&SQLDataType::Boolean).unwrap(),
             DataType::Boolean
         );
     }
@@ -544,5 +524,27 @@ mod tests {
         assert_eq!(schema.field(0).data_type(), &DataType::Int64);
         assert_eq!(schema.field(1).name(), "name");
         assert_eq!(schema.field(1).data_type(), &DataType::Utf8);
+    }
+
+    #[test]
+    fn test_postgres_serial_support() {
+        let sql =
+            "CREATE USER TABLE app.pg_orders (id SERIAL PRIMARY KEY, amount DOUBLE PRECISION)";
+        let namespace = NamespaceId::new("app");
+        let stmt = CreateUserTableStatement::parse(sql, &namespace).unwrap();
+
+        assert_eq!(stmt.schema.field(0).data_type(), &DataType::Int32);
+        assert_eq!(stmt.schema.field(1).data_type(), &DataType::Float64);
+    }
+
+    #[test]
+    fn test_mysql_auto_increment_support() {
+        let sql =
+            "CREATE USER TABLE app.accounts (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(128))";
+        let namespace = NamespaceId::new("app");
+        let stmt = CreateUserTableStatement::parse(sql, &namespace).unwrap();
+
+        assert_eq!(stmt.schema.field(0).data_type(), &DataType::Int32);
+        assert_eq!(stmt.schema.field(1).data_type(), &DataType::Utf8);
     }
 }

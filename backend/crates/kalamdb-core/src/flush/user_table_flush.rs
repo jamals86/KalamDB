@@ -116,7 +116,7 @@ impl UserTableFlushJob {
     }
 
     /// Substitute ${user_id} in storage path template
-    /// 
+    ///
     /// DEPRECATED: Use resolve_storage_path_for_user() instead (T170)
     fn substitute_user_id_in_path(&self, user_id: &UserId) -> String {
         self.storage_location
@@ -124,13 +124,13 @@ impl UserTableFlushJob {
     }
 
     /// Resolve storage path for a user using StorageRegistry (T170-T170c)
-    /// 
+    ///
     /// Implements dynamic template resolution:
     /// 1. Query StorageRegistry for storage configuration
     /// 2. Use Storage.base_directory as path prefix
     /// 3. Apply Storage.user_tables_template with variable substitution
     /// 4. Validate template variable ordering
-    /// 
+    ///
     /// Fallback to hardcoded storage_location if registry not configured.
     /// Resolve storage path for a user using template substitution
     ///
@@ -179,13 +179,9 @@ impl UserTableFlushJob {
 
             let credentials = if matches!(storage.storage_type(), StorageType::S3) {
                 match storage.credentials() {
-                    Some(raw) => Some(
-                        serde_json::from_str::<JsonValue>(raw)
-                            .map_err(|e| KalamDbError::Other(format!(
-                                "Invalid S3 credentials JSON: {}",
-                                e
-                            )))?,
-                    ),
+                    Some(raw) => Some(serde_json::from_str::<JsonValue>(raw).map_err(|e| {
+                        KalamDbError::Other(format!("Invalid S3 credentials JSON: {}", e))
+                    })?),
                     None => None,
                 }
             } else {
@@ -515,7 +511,7 @@ impl UserTableFlushJob {
         let user_id_obj = UserId::new(user_id.to_string());
         let (user_storage_path, _s3_credentials) =
             self.resolve_storage_path_for_user(&user_id_obj)?;
-        
+
         // T161b: Generate ISO 8601 timestamp-based filename
         let batch_filename = self.generate_batch_filename();
         let output_path = PathBuf::from(&user_storage_path).join(&batch_filename);
@@ -671,7 +667,10 @@ mod tests {
 
         let result = job.execute().unwrap();
         if result.job_record.status == "failed" {
-            eprintln!("Job failed with error: {:?}", result.job_record.error_message);
+            eprintln!(
+                "Job failed with error: {:?}",
+                result.job_record.error_message
+            );
         }
         assert_eq!(result.rows_flushed, 0); // 0 rows flushed
         assert_eq!(result.users_count, 0); // 0 users

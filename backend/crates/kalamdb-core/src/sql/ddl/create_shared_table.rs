@@ -5,10 +5,11 @@
 
 use crate::catalog::{NamespaceId, TableName};
 use crate::error::KalamDbError;
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use datafusion::sql::sqlparser::ast::{ColumnDef, DataType as SQLDataType, Statement};
+use datafusion::arrow::datatypes::{Field, Schema};
+use datafusion::sql::sqlparser::ast::{ColumnDef, Statement};
 use datafusion::sql::sqlparser::dialect::GenericDialect;
 use datafusion::sql::sqlparser::parser::Parser;
+use kalamdb_sql::map_sql_type_to_arrow;
 use std::sync::Arc;
 
 /// Flush policy for shared tables
@@ -160,7 +161,8 @@ impl CreateSharedTableStatement {
 
         for col in columns {
             let field_name = col.name.value.clone();
-            let data_type = Self::map_sql_type_to_arrow(&col.data_type)?;
+            let data_type = map_sql_type_to_arrow(&col.data_type)
+                .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
             let nullable = col.options.iter().any(|opt| {
                 matches!(
                     opt.option,
@@ -177,40 +179,6 @@ impl CreateSharedTableStatement {
         }
 
         Ok(Arc::new(Schema::new(fields)))
-    }
-
-    /// Map SQL data type to Arrow data type
-    fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType, KalamDbError> {
-        match sql_type {
-            SQLDataType::BigInt(_) => Ok(DataType::Int64),
-            SQLDataType::Int(_) | SQLDataType::Integer(_) => Ok(DataType::Int32),
-            SQLDataType::SmallInt(_) => Ok(DataType::Int16),
-            SQLDataType::TinyInt(_) => Ok(DataType::Int8),
-            SQLDataType::UnsignedBigInt(_) => Ok(DataType::UInt64),
-            SQLDataType::UnsignedInt(_) | SQLDataType::UnsignedInteger(_) => Ok(DataType::UInt32),
-            SQLDataType::UnsignedSmallInt(_) => Ok(DataType::UInt16),
-            SQLDataType::UnsignedTinyInt(_) => Ok(DataType::UInt8),
-            SQLDataType::Float(_) => Ok(DataType::Float32),
-            SQLDataType::Double | SQLDataType::DoublePrecision => Ok(DataType::Float64),
-            SQLDataType::Boolean => Ok(DataType::Boolean),
-            SQLDataType::Text | SQLDataType::String(_) => Ok(DataType::Utf8),
-            SQLDataType::Varchar(_) | SQLDataType::Char(_) | SQLDataType::CharVarying(_) => {
-                Ok(DataType::Utf8)
-            }
-            SQLDataType::Timestamp(_, _) => Ok(DataType::Timestamp(
-                datafusion::arrow::datatypes::TimeUnit::Millisecond,
-                None,
-            )),
-            SQLDataType::Date => Ok(DataType::Date32),
-            SQLDataType::Binary(_) | SQLDataType::Varbinary(_) | SQLDataType::Blob(_) => {
-                Ok(DataType::Binary)
-            }
-            SQLDataType::JSON => Ok(DataType::Utf8), // Store JSON as string
-            _ => Err(KalamDbError::InvalidSql(format!(
-                "Unsupported data type: {:?}",
-                sql_type
-            ))),
-        }
     }
 
     /// Parse FLUSH policy from SQL text
@@ -243,6 +211,7 @@ impl CreateSharedTableStatement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datafusion::arrow::datatypes::DataType;
 
     fn test_namespace() -> NamespaceId {
         NamespaceId::new("test_namespace".to_string())
@@ -362,5 +331,23 @@ mod tests {
         assert_eq!(stmt.schema.field(5).data_type(), &DataType::UInt16);
         assert_eq!(stmt.schema.field(6).data_type(), &DataType::UInt32);
         assert_eq!(stmt.schema.field(7).data_type(), &DataType::UInt64);
+    }
+
+    #[test]
+    fn test_postgres_serial_column() {
+        let sql = "CREATE TABLE pg_users (id SERIAL PRIMARY KEY, name TEXT)";
+        let stmt = CreateSharedTableStatement::parse(sql, &test_namespace()).unwrap();
+
+        assert_eq!(stmt.schema.field(0).data_type(), &DataType::Int32);
+        assert_eq!(stmt.schema.field(1).data_type(), &DataType::Utf8);
+    }
+
+    #[test]
+    fn test_mysql_auto_increment_column() {
+        let sql = "CREATE TABLE accounts (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100))";
+        let stmt = CreateSharedTableStatement::parse(sql, &test_namespace()).unwrap();
+
+        assert_eq!(stmt.schema.field(0).data_type(), &DataType::Int32);
+        assert_eq!(stmt.schema.field(1).data_type(), &DataType::Utf8);
     }
 }

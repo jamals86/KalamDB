@@ -9,6 +9,7 @@ use crate::middleware;
 use crate::routes;
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
+use datafusion::catalog::schema::{MemorySchemaProvider, SchemaProvider};
 use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_core::services::{
@@ -28,7 +29,6 @@ use kalamdb_sql::KalamSql;
 use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
 use log::info;
 use std::sync::Arc;
-use datafusion::catalog::schema::{MemorySchemaProvider, SchemaProvider};
 
 /// Aggregated application components that need to be shared across the
 /// HTTP server and shutdown handling.
@@ -139,10 +139,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         .register_table("tables".to_string(), tables_provider)
         .expect("Failed to register system.tables table");
     system_schema
-        .register_table(
-            "storage_locations".to_string(),
-            storage_locations_provider,
-        )
+        .register_table("storage_locations".to_string(), storage_locations_provider)
         .expect("Failed to register system.storage_locations table");
     system_schema
         .register_table("storages".to_string(), storages_provider)
@@ -154,7 +151,10 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         .register_table("jobs".to_string(), jobs_provider.clone())
         .expect("Failed to register system.jobs table");
 
-    info!("System tables registered with DataFusion (catalog: {})", catalog_name);
+    info!(
+        "System tables registered with DataFusion (catalog: {})",
+        catalog_name
+    );
 
     // Storage registry and SQL executor
     let storage_registry = Arc::new(StorageRegistry::new(kalam_sql.clone()));
@@ -181,9 +181,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     );
 
     let default_user_id = kalamdb_core::catalog::UserId::from("system");
-    sql_executor
-        .load_existing_tables(default_user_id)
-        .await?;
+    sql_executor.load_existing_tables(default_user_id).await?;
     info!("Existing tables loaded and registered with DataFusion");
 
     // JWT authentication
@@ -217,7 +215,10 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     // Resume crash recovery jobs
     match flush_scheduler.resume_incomplete_jobs().await {
         Ok(count) if count > 0 => {
-            info!("Resumed {} incomplete flush jobs from previous session", count);
+            info!(
+                "Resumed {} incomplete flush jobs from previous session",
+                count
+            );
         }
         Ok(_) => {}
         Err(e) => {

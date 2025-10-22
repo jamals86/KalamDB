@@ -1281,10 +1281,7 @@ impl SqlExecutor {
         // Validate credentials JSON (if provided)
         let normalized_credentials = if let Some(raw) = stmt.credentials.as_ref() {
             let value: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Invalid credentials JSON: {}",
-                    e
-                ))
+                KalamDbError::InvalidOperation(format!("Invalid credentials JSON: {}", e))
             })?;
 
             if !value.is_object() {
@@ -1293,14 +1290,12 @@ impl SqlExecutor {
                 ));
             }
 
-            Some(
-                serde_json::to_string(&value).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to normalize credentials JSON: {}",
-                        e
-                    ))
-                })?,
-            )
+            Some(serde_json::to_string(&value).map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to normalize credentials JSON: {}",
+                    e
+                ))
+            })?)
         } else {
             None
         };
@@ -2484,15 +2479,11 @@ impl SqlExecutor {
                 .collect::<Vec<_>>(),
         ));
 
-        RecordBatch::try_new(schema, vec![
-            ids,
-            names,
-            types,
-            directories,
-            credentials,
-            descriptions,
-        ])
-            .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
+        RecordBatch::try_new(
+            schema,
+            vec![ids, names, types, directories, credentials, descriptions],
+        )
+        .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
     }
 
     fn is_admin(user_id: Option<&UserId>) -> bool {

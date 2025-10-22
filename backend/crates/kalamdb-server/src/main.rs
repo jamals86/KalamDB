@@ -32,14 +32,8 @@ async fn main() -> Result<()> {
         config.logging.log_to_console,
     )?;
 
-    info!(
-        "Starting KalamDB Server v{}",
-        env!("CARGO_PKG_VERSION")
-    );
-    info!(
-        "Host: {}  Port: {}",
-        config.server.host, config.server.port
-    );
+    info!("Starting KalamDB Server v{}", env!("CARGO_PKG_VERSION"));
+    info!("Host: {}  Port: {}", config.server.host, config.server.port);
 
     // Build application state and kick off background services
     let components = bootstrap(&config).await?;
@@ -47,4 +41,3 @@ async fn main() -> Result<()> {
     // Run HTTP server until termination signal is received
     run(&config, components).await
 }
-

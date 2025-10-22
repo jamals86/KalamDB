@@ -154,8 +154,8 @@
 - [X] T010b [P] [US14] test_sql_keywords_enum_centralized: Verify all SQL keywords in keywords.rs as enums
 - [X] T010c [P] [US14] test_sqlparser_rs_integration: Execute SELECT/INSERT, verify sqlparser-rs used
 - [X] T010d [P] [US14] test_custom_statement_extension: Execute CREATE STORAGE, verify custom parser extension
-- [ ] T010e [P] [US14] test_postgres_syntax_compatibility: Execute PostgreSQL-style commands, verify accepted
-- [ ] T010f [P] [US14] test_mysql_syntax_compatibility: Execute MySQL-style commands, verify accepted
+- [X] T010e [P] [US14] test_postgres_syntax_compatibility: Execute PostgreSQL-style commands, verify accepted
+- [X] T010f [P] [US14] test_mysql_syntax_compatibility: Execute MySQL-style commands, verify accepted
 - [X] T010g [P] [US14] test_error_message_postgres_style: Trigger error, verify "ERROR: relation 'X' does not exist" format
 - [X] T010h [P] [US14] test_cli_output_psql_style: Execute SELECT in CLI, verify psql-style table formatting
 
@@ -223,13 +223,13 @@
 
 #### PostgreSQL/MySQL Compatibility
 
-- [ ] T056a [P] [US14] Create `/backend/crates/kalamdb-sql/src/compatibility.rs` for syntax mapping
+- [X] T056a [P] [US14] Create `/backend/crates/kalamdb-sql/src/compatibility.rs` for syntax mapping
 - [ ] T057a [US14] Implement PostgreSQL-style error messages (e.g., "ERROR: relation 'X' does not exist")
 - [ ] T058a [US14] Implement MySQL-style error messages as alternative format (configurable)
-- [ ] T059a [US14] Add support for PostgreSQL CREATE TABLE syntax variants
-- [ ] T060a [US14] Add support for MySQL CREATE TABLE syntax variants
-- [ ] T061a [US14] Map PostgreSQL data types to KalamDB types (VARCHAR → TEXT, SERIAL → INT with auto-increment)
-- [ ] T062a [US14] Map MySQL data types to KalamDB types
+- [X] T059a [US14] Add support for PostgreSQL CREATE TABLE syntax variants
+- [X] T060a [US14] Add support for MySQL CREATE TABLE syntax variants
+- [X] T061a [US14] Map PostgreSQL data types to KalamDB types (VARCHAR → TEXT, SERIAL → INT with auto-increment)
+- [X] T062a [US14] Map MySQL data types to KalamDB types
 - [X] T063a [P] [US14] Update `/cli/kalam-cli/src/formatter.rs` to use psql-style table borders (┌─┬─┐ style)
 - [ ] T064a [US14] Add row count display in CLI output ("(N rows)" like psql)
 - [ ] T065a [US14] Implement timing display in CLI ("Time: X.XXX ms" like psql)

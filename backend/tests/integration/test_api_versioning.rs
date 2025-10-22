@@ -325,9 +325,10 @@ async fn test_postgres_syntax_compatibility() {
         .to_request();
 
     let resp = test::call_service(&server.app, client).await;
-    assert!(
-        resp.status() == 200 || resp.status() == 400,
-        "PostgreSQL syntax should be recognized"
+    assert_eq!(
+        resp.status(),
+        200,
+        "PostgreSQL syntax should be accepted (SERIAL column)"
     );
 }
 
@@ -346,9 +347,10 @@ async fn test_mysql_syntax_compatibility() {
         .to_request();
 
     let resp = test::call_service(&server.app, client).await;
-    assert!(
-        resp.status() == 200 || resp.status() == 400,
-        "MySQL syntax should be recognized"
+    assert_eq!(
+        resp.status(),
+        200,
+        "MySQL syntax should be accepted (AUTO_INCREMENT column)"
     );
 }
 

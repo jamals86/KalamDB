@@ -363,6 +363,9 @@ mod tests {
 
         assert_eq!(config.storage_id(), "s3-prod");
         assert!(config.is_s3());
-        assert_eq!(config.credentials(), Some("{\"access_key\":\"A\",\"secret_key\":\"B\"}"));
+        assert_eq!(
+            config.credentials(),
+            Some("{\"access_key\":\"A\",\"secret_key\":\"B\"}")
+        );
     }
 }

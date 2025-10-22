@@ -32,19 +32,21 @@
 //! ```
 
 pub mod adapter;
+pub mod compatibility;
 pub mod ddl;
 pub mod executor;
-pub mod keywords;
 pub mod job_commands;
+pub mod keywords;
 pub mod models;
 pub mod parser;
 pub mod query_cache;
 pub mod storage_commands;
 
 pub use adapter::RocksDbAdapter;
+pub use compatibility::map_sql_type_to_arrow;
 pub use executor::SqlExecutor;
-pub use keywords::{KalamDbKeyword, SqlKeyword};
 pub use job_commands::{parse_job_command, JobCommand};
+pub use keywords::{KalamDbKeyword, SqlKeyword};
 pub use models::*;
 pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};

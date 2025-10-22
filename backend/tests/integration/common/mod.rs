@@ -53,12 +53,15 @@ pub struct HttpTestServer {
 
 impl HttpTestServer {
     /// Execute a request against the test server
-    pub async fn execute_request(&self, req: actix_web::test::TestRequest) -> actix_web::dev::ServiceResponse {
+    pub async fn execute_request(
+        &self,
+        req: actix_web::test::TestRequest,
+    ) -> actix_web::dev::ServiceResponse {
         use actix_web::{test, App};
+        use jsonwebtoken::Algorithm;
         use kalamdb_api::auth::jwt::JwtAuth;
         use kalamdb_api::rate_limiter::RateLimiter;
         use std::sync::Arc;
-        use jsonwebtoken::Algorithm;
 
         let jwt_auth = Arc::new(JwtAuth::new(
             "kalamdb-dev-secret-key-change-in-production".to_string(),
@@ -404,8 +407,7 @@ impl TestServer {
                     },
                     ExecutionResult::RecordBatch(batch) => {
                         // Convert single batch to JSON
-                        let query_result =
-                            record_batch_to_query_result(&batch, mask_credentials);
+                        let query_result = record_batch_to_query_result(&batch, mask_credentials);
                         SqlResponse {
                             status: "success".to_string(),
                             results: vec![query_result],
@@ -415,11 +417,10 @@ impl TestServer {
                     }
                     ExecutionResult::RecordBatches(batches) => {
                         // Convert multiple batches to JSON
-                        let results: Vec<_> =
-                            batches
-                                .iter()
-                                .map(|batch| record_batch_to_query_result(batch, mask_credentials))
-                                .collect();
+                        let results: Vec<_> = batches
+                            .iter()
+                            .map(|batch| record_batch_to_query_result(batch, mask_credentials))
+                            .collect();
                         SqlResponse {
                             status: "success".to_string(),
                             results,
@@ -443,16 +444,12 @@ impl TestServer {
                                     error: None,
                                 }
                             } else {
-                                let results: Vec<_> =
-                                    batches
-                                        .iter()
-                                        .map(|batch| {
-                                            record_batch_to_query_result(
-                                                batch,
-                                                mask_credentials,
-                                            )
-                                        })
-                                        .collect();
+                                let results: Vec<_> = batches
+                                    .iter()
+                                    .map(|batch| {
+                                        record_batch_to_query_result(batch, mask_credentials)
+                                    })
+                                    .collect();
                                 SqlResponse {
                                     status: "success".to_string(),
                                     results,

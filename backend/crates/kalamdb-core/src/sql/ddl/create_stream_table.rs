@@ -5,10 +5,11 @@
 
 use crate::catalog::{NamespaceId, TableName};
 use crate::error::KalamDbError;
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use datafusion::sql::sqlparser::ast::{ColumnDef, DataType as SQLDataType, Statement};
+use datafusion::arrow::datatypes::{Field, Schema};
+use datafusion::sql::sqlparser::ast::{ColumnDef, Statement};
 use datafusion::sql::sqlparser::dialect::GenericDialect;
 use datafusion::sql::sqlparser::parser::Parser;
+use kalamdb_sql::map_sql_type_to_arrow;
 use std::sync::Arc;
 
 /// CREATE STREAM TABLE statement
@@ -153,7 +154,8 @@ impl CreateStreamTableStatement {
         let fields: Result<Vec<Field>, KalamDbError> = columns
             .iter()
             .map(|col| {
-                let data_type = Self::convert_sql_type(&col.data_type)?;
+                let data_type = map_sql_type_to_arrow(&col.data_type)
+                    .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
                 Ok(Field::new(
                     col.name.value.clone(),
                     data_type,
@@ -168,33 +170,6 @@ impl CreateStreamTableStatement {
             .collect();
 
         Ok(Arc::new(Schema::new(fields?)))
-    }
-
-    /// Convert SQL data type to Arrow data type
-    fn convert_sql_type(sql_type: &SQLDataType) -> Result<DataType, KalamDbError> {
-        match sql_type {
-            SQLDataType::BigInt(_) | SQLDataType::Int8(_) => Ok(DataType::Int64),
-            SQLDataType::Int(_) | SQLDataType::Integer(_) | SQLDataType::Int4(_) => {
-                Ok(DataType::Int32)
-            }
-            SQLDataType::SmallInt(_) | SQLDataType::Int2(_) => Ok(DataType::Int16),
-            SQLDataType::Boolean => Ok(DataType::Boolean),
-            SQLDataType::Text | SQLDataType::String(_) | SQLDataType::Varchar(_) => {
-                Ok(DataType::Utf8)
-            }
-            SQLDataType::Float(_) | SQLDataType::Real => Ok(DataType::Float32),
-            SQLDataType::Double | SQLDataType::DoublePrecision => Ok(DataType::Float64),
-            SQLDataType::Timestamp(_, _) => Ok(DataType::Timestamp(
-                datafusion::arrow::datatypes::TimeUnit::Millisecond,
-                None,
-            )),
-            SQLDataType::Date => Ok(DataType::Date32),
-            SQLDataType::Binary(_) | SQLDataType::Bytea => Ok(DataType::Binary),
-            _ => Err(KalamDbError::InvalidSql(format!(
-                "Unsupported data type: {:?}",
-                sql_type
-            ))),
-        }
     }
 
     /// Validate the table name follows naming conventions
@@ -263,6 +238,8 @@ impl CreateStreamTableStatement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datafusion::arrow::datatypes::DataType;
+    use datafusion::sql::sqlparser::ast::DataType as SQLDataType;
 
     #[test]
     fn test_parse_simple_create_stream_table() {
@@ -337,15 +314,15 @@ mod tests {
     #[test]
     fn test_convert_sql_types() {
         assert_eq!(
-            CreateStreamTableStatement::convert_sql_type(&SQLDataType::BigInt(None)).unwrap(),
+            map_sql_type_to_arrow(&SQLDataType::BigInt(None)).unwrap(),
             DataType::Int64
         );
         assert_eq!(
-            CreateStreamTableStatement::convert_sql_type(&SQLDataType::Text).unwrap(),
+            map_sql_type_to_arrow(&SQLDataType::Text).unwrap(),
             DataType::Utf8
         );
         assert_eq!(
-            CreateStreamTableStatement::convert_sql_type(&SQLDataType::Boolean).unwrap(),
+            map_sql_type_to_arrow(&SQLDataType::Boolean).unwrap(),
             DataType::Boolean
         );
     }
@@ -392,5 +369,15 @@ mod tests {
         // No _updated or _deleted fields
         assert!(stmt.schema.field_with_name("_updated").is_err());
         assert!(stmt.schema.field_with_name("_deleted").is_err());
+    }
+
+    #[test]
+    fn test_stream_table_with_serial_column() {
+        let sql = "CREATE STREAM TABLE events (id SERIAL, payload TEXT)";
+        let namespace = NamespaceId::new("app");
+        let stmt = CreateStreamTableStatement::parse(sql, &namespace).unwrap();
+
+        assert_eq!(stmt.schema.field(0).data_type(), &DataType::Int32);
+        assert_eq!(stmt.schema.field(1).data_type(), &DataType::Utf8);
     }
 }

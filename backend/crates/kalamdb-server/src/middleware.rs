@@ -20,4 +20,3 @@ pub fn build_cors() -> Cors {
 pub fn request_logger() -> middleware::Logger {
     middleware::Logger::default()
 }
-

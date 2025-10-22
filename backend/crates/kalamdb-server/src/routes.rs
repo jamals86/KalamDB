@@ -10,4 +10,3 @@ use actix_web::web;
 pub fn configure(cfg: &mut web::ServiceConfig) {
     kalamdb_api::routes::configure_routes(cfg);
 }
-

@@ -117,8 +117,10 @@ mod tests {
 
     #[test]
     fn test_kalam_keyword_from_str() {
-        assert_eq!(KalamDbKeyword::from_str("storage").unwrap(), KalamDbKeyword::Storage);
+        assert_eq!(
+            KalamDbKeyword::from_str("storage").unwrap(),
+            KalamDbKeyword::Storage
+        );
         assert!(KalamDbKeyword::from_str("foobar").is_err());
     }
 }
-

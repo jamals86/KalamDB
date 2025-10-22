@@ -360,7 +360,7 @@ mod tests {
         // We verify partitions exist using partition_exists instead
         assert!(backend.partition_exists(&Partition::new("cf1")));
         assert!(backend.partition_exists(&Partition::new("cf2")));
-        
+
         // list_partitions is currently limited due to Arc<DB> API constraints
         let partitions = backend.list_partitions().unwrap();
         // Just verify it doesn't panic - actual enumeration is limited
