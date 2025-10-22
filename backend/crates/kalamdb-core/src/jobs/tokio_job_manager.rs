@@ -37,14 +37,14 @@
 //! manager.start_job(
 //!     job_id.clone(),
 //!     "flush".to_string(),
-//!     async move {
+//!     Box::pin(async move {
 //!         // Simulate work
 //!         for i in 0..100 {
 //!             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 //!             // Could check for cancellation here
 //!         }
 //!         Ok("Flushed 1000 rows".to_string())
-//!     }
+//!     })
 //! ).await?;
 //!
 //! // Cancel after 1 second

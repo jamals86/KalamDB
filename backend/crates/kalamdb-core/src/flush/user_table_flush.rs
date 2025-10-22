@@ -527,7 +527,7 @@ mod tests {
 
     #[test]
     fn test_user_table_flush_job_creation() {
-        let test_db = TestDb::single_cf("user_table:test_ns:test_table").unwrap();
+        let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
         let store = Arc::new(UserTableStore::new(test_db.db.clone()).unwrap());
         let schema = create_test_schema();
 
@@ -547,7 +547,7 @@ mod tests {
 
     #[test]
     fn test_user_table_flush_empty_table() {
-        let test_db = TestDb::single_cf("user_table:test_ns:test_table").unwrap();
+        let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
         let store = Arc::new(UserTableStore::new(test_db.db.clone()).unwrap());
         let schema = create_test_schema();
 
@@ -574,7 +574,7 @@ mod tests {
 
     #[test]
     fn test_user_table_flush_single_user() {
-        let test_db = TestDb::single_cf("user_table:test_ns:test_table").unwrap();
+        let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
         let store = Arc::new(UserTableStore::new(test_db.db.clone()).unwrap());
         let schema = create_test_schema();
 
@@ -625,7 +625,7 @@ mod tests {
 
     #[test]
     fn test_user_table_flush_multiple_users() {
-        let test_db = TestDb::single_cf("user_table:test_ns:test_table").unwrap();
+        let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
         let store = Arc::new(UserTableStore::new(test_db.db.clone()).unwrap());
         let schema = create_test_schema();
 
@@ -678,7 +678,7 @@ mod tests {
 
     #[test]
     fn test_user_table_flush_skips_soft_deleted() {
-        let test_db = TestDb::single_cf("user_table:test_ns:test_table").unwrap();
+        let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
         let store = Arc::new(UserTableStore::new(test_db.db.clone()).unwrap());
         let schema = create_test_schema();
 

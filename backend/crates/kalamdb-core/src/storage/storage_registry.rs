@@ -288,6 +288,11 @@ impl StorageRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::RocksDbInit;
+    use once_cell::sync::Lazy;
+    use std::fs;
+    use std::sync::{Arc, Mutex};
+    use tempfile::Builder;
 
     // Note: Full integration tests require a RocksDB instance
     // These are unit tests for template validation logic
@@ -344,9 +349,34 @@ mod tests {
 
     // Helper to create a mock registry for tests that don't need DB
     fn create_mock_registry() -> StorageRegistry {
-        // For validation tests, we don't actually need a real DB
-        // We'll need to refactor this for proper testing
-        // For now, these tests document expected behavior
-        unimplemented!("Mock registry creation requires DB refactoring")
+        static TEST_DIRS: Lazy<Mutex<Vec<tempfile::TempDir>>> =
+            Lazy::new(|| Mutex::new(Vec::new()));
+
+        let temp_dir = Builder::new()
+            .prefix("kalamdb-storage-registry-tests")
+            .tempdir()
+            .expect("Failed to create temp directory for storage registry tests");
+
+        let db_path = temp_dir.path().join("rocksdb");
+        fs::create_dir_all(&db_path)
+            .expect("Failed to create RocksDB directory for storage registry tests");
+
+        let db_path_string = db_path.to_string_lossy().into_owned();
+        TEST_DIRS
+            .lock()
+            .expect("Temp dir mutex poisoned")
+            .push(temp_dir);
+
+        let db_init = RocksDbInit::new(db_path_string);
+        let db = db_init
+            .open()
+            .expect("Failed to open RocksDB for storage registry tests");
+
+        let kalam_sql = Arc::new(
+            KalamSql::new(db)
+                .expect("Failed to create KalamSQL for storage registry tests"),
+        );
+
+        StorageRegistry::new(kalam_sql)
     }
 }
