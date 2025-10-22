@@ -298,7 +298,8 @@ mod tests {
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
-        let cf_names = vec!["stream_table:app:events"];
+        // Use correct column family format: stream_{namespace}:{table}
+        let cf_names = vec!["stream_app:events"];
         let db = DB::open_cf(&opts, temp_dir.path(), &cf_names).unwrap();
 
         (Arc::new(db), temp_dir)
