@@ -52,8 +52,10 @@ mod tests {
         assert_eq!(schema.field(0).name(), "user_id");
         assert_eq!(schema.field(1).name(), "username");
         assert_eq!(schema.field(2).name(), "email");
-        assert_eq!(schema.field(3).name(), "created_at");
-        assert_eq!(schema.field(4).name(), "updated_at");
+        assert_eq!(schema.field(3).name(), "storage_mode");
+        assert_eq!(schema.field(4).name(), "storage_id");
+        assert_eq!(schema.field(5).name(), "created_at");
+        assert_eq!(schema.field(6).name(), "updated_at");
     }
 
     #[test]

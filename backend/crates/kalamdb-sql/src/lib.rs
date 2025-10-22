@@ -37,6 +37,7 @@ pub mod job_commands;
 pub mod models;
 pub mod parser;
 pub mod query_cache;
+pub mod storage_commands;
 
 pub use adapter::RocksDbAdapter;
 pub use executor::SqlExecutor;
@@ -44,6 +45,9 @@ pub use job_commands::{parse_job_command, JobCommand};
 pub use models::*;
 pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
+pub use storage_commands::{
+    AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
+};
 
 use anyhow::Result;
 use rocksdb::DB;

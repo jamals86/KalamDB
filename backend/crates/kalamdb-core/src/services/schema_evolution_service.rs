@@ -531,6 +531,8 @@ mod tests {
             table_type: table_type.to_string(),
             created_at: chrono::Utc::now().timestamp(),
             storage_location: "/tmp/test".to_string(),
+            storage_id: Some("local".to_string()),
+            use_user_storage: false,
             flush_policy: "{}".to_string(),
             schema_version: 1,
             deleted_retention_hours: 72,

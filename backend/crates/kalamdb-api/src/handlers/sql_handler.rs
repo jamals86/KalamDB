@@ -135,39 +135,41 @@ pub async fn execute_sql(
 
 /// Execute a single SQL statement
 /// Uses SqlExecutor for all SQL (custom DDL and standard DataFusion SQL)
+/// Falls back to DataFusionSessionFactory for testing if SqlExecutor is not available
 async fn execute_single_statement(
     sql: &str,
-    _session_factory: &Arc<DataFusionSessionFactory>,
+    session_factory: &Arc<DataFusionSessionFactory>,
     sql_executor: Option<&Arc<SqlExecutor>>,
     user_id: Option<&UserId>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
-    // Require sql_executor - all SQL goes through it now
-    let sql_executor = sql_executor.ok_or_else(|| {
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "SQL executor not configured",
-        )) as Box<dyn std::error::Error>
-    })?;
-
-    // Execute through SqlExecutor (handles both custom DDL and DataFusion)
-    match sql_executor.execute(sql, user_id).await {
-        Ok(result) => {
-            // Convert ExecutionResult to QueryResult
-            match result {
-                ExecutionResult::Success(message) => {
-                    Ok(QueryResult::with_message(message))
-                }
-                ExecutionResult::RecordBatch(batch) => {
-                    record_batch_to_query_result(vec![batch])
-                }
-                ExecutionResult::RecordBatches(batches) => {
-                    record_batch_to_query_result(batches)
+    // If sql_executor is available, use it (production path)
+    if let Some(sql_executor) = sql_executor {
+        // Execute through SqlExecutor (handles both custom DDL and DataFusion)
+        match sql_executor.execute(sql, user_id).await {
+            Ok(result) => {
+                // Convert ExecutionResult to QueryResult
+                match result {
+                    ExecutionResult::Success(message) => {
+                        Ok(QueryResult::with_message(message))
+                    }
+                    ExecutionResult::RecordBatch(batch) => {
+                        record_batch_to_query_result(vec![batch])
+                    }
+                    ExecutionResult::RecordBatches(batches) => {
+                        record_batch_to_query_result(batches)
+                    }
                 }
             }
+            Err(e) => {
+                Err(Box::new(e))
+            }
         }
-        Err(e) => {
-            Err(Box::new(e))
-        }
+    } else {
+        // Fallback for testing: use DataFusion directly for simple queries
+        let session = session_factory.create_session();
+        let df = session.sql(sql).await?;
+        let batches = df.collect().await?;
+        record_batch_to_query_result(batches)
     }
 }
 

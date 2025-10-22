@@ -75,6 +75,10 @@ path = "../../tests/integration/test_system_tables.rs"
 name = "test_flush_operations"
 path = "../../tests/integration/test_flush_operations.rs"
 
+[[test]]
+name = "test_storage_management"
+path = "../../tests/integration/test_storage_management.rs"
+
 [dev-dependencies]
 tempfile = "3"
 serde_json.workspace = true

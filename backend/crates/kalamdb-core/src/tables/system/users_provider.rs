@@ -126,6 +126,8 @@ impl UsersTableProvider {
         let mut user_ids = StringBuilder::new();
         let mut usernames = StringBuilder::new();
         let mut emails = StringBuilder::new();
+        let mut storage_modes = StringBuilder::new();
+        let mut storage_ids = StringBuilder::new();
         let mut created_ats = Vec::new();
         let mut updated_ats = Vec::new();
 
@@ -133,6 +135,8 @@ impl UsersTableProvider {
             user_ids.append_value(&user.user_id);
             usernames.append_value(&user.username);
             emails.append_value(&user.email);
+            storage_modes.append_option(user.storage_mode.as_deref());
+            storage_ids.append_option(user.storage_id.as_deref());
             created_ats.push(Some(user.created_at));
             updated_ats.push(Some(user.created_at)); // using created_at for both since updated_at not in model
         }
@@ -143,6 +147,8 @@ impl UsersTableProvider {
                 Arc::new(user_ids.finish()) as ArrayRef,
                 Arc::new(usernames.finish()) as ArrayRef,
                 Arc::new(emails.finish()) as ArrayRef,
+                Arc::new(storage_modes.finish()) as ArrayRef,
+                Arc::new(storage_ids.finish()) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef,
             ],
@@ -317,14 +323,14 @@ mod tests {
 
         let batch = provider.scan_all_users().unwrap();
         assert_eq!(batch.num_rows(), 2);
-        assert_eq!(batch.num_columns(), 5);
+        assert_eq!(batch.num_columns(), 7);
     }
 
     #[test]
     fn test_table_provider_schema() {
         let (provider, _temp_dir) = create_test_provider();
         let schema = provider.schema();
-        assert_eq!(schema.fields().len(), 5);
+        assert_eq!(schema.fields().len(), 7);
         assert_eq!(schema.field(0).name(), "user_id");
         assert_eq!(schema.field(1).name(), "username");
     }

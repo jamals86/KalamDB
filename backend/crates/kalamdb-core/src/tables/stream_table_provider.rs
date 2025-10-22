@@ -627,7 +627,7 @@ mod tests {
     use serde_json::json;
 
     fn create_test_provider() -> (StreamTableProvider, TestDb) {
-        let test_db = TestDb::new(&["stream_table:app:events"]).unwrap();
+        let test_db = TestDb::new(&["stream_app:events"]).unwrap();
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),

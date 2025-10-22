@@ -20,7 +20,9 @@ use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::storage::RocksDbInit;
 use kalamdb_core::tables::system::{
-    JobsTableProvider, LiveQueriesTableProvider, StorageLocationsTableProvider, UsersTableProvider,
+    JobsTableProvider, LiveQueriesTableProvider, NamespacesTableProvider,
+    StorageLocationsTableProvider, SystemStoragesProvider, SystemTablesTableProvider,
+    UsersTableProvider,
 };
 use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
 use log::info;
@@ -93,11 +95,14 @@ async fn main() -> Result<()> {
 
     // Initialize system table providers (all use KalamSQL for RocksDB operations)
     let users_provider = Arc::new(UsersTableProvider::new(kalam_sql.clone()));
+    let namespaces_provider = Arc::new(NamespacesTableProvider::new(kalam_sql.clone()));
+    let tables_provider = Arc::new(SystemTablesTableProvider::new(kalam_sql.clone()));
     let storage_locations_provider =
         Arc::new(StorageLocationsTableProvider::new(kalam_sql.clone()));
+    let storages_provider = Arc::new(SystemStoragesProvider::new(kalam_sql.clone()));
     let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone()));
     let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.clone()));
-    info!("System table providers initialized (users, storage_locations, live_queries, jobs)");
+    info!("System table providers initialized (users, namespaces, tables, storage_locations, storages, live_queries, jobs)");
 
     // Initialize DataFusion session factory
     let session_factory = Arc::new(
@@ -132,18 +137,27 @@ async fn main() -> Result<()> {
         .register_table("users".to_string(), users_provider.clone())
         .expect("Failed to register system.users table");
     system_schema
+        .register_table("namespaces".to_string(), namespaces_provider.clone())
+        .expect("Failed to register system.namespaces table");
+    system_schema
+        .register_table("tables".to_string(), tables_provider.clone())
+        .expect("Failed to register system.tables table");
+    system_schema
         .register_table(
             "storage_locations".to_string(),
             storage_locations_provider.clone(),
         )
         .expect("Failed to register system.storage_locations table");
     system_schema
+        .register_table("storages".to_string(), storages_provider.clone())
+        .expect("Failed to register system.storages table");
+    system_schema
         .register_table("live_queries".to_string(), live_queries_provider.clone())
         .expect("Failed to register system.live_queries table");
     system_schema
         .register_table("jobs".to_string(), jobs_provider.clone())
         .expect("Failed to register system.jobs table");
-    info!("System tables registered with DataFusion (system.users, system.storage_locations, system.live_queries, system.jobs)");
+    info!("System tables registered with DataFusion (system.users, system.namespaces, system.tables, system.storage_locations, system.storages, system.live_queries, system.jobs)");
 
     // Initialize table stores
     let user_table_store = Arc::new(UserTableStore::new(db.clone())?);
@@ -175,6 +189,10 @@ async fn main() -> Result<()> {
     ));
     info!("TableDeletionService initialized");
 
+    // Initialize StorageRegistry for template validation
+    let storage_registry = Arc::new(kalamdb_core::storage::StorageRegistry::new(kalam_sql.clone()));
+    info!("StorageRegistry initialized");
+
     // Initialize SqlExecutor with builder pattern
     let sql_executor = Arc::new(
         SqlExecutor::new(
@@ -185,6 +203,7 @@ async fn main() -> Result<()> {
             stream_table_service.clone(),
         )
         .with_table_deletion_service(table_deletion_service)
+        .with_storage_registry(storage_registry)
         .with_stores(
             user_table_store.clone(),
             shared_table_store.clone(),
@@ -192,7 +211,7 @@ async fn main() -> Result<()> {
             kalam_sql.clone(),
         ),
     );
-    info!("SqlExecutor initialized with DROP TABLE support and table registration");
+    info!("SqlExecutor initialized with DROP TABLE support, storage registry, and table registration");
 
     // Load existing tables from system_tables and register with DataFusion
     let default_user_id = kalamdb_core::catalog::UserId::from("system");

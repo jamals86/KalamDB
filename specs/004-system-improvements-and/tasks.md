@@ -389,11 +389,11 @@
 - [ ] T172b [US2] If count > 0, return error: "Cannot delete storage '<name>': N table(s) still reference it"
 - [ ] T172c [US2] Include list of up to 10 table names in error message
 - [ ] T172d [US2] Add special protection: Prevent deletion of storage_id='local' (hardcoded check)
-- [ ] T173 [P] [US2] Create SQL commands for storage management in `/backend/crates/kalamdb-sql/src/storage_commands.rs`
-- [ ] T173a [P] [US2] Implement CREATE STORAGE command parsing
-- [ ] T173b [P] [US2] Implement ALTER STORAGE command parsing (update templates, description)
-- [ ] T173c [P] [US2] Implement DROP STORAGE command parsing
-- [ ] T173d [P] [US2] Implement SHOW STORAGES command parsing
+- [X] T173 [P] [US2] Create SQL commands for storage management in `/backend/crates/kalamdb-sql/src/storage_commands.rs`
+- [X] T173a [P] [US2] Implement CREATE STORAGE command parsing
+- [X] T173b [P] [US2] Implement ALTER STORAGE command parsing (update templates, description)
+- [X] T173c [P] [US2] Implement DROP STORAGE command parsing
+- [X] T173d [P] [US2] Implement SHOW STORAGES command parsing
 
 **Integration Tests for Storage Management**:
 - [ ] T174 [P] [US2] test_default_storage_creation: Start server, query system.storages, verify storage_id='local' exists

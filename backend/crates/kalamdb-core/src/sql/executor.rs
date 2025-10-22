@@ -91,6 +91,8 @@ pub struct SqlExecutor {
     session_factory: DataFusionSessionFactory,
     // System tables
     jobs_table_provider: Option<Arc<crate::tables::system::JobsTableProvider>>,
+    // Storage registry for template validation
+    storage_registry: Option<Arc<crate::storage::StorageRegistry>>,
 }
 
 /// UPDATE statement parsed info
@@ -134,7 +136,14 @@ impl SqlExecutor {
             kalam_sql: None,
             session_factory,
             jobs_table_provider: None,
+            storage_registry: None,
         }
+    }
+
+    /// Set the storage registry (optional, for storage template validation)
+    pub fn with_storage_registry(mut self, registry: Arc<crate::storage::StorageRegistry>) -> Self {
+        self.storage_registry = Some(registry);
+        self
     }
 
     /// Set the table deletion service (optional, for DROP TABLE support)
@@ -361,10 +370,18 @@ impl SqlExecutor {
             return self.execute_show_namespaces(sql).await;
         } else if sql_upper.starts_with("SHOW TABLES") {
             return self.execute_show_tables(sql).await;
+        } else if sql_upper.starts_with("SHOW STORAGES") {
+            return self.execute_show_storages(sql).await;
         } else if sql_upper.starts_with("SHOW STATS") {
             return self.execute_show_table_stats(sql).await;
         } else if sql_upper.starts_with("DESCRIBE TABLE") || sql_upper.starts_with("DESC TABLE") {
             return self.execute_describe_table(sql).await;
+        } else if sql_upper.starts_with("CREATE STORAGE") {
+            return self.execute_create_storage(sql).await;
+        } else if sql_upper.starts_with("ALTER STORAGE") {
+            return self.execute_alter_storage(sql).await;
+        } else if sql_upper.starts_with("DROP STORAGE") {
+            return self.execute_drop_storage(sql).await;
         } else if sql_upper.starts_with("ALTER NAMESPACE") {
             return self.execute_alter_namespace(sql).await;
         } else if sql_upper.starts_with("DROP NAMESPACE") {
@@ -1167,6 +1184,214 @@ impl SqlExecutor {
         let batch = Self::tables_to_record_batch(filtered_tables)?;
 
         Ok(ExecutionResult::RecordBatch(batch))
+    }
+
+    /// Execute SHOW STORAGES
+    async fn execute_show_storages(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        use kalamdb_sql::ShowStoragesStatement;
+        
+        let _stmt = ShowStoragesStatement::parse(sql)
+            .map_err(|e| KalamDbError::InvalidSql(e))?;
+
+        let kalam_sql = self
+            .kalam_sql
+            .as_ref()
+            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+
+        // Get all storages
+        let storages = kalam_sql
+            .scan_all_storages()
+            .map_err(|e| KalamDbError::Other(format!("Failed to scan storages: {}", e)))?;
+
+        // Sort: 'local' first, then alphabetically
+        let mut sorted_storages = storages;
+        sorted_storages.sort_by(|a, b| {
+            if a.storage_id == "local" {
+                std::cmp::Ordering::Less
+            } else if b.storage_id == "local" {
+                std::cmp::Ordering::Greater
+            } else {
+                a.storage_id.cmp(&b.storage_id)
+            }
+        });
+
+        // Convert to RecordBatch
+        let batch = Self::storages_to_record_batch(sorted_storages)?;
+
+        Ok(ExecutionResult::RecordBatch(batch))
+    }
+
+    /// Execute CREATE STORAGE
+    async fn execute_create_storage(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        use kalamdb_sql::CreateStorageStatement;
+        
+        let stmt = CreateStorageStatement::parse(sql)
+            .map_err(|e| KalamDbError::InvalidSql(e))?;
+
+        let kalam_sql = self
+            .kalam_sql
+            .as_ref()
+            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+
+        // Check if storage already exists
+        if let Some(_) = kalam_sql
+            .get_storage(&stmt.storage_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to check storage: {}", e)))?
+        {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Storage '{}' already exists",
+                stmt.storage_id
+            )));
+        }
+
+        // Validate templates using StorageRegistry
+        if let Some(storage_registry) = &self.storage_registry {
+            storage_registry.validate_template(&stmt.shared_tables_template, false)?;
+            storage_registry.validate_template(&stmt.user_tables_template, true)?;
+        }
+
+        // Create storage record
+        let storage = kalamdb_sql::Storage {
+            storage_id: stmt.storage_id.clone(),
+            storage_name: stmt.storage_name,
+            description: stmt.description,
+            storage_type: stmt.storage_type,
+            base_directory: stmt.base_directory,
+            shared_tables_template: stmt.shared_tables_template,
+            user_tables_template: stmt.user_tables_template,
+            created_at: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
+        };
+
+        // Insert into system.storages
+        kalam_sql
+            .insert_storage(&storage)
+            .map_err(|e| KalamDbError::Other(format!("Failed to create storage: {}", e)))?;
+
+        Ok(ExecutionResult::Success(format!(
+            "Storage '{}' created successfully",
+            stmt.storage_id
+        )))
+    }
+
+    /// Execute ALTER STORAGE
+    async fn execute_alter_storage(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        use kalamdb_sql::AlterStorageStatement;
+        
+        let stmt = AlterStorageStatement::parse(sql)
+            .map_err(|e| KalamDbError::InvalidSql(e))?;
+
+        let kalam_sql = self
+            .kalam_sql
+            .as_ref()
+            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+
+        // Get existing storage
+        let mut storage = kalam_sql
+            .get_storage(&stmt.storage_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))?
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!("Storage '{}' not found", stmt.storage_id))
+            })?;
+
+        // Apply updates
+        if let Some(name) = stmt.storage_name {
+            storage.storage_name = name;
+        }
+        if let Some(desc) = stmt.description {
+            storage.description = Some(desc);
+        }
+        if let Some(template) = stmt.shared_tables_template {
+            // Validate new template
+            if let Some(storage_registry) = &self.storage_registry {
+                storage_registry.validate_template(&template, false)?;
+            }
+            storage.shared_tables_template = template;
+        }
+        if let Some(template) = stmt.user_tables_template {
+            // Validate new template
+            if let Some(storage_registry) = &self.storage_registry {
+                storage_registry.validate_template(&template, true)?;
+            }
+            storage.user_tables_template = template;
+        }
+
+        storage.updated_at = chrono::Utc::now().timestamp();
+
+        // Update in system.storages
+        kalam_sql
+            .insert_storage(&storage) // Using insert as upsert
+            .map_err(|e| KalamDbError::Other(format!("Failed to update storage: {}", e)))?;
+
+        Ok(ExecutionResult::Success(format!(
+            "Storage '{}' updated successfully",
+            stmt.storage_id
+        )))
+    }
+
+    /// Execute DROP STORAGE
+    async fn execute_drop_storage(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        use kalamdb_sql::DropStorageStatement;
+        
+        let stmt = DropStorageStatement::parse(sql)
+            .map_err(|e| KalamDbError::InvalidSql(e))?;
+
+        let kalam_sql = self
+            .kalam_sql
+            .as_ref()
+            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+
+        // Prevent deletion of 'local' storage
+        if stmt.storage_id == "local" {
+            return Err(KalamDbError::InvalidOperation(
+                "Cannot delete 'local' storage (protected)".to_string(),
+            ));
+        }
+
+        // Check if any tables reference this storage
+        let tables = kalam_sql
+            .scan_all_tables()
+            .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
+
+        let dependent_tables: Vec<_> = tables
+            .iter()
+            .filter(|t| {
+                t.storage_id
+                    .as_ref()
+                    .map(|id| id == &stmt.storage_id)
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        if !dependent_tables.is_empty() {
+            let table_names: Vec<String> = dependent_tables
+                .iter()
+                .take(10)
+                .map(|t| format!("{}.{}", t.namespace, t.table_name))
+                .collect();
+
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Cannot delete storage '{}': {} table(s) still reference it. Tables: {}{}",
+                stmt.storage_id,
+                dependent_tables.len(),
+                table_names.join(", "),
+                if dependent_tables.len() > 10 {
+                    "..."
+                } else {
+                    ""
+                }
+            )));
+        }
+
+        // Delete the storage
+        kalam_sql
+            .delete_storage(&stmt.storage_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to delete storage: {}", e)))?;
+
+        Ok(ExecutionResult::Success(format!(
+            "Storage '{}' deleted successfully",
+            stmt.storage_id
+        )))
     }
 
     /// Execute DESCRIBE TABLE
@@ -2000,6 +2225,57 @@ impl SqlExecutor {
         ));
 
         RecordBatch::try_new(schema, vec![namespaces, names, types, created_at])
+            .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
+    }
+
+    /// Convert storage list to RecordBatch for SHOW STORAGES
+    fn storages_to_record_batch(
+        storages: Vec<kalamdb_sql::Storage>,
+    ) -> Result<RecordBatch, KalamDbError> {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("storage_id", DataType::Utf8, false),
+            Field::new("storage_name", DataType::Utf8, false),
+            Field::new("storage_type", DataType::Utf8, false),
+            Field::new("base_directory", DataType::Utf8, false),
+            Field::new("description", DataType::Utf8, true),
+        ]));
+
+        let ids: ArrayRef = Arc::new(StringArray::from(
+            storages
+                .iter()
+                .map(|s| s.storage_id.as_str())
+                .collect::<Vec<_>>(),
+        ));
+
+        let names: ArrayRef = Arc::new(StringArray::from(
+            storages
+                .iter()
+                .map(|s| s.storage_name.as_str())
+                .collect::<Vec<_>>(),
+        ));
+
+        let types: ArrayRef = Arc::new(StringArray::from(
+            storages
+                .iter()
+                .map(|s| s.storage_type.as_str())
+                .collect::<Vec<_>>(),
+        ));
+
+        let directories: ArrayRef = Arc::new(StringArray::from(
+            storages
+                .iter()
+                .map(|s| s.base_directory.as_str())
+                .collect::<Vec<_>>(),
+        ));
+
+        let descriptions: ArrayRef = Arc::new(StringArray::from(
+            storages
+                .iter()
+                .map(|s| s.description.as_deref())
+                .collect::<Vec<_>>(),
+        ));
+
+        RecordBatch::try_new(schema, vec![ids, names, types, directories, descriptions])
             .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
     }
 
