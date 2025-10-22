@@ -31,6 +31,50 @@
    - *Impact*: User Story 10, Phase 12 tasks (T284a-e, T295a-e, T300a, T302a)
    - *Rationale*: Prevents accidental data loss, allows administrative recovery, eventual cleanup for operational hygiene
 
+6. **Q: What naming convention should be used for Parquet files within the templated directory paths?** → A: Timestamp-based: `{timestamp_iso8601}.parquet` or `{timestamp_unix}.parquet`
+   - *Impact*: User Story 2, Phase 5 tasks (T151-T152, T161b, T162b)
+   - *Rationale*: Timestamps provide natural time-series organization and make it easy to identify when data was flushed. Files are easily sortable chronologically, and the format prevents most naming collisions since duplicate prevention ensures only one flush runs per table at a time.
+
+7. **Q: How should template variable substitution work for generating Parquet file paths?** → A: Single-pass substitution with validation (resolve all variables at once, validate path, create directories, write file)
+   - *Impact*: User Story 2, Phase 5 tasks (T151-T152, T153-T154)
+   - *Rationale*: Simplest and most efficient approach. All template variables are known at flush execution time. Single-pass substitution with upfront validation catches configuration errors early and fails fast with clear error messages. Template supports: {storageLocation}, {namespace}, {userId}, {tableName}, {shard} with extensibility for future variables.
+
+8. **Q: Should each user's data go into a separate Parquet file, or can multiple users share a file?** → A: One Parquet file per user per flush (complete isolation)
+   - *Impact*: User Story 2, Phase 5 tasks (T151-T152, T269)
+   - *Rationale*: This is the fundamental design principle of KalamDB - keeping each user's data in separate folder storage. Provides complete data isolation, simplifies row-level security, enables efficient per-user queries, facilitates user-specific data deletion/cleanup, and prevents cross-user data leakage. Each flush creates one file per user: `users/user123/messages/2025-10-22T14-30-00.parquet`.
+
+9. **Q: How does the flush job retrieve buffered data from RocksDB before processing?** → A: Scan by table column family using RocksDB snapshot with streaming per-user writes (scan table column family, userId is in key enabling natural grouping, write each user's data immediately upon detecting user boundary, use snapshot for consistency)
+   - *Impact*: User Story 2, Phase 5 tasks (T151-T152, T161a)
+   - *Rationale*: RocksDB keys include userId, so scanning the table's column family naturally groups rows by user. When the scanner detects a userId boundary (next row has different userId), it immediately writes that user's accumulated rows to Parquet. This streaming approach prevents memory spikes since only one user's data is in memory at a time. Using a RocksDB snapshot ensures consistent reads - prevents missing rows if new inserts occur during the scan. Critical for correctness and memory efficiency.
+
+10. **Q: What happens to buffered data in RocksDB after successfully writing to Parquet files?** → A: Delete immediately (delete buffered rows from RocksDB as soon as Parquet write succeeds for each user)
+   - *Impact*: User Story 2, Phase 5 tasks (T151-T152, T161a)
+   - *Rationale*: Standard flush pattern - once data is safely persisted to Parquet, buffer should be cleared to free memory and prevent duplicate processing. Immediate deletion per user (after each Parquet write) maintains consistency and prevents unbounded buffer growth. RocksDB batch deletion ensures atomicity. Keeps system in clean state and memory usage bounded.
+
+### Session 2025-10-22 (Continued) - Storage Location Management Architecture
+
+**Summary**: Major architectural clarification defining multi-storage support with pluggable storage backends (filesystem, S3), storage location registry in system.storages table, per-table and per-user storage assignment, and flexible path templates with variable ordering constraints.
+
+11. **Q: How should storage locations be managed and assigned to tables?** → A: system.storages table registry with storage_id references in tables (default "local" storage, tables reference storage by ID, users can have per-table storage overrides)
+   - *Impact*: User Story 2, Phase 5 tasks (T151-T152, T155-T155b, new storage management tasks)
+   - *Rationale*: Enables multi-cloud/hybrid storage deployments (local filesystem + S3 buckets). Storage abstraction separates physical location from logical tables. Registry pattern allows adding new storage locations without code changes. Per-user storage assignment enables data sovereignty and billing isolation.
+
+12. **Q: What storage types should be supported and how are they structured?** → A: Enum StorageType { Filesystem, S3 } with base directory + separate path templates for shared vs user tables
+   - *Impact*: User Story 2, Phase 5 tasks (T151-T152, storage backend implementation)
+   - *Rationale*: Filesystem for local/NFS deployments, S3 for cloud-native deployments. Extensible enum allows future backends (Azure Blob, GCS). Separate templates for shared/user tables enforce isolation rules and variable ordering constraints.
+
+13. **Q: What are the path template variable ordering rules for shared vs user tables?** → A: Shared: {namespace}/{tableName} order enforced. User: {namespace}/{tableName}/{shard}/{userId} order enforced
+   - *Impact*: User Story 2, Phase 5 tasks (T152, T155-T155b, path validation)
+   - *Rationale*: Enforced ordering ensures predictable directory structure, simplifies data discovery, and prevents misconfiguration. Shared tables grouped by namespace/table. User tables require userId in path for isolation. Shard placement between tableName and userId enables efficient sharding queries.
+
+14. **Q: How does per-user storage assignment work with use_user_storage option?** → A: Lookup chain: table.use_user_storage=true → check user.storage_mode → if "region" use user.storage_id, if "table" use table.storage_id fallback
+   - *Impact*: User Story 2, User Story 10 (user management), new storage assignment logic
+   - *Rationale*: Enables data sovereignty (users in EU region → EU S3 bucket). Flexible fallback prevents orphaned data. user.storage_mode="table" allows per-table override when needed. Supports multi-tenant SaaS scenarios with region-specific compliance.
+
+15. **Q: What prevents storage deletion when tables are using it?** → A: Foreign key constraint + validation: DELETE storage only allowed when no tables reference it (query system.tables for storage_id match, return error with table count if >0)
+   - *Impact*: User Story 2, storage management commands, data integrity
+   - *Rationale*: Prevents orphaned tables and data loss. Explicit error message helps administrators identify dependent tables before deletion. Follows database FK constraint pattern for referential integrity.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 0 - Kalam CLI: Interactive Command-Line Client (Priority: P0)
@@ -745,6 +789,20 @@ Developers and operators need reliable server startup, better CLI user experienc
 - **FR-012b**: When both time and row count triggers are configured, flush MUST execute when either condition is met first
 - **FR-012c**: After flush completion, both time and row count counters MUST reset for the next flush cycle
 - **FR-013**: Flush jobs MUST group buffered data by user_id before writing to storage
+- **FR-013a**: Each user's data MUST be written to a separate Parquet file (one file per user per flush operation)
+- **FR-013b**: User data isolation MUST be maintained at the file level - a single Parquet file MUST NOT contain data from multiple users
+- **FR-013c**: When a flush is triggered, the system MUST iterate through all unique user_ids in the buffered data and create one file per user
+- **FR-013d**: Flush job MUST create a RocksDB snapshot before scanning buffered data to ensure read consistency
+- **FR-013e**: Flush job MUST scan the table's column family (buffered data is organized per table in RocksDB)
+- **FR-013f**: RocksDB keys MUST include userId component, enabling natural grouping during sequential scan (e.g., key format: `table_id:user_id:row_id`)
+- **FR-013g**: Flush job MUST use streaming writes: accumulate rows for current userId, detect userId boundary in scan, immediately write Parquet file, then continue with next userId
+- **FR-013h**: Flush job MUST NOT accumulate all users' data in memory simultaneously - only one user's data at a time to prevent memory spikes
+- **FR-013i**: When scanner detects userId change (current row's userId ≠ previous row's userId), it MUST trigger Parquet write for accumulated data before processing new userId
+- **FR-013j**: After successfully writing a user's Parquet file, flush job MUST immediately delete those buffered rows from RocksDB
+- **FR-013k**: Row deletion MUST use RocksDB batch operations for atomicity (all rows for a user deleted together or none)
+- **FR-013l**: If Parquet write fails for a user, buffered rows for that user MUST remain in RocksDB (no deletion)
+- **FR-013m**: Flush job MUST track which users' data was successfully flushed and only delete their corresponding RocksDB rows
+- **FR-013n**: Upon flush job completion, system MUST log total rows flushed, total rows deleted from buffer, and any errors encountered per user
 - **FR-014**: System MUST support configurable storage location path templates with variables: {storageLocation}, {namespace}, {userId}, {tableName}, {shard}
 - **FR-015**: System MUST provide default storage location in `config.toml` (defaulting to `./data/storage`)
 - **FR-016**: System MUST support separate path templates for user tables vs shared tables
@@ -753,6 +811,54 @@ Developers and operators need reliable server startup, better CLI user experienc
 - **FR-019**: System MUST support configurable sharding strategies for distributing data across storage locations
 - **FR-020**: System MUST provide a default alphabetic sharding strategy (a-z) when no custom strategy is specified
 - **FR-021**: Flush jobs MUST write data in Parquet format to the determined storage locations
+- **FR-021a**: Parquet filenames MUST follow timestamp-based naming: `YYYY-MM-DDTHH-MM-SS.parquet` (ISO 8601 format with hyphens instead of colons for filesystem compatibility)
+- **FR-021b**: Path template resolution MUST use single-pass substitution: resolve all variables simultaneously, validate resulting path, create directories if needed, then write file
+- **FR-021c**: Template variable substitution MUST support: {storageLocation}, {namespace}, {userId}, {tableName}, {shard} with extensibility for additional variables in future
+- **FR-021d**: When sharding is configured, {shard} variable MUST be populated by applying the table's configured sharding strategy to the user_id
+- **FR-021e**: When sharding is NOT configured, {shard} variable MUST be substituted with empty string (template can omit {shard} entirely)
+- **FR-021f**: Path template validation MUST fail fast with clear error message if any required variable is undefined or invalid
+- **FR-021g**: Full Parquet file path example for user table with sharding: `./data/storage/default/users/user123/messages/shard-a/2025-10-22T14-30-00.parquet`
+- **FR-021h**: Full Parquet file path example for user table without sharding: `./data/storage/default/users/user123/messages/2025-10-22T14-30-00.parquet`
+
+#### Storage Location Management
+
+- **FR-021i**: System MUST maintain a system.storages table registering all available storage locations
+- **FR-021j**: system.storages schema MUST include: storage_id (PRIMARY KEY), storage_name, description, storage_type (enum), base_directory, shared_tables_template, user_tables_template, created_at, updated_at
+- **FR-021k**: storage_type MUST be an enum with values: "filesystem", "s3" (extensible for future backends like Azure Blob, GCS)
+- **FR-021l**: On fresh installation, system MUST automatically create default storage with storage_id="local", storage_type="filesystem", base_directory="" (reads from config.toml)
+- **FR-021m**: When base_directory is empty string for storage_id="local", system MUST read storage location from config.toml default_storage_path (default: "./data/storage")
+- **FR-021n**: For S3 storage type, base_directory MUST follow format: "s3://bucket-name/" or "s3://bucket-name/prefix/"
+- **FR-021o**: shared_tables_template MUST enforce variable ordering: {namespace} MUST appear before {tableName}
+- **FR-021p**: shared_tables_template default value: "{namespace}/shared/{tableName}"
+- **FR-021q**: user_tables_template MUST enforce variable ordering: {namespace} → {tableName} → {shard} → {userId} (in this exact order)
+- **FR-021r**: user_tables_template default value: "{namespace}/users/{tableName}/{shard}/{userId}"
+- **FR-021s**: user_tables_template validation MUST ensure {userId} variable is present (required for user table isolation)
+- **FR-021t**: When querying system.storages, results MUST be ordered with storage_id="local" first, then alphabetically by storage_name
+- **FR-021u**: system.tables schema MUST include storage_id column referencing system.storages (foreign key constraint)
+- **FR-021v**: When creating a table without explicit storage_id, system MUST default to storage_id="local"
+- **FR-021w**: User tables MUST always have storage_id defined (NOT NULL constraint on system.tables.storage_id for user tables)
+- **FR-021x**: system.users schema MUST include storage_mode ENUM('table', 'region') and storage_id columns
+- **FR-021y**: storage_mode='table' means user inherits storage from each table's storage_id (default behavior)
+- **FR-021z**: storage_mode='region' means user has overridden storage_id for all their user tables (data sovereignty scenario)
+
+#### Storage Assignment Resolution
+
+- **FR-021aa**: When creating user table with option use_user_storage=true, system MUST implement storage lookup chain
+- **FR-021ab**: Storage lookup chain step 1: Check user.storage_mode - if 'region', use user.storage_id
+- **FR-021ac**: Storage lookup chain step 2: If user.storage_mode='table', fallback to table.storage_id
+- **FR-021ad**: Storage lookup chain step 3: If table.storage_id is NULL, fallback to storage_id='local'
+- **FR-021ae**: Flush job MUST resolve final storage_id per user before generating Parquet path
+- **FR-021af**: When use_user_storage=false (default), system MUST use table.storage_id directly (no user lookup)
+
+#### Storage Deletion Protection
+
+- **FR-021ag**: DELETE FROM system.storages MUST be protected by referential integrity check
+- **FR-021ah**: Before deleting storage, system MUST query system.tables for COUNT(*) WHERE storage_id = <target_storage_id>
+- **FR-021ai**: If table count > 0, DELETE MUST fail with error: "Cannot delete storage '<storage_name>': N table(s) still reference it"
+- **FR-021aj**: Error message MUST include list of tables using the storage (up to 10 table names)
+- **FR-021ak**: system.storages with storage_id='local' MUST NOT be deleteable (special protection)
+- **FR-021al**: System MUST validate storage_id references exist in system.storages when creating tables (foreign key validation)
+
 - **FR-022**: System MUST track flush job status using a Tokio-based job registry (HashMap<JobId, JoinHandle>) for observability and cancellation
 - **FR-022a**: System MUST implement a JobManager trait to provide a generic interface for job lifecycle management (start, cancel, get_status)
 - **FR-022b**: Initial implementation MUST use Tokio JoinHandles for job cancellation, with the interface designed to allow future replacement with actor-based supervision

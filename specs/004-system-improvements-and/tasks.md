@@ -277,31 +277,44 @@
 
 ### Implementation for User Story 2
 
-- [ ] T145 [P] [US2] Create `/backend/crates/kalamdb-core/src/scheduler.rs` with FlushScheduler struct
+- [X] T145 [P] [US2] Create `/backend/crates/kalamdb-core/src/scheduler.rs` with FlushScheduler struct
 - [ ] T146 [P] [US2] Create `/backend/crates/kalamdb-store/src/flush.rs` with FlushJob implementation
-- [ ] T146a [P] [US2] Create `/backend/crates/kalamdb-core/src/job_manager.rs` with JobManager trait interface
-- [ ] T147 [P] [US2] Create `/backend/crates/kalamdb-store/src/sharding.rs` with ShardingStrategy trait and implementations
-- [ ] T148 [US2] Implement FlushScheduler with tokio interval timer
-- [ ] T148a [US2] Implement FlushScheduler row count monitoring (check buffered row count on each insert/update)
-- [ ] T148b [US2] Implement FlushScheduler trigger logic (time OR row count, whichever first)
-- [ ] T149 [US2] Implement FlushScheduler::schedule_table() to register tables for automatic flush
-- [ ] T149a [US2] Add flush_interval and flush_row_threshold parameters to schedule_table()
-- [ ] T150 [US2] Implement TokioJobManager with HashMap<JobId, JoinHandle> for job tracking and cancellation
-- [ ] T150a [US2] Implement JobManager trait with start(), cancel(), get_status() methods
-- [ ] T150b [US2] Ensure JobManager interface is generic enough to allow future actor-based implementation
-- [ ] T151 [US2] Implement FlushJob::execute_flush() with user-based data grouping and Parquet schema-version metadata
-- [ ] T152 [US2] Implement storage path template variable substitution ({namespace}, {userId}, {tableName}, {shard})
-- [ ] T153 [US2] Implement AlphabeticSharding, NumericSharding, ConsistentHashSharding strategies
-- [ ] T154 [US2] Implement ShardingRegistry for strategy lookup
+- [X] T146a [P] [US2] Create `/backend/crates/kalamdb-core/src/job_manager.rs` with JobManager trait interface
+- [X] T147 [P] [US2] Create `/backend/crates/kalamdb-store/src/sharding.rs` with ShardingStrategy trait and implementations
+- [X] T148 [US2] Implement FlushScheduler with tokio interval timer
+- [X] T148a [US2] Implement FlushScheduler row count monitoring (check buffered row count on each insert/update)
+- [X] T148b [US2] Implement FlushScheduler trigger logic (time OR row count, whichever first)
+- [X] T149 [US2] Implement FlushScheduler::schedule_table() to register tables for automatic flush
+- [X] T149a [US2] Add flush_interval and flush_row_threshold parameters to schedule_table()
+- [X] T150 [US2] Implement TokioJobManager with HashMap<JobId, JoinHandle> for job tracking and cancellation
+- [X] T150a [US2] Implement JobManager trait with start(), cancel(), get_status() methods
+- [X] T150b [US2] Ensure JobManager interface is generic enough to allow future actor-based implementation
+- [ ] T151 [US2] Implement FlushJob::execute_flush() with streaming per-user writes (create RocksDB snapshot → scan table column family → detect userId boundaries → write Parquet per user → delete buffered rows → repeat)
+- [ ] T151a [US2] Create RocksDB snapshot at flush start for read consistency (prevents missing rows from concurrent inserts)
+- [ ] T151b [US2] Scan table's column family sequentially (keys structured as table_id:user_id:row_id for natural grouping)
+- [ ] T151c [US2] Accumulate rows for current userId in memory (streaming approach - only one user's data at a time)
+- [ ] T151d [US2] Detect userId boundary (current_row.user_id ≠ previous_row.user_id) to trigger Parquet write
+- [ ] T151e [US2] Write accumulated rows to Parquet file for completed user before continuing scan
+- [ ] T151f [US2] Delete successfully flushed rows from RocksDB using batch operation (atomic per-user deletion)
+- [ ] T151g [US2] On Parquet write failure for a user, keep their buffered rows in RocksDB (no deletion)
+- [ ] T151h [US2] Track per-user flush success/failure and log total rows flushed/deleted at job completion
+- [ ] T152 [US2] Implement storage path template variable substitution with single-pass validation ({storageLocation}/{namespace}/users/{userId}/{tableName}/{shard}/YYYY-MM-DDTHH-MM-SS.parquet)
+- [ ] T152a [US2] Implement timestamp-based Parquet filename generation: YYYY-MM-DDTHH-MM-SS.parquet (ISO 8601 with hyphens)
+- [ ] T152b [US2] Resolve {shard} variable by applying table's configured sharding strategy to userId
+- [ ] T152c [US2] When sharding not configured, substitute {shard} with empty string (allow templates to omit {shard})
+- [ ] T152d [US2] Validate all required template variables are defined before creating directories
+- [ ] T152e [US2] Fail fast with clear error message if any template variable is undefined or invalid
+- [X] T153 [US2] Implement AlphabeticSharding, NumericSharding, ConsistentHashSharding strategies
+- [X] T154 [US2] Implement ShardingRegistry for strategy lookup
 - [ ] T155 [US2] Update table creation DDL to accept flush_interval and sharding_strategy parameters
 - [ ] T155a [US2] Update table creation DDL to accept flush_row_threshold parameter
 - [ ] T155b [US2] Validate that at least one flush trigger (interval or row threshold) is configured
 - [ ] T156 [US2] Integrate FlushScheduler into server startup in `/backend/crates/kalamdb-server/src/main.rs`
-- [ ] T157 [US2] Update system.jobs table schema to include parameters, result, trace, memory_used, cpu_used columns
+- [X] T157 [US2] Update system.jobs table schema to include parameters, result, trace, memory_used, cpu_used columns (verified already present)
 - [ ] T158 [US2] Implement job tracking in FlushJob to write status to system.jobs BEFORE starting work
-- [ ] T158a [US2] Implement KILL JOB SQL command in `/backend/crates/kalamdb-sql/src/job_commands.rs`
-- [ ] T158b [US2] Add KILL JOB command parsing and execution in SQL executor
-- [ ] T158c [US2] Update job status to 'cancelled' with timestamp when KILL JOB executes
+- [X] T158a [US2] Implement KILL JOB SQL command parsing in `/backend/crates/kalamdb-sql/src/job_commands.rs` (9 tests passing)
+- [X] T158b [US2] Add KILL JOB command execution in SQL executor (execute_kill_job method added)
+- [X] T158c [US2] Update job status to 'cancelled' with timestamp when KILL JOB executes (cancel_job method in JobsTableProvider)
 - [ ] T158d [US2] Implement flush job state persistence: job_id, table_name, status, start_time, progress to system.jobs
 - [ ] T158e [US2] Implement crash recovery: On startup, query system.jobs for incomplete jobs and resume them
 - [ ] T158f [US2] Add duplicate flush prevention: Check system.jobs for running flush on same table before creating new job
@@ -319,15 +332,88 @@
 - [ ] T158r [US2] Add job_cleanup_schedule configuration to config.toml (default: "0 0 * * *" / daily at midnight)
 - [ ] T158s [US2] Create cleanup job that deletes records where created_at < (current_time - retention_period)
 
+### Storage Location Management (NEW)
+
+- [ ] T163 [P] [US2] Create system.storages table schema with columns: storage_id (PK), storage_name, description, storage_type (enum), base_directory, shared_tables_template, user_tables_template, created_at, updated_at
+- [ ] T163a [P] [US2] Create StorageType enum in `/backend/crates/kalamdb-commons/src/models.rs` with values: Filesystem, S3
+- [ ] T163b [P] [US2] Add storage_id column to system.tables with foreign key constraint to system.storages
+- [ ] T163c [P] [US2] Add storage_mode (ENUM: 'table', 'region') and storage_id columns to system.users table
+- [ ] T164 [US2] Implement default storage creation: On server startup, if system.storages is empty, insert storage_id='local', storage_type='filesystem', base_directory='', templates with defaults
+- [ ] T164a [US2] Implement config.toml default_storage_path fallback: When base_directory='' for storage_id='local', read from config (default: "./data/storage")
+- [ ] T165 [P] [US2] Create `/backend/crates/kalamdb-core/src/storage/storage_registry.rs` with StorageRegistry struct
+- [ ] T165a [P] [US2] Implement StorageRegistry::get_storage(storage_id) -> Result<Storage>
+- [ ] T165b [P] [US2] Implement StorageRegistry::list_storages() with ordering (storage_id='local' first, then alphabetical)
+- [ ] T166 [US2] Implement path template validation in StorageRegistry::validate_template()
+- [ ] T166a [US2] Validate shared_tables_template: Ensure {namespace} appears before {tableName}
+- [ ] T166b [US2] Validate user_tables_template: Enforce ordering {namespace} → {tableName} → {shard} → {userId}
+- [ ] T166c [US2] Validate user_tables_template: Ensure {userId} variable is present (required)
+- [ ] T167 [US2] Update CREATE TABLE DDL to accept STORAGE storage_id parameter
+- [ ] T167a [US2] When storage_id omitted in CREATE TABLE, default to storage_id='local'
+- [ ] T167b [US2] Validate storage_id exists in system.storages before creating table (FK validation)
+- [ ] T167c [US2] For user tables, enforce NOT NULL constraint on storage_id
+- [ ] T168 [US2] Update CREATE TABLE DDL to accept USE_USER_STORAGE boolean option
+- [ ] T168a [US2] Store use_user_storage flag in system.tables metadata
+- [ ] T169 [US2] Implement storage lookup chain in FlushJob::resolve_storage_for_user()
+- [ ] T169a [US2] Step 1: If table.use_user_storage=false, return table.storage_id
+- [ ] T169b [US2] Step 2: If table.use_user_storage=true, query user.storage_mode
+- [ ] T169c [US2] Step 3: If user.storage_mode='region', return user.storage_id
+- [ ] T169d [US2] Step 4: If user.storage_mode='table', fallback to table.storage_id
+- [ ] T169e [US2] Step 5: If table.storage_id is NULL, fallback to storage_id='local'
+- [ ] T170 [US2] Update FlushJob path template resolution to use storage from StorageRegistry
+- [ ] T170a [US2] Replace hardcoded {storageLocation} with Storage.base_directory
+- [ ] T170b [US2] Use Storage.user_tables_template or Storage.shared_tables_template based on table type
+- [ ] T170c [US2] Validate template variable ordering during path generation
+- [ ] T171 [US2] Implement S3 storage backend in `/backend/crates/kalamdb-store/src/s3_storage.rs`
+- [ ] T171a [US2] Add aws-sdk-s3 dependency to kalamdb-store/Cargo.toml
+- [ ] T171b [US2] Implement S3Storage::write_parquet() using aws-sdk-s3 PutObject
+- [ ] T171c [US2] Implement S3Storage::read_parquet() using aws-sdk-s3 GetObject
+- [ ] T172 [US2] Implement DELETE FROM system.storages with referential integrity protection
+- [ ] T172a [US2] Query system.tables for COUNT(*) WHERE storage_id = target_storage_id
+- [ ] T172b [US2] If count > 0, return error: "Cannot delete storage '<name>': N table(s) still reference it"
+- [ ] T172c [US2] Include list of up to 10 table names in error message
+- [ ] T172d [US2] Add special protection: Prevent deletion of storage_id='local' (hardcoded check)
+- [ ] T173 [P] [US2] Create SQL commands for storage management in `/backend/crates/kalamdb-sql/src/storage_commands.rs`
+- [ ] T173a [P] [US2] Implement CREATE STORAGE command parsing
+- [ ] T173b [P] [US2] Implement ALTER STORAGE command parsing (update templates, description)
+- [ ] T173c [P] [US2] Implement DROP STORAGE command parsing
+- [ ] T173d [P] [US2] Implement SHOW STORAGES command parsing
+
+**Integration Tests for Storage Management**:
+- [ ] T174 [P] [US2] test_default_storage_creation: Start server, query system.storages, verify storage_id='local' exists
+- [ ] T175 [P] [US2] test_create_storage_filesystem: Execute CREATE STORAGE, verify new storage in system.storages
+- [ ] T176 [P] [US2] test_create_storage_s3: Create S3 storage with s3://bucket-name/ base_directory, verify accepted
+- [ ] T177 [P] [US2] test_create_table_with_storage: CREATE TABLE ... STORAGE 's3-prod', verify table.storage_id='s3-prod'
+- [ ] T178 [P] [US2] test_create_table_default_storage: CREATE TABLE without STORAGE, verify table.storage_id='local'
+- [ ] T179 [P] [US2] test_create_table_invalid_storage: CREATE TABLE STORAGE 'nonexistent', verify FK validation error
+- [ ] T180 [P] [US2] test_user_table_storage_required: CREATE USER TABLE without storage_id, verify NOT NULL error
+- [ ] T181 [P] [US2] test_flush_with_use_user_storage: Create table with USE_USER_STORAGE=true, flush, verify storage lookup chain
+- [ ] T182 [P] [US2] test_user_storage_mode_region: Set user.storage_mode='region', flush, verify user.storage_id used
+- [ ] T183 [P] [US2] test_user_storage_mode_table: Set user.storage_mode='table', flush, verify table.storage_id used
+- [ ] T184 [P] [US2] test_storage_template_validation: CREATE STORAGE with invalid template (wrong variable order), verify error
+- [ ] T185 [P] [US2] test_shared_table_template_ordering: Verify {namespace} before {tableName} enforced
+- [ ] T186 [P] [US2] test_user_table_template_ordering: Verify {namespace}→{tableName}→{shard}→{userId} enforced
+- [ ] T187 [P] [US2] test_user_table_template_requires_userId: CREATE STORAGE without {userId} in user template, verify error
+- [ ] T188 [P] [US2] test_delete_storage_with_tables: Create table, attempt DELETE storage, verify error with table count
+- [ ] T189 [P] [US2] test_delete_storage_local_protected: Attempt DELETE storage_id='local', verify protection error
+- [ ] T190 [P] [US2] test_delete_storage_no_dependencies: Create storage, delete it (no tables), verify success
+- [ ] T191 [P] [US2] test_show_storages_ordering: Query system.storages, verify 'local' first, then alphabetical
+- [ ] T192 [P] [US2] test_flush_resolves_s3_storage: Create table with S3 storage, flush, verify Parquet uploaded to S3
+- [ ] T193 [P] [US2] test_multi_storage_flush: Create 3 tables with different storages, flush all, verify each uses correct storage
+
 **Documentation Tasks for User Story 2**:
-- [ ] T159 [P] [US2] Add rustdoc to FlushScheduler explaining scheduling algorithm (time and row count triggers)
-- [ ] T160 [P] [US2] Add rustdoc to ShardingStrategy trait with implementation guide
-- [ ] T161 [P] [US2] Add inline comments to JobManager trait explaining design rationale for future actor migration
-- [ ] T161a [P] [US2] Add inline comments to TokioJobManager explaining JoinHandle-based cancellation
-- [ ] T161b [P] [US2] Add inline comments explaining flush trigger logic (OR condition, counter reset)
-- [ ] T162 [P] [US2] Create ADR-005-flush-jobs.md explaining Tokio-based job management and future actor migration path
-- [ ] T162a [P] [US2] Update ADR-005 to document decision to use JobManager trait for abstraction
-- [ ] T162b [P] [US2] Update ADR-005 to document flush trigger design (time + row count)
+- [ ] T159 [P] [US2] Add rustdoc to FlushScheduler explaining scheduling algorithm (time and row count triggers, OR logic, counter reset)
+- [ ] T160 [P] [US2] Add rustdoc to ShardingStrategy trait with implementation guide and examples
+- [ ] T161 [P] [US2] Add inline comments to JobManager trait explaining design rationale for future actor migration (currently Tokio JoinHandles)
+- [ ] T161a [P] [US2] Add inline comments to FlushJob::execute_flush() explaining streaming write algorithm (snapshot → scan → boundary detect → write → delete)
+- [ ] T161b [P] [US2] Add inline comments explaining Parquet file naming convention (timestamp-based: YYYY-MM-DDTHH-MM-SS.parquet)
+- [ ] T161c [P] [US2] Add inline comments explaining template path resolution (single-pass substitution with validation)
+- [ ] T162 [P] [US2] Create ADR-006-flush-execution.md documenting streaming write approach (prevents memory spikes, RocksDB snapshot for consistency)
+- [ ] T162a [P] [US2] Update ADR-006 to document per-user file isolation principle (one Parquet file per user per flush)
+- [ ] T162b [P] [US2] Update ADR-006 to document immediate deletion pattern (delete from buffer after successful Parquet write)
+- [ ] T194 [P] [US2] Create ADR-007-storage-registry.md documenting multi-storage architecture (filesystem + S3, template validation, lookup chain)
+- [ ] T194a [P] [US2] Add rustdoc to StorageRegistry explaining storage resolution and template validation
+- [ ] T194b [P] [US2] Add inline comments to storage lookup chain explaining use_user_storage and storage_mode logic
+- [ ] T194c [P] [US2] Update API_REFERENCE.md with CREATE/ALTER/DROP STORAGE commands and USE_USER_STORAGE option
 
 **Checkpoint**: Automatic flushing works reliably with dual triggers (time and row count), user partitioning, configurable sharding, and job cancellation via KILL JOB command
 

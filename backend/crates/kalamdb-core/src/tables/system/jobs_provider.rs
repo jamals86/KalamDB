@@ -78,6 +78,14 @@ impl JobRecord {
         self
     }
 
+    /// Mark job as cancelled
+    pub fn cancel(mut self) -> Self {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.status = "cancelled".to_string();
+        self.end_time = Some(now);
+        self
+    }
+
     /// Set table name
     pub fn with_table_name(mut self, table_name: String) -> Self {
         self.table_name = Some(table_name);
@@ -262,6 +270,37 @@ impl JobsTableProvider {
             }
             None => Ok(None),
         }
+    }
+
+    /// Cancel a job by marking it as cancelled
+    ///
+    /// # Arguments
+    ///
+    /// * `job_id` - ID of the job to cancel
+    ///
+    /// # Returns
+    ///
+    /// Ok(()) if job was cancelled, or error if:
+    /// - Job doesn't exist
+    /// - Job is already completed/failed/cancelled
+    pub fn cancel_job(&self, job_id: &str) -> Result<(), KalamDbError> {
+        // Get current job
+        let job = self.get_job(job_id)?
+            .ok_or_else(|| KalamDbError::NotFound(format!("Job not found: {}", job_id)))?;
+
+        // Check if job is still running
+        if job.status != "running" {
+            return Err(KalamDbError::Other(format!(
+                "Cannot cancel job {} with status '{}'",
+                job_id, job.status
+            )));
+        }
+
+        // Update to cancelled status
+        let cancelled_job = job.cancel();
+        self.update_job(cancelled_job)?;
+
+        Ok(())
     }
 
     /// Delete jobs older than retention period (in days)

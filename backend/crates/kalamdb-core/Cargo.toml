@@ -21,7 +21,7 @@ datafusion.workspace = true
 
 # Async
 async-trait = "0.1"
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "time", "rt"] }
 
 # Serialization
 serde.workspace = true

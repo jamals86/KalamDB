@@ -55,7 +55,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser;
-use kalamdb_sql::KalamSql;
+use kalamdb_sql::{job_commands::parse_job_command, KalamSql};
 use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::sync::Arc;
 
@@ -89,6 +89,8 @@ pub struct SqlExecutor {
     kalam_sql: Option<Arc<KalamSql>>,
     // Session factory for creating per-user sessions
     session_factory: DataFusionSessionFactory,
+    // System tables
+    jobs_table_provider: Option<Arc<crate::tables::system::JobsTableProvider>>,
 }
 
 /// UPDATE statement parsed info
@@ -131,6 +133,7 @@ impl SqlExecutor {
             stream_table_store: None,
             kalam_sql: None,
             session_factory,
+            jobs_table_provider: None,
         }
     }
 
@@ -151,6 +154,9 @@ impl SqlExecutor {
         self.user_table_store = Some(user_table_store);
         self.shared_table_store = Some(shared_table_store);
         self.stream_table_store = Some(stream_table_store);
+        self.jobs_table_provider = Some(Arc::new(crate::tables::system::JobsTableProvider::new(
+            kalam_sql.clone(),
+        )));
         self.kalam_sql = Some(kalam_sql);
         self
     }
@@ -342,6 +348,11 @@ impl SqlExecutor {
         user_id: Option<&UserId>,
     ) -> Result<ExecutionResult, KalamDbError> {
         let sql_upper = sql.trim().to_uppercase();
+
+        // Check for job commands first
+        if sql_upper.split_whitespace().take(2).collect::<Vec<_>>().join(" ") == "KILL JOB" {
+            return self.execute_kill_job(sql).await;
+        }
 
         // Try to parse as DDL first
         if sql_upper.starts_with("CREATE NAMESPACE") {
@@ -1256,6 +1267,34 @@ impl SqlExecutor {
         };
 
         Ok(ExecutionResult::Success(message))
+    }
+
+    /// Execute KILL JOB command
+    async fn execute_kill_job(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        use kalamdb_sql::job_commands::JobCommand;
+
+        // Parse the KILL JOB command
+        let command = parse_job_command(sql)
+            .map_err(|e| KalamDbError::InvalidSql(format!("Failed to parse KILL JOB: {}", e)))?;
+
+        let job_id = match command {
+            JobCommand::Kill { job_id } => job_id,
+        };
+
+        // Get JobsTableProvider
+        let jobs_provider = self.jobs_table_provider.as_ref().ok_or_else(|| {
+            KalamDbError::InvalidOperation("Job management not configured".to_string())
+        })?;
+
+        // Cancel the job
+        jobs_provider
+            .cancel_job(&job_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to cancel job: {}", e)))?;
+
+        Ok(ExecutionResult::Success(format!(
+            "Job '{}' cancelled successfully",
+            job_id
+        )))
     }
 
     /// Execute CREATE TABLE - determines table type from LOCATION and routes to appropriate service

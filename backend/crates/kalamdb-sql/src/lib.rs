@@ -33,12 +33,14 @@
 
 pub mod adapter;
 pub mod executor;
+pub mod job_commands;
 pub mod models;
 pub mod parser;
 pub mod query_cache;
 
 pub use adapter::RocksDbAdapter;
 pub use executor::SqlExecutor;
+pub use job_commands::{parse_job_command, JobCommand};
 pub use models::*;
 pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};

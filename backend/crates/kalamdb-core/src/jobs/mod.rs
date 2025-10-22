@@ -37,9 +37,13 @@
 //! ```
 
 pub mod executor;
+pub mod job_manager;
 pub mod retention;
 pub mod stream_eviction;
+pub mod tokio_job_manager;
 
 pub use executor::{JobExecutor, JobResult};
+pub use job_manager::{JobInfo, JobManager, JobStatus};
 pub use retention::{RetentionConfig, RetentionPolicy};
 pub use stream_eviction::{StreamEvictionConfig, StreamEvictionJob};
+pub use tokio_job_manager::TokioJobManager;
