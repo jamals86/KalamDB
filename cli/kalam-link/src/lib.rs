@@ -71,7 +71,7 @@ pub mod subscription;
 pub use auth::AuthProvider;
 pub use client::KalamLinkClient;
 pub use error::{KalamLinkError, Result};
-pub use models::{ChangeEvent, QueryRequest, QueryResponse};
+pub use models::{ChangeEvent, ErrorDetail, QueryRequest, QueryResponse};
 pub use query::QueryExecutor;
 pub use subscription::SubscriptionManager;
 

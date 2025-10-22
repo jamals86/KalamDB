@@ -5,6 +5,32 @@
 **Status**: Draft  
 **Input**: User description: "System Improvements and Query Optimization - Parametrized queries, automatic flushing, caching, and architectural refactoring"
 
+## Clarifications
+
+### Session 2025-10-22
+
+**Summary**: Five critical design decisions clarified to ensure consistent implementation across all user stories. These clarifications resolve ambiguities in flush triggers, caching scope, execution semantics, and user lifecycle management.
+
+1. **Q: What flush triggers should the automatic flushing system support?** → A: Both time and row count triggers (flush when interval expires OR row threshold reached)
+   - *Impact*: User Story 2, Phase 5 tasks (T138a-d, T148a-b, T149a, T155a-b, T161b, T162b)
+   - *Rationale*: Dual triggers prevent both memory exhaustion (row count) and delayed durability (time interval)
+
+2. **Q: What should be the scope and lifecycle of the query plan cache?** → A: Global cache with LRU eviction (single cache shared across all users/sessions, evict least-recently-used when limit reached)
+   - *Impact*: User Story 1, Phase 4 tasks (T117a-c, T125, T128, T132a, T133, T136)
+   - *Rationale*: Maximizes memory efficiency and benefits all users; simpler than per-session caching
+
+3. **Q: Should manual FLUSH TABLE be synchronous or asynchronous?** → A: Always asynchronous (returns job_id immediately, client polls system.jobs for completion status)
+   - *Impact*: User Story 3, Phase 8 tasks (T206, T206a, T207, T208, T209, T211, T211a, T217, T217a, T219, T219a, T220, T221)
+   - *Rationale*: Prevents HTTP timeout for large flushes, enables concurrent operations, consistent with automatic flush job pattern
+
+4. **Q: What are the transaction semantics for batch SQL execution?** → A: Sequential non-transactional (each statement commits independently, failure stops execution at that point, previous statements remain committed)
+   - *Impact*: User Story 9, Phase 11 tasks (T255, T256, T256a-b, T266, T266a, T279)
+   - *Rationale*: Simpler implementation, predictable behavior; clients can wrap in BEGIN/COMMIT for transactions
+
+5. **Q: What happens to user tables when a user is deleted?** → A: Soft delete with grace period (mark user as deleted, retain tables for configurable days before cleanup, allow recovery during grace period)
+   - *Impact*: User Story 10, Phase 12 tasks (T284a-e, T295a-e, T300a, T302a)
+   - *Rationale*: Prevents accidental data loss, allows administrative recovery, eventual cleanup for operational hygiene
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 0 - Kalam CLI: Interactive Command-Line Client (Priority: P0)
@@ -179,83 +205,110 @@ Database developers, administrators, and users need an interactive command-line 
 
 ### User Story 1 - Parametrized Query Execution with Caching (Priority: P1)
 
-Database users need to execute queries efficiently with dynamic parameters while maintaining security and performance. The system should compile queries once and reuse the execution plan for subsequent calls with different parameter values.
+Database users need to execute queries efficiently with dynamic parameters while maintaining security and performance. The system should compile queries once, store the execution plan in a global LRU cache shared across all users, and reuse it for subsequent calls with different parameter values.
 
-**Why this priority**: Query compilation is expensive. Eliminating repeated compilation for the same query structure will significantly improve response times and reduce CPU usage. This is a fundamental performance optimization that benefits all database operations.
+**Why this priority**: Query compilation is expensive. Eliminating repeated compilation for the same query structure will significantly improve response times and reduce CPU usage. A global cache with LRU eviction maximizes memory efficiency and benefits all users. This is a fundamental performance optimization that benefits all database operations.
 
-**Independent Test**: Can be fully tested by submitting a parametrized query via the `/api/sql` endpoint, verifying it executes correctly with parameters, then submitting the same query with different parameters and confirming the cached execution plan is used (observable through faster execution time and query plan inspection).
+**Independent Test**: Can be fully tested by submitting a parametrized query via the `/api/sql` endpoint, verifying it executes correctly with parameters, then submitting the same query with different parameters and confirming the cached execution plan is used (observable through faster execution time and query plan inspection). Test cache eviction by filling the cache beyond configured limit and verifying least-recently-used plans are evicted.
 
 **Acceptance Scenarios**:
 
 1. **Given** a user has a SQL query with dynamic values, **When** they submit `{ "sql": "SELECT * FROM messages WHERE user_id = $1 AND created_at > $2", "params": ["user123", "2025-01-01"] }` to `/api/sql`, **Then** the query executes successfully and returns filtered results
-2. **Given** a parametrized query has been executed once, **When** the same query structure is submitted again with different parameter values, **Then** the cached execution plan is used without recompilation
-3. **Given** a query with invalid parameter count, **When** submitted to the API, **Then** the system returns a clear error message indicating parameter mismatch
-4. **Given** query results are being returned, **When** the query execution configuration enables timing, **Then** the response includes the query execution duration
+2. **Given** a parametrized query has been executed once, **When** the same query structure is submitted again with different parameter values (by same or different user), **Then** the cached execution plan from global cache is used without recompilation
+3. **Given** the query plan cache is full, **When** a new query structure is executed, **Then** the least-recently-used plan is evicted and the new plan is cached
+4. **Given** a query with invalid parameter count, **When** submitted to the API, **Then** the system returns a clear error message indicating parameter mismatch
+5. **Given** query results are being returned, **When** the query execution configuration enables timing, **Then** the response includes the query execution duration and cache hit/miss status
 
 **Integration Tests** (backend/tests/integration/test_parametrized_queries.rs):
 
 1. **test_parametrized_query_execution**: Create user table, execute parametrized SELECT with $1, $2 placeholders, verify results match parameter values
 2. **test_execution_plan_caching**: Execute same query structure twice with different parameters, verify second execution is faster (plan cached)
-3. **test_parameter_count_mismatch**: Submit query with 2 placeholders but 1 parameter value, verify error message includes "parameter mismatch"
-4. **test_parameter_type_validation**: Submit parametrized INSERT with wrong type (string for INT column), verify type error returned
-5. **test_query_timing_in_response**: Enable timing in config, execute parametrized query, verify response includes execution_time_ms field
-6. **test_parametrized_insert_update_delete**: Test parametrized INSERT, UPDATE, DELETE operations with parameter substitution
-7. **test_concurrent_parametrized_queries**: Execute multiple parametrized queries concurrently, verify no cache contention or errors
+3. **test_global_cache_cross_user**: User1 executes parametrized query, User2 executes same query structure with different params, verify both use same cached plan
+4. **test_lru_eviction**: Configure small cache size (e.g., 10 plans), execute 15 different query structures, verify least-recently-used plans evicted
+5. **test_cache_hit_miss_metrics**: Execute new query (cache miss), execute same query again (cache hit), verify response includes cache_hit:true/false indicator
+6. **test_parameter_count_mismatch**: Submit query with 2 placeholders but 1 parameter value, verify error message includes "parameter mismatch"
+7. **test_parameter_type_validation**: Submit parametrized INSERT with wrong type (string for INT column), verify type error returned
+8. **test_query_timing_in_response**: Enable timing in config, execute parametrized query, verify response includes execution_time_ms field
+9. **test_parametrized_insert_update_delete**: Test parametrized INSERT, UPDATE, DELETE operations with parameter substitution
+10. **test_concurrent_parametrized_queries**: Execute multiple parametrized queries concurrently, verify no cache contention or errors
 
 ---
 
-### User Story 2 - Automatic Table Flushing with Scheduled Jobs (Priority: P1)
+### User Story 2 - Automatic Table Flushing with Scheduled Jobs and Job Management (Priority: P1)
 
-Database administrators need user table data automatically persisted to storage at configured intervals without manual intervention. The system should group data by user, apply configured sharding strategies, and write to organized storage paths.
+Database administrators need user table data automatically persisted to storage based on configured time intervals or row count thresholds without manual intervention. The system should group data by user, apply configured sharding strategies, and write to organized storage paths. Administrators also need the ability to monitor and cancel long-running jobs using SQL commands.
 
-**Why this priority**: Data durability is critical. Without automatic flushing, data remains only in memory/buffer and is vulnerable to loss. This is essential for production readiness and data reliability.
+**Why this priority**: Data durability is critical. Without automatic flushing, data remains only in memory/buffer and is vulnerable to loss. This is essential for production readiness and data reliability. Multiple flush triggers (time and row count) prevent both memory exhaustion during write bursts and delayed durability during low-activity periods. Job cancellation is necessary for operational control during maintenance or when jobs need to be aborted.
 
-**Independent Test**: Can be fully tested by creating a table with flush configuration, inserting data from multiple users, waiting for the scheduled flush interval, then verifying Parquet files are created in the correct storage locations organized by user and shard.
+**Independent Test**: Can be fully tested by creating a table with flush configuration (interval and row threshold), inserting data from multiple users, waiting for the scheduled flush interval or reaching row threshold, then verifying Parquet files are created in the correct storage locations organized by user and shard. Job cancellation can be tested by starting a long-running flush job and executing `KILL JOB <job_id>` to verify it stops.
 
 **Acceptance Scenarios**:
 
 1. **Given** a table is created with flush interval configuration, **When** the scheduled flush time arrives and data exists in the buffer, **Then** a flush job initiates automatically
-2. **Given** multiple users have data in a table buffer, **When** automatic flush executes, **Then** data is grouped by user_id and written to separate storage locations
-3. **Given** flush storage locations are configured with path templates, **When** data is flushed, **Then** files are written following the template pattern (e.g., `{storageLocation}/{namespace}/users/{userId}/{tableName}/`)
-4. **Given** a sharding strategy is configured, **When** data is flushed, **Then** data is distributed across shards according to the configured function
-5. **Given** flush configuration specifies separate paths for user tables vs shared tables, **When** flush executes for each table type, **Then** data is written to the appropriate directory structure
+2. **Given** a table is created with row count threshold configuration, **When** buffered rows reach the threshold, **Then** a flush job initiates automatically regardless of time interval
+3. **Given** a table has both time and row count triggers configured, **When** either trigger condition is met first, **Then** flush executes and both counters reset
+4. **Given** multiple users have data in a table buffer, **When** automatic flush executes, **Then** data is grouped by user_id and written to separate storage locations
+5. **Given** flush storage locations are configured with path templates, **When** data is flushed, **Then** files are written following the template pattern (e.g., `{storageLocation}/{namespace}/users/{userId}/{tableName}/`)
+6. **Given** a sharding strategy is configured, **When** data is flushed, **Then** data is distributed across shards according to the configured function
+7. **Given** flush configuration specifies separate paths for user tables vs shared tables, **When** flush executes for each table type, **Then** data is written to the appropriate directory structure
+8. **Given** a flush job is in progress, **When** the server crashes mid-flush, **Then** on restart the job resumes from system.jobs state and completes the flush (data preserved in RocksDB)
+9. **Given** a flush job is running for a table, **When** another flush is requested for the same table, **Then** the system prevents duplicate jobs and returns the existing job_id
+10. **Given** the server is shutting down, **When** active flush jobs are running, **Then** the server waits for all flush jobs to complete before terminating
+11. **Given** a flush job starts or completes, **When** the operation occurs, **Then** debug logs record job_id, table name, start timestamp, end timestamp, and records flushed
+12. **Given** jobs exist in system.jobs, **When** they exceed the configured retention period, **Then** a cleanup job automatically deletes old job records
+13. **Given** a long-running flush job is executing, **When** an administrator executes `KILL JOB '<job_id>'`, **Then** the job is cancelled and its status is updated to 'cancelled' in system.jobs
+14. **Given** a job has been cancelled, **When** querying system.jobs for that job_id, **Then** the status field shows 'cancelled' and the cancellation timestamp is recorded
 
 **Integration Tests** (backend/tests/integration/test_automatic_flushing.rs):
 
 1. **test_scheduled_flush_interval**: Create table with 5-second flush interval, insert data, wait for scheduler, verify Parquet files created at storage location
-2. **test_multi_user_flush_grouping**: Insert data from user1 and user2, trigger flush, verify separate Parquet files at {storageLocation}/users/user1/ and /users/user2/
-3. **test_storage_path_template_substitution**: Create table with template path containing {namespace}, {userId}, {tableName}, flush data, verify actual paths match substituted template
-4. **test_sharding_strategy_distribution**: Configure alphabetic sharding (a-z), insert data across multiple shards, flush, verify files distributed to correct shard directories
-5. **test_user_vs_shared_table_paths**: Create user table and shared table, insert data, flush both, verify user data at users/{userId}/ and shared data at {namespace}/{table}/
-6. **test_flush_job_status_tracking**: Trigger flush, query system.jobs table, verify flush job recorded with status, metrics, and storage location
-7. **test_scheduler_recovery_after_restart**: Insert data, shutdown server before flush, restart, verify scheduler triggers pending flush
+2. **test_row_count_flush_trigger**: Create table with 1000-row flush threshold, insert 1000 rows, verify flush triggers immediately without waiting for time interval
+3. **test_combined_triggers_time_wins**: Create table with 10s interval and 10000-row threshold, insert 100 rows, wait 10s, verify time trigger causes flush
+4. **test_combined_triggers_rowcount_wins**: Create table with 60s interval and 100-row threshold, insert 100 rows quickly, verify row count trigger causes flush before time interval
+5. **test_trigger_counter_reset**: Create table with 5s interval, insert data, wait for flush, insert more data, verify next flush occurs 5s after previous flush (timer reset)
+6. **test_multi_user_flush_grouping**: Insert data from user1 and user2, trigger flush, verify separate Parquet files at {storageLocation}/users/user1/ and /users/user2/
+7. **test_storage_path_template_substitution**: Create table with template path containing {namespace}, {userId}, {tableName}, flush data, verify actual paths match substituted template
+8. **test_sharding_strategy_distribution**: Configure alphabetic sharding (a-z), insert data across multiple shards, flush, verify files distributed to correct shard directories
+9. **test_user_vs_shared_table_paths**: Create user table and shared table, insert data, flush both, verify user data at users/{userId}/ and shared data at {namespace}/{table}/
+10. **test_flush_job_status_tracking**: Trigger flush, query system.jobs table, verify flush job recorded with status, metrics, and storage location
+11. **test_scheduler_recovery_after_restart**: Insert data, shutdown server before flush, restart, verify scheduler triggers pending flush
+12. **test_flush_crash_recovery**: Start flush, crash server mid-flush, restart, verify job resumes and completes (data in RocksDB preserved)
+13. **test_duplicate_flush_prevention**: Start flush job, attempt second flush on same table, verify returns existing job_id without creating duplicate
+14. **test_graceful_shutdown_waits_for_flush**: Start flush jobs, initiate shutdown, verify server waits for completion before exit
+15. **test_flush_job_logging**: Start flush, verify debug logs include job_id, table, start/end timestamps, records flushed
+16. **test_jobs_history_cleanup**: Create old jobs (beyond retention period), trigger cleanup, verify old jobs deleted from system.jobs
+17. **test_kill_job_cancellation**: Start long-running flush job, execute KILL JOB '<job_id>', verify job status changes to 'cancelled' in system.jobs
+18. **test_kill_nonexistent_job_error**: Execute KILL JOB with non-existent job_id, verify error message indicates job not found
+19. **test_concurrent_job_management**: Start multiple flush jobs, cancel one while others run, verify only targeted job is cancelled
 
 ---
 
 ### User Story 3 - Manual Table Flushing via SQL Command (Priority: P2)
 
-Database administrators need to manually trigger immediate table flushing for maintenance, backup, or server shutdown scenarios. The command should provide control over which tables to flush and confirmation of the operation.
+Database administrators need to manually trigger table flushing for maintenance, backup, or server shutdown scenarios. The command should return immediately with a job_id, allowing administrators to monitor progress asynchronously via system.jobs without blocking HTTP connections.
 
-**Why this priority**: Manual control is necessary for planned maintenance and backup operations. While automatic flushing handles routine operations, administrators need the ability to force immediate persistence.
+**Why this priority**: Manual control is necessary for planned maintenance and backup operations. While automatic flushing handles routine operations, administrators need the ability to force immediate persistence. Asynchronous execution prevents HTTP timeouts for large table flushes and allows concurrent flush operations.
 
-**Independent Test**: Can be fully tested by executing a `FLUSH TABLE` SQL command via the API, then verifying the specified table's buffered data is immediately written to storage and the buffer is cleared.
+**Independent Test**: Can be fully tested by executing a `FLUSH TABLE` SQL command via the API, verifying it returns a job_id immediately, then polling system.jobs to confirm the flush completes and Parquet files are written.
 
 **Acceptance Scenarios**:
 
-1. **Given** a user table has buffered data, **When** administrator executes `FLUSH TABLE namespace.table_name`, **Then** all buffered data is immediately written to storage
-2. **Given** multiple tables exist, **When** administrator executes `FLUSH ALL TABLES`, **Then** all tables with buffered data are flushed sequentially
-3. **Given** a flush operation completes, **When** the SQL command returns, **Then** the response includes the number of records flushed and the target storage location
-4. **Given** the server is shutting down, **When** the shutdown sequence initiates, **Then** automatic flush of all tables executes before the process terminates
+1. **Given** a user table has buffered data, **When** administrator executes `FLUSH TABLE namespace.table_name`, **Then** the command returns immediately with a job_id and the flush executes asynchronously
+2. **Given** a flush job is running, **When** querying system.jobs with the job_id, **Then** the status field shows progress ('pending', 'running', 'completed', or 'failed')
+3. **Given** multiple tables exist, **When** administrator executes `FLUSH ALL TABLES`, **Then** multiple flush jobs are created and all job_ids are returned in the response
+4. **Given** a flush job completes successfully, **When** querying system.jobs, **Then** the result field includes records_flushed count and storage_location path
+5. **Given** the server is shutting down, **When** the shutdown sequence initiates, **Then** all pending flush jobs complete (or timeout) before the process terminates
 
 **Integration Tests** (backend/tests/integration/test_manual_flushing.rs):
 
-1. **test_flush_table_command**: Create user table, insert 100 rows, execute FLUSH TABLE namespace.table_name, verify Parquet file created and buffer cleared
-2. **test_flush_all_tables_command**: Create 3 tables with buffered data, execute FLUSH ALL TABLES, verify all tables flushed and response includes count for each table
-3. **test_flush_response_includes_metrics**: Execute FLUSH TABLE, verify response includes records_flushed count and storage_location path
-4. **test_concurrent_flush_prevention**: Trigger FLUSH TABLE in one thread, attempt FLUSH same table in another thread, verify second request queued/rejected with appropriate message
-5. **test_flush_empty_table**: Execute FLUSH TABLE on table with no buffered data, verify response indicates 0 records flushed with success status
-6. **test_shutdown_automatic_flush**: Insert data into multiple tables, initiate server shutdown, verify all tables flushed before process terminates (check Parquet files exist)
-7. **test_flush_table_synchronous_operation**: Execute FLUSH TABLE, measure response time, verify command blocks until flush completes (not async fire-and-forget)
+1. **test_flush_table_returns_job_id**: Create user table, insert 100 rows, execute FLUSH TABLE, verify response contains job_id and returns immediately (< 100ms)
+2. **test_flush_job_completes_asynchronously**: Execute FLUSH TABLE to get job_id, poll system.jobs, verify status progresses from 'pending' → 'running' → 'completed'
+3. **test_flush_all_tables_multiple_jobs**: Create 3 tables with buffered data, execute FLUSH ALL TABLES, verify response contains array of job_ids (one per table)
+4. **test_flush_job_result_includes_metrics**: Execute FLUSH TABLE, wait for completion, query system.jobs, verify result field includes records_flushed and storage_location
+5. **test_flush_empty_table**: Execute FLUSH TABLE on table with no buffered data, verify job completes with result indicating 0 records flushed
+6. **test_concurrent_flush_same_table**: Execute FLUSH TABLE twice concurrently on same table, verify both jobs succeed or second job detects in-progress flush
+7. **test_shutdown_waits_for_flush_jobs**: Insert data, execute FLUSH TABLE, immediately initiate shutdown, verify flush completes before process terminates
+8. **test_flush_job_failure_handling**: Simulate flush error (e.g., disk full), verify job status='failed' and error message in system.jobs.result
 
 ---
 
@@ -409,68 +462,80 @@ Users and operators need well-organized documentation with clear categories and 
 
 ### User Story 9 - Enhanced API Features and Live Query Improvements (Priority: P2)
 
-Database users need more flexible API capabilities including batch SQL execution, enhanced live query features, and improved system observability. These enhancements build on the base functionality to provide better developer experience and operational control.
+Database users need more flexible API capabilities including batch SQL execution with sequential non-transactional semantics, enhanced live query features, and improved system observability. These enhancements build on the base functionality to provide better developer experience and operational control.
 
-**Why this priority**: These are quality-of-life improvements that enhance developer productivity and operational capabilities without changing core architecture. They address common patterns and pain points discovered during usage.
+**Why this priority**: These are quality-of-life improvements that enhance developer productivity and operational capabilities without changing core architecture. They address common patterns and pain points discovered during usage. Sequential non-transactional batch execution provides simplicity and predictability without requiring transaction management complexity.
 
-**Independent Test**: Can be fully tested by submitting batch SQL requests, creating WebSocket subscriptions with initial data fetch, monitoring enhanced system tables, and executing administrative commands.
+**Independent Test**: Can be fully tested by submitting batch SQL requests, creating WebSocket subscriptions with initial data fetch, monitoring enhanced system tables, and executing administrative commands. Test batch semantics by executing batch with intentional failure in middle statement and verifying previous statements remain committed.
 
 **Acceptance Scenarios**:
 
-1. **Given** a user needs to execute multiple related SQL commands, **When** they submit a request with semicolon-separated statements to `/api/sql`, **Then** all statements execute in sequence and individual results are returned
-2. **Given** a user establishes a WebSocket subscription, **When** they specify "last_rows": N in subscription options, **Then** they immediately receive the last N rows before real-time updates begin
-3. **Given** a table has active live query subscriptions, **When** an administrator attempts to DROP TABLE, **Then** the operation fails with error listing the active subscription count
-4. **Given** an administrator needs to terminate a subscription, **When** they execute `KILL LIVE QUERY <live_id>`, **Then** the specified subscription is disconnected and removed from system.live_queries
-5. **Given** system.live_queries exists, **When** queried, **Then** it includes options (JSON), changes counter, and node identifier fields
-6. **Given** system.jobs exists, **When** queried, **Then** it includes parameters array, result string, trace string, and resource metrics (memory_used, cpu_used)
-7. **Given** users query tables, **When** DESCRIBE TABLE is executed, **Then** the output includes current schema version and reference to schema history in system.table_schemas
-8. **Given** administrators monitor tables, **When** SHOW TABLE STATS is executed, **Then** row counts, storage size, and buffer status are displayed
+1. **Given** a user needs to execute multiple related SQL commands, **When** they submit a request with semicolon-separated statements to `/api/sql`, **Then** each statement executes sequentially and commits independently
+2. **Given** a batch contains multiple statements, **When** one statement fails during execution, **Then** execution stops at that point, previous statements remain committed, and an error indicates which statement failed
+3. **Given** a user wants transactional batch behavior, **When** they need rollback capability, **Then** they must explicitly wrap statements in BEGIN/COMMIT/ROLLBACK commands
+4. **Given** a user establishes a WebSocket subscription, **When** they specify "last_rows": N in subscription options, **Then** they immediately receive the last N rows before real-time updates begin
+5. **Given** a table has active live query subscriptions, **When** an administrator attempts to DROP TABLE, **Then** the operation fails with error listing the active subscription count
+6. **Given** an administrator needs to terminate a subscription, **When** they execute `KILL LIVE QUERY <live_id>`, **Then** the specified subscription is disconnected and removed from system.live_queries
+7. **Given** system.live_queries exists, **When** queried, **Then** it includes options (JSON), changes counter, and node identifier fields
+8. **Given** system.jobs exists, **When** queried, **Then** it includes parameters array, result string, trace string, and resource metrics (memory_used, cpu_used)
+9. **Given** users query tables, **When** DESCRIBE TABLE is executed, **Then** the output includes current schema version and reference to schema history in system.table_schemas
+10. **Given** administrators monitor tables, **When** SHOW TABLE STATS is executed, **Then** row counts, storage size, and buffer status are displayed
 
 **Integration Tests** (backend/tests/integration/test_enhanced_api_features.rs):
 
-1. **test_batch_sql_execution**: Submit request with 3 semicolon-separated SQL statements, verify all execute in sequence with individual results returned
-2. **test_batch_sql_partial_failure**: Submit batch with one invalid statement, verify execution stops at failure point with clear error indicating which statement failed
-3. **test_websocket_initial_data_fetch**: Create table, insert 100 rows, subscribe with "last_rows": 50, verify immediate response with 50 most recent rows
-4. **test_drop_table_with_active_subscriptions**: Create WebSocket subscription, attempt DROP TABLE, verify error includes active subscription count
-5. **test_kill_live_query_command**: Create subscription, query system.live_queries for live_id, execute KILL LIVE QUERY, verify subscription disconnected
-6. **test_system_live_queries_enhanced_fields**: Create subscription with options, query system.live_queries, verify options (JSON), changes counter, node fields populated
-7. **test_system_jobs_enhanced_fields**: Trigger flush job, query system.jobs, verify parameters, result, trace, memory_used, cpu_used fields populated
-8. **test_describe_table_schema_history**: Create table, ALTER TABLE twice, DESCRIBE TABLE, verify output includes current_schema_version and history reference
-9. **test_show_table_stats_command**: Insert data, flush, execute SHOW TABLE STATS, verify output includes buffered/flushed row counts, storage size, last flush timestamp
-10. **test_shared_table_subscription_prevention**: Create shared table, attempt WebSocket subscription, verify error "Live query subscriptions not supported on shared tables"
+1. **test_batch_sql_sequential_execution**: Submit batch with 3 statements (CREATE TABLE, INSERT, SELECT), verify all execute in sequence with individual results
+2. **test_batch_sql_partial_failure_commits_previous**: Submit batch with INSERT (succeeds), INSERT (succeeds), invalid SELECT (fails), verify first 2 inserts remain committed
+3. **test_batch_sql_error_indicates_statement_number**: Submit batch with error in statement 3, verify error message includes "Statement 3 failed: ..."
+4. **test_batch_sql_explicit_transaction**: Submit batch with BEGIN, INSERT, INSERT, COMMIT, verify transactional behavior when explicitly requested
+5. **test_websocket_initial_data_fetch**: Create table, insert 100 rows, subscribe with "last_rows": 50, verify immediate response with 50 most recent rows
+6. **test_drop_table_with_active_subscriptions**: Create WebSocket subscription, attempt DROP TABLE, verify error includes active subscription count
+7. **test_kill_live_query_command**: Create subscription, query system.live_queries for live_id, execute KILL LIVE QUERY, verify subscription disconnected
+8. **test_system_live_queries_enhanced_fields**: Create subscription with options, query system.live_queries, verify options (JSON), changes counter, node fields populated
+9. **test_system_jobs_enhanced_fields**: Trigger flush job, query system.jobs, verify parameters, result, trace, memory_used, cpu_used fields populated
+10. **test_describe_table_schema_history**: Create table, ALTER TABLE twice, DESCRIBE TABLE, verify output includes current_schema_version and history reference
+11. **test_show_table_stats_command**: Insert data, flush, execute SHOW TABLE STATS, verify output includes buffered/flushed row counts, storage size, last flush timestamp
+12. **test_shared_table_subscription_prevention**: Create shared table, attempt WebSocket subscription, verify error "Live query subscriptions not supported on shared tables"
 
 ---
 
 ### User Story 10 - User Management SQL Commands (Priority: P2)
 
-Database administrators need SQL commands to manage users in the system.users table for user registration, updates, and removal. Standard SQL syntax should be used for consistency with existing table operations.
+Database administrators need SQL commands to manage users in the system.users table for user registration, updates, and soft deletion with grace period. The system should mark users as deleted while retaining their tables and data for a configurable recovery period before final cleanup.
 
-**Why this priority**: User management is a fundamental administrative task. While the system.users table exists, providing standard SQL commands (INSERT/UPDATE/DELETE) makes user administration consistent with other database operations and easier for administrators familiar with SQL.
+**Why this priority**: User management is a fundamental administrative task. While the system.users table exists, providing standard SQL commands (INSERT/UPDATE/DELETE) makes user administration consistent with other database operations. Soft delete with grace period prevents accidental data loss and allows recovery of mistakenly deleted users while still providing eventual cleanup.
 
-**Independent Test**: Can be fully tested by executing INSERT USER, UPDATE USER, and DELETE USER SQL commands via the `/api/sql` endpoint, then querying system.users to verify changes were persisted correctly.
+**Independent Test**: Can be fully tested by executing INSERT USER, UPDATE USER, and DELETE USER SQL commands via the `/api/sql` endpoint, then querying system.users to verify changes were persisted correctly. Test soft delete by deleting user, verifying tables remain accessible, waiting for grace period expiration, and confirming cleanup occurs.
 
 **Acceptance Scenarios**:
 
-1. **Given** an administrator needs to add a user, **When** they execute `INSERT INTO system.users (user_id, username, metadata) VALUES ('user123', 'john_doe', '{"role": "admin"}')`, **Then** the user is created in system.users table
+1. **Given** an administrator needs to add a user, **When** they execute `INSERT INTO system.users (user_id, username, metadata) VALUES ('user123', 'john_doe', '{"role": "admin"}')`, **Then** the user is created in system.users table with deleted_at=NULL
 2. **Given** an administrator needs to update user information, **When** they execute `UPDATE system.users SET username = 'jane_doe', metadata = '{"role": "user"}' WHERE user_id = 'user123'`, **Then** the user record is updated
-3. **Given** an administrator needs to remove a user, **When** they execute `DELETE FROM system.users WHERE user_id = 'user123'`, **Then** the user is removed from system.users table
-4. **Given** a user_id already exists, **When** an administrator attempts to INSERT with the same user_id, **Then** the system returns error "User with user_id 'X' already exists"
-5. **Given** an administrator updates a non-existent user, **When** UPDATE is executed, **Then** the system returns error "User with user_id 'X' not found"
-6. **Given** metadata is provided in INSERT/UPDATE, **When** the SQL executes, **Then** JSON metadata is validated and stored correctly
-7. **Given** an administrator queries users, **When** they execute `SELECT * FROM system.users WHERE username LIKE '%john%'`, **Then** matching users are returned with all fields (user_id, username, metadata, created_at, updated_at)
+3. **Given** an administrator needs to remove a user, **When** they execute `DELETE FROM system.users WHERE user_id = 'user123'`, **Then** the user is marked as deleted (deleted_at set to current timestamp) but not physically removed
+4. **Given** a user is soft-deleted, **When** querying system.users without specifying deleted_at, **Then** deleted users are excluded from results by default
+5. **Given** a user is soft-deleted, **When** the configured grace period expires, **Then** a cleanup job permanently removes the user and all associated tables
+6. **Given** an administrator needs to recover a deleted user, **When** they execute `UPDATE system.users SET deleted_at = NULL WHERE user_id = 'user123'` within grace period, **Then** the user is restored and deletion cleanup is cancelled
+7. **Given** a user_id already exists, **When** an administrator attempts to INSERT with the same user_id, **Then** the system returns error "User with user_id 'X' already exists"
+8. **Given** an administrator updates a non-existent user, **When** UPDATE is executed, **Then** the system returns error "User with user_id 'X' not found"
+9. **Given** metadata is provided in INSERT/UPDATE, **When** the SQL executes, **Then** JSON metadata is validated and stored correctly
+10. **Given** an administrator queries users, **When** they execute `SELECT * FROM system.users WHERE username LIKE '%john%'`, **Then** matching non-deleted users are returned with all fields (user_id, username, metadata, created_at, updated_at, deleted_at)
 
 **Integration Tests** (backend/tests/integration/test_user_management_sql.rs):
 
-1. **test_insert_user_into_system_users**: Execute INSERT INTO system.users with user_id, username, metadata, verify user created and queryable
+1. **test_insert_user_into_system_users**: Execute INSERT INTO system.users with user_id, username, metadata, verify user created with deleted_at=NULL
 2. **test_update_user_in_system_users**: Insert user, execute UPDATE to modify username and metadata, verify changes persisted
-3. **test_delete_user_from_system_users**: Insert user, execute DELETE FROM system.users, query to verify user removed
-4. **test_duplicate_user_id_validation**: Insert user with user_id "user123", attempt INSERT with same user_id, verify error "User with user_id 'user123' already exists"
-5. **test_update_nonexistent_user_error**: Execute UPDATE for user_id that doesn't exist, verify error "User with user_id 'X' not found"
-6. **test_json_metadata_validation**: Insert user with malformed JSON metadata '{"invalid}', verify error indicates JSON validation failure
-7. **test_automatic_timestamps**: Insert user, verify created_at set automatically; UPDATE user, verify updated_at changes to current time
-8. **test_partial_update_preserves_fields**: Insert user with username and metadata, UPDATE only username, verify metadata unchanged
-9. **test_required_fields_validation**: Attempt INSERT without user_id or username, verify NOT NULL constraint error
-10. **test_select_with_filtering**: Insert multiple users, execute SELECT with WHERE username LIKE filter, verify only matching users returned
+3. **test_soft_delete_user**: Insert user, execute DELETE FROM system.users, verify deleted_at timestamp set and user still in database
+4. **test_soft_deleted_user_excluded_from_queries**: Delete user, execute SELECT * FROM system.users, verify deleted user not in results
+5. **test_query_deleted_users_explicitly**: Delete user, execute SELECT * FROM system.users WHERE deleted_at IS NOT NULL, verify deleted user appears
+6. **test_restore_deleted_user**: Delete user, UPDATE system.users SET deleted_at=NULL, verify user restored and appears in default queries
+7. **test_grace_period_cleanup**: Delete user with 1-day grace period, advance time 2 days (or trigger cleanup job), verify user and tables permanently removed
+8. **test_user_tables_accessible_during_grace_period**: Create user table, delete user, verify table still accessible during grace period
+9. **test_duplicate_user_id_validation**: Insert user with user_id "user123", attempt INSERT with same user_id, verify error "User with user_id 'user123' already exists"
+10. **test_update_nonexistent_user_error**: Execute UPDATE for user_id that doesn't exist, verify error "User with user_id 'X' not found"
+11. **test_json_metadata_validation**: Insert user with malformed JSON metadata '{"invalid}', verify error indicates JSON validation failure
+12. **test_automatic_timestamps**: Insert user, verify created_at set automatically; UPDATE user, verify updated_at changes; DELETE user, verify deleted_at set
+13. **test_partial_update_preserves_fields**: Insert user with username and metadata, UPDATE only username, verify metadata unchanged
+14. **test_required_fields_validation**: Attempt INSERT without user_id or username, verify NOT NULL constraint error
+15. **test_select_with_filtering**: Insert multiple users, execute SELECT with WHERE username LIKE filter, verify only matching non-deleted users returned
 
 ---
 
@@ -610,6 +675,47 @@ Operations teams need confidence that the system handles sustained high load wit
 - What happens when concurrent INSERT operations attempt to create the same user_id simultaneously?
 - How does UPDATE handle setting metadata to NULL vs empty JSON object '{}'?
 
+---
+
+### User Story 13 - Operational Improvements and Bug Fixes (Priority: P2)
+
+Developers and operators need reliable server startup, better CLI user experience, proper cache management, and bug-free table operations. The system should validate server state before initialization, provide visual feedback during operations, support dynamic auto-completion, and handle storage paths correctly.
+
+**Why this priority**: These improvements address real operational pain points discovered during development and testing. They don't block core functionality but significantly improve reliability, debuggability, and user experience. Cache clearing is essential for troubleshooting, server port checking prevents startup errors, CLI progress indicators improve perceived performance, and bug fixes ensure data integrity.
+
+**Independent Test**: Can be tested by executing CLEAR CACHE command and verifying caches are emptied, starting server on occupied port and confirming graceful error, executing long query in CLI and seeing progress indicator, using tab completion with table names, creating/deleting user tables and verifying storage paths, accessing healthcheck endpoint, and starting CLI with server down.
+
+**Acceptance Scenarios**:
+
+1. **Given** caches exist in the system, **When** administrator executes `CLEAR CACHE;`, **Then** all caches (session, query plan, etc.) are cleared and a success message is returned
+2. **Given** the server is attempting to start, **When** the configured port is already in use, **Then** the server checks port availability before loading RocksDB and exits with clear error message
+3. **Given** a user executes a query in CLI, **When** the query takes longer than 200ms, **Then** CLI displays a loading indicator with elapsed time
+4. **Given** a user types in CLI, **When** they press TAB after typing partial table name, **Then** CLI fetches available tables from system.tables and provides auto-completion
+5. **Given** a user queries data in CLI, **When** results are displayed, **Then** column order matches the SELECT statement order (or schema order for SELECT *)
+6. **Given** the server is running, **When** logs accumulate, **Then** log rotation occurs based on configured size/time limits
+7. **Given** RocksDB is configured, **When** WAL logs accumulate, **Then** system preserves only configured number of recent logs
+8. **Given** a user table is being deleted, **When** storage path variable substitution occurs, **Then** actual user_id is used instead of literal "${user_id}" string
+9. **Given** a shared table is created, **When** table creation completes, **Then** corresponding storage folder is created at configured storage location
+10. **Given** server is running, **When** `/health` endpoint is accessed, **Then** server returns 200 OK with health status, uptime, and version information
+11. **Given** kalam-cli is starting, **When** establishing connection, **Then** healthcheck is performed and clear error is shown if server is unreachable
+
+**Integration Tests** (backend/tests/integration/test_operational_improvements.rs):
+
+1. **test_clear_cache_command**: Execute queries to populate caches, run CLEAR CACHE, verify caches emptied and subsequent queries slower
+2. **test_port_already_in_use**: Start server on port 8080, attempt second server on same port, verify graceful error before RocksDB initialization
+3. **test_cli_progress_indicator**: Execute long-running query, verify progress indicator appears and updates elapsed time
+4. **test_cli_table_autocomplete**: Type "SELECT * FROM me" + TAB, verify auto-completion suggests "messages" table
+5. **test_select_column_order_preserved**: Execute SELECT with specific column order, verify CLI output preserves exact order
+6. **test_log_rotation_triggers**: Generate logs exceeding size limit, verify old logs rotated to archive files
+7. **test_rocksdb_wal_log_limit**: Perform many writes, verify RocksDB preserves only configured number of WAL files
+8. **test_user_table_deletion_path_substitution**: Create user table, delete it, verify no "${user_id}" literal in log warnings
+9. **test_shared_table_storage_folder_creation**: Create shared table, verify storage folder exists at configured location
+10. **test_health_endpoint**: GET /health, verify response includes {"status": "healthy", "uptime_seconds": N, "version": "X.Y.Z"}
+11. **test_cli_connection_check**: Stop server, start CLI, verify error message indicates server unreachable
+12. **test_cli_healthcheck_on_startup**: Start CLI with server running, verify successful connection without errors
+
+---
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -620,17 +726,24 @@ Operations teams need confidence that the system handles sustained high load wit
 - **FR-002**: API request body MUST support a format containing both `sql` (query string) and `params` (array of parameter values)
 - **FR-003**: System MUST validate that the number of provided parameters matches the number of placeholders in the query
 - **FR-004**: System MUST compile parametrized queries into reusable execution plans on first execution
-- **FR-005**: System MUST cache compiled query execution plans indexed by the normalized query structure
+- **FR-005**: System MUST maintain a global query plan cache indexed by normalized query structure, shared across all users and sessions
+- **FR-005a**: Query plan cache MUST use LRU (Least Recently Used) eviction policy when cache size limit is reached
+- **FR-005b**: System MUST provide configurable cache size limit in `config.toml` (default: 1000 plans)
 - **FR-006**: System MUST substitute parameter values into cached execution plans without recompilation
 - **FR-007**: System MUST support parameter types: string, integer, float, boolean, timestamp
 - **FR-008**: System MUST return clear error messages when parameter types don't match expected column types
-- **FR-009**: API response MUST optionally include query execution time when configured in `config.toml`
+- **FR-009**: API response MUST optionally include query execution time and cache hit/miss status when configured in `config.toml`
 
 #### Automatic Flushing System
 
 - **FR-010**: System MUST support configuration of automatic flush intervals per table at creation time
+- **FR-010a**: System MUST support configuration of row count thresholds per table at creation time
+- **FR-010b**: System MUST support configuring both time interval and row count threshold simultaneously (whichever triggers first)
 - **FR-011**: System MUST initialize a scheduler service that monitors all tables with flush configurations
 - **FR-012**: Scheduler MUST trigger flush jobs at configured intervals for each table
+- **FR-012a**: Scheduler MUST trigger flush jobs when buffered row count reaches configured threshold for each table
+- **FR-012b**: When both time and row count triggers are configured, flush MUST execute when either condition is met first
+- **FR-012c**: After flush completion, both time and row count counters MUST reset for the next flush cycle
 - **FR-013**: Flush jobs MUST group buffered data by user_id before writing to storage
 - **FR-014**: System MUST support configurable storage location path templates with variables: {storageLocation}, {namespace}, {userId}, {tableName}, {shard}
 - **FR-015**: System MUST provide default storage location in `config.toml` (defaulting to `./data/storage`)
@@ -640,39 +753,63 @@ Operations teams need confidence that the system handles sustained high load wit
 - **FR-019**: System MUST support configurable sharding strategies for distributing data across storage locations
 - **FR-020**: System MUST provide a default alphabetic sharding strategy (a-z) when no custom strategy is specified
 - **FR-021**: Flush jobs MUST write data in Parquet format to the determined storage locations
-- **FR-022**: System MUST track flush job status using an actor model for observability
+- **FR-022**: System MUST track flush job status using a Tokio-based job registry (HashMap<JobId, JoinHandle>) for observability and cancellation
+- **FR-022a**: System MUST implement a JobManager trait to provide a generic interface for job lifecycle management (start, cancel, get_status)
+- **FR-022b**: Initial implementation MUST use Tokio JoinHandles for job cancellation, with the interface designed to allow future replacement with actor-based supervision
 - **FR-023**: Each Parquet file MUST include metadata indicating the schema version used
+- **FR-024**: System MUST support SQL command: `KILL JOB '<job_id>'` to cancel running jobs
+- **FR-025**: KILL JOB command MUST abort the job's task using JoinHandle::abort()
+- **FR-026**: KILL JOB command MUST update job status to 'cancelled' in system.jobs table with cancellation timestamp
+- **FR-026a**: Flush jobs MUST persist their state to system.jobs table before starting work
+- **FR-026b**: On server crash during flush, system MUST detect incomplete jobs from system.jobs on restart and resume them
+- **FR-026c**: Flush job state in system.jobs MUST include: job_id, table_name, status, start_time, progress indicator
+- **FR-026d**: System MUST check system.jobs for running flush jobs on same table before creating new flush job
+- **FR-026e**: If flush job already exists for table, system MUST return existing job_id instead of creating duplicate
+- **FR-026f**: Server shutdown sequence MUST query system.jobs for active flush jobs (status='running')
+- **FR-026g**: Server shutdown MUST wait for all active flush jobs to reach 'completed' or 'failed' status before exit
+- **FR-026h**: Shutdown wait MUST respect configurable timeout (default: 5 minutes) in config.toml
+- **FR-026i**: Flush job start MUST log: DEBUG "Flush job started: job_id={}, table={}, namespace={}, timestamp={}"
+- **FR-026j**: Flush job completion MUST log: DEBUG "Flush job completed: job_id={}, table={}, records_flushed={}, duration_ms={}"
+- **FR-026k**: system.jobs table MUST be the authoritative source of truth for job status (not in-memory state)
+- **FR-026l**: RocksDB column family for system.jobs MUST be optimized for fast reads with aggressive caching
+- **FR-026m**: System MUST implement scheduled cleanup job for old job records in system.jobs
+- **FR-026n**: Job cleanup MUST delete records where created_at < (current_time - retention_period)
+- **FR-026o**: Job retention period MUST be configurable in config.toml (default: 30 days)
+- **FR-026p**: Job cleanup schedule MUST be configurable in config.toml (default: daily at midnight)
 
 #### Manual Flushing Commands
 
-- **FR-024**: System MUST support SQL command: `FLUSH TABLE <namespace>.<table_name>`
-- **FR-025**: System MUST support SQL command: `FLUSH ALL TABLES` to flush all tables with buffered data
-- **FR-026**: Manual flush commands MUST be synchronous, returning only after flush operation completes
-- **FR-027**: Flush command response MUST include number of records flushed and target storage location
-- **FR-028**: System MUST automatically flush all tables during server shutdown sequence before process termination
-- **FR-029**: System MUST prevent concurrent flush operations on the same table (queue subsequent requests)
+- **FR-027**: System MUST support SQL command: `FLUSH TABLE <namespace>.<table_name>`
+- **FR-028**: System MUST support SQL command: `FLUSH ALL TABLES` to flush all tables with buffered data
+- **FR-029**: Manual flush commands MUST be asynchronous, returning immediately with job_id(s) for status monitoring
+- **FR-029a**: FLUSH TABLE command MUST return response containing job_id for the flush operation
+- **FR-029b**: FLUSH ALL TABLES command MUST return response containing array of job_ids (one per table)
+- **FR-030**: Flush job result in system.jobs MUST include number of records flushed and target storage location
+- **FR-031**: System MUST automatically flush all tables during server shutdown sequence before process termination
+- **FR-031a**: Server shutdown MUST wait for pending flush jobs to complete (or timeout after configurable duration)
+- **FR-032**: System MUST handle concurrent flush requests on the same table gracefully (allow both or detect in-progress flush)
 
 #### Session-Level Table Caching
 
-- **FR-030**: System MUST maintain a per-user session context for database operations
-- **FR-031**: Session context MUST cache table registrations for tables accessed during the session
-- **FR-032**: System MUST reuse cached table registrations for subsequent queries within the same session
-- **FR-033**: System MUST implement a configurable timeout for cached table registrations (LRU or time-based eviction)
-- **FR-034**: System MUST automatically evict unused table registrations based on eviction policy
-- **FR-035**: System MUST detect schema changes and invalidate cached registrations when schema modifications occur
-- **FR-036**: System MUST validate cached table registrations still reference existing tables before query execution
+- **FR-033**: System MUST maintain a per-user session context for database operations
+- **FR-034**: Session context MUST cache table registrations for tables accessed during the session
+- **FR-035**: System MUST reuse cached table registrations for subsequent queries within the same session
+- **FR-036**: System MUST implement a configurable timeout for cached table registrations (LRU or time-based eviction)
+- **FR-037**: System MUST automatically evict unused table registrations based on eviction policy
+- **FR-038**: System MUST detect schema changes and invalidate cached registrations when schema modifications occur
+- **FR-039**: System MUST validate cached table registrations still reference existing tables before query execution
 
 #### Namespace Validation
 
-- **FR-037**: System MUST validate namespace existence before creating any user, shared, or stream table
-- **FR-038**: System MUST return error "Namespace '<namespace>' does not exist" when table creation references non-existent namespace
-- **FR-039**: Error message MUST include guidance: "Create it first with CREATE NAMESPACE."
-- **FR-040**: Validation MUST be transactional to prevent race conditions between validation and table creation
+- **FR-040**: System MUST validate namespace existence before creating any user, shared, or stream table
+- **FR-041**: System MUST return error "Namespace '<namespace>' does not exist" when table creation references non-existent namespace
+- **FR-042**: Error message MUST include guidance: "Create it first with CREATE NAMESPACE."
+- **FR-043**: Validation MUST be transactional to prevent race conditions between validation and table creation
 
 #### Code Quality and Architectural Improvements
 
-- **FR-041**: System MUST provide a common base implementation for system table providers to eliminate code duplication
-- **FR-042**: System MUST define all system table names in a centralized location (single source of truth)
+- **FR-044**: System MUST provide a common base implementation for system table providers to eliminate code duplication
+- **FR-045**: System MUST define all system table names in a centralized location (single source of truth)
 - **FR-043**: System MUST consistently use type-safe wrappers (NamespaceId, TableName, UserId) instead of raw strings throughout the codebase
 - **FR-044**: All scan() functions MUST include documentation explaining their purpose, key parameter usage, and architectural role
 - **FR-045**: Column family naming logic MUST be centralized in helper functions instead of inline string formatting
@@ -744,8 +881,10 @@ Operations teams need confidence that the system handles sustained high load wit
 #### Enhanced API Features and Live Query Improvements
 
 - **FR-106**: System MUST accept multiple SQL statements separated by semicolons in a single `/api/sql` request
-- **FR-107**: Multiple SQL statements MUST execute in sequence, with each statement's result returned separately
-- **FR-108**: If any statement in a batch fails, subsequent statements MUST NOT execute and the error MUST be clearly indicated
+- **FR-107**: Multiple SQL statements MUST execute in sequence with sequential non-transactional semantics (each statement commits independently)
+- **FR-108**: If any statement in a batch fails, execution MUST stop at that point, previous statements MUST remain committed, and error MUST indicate which statement failed
+- **FR-108a**: Batch SQL error response MUST include statement number (e.g., "Statement 3 failed: syntax error")
+- **FR-108b**: For transactional batch behavior, clients MUST explicitly wrap statements in BEGIN/COMMIT/ROLLBACK commands
 - **FR-109**: WebSocket subscription options MUST support "last_rows" parameter to fetch initial data
 - **FR-110**: When "last_rows": N is specified, system MUST immediately return the N most recent rows matching the subscription filter
 - **FR-111**: Initial data fetch MUST complete before real-time change notifications begin
@@ -774,18 +913,59 @@ Operations teams need confidence that the system handles sustained high load wit
 
 - **FR-132**: System MUST support standard SQL INSERT syntax for adding users: `INSERT INTO system.users (user_id, username, metadata) VALUES (...)`
 - **FR-133**: System MUST support standard SQL UPDATE syntax for modifying users: `UPDATE system.users SET username = '...', metadata = '...' WHERE user_id = '...'`
-- **FR-134**: System MUST support standard SQL DELETE syntax for removing users: `DELETE FROM system.users WHERE user_id = '...'`
+- **FR-134**: System MUST support standard SQL DELETE syntax for soft-deleting users: `DELETE FROM system.users WHERE user_id = '...'`
+- **FR-134a**: DELETE operation MUST set deleted_at timestamp to current time (soft delete) instead of physically removing the user
+- **FR-134b**: System MUST add deleted_at column (TIMESTAMP, nullable) to system.users table schema
+- **FR-134c**: Default SELECT queries on system.users MUST exclude soft-deleted users (WHERE deleted_at IS NULL implied)
+- **FR-134d**: Administrators MUST be able to query deleted users explicitly with WHERE deleted_at IS NOT NULL
 - **FR-135**: System MUST validate user_id uniqueness on INSERT and return error "User with user_id 'X' already exists" for duplicates
 - **FR-136**: System MUST validate user existence on UPDATE and return error "User with user_id 'X' not found" if user doesn't exist
 - **FR-137**: System MUST validate user existence on DELETE and return error "User with user_id 'X' not found" if user doesn't exist
 - **FR-138**: System MUST validate metadata field as valid JSON when provided in INSERT or UPDATE operations
 - **FR-139**: System MUST automatically set created_at timestamp on INSERT using current server time
 - **FR-140**: System MUST automatically update updated_at timestamp on UPDATE using current server time
+- **FR-140a**: System MUST automatically set deleted_at timestamp on DELETE using current server time
 - **FR-141**: System MUST support SELECT queries on system.users with filtering (WHERE), ordering (ORDER BY), and limiting (LIMIT)
 - **FR-142**: System MUST support partial updates where only specified fields are modified (e.g., UPDATE only username without changing metadata)
 - **FR-143**: username field MUST be required (NOT NULL) on INSERT operations
 - **FR-144**: user_id field MUST be required (NOT NULL) on INSERT operations
 - **FR-145**: metadata field MUST be optional (nullable) and default to NULL if not provided
+- **FR-145a**: System MUST support configurable grace period for user deletion (default: 30 days) in config.toml
+- **FR-145b**: System MUST implement scheduled cleanup job that permanently deletes users where deleted_at + grace_period < current_time
+- **FR-145c**: User deletion cleanup MUST also delete all tables owned by the user
+- **FR-145d**: Administrators MUST be able to restore deleted users within grace period by setting deleted_at = NULL
+- **FR-145e**: Restoring a deleted user (UPDATE deleted_at = NULL) MUST cancel scheduled cleanup for that user
+
+#### Operational Improvements and Bug Fixes
+
+- **FR-176**: System MUST support SQL command: `CLEAR CACHE;` to clear all caches (session, query plan, and future caches)
+- **FR-177**: CLEAR CACHE command MUST clear session table registration caches
+- **FR-178**: CLEAR CACHE command MUST clear global query plan cache
+- **FR-179**: CLEAR CACHE command MUST return count of cleared cache entries by cache type
+- **FR-180**: Server startup MUST check if configured port is already in use BEFORE initializing RocksDB
+- **FR-181**: If port is unavailable, server MUST exit with clear error message indicating port and process holding it
+- **FR-182**: CLI MUST display loading indicator for queries taking longer than 200ms
+- **FR-183**: CLI loading indicator MUST show elapsed time in seconds with 0.1s precision
+- **FR-184**: CLI auto-completion MUST fetch table names from system.tables on TAB press
+- **FR-185**: CLI auto-completion MUST support schema-qualified table names (namespace.table_name)
+- **FR-186**: CLI SELECT result output MUST preserve column order as specified in SELECT clause
+- **FR-187**: CLI SELECT * result output MUST preserve column order from table schema definition
+- **FR-188**: System MUST implement log rotation based on configurable size and/or time limits
+- **FR-189**: Log rotation configuration MUST support max_file_size (bytes) and max_age (days) in config.toml
+- **FR-190**: System MUST preserve configurable number of rotated log files (default: 10)
+- **FR-191**: RocksDB MUST preserve only configured number of WAL log files (default: 3)
+- **FR-192**: RocksDB WAL log retention MUST be configurable in config.toml
+- **FR-193**: User table deletion MUST substitute actual user_id value in storage path templates
+- **FR-194**: User table deletion MUST NOT use literal "${user_id}" string in storage operations
+- **FR-195**: Shared table creation MUST create corresponding storage folder at configured storage location
+- **FR-196**: Shared table storage folder creation MUST occur before table registration completes
+- **FR-197**: System MUST provide HTTP healthcheck endpoint at /health
+- **FR-198**: /health endpoint MUST return JSON with status, uptime_seconds, and version fields
+- **FR-199**: /health endpoint MUST return 200 OK when server is operational
+- **FR-200**: /health endpoint MUST return 503 Service Unavailable when server is shutting down
+- **FR-201**: kalam-link MUST implement healthcheck method for server connectivity validation
+- **FR-202**: kalam-cli MUST execute healthcheck on startup before displaying prompt
+- **FR-203**: kalam-cli MUST display clear error and exit if healthcheck fails on startup
 
 #### Integration Testing Requirements
 

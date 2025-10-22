@@ -112,7 +112,7 @@ impl CLISession {
                 Ok(())
             }
             Err(e) => {
-                eprintln!("Error executing query: {}", e);
+                // Don't print error here - let caller handle it
                 Err(e.into())
             }
         }

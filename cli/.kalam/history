@@ -1,0 +1,35 @@
+\q
+select * from system.users;
+select * from system.users
+SELECT * FROM namespace.table
+CREATE NAMESPACE batch_test;
+\q
+select * from system.users
+select * from system.users;
+\q
+select * from system.users
+select * from system.tables
+\q
+select * from system.users
+select * from system.tables
+select namespace from system.tables
+select namespace,table_type from system.tables
+select * from system.tables
+select * from system.jobs
+select * from system.tables
+select * from jamal:files
+select * from jamal:files;
+select * from jamal:files_inc
+select * from jamal:files_inc22
+select * from test_cli:messages
+select * from test_cli.messages
+select * from jamal.files_inc22
+drop table jamal.files_inc22
+select * from system.tables
+drop table jamal.files_inc
+select * from system.tables
+flush table jamal.files_inc
+select * from system.tables
+drop table jamal.files_inc
+cd C:\Jamal\git\KalamDB\backend && cargo build --bin kalamdb-server 2>&1 | Select-String -Pattern "error\[|warning: unused|Finished|Compiling kalamdb"
+select * from system.tables

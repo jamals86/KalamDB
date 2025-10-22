@@ -20,10 +20,12 @@ Tests are **gracefully skipped** if the server is not running, allowing for quic
 cd backend
 cargo run --release --bin kalamdb-server
 
-# Terminal 2: Run the tests
+# Terminal 2: Run the tests (use --test-threads=1 to avoid conflicts)
 cd cli
-cargo test -p kalam-cli --test test_cli_integration -- --nocapture
+cargo test -p kalam-cli --test test_cli_integration -- --test-threads=1 --nocapture
 ```
+
+**Note:** Tests share the same `test_cli` namespace, so running with `--test-threads=1` prevents race conditions between parallel tests.
 
 ### Option 2: Without Server (Quick Validation)
 
@@ -101,6 +103,38 @@ test test_cli_connection_failure_handling ... ok
 test test_server_health_check ... ok
 
 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+## Output Format Changes
+
+The CLI now displays results in a MySQL/PostgreSQL-compatible format:
+
+### Query Results
+```
+id | content | created_at
+--------------------------------------------------
+1 | Hello World | 2025-10-22 10:30:00
+2 | Test Message | 2025-10-22 10:30:01
+2 rows in set (0.01 sec)
+```
+
+### Empty Results
+```
+id | content | created_at
+--------------------------------------------------
+Empty set (0.00 sec)
+```
+
+### DDL Statements
+```
+CREATE NAMESPACE batch_test;
+Query OK, 0 rows affected (0.02 sec)
+```
+
+### Error Messages
+```
+ERROR SQL_EXECUTION_ERROR: Error executing statement 1: Error planning query: Error during planning: table 'kalam.namespace.table' not found
+Details: SELECT * FROM namespace.table
 ```
 
 ## Adding New Tests

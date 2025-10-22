@@ -459,102 +459,148 @@ eviction_policy = "lru"
 
 ---
 
-## Research Item 7: Flush Job Actor Communication Protocol
+## Research Item 7: Job Management with Tokio-Based Registry
 
-**Context**: Flush jobs run as actors. The scheduler must be able to start, cancel, and query status of flush jobs. Actors must report progress and errors back to the scheduler.
+**Context**: Flush jobs need lifecycle management (start, cancel, status tracking). The system must support job cancellation for operational control during maintenance or when long-running jobs need to be aborted.
 
-**Decision**: **Message-based protocol using tokio channels with job lifecycle states**.
+**Decision**: **Tokio-based job registry with generic JobManager trait interface for future actor migration**.
 
 ```rust
-pub enum FlushJobMessage {
-    Start { table: TableName, namespace: NamespaceId },
-    Cancel { job_id: JobId },
-    GetStatus { job_id: JobId, respond_to: oneshot::Sender<JobStatus> },
+// Generic job management interface
+pub trait JobManager: Send + Sync {
+    async fn start_job(&self, job_type: JobType, params: JobParams) -> Result<JobId>;
+    async fn cancel_job(&self, job_id: JobId) -> Result<()>;
+    async fn get_job_status(&self, job_id: JobId) -> Result<JobStatus>;
+    async fn list_active_jobs(&self) -> Result<Vec<JobInfo>>;
 }
 
 pub enum JobStatus {
     Running { progress: f32, records_processed: usize },
     Completed { records_flushed: usize, storage_location: String },
     Failed { error: String },
-    Cancelled,
+    Cancelled { cancelled_at: DateTime<Utc> },
 }
 
-pub struct FlushJobActor {
-    receiver: mpsc::Receiver<FlushJobMessage>,
-    jobs: HashMap<JobId, JoinHandle<Result<()>>>,
+// Tokio-based implementation
+pub struct TokioJobManager {
+    jobs: Arc<RwLock<HashMap<JobId, JoinHandle<Result<()>>>>>,
+    status_store: Arc<dyn JobStatusStore>,
 }
 
-impl FlushJobActor {
-    pub async fn run(&mut self) {
-        while let Some(msg) = self.receiver.recv().await {
-            match msg {
-                FlushJobMessage::Start { table, namespace } => {
-                    let job_id = JobId::new();
-                    let handle = tokio::spawn(async move {
-                        self.execute_flush(table, namespace).await
+impl JobManager for TokioJobManager {
+    async fn start_job(&self, job_type: JobType, params: JobParams) -> Result<JobId> {
+        let job_id = JobId::new();
+        let handle = tokio::spawn(async move {
+            execute_job(job_type, params).await
+        });
+        
+        self.jobs.write().await.insert(job_id.clone(), handle);
+        self.status_store.create_job(job_id.clone(), job_type, JobStatus::Running).await?;
+        Ok(job_id)
+    }
+    
+    async fn cancel_job(&self, job_id: JobId) -> Result<()> {
+        let mut jobs = self.jobs.write().await;
+        if let Some(handle) = jobs.remove(&job_id) {
+            handle.abort();
+            self.status_store.update_status(
+                job_id,
+                JobStatus::Cancelled { cancelled_at: Utc::now() }
+            ).await?;
+            Ok(())
+        } else {
+            Err(KalamDbError::JobNotFound(job_id))
+        }
+    }
+    
+    async fn get_job_status(&self, job_id: JobId) -> Result<JobStatus> {
+        self.status_store.get_status(job_id).await
+    }
+    
+    async fn list_active_jobs(&self) -> Result<Vec<JobInfo>> {
+        let jobs = self.jobs.read().await;
+        let mut active = Vec::new();
+        for job_id in jobs.keys() {
+            if let Ok(status) = self.get_job_status(job_id.clone()).await {
+                if matches!(status, JobStatus::Running { .. }) {
+                    active.push(JobInfo {
+                        job_id: job_id.clone(),
+                        status,
                     });
-                    self.jobs.insert(job_id, handle);
-                }
-                FlushJobMessage::Cancel { job_id } => {
-                    if let Some(handle) = self.jobs.remove(&job_id) {
-                        handle.abort();
-                    }
-                }
-                FlushJobMessage::GetStatus { job_id, respond_to } => {
-                    let status = self.query_status(job_id);
-                    let _ = respond_to.send(status);
                 }
             }
         }
+        Ok(active)
     }
 }
 ```
 
-**Scheduler Integration**:
+**SQL Command Integration**:
 ```rust
-pub struct FlushScheduler {
-    actor_tx: mpsc::Sender<FlushJobMessage>,
-}
-
-impl FlushScheduler {
-    pub async fn schedule_flush(&self, table: TableName) -> Result<JobId> {
-        let job_id = JobId::new();
-        self.actor_tx.send(FlushJobMessage::Start {
-            table,
-            namespace: /* ... */,
-        }).await?;
-        Ok(job_id)
-    }
+// KILL JOB command implementation
+pub async fn execute_kill_job(
+    job_manager: &Arc<dyn JobManager>,
+    job_id: JobId,
+) -> Result<QueryResult> {
+    job_manager.cancel_job(job_id.clone()).await?;
     
-    pub async fn cancel_flush(&self, job_id: JobId) -> Result<()> {
-        self.actor_tx.send(FlushJobMessage::Cancel { job_id }).await?;
-        Ok(())
-    }
-    
-    pub async fn get_job_status(&self, job_id: JobId) -> Result<JobStatus> {
-        let (tx, rx) = oneshot::channel();
-        self.actor_tx.send(FlushJobMessage::GetStatus { job_id, respond_to: tx }).await?;
-        Ok(rx.await?)
-    }
+    Ok(QueryResult::Success {
+        message: format!("Job '{}' cancelled successfully", job_id),
+        rows_affected: 1,
+    })
 }
 ```
 
 **Rationale**:
-1. **Message passing**: Decouples scheduler from job execution (actor pattern)
-2. **Bounded channels**: Prevents unbounded queue growth (backpressure)
-3. **oneshot for responses**: Type-safe request-response pattern
-4. **Cancellation**: Flush jobs can be aborted (important for long-running flushes during shutdown)
-5. **Status tracking**: Scheduler can query job progress for observability (system.jobs table)
+1. **JobManager trait**: Provides abstraction layer - implementation can be swapped without changing consumers
+2. **Tokio JoinHandle**: Lightweight, built-in cancellation via abort() - no additional dependencies
+3. **Generic interface**: Designed to support future actor-based implementation (Actix, custom actor system)
+4. **Status persistence**: JobStatusStore trait allows different backends (RocksDB system.jobs table, in-memory)
+5. **KILL JOB command**: Direct operational control - administrators can cancel stuck or unnecessary jobs
+6. **Clean shutdown**: Jobs can be aborted during server shutdown to prevent data corruption
 
 **Alternatives Considered**:
-- **Shared state with Mutex**: Jobs update shared HashMap<JobId, JobStatus> - Rejected because it requires locking on every status update (contention)
-- **Direct function calls**: No actors, synchronous flush - Rejected because it blocks the scheduler thread (can't handle multiple concurrent flushes)
-- **Actor framework** (actix, tokio-actor): Use existing actor library - Rejected because it adds unnecessary complexity for simple message passing (tokio channels are sufficient)
+- **Actor-based supervision** (actix, ractor): Provides sophisticated supervision trees and message passing - Rejected for Phase 5 because it adds complexity; Tokio approach is simpler and sufficient for initial implementation. JobManager trait allows future migration.
+- **Shared state with Mutex**: Jobs update shared HashMap<JobId, JobStatus> - Rejected because it requires locking on every status update (contention) and doesn't provide cancellation mechanism.
+- **Direct function calls**: No job registry, synchronous flush - Rejected because it blocks the scheduler thread (can't handle multiple concurrent flushes) and provides no cancellation mechanism.
 
-**Job Lifecycle**:
-1. **Created**: Job ID generated, added to system.jobs table
-2. **Running**: Actor spawns async task, updates progress periodically
-3. **Completed/Failed/Cancelled**: Final status written to system.jobs, task cleaned up
+**Migration Path to Actor Model**:
+```rust
+// Future actor-based implementation (example)
+pub struct ActorJobManager {
+    actor_tx: mpsc::Sender<ActorMessage>,
+}
+
+impl JobManager for ActorJobManager {
+    async fn start_job(&self, job_type: JobType, params: JobParams) -> Result<JobId> {
+        // Send StartJob message to actor
+        let (tx, rx) = oneshot::channel();
+        self.actor_tx.send(ActorMessage::StartJob {
+            job_type,
+            params,
+            respond_to: tx,
+        }).await?;
+        rx.await?
+    }
+    
+    async fn cancel_job(&self, job_id: JobId) -> Result<()> {
+        // Send CancelJob message to actor
+        let (tx, rx) = oneshot::channel();
+        self.actor_tx.send(ActorMessage::CancelJob {
+            job_id,
+            respond_to: tx,
+        }).await?;
+        rx.await?
+    }
+    
+    // ... similar for other methods
+}
+```
+
+**Job Lifecycle** (applies to both implementations):
+1. **Created**: Job ID generated, added to system.jobs table with status='running'
+2. **Running**: Task spawned (Tokio) or actor message sent, updates progress periodically
+3. **Completed/Failed/Cancelled**: Final status written to system.jobs, task/actor cleaned up
 
 ---
 

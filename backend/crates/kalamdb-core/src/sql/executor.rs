@@ -533,7 +533,16 @@ impl SqlExecutor {
         let df = session
             .sql(sql)
             .await
-            .map_err(|e| KalamDbError::Other(format!("Error planning query: {}", e)))?;
+            .map_err(|e| {
+                // Extract the root cause to avoid "Error planning query: Error during planning:" duplication
+                let err_msg = e.to_string();
+                if err_msg.contains("Error during planning:") {
+                    // DataFusion already says "Error during planning", don't duplicate
+                    KalamDbError::Other(err_msg)
+                } else {
+                    KalamDbError::Other(format!("Error planning query: {}", err_msg))
+                }
+            })?;
 
         // Collect results
         let batches = df
@@ -1017,7 +1026,16 @@ impl SqlExecutor {
         let df = session
             .sql(sql)
             .await
-            .map_err(|e| KalamDbError::Other(format!("Error planning query: {}", e)))?;
+            .map_err(|e| {
+                // Extract the root cause to avoid "Error planning query: Error during planning:" duplication
+                let err_msg = e.to_string();
+                if err_msg.contains("Error during planning:") {
+                    // DataFusion already says "Error during planning", don't duplicate
+                    KalamDbError::Other(err_msg)
+                } else {
+                    KalamDbError::Other(format!("Error planning query: {}", err_msg))
+                }
+            })?;
 
         // Collect results
         let batches = df
@@ -1055,7 +1073,16 @@ impl SqlExecutor {
         let df = session
             .sql(sql)
             .await
-            .map_err(|e| KalamDbError::Other(format!("Error planning query: {}", e)))?;
+            .map_err(|e| {
+                // Extract the root cause to avoid "Error planning query: Error during planning:" duplication
+                let err_msg = e.to_string();
+                if err_msg.contains("Error during planning:") {
+                    // DataFusion already says "Error during planning", don't duplicate
+                    KalamDbError::Other(err_msg)
+                } else {
+                    KalamDbError::Other(format!("Error planning query: {}", err_msg))
+                }
+            })?;
 
         // Collect results
         let batches = df

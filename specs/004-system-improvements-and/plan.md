@@ -7,7 +7,7 @@
 
 ## Summary
 
-This feature encompasses comprehensive system improvements across multiple areas: interactive CLI client (kalam-cli with kalam-link library), query optimization (parametrized queries with execution plan caching), data persistence (automatic/manual flushing with job scheduling), performance enhancements (session-level table caching, memory leak testing), architectural refactoring (storage abstraction, code quality improvements, commons crate), API enhancements (batch SQL, enhanced system tables, user management commands), and infrastructure improvements (Docker deployment, documentation organization). The technical approach involves creating a new `/cli` project with WebAssembly-compatible library, implementing DataFusion query plan caching, adding actor-based job scheduling for flushes, introducing storage trait abstraction for pluggable backends, and comprehensive integration/stress testing for live query reliability and memory stability.
+This feature encompasses comprehensive system improvements across multiple areas: interactive CLI client (kalam-cli with kalam-link library), query optimization (parametrized queries with global LRU execution plan caching), data persistence (automatic/manual flushing with Tokio-based job scheduling and cancellation using dual triggers: time interval OR row count threshold, with crash recovery via system.jobs persistence, duplicate prevention, graceful shutdown coordination, debug logging, and automated history cleanup), performance enhancements (session-level table caching, memory leak testing), architectural refactoring (storage abstraction, code quality improvements, commons crate), API enhancements (batch SQL with sequential non-transactional semantics, enhanced system tables, soft-delete user management with grace period), operational improvements (CLEAR CACHE command, server port validation, CLI progress indicators, log rotation, healthcheck endpoint), and infrastructure improvements (Docker deployment, documentation organization). The technical approach involves creating a new `/cli` project with WebAssembly-compatible library, implementing DataFusion query plan caching with LRU eviction, adding Tokio-based job registry for flush operations with generic JobManager trait interface (designed for future actor migration), implementing robust flush reliability features (crash recovery, duplicate detection, shutdown wait, jobs table optimization), introducing storage trait abstraction for pluggable backends, and comprehensive integration/stress testing for live query reliability and memory stability.
 
 ## Technical Context
 
@@ -31,7 +31,7 @@ This feature encompasses comprehensive system improvements across multiple areas
 4. **Docker base image**: Alpine vs distroless for optimal size/security balance
 5. **Sharding function plugin mechanism**: How custom sharding strategies are registered and invoked (trait objects vs function pointers)
 6. **Query plan cache key structure**: How to normalize SQL queries to create stable cache keys (AST hash vs string normalization)
-7. **Flush job actor communication**: Message protocol between scheduler and flush job actors for cancellation/status
+7. **JobManager trait methods**: Exact signatures for start(), cancel(), get_status() to support both Tokio JoinHandles and future actor supervision
 8. **DataFusion expression serialization**: How to persist cached expressions for live query filters across restarts
 
 **Storage**: RocksDB for write path (<1ms), Parquet for flushed storage (compressed columnar format)
@@ -92,6 +92,7 @@ This feature encompasses comprehensive system improvements across multiple areas
 - ✅ Benchmarks planned for query plan caching, session cache, flush operations (criterion.rs)
 - ✅ Stress tests define memory growth limits (<10%) and response time requirements (p95 <500ms)
 - ✅ Performance regressions caught through integration test timing validation
+- ✅ Job cancellation uses lightweight Tokio JoinHandle::abort() (minimal overhead)
 
 **III. Data Ownership**:
 - ✅ User-based data partitioning maintained through flush operations (path templates include {userId})
@@ -112,8 +113,9 @@ This feature encompasses comprehensive system improvements across multiple areas
 **VI. Transparency**:
 - ✅ Enhanced system.jobs table includes parameters, result, trace, memory_used, cpu_used
 - ✅ Enhanced system.live_queries includes options, changes counter, node identifier
-- ✅ Flush operations tracked through actor model with job status
-- ✅ Stress tests include monitoring for actor system health (mailbox overflow detection)
+- ✅ Flush operations tracked through JobManager with job status and cancellation support
+- ✅ KILL JOB SQL command provides operational control over long-running jobs
+- ✅ Stress tests include monitoring for job system health (memory leaks, stuck jobs)
 
 **VII. Secure by Default**:
 - ✅ JWT authentication maintained in kalam-link
@@ -140,7 +142,7 @@ This feature encompasses comprehensive system improvements across multiple areas
   - **ADR-002**: Query plan caching strategy (DataFusion integration, cache key structure)
   - **ADR-003**: Storage abstraction trait design (method signatures, column family handling)
   - **ADR-004**: kalamdb-commons crate creation and dependency management
-  - **ADR-005**: Flush job actor model and scheduling architecture
+  - **ADR-005**: Tokio-based job management with JobManager trait (flush scheduling, cancellation, future actor migration path)
   - **ADR-006**: Session-level table registration caching policy (LRU vs TTL)
 - [ ] Code examples planned:
   - kalam-link: Establishing connection, executing parametrized query, subscribing to table changes

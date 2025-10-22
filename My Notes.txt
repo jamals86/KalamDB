@@ -32,4 +32,23 @@ Tools & Utilities:
 
 Notes:
 1) devide the cli test into multiple files
+2) when starting the server check first if the port is opened already ebfore laoding the rocksdb
+3) The cli show progress while the query is performing with a loading indication and time since start
+4) auto complete is not working at all in the cli, it should also work with fetching tables/schemas from select * from system.tables
+5) in the query output when selecting always preserve the order of the columns which are returned (without ruining the performance)
+6) Add log rotation
+7) specify how many logs for rocksdb to preserve
+8) fix bug in deleting a user table:
+    [2025-10-22 13:27:02.956] [WARN ] - actix-rt|system:0|arbiter:12 - kalamdb_core::services::table_deletion_service:252 - Storage path does not exist: /data/${user_id}/tables
+    [2025-10-22 13:27:02.981] [WARN ] - actix-rt|system:0|arbiter:12 - kalamdb_core::services::table_deletion_service:152 - Failed to decrement storage usage count: Not found: Storage location '/data/${user_id}/tables' not found
+9) Whenever we create a shared table directly we should create it's corresponding folder in the storage location it has been set in it to be flushed to
+10) Add a healthcheck for the kalamdb-server api
+11) add a connection check whenever we open the kalam-cli tool, if the server is down then we display an error and don't open the cli at all, this healthcheck should be added to the kalam-link
+12) add CLEAR CACHE; which clears the session caching, the query caching or any caches added in the future
 
+
+
+The KalamDB should have similar sql syntax as postgress and MySQL so whenever i ask about syntax you search how Postgress and MySQL writes this syntax and do things in their architecture
+Also the CLI tool for KalamDb should be similar as well
+Error messages and returned syntax from SQL queries/api and cli output should be also similar
+Always prefer simple and clear archeticture and logic, the the design should be simple and scalable without so much complexity its a simple database

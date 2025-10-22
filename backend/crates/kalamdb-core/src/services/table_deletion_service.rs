@@ -423,7 +423,7 @@ impl TableDeletionService {
             format!("table_type={:?}", table_type),
         ];
 
-        let job = Job {
+        let job: Job = Job {
             job_id: job_id.clone(),
             job_type: "table_deletion".to_string(),
             table_name: table_name.as_str().to_string(),
