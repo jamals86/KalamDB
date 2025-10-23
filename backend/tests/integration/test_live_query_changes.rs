@@ -11,9 +11,41 @@
 
 mod common;
 
-use common::{fixtures, websocket::WebSocketClient, TestServer};
+use common::{create_test_jwt, fixtures, websocket::WebSocketClient, start_http_server_for_websocket_tests, TestServer};
 use std::time::Duration;
 use tokio::time::sleep;
+
+/// Helper to setup HTTP server and test table for WebSocket tests
+async fn setup_http_server_and_table(
+    namespace: &str,
+    table_name: &str,
+    user_id: &str,
+) -> (TestServer, String) {
+    let (server, base_url) = start_http_server_for_websocket_tests().await;
+    
+    // Create namespace
+    fixtures::create_namespace(&server, namespace).await;
+
+    // Create user table with appropriate schema
+    let create_table = format!(
+        r#"CREATE USER TABLE {}.{} (
+            id TEXT,
+            content TEXT,
+            priority INT,
+            created_at BIGINT
+        ) LOCATION 's3://bucket/users/${{user_id}}/{}/'"#,
+        namespace, table_name, table_name
+    );
+
+    let response = server.execute_sql_as_user(&create_table, user_id).await;
+    assert_eq!(
+        response.status, "success",
+        "Failed to create table: {:?}",
+        response.error
+    );
+    
+    (server, base_url)
+}
 
 /// Helper to create a test namespace and user table for live query testing
 async fn setup_test_table(server: &TestServer, namespace: &str, table_name: &str, user_id: &str) {
@@ -43,14 +75,17 @@ async fn setup_test_table(server: &TestServer, namespace: &str, table_name: &str
 ///
 /// Subscribe to a user table, INSERT 100 rows, verify 100 notifications received.
 /// This validates the basic INSERT detection mechanism.
-#[actix_web::test]
-#[ignore = "WebSocket subscriptions not fully implemented yet"]
+#[tokio::test]
+#[ignore = "Requires running server with WebSocket support - run manually"]
 async fn test_live_query_detects_inserts() {
-    let server = TestServer::new().await;
-    setup_test_table(&server, "test_ns", "messages", "user1").await;
+    let (server, base_url) = setup_http_server_and_table("test_ns", "messages", "user1").await;
+    let ws_url = format!("{}/v1/ws", base_url.replace("http", "ws"));
+    
+    // Create JWT token for authentication
+    let token = create_test_jwt("user1", "kalamdb-dev-secret-key-change-in-production", 3600);
 
-    // Connect WebSocket and subscribe
-    let mut ws = WebSocketClient::connect("ws://localhost:8080/ws").await.unwrap();
+    // Connect WebSocket with authentication and subscribe
+    let mut ws = WebSocketClient::connect_with_auth(&ws_url, Some(&token)).await.unwrap();
     ws.subscribe(
         "messages",
         "SELECT * FROM test_ns.messages WHERE created_at > 0",
@@ -71,8 +106,8 @@ async fn test_live_query_detects_inserts() {
         server.execute_sql_as_user(&insert_sql, "user1").await;
     }
 
-    // Wait for notifications
-    sleep(Duration::from_millis(500)).await;
+    // Receive notifications with timeout
+    ws.receive_notifications(Duration::from_secs(2)).await.unwrap();
 
     // Verify 100 notifications received
     let notifications = ws.get_notifications();
@@ -97,7 +132,7 @@ async fn test_live_query_detects_inserts() {
 /// Subscribe, INSERT + UPDATE rows, verify notifications contain old/new values.
 /// This validates UPDATE detection with old value tracking.
 #[actix_web::test]
-#[ignore = "WebSocket subscriptions not fully implemented yet"]
+#[ignore = "Requires running server with WebSocket support - run manually"]
 async fn test_live_query_detects_updates() {
     let server = TestServer::new().await;
     setup_test_table(&server, "test_ns", "messages", "user1").await;
@@ -155,7 +190,7 @@ async fn test_live_query_detects_updates() {
 /// Subscribe, INSERT + DELETE rows, verify _deleted flag in notifications.
 /// This validates soft-delete detection.
 #[actix_web::test]
-#[ignore = "WebSocket subscriptions not fully implemented yet"]
+#[ignore = "Requires running server with WebSocket support - run manually"]
 async fn test_live_query_detects_deletes() {
     let server = TestServer::new().await;
     setup_test_table(&server, "test_ns", "messages", "user1").await;
@@ -211,7 +246,7 @@ async fn test_live_query_detects_deletes() {
 /// Spawn 5 concurrent writers inserting rows simultaneously.
 /// Verify all notifications are received without loss or duplication.
 #[actix_web::test]
-#[ignore = "WebSocket subscriptions not fully implemented yet"]
+#[ignore = "Requires running server with WebSocket support - run manually"]
 async fn test_concurrent_writers_no_message_loss() {
     let server = TestServer::new().await;
     setup_test_table(&server, "test_ns", "messages", "user1").await;
@@ -279,7 +314,7 @@ async fn test_concurrent_writers_no_message_loss() {
 /// Simulate an AI agent writing messages while a human client is subscribed.
 /// Verify the human client receives all notifications in real-time.
 #[actix_web::test]
-#[ignore = "WebSocket subscriptions not fully implemented yet"]
+#[ignore = "Requires running server with WebSocket support - run manually"]
 async fn test_ai_message_scenario() {
     let server = TestServer::new().await;
     setup_test_table(&server, "test_ns", "messages", "user1").await;
@@ -338,7 +373,7 @@ async fn test_ai_message_scenario() {
 /// Execute INSERT, UPDATE, DELETE in sequence.
 /// Verify notifications arrive in chronological order.
 #[actix_web::test]
-#[ignore = "WebSocket subscriptions not fully implemented yet"]
+#[ignore = "Requires running server with WebSocket support - run manually"]
 async fn test_mixed_operations_ordering() {
     let server = TestServer::new().await;
     setup_test_table(&server, "test_ns", "messages", "user1").await;
@@ -399,7 +434,7 @@ async fn test_mixed_operations_ordering() {
 ///
 /// Trigger 50 changes, verify system.live_queries changes counter = 50.
 #[actix_web::test]
-#[ignore = "WebSocket subscriptions not fully implemented yet"]
+#[ignore = "Requires running server with WebSocket support - run manually"]
 async fn test_changes_counter_accuracy() {
     let server = TestServer::new().await;
     setup_test_table(&server, "test_ns", "messages", "user1").await;
@@ -444,7 +479,7 @@ async fn test_changes_counter_accuracy() {
 ///
 /// Create 3 separate subscriptions, verify each receives independent notifications.
 #[actix_web::test]
-#[ignore = "WebSocket subscriptions not fully implemented yet"]
+#[ignore = "Requires running server with WebSocket support - run manually"]
 async fn test_multiple_listeners_same_table() {
     let server = TestServer::new().await;
     setup_test_table(&server, "test_ns", "messages", "user1").await;
@@ -507,7 +542,7 @@ async fn test_multiple_listeners_same_table() {
 /// Subscribe, disconnect, reconnect, verify subscription continues.
 /// Note: This tests reconnection behavior, not message recovery during disconnection.
 #[actix_web::test]
-#[ignore = "WebSocket subscriptions not fully implemented yet"]
+#[ignore = "Requires running server with WebSocket support - run manually"]
 async fn test_listener_reconnect_no_data_loss() {
     let server = TestServer::new().await;
     setup_test_table(&server, "test_ns", "messages", "user1").await;
@@ -573,7 +608,7 @@ async fn test_listener_reconnect_no_data_loss() {
 /// INSERT 1000 rows rapidly, verify all 1000 notifications are delivered.
 /// This tests the system's ability to handle high-throughput scenarios.
 #[actix_web::test]
-#[ignore = "WebSocket subscriptions not fully implemented yet"]
+#[ignore = "Requires running server with WebSocket support - run manually"]
 async fn test_high_frequency_changes() {
     let server = TestServer::new().await;
     setup_test_table(&server, "test_ns", "messages", "user1").await;

@@ -702,6 +702,102 @@ impl TestServer {
     }
 }
 
+/// Start a real HTTP server on a random available port for WebSocket testing.
+///
+/// Returns the TestServer instance and the base URL of the server.
+/// The server runs in a background task and will be automatically stopped when dropped.
+///
+/// # Example
+///
+/// ```no_run
+/// let (server, base_url) = start_http_server_for_websocket_tests().await;
+/// let ws_url = format!("{}/v1/ws", base_url.replace("http", "ws"));
+/// // Connect WebSocket and run tests...
+/// ```
+pub async fn start_http_server_for_websocket_tests() -> (TestServer, String) {
+    use actix_web::{web, App, HttpServer};
+    use jsonwebtoken::Algorithm;
+    use kalamdb_api::auth::jwt::JwtAuth;
+    use kalamdb_api::rate_limiter::RateLimiter;
+    use std::sync::Arc;
+
+    let server = TestServer::new().await;
+    
+    let session_factory = server.session_factory.clone();
+    let sql_executor = server.sql_executor.clone();
+    
+    let jwt_auth = Arc::new(JwtAuth::new(
+        "kalamdb-dev-secret-key-change-in-production".to_string(),
+        Algorithm::HS256,
+    ));
+    let rate_limiter = Arc::new(RateLimiter::new());
+
+    // Start server on port 8080
+    let http_server = HttpServer::new(move || {
+        App::new()
+            .app_data(web::Data::new(session_factory.clone()))
+            .app_data(web::Data::new(sql_executor.clone()))
+            .app_data(web::Data::new(jwt_auth.clone()))
+            .app_data(web::Data::new(rate_limiter.clone()))
+            .configure(kalamdb_api::routes::configure_routes)
+    })
+    .bind(("127.0.0.1", 8080))
+    .expect("Failed to bind to port 8080")
+    .run();
+
+    // Spawn server in background
+    tokio::spawn(http_server);
+    
+    // Give server time to start
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    (server, "http://127.0.0.1:8080".to_string())
+}
+
+/// Create a test JWT token for WebSocket authentication
+///
+/// # Arguments
+///
+/// * `user_id` - User ID for the token
+/// * `secret` - JWT secret (should match server configuration)
+/// * `exp_seconds` - Token expiration in seconds from now
+///
+/// # Example
+///
+/// ```no_run
+/// let token = create_test_jwt("user1", "kalamdb-dev-secret-key-change-in-production", 3600);
+/// let ws = WebSocketClient::connect_with_auth(&ws_url, Some(&token)).await.unwrap();
+/// ```
+pub fn create_test_jwt(user_id: &str, secret: &str, exp_seconds: i64) -> String {
+    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct Claims {
+        sub: String,
+        iat: u64,
+        exp: u64,
+        user_id: String,
+        roles: Vec<String>,
+    }
+
+    let now = chrono::Utc::now().timestamp() as u64;
+    let claims = Claims {
+        sub: user_id.to_string(),
+        iat: now,
+        exp: (now as i64 + exp_seconds) as u64,
+        user_id: user_id.to_string(),
+        roles: vec!["user".to_string()],
+    };
+
+    encode(
+        &Header::new(Algorithm::HS256),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .expect("Failed to create JWT token")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

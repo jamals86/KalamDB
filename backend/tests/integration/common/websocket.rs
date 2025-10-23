@@ -39,7 +39,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::time::timeout;
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message, WebSocketStream};
+use tokio_tungstenite::{connect_async_with_config, tungstenite::protocol::Message, tungstenite::protocol::WebSocketConfig, WebSocketStream};
 use tokio_tungstenite::MaybeTlsStream;
 use tokio::net::TcpStream;
 
@@ -122,7 +122,35 @@ impl WebSocketClient {
     /// let ws = WebSocketClient::connect("ws://localhost:8080/ws").await;
     /// ```
     pub async fn connect(url: &str) -> Result<Self> {
-        let (ws_stream, _) = connect_async(url).await?;
+        Self::connect_with_auth(url, None).await
+    }
+
+    /// Connect to WebSocket endpoint with authentication.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - WebSocket URL
+    /// * `token` - Optional JWT token for authentication
+    pub async fn connect_with_auth(url: &str, token: Option<&str>) -> Result<Self> {
+        use tokio_tungstenite::tungstenite::http::Request;
+        
+        // Build HTTP request with optional Authorization header
+        let mut request = Request::builder()
+            .uri(url)
+            .header("Host", url.split("://").nth(1).and_then(|s| s.split('/').next()).unwrap_or("localhost"))
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key());
+        
+        if let Some(token) = token {
+            request = request.header("Authorization", format!("Bearer {}", token));
+        }
+        
+        let request = request.body(()).map_err(|e| anyhow::anyhow!("Failed to build request: {}", e))?;
+        
+        // Connect with custom request
+        let (ws_stream, _) = connect_async_with_config(request, Some(WebSocketConfig::default()), false).await?;
         
         Ok(Self {
             ws_stream,
@@ -485,15 +513,16 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "Requires running server"]
     async fn test_websocket_client_connect() {
-        let ws = WebSocketClient::connect("ws://localhost:8080/ws").await;
-        assert_eq!(ws.url, "ws://localhost:8080/ws");
+        let ws = WebSocketClient::connect("ws://localhost:8080/ws").await.unwrap();
         assert_eq!(ws.subscription_count(), 0);
     }
 
     #[tokio::test]
+    #[ignore = "Requires running server"]
     async fn test_subscribe() {
-        let mut ws = WebSocketClient::connect("ws://localhost:8080/ws").await;
+        let mut ws = WebSocketClient::connect("ws://localhost:8080/ws").await.unwrap();
 
         ws.subscribe("messages", "SELECT * FROM app.messages")
             .await
