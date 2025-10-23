@@ -3,13 +3,14 @@
 //! Parses CREATE STREAM TABLE statements with schema, retention period,
 //! ephemeral mode, and max buffer size.
 
-use crate::catalog::{NamespaceId, TableName};
-use crate::error::KalamDbError;
-use datafusion::arrow::datatypes::{Field, Schema};
-use datafusion::sql::sqlparser::ast::{ColumnDef, Statement};
-use datafusion::sql::sqlparser::dialect::GenericDialect;
-use datafusion::sql::sqlparser::parser::Parser;
-use kalamdb_sql::map_sql_type_to_arrow;
+use crate::compatibility::map_sql_type_to_arrow;
+use crate::ddl::DdlResult;
+
+use arrow::datatypes::{Field, Schema};
+use kalamdb_commons::models::{NamespaceId, TableName};
+use sqlparser::ast::{ColumnDef, ColumnOption, ObjectName, Statement};
+use sqlparser::dialect::GenericDialect;
+use sqlparser::parser::Parser;
 use std::sync::Arc;
 
 /// CREATE STREAM TABLE statement
@@ -33,7 +34,7 @@ pub struct CreateStreamTableStatement {
 
 impl CreateStreamTableStatement {
     /// Parse a CREATE STREAM TABLE statement from SQL
-    pub fn parse(sql: &str, current_namespace: &NamespaceId) -> Result<Self, KalamDbError> {
+    pub fn parse(sql: &str, current_namespace: &NamespaceId) -> DdlResult<Self> {
         // Preprocess SQL to remove "STREAM" keyword and TTL/BUFFER_SIZE clauses for standard SQL parser
         // "CREATE STREAM TABLE ... TTL 3600 BUFFER_SIZE 1000" -> "CREATE TABLE ..."
         // Normalize whitespace and remove stream-specific keywords before parsing
@@ -62,12 +63,10 @@ impl CreateStreamTableStatement {
 
         let dialect = GenericDialect {};
         let statements = Parser::parse_sql(&dialect, &normalized_sql)
-            .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+            .map_err(|e| e.to_string())?;
 
         if statements.is_empty() {
-            return Err(KalamDbError::InvalidSql(
-                "No SQL statement found".to_string(),
-            ));
+            return Err("No SQL statement found".to_string());
         }
 
         let stmt = &statements[0];
@@ -79,7 +78,7 @@ impl CreateStreamTableStatement {
         stmt: &Statement,
         current_namespace: &NamespaceId,
         original_sql: &str,
-    ) -> Result<Self, KalamDbError> {
+    ) -> DdlResult<Self> {
         match stmt {
             Statement::CreateTable {
                 name,
@@ -117,19 +116,15 @@ impl CreateStreamTableStatement {
                     if_not_exists: *if_not_exists,
                 })
             }
-            _ => Err(KalamDbError::InvalidSql(
-                "Expected CREATE TABLE statement".to_string(),
-            )),
+            _ => Err("Expected CREATE TABLE statement".to_string()),
         }
     }
 
     /// Extract table name from object name
-    fn extract_table_name(
-        name: &datafusion::sql::sqlparser::ast::ObjectName,
-    ) -> Result<String, KalamDbError> {
+    fn extract_table_name(name: &ObjectName) -> DdlResult<String> {
         let parts = &name.0;
         if parts.is_empty() {
-            return Err(KalamDbError::InvalidSql("Empty table name".to_string()));
+            return Err("Empty table name".to_string());
         }
 
         // Take the last part as table name (handles both "table" and "namespace.table")
@@ -137,9 +132,7 @@ impl CreateStreamTableStatement {
     }
 
     /// Extract namespace from object name (if provided in SQL)
-    fn extract_namespace_from_table_name(
-        name: &datafusion::sql::sqlparser::ast::ObjectName,
-    ) -> Option<String> {
+    fn extract_namespace_from_table_name(name: &ObjectName) -> Option<String> {
         let parts = &name.0;
         // If we have "namespace.table", return the namespace (first part)
         if parts.len() >= 2 {
@@ -150,21 +143,18 @@ impl CreateStreamTableStatement {
     }
 
     /// Parse schema from column definitions
-    fn parse_schema(columns: &[ColumnDef]) -> Result<Arc<Schema>, KalamDbError> {
-        let fields: Result<Vec<Field>, KalamDbError> = columns
+    fn parse_schema(columns: &[ColumnDef]) -> DdlResult<Arc<Schema>> {
+        let fields: Result<Vec<Field>, anyhow::Error> = columns
             .iter()
             .map(|col| {
                 let data_type = map_sql_type_to_arrow(&col.data_type)
-                    .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+                    .map_err(|e| e.to_string())?;
                 Ok(Field::new(
                     col.name.value.clone(),
                     data_type,
-                    col.options.iter().any(|opt| {
-                        matches!(
-                            opt.option,
-                            datafusion::sql::sqlparser::ast::ColumnOption::Null
-                        )
-                    }),
+                    col.options
+                        .iter()
+                        .any(|opt| matches!(opt.option, ColumnOption::Null)),
                 ))
             })
             .collect();
@@ -173,7 +163,7 @@ impl CreateStreamTableStatement {
     }
 
     /// Validate the table name follows naming conventions
-    pub fn validate_table_name(&self) -> Result<(), KalamDbError> {
+    pub fn validate_table_name(&self) -> DdlResult<()> {
         let name = self.table_name.as_str();
 
         // Must start with lowercase letter
@@ -183,9 +173,7 @@ impl CreateStreamTableStatement {
             .map(|c| c.is_ascii_lowercase())
             .unwrap_or(false)
         {
-            return Err(KalamDbError::InvalidOperation(
-                "Table name must start with a lowercase letter".to_string(),
-            ));
+            return Err("Table name must start with a lowercase letter".to_string());
         }
 
         // Can only contain lowercase letters, digits, and underscores
@@ -193,10 +181,9 @@ impl CreateStreamTableStatement {
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
         {
-            return Err(KalamDbError::InvalidOperation(
+            return Err(
                 "Table name can only contain lowercase letters, digits, and underscores"
-                    .to_string(),
-            ));
+            .to_string());
         }
 
         Ok(())
@@ -204,14 +191,12 @@ impl CreateStreamTableStatement {
 
     /// Parse TTL (retention) from SQL text
     /// Supports: TTL 3600 (seconds)
-    fn parse_ttl(sql: &str) -> Result<Option<u32>, KalamDbError> {
+    fn parse_ttl(sql: &str) -> DdlResult<Option<u32>> {
         use regex::Regex;
 
         let ttl_re = Regex::new(r"(?i)TTL\s+(\d+)").unwrap();
         if let Some(caps) = ttl_re.captures(sql) {
-            let seconds: u32 = caps[1]
-                .parse()
-                .map_err(|_| KalamDbError::InvalidSql("Invalid TTL value".to_string()))?;
+            let seconds: u32 = caps[1].parse().map_err(|_| "Invalid TTL value".to_string())?;
             return Ok(Some(seconds));
         }
 
@@ -220,14 +205,14 @@ impl CreateStreamTableStatement {
 
     /// Parse BUFFER_SIZE from SQL text
     /// Supports: BUFFER_SIZE 1000 (number of rows)
-    fn parse_buffer_size(sql: &str) -> Result<Option<usize>, KalamDbError> {
+    fn parse_buffer_size(sql: &str) -> DdlResult<Option<usize>> {
         use regex::Regex;
 
         let buffer_re = Regex::new(r"(?i)BUFFER_SIZE\s+(\d+)").unwrap();
         if let Some(caps) = buffer_re.captures(sql) {
             let size: usize = caps[1]
                 .parse()
-                .map_err(|_| KalamDbError::InvalidSql("Invalid BUFFER_SIZE value".to_string()))?;
+                .map_err(|_| "Invalid BUFFER_SIZE value".to_string())?;
             return Ok(Some(size));
         }
 
@@ -238,8 +223,8 @@ impl CreateStreamTableStatement {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::datatypes::DataType;
-    use datafusion::sql::sqlparser::ast::DataType as SQLDataType;
+    use arrow::datatypes::DataType;
+    use sqlparser::ast::{DataType as SQLDataType, Ident};
 
     #[test]
     fn test_parse_simple_create_stream_table() {
@@ -331,13 +316,13 @@ mod tests {
     fn test_parse_schema() {
         let columns = vec![
             ColumnDef {
-                name: datafusion::sql::sqlparser::ast::Ident::new("id"),
+                name: Ident::new("id"),
                 data_type: SQLDataType::BigInt(None),
                 collation: None,
                 options: vec![],
             },
             ColumnDef {
-                name: datafusion::sql::sqlparser::ast::Ident::new("event_type"),
+                name: Ident::new("event_type"),
                 data_type: SQLDataType::Text,
                 collation: None,
                 options: vec![],

@@ -8,6 +8,30 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 
+// Re-export from kalamdb-commons
+pub use kalamdb_commons::models::{ConnectionId, LiveId};
+
+// Extension traits to add KalamDbError-based parsing to commons types
+pub trait ConnectionIdExt {
+    fn from_string_kalam(s: &str) -> Result<ConnectionId, KalamDbError>;
+}
+
+impl ConnectionIdExt for ConnectionId {
+    fn from_string_kalam(s: &str) -> Result<ConnectionId, KalamDbError> {
+        ConnectionId::from_string(s).map_err(|e| KalamDbError::InvalidOperation(e))
+    }
+}
+
+pub trait LiveIdExt {
+    fn from_string_kalam(s: &str) -> Result<LiveId, KalamDbError>;
+}
+
+impl LiveIdExt for LiveId {
+    fn from_string_kalam(s: &str) -> Result<LiveId, KalamDbError> {
+        LiveId::from_string(s).map_err(|e| KalamDbError::InvalidOperation(e))
+    }
+}
+
 /// Node identifier for cluster deployments
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub String);
@@ -57,125 +81,6 @@ impl AsRef<str> for UserId {
 impl fmt::Display for UserId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
-    }
-}
-
-/// Connection identifier: {user_id}-{unique_conn_id}
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ConnectionId {
-    pub user_id: String,
-    pub unique_conn_id: String,
-}
-
-impl ConnectionId {
-    /// Create a new connection ID
-    pub fn new(user_id: String, unique_conn_id: String) -> Self {
-        Self {
-            user_id,
-            unique_conn_id,
-        }
-    }
-
-    /// Parse from string format: {user_id}-{unique_conn_id}
-    pub fn from_string(s: &str) -> Result<Self, KalamDbError> {
-        let parts: Vec<&str> = s.splitn(2, '-').collect();
-        if parts.len() != 2 {
-            return Err(KalamDbError::InvalidOperation(format!(
-                "Invalid connection_id format: {}. Expected: {{user_id}}-{{unique_conn_id}}",
-                s
-            )));
-        }
-        Ok(Self {
-            user_id: parts[0].to_string(),
-            unique_conn_id: parts[1].to_string(),
-        })
-    }
-
-    /// Get user_id component
-    pub fn user_id(&self) -> &str {
-        &self.user_id
-    }
-
-    /// Get unique_conn_id component
-    pub fn unique_conn_id(&self) -> &str {
-        &self.unique_conn_id
-    }
-}
-
-impl fmt::Display for ConnectionId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}-{}", self.user_id, self.unique_conn_id)
-    }
-}
-
-/// Live query identifier: {connection_id}-{table_name}-{query_id}
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct LiveId {
-    pub connection_id: ConnectionId,
-    pub table_name: String,
-    pub query_id: String,
-}
-
-impl LiveId {
-    /// Create a new live query ID
-    pub fn new(connection_id: ConnectionId, table_name: String, query_id: String) -> Self {
-        Self {
-            connection_id,
-            table_name,
-            query_id,
-        }
-    }
-
-    /// Parse from string format: {user_id}-{unique_conn_id}-{table_name}-{query_id}
-    pub fn from_string(s: &str) -> Result<Self, KalamDbError> {
-        let parts: Vec<&str> = s.splitn(4, '-').collect();
-        if parts.len() != 4 {
-            return Err(KalamDbError::InvalidOperation(format!(
-                "Invalid live_id format: {}. Expected: {{user_id}}-{{unique_conn_id}}-{{table_name}}-{{query_id}}",
-                s
-            )));
-        }
-        Ok(Self {
-            connection_id: ConnectionId {
-                user_id: parts[0].to_string(),
-                unique_conn_id: parts[1].to_string(),
-            },
-            table_name: parts[2].to_string(),
-            query_id: parts[3].to_string(),
-        })
-    }
-
-    /// Get connection_id component
-    pub fn connection_id(&self) -> &ConnectionId {
-        &self.connection_id
-    }
-
-    /// Get table_name component
-    pub fn table_name(&self) -> &str {
-        &self.table_name
-    }
-
-    /// Get query_id component
-    pub fn query_id(&self) -> &str {
-        &self.query_id
-    }
-
-    /// Get user_id from connection_id
-    pub fn user_id(&self) -> &str {
-        &self.connection_id.user_id
-    }
-}
-
-impl fmt::Display for LiveId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}-{}-{}-{}",
-            self.connection_id.user_id,
-            self.connection_id.unique_conn_id,
-            self.table_name,
-            self.query_id
-        )
     }
 }
 

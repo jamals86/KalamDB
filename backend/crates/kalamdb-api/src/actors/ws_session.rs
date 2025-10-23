@@ -4,6 +4,7 @@
 
 use actix::{Actor, ActorContext, AsyncContext, Handler, Message, StreamHandler};
 use actix_web_actors::ws;
+use kalamdb_commons::models::UserId;
 use log::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -32,7 +33,7 @@ pub struct WebSocketSession {
 
     /// Authenticated user ID (from JWT token)
     /// None if authentication is disabled/optional
-    pub user_id: Option<kalamdb_core::catalog::UserId>,
+    pub user_id: Option<UserId>,
 
     /// Rate limiter for message and subscription limits
     pub rate_limiter: Option<Arc<RateLimiter>>,
@@ -54,7 +55,7 @@ impl WebSocketSession {
     /// * `rate_limiter` - Optional rate limiter for message and subscription limits
     pub fn new(
         connection_id: String,
-        user_id: Option<kalamdb_core::catalog::UserId>,
+        user_id: Option<UserId>,
         rate_limiter: Option<Arc<RateLimiter>>,
     ) -> Self {
         Self {
@@ -282,7 +283,7 @@ mod tests {
 
     #[test]
     fn test_websocket_session_creation() {
-        let user_id = Some(kalamdb_core::catalog::UserId::from("user-123"));
+        let user_id = Some(UserId::from("user-123"));
         let session = WebSocketSession::new("test-conn-123".to_string(), user_id.clone(), None);
         assert_eq!(session.connection_id, "test-conn-123");
         assert_eq!(session.user_id, user_id);

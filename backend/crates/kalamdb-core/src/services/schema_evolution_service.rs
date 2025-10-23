@@ -17,8 +17,8 @@
 use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::schema::ArrowSchemaWithOptions;
-use crate::sql::ddl::ColumnOperation;
 use arrow::datatypes::{DataType, Field, Schema};
+use kalamdb_sql::ddl::ColumnOperation;
 use kalamdb_sql::{KalamSql, Table, TableSchema};
 use std::sync::Arc;
 

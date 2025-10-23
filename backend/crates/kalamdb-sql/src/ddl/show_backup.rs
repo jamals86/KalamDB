@@ -4,8 +4,9 @@
 //! - SHOW BACKUP FOR DATABASE app
 //! - SHOW BACKUPS FOR DATABASE app
 
-use crate::catalog::NamespaceId;
-use crate::error::KalamDbError;
+use crate::ddl::DdlResult;
+
+use kalamdb_commons::models::NamespaceId;
 
 /// SHOW BACKUP statement
 #[derive(Debug, Clone, PartialEq)]
@@ -20,7 +21,7 @@ impl ShowBackupStatement {
     /// Supports syntax:
     /// - SHOW BACKUP FOR DATABASE namespace
     /// - SHOW BACKUPS FOR DATABASE namespace
-    pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
+    pub fn parse(sql: &str) -> DdlResult<Self> {
         let sql_trimmed = sql.trim();
         let sql_upper = sql_trimmed.to_uppercase();
 
@@ -29,9 +30,7 @@ impl ShowBackupStatement {
             || sql_upper.starts_with("SHOW BACKUPS FOR DATABASE");
 
         if !has_backup {
-            return Err(KalamDbError::InvalidSql(
-                "Expected SHOW BACKUP FOR DATABASE statement".to_string(),
-            ));
+            return Err("Expected SHOW BACKUP FOR DATABASE statement".to_string());
         }
 
         // Extract namespace name
@@ -49,7 +48,7 @@ impl ShowBackupStatement {
 
         let namespace_name = namespace_name
             .and_then(|s| s.split_whitespace().next())
-            .ok_or_else(|| KalamDbError::InvalidSql("Namespace name is required".to_string()))?;
+            .ok_or_else(|| "Namespace name is required".to_string())?;
 
         Ok(Self {
             namespace_id: NamespaceId::new(namespace_name),

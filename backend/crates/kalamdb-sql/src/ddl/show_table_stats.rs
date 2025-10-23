@@ -4,8 +4,9 @@
 //! - SHOW STATS FOR TABLE table_name
 //! - SHOW STATS FOR TABLE namespace.table_name
 
-use crate::catalog::{NamespaceId, TableName};
-use crate::error::KalamDbError;
+use crate::ddl::DdlResult;
+
+use kalamdb_commons::models::{NamespaceId, TableName};
 
 /// SHOW TABLE STATS statement
 #[derive(Debug, Clone, PartialEq)]
@@ -23,14 +24,14 @@ impl ShowTableStatsStatement {
     /// Supports syntax:
     /// - SHOW STATS FOR TABLE table_name
     /// - SHOW STATS FOR TABLE namespace.table_name
-    pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
+    pub fn parse(sql: &str) -> DdlResult<Self> {
+        use crate::parser::utils::extract_qualified_table;
+
         let sql_trimmed = sql.trim();
         let sql_upper = sql_trimmed.to_uppercase();
 
         if !sql_upper.starts_with("SHOW STATS FOR TABLE") {
-            return Err(KalamDbError::InvalidSql(
-                "Expected SHOW STATS FOR TABLE statement".to_string(),
-            ));
+            return Err("Expected SHOW STATS FOR TABLE statement".to_string());
         }
 
         // Extract table name part
@@ -38,25 +39,20 @@ impl ShowTableStatsStatement {
             .strip_prefix("SHOW STATS FOR TABLE")
             .or_else(|| sql_trimmed.strip_prefix("show stats for table"))
             .map(|s| s.trim())
-            .ok_or_else(|| KalamDbError::InvalidSql("Invalid SHOW STATS syntax".to_string()))?;
+            .ok_or_else(|| "Invalid SHOW STATS syntax".to_string())?;
 
         let table_identifier = table_part
             .split_whitespace()
             .next()
-            .ok_or_else(|| KalamDbError::InvalidSql("Table name is required".to_string()))?;
+            .ok_or_else(|| "Table name is required".to_string())?;
 
         // Check for qualified name (namespace.table)
         if table_identifier.contains('.') {
-            let parts: Vec<&str> = table_identifier.split('.').collect();
-            if parts.len() != 2 {
-                return Err(KalamDbError::InvalidSql(
-                    "Invalid qualified table name format".to_string(),
-                ));
-            }
-
+            let (namespace, table) = extract_qualified_table(table_identifier)
+                .map_err(|e| e.to_string())?;
             Ok(Self {
-                namespace_id: Some(NamespaceId::new(parts[0])),
-                table_name: TableName::new(parts[1]),
+                namespace_id: Some(NamespaceId::new(&namespace)),
+                table_name: TableName::new(&table),
             })
         } else {
             // Unqualified name

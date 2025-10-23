@@ -4,8 +4,9 @@
 //! - BACKUP DATABASE app TO 'path/to/backup'
 //! - BACKUP DATABASE IF EXISTS app TO '/backups/app'
 
-use crate::catalog::NamespaceId;
-use crate::error::KalamDbError;
+use crate::ddl::DdlResult;
+
+use kalamdb_commons::models::NamespaceId;
 
 /// BACKUP DATABASE statement
 #[derive(Debug, Clone, PartialEq)]
@@ -26,14 +27,12 @@ impl BackupDatabaseStatement {
     /// Supports syntax:
     /// - BACKUP DATABASE namespace TO 'path'
     /// - BACKUP DATABASE IF EXISTS namespace TO 'path'
-    pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
+    pub fn parse(sql: &str) -> DdlResult<Self> {
         let sql_trimmed = sql.trim();
         let sql_upper = sql_trimmed.to_uppercase();
 
         if !sql_upper.starts_with("BACKUP DATABASE") {
-            return Err(KalamDbError::InvalidSql(
-                "Expected BACKUP DATABASE statement".to_string(),
-            ));
+            return Err("Expected BACKUP DATABASE statement".to_string());
         }
 
         let if_exists = sql_upper.contains("IF EXISTS");
@@ -56,21 +55,17 @@ impl BackupDatabaseStatement {
                 .map(|s| s.trim())
         };
 
-        let remaining = remaining.ok_or_else(|| {
-            KalamDbError::InvalidSql("Invalid BACKUP DATABASE syntax".to_string())
-        })?;
+        let remaining = remaining.ok_or_else(|| "Invalid BACKUP DATABASE syntax".to_string())?;
 
         // Split by TO keyword
         let to_upper = remaining.to_uppercase();
-        let to_pos = to_upper.find(" TO ").ok_or_else(|| {
-            KalamDbError::InvalidSql("Expected TO clause in BACKUP DATABASE".to_string())
-        })?;
+        let to_pos = to_upper
+            .find(" TO ")
+            .ok_or_else(|| "Expected TO clause in BACKUP DATABASE".to_string())?;
 
         let namespace_name = remaining[..to_pos].trim();
         if namespace_name.is_empty() {
-            return Err(KalamDbError::InvalidSql(
-                "Namespace name is required".to_string(),
-            ));
+            return Err("Namespace name is required".to_string());
         }
 
         let path_part = remaining[to_pos + 4..].trim(); // Skip " TO "
@@ -81,15 +76,11 @@ impl BackupDatabaseStatement {
         } else if path_part.starts_with('"') && path_part.ends_with('"') {
             path_part[1..path_part.len() - 1].to_string()
         } else {
-            return Err(KalamDbError::InvalidSql(
-                "Backup path must be quoted".to_string(),
-            ));
+            return Err("Backup path must be quoted".to_string());
         };
 
         if backup_path.is_empty() {
-            return Err(KalamDbError::InvalidSql(
-                "Backup path cannot be empty".to_string(),
-            ));
+            return Err("Backup path cannot be empty".to_string());
         }
 
         Ok(Self {

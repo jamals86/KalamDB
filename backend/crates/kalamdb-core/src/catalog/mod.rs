@@ -1,23 +1,19 @@
 //! Catalog module for namespace and table metadata management
 //!
 //! This module manages the catalog of namespaces, tables, and their associated metadata.
+//!
+//! **Note**: Basic type wrappers (UserId, NamespaceId, TableName, TableType) have been
+//! moved to `kalamdb_commons::models` for shared usage across crates.
 
-pub mod catalog_store;
 pub mod namespace;
-pub mod namespace_id;
 pub mod storage_location;
 pub mod table_cache;
 pub mod table_metadata;
-pub mod table_name;
-pub mod table_type;
-pub mod user_id;
 
-pub use catalog_store::CatalogStore;
 pub use namespace::Namespace;
-pub use namespace_id::NamespaceId;
 pub use storage_location::{LocationType, StorageLocation};
 pub use table_cache::TableCache;
 pub use table_metadata::TableMetadata;
-pub use table_name::TableName;
-pub use table_type::TableType;
-pub use user_id::UserId;
+
+// Re-export common types from kalamdb_commons for convenience
+pub use kalamdb_commons::models::{NamespaceId, TableName, TableType, UserId};

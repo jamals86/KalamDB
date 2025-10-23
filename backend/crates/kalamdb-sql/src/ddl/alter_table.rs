@@ -7,8 +7,9 @@
 //! - ALTER USER TABLE messages ADD COLUMN age INT
 //! - ALTER SHARED TABLE messages ADD COLUMN age INT
 
-use crate::catalog::{NamespaceId, TableName};
-use crate::error::KalamDbError;
+use crate::ddl::DdlResult;
+
+use kalamdb_commons::models::{NamespaceId, TableName};
 
 /// Column alteration operation
 #[derive(Debug, Clone, PartialEq)]
@@ -52,14 +53,12 @@ impl AlterTableStatement {
     /// - ALTER TABLE name MODIFY COLUMN col_name new_data_type [NULL | NOT NULL]
     /// - ALTER USER TABLE ... (explicitly specify table type)
     /// - ALTER SHARED TABLE ... (explicitly specify table type)
-    pub fn parse(sql: &str, current_namespace: &NamespaceId) -> Result<Self, KalamDbError> {
+    pub fn parse(sql: &str, current_namespace: &NamespaceId) -> DdlResult<Self> {
         let sql_trim = sql.trim();
         let sql_upper = sql_trim.to_uppercase();
 
         if !sql_upper.starts_with("ALTER") {
-            return Err(KalamDbError::InvalidSql(
-                "Expected ALTER TABLE statement".to_string(),
-            ));
+            return Err("Expected ALTER TABLE statement".to_string());
         }
 
         // Extract table name (handles ALTER TABLE, ALTER USER TABLE, ALTER SHARED TABLE)
@@ -73,9 +72,9 @@ impl AlterTableStatement {
         } else if sql_upper.contains(" MODIFY COLUMN ") || sql_upper.contains(" MODIFY ") {
             Self::parse_modify_column(sql_trim)?
         } else {
-            return Err(KalamDbError::InvalidSql(
-                "Expected ADD COLUMN, DROP COLUMN, or MODIFY COLUMN operation".to_string(),
-            ));
+            return Err(
+                "Expected ADD COLUMN, DROP COLUMN, or MODIFY COLUMN operation"
+            .to_string());
         };
 
         Ok(Self {
@@ -86,7 +85,7 @@ impl AlterTableStatement {
     }
 
     /// Extract table name from ALTER TABLE statement
-    fn extract_table_name(sql: &str) -> Result<String, KalamDbError> {
+    fn extract_table_name(sql: &str) -> DdlResult<String> {
         let sql_upper = sql.to_uppercase();
 
         // Try different patterns
@@ -108,11 +107,11 @@ impl AlterTableStatement {
 
         after_alter
             .map(|s| s.to_string())
-            .ok_or_else(|| KalamDbError::InvalidSql("Table name is required".to_string()))
+            .ok_or_else(|| "Table name is required".to_string())
     }
 
     /// Parse ADD COLUMN operation
-    fn parse_add_column(sql: &str) -> Result<ColumnOperation, KalamDbError> {
+    fn parse_add_column(sql: &str) -> DdlResult<ColumnOperation> {
         let sql_upper = sql.to_uppercase();
 
         // Find the position of ADD COLUMN or ADD
@@ -135,9 +134,7 @@ impl AlterTableStatement {
         // Parse column definition: name type [NULL|NOT NULL] [DEFAULT value]
         let parts: Vec<&str> = column_def.split_whitespace().collect();
         if parts.len() < 2 {
-            return Err(KalamDbError::InvalidSql(
-                "Column definition requires name and data type".to_string(),
-            ));
+            return Err("Column definition requires name and data type".to_string());
         }
 
         let column_name = parts[0].to_string();
@@ -165,7 +162,7 @@ impl AlterTableStatement {
     }
 
     /// Parse DROP COLUMN operation
-    fn parse_drop_column(sql: &str) -> Result<ColumnOperation, KalamDbError> {
+    fn parse_drop_column(sql: &str) -> DdlResult<ColumnOperation> {
         let sql_upper = sql.to_uppercase();
 
         // Find the position of DROP COLUMN or DROP
@@ -183,7 +180,7 @@ impl AlterTableStatement {
             .or_else(|| column_part.strip_prefix(" DROP "))
             .or_else(|| column_part.strip_prefix(" drop "))
             .and_then(|s| s.trim().split_whitespace().next())
-            .ok_or_else(|| KalamDbError::InvalidSql("Column name is required".to_string()))?;
+            .ok_or_else(|| "Column name is required".to_string())?;
 
         Ok(ColumnOperation::Drop {
             column_name: column_name.to_string(),
@@ -191,7 +188,7 @@ impl AlterTableStatement {
     }
 
     /// Parse MODIFY COLUMN operation
-    fn parse_modify_column(sql: &str) -> Result<ColumnOperation, KalamDbError> {
+    fn parse_modify_column(sql: &str) -> DdlResult<ColumnOperation> {
         let sql_upper = sql.to_uppercase();
 
         // Find the position of MODIFY COLUMN or MODIFY
@@ -214,9 +211,9 @@ impl AlterTableStatement {
         // Parse column definition: name new_type [NULL|NOT NULL]
         let parts: Vec<&str> = column_def.split_whitespace().collect();
         if parts.len() < 2 {
-            return Err(KalamDbError::InvalidSql(
-                "Column modification requires name and new data type".to_string(),
-            ));
+            return Err(
+                "Column modification requires name and new data type"
+            .to_string());
         }
 
         let column_name = parts[0].to_string();

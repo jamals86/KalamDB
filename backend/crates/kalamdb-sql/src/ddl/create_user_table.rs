@@ -5,7 +5,7 @@
 
 use crate::compatibility::map_sql_type_to_arrow;
 use crate::ddl::DdlResult;
-use anyhow::anyhow;
+
 use arrow::datatypes::{Field, Schema};
 use kalamdb_commons::models::{NamespaceId, TableName};
 use regex::Regex;
@@ -140,10 +140,10 @@ impl CreateUserTableStatement {
 
         let dialect = GenericDialect {};
         let statements =
-            Parser::parse_sql(&dialect, &normalized_sql).map_err(|e| anyhow!(e.to_string()))?;
+            Parser::parse_sql(&dialect, &normalized_sql).map_err(|e| e.to_string())?;
 
         if statements.is_empty() {
-            return Err(anyhow!("No SQL statement found"));
+            return Err("No SQL statement found".to_string());
         }
 
         let stmt = &statements[0];
@@ -197,7 +197,7 @@ impl CreateUserTableStatement {
                     if_not_exists: *if_not_exists,
                 })
             }
-            _ => Err(anyhow!("Expected CREATE TABLE statement")),
+            _ => Err("Expected CREATE TABLE statement".to_string()),
         }
     }
 
@@ -224,10 +224,10 @@ impl CreateUserTableStatement {
                 // Both parameters provided - Combined policy
                 let interval_seconds: u32 = interval_caps[1]
                     .parse()
-                    .map_err(|_| anyhow!("Invalid FLUSH INTERVAL value"))?;
+                    .map_err(|_| "Invalid FLUSH INTERVAL value".to_string())?;
                 let row_limit: u32 = row_caps[1]
                     .parse()
-                    .map_err(|_| anyhow!("Invalid ROW_THRESHOLD value"))?;
+                    .map_err(|_| "Invalid ROW_THRESHOLD value".to_string())?;
 
                 let policy = UserTableFlushPolicy::Combined {
                     interval_seconds,
@@ -235,7 +235,7 @@ impl CreateUserTableStatement {
                 };
 
                 // T155b: Validate policy parameters
-                policy.validate().map_err(|e| anyhow!(e))?;
+                policy.validate().map_err(|e| e.to_string())?;
 
                 return Ok(Some(policy));
             }
@@ -243,10 +243,10 @@ impl CreateUserTableStatement {
                 // Only interval provided - TimeInterval policy
                 let interval_seconds: u32 = interval_caps[1]
                     .parse()
-                    .map_err(|_| anyhow!("Invalid FLUSH INTERVAL value"))?;
+                    .map_err(|_| "Invalid FLUSH INTERVAL value".to_string())?;
 
                 let policy = UserTableFlushPolicy::TimeInterval { interval_seconds };
-                policy.validate().map_err(|e| anyhow!(e))?;
+                policy.validate().map_err(|e| e.to_string())?;
 
                 return Ok(Some(policy));
             }
@@ -254,10 +254,10 @@ impl CreateUserTableStatement {
                 // Only row threshold provided - RowLimit policy
                 let row_limit: u32 = row_caps[1]
                     .parse()
-                    .map_err(|_| anyhow!("Invalid ROW_THRESHOLD value"))?;
+                    .map_err(|_| "Invalid ROW_THRESHOLD value".to_string())?;
 
                 let policy = UserTableFlushPolicy::RowLimit { row_limit };
-                policy.validate().map_err(|e| anyhow!(e))?;
+                policy.validate().map_err(|e| e.to_string())?;
 
                 return Ok(Some(policy));
             }
@@ -271,9 +271,9 @@ impl CreateUserTableStatement {
         if let Some(caps) = rows_re.captures(sql) {
             let count: u32 = caps[1]
                 .parse()
-                .map_err(|_| anyhow!("Invalid FLUSH ROWS value"))?;
+                .map_err(|_| "Invalid FLUSH ROWS value".to_string())?;
             let policy = UserTableFlushPolicy::RowLimit { row_limit: count };
-            policy.validate().map_err(|e| anyhow!(e))?;
+            policy.validate().map_err(|e| e.to_string())?;
             return Ok(Some(policy));
         }
 
@@ -282,11 +282,11 @@ impl CreateUserTableStatement {
         if let Some(caps) = seconds_re.captures(sql) {
             let secs: u32 = caps[1]
                 .parse()
-                .map_err(|_| anyhow!("Invalid FLUSH SECONDS value"))?;
+                .map_err(|_| "Invalid FLUSH SECONDS value".to_string())?;
             let policy = UserTableFlushPolicy::TimeInterval {
                 interval_seconds: secs,
             };
-            policy.validate().map_err(|e| anyhow!(e))?;
+            policy.validate().map_err(|e| e.to_string())?;
             return Ok(Some(policy));
         }
 
@@ -313,7 +313,7 @@ impl CreateUserTableStatement {
                 .or_else(|| caps.get(2))
                 .or_else(|| caps.get(3))
                 .map(|m| m.as_str().to_string())
-                .ok_or_else(|| anyhow!("Invalid STORAGE clause"))?;
+                .ok_or_else(|| "Invalid STORAGE clause".to_string())?;
             Ok(Some(storage_id))
         } else {
             // T167a: Default to 'local' when omitted
@@ -340,7 +340,7 @@ impl CreateUserTableStatement {
     fn extract_table_name(name: &sqlparser::ast::ObjectName) -> DdlResult<String> {
         let parts = &name.0;
         if parts.is_empty() {
-            return Err(anyhow!("Empty table name"));
+            return Err("Empty table name".to_string());
         }
 
         // Take the last part as table name (handles both "table" and "namespace.table")
@@ -364,7 +364,7 @@ impl CreateUserTableStatement {
             .iter()
             .map(|col| {
                 let data_type =
-                    map_sql_type_to_arrow(&col.data_type).map_err(|e| anyhow!(e.to_string()))?;
+                    map_sql_type_to_arrow(&col.data_type).map_err(|e| e.to_string())?;
                 Ok(Field::new(
                     col.name.value.clone(),
                     data_type,
@@ -389,7 +389,7 @@ impl CreateUserTableStatement {
             .map(|c| c.is_ascii_lowercase())
             .unwrap_or(false)
         {
-            return Err(anyhow!("Table name must start with a lowercase letter"));
+            return Err("Table name must start with a lowercase letter".to_string());
         }
 
         // Can only contain lowercase letters, digits, and underscores
@@ -397,9 +397,9 @@ impl CreateUserTableStatement {
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
         {
-            return Err(anyhow!(
+            return Err(
                 "Table name can only contain lowercase letters, digits, and underscores"
-            ));
+            .to_string());
         }
 
         Ok(())

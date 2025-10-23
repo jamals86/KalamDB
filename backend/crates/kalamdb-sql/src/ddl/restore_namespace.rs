@@ -4,8 +4,9 @@
 //! - RESTORE DATABASE app FROM 'path/to/backup'
 //! - RESTORE DATABASE IF NOT EXISTS app FROM '/backups/app'
 
-use crate::catalog::NamespaceId;
-use crate::error::KalamDbError;
+use crate::ddl::DdlResult;
+
+use kalamdb_commons::models::NamespaceId;
 
 /// RESTORE DATABASE statement
 #[derive(Debug, Clone, PartialEq)]
@@ -26,14 +27,12 @@ impl RestoreDatabaseStatement {
     /// Supports syntax:
     /// - RESTORE DATABASE namespace FROM 'path'
     /// - RESTORE DATABASE IF NOT EXISTS namespace FROM 'path'
-    pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
+    pub fn parse(sql: &str) -> DdlResult<Self> {
         let sql_trimmed = sql.trim();
         let sql_upper = sql_trimmed.to_uppercase();
 
         if !sql_upper.starts_with("RESTORE DATABASE") {
-            return Err(KalamDbError::InvalidSql(
-                "Expected RESTORE DATABASE statement".to_string(),
-            ));
+            return Err("Expected RESTORE DATABASE statement".to_string());
         }
 
         let if_not_exists = sql_upper.contains("IF NOT EXISTS");
@@ -56,21 +55,17 @@ impl RestoreDatabaseStatement {
                 .map(|s| s.trim())
         };
 
-        let remaining = remaining.ok_or_else(|| {
-            KalamDbError::InvalidSql("Invalid RESTORE DATABASE syntax".to_string())
-        })?;
+        let remaining = remaining.ok_or_else(|| "Invalid RESTORE DATABASE syntax".to_string())?;
 
         // Split by FROM keyword
         let from_upper = remaining.to_uppercase();
-        let from_pos = from_upper.find(" FROM ").ok_or_else(|| {
-            KalamDbError::InvalidSql("Expected FROM clause in RESTORE DATABASE".to_string())
-        })?;
+        let from_pos = from_upper
+            .find(" FROM ")
+            .ok_or_else(|| "Expected FROM clause in RESTORE DATABASE".to_string())?;
 
         let namespace_name = remaining[..from_pos].trim();
         if namespace_name.is_empty() {
-            return Err(KalamDbError::InvalidSql(
-                "Namespace name is required".to_string(),
-            ));
+            return Err("Namespace name is required".to_string());
         }
 
         let path_part = remaining[from_pos + 6..].trim(); // Skip " FROM "
@@ -81,15 +76,11 @@ impl RestoreDatabaseStatement {
         } else if path_part.starts_with('"') && path_part.ends_with('"') {
             path_part[1..path_part.len() - 1].to_string()
         } else {
-            return Err(KalamDbError::InvalidSql(
-                "Backup path must be quoted".to_string(),
-            ));
+            return Err("Backup path must be quoted".to_string());
         };
 
         if backup_path.is_empty() {
-            return Err(KalamDbError::InvalidSql(
-                "Backup path cannot be empty".to_string(),
-            ));
+            return Err("Backup path cannot be empty".to_string());
         }
 
         Ok(Self {

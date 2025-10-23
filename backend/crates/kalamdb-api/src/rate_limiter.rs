@@ -3,7 +3,7 @@
 //! This module provides token bucket-based rate limiting to prevent abuse
 //! and ensure fair resource allocation across users and connections.
 
-use kalamdb_core::catalog::UserId;
+use kalamdb_commons::models::UserId;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};

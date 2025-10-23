@@ -27,7 +27,7 @@
 //!
 //!     // Execute a query
 //!     let response = client.execute_query("SELECT * FROM users LIMIT 10").await?;
-//!     println!("Results: {:?}", response.data);
+//!     println!("Results: {:?}", response.results);
 //!
 //!     // Subscribe to real-time changes
 //!     let mut subscription = client.subscribe("SELECT * FROM messages").await?;

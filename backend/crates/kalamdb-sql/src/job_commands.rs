@@ -61,15 +61,14 @@ pub enum JobCommand {
 /// let cmd = parse_job_command("KILL JOB 'flush-001'").unwrap();
 /// ```
 pub fn parse_job_command(sql: &str) -> Result<JobCommand> {
-    let sql = sql.trim();
-    let sql_upper = sql.to_uppercase();
-
-    // Normalize whitespace for keyword matching
-    let normalized = sql_upper.split_whitespace().collect::<Vec<_>>().join(" ");
+    use crate::parser::utils::normalize_sql;
+    
+    let normalized = normalize_sql(sql);
+    let sql_upper = normalized.to_uppercase();
 
     // Check for KILL JOB command
-    if normalized.starts_with("KILL JOB") {
-        return parse_kill_job(sql);
+    if sql_upper.starts_with("KILL JOB") {
+        return parse_kill_job(&normalized);
     }
 
     Err(anyhow!("Unknown job command: {}", sql))
@@ -79,8 +78,6 @@ pub fn parse_job_command(sql: &str) -> Result<JobCommand> {
 ///
 /// Syntax: KILL JOB 'job_id' | KILL JOB "job_id" | KILL JOB job_id
 fn parse_kill_job(sql: &str) -> Result<JobCommand> {
-    let sql = sql.trim();
-
     // Remove "KILL JOB" prefix (handle variable whitespace)
     let parts: Vec<&str> = sql.split_whitespace().collect();
     if parts.len() < 3 {

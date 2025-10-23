@@ -4,8 +4,9 @@
 //! - SHOW TABLES
 //! - SHOW TABLES IN namespace
 
-use crate::catalog::NamespaceId;
-use crate::error::KalamDbError;
+use crate::ddl::DdlResult;
+
+use kalamdb_commons::models::NamespaceId;
 
 /// SHOW TABLES statement
 #[derive(Debug, Clone, PartialEq)]
@@ -20,14 +21,12 @@ impl ShowTablesStatement {
     /// Supports syntax:
     /// - SHOW TABLES
     /// - SHOW TABLES IN namespace
-    pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
+    pub fn parse(sql: &str) -> DdlResult<Self> {
         let sql_trimmed = sql.trim();
         let sql_upper = sql_trimmed.to_uppercase();
 
         if !sql_upper.starts_with("SHOW TABLES") {
-            return Err(KalamDbError::InvalidSql(
-                "Expected SHOW TABLES statement".to_string(),
-            ));
+            return Err("Expected SHOW TABLES statement".to_string());
         }
 
         // Check for IN clause
@@ -37,23 +36,20 @@ impl ShowTablesStatement {
             let namespace_part = sql_trimmed[in_pos + 4..].trim();
 
             if namespace_part.is_empty() {
-                return Err(KalamDbError::InvalidSql(
-                    "Namespace name required after IN".to_string(),
-                ));
+                return Err("Namespace name required after IN".to_string());
             }
 
-            let namespace_name = namespace_part.split_whitespace().next().ok_or_else(|| {
-                KalamDbError::InvalidSql("Namespace name required after IN".to_string())
-            })?;
+            let namespace_name = namespace_part
+                .split_whitespace()
+                .next()
+                .ok_or_else(|| "Namespace name required after IN".to_string())?;
 
             Ok(Self {
                 namespace_id: Some(NamespaceId::new(namespace_name)),
             })
         } else if sql_upper.ends_with(" IN") {
             // Trailing IN without namespace
-            Err(KalamDbError::InvalidSql(
-                "Namespace name required after IN".to_string(),
-            ))
+            Err("Namespace name required after IN".to_string())
         } else {
             // No namespace filter - show all tables
             Ok(Self { namespace_id: None })
@@ -86,7 +82,6 @@ mod tests {
     #[test]
     fn test_parse_show_tables_missing_namespace() {
         let result = ShowTablesStatement::parse("SHOW TABLES IN");
-        println!("Result: {:?}", result);
         assert!(result.is_err());
     }
 

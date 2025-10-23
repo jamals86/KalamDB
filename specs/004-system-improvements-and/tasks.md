@@ -211,15 +211,15 @@
 - [X] T044a [P] [US14] Create `/backend/crates/kalamdb-sql/src/keywords.rs` with centralized SQL keyword enums
 - [X] T045a [P] [US14] Define SqlKeyword enum in keywords.rs (SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, etc.)
 - [X] T046a [P] [US14] Define KalamDbKeyword enum in keywords.rs (STORAGE, FLUSH, NAMESPACE, etc.)
-- [ ] T047a [US14] Add sqlparser-rs dependency to kalamdb-sql Cargo.toml (version 0.40+)
-- [ ] T048a [US14] Create `/backend/crates/kalamdb-sql/src/parser/mod.rs` for parser module organization
-- [ ] T049a [P] [US14] Create `/backend/crates/kalamdb-sql/src/parser/standard.rs` wrapping sqlparser-rs for standard SQL
-- [ ] T050a [P] [US14] Create `/backend/crates/kalamdb-sql/src/parser/extensions.rs` for KalamDB-specific extensions
-- [ ] T051a [US14] Implement sqlparser-rs custom dialect for KalamDB extending PostgreSQL dialect
-- [ ] T052a [US14] Add custom statement types: CreateStorage, AlterStorage, FlushTable, KillJob, KillLiveQuery
-- [ ] T053a [US14] Refactor existing parsers to use sqlparser-rs where possible
-- [ ] T054a [US14] Keep custom parsers only for KalamDB-specific syntax (CREATE STORAGE, etc.)
-- [ ] T055a [US14] Consolidate duplicate parsing logic across storage_commands.rs, flush_commands.rs, user_management.rs
+- [X] T047a [US14] Add sqlparser-rs dependency to kalamdb-sql Cargo.toml (version 0.40+)
+- [X] T048a [US14] Create `/backend/crates/kalamdb-sql/src/parser/mod.rs` for parser module organization
+- [X] T049a [P] [US14] Create `/backend/crates/kalamdb-sql/src/parser/standard.rs` wrapping sqlparser-rs for standard SQL
+- [X] T050a [P] [US14] Create `/backend/crates/kalamdb-sql/src/parser/extensions.rs` for KalamDB-specific extensions
+- [X] T051a [US14] Implement sqlparser-rs custom dialect for KalamDB extending PostgreSQL dialect
+- [X] T052a [US14] Add custom statement types: CreateStorage, AlterStorage, FlushTable, KillJob, KillLiveQuery
+- [X] T053a [US14] Refactor existing parsers to use sqlparser-rs where possible
+- [X] T054a [US14] Keep custom parsers only for KalamDB-specific syntax (CREATE STORAGE, etc.)
+- [X] T055a [US14] Consolidate duplicate parsing logic across storage_commands.rs, flush_commands.rs, user_management.rs
 
 #### PostgreSQL/MySQL Compatibility
 
@@ -238,6 +238,23 @@
 
 - [ ] T066a [US14] Audit all SQL parsing code for duplication and consolidate
 - [ ] T067a [US14] Ensure clear separation: kalamdb-sql (parsing) vs kalamdb-core (execution)
+  - [ ] T067a-1 [US14] Move `alter_namespace.rs` from kalamdb-core to kalamdb-sql + refactor to use DdlResult & shared utils
+  - [ ] T067a-2 [US14] Move `backup_namespace.rs` from kalamdb-core to kalamdb-sql + refactor
+  - [ ] T067a-3 [US14] Move `restore_namespace.rs` from kalamdb-core to kalamdb-sql + refactor
+  - [X] T067a-4 [US14] Move `drop_namespace.rs` from kalamdb-core to kalamdb-sql + refactor
+  - [X] T067a-5 [US14] Move `show_namespaces.rs` from kalamdb-core to kalamdb-sql + refactor
+  - [X] T067a-6 [US14] Move `show_tables.rs` from kalamdb-core to kalamdb-sql + refactor
+  - [X] T067a-7 [US14] Move `show_table_stats.rs` from kalamdb-core to kalamdb-sql + refactor
+  - [ ] T067a-8 [US14] Move `show_backup.rs` from kalamdb-core to kalamdb-sql + refactor
+  - [X] T067a-9 [US14] Move `describe_table.rs` from kalamdb-core to kalamdb-sql + refactor
+  - [ ] T067a-10 [US14] Move `create_shared_table.rs` from kalamdb-core to kalamdb-sql + refactor
+  - [ ] T067a-11 [US14] Move `create_stream_table.rs` from kalamdb-core to kalamdb-sql + refactor
+  - [ ] T067a-12 [US14] Move `alter_table.rs` from kalamdb-core to kalamdb-sql + refactor
+  - [ ] T067a-13 [US14] Move `kill_live_query.rs` from kalamdb-core to kalamdb-sql + refactor
+  - [ ] T067a-14 [US14] Update kalamdb-sql/src/ddl/mod.rs to export all DDL statements
+  - [ ] T067a-15 [US14] Update kalamdb-core imports to use kalamdb_sql::ddl::*
+  - [ ] T067a-16 [US14] Remove old kalamdb-core/src/sql/ddl/ directory
+  - [ ] T067a-17 [US14] Update executor.rs to import DDL statements from kalamdb-sql
 - [ ] T068a [US14] Remove any ad-hoc string parsing in favor of structured parser usage
 - [ ] T069a [US14] Add parser unit tests for all SQL statement types
 - [ ] T070a [US14] Add parser tests for PostgreSQL syntax variants

@@ -2,8 +2,8 @@
 //!
 //! Namespaces are logical containers for tables in KalamDB.
 
-use crate::catalog::NamespaceId;
 use chrono::{DateTime, Utc};
+use kalamdb_commons::models::NamespaceId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

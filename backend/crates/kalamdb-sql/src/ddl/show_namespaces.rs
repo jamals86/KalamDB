@@ -3,7 +3,8 @@
 //! Parses SQL statements like:
 //! - SHOW NAMESPACES
 
-use crate::error::KalamDbError;
+use crate::ddl::DdlResult;
+
 
 /// SHOW NAMESPACES statement
 #[derive(Debug, Clone, PartialEq)]
@@ -11,13 +12,11 @@ pub struct ShowNamespacesStatement;
 
 impl ShowNamespacesStatement {
     /// Parse a SHOW NAMESPACES statement from SQL
-    pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
+    pub fn parse(sql: &str) -> DdlResult<Self> {
         let sql_upper = sql.trim().to_uppercase();
 
         if sql_upper != "SHOW NAMESPACES" {
-            return Err(KalamDbError::InvalidSql(
-                "Expected SHOW NAMESPACES statement".to_string(),
-            ));
+            return Err("Expected SHOW NAMESPACES statement".to_string());
         }
 
         Ok(Self)

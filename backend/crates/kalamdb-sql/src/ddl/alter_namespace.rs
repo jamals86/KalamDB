@@ -3,8 +3,9 @@
 //! Parses SQL statements like:
 //! - ALTER NAMESPACE app SET OPTIONS (key1 = 'value1', key2 = 'value2')
 
-use crate::catalog::NamespaceId;
-use crate::error::KalamDbError;
+use crate::ddl::DdlResult;
+
+use kalamdb_commons::models::NamespaceId;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
@@ -23,19 +24,15 @@ impl AlterNamespaceStatement {
     ///
     /// Supports syntax:
     /// - ALTER NAMESPACE name SET OPTIONS (key1 = 'value1', key2 = 42, key3 = true)
-    pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
+    pub fn parse(sql: &str) -> DdlResult<Self> {
         let sql_upper = sql.trim().to_uppercase();
 
         if !sql_upper.starts_with("ALTER NAMESPACE") {
-            return Err(KalamDbError::InvalidSql(
-                "Expected ALTER NAMESPACE statement".to_string(),
-            ));
+            return Err("Expected ALTER NAMESPACE statement".to_string());
         }
 
         if !sql_upper.contains("SET OPTIONS") {
-            return Err(KalamDbError::InvalidSql(
-                "Expected SET OPTIONS clause".to_string(),
-            ));
+            return Err("Expected SET OPTIONS clause".to_string());
         }
 
         // Extract namespace name (between ALTER NAMESPACE and SET OPTIONS)
@@ -43,27 +40,25 @@ impl AlterNamespaceStatement {
             .trim()
             .strip_prefix("ALTER NAMESPACE")
             .or_else(|| sql.trim().strip_prefix("alter namespace"))
-            .ok_or_else(|| KalamDbError::InvalidSql("Invalid ALTER NAMESPACE syntax".to_string()))?
+            .ok_or_else(|| "Invalid ALTER NAMESPACE syntax".to_string())?
             .trim();
 
         let set_options_pos = name_part
             .to_uppercase()
             .find("SET OPTIONS")
-            .ok_or_else(|| KalamDbError::InvalidSql("SET OPTIONS clause not found".to_string()))?;
+            .ok_or_else(|| "SET OPTIONS clause not found".to_string())?;
 
         let name = name_part[..set_options_pos].trim();
 
         if name.is_empty() {
-            return Err(KalamDbError::InvalidSql(
-                "Namespace name is required".to_string(),
-            ));
+            return Err("Namespace name is required".to_string());
         }
 
         // Extract options from parentheses
         let options_part = name_part[set_options_pos..]
             .strip_prefix("SET OPTIONS")
             .or_else(|| name_part[set_options_pos..].strip_prefix("set options"))
-            .ok_or_else(|| KalamDbError::InvalidSql("Invalid SET OPTIONS syntax".to_string()))?
+            .ok_or_else(|| "Invalid SET OPTIONS syntax".to_string())?
             .trim();
 
         let options = Self::parse_options(options_part)?;
@@ -75,13 +70,11 @@ impl AlterNamespaceStatement {
     }
 
     /// Parse options from the (key1 = value1, key2 = value2) format
-    fn parse_options(options_str: &str) -> Result<HashMap<String, JsonValue>, KalamDbError> {
+    fn parse_options(options_str: &str) -> DdlResult<HashMap<String, JsonValue>> {
         let options_str = options_str.trim();
 
         if !options_str.starts_with('(') || !options_str.ends_with(')') {
-            return Err(KalamDbError::InvalidSql(
-                "Options must be enclosed in parentheses".to_string(),
-            ));
+            return Err("Options must be enclosed in parentheses".to_string());
         }
 
         let inner = &options_str[1..options_str.len() - 1].trim();
@@ -97,10 +90,7 @@ impl AlterNamespaceStatement {
             let parts: Vec<&str> = pair.split('=').map(|s| s.trim()).collect();
 
             if parts.len() != 2 {
-                return Err(KalamDbError::InvalidSql(format!(
-                    "Invalid option format: {}",
-                    pair
-                )));
+                return Err(format!("Invalid option format: {}", pair));
             }
 
             let key = parts[0].to_string();
@@ -120,13 +110,10 @@ impl AlterNamespaceStatement {
                 // Float value
                 JsonValue::Number(
                     serde_json::Number::from_f64(num)
-                        .ok_or_else(|| KalamDbError::InvalidSql("Invalid number".to_string()))?,
+                        .ok_or_else(|| "Invalid number".to_string())?,
                 )
             } else {
-                return Err(KalamDbError::InvalidSql(format!(
-                    "Invalid value format: {}",
-                    value_str
-                )));
+                return Err(format!("Invalid value format: {}", value_str));
             };
 
             options.insert(key, value);

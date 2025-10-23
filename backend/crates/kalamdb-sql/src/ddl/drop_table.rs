@@ -7,7 +7,7 @@
 //! - DROP TABLE IF EXISTS messages
 
 use crate::ddl::DdlResult;
-use anyhow::anyhow;
+
 use kalamdb_commons::models::{NamespaceId, TableName};
 
 /// Table categories supported by DROP TABLE statements.
@@ -47,7 +47,7 @@ impl DropTableStatement {
         let sql_upper = sql.trim().to_uppercase();
 
         if !sql_upper.starts_with("DROP") {
-            return Err(anyhow!("Expected DROP TABLE statement"));
+            return Err("Expected DROP TABLE statement".to_string());
         }
 
         // Determine if IF EXISTS is present
@@ -64,9 +64,9 @@ impl DropTableStatement {
             // Default to USER TABLE if no type specified
             TableKind::User
         } else {
-            return Err(anyhow!(
+            return Err(
                 "Expected DROP [USER|SHARED|STREAM] TABLE statement"
-            ));
+            .to_string());
         };
 
         // Extract table name
@@ -103,7 +103,7 @@ impl DropTableStatement {
 
         let name = name_part
             .and_then(|s| s.split_whitespace().next())
-            .ok_or_else(|| anyhow!("Table name is required"))?;
+            .ok_or_else(|| "Table name is required".to_string())?;
 
         // Handle qualified name (namespace.table)
         let (namespace_id, table_name) = if let Some(dot_pos) = name.find('.') {

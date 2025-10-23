@@ -4,8 +4,9 @@
 //! - DROP NAMESPACE app
 //! - DROP NAMESPACE IF EXISTS app
 
-use crate::catalog::NamespaceId;
-use crate::error::KalamDbError;
+use crate::ddl::DdlResult;
+
+use kalamdb_commons::models::NamespaceId;
 
 /// DROP NAMESPACE statement
 #[derive(Debug, Clone, PartialEq)]
@@ -23,13 +24,11 @@ impl DropNamespaceStatement {
     /// Supports syntax:
     /// - DROP NAMESPACE name
     /// - DROP NAMESPACE IF EXISTS name
-    pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
+    pub fn parse(sql: &str) -> DdlResult<Self> {
         let sql_upper = sql.trim().to_uppercase();
 
         if !sql_upper.starts_with("DROP NAMESPACE") {
-            return Err(KalamDbError::InvalidSql(
-                "Expected DROP NAMESPACE statement".to_string(),
-            ));
+            return Err("Expected DROP NAMESPACE statement".to_string());
         }
 
         let if_exists = sql_upper.contains("IF EXISTS");
@@ -54,7 +53,7 @@ impl DropNamespaceStatement {
 
         let name = name_part
             .and_then(|s| s.split_whitespace().next())
-            .ok_or_else(|| KalamDbError::InvalidSql("Namespace name is required".to_string()))?;
+            .ok_or_else(|| "Namespace name is required".to_string())?;
 
         Ok(Self {
             name: NamespaceId::new(name),

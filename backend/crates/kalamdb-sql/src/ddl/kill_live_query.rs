@@ -3,8 +3,9 @@
 //! Parses SQL statements like:
 //! - KILL LIVE QUERY 'user123-conn_abc-messages-updatedMessages'
 
-use crate::error::KalamDbError;
-use crate::live_query::LiveId;
+use crate::ddl::DdlResult;
+
+use kalamdb_commons::models::{ConnectionId, LiveId};
 
 /// KILL LIVE QUERY statement
 #[derive(Debug, Clone, PartialEq)]
@@ -20,13 +21,11 @@ impl KillLiveQueryStatement {
     /// - KILL LIVE QUERY 'live_id'
     /// - KILL LIVE QUERY "live_id"
     /// - KILL LIVE QUERY live_id
-    pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
+    pub fn parse(sql: &str) -> DdlResult<Self> {
         let sql_upper = sql.trim().to_uppercase();
 
         if !sql_upper.starts_with("KILL LIVE QUERY") {
-            return Err(KalamDbError::InvalidSql(
-                "Expected KILL LIVE QUERY statement".to_string(),
-            ));
+            return Err("Expected KILL LIVE QUERY statement".to_string());
         }
 
         // Extract live_id (everything after "KILL LIVE QUERY")
@@ -35,7 +34,7 @@ impl KillLiveQueryStatement {
             .strip_prefix("KILL LIVE QUERY")
             .or_else(|| sql.trim().strip_prefix("kill live query"))
             .map(|s| s.trim())
-            .ok_or_else(|| KalamDbError::InvalidSql("Live query ID is required".to_string()))?;
+            .ok_or_else(|| "Live query ID is required".to_string())?;
 
         // Remove quotes if present
         let live_id_str = live_id_str
@@ -43,13 +42,11 @@ impl KillLiveQueryStatement {
             .trim();
 
         if live_id_str.is_empty() {
-            return Err(KalamDbError::InvalidSql(
-                "Live query ID cannot be empty".to_string(),
-            ));
+            return Err("Live query ID cannot be empty".to_string());
         }
 
         // Parse live_id string to LiveId struct
-        let live_id = LiveId::from_string(live_id_str)?;
+        let live_id = LiveId::from_string(live_id_str).map_err(|e| e.to_string())?;
 
         Ok(Self { live_id })
     }
@@ -60,7 +57,7 @@ impl KillLiveQueryStatement {
     }
 
     /// Get the connection_id from the live_id
-    pub fn connection_id(&self) -> &crate::live_query::ConnectionId {
+    pub fn connection_id(&self) -> &ConnectionId {
         self.live_id.connection_id()
     }
 }

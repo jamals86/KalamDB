@@ -36,12 +36,6 @@ use crate::services::{
     UserTableService,
 };
 use crate::sql::datafusion_session::DataFusionSessionFactory;
-use crate::sql::ddl::{
-    AlterNamespaceStatement, CreateNamespaceStatement, CreateSharedTableStatement,
-    CreateStreamTableStatement, CreateUserTableStatement, DescribeTableStatement,
-    DropNamespaceStatement, DropTableStatement, ShowNamespacesStatement, ShowTableStatsStatement,
-    ShowTablesStatement,
-};
 use crate::tables::{
     system::{
         NamespacesTableProvider, SystemTablesTableProvider,
@@ -55,6 +49,12 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser;
+use kalamdb_sql::ddl::{
+    AlterNamespaceStatement, CreateNamespaceStatement, CreateSharedTableStatement,
+    CreateStreamTableStatement, CreateUserTableStatement, DescribeTableStatement,
+    DropNamespaceStatement, DropTableStatement, FlushPolicy, ShowNamespacesStatement,
+    ShowTableStatsStatement, ShowTablesStatement,
+};
 use kalamdb_sql::{job_commands::parse_job_command, KalamSql};
 use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::sync::Arc;
@@ -1972,13 +1972,13 @@ impl SqlExecutor {
                     // Convert local FlushPolicy to the global one for serialization
                     let flush_policy_json = if let Some(fp) = flush_policy {
                         match fp {
-                            crate::sql::ddl::create_shared_table::FlushPolicy::Rows(n) => {
+                            FlushPolicy::Rows(n) => {
                                 serde_json::json!({"type": "row_limit", "row_limit": n}).to_string()
                             }
-                            crate::sql::ddl::create_shared_table::FlushPolicy::Time(s) => {
+                            FlushPolicy::Time(s) => {
                                 serde_json::json!({"type": "time_interval", "interval_seconds": s}).to_string()
                             }
-                            crate::sql::ddl::create_shared_table::FlushPolicy::Combined { rows, seconds } => {
+                            FlushPolicy::Combined { rows, seconds } => {
                                 serde_json::json!({"type": "combined", "row_limit": rows, "interval_seconds": seconds}).to_string()
                             }
                         }
@@ -2047,13 +2047,13 @@ impl SqlExecutor {
                     let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
                     let flush_policy_json = if let Some(fp) = flush_policy {
                         match fp {
-                            crate::sql::ddl::create_shared_table::FlushPolicy::Rows(n) => {
+                            FlushPolicy::Rows(n) => {
                                 serde_json::json!({"type": "row_limit", "row_limit": n}).to_string()
                             }
-                            crate::sql::ddl::create_shared_table::FlushPolicy::Time(s) => {
+                            FlushPolicy::Time(s) => {
                                 serde_json::json!({"type": "time_interval", "interval_seconds": s}).to_string()
                             }
-                            crate::sql::ddl::create_shared_table::FlushPolicy::Combined { rows, seconds } => {
+                            FlushPolicy::Combined { rows, seconds } => {
                                 serde_json::json!({"type": "combined", "row_limit": rows, "interval_seconds": seconds}).to_string()
                             }
                         }

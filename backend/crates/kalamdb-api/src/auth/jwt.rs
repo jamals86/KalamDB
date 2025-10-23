@@ -4,7 +4,7 @@
 //! using the jsonwebtoken crate.
 
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
-use kalamdb_core::catalog::UserId;
+use kalamdb_commons::models::UserId;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 

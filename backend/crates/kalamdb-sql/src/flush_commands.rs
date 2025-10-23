@@ -59,6 +59,7 @@
 //! ```rust
 //! use kalamdb_sql::flush_commands::{FlushTableStatement, FlushAllTablesStatement};
 //!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Parse FLUSH TABLE
 //! let stmt = FlushTableStatement::parse("FLUSH TABLE prod.events")?;
 //! assert_eq!(stmt.namespace, "prod");
@@ -67,6 +68,8 @@
 //! // Parse FLUSH ALL TABLES
 //! let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod")?;
 //! assert_eq!(stmt.namespace, "prod");
+//! # Ok(())
+//! # }
 //! ```
 
 /// FLUSH TABLE statement
@@ -104,13 +107,10 @@ impl FlushTableStatement {
     /// - Syntax is invalid
     /// - Table name is not qualified (missing namespace)
     pub fn parse(sql: &str) -> Result<Self, String> {
+        use crate::parser::utils::{normalize_sql, extract_qualified_table};
+
         // Normalize SQL: remove extra whitespace, semicolons
-        let normalized = sql
-            .trim()
-            .trim_end_matches(';')
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+        let normalized = normalize_sql(sql);
         let sql_upper = normalized.to_uppercase();
 
         // Check for FLUSH TABLE prefix
@@ -126,16 +126,7 @@ impl FlushTableStatement {
 
         // Get table identifier (should be namespace.table_name)
         let table_ref = tokens[2];
-        let parts: Vec<&str> = table_ref.split('.').collect();
-
-        if parts.len() != 2 {
-            return Err(
-                "Table name must be qualified (namespace.table_name)".to_string(),
-            );
-        }
-
-        let namespace = parts[0].to_string();
-        let table_name = parts[1].to_string();
+        let (namespace, table_name) = extract_qualified_table(table_ref)?;
 
         // Check for extra tokens
         if tokens.len() > 3 {
@@ -183,13 +174,10 @@ impl FlushAllTablesStatement {
     /// - Missing IN keyword
     /// - Extra tokens after namespace
     pub fn parse(sql: &str) -> Result<Self, String> {
+        use crate::parser::utils::normalize_sql;
+
         // Normalize SQL: remove extra whitespace, semicolons
-        let normalized = sql
-            .trim()
-            .trim_end_matches(';')
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+        let normalized = normalize_sql(sql);
         let sql_upper = normalized.to_uppercase();
 
         // Check for FLUSH ALL TABLES IN prefix

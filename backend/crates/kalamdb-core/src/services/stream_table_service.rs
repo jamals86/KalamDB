@@ -11,8 +11,8 @@
 use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
-use crate::sql::ddl::create_stream_table::CreateStreamTableStatement;
 use datafusion::arrow::datatypes::Schema;
+use kalamdb_sql::ddl::CreateStreamTableStatement;
 use kalamdb_sql::models::TableSchema;
 use kalamdb_sql::KalamSql;
 use kalamdb_store::StreamTableStore;

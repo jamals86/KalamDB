@@ -3,13 +3,14 @@
 //! Parses CREATE SHARED TABLE statements with schema, location, flush policy,
 //! and deleted retention configuration.
 
-use crate::catalog::{NamespaceId, TableName};
-use crate::error::KalamDbError;
-use datafusion::arrow::datatypes::{Field, Schema};
-use datafusion::sql::sqlparser::ast::{ColumnDef, Statement};
-use datafusion::sql::sqlparser::dialect::GenericDialect;
-use datafusion::sql::sqlparser::parser::Parser;
-use kalamdb_sql::map_sql_type_to_arrow;
+use crate::compatibility::map_sql_type_to_arrow;
+use crate::ddl::DdlResult;
+
+use arrow::datatypes::{Field, Schema};
+use kalamdb_commons::models::{NamespaceId, TableName};
+use sqlparser::ast::{ColumnDef, ColumnOption, ObjectName, Statement};
+use sqlparser::dialect::GenericDialect;
+use sqlparser::parser::Parser;
 use std::sync::Arc;
 
 /// Flush policy for shared tables
@@ -44,7 +45,7 @@ pub struct CreateSharedTableStatement {
 
 impl CreateSharedTableStatement {
     /// Parse a CREATE SHARED TABLE statement from SQL
-    pub fn parse(sql: &str, current_namespace: &NamespaceId) -> Result<Self, KalamDbError> {
+    pub fn parse(sql: &str, current_namespace: &NamespaceId) -> DdlResult<Self> {
         // Preprocess SQL to remove "SHARED" keyword and FLUSH clause for standard SQL parser
         // "CREATE SHARED TABLE ... FLUSH ROWS 100" -> "CREATE TABLE ..."
         let mut normalized_sql = sql
@@ -68,12 +69,10 @@ impl CreateSharedTableStatement {
 
         let dialect = GenericDialect {};
         let statements = Parser::parse_sql(&dialect, &normalized_sql)
-            .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+            .map_err(|e| e.to_string())?;
 
         if statements.is_empty() {
-            return Err(KalamDbError::InvalidSql(
-                "No SQL statement found".to_string(),
-            ));
+            return Err("No SQL statement found".to_string());
         }
 
         let stmt = &statements[0];
@@ -85,7 +84,7 @@ impl CreateSharedTableStatement {
         stmt: &Statement,
         current_namespace: &NamespaceId,
         original_sql: &str,
-    ) -> Result<Self, KalamDbError> {
+    ) -> DdlResult<Self> {
         match stmt {
             Statement::CreateTable {
                 name,
@@ -119,19 +118,15 @@ impl CreateSharedTableStatement {
                     if_not_exists: *if_not_exists,
                 })
             }
-            _ => Err(KalamDbError::InvalidSql(
-                "Expected CREATE TABLE statement".to_string(),
-            )),
+            _ => Err("Expected CREATE TABLE statement".to_string()),
         }
     }
 
     /// Extract table name from object name
-    fn extract_table_name(
-        name: &datafusion::sql::sqlparser::ast::ObjectName,
-    ) -> Result<String, KalamDbError> {
+    fn extract_table_name(name: &ObjectName) -> DdlResult<String> {
         let parts = &name.0;
         if parts.is_empty() {
-            return Err(KalamDbError::InvalidSql("Empty table name".to_string()));
+            return Err("Empty table name".to_string());
         }
 
         // Take the last part as table name (handles both "table" and "namespace.table")
@@ -139,7 +134,7 @@ impl CreateSharedTableStatement {
     }
 
     /// Extract namespace from object name if qualified, otherwise return None
-    fn extract_namespace(name: &datafusion::sql::sqlparser::ast::ObjectName) -> Option<String> {
+    fn extract_namespace(name: &ObjectName) -> Option<String> {
         let parts = &name.0;
         if parts.len() >= 2 {
             // Qualified name like "app.config" - first part is namespace
@@ -150,11 +145,9 @@ impl CreateSharedTableStatement {
     }
 
     /// Parse schema from column definitions
-    fn parse_schema(columns: &[ColumnDef]) -> Result<Arc<Schema>, KalamDbError> {
+    fn parse_schema(columns: &[ColumnDef]) -> DdlResult<Arc<Schema>> {
         if columns.is_empty() {
-            return Err(KalamDbError::InvalidSql(
-                "Table must have at least one column".to_string(),
-            ));
+            return Err("Table must have at least one column".to_string());
         }
 
         let mut fields = Vec::new();
@@ -162,18 +155,13 @@ impl CreateSharedTableStatement {
         for col in columns {
             let field_name = col.name.value.clone();
             let data_type = map_sql_type_to_arrow(&col.data_type)
-                .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+                .map_err(|e| e.to_string())?;
             let nullable = col.options.iter().any(|opt| {
-                matches!(
-                    opt.option,
-                    datafusion::sql::sqlparser::ast::ColumnOption::Null
-                )
-            }) || !col.options.iter().any(|opt| {
-                matches!(
-                    opt.option,
-                    datafusion::sql::sqlparser::ast::ColumnOption::NotNull
-                )
-            });
+                matches!(opt.option, ColumnOption::Null)
+            }) || !col
+                .options
+                .iter()
+                .any(|opt| matches!(opt.option, ColumnOption::NotNull));
 
             fields.push(Field::new(field_name, data_type, nullable));
         }
@@ -183,7 +171,7 @@ impl CreateSharedTableStatement {
 
     /// Parse FLUSH policy from SQL text
     /// Supports: FLUSH ROWS 100, FLUSH SECONDS 60
-    fn parse_flush_policy(sql: &str) -> Result<Option<FlushPolicy>, KalamDbError> {
+    fn parse_flush_policy(sql: &str) -> DdlResult<Option<FlushPolicy>> {
         use regex::Regex;
 
         // Look for FLUSH ROWS <number>
@@ -191,7 +179,7 @@ impl CreateSharedTableStatement {
         if let Some(caps) = rows_re.captures(sql) {
             let count: usize = caps[1]
                 .parse()
-                .map_err(|_| KalamDbError::InvalidSql("Invalid FLUSH ROWS value".to_string()))?;
+                .map_err(|_| "Invalid FLUSH ROWS value".to_string())?;
             return Ok(Some(FlushPolicy::Rows(count)));
         }
 
@@ -200,7 +188,7 @@ impl CreateSharedTableStatement {
         if let Some(caps) = seconds_re.captures(sql) {
             let secs: u64 = caps[1]
                 .parse()
-                .map_err(|_| KalamDbError::InvalidSql("Invalid FLUSH SECONDS value".to_string()))?;
+                .map_err(|_| "Invalid FLUSH SECONDS value".to_string())?;
             return Ok(Some(FlushPolicy::Time(secs)));
         }
 
@@ -211,7 +199,7 @@ impl CreateSharedTableStatement {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::datatypes::DataType;
+    use arrow::datatypes::{DataType, TimeUnit};
 
     fn test_namespace() -> NamespaceId {
         NamespaceId::new("test_namespace".to_string())
@@ -263,7 +251,7 @@ mod tests {
         assert_eq!(stmt.schema.field(3).data_type(), &DataType::Boolean);
         assert_eq!(
             stmt.schema.field(4).data_type(),
-            &DataType::Timestamp(datafusion::arrow::datatypes::TimeUnit::Millisecond, None)
+            &DataType::Timestamp(TimeUnit::Millisecond, None)
         );
         assert_eq!(stmt.schema.field(5).data_type(), &DataType::Binary);
     }

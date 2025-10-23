@@ -6,8 +6,9 @@
 //! - DESC TABLE table_name
 //! - DESCRIBE TABLE table_name HISTORY (show schema versions)
 
-use crate::catalog::{NamespaceId, TableName};
-use crate::error::KalamDbError;
+use crate::ddl::DdlResult;
+
+use kalamdb_commons::models::{NamespaceId, TableName};
 
 /// DESCRIBE TABLE statement
 #[derive(Debug, Clone, PartialEq)]
@@ -29,7 +30,8 @@ impl DescribeTableStatement {
     /// - DESCRIBE TABLE table_name
     /// - DESCRIBE TABLE namespace.table_name
     /// - DESC TABLE table_name (shorthand)
-    pub fn parse(sql: &str) -> Result<Self, KalamDbError> {
+    /// - DESCRIBE TABLE table_name HISTORY
+    pub fn parse(sql: &str) -> DdlResult<Self> {
         let sql = sql.trim();
         let sql_upper = sql.to_uppercase();
 
@@ -39,9 +41,7 @@ impl DescribeTableStatement {
         } else if sql_upper.strip_prefix("DESC TABLE ").is_some() {
             sql[11..].trim() // Use original casing for table names
         } else {
-            return Err(KalamDbError::InvalidSql(
-                "Expected DESCRIBE TABLE or DESC TABLE".to_string(),
-            ));
+            return Err("Expected DESCRIBE TABLE or DESC TABLE".to_string());
         };
 
         // Check for HISTORY keyword at the end (case-insensitive)
@@ -68,10 +68,7 @@ impl DescribeTableStatement {
                 table_name: TableName::new(parts[1].trim()),
                 show_history,
             }),
-            _ => Err(KalamDbError::InvalidSql(format!(
-                "Invalid table reference: {}",
-                table_ref
-            ))),
+            _ => Err(format!("Invalid table reference: {}", table_ref)),
         }
     }
 }
@@ -131,7 +128,7 @@ mod tests {
         let stmt = DescribeTableStatement::parse("DESCRIBE TABLE users HISTORY").unwrap();
         assert!(stmt.namespace_id.is_none());
         assert_eq!(stmt.table_name.as_str(), "users");
-        assert_eq!(stmt.show_history, true);
+        assert!(stmt.show_history);
     }
 
     #[test]
@@ -139,7 +136,7 @@ mod tests {
         let stmt = DescribeTableStatement::parse("DESC TABLE users HISTORY").unwrap();
         assert!(stmt.namespace_id.is_none());
         assert_eq!(stmt.table_name.as_str(), "users");
-        assert_eq!(stmt.show_history, true);
+        assert!(stmt.show_history);
     }
 
     #[test]
@@ -147,12 +144,12 @@ mod tests {
         let stmt = DescribeTableStatement::parse("DESCRIBE TABLE myapp.messages HISTORY").unwrap();
         assert_eq!(stmt.namespace_id.unwrap().as_str(), "myapp");
         assert_eq!(stmt.table_name.as_str(), "messages");
-        assert_eq!(stmt.show_history, true);
+        assert!(stmt.show_history);
     }
 
     #[test]
     fn test_describe_table_no_history() {
         let stmt = DescribeTableStatement::parse("DESCRIBE TABLE users").unwrap();
-        assert_eq!(stmt.show_history, false);
+        assert!(!stmt.show_history);
     }
 }
