@@ -122,3 +122,10 @@ flush all
 FLUSH TABLE JAMALNS.FILES2
 FLUSH TABLE jamalns.files2
 select * from system.jobs
+\q
+select * from system.jobs
+FLUSH TABLE jamalns.files2
+select * from system.jobs
+FLUSH TABLE jamalns.files2
+select * from system.jobs
+\q

@@ -233,12 +233,18 @@ impl UserTableFlushJob {
             jobs_provider.insert_job(job_record.clone())?;
 
             // T158k: DEBUG logging for flush start
-            log::debug!(
-                "Flush job started: job_id={}, table={}.{}, namespace={}, timestamp={}",
+            log::info!(
+                "🚀 Flush job started: job_id={}, table={}.{}, timestamp={}",
                 job_id,
                 self.namespace_id.as_str(),
                 self.table_name.as_str(),
+                Utc::now().to_rfc3339()
+            );
+        } else {
+            log::info!(
+                "🚀 Flush job started (no jobs_provider): table={}.{}, timestamp={}",
                 self.namespace_id.as_str(),
+                self.table_name.as_str(),
                 Utc::now().to_rfc3339()
             );
         }
@@ -285,12 +291,24 @@ impl UserTableFlushJob {
         if let Some(ref jobs_provider) = self.jobs_provider {
             jobs_provider.update_job(job_record.clone())?;
 
-            log::debug!(
-                "Flush job completed: job_id={}, table={}.{}, records_flushed={}, duration_ms={}",
+            log::info!(
+                "✅ Flush job completed: job_id={}, table={}.{}, rows_flushed={}, users_count={}, parquet_files={}, duration_ms={}",
                 job_id,
                 self.namespace_id.as_str(),
                 self.table_name.as_str(),
                 rows_flushed,
+                users_count,
+                parquet_files.len(),
+                duration_ms
+            );
+        } else {
+            log::info!(
+                "✅ Flush job completed (no jobs_provider): table={}.{}, rows_flushed={}, users_count={}, parquet_files={}, duration_ms={}",
+                self.namespace_id.as_str(),
+                self.table_name.as_str(),
+                rows_flushed,
+                users_count,
+                parquet_files.len(),
                 duration_ms
             );
         }
@@ -556,6 +574,14 @@ impl UserTableFlushJob {
 
         let rows_count = rows.len();
 
+        log::debug!(
+            "💾 Flushing {} rows for user_id={} (table={}.{})",
+            rows_count,
+            user_id,
+            self.namespace_id.as_str(),
+            self.table_name.as_str()
+        );
+
         // Convert rows to RecordBatch
         let batch = self.rows_to_record_batch(rows)?;
 
@@ -570,16 +596,33 @@ impl UserTableFlushJob {
         let output_path = PathBuf::from(&user_storage_path).join(&batch_filename);
 
         // Write to Parquet
+        log::debug!(
+            "📝 Writing Parquet file: path={}, rows={}, user_id={}",
+            output_path.display(),
+            rows_count,
+            user_id
+        );
+
         let writer = ParquetWriter::new(output_path.to_str().unwrap());
-        writer.write(self.schema.clone(), vec![batch])?;
+        writer.write(self.schema.clone(), vec![batch]).map_err(|e| {
+            log::error!(
+                "❌ Failed to write Parquet file for user_id={}, path={}: {}",
+                user_id,
+                output_path.display(),
+                e
+            );
+            e
+        })?;
 
         parquet_files.push(output_path.to_string_lossy().to_string());
 
         log::info!(
-            "Flushed {} rows for user {} to {}",
+            "✅ Flushed {} rows for user_id={} to {} (table={}.{})",
             rows_count,
             user_id,
-            output_path.display()
+            output_path.display(),
+            self.namespace_id.as_str(),
+            self.table_name.as_str()
         );
 
         Ok(rows_count)
@@ -603,11 +646,32 @@ impl UserTableFlushJob {
             return Ok(());
         }
 
+        log::debug!(
+            "🗑️  Deleting {} flushed keys from RocksDB (table={}.{})",
+            keys.len(),
+            self.namespace_id.as_str(),
+            self.table_name.as_str()
+        );
+
         self.store
             .delete_batch_by_keys(self.namespace_id.as_str(), self.table_name.as_str(), keys)
-            .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed rows: {}", e)))?;
+            .map_err(|e| {
+                log::error!(
+                    "❌ Failed to delete {} flushed rows from storage (table={}.{}): {}",
+                    keys.len(),
+                    self.namespace_id.as_str(),
+                    self.table_name.as_str(),
+                    e
+                );
+                KalamDbError::Other(format!("Failed to delete flushed rows: {}", e))
+            })?;
 
-        log::debug!("Deleted {} flushed rows from storage", keys.len());
+        log::debug!(
+            "✅ Deleted {} flushed rows from RocksDB (table={}.{})",
+            keys.len(),
+            self.namespace_id.as_str(),
+            self.table_name.as_str()
+        );
         Ok(())
     }
 

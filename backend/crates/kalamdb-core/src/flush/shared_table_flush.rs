@@ -111,12 +111,27 @@ impl SharedTableFlushJob {
                     self.table_name.as_str()
                 ));
 
+        log::info!(
+            "🚀 Shared table flush job started: job_id={}, table={}.{}, timestamp={}",
+            job_id,
+            self.namespace_id.as_str(),
+            self.table_name.as_str(),
+            Utc::now().to_rfc3339()
+        );
+
         // Execute flush and capture metrics
         let start_time = std::time::Instant::now();
 
         let (rows_flushed, parquet_file) = match self.execute_flush() {
             Ok(result) => result,
             Err(e) => {
+                log::error!(
+                    "❌ Shared table flush failed: job_id={}, table={}.{}, error={}",
+                    job_id,
+                    self.namespace_id.as_str(),
+                    self.table_name.as_str(),
+                    e
+                );
                 // Mark job as failed
                 job_record = job_record.fail(format!("Flush failed: {}", e));
                 return Ok(FlushJobResult {
@@ -138,6 +153,16 @@ impl SharedTableFlushJob {
 
         // Mark job as completed
         job_record = job_record.complete(Some(result_json.to_string()));
+
+        log::info!(
+            "✅ Shared table flush completed: job_id={}, table={}.{}, rows_flushed={}, duration_ms={}, parquet_file={}",
+            job_id,
+            self.namespace_id.as_str(),
+            self.table_name.as_str(),
+            rows_flushed,
+            duration_ms,
+            parquet_file.as_deref().unwrap_or("none")
+        );
 
         // Send flush notification to live query subscribers
         if let Some(live_query_manager) = &self.live_query_manager {
@@ -175,16 +200,37 @@ impl SharedTableFlushJob {
 
     /// Internal flush execution (separated for error handling)
     fn execute_flush(&self) -> Result<(usize, Option<String>), KalamDbError> {
+        log::debug!(
+            "🔄 Starting shared table flush: table={}.{}",
+            self.namespace_id.as_str(),
+            self.table_name.as_str()
+        );
+
         // Scan all rows (scan already filters out soft-deleted rows)
         let rows = self
             .store
             .scan(self.namespace_id.as_str(), self.table_name.as_str())
-            .map_err(|e| KalamDbError::Other(format!("Failed to scan rows: {}", e)))?;
+            .map_err(|e| {
+                log::error!(
+                    "❌ Failed to scan rows for shared table={}.{}: {}",
+                    self.namespace_id.as_str(),
+                    self.table_name.as_str(),
+                    e
+                );
+                KalamDbError::Other(format!("Failed to scan rows: {}", e))
+            })?;
+
+        log::debug!(
+            "📊 Scanned {} rows from shared table={}.{}",
+            rows.len(),
+            self.namespace_id.as_str(),
+            self.table_name.as_str()
+        );
 
         // If no rows to flush, return early
         if rows.is_empty() {
             log::info!(
-                "No rows to flush for shared table {}.{}",
+                "⚠️  No rows to flush for shared table={}.{} (empty table or all deleted)",
                 self.namespace_id.as_str(),
                 self.table_name.as_str()
             );
@@ -192,6 +238,12 @@ impl SharedTableFlushJob {
         }
 
         let rows_count = rows.len();
+        log::debug!(
+            "💾 Flushing {} rows to Parquet for shared table={}.{}",
+            rows_count,
+            self.namespace_id.as_str(),
+            self.table_name.as_str()
+        );
 
         // Convert rows to RecordBatch
         let batch = self.rows_to_record_batch(&rows)?;
@@ -208,13 +260,28 @@ impl SharedTableFlushJob {
         }
 
         // Write to Parquet
+        log::debug!(
+            "📝 Writing Parquet file: path={}, rows={}",
+            output_path.display(),
+            rows_count
+        );
+
         let writer = ParquetWriter::new(output_path.to_str().unwrap());
-        writer.write(self.schema.clone(), vec![batch])?;
+        writer.write(self.schema.clone(), vec![batch]).map_err(|e| {
+            log::error!(
+                "❌ Failed to write Parquet file for shared table={}.{}, path={}: {}",
+                self.namespace_id.as_str(),
+                self.table_name.as_str(),
+                output_path.display(),
+                e
+            );
+            e
+        })?;
 
         let output_path_str = output_path.to_string_lossy().to_string();
 
         log::info!(
-            "Flushed {} rows for shared table {}.{} to {}",
+            "✅ Flushed {} rows for shared table={}.{} to {}",
             rows_count,
             self.namespace_id.as_str(),
             self.table_name.as_str(),
@@ -222,7 +289,21 @@ impl SharedTableFlushJob {
         );
 
         // Delete flushed rows from RocksDB
+        log::debug!(
+            "🗑️  Deleting {} flushed rows from RocksDB (table={}.{})",
+            rows_count,
+            self.namespace_id.as_str(),
+            self.table_name.as_str()
+        );
+
         self.delete_flushed_rows(&rows)?;
+
+        log::debug!(
+            "✅ Deleted {} rows from RocksDB after flush (table={}.{})",
+            rows_count,
+            self.namespace_id.as_str(),
+            self.table_name.as_str()
+        );
 
         Ok((rows_count, Some(output_path_str)))
     }

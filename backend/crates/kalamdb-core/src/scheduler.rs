@@ -654,6 +654,7 @@ impl FlushScheduler {
 
             // Generate job ID
             let job_id = format!("flush-{}-{}", cf_name, uuid::Uuid::new_v4());
+            let job_id_clone = job_id.clone();
 
             // Mark flush as active (in-memory for now - actual tracking in system.jobs)
             {
@@ -686,7 +687,7 @@ impl FlushScheduler {
             let job_future = Box::pin(async move {
                 log::debug!(
                     "📊 Flush job executing: job_id={}, table={}, cf={}",
-                    job_id,
+                    job_id_clone,
                     table_name_clone.as_str(),
                     cf_name_clone
                 );
@@ -696,7 +697,7 @@ impl FlushScheduler {
                 // For now, we log what would happen
                 log::warn!(
                     "⚠️  Flush logic not yet wired to scheduler (job_id={}). Need to wire UserTableFlushJob or SharedTableFlushJob execution here.",
-                    job_id
+                    job_id_clone
                 );
 
                 // Simulate flush delay for testing
@@ -714,7 +715,7 @@ impl FlushScheduler {
 
                 log::info!(
                     "✅ Flush job completed: job_id={}, table={}, cf={}, rows=0 (not wired yet)",
-                    job_id,
+                    job_id_clone,
                     table_name_clone.as_str(),
                     cf_name_clone
                 );
