@@ -4,8 +4,7 @@
 //! - CREATE NAMESPACE app
 //! - CREATE NAMESPACE IF NOT EXISTS app
 
-use crate::ddl::DdlResult;
-
+use crate::ddl::{parsing, DdlResult};
 use kalamdb_commons::models::NamespaceId;
 
 /// CREATE NAMESPACE statement
@@ -25,35 +24,8 @@ impl CreateNamespaceStatement {
     /// - CREATE NAMESPACE name
     /// - CREATE NAMESPACE IF NOT EXISTS name
     pub fn parse(sql: &str) -> DdlResult<Self> {
-        let sql_upper = sql.trim().to_uppercase();
-
-        if !sql_upper.starts_with("CREATE NAMESPACE") {
-            return Err("Expected CREATE NAMESPACE statement".to_string());
-        }
-
-        let if_not_exists = sql_upper.contains("IF NOT EXISTS");
-
-        // Extract namespace name
-        let name_part = if if_not_exists {
-            sql.trim()
-                .strip_prefix("CREATE NAMESPACE")
-                .and_then(|s| s.trim().strip_prefix("IF NOT EXISTS"))
-                .or_else(|| {
-                    sql.trim()
-                        .strip_prefix("create namespace")
-                        .and_then(|s| s.trim().strip_prefix("if not exists"))
-                })
-                .map(|s| s.trim())
-        } else {
-            sql.trim()
-                .strip_prefix("CREATE NAMESPACE")
-                .or_else(|| sql.trim().strip_prefix("create namespace"))
-                .map(|s| s.trim())
-        };
-
-        let name = name_part
-            .and_then(|s| s.split_whitespace().next())
-            .ok_or_else(|| "Namespace name is required".to_string())?;
+        let (name, if_not_exists) =
+            parsing::parse_create_drop_statement(sql, "CREATE NAMESPACE", "IF NOT EXISTS")?;
 
         Ok(Self {
             name: NamespaceId::new(name),

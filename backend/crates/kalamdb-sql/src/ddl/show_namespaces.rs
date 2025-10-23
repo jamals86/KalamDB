@@ -3,8 +3,7 @@
 //! Parses SQL statements like:
 //! - SHOW NAMESPACES
 
-use crate::ddl::DdlResult;
-
+use crate::ddl::{parsing, DdlResult};
 
 /// SHOW NAMESPACES statement
 #[derive(Debug, Clone, PartialEq)]
@@ -13,12 +12,7 @@ pub struct ShowNamespacesStatement;
 impl ShowNamespacesStatement {
     /// Parse a SHOW NAMESPACES statement from SQL
     pub fn parse(sql: &str) -> DdlResult<Self> {
-        let sql_upper = sql.trim().to_uppercase();
-
-        if sql_upper != "SHOW NAMESPACES" {
-            return Err("Expected SHOW NAMESPACES statement".to_string());
-        }
-
+        parsing::parse_simple_statement(sql, "SHOW NAMESPACES")?;
         Ok(Self)
     }
 }

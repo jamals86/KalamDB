@@ -253,11 +253,6 @@ impl TestServer {
 
         // Create "system" schema in DataFusion and register system table providers
         use datafusion::catalog::schema::MemorySchemaProvider;
-        use kalamdb_core::tables::system::{
-            JobsTableProvider, LiveQueriesTableProvider, NamespacesTableProvider,
-            StorageLocationsTableProvider, SystemStoragesProvider, SystemTablesTableProvider,
-            UsersTableProvider,
-        };
 
         let system_schema = Arc::new(MemorySchemaProvider::new());
         let catalog_name = "kalam";
@@ -268,40 +263,12 @@ impl TestServer {
             .register_schema("system", system_schema.clone())
             .expect("Failed to register system schema");
 
-        // Register system table providers
-        let users_provider = Arc::new(UsersTableProvider::new(kalam_sql.clone()));
-        let namespaces_provider = Arc::new(NamespacesTableProvider::new(kalam_sql.clone()));
-        let tables_provider = Arc::new(SystemTablesTableProvider::new(kalam_sql.clone()));
-        let storage_locations_provider =
-            Arc::new(StorageLocationsTableProvider::new(kalam_sql.clone()));
-        let storages_provider = Arc::new(SystemStoragesProvider::new(kalam_sql.clone()));
-        let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone()));
-        let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.clone()));
-
-        system_schema
-            .register_table("users".to_string(), users_provider.clone())
-            .expect("Failed to register system.users");
-        system_schema
-            .register_table("namespaces".to_string(), namespaces_provider.clone())
-            .expect("Failed to register system.namespaces");
-        system_schema
-            .register_table("tables".to_string(), tables_provider.clone())
-            .expect("Failed to register system.tables");
-        system_schema
-            .register_table(
-                "storage_locations".to_string(),
-                storage_locations_provider.clone(),
-            )
-            .expect("Failed to register system.storage_locations");
-        system_schema
-            .register_table("storages".to_string(), storages_provider.clone())
-            .expect("Failed to register system.storages");
-        system_schema
-            .register_table("live_queries".to_string(), live_queries_provider.clone())
-            .expect("Failed to register system.live_queries");
-        system_schema
-            .register_table("jobs".to_string(), jobs_provider.clone())
-            .expect("Failed to register system.jobs");
+        // Register all system tables using centralized function
+        let jobs_provider = kalamdb_core::system_table_registration::register_system_tables(
+            &system_schema,
+            kalam_sql.clone(),
+        )
+        .expect("Failed to register system tables");
 
         // Initialize StorageRegistry for template validation
         let storage_registry = Arc::new(kalamdb_core::storage::StorageRegistry::new(

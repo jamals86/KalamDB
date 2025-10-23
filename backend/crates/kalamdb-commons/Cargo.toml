@@ -16,6 +16,7 @@ serde = { version = "1.0", features = ["derive"], optional = true }
 [features]
 # Feature to enable serde support for serialization
 serde = ["dep:serde"]
+default = []
 
 [lib]
 name = "kalamdb_commons"

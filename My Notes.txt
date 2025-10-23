@@ -29,39 +29,6 @@ Tools & Utilities:
 
 
 
-
-Notes:
-1) devide the cli test into multiple files
-2) when starting the server check first if the port is opened already ebfore laoding the rocksdb
-3) The cli show progress while the query is performing with a loading indication and time since start
-4) auto complete is not working at all in the cli, it should also work with fetching tables/schemas from select * from system.tables
-5) in the query output when selecting always preserve the order of the columns which are returned (without ruining the performance)
-6) Add log rotation
-7) specify how many logs for rocksdb to preserve
-8) fix bug in deleting a user table:
-    [2025-10-22 13:27:02.956] [WARN ] - actix-rt|system:0|arbiter:12 - kalamdb_core::services::table_deletion_service:252 - Storage path does not exist: /data/${user_id}/tables
-    [2025-10-22 13:27:02.981] [WARN ] - actix-rt|system:0|arbiter:12 - kalamdb_core::services::table_deletion_service:152 - Failed to decrement storage usage count: Not found: Storage location '/data/${user_id}/tables' not found
-9) Whenever we create a shared table directly we should create it's corresponding folder in the storage location it has been set in it to be flushed to
-10) Add a healthcheck for the kalamdb-server api
-11) add a connection check whenever we open the kalam-cli tool, if the server is down then we display an error and don't open the cli at all, this healthcheck should be added to the kalam-link
-12) add CLEAR CACHE; which clears the session caching, the query caching or any caches added in the future
-
-
-13) Remove storage_locations it's the same as system.storages also we need to add the same columns from it: credentials
-14) change the /api/sql to /v1/api/sql and also /v1/ws, /v1/api/healthcheck so that we have consistent versioning in the future
-15) divide the main.rs file into multiple files
-16) All parsers which is responsible for parsing SQL statemenets like cREATE STORAGE and other commands should be moved to kalamdb-sql
-        Should this be moved to kalamdb-sql -> backend/crates/kalamdb-core/src/sql/executor.rs
-
-17) CLI - Indicate a green dot on the prompt: {dot green or red} kalam> which indicate if the server online or offline
-18) CLI - Add also logging for the cli alone
-19) CLI - Auto complete still not working - i prefer while the user write add the auto complete in gray after the word like ai auto complete
-20) LINK - Should be as much light weight as possible, currently its 400kb which can be less
-21) dont create flush job 2 times if there is an already running one
-22) flush jobs not working it stuck running
-23) The fields order when i run select * from table should always be consistent with the created table order of fields
-
-
 The KalamDB should have similar sql syntax as postgress and MySQL so whenever i ask about syntax you search how Postgress and MySQL writes this syntax and do things in their architecture
 Also the CLI tool for KalamDb should be similar as well
 Error messages and returned syntax from SQL queries/api and cli output should be also similar
@@ -88,3 +55,47 @@ Storages for tables:
 8) If a user table when it was created with an option:  "use_user_storage": true, then we will look at the user's define storage_id if it's set there to storage_mode = table then we will fallback to the user's table storage_id which was defined when creating the table
 9) User's table should always have a storage_id defined in it
 10) deleting a storage should only be done when no table is using this storage only
+
+
+
+
+Notes:
+#1) devide the cli test into multiple files
+#2) when starting the server check first if the port is opened already ebfore laoding the rocksdb
+#3) The cli show progress while the query is performing with a loading indication and time since start
+#4) auto complete is not working at all in the cli, it should also work with fetching tables/schemas from select * from system.tables
+#5) in the query output when selecting always preserve the order of the columns which are returned (without ruining the performance)
+#6) Add log rotation
+#7) specify how many logs for rocksdb to preserve
+#8) fix bug in deleting a user table:
+#    [2025-10-22 13:27:02.956] [WARN ] - actix-rt|system:0|arbiter:12 - kalamdb_core::services::table_deletion_service:252 - Storage path does not exist: /data/${user_id}/tables
+#    [2025-10-22 13:27:02.981] [WARN ] - actix-rt|system:0|arbiter:12 - kalamdb_core::services::table_deletion_service:152 - Failed to decrement storage usage count: Not found: Storage location '/data/${user_id}/tables' not found
+#9) Whenever we create a shared table directly we should create it's corresponding folder in the storage location it has been set in it to be flushed to
+#10) Add a healthcheck for the kalamdb-server api
+#11) add a connection check whenever we open the kalam-cli tool, if the server is down then we display an error and don't open the cli at all, this healthcheck should be added to the kalam-link
+#12) add CLEAR CACHE; which clears the session caching, the query caching or any caches added in the future
+#13) Remove storage_locations it's the same as system.storages also we need to add the same columns from it: credentials
+#14) change the /api/sql to /v1/api/sql and also /v1/ws, /v1/api/healthcheck so that we have consistent versioning in the future
+#15) divide the main.rs file into multiple files
+#16) All parsers which is responsible for parsing SQL statemenets like cREATE STORAGE and other commands should be moved to kalamdb-sql
+#        Should this be moved to kalamdb-sql -> backend/crates/kalamdb-core/src/sql/executor.rs
+#22) In progress -   flush jobs not working it stuck running and never starts, i init the flush using flush table namespac1.files
+
+21) dont create flush job 2 times if there is an already running one
+23) The fields order when i run select * from table should always be consistent with the created table order of fields
+24) Why we still have a long if-else in backend/crates/kalamdb-core/src/sql/executor.rs for parsing sql's? shouldnt the parser be inside kalamdb-sql?
+    I want you to revisit all sql parsers and logic which parses sql statements and make sure we dont have a duplicated code for these
+    
+    system_schema.register_table - strill uses a string here instead of an enum
+    its better to move backend/crates/kalamdb-sql/src/parser/system.rs which has a list of all system tables into an enum inside kalamdb-commons
+
+
+
+
+16) Job Status need to have an enum as a value so we dont make mistakes with typo's, also check other places where we might need enums as well
+17) CLI - Indicate a green dot on the prompt: {dot green or red} kalam> which indicate if the server online or offline
+18) CLI - Add also logging for the cli alone
+19) CLI - Auto complete still not working - i prefer while the user write add the auto complete in gray after the word like ai auto complete
+20) Link - Should be as much light weight as possible, currently its 400kb which can be less
+25) Make a test compiling kalamdb-link into wasm and try include it into a typescript class
+26) Make the logic the same as postgres which whenever insert/update/delete it returns the affected rows correctly

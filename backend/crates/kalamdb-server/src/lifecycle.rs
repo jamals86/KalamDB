@@ -9,7 +9,7 @@ use crate::middleware;
 use crate::routes;
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
-use datafusion::catalog::schema::{MemorySchemaProvider, SchemaProvider};
+use datafusion::catalog::schema::MemorySchemaProvider;
 use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_core::services::{
@@ -19,11 +19,6 @@ use kalamdb_core::services::{
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::storage::{RocksDbInit, StorageRegistry};
-use kalamdb_core::tables::system::{
-    JobsTableProvider, LiveQueriesTableProvider, NamespacesTableProvider,
-    StorageLocationsTableProvider, SystemStoragesProvider, SystemTablesTableProvider,
-    UsersTableProvider,
-};
 use kalamdb_core::{jobs::TokioJobManager, scheduler::FlushScheduler};
 use kalamdb_sql::KalamSql;
 use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
@@ -120,36 +115,12 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         .register_schema("system", system_schema.clone())
         .expect("Failed to register system schema");
 
-    let users_provider = Arc::new(UsersTableProvider::new(kalam_sql.clone()));
-    let namespaces_provider = Arc::new(NamespacesTableProvider::new(kalam_sql.clone()));
-    let tables_provider = Arc::new(SystemTablesTableProvider::new(kalam_sql.clone()));
-    let storage_locations_provider =
-        Arc::new(StorageLocationsTableProvider::new(kalam_sql.clone()));
-    let storages_provider = Arc::new(SystemStoragesProvider::new(kalam_sql.clone()));
-    let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone()));
-    let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.clone()));
-
-    system_schema
-        .register_table("users".to_string(), users_provider)
-        .expect("Failed to register system.users table");
-    system_schema
-        .register_table("namespaces".to_string(), namespaces_provider)
-        .expect("Failed to register system.namespaces table");
-    system_schema
-        .register_table("tables".to_string(), tables_provider)
-        .expect("Failed to register system.tables table");
-    system_schema
-        .register_table("storage_locations".to_string(), storage_locations_provider)
-        .expect("Failed to register system.storage_locations table");
-    system_schema
-        .register_table("storages".to_string(), storages_provider)
-        .expect("Failed to register system.storages table");
-    system_schema
-        .register_table("live_queries".to_string(), live_queries_provider)
-        .expect("Failed to register system.live_queries table");
-    system_schema
-        .register_table("jobs".to_string(), jobs_provider.clone())
-        .expect("Failed to register system.jobs table");
+    // Register all system tables using centralized function
+    let jobs_provider = kalamdb_core::system_table_registration::register_system_tables(
+        &system_schema,
+        kalam_sql.clone(),
+    )
+    .expect("Failed to register system tables");
 
     info!(
         "System tables registered with DataFusion (catalog: {})",
@@ -158,6 +129,10 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
 
     // Storage registry and SQL executor
     let storage_registry = Arc::new(StorageRegistry::new(kalam_sql.clone()));
+    
+    // Create job manager first
+    let job_manager = Arc::new(TokioJobManager::new());
+    
     let sql_executor = Arc::new(
         SqlExecutor::new(
             namespace_service.clone(),
@@ -168,6 +143,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         )
         .with_table_deletion_service(table_deletion_service)
         .with_storage_registry(storage_registry)
+        .with_job_manager(job_manager.clone())
         .with_stores(
             user_table_store,
             shared_table_store,
@@ -177,7 +153,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     );
 
     info!(
-        "SqlExecutor initialized with DROP TABLE support, storage registry, and table registration"
+        "SqlExecutor initialized with DROP TABLE support, storage registry, job manager, and table registration"
     );
 
     let default_user_id = kalamdb_core::catalog::UserId::from("system");
@@ -206,9 +182,8 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     );
 
     // Flush scheduler
-    let job_manager = Arc::new(TokioJobManager::new());
     let flush_scheduler = Arc::new(
-        FlushScheduler::new(job_manager, std::time::Duration::from_secs(5))
+        FlushScheduler::new(job_manager.clone(), std::time::Duration::from_secs(5))
             .with_jobs_provider(jobs_provider.clone()),
     );
 

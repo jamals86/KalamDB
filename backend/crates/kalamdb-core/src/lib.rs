@@ -18,4 +18,5 @@ pub mod schema;
 pub mod services;
 pub mod sql;
 pub mod storage;
+pub mod system_table_registration;
 pub mod tables;

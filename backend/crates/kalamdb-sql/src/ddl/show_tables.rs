@@ -4,8 +4,7 @@
 //! - SHOW TABLES
 //! - SHOW TABLES IN namespace
 
-use crate::ddl::DdlResult;
-
+use crate::ddl::{parsing, DdlResult};
 use kalamdb_commons::models::NamespaceId;
 
 /// SHOW TABLES statement
@@ -22,38 +21,11 @@ impl ShowTablesStatement {
     /// - SHOW TABLES
     /// - SHOW TABLES IN namespace
     pub fn parse(sql: &str) -> DdlResult<Self> {
-        let sql_trimmed = sql.trim();
-        let sql_upper = sql_trimmed.to_uppercase();
-
-        if !sql_upper.starts_with("SHOW TABLES") {
-            return Err("Expected SHOW TABLES statement".to_string());
-        }
-
-        // Check for IN clause
-        if sql_upper.contains(" IN ") {
-            // Extract namespace name after IN
-            let in_pos = sql_upper.find(" IN ").unwrap();
-            let namespace_part = sql_trimmed[in_pos + 4..].trim();
-
-            if namespace_part.is_empty() {
-                return Err("Namespace name required after IN".to_string());
-            }
-
-            let namespace_name = namespace_part
-                .split_whitespace()
-                .next()
-                .ok_or_else(|| "Namespace name required after IN".to_string())?;
-
-            Ok(Self {
-                namespace_id: Some(NamespaceId::new(namespace_name)),
-            })
-        } else if sql_upper.ends_with(" IN") {
-            // Trailing IN without namespace
-            Err("Namespace name required after IN".to_string())
-        } else {
-            // No namespace filter - show all tables
-            Ok(Self { namespace_id: None })
-        }
+        let namespace = parsing::parse_optional_in_clause(sql, "SHOW TABLES")?;
+        
+        Ok(Self {
+            namespace_id: namespace.map(NamespaceId::new),
+        })
     }
 }
 

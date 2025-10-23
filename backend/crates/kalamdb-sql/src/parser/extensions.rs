@@ -19,15 +19,15 @@
 /// here for a unified parser interface.
 
 // Re-export storage commands
-pub use crate::storage_commands::{
+pub use crate::ddl::storage_commands::{
     AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
 };
 
 // Re-export flush commands
-pub use crate::flush_commands::{FlushAllTablesStatement, FlushTableStatement};
+pub use crate::ddl::flush_commands::{FlushAllTablesStatement, FlushTableStatement};
 
-// Re-export job commands
-pub use crate::job_commands::{parse_job_command, JobCommand};
+// Job commands (KILL JOB)
+pub use crate::ddl::job_commands::{parse_job_command, JobCommand};
 
 /// Extension statement types that don't fit into standard SQL.
 ///
