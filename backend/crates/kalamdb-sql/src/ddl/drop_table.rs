@@ -54,66 +54,29 @@ impl DropTableStatement {
     /// - DROP TABLE IF EXISTS name (defaults to USER TABLE)
     /// - DROP USER TABLE IF EXISTS name
     pub fn parse(sql: &str, current_namespace: &NamespaceId) -> DdlResult<Self> {
+        use crate::ddl::parsing;
+
         let sql_upper = sql.trim().to_uppercase();
 
         if !sql_upper.starts_with("DROP") {
             return Err("Expected DROP TABLE statement".to_string());
         }
 
-        // Determine if IF EXISTS is present
-        let if_exists = sql_upper.contains("IF EXISTS");
-
         // Determine table type
-        let table_type = if sql_upper.contains("DROP USER TABLE") {
-            TableKind::User
+        let (table_type, type_keyword) = if sql_upper.contains("DROP USER TABLE") {
+            (TableKind::User, "DROP USER TABLE")
         } else if sql_upper.contains("DROP SHARED TABLE") {
-            TableKind::Shared
+            (TableKind::Shared, "DROP SHARED TABLE")
         } else if sql_upper.contains("DROP STREAM TABLE") {
-            TableKind::Stream
+            (TableKind::Stream, "DROP STREAM TABLE")
         } else if sql_upper.contains("DROP TABLE") {
-            // Default to USER TABLE if no type specified
-            TableKind::User
+            (TableKind::User, "DROP TABLE") // Default to USER TABLE
         } else {
-            return Err(
-                "Expected DROP [USER|SHARED|STREAM] TABLE statement"
-            .to_string());
+            return Err("Expected DROP [USER|SHARED|STREAM] TABLE statement".to_string());
         };
 
-        // Extract table name
-        let name_part = if if_exists {
-            // Handle "DROP [TYPE] TABLE IF EXISTS name"
-            sql.trim()
-                .strip_prefix("DROP USER TABLE")
-                .or_else(|| sql.trim().strip_prefix("drop user table"))
-                .or_else(|| sql.trim().strip_prefix("DROP SHARED TABLE"))
-                .or_else(|| sql.trim().strip_prefix("drop shared table"))
-                .or_else(|| sql.trim().strip_prefix("DROP STREAM TABLE"))
-                .or_else(|| sql.trim().strip_prefix("drop stream table"))
-                .or_else(|| sql.trim().strip_prefix("DROP TABLE"))
-                .or_else(|| sql.trim().strip_prefix("drop table"))
-                .and_then(|s| {
-                    s.trim()
-                        .strip_prefix("IF EXISTS")
-                        .or_else(|| s.trim().strip_prefix("if exists"))
-                })
-                .map(|s| s.trim())
-        } else {
-            // Handle "DROP [TYPE] TABLE name"
-            sql.trim()
-                .strip_prefix("DROP USER TABLE")
-                .or_else(|| sql.trim().strip_prefix("drop user table"))
-                .or_else(|| sql.trim().strip_prefix("DROP SHARED TABLE"))
-                .or_else(|| sql.trim().strip_prefix("drop shared table"))
-                .or_else(|| sql.trim().strip_prefix("DROP STREAM TABLE"))
-                .or_else(|| sql.trim().strip_prefix("drop stream table"))
-                .or_else(|| sql.trim().strip_prefix("DROP TABLE"))
-                .or_else(|| sql.trim().strip_prefix("drop table"))
-                .map(|s| s.trim())
-        };
-
-        let name = name_part
-            .and_then(|s| s.split_whitespace().next())
-            .ok_or_else(|| "Table name is required".to_string())?;
+        // Parse using shared utility (handles IF EXISTS)
+        let (name, if_exists) = parsing::parse_create_drop_statement(sql, type_keyword, "IF EXISTS")?;
 
         // Handle qualified name (namespace.table)
         let (namespace_id, table_name) = if let Some(dot_pos) = name.find('.') {
@@ -121,7 +84,7 @@ impl DropTableStatement {
             let tbl = &name[dot_pos + 1..];
             (NamespaceId::new(ns), TableName::new(tbl))
         } else {
-            (current_namespace.clone(), TableName::new(name))
+            (current_namespace.clone(), TableName::new(&name))
         };
 
         Ok(Self {

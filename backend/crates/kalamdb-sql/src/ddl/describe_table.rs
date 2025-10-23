@@ -32,44 +32,38 @@ impl DescribeTableStatement {
     /// - DESC TABLE table_name (shorthand)
     /// - DESCRIBE TABLE table_name HISTORY
     pub fn parse(sql: &str) -> DdlResult<Self> {
-        let sql = sql.trim();
-        let sql_upper = sql.to_uppercase();
+        use crate::ddl::parsing;
 
-        // Check for DESCRIBE TABLE or DESC TABLE prefix (case-insensitive)
-        let rest = if sql_upper.strip_prefix("DESCRIBE TABLE ").is_some() {
-            sql[15..].trim() // Use original casing for table names
-        } else if sql_upper.strip_prefix("DESC TABLE ").is_some() {
-            sql[11..].trim() // Use original casing for table names
+        let sql_trimmed = sql.trim().trim_end_matches(';');
+        let sql_upper = sql_trimmed.to_uppercase();
+
+        // Determine which prefix is used
+        let prefix_len = if sql_upper.starts_with("DESCRIBE TABLE ") {
+            15
+        } else if sql_upper.starts_with("DESC TABLE ") {
+            11
         } else {
             return Err("Expected DESCRIBE TABLE or DESC TABLE".to_string());
         };
 
-        // Check for HISTORY keyword at the end (case-insensitive)
-        let rest_upper = rest.to_uppercase();
-        let (table_ref, show_history) = if rest_upper.ends_with(" HISTORY") {
-            (rest[..rest.len() - 8].trim(), true)
+        // Extract remainder after prefix
+        let remainder = sql_trimmed[prefix_len..].trim();
+        
+        // Check for HISTORY keyword at the end
+        let remainder_upper = remainder.to_uppercase();
+        let (table_ref, show_history) = if remainder_upper.ends_with(" HISTORY") {
+            (remainder[..remainder.len() - 8].trim(), true)
         } else {
-            (rest, false)
+            (remainder, false)
         };
 
-        // Split on . for qualified names (namespace.table)
-        let parts: Vec<&str> = table_ref.split('.').collect();
+        let (namespace, table) = parsing::parse_table_reference(table_ref)?;
 
-        match parts.len() {
-            // Simple table name (no namespace)
-            1 => Ok(Self {
-                namespace_id: None,
-                table_name: TableName::new(parts[0].trim()),
-                show_history,
-            }),
-            // Qualified name (namespace.table)
-            2 => Ok(Self {
-                namespace_id: Some(NamespaceId::new(parts[0].trim())),
-                table_name: TableName::new(parts[1].trim()),
-                show_history,
-            }),
-            _ => Err(format!("Invalid table reference: {}", table_ref)),
-        }
+        Ok(Self {
+            namespace_id: namespace.map(|ns| NamespaceId::new(&ns)),
+            table_name: TableName::new(&table),
+            show_history,
+        })
     }
 }
 

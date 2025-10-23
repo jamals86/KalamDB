@@ -25,42 +25,15 @@ impl ShowTableStatsStatement {
     /// - SHOW STATS FOR TABLE table_name
     /// - SHOW STATS FOR TABLE namespace.table_name
     pub fn parse(sql: &str) -> DdlResult<Self> {
-        use crate::parser::utils::extract_qualified_table;
+        use crate::ddl::parsing;
 
-        let sql_trimmed = sql.trim();
-        let sql_upper = sql_trimmed.to_uppercase();
+        let table_ref = parsing::extract_after_prefix(sql, "SHOW STATS FOR TABLE")?;
+        let (namespace, table) = parsing::parse_table_reference(&table_ref)?;
 
-        if !sql_upper.starts_with("SHOW STATS FOR TABLE") {
-            return Err("Expected SHOW STATS FOR TABLE statement".to_string());
-        }
-
-        // Extract table name part
-        let table_part = sql_trimmed
-            .strip_prefix("SHOW STATS FOR TABLE")
-            .or_else(|| sql_trimmed.strip_prefix("show stats for table"))
-            .map(|s| s.trim())
-            .ok_or_else(|| "Invalid SHOW STATS syntax".to_string())?;
-
-        let table_identifier = table_part
-            .split_whitespace()
-            .next()
-            .ok_or_else(|| "Table name is required".to_string())?;
-
-        // Check for qualified name (namespace.table)
-        if table_identifier.contains('.') {
-            let (namespace, table) = extract_qualified_table(table_identifier)
-                .map_err(|e| e.to_string())?;
-            Ok(Self {
-                namespace_id: Some(NamespaceId::new(&namespace)),
-                table_name: TableName::new(&table),
-            })
-        } else {
-            // Unqualified name
-            Ok(Self {
-                namespace_id: None,
-                table_name: TableName::new(table_identifier),
-            })
-        }
+        Ok(Self {
+            namespace_id: namespace.map(|ns| NamespaceId::new(&ns)),
+            table_name: TableName::new(&table),
+        })
     }
 }
 
