@@ -53,6 +53,9 @@ Notes:
 16) All parsers which is responsible for parsing SQL statemenets like cREATE STORAGE and other commands should be moved to kalamdb-sql
         Should this be moved to kalamdb-sql -> backend/crates/kalamdb-core/src/sql/executor.rs
 
+17) CLI - Indicate a green dot on the prompt: {dot green or red} kalam> which indicate if the server online or offline
+18) CLI - Add also logging for the cli alone
+19) LINK - 
 
 The KalamDB should have similar sql syntax as postgress and MySQL so whenever i ask about syntax you search how Postgress and MySQL writes this syntax and do things in their architecture
 Also the CLI tool for KalamDb should be similar as well

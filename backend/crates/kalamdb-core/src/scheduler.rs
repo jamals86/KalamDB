@@ -674,15 +674,37 @@ impl FlushScheduler {
             let cf_name_clone = cf_name.clone();
             let active_flushes_clone = Arc::clone(active_flushes);
             let trigger_monitor_clone = Arc::clone(trigger_monitor);
+            let table_name_clone = scheduled.table_name.clone();
+
+            log::info!(
+                "🚀 Starting flush job: job_id={}, table={}, cf={}",
+                job_id,
+                table_name_clone.as_str(),
+                cf_name
+            );
 
             let job_future = Box::pin(async move {
-                // TODO: Implement actual flush logic here
-                // For now, simulate a flush operation
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                log::debug!(
+                    "📊 Flush job executing: job_id={}, table={}, cf={}",
+                    job_id,
+                    table_name_clone.as_str(),
+                    cf_name_clone
+                );
+
+                // TODO: Execute actual flush logic here
+                // This requires access to the table provider and storage registry
+                // For now, we log what would happen
+                log::warn!(
+                    "⚠️  Flush logic not yet wired to scheduler (job_id={}). Need to wire UserTableFlushJob or SharedTableFlushJob execution here.",
+                    job_id
+                );
+
+                // Simulate flush delay for testing
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
                 // Reset trigger state after flush
                 if let Err(e) = trigger_monitor_clone.on_flush_completed(&cf_name_clone) {
-                    log::error!("Failed to reset trigger state: {}", e);
+                    log::error!("❌ Failed to reset trigger state: {}", e);
                 }
 
                 // Remove from active flushes
@@ -690,7 +712,14 @@ impl FlushScheduler {
                     active.remove(&cf_name_clone);
                 }
 
-                Ok("Flush completed".to_string())
+                log::info!(
+                    "✅ Flush job completed: job_id={}, table={}, cf={}, rows=0 (not wired yet)",
+                    job_id,
+                    table_name_clone.as_str(),
+                    cf_name_clone
+                );
+
+                Ok(format!("Flush completed for {}", table_name_clone.as_str()))
             });
 
             if let Err(e) = job_manager

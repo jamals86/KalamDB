@@ -65,11 +65,12 @@ impl KalamLinkClient {
         SubscriptionManager::new(&self.base_url, query, &self.auth).await
     }
 
-    /// Check server health
-    pub async fn health_check(&self) -> Result<bool> {
+    /// Check server health and get server information
+    pub async fn health_check(&self) -> Result<crate::models::HealthCheckResponse> {
         let url = format!("{}/v1/api/healthcheck", self.base_url);
         let response = self.http_client.get(&url).send().await?;
-        Ok(response.status().is_success())
+        let health_response = response.json::<crate::models::HealthCheckResponse>().await?;
+        Ok(health_response)
     }
 }
 

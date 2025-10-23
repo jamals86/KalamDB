@@ -336,9 +336,21 @@ impl UserTableFlushJob {
     ///
     /// # T151-T151h: Streaming flush with RocksDB snapshot and per-user atomicity
     fn execute_flush(&self) -> Result<(usize, usize, Vec<String>), KalamDbError> {
+        log::debug!(
+            "🔄 Starting flush execution: table={}.{}, snapshot creation...",
+            self.namespace_id.as_str(),
+            self.table_name.as_str()
+        );
+
         // T151a: Create RocksDB snapshot for read consistency
         // This prevents missing rows from concurrent inserts during flush
         let snapshot = self.store.create_snapshot();
+
+        log::debug!(
+            "📸 RocksDB snapshot created for table={}.{}",
+            self.namespace_id.as_str(),
+            self.table_name.as_str()
+        );
 
         // Initialize streaming state
         let mut total_rows_flushed = 0;
@@ -358,10 +370,32 @@ impl UserTableFlushJob {
                 self.table_name.as_str(),
             )
             .map_err(|e| {
+                log::error!(
+                    "❌ Failed to create snapshot iterator for table={}.{}: {}",
+                    self.namespace_id.as_str(),
+                    self.table_name.as_str(),
+                    e
+                );
                 KalamDbError::Other(format!("Failed to create snapshot iterator: {}", e))
             })?;
 
+        log::debug!(
+            "🔍 Scanning rows for table={}.{}...",
+            self.namespace_id.as_str(),
+            self.table_name.as_str()
+        );
+
+        let mut rows_scanned = 0;
         for item in iter {
+            rows_scanned += 1;
+            if rows_scanned % 1000 == 0 {
+                log::debug!(
+                    "📊 Scanned {} rows so far (table={}.{})",
+                    rows_scanned,
+                    self.namespace_id.as_str(),
+                    self.table_name.as_str()
+                );
+            }
             let (key_bytes, value_bytes) =
                 item.map_err(|e| KalamDbError::Other(format!("Iterator error: {}", e)))?;
 
@@ -469,6 +503,25 @@ impl UserTableFlushJob {
                     }
                 }
             }
+        }
+
+        log::info!(
+            "✅ Flush execution completed: table={}.{}, total_rows_scanned={}, total_rows_flushed={}, users_count={}, parquet_files={}",
+            self.namespace_id.as_str(),
+            self.table_name.as_str(),
+            rows_scanned,
+            total_rows_flushed,
+            users_count,
+            parquet_files.len()
+        );
+
+        if total_rows_flushed == 0 {
+            log::warn!(
+                "⚠️  No rows flushed for table={}.{} (scanned {} rows total, possibly all deleted or no data)",
+                self.namespace_id.as_str(),
+                self.table_name.as_str(),
+                rows_scanned
+            );
         }
 
         Ok((total_rows_flushed, users_count, parquet_files))

@@ -10,7 +10,7 @@
 use kalam_link::KalamLinkClient;
 use clap::ValueEnum;
 use rustyline::error::ReadlineError;
-use rustyline::{Editor, Helper};
+use rustyline::{Editor, Helper, Config, CompletionType, EditMode};
 use rustyline::history::DefaultHistory;
 use rustyline::completion::Completer;
 use rustyline::highlight::Highlighter;
@@ -18,6 +18,7 @@ use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
 use colored::*;
 
 use crate::{
@@ -26,7 +27,6 @@ use crate::{
     history::CommandHistory,
     parser::{Command, CommandParser},
     completer::AutoCompleter,
-    highlighter::SqlHighlighter,
 };
 
 /// Output format for query results
@@ -65,6 +65,15 @@ pub struct CLISession {
 
     /// Threshold for showing loading indicator (milliseconds)
     loading_threshold_ms: u64,
+
+    /// Current user ID
+    user_id: String,
+
+    /// Server version
+    server_version: Option<String>,
+
+    /// Server API version
+    server_api_version: Option<String>,
 }
 
 impl CLISession {
@@ -90,12 +99,17 @@ impl CLISession {
             (None, None) => builder,
         };
 
-        // Add user ID if provided
-        if let Some(uid) = user_id {
-            builder = builder.user_id(uid);
-        }
+        // Set user ID (default to "cli" if not provided)
+        let actual_user_id = user_id.unwrap_or_else(|| "cli".to_string());
+        builder = builder.user_id(actual_user_id.clone());
 
         let client = builder.build()?;
+
+        // Try to fetch server info from health check
+        let (server_version, server_api_version) = match client.health_check().await {
+            Ok(health) => (Some(health.version), Some(health.api_version)),
+            Err(_) => (None, None),
+        };
 
         Ok(Self {
             client,
@@ -107,6 +121,9 @@ impl CLISession {
             connected: true,
             subscription_paused: false,
             loading_threshold_ms: 200, // Default: 200ms
+            user_id: actual_user_id,
+            server_version,
+            server_api_version,
         })
     }
 
@@ -118,22 +135,28 @@ impl CLISession {
     pub async fn execute(&mut self, sql: &str) -> Result<()> {
         let start = Instant::now();
         
-        // Create a loading indicator task
+        // Create a loading indicator with proper cleanup
+        let spinner = Arc::new(Mutex::new(None::<ProgressBar>));
+        let spinner_clone = Arc::clone(&spinner);
+        
         let show_loading = tokio::spawn({
             let threshold = Duration::from_millis(self.loading_threshold_ms);
             async move {
                 tokio::time::sleep(threshold).await;
-                Some(Self::create_spinner())
+                let pb = Self::create_spinner();
+                *spinner_clone.lock().unwrap() = Some(pb);
             }
         });
 
         // Execute the query
         let result = self.client.execute_query(sql).await;
         
-        // Cancel the loading indicator
+        // Cancel the loading indicator and finish spinner if it was shown
         show_loading.abort();
+        if let Some(pb) = spinner.lock().unwrap().take() {
+            pb.finish_and_clear();
+        }
         
-        // If spinner was shown, get it and finish
         let elapsed = start.elapsed();
         
         match result {
@@ -189,25 +212,36 @@ impl CLISession {
     ///
     /// **Implements T093**: Interactive REPL with rustyline
     /// **Implements T114b**: Enhanced autocomplete with table names
-    /// **Enhanced**: Beautiful UI with colors and styled prompt
+    /// **Enhanced**: Simple, fast UI without performance issues
     pub async fn run_interactive(&mut self) -> Result<()> {
         // Print welcome banner
         self.print_banner();
 
         // Create autocompleter and fetch initial table names
         let mut completer = AutoCompleter::new();
+        print!("{}", "Fetching tables... ".dimmed());
+        std::io::Write::flush(&mut std::io::stdout()).ok();
+        
         if let Err(e) = self.refresh_tables(&mut completer).await {
-            eprintln!("{}", format!("⚠ Could not fetch table names: {}", e).yellow());
+            println!("{}", format!("⚠ {}", e).yellow());
+        } else {
+            println!("{}", "✓".green());
         }
 
-        // Create rustyline helper with syntax highlighting
+        // Create rustyline helper with autocomplete only (no highlighting for performance)
         let helper = CLIHelper { 
             completer,
-            highlighter: SqlHighlighter::new(self.color),
         };
 
-        // Initialize readline with completer and highlighter
-        let mut rl = Editor::<CLIHelper, DefaultHistory>::new()?;
+        // Initialize readline with completer and proper configuration
+        let config = Config::builder()
+            .completion_type(CompletionType::List) // Show list of completions
+            .completion_prompt_limit(100) // Show up to 100 completions
+            .edit_mode(EditMode::Emacs) // Emacs keybindings (Tab for completion)
+            .auto_add_history(true)
+            .build();
+            
+        let mut rl = Editor::<CLIHelper, DefaultHistory>::with_config(config)?;
         rl.set_helper(Some(helper));
         
         let history = CommandHistory::new(1000);
@@ -221,8 +255,8 @@ impl CLISession {
 
         // Main REPL loop
         loop {
-            // Create styled prompt
-            let prompt = self.create_prompt();
+            // Simple prompt without ANSI codes to avoid cursor position issues
+            let prompt = "kalam> ";
 
             match rl.readline(&prompt) {
                 Ok(line) => {
@@ -241,21 +275,24 @@ impl CLISession {
                             // Handle refresh-tables command specially to update completer
                             if matches!(command, Command::RefreshTables) {
                                 if let Some(helper) = rl.helper_mut() {
+                                    print!("{}", "Fetching tables... ".dimmed());
+                                    std::io::Write::flush(&mut std::io::stdout()).ok();
+                                    
                                     if let Err(e) = self.refresh_tables(&mut helper.completer).await {
-                                        eprintln!("{}", format!("✗ Error refreshing tables: {}", e).red());
+                                        println!("{}", format!("✗ {}", e).red());
                                     } else {
-                                        println!("{}", "✓ Table names refreshed".green());
+                                        println!("{}", "✓".green());
                                     }
                                 }
                                 continue;
                             }
 
                             if let Err(e) = self.execute_command(command).await {
-                                eprintln!("{}", format!("✗ Error: {}", e).red().bold());
+                                eprintln!("{}", format!("✗ {}", e).red());
                             }
                         }
                         Err(e) => {
-                            eprintln!("{}", format!("✗ Parse error: {}", e).red());
+                            eprintln!("{}", format!("✗ {}", e).red());
                         }
                     }
                 }
@@ -264,11 +301,11 @@ impl CLISession {
                     continue;
                 }
                 Err(ReadlineError::Eof) => {
-                    println!("\n{}", "👋 Goodbye!".cyan().bold());
+                    println!("\n{}", "Goodbye!".cyan());
                     break;
                 }
                 Err(err) => {
-                    eprintln!("{}", format!("✗ Error: {}", err).red());
+                    eprintln!("{}", format!("✗ {}", err).red());
                     break;
                 }
             }
@@ -292,40 +329,28 @@ impl CLISession {
         println!("{}", "╚═══════════════════════════════════════════════════════════╝".bright_blue().bold());
         println!();
         println!("  {}  {}", "📡".dimmed(), format!("Connected to: {}", self.server_url).cyan());
-        println!("  {}  {}", "📚".dimmed(), format!("Version: {}", env!("CARGO_PKG_VERSION")).dimmed());
+        println!("  {}  {}", "�".dimmed(), format!("User: {}", self.user_id).cyan());
+        
+        if let Some(ref version) = self.server_version {
+            println!("  {}  {}", "🏷️ ".dimmed(), format!("Server version: {}", version).dimmed());
+        }
+        
+        println!("  {}  {}", "�📚".dimmed(), format!("CLI version: {}", env!("CARGO_PKG_VERSION")).dimmed());
         println!("  {}  Type {} for help, {} to exit", "💡".dimmed(), "\\help".cyan().bold(), "\\quit".cyan().bold());
         println!();
-    }
-
-    /// Create styled prompt
-    fn create_prompt(&self) -> String {
-        if self.color {
-            if self.connected {
-                // Simplified prompt without background color to avoid cursor issues
-                format!("{} {} ", "kalam".bright_cyan().bold(), "❯".bright_cyan())
-            } else {
-                format!("{} {} ", "kalam".red().bold(), "❯".red())
-            }
-        } else {
-            if self.connected {
-                "kalam> ".to_string()
-            } else {
-                "kalam (disconnected)> ".to_string()
-            }
-        }
     }
 
     /// Fetch table names from server and update completer
     async fn refresh_tables(&mut self, completer: &mut AutoCompleter) -> Result<()> {
         // Query system.tables to get table names
-        let response = self.client.execute_query("SELECT name FROM system.tables").await?;
+        let response = self.client.execute_query("SELECT table_name FROM system.tables").await?;
         
         // Extract table names from response
         let mut table_names = Vec::new();
         if !response.results.is_empty() {
             if let Some(rows) = &response.results[0].rows {
                 for row in rows {
-                    if let Some(name_value) = row.get("name") {
+                    if let Some(name_value) = row.get("table_name") {
                         if let Some(name) = name_value.as_str() {
                             table_names.push(name.to_string());
                         }
@@ -392,7 +417,7 @@ impl CLISession {
                 }
             }
             Command::ListTables => {
-                self.execute("SELECT name, type FROM system.tables").await?;
+                self.execute("SELECT table_name, table_type FROM system.tables").await?;
             }
             Command::RefreshTables => {
                 // This is handled in run_interactive, shouldn't reach here
@@ -622,10 +647,9 @@ impl CLISession {
     }
 }
 
-/// Rustyline helper with autocomplete and syntax highlighting
+/// Rustyline helper with autocomplete (no highlighting for performance)
 struct CLIHelper {
     completer: AutoCompleter,
-    highlighter: SqlHighlighter,
 }
 
 impl Completer for CLIHelper {
@@ -645,15 +669,7 @@ impl Hinter for CLIHelper {
     type Hint = String;
 }
 
-impl Highlighter for CLIHelper {
-    fn highlight<'l>(&self, line: &'l str, pos: usize) -> std::borrow::Cow<'l, str> {
-        self.highlighter.highlight(line, pos)
-    }
-
-    fn highlight_char(&self, line: &str, pos: usize, forced: bool) -> bool {
-        self.highlighter.highlight_char(line, pos, forced)
-    }
-}
+impl Highlighter for CLIHelper {}
 
 impl Validator for CLIHelper {}
 

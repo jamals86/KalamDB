@@ -47,3 +47,4 @@ config.toml
 
 # Documentation build
 /target/doc/
+cli/.kalam/history
