@@ -2,6 +2,7 @@
 //!
 //! **Implements T084**: CLISession state with kalam-link client integration
 //! **Implements T091-T093**: Interactive readline loop with command execution
+//! **Implements T114a**: Loading indicator for long-running queries
 //!
 //! Manages the connection to KalamDB server and execution state throughout
 //! the CLI session lifetime.
@@ -9,13 +10,24 @@
 use kalam_link::KalamLinkClient;
 use clap::ValueEnum;
 use rustyline::error::ReadlineError;
-use rustyline::DefaultEditor;
+use rustyline::{Editor, Helper};
+use rustyline::history::DefaultHistory;
+use rustyline::completion::Completer;
+use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
+use rustyline::validate::Validator;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::time::{Duration, Instant};
+use colored::*;
+use console::Term;
 
 use crate::{
     error::Result,
     formatter::OutputFormatter,
     history::CommandHistory,
     parser::{Command, CommandParser},
+    completer::AutoCompleter,
+    highlighter::SqlHighlighter,
 };
 
 /// Output format for query results
@@ -51,6 +63,9 @@ pub struct CLISession {
 
     /// Active subscription paused state
     subscription_paused: bool,
+
+    /// Threshold for showing loading indicator (milliseconds)
+    loading_threshold_ms: u64,
 }
 
 impl CLISession {
@@ -92,17 +107,45 @@ impl CLISession {
             color,
             connected: true,
             subscription_paused: false,
+            loading_threshold_ms: 200, // Default: 200ms
         })
     }
 
-    /// Execute a SQL query
+    /// Execute a SQL query with loading indicator
     ///
     /// **Implements T092**: Execute SQL via kalam-link client
+    /// **Implements T114a**: Show loading indicator for queries > threshold
     pub async fn execute(&mut self, sql: &str) -> Result<()> {
-        match self.client.execute_query(sql).await {
+        let start = Instant::now();
+        
+        // Create a loading indicator task
+        let show_loading = tokio::spawn({
+            let threshold = Duration::from_millis(self.loading_threshold_ms);
+            async move {
+                tokio::time::sleep(threshold).await;
+                Some(Self::create_spinner())
+            }
+        });
+
+        // Execute the query
+        let result = self.client.execute_query(sql).await;
+        
+        // Cancel the loading indicator
+        show_loading.abort();
+        
+        // If spinner was shown, get it and finish
+        let elapsed = start.elapsed();
+        
+        match result {
             Ok(response) => {
                 let output = self.formatter.format_response(&response)?;
                 println!("{}", output);
+                
+                // Show timing if query took significant time
+                if elapsed.as_millis() >= self.loading_threshold_ms as u128 {
+                    println!("\nTime: {:.3} ms", elapsed.as_secs_f64() * 1000.0);
+                }
+                
                 Ok(())
             }
             Err(e) => {
@@ -110,6 +153,20 @@ impl CLISession {
                 Err(e.into())
             }
         }
+    }
+
+    /// Create a spinner for long-running operations
+    fn create_spinner() -> ProgressBar {
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                .template("{spinner:.cyan} {msg}")
+                .unwrap(),
+        );
+        pb.set_message("Executing query...");
+        pb.enable_steady_tick(Duration::from_millis(80));
+        pb
     }
 
     /// Execute multiple SQL statements
@@ -123,16 +180,28 @@ impl CLISession {
         Ok(())
     }
 
-    /// Run interactive readline loop
+    /// Run interactive readline loop with autocomplete
     ///
     /// **Implements T093**: Interactive REPL with rustyline
+    /// **Implements T114b**: Enhanced autocomplete with table names
     pub async fn run_interactive(&mut self) -> Result<()> {
         println!("Kalam CLI v{}", env!("CARGO_PKG_VERSION"));
         println!("Connected to: {}", self.server_url);
         println!("Type \\help for help, \\quit to exit\n");
 
-        // Initialize readline
-        let mut rl = DefaultEditor::new()?;
+        // Create autocompleter and fetch initial table names
+        let mut completer = AutoCompleter::new();
+        if let Err(e) = self.refresh_tables(&mut completer).await {
+            eprintln!("Warning: Could not fetch table names for autocomplete: {}", e);
+        }
+
+        // Create rustyline helper
+        let helper = CLIHelper { completer };
+
+        // Initialize readline with completer
+        let mut rl = Editor::<CLIHelper, DefaultHistory>::new()?;
+        rl.set_helper(Some(helper));
+        
         let history = CommandHistory::new(1000);
 
         // Load history
@@ -164,6 +233,18 @@ impl CLISession {
                     // Parse and execute command
                     match self.parser.parse(line) {
                         Ok(command) => {
+                            // Handle refresh-tables command specially to update completer
+                            if matches!(command, Command::RefreshTables) {
+                                if let Some(helper) = rl.helper_mut() {
+                                    if let Err(e) = self.refresh_tables(&mut helper.completer).await {
+                                        eprintln!("Error refreshing tables: {}", e);
+                                    } else {
+                                        println!("Table names refreshed");
+                                    }
+                                }
+                                continue;
+                            }
+
                             if let Err(e) = self.execute_command(command).await {
                                 eprintln!("Error: {}", e);
                             }
@@ -188,6 +269,29 @@ impl CLISession {
             }
         }
 
+        Ok(())
+    }
+
+    /// Fetch table names from server and update completer
+    async fn refresh_tables(&mut self, completer: &mut AutoCompleter) -> Result<()> {
+        // Query system.tables to get table names
+        let response = self.client.execute_query("SELECT name FROM system.tables").await?;
+        
+        // Extract table names from response
+        let mut table_names = Vec::new();
+        if !response.results.is_empty() {
+            if let Some(rows) = &response.results[0].rows {
+                for row in rows {
+                    if let Some(name_value) = row.get("name") {
+                        if let Some(name) = name_value.as_str() {
+                            table_names.push(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        
+        completer.set_tables(table_names);
         Ok(())
     }
 
@@ -246,6 +350,10 @@ impl CLISession {
             }
             Command::ListTables => {
                 self.execute("SELECT name, type FROM system.tables").await?;
+            }
+            Command::RefreshTables => {
+                // This is handled in run_interactive, shouldn't reach here
+                println!("Table names refreshed");
             }
             Command::Describe(table) => {
                 let query = format!("SELECT * FROM system.columns WHERE table_name = '{}'", table);
@@ -425,6 +533,12 @@ impl CLISession {
         println!("    \\subscribe <query>     Start WebSocket subscription");
         println!("    \\watch <query>         Alias for \\subscribe");
         println!("    \\unsubscribe           Cancel active subscription");
+        println!("    \\refresh-tables        Refresh table names for autocomplete");
+        println!();
+        println!("  Features:");
+        println!("    - TAB completion for SQL keywords, table names, and columns");
+        println!("    - Loading indicator for queries taking longer than 200ms");
+        println!("    - Command history (saved in ~/.kalam/history)");
         println!();
         println!("  Examples:");
         println!("    SELECT * FROM users WHERE age > 18;");
@@ -464,6 +578,34 @@ impl CLISession {
         self.formatter = OutputFormatter::new(self.format, enabled);
     }
 }
+
+/// Rustyline helper with autocomplete support
+struct CLIHelper {
+    completer: AutoCompleter,
+}
+
+impl Completer for CLIHelper {
+    type Candidate = <AutoCompleter as Completer>::Candidate;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        ctx: &rustyline::Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
+        self.completer.complete(line, pos, ctx)
+    }
+}
+
+impl Hinter for CLIHelper {
+    type Hint = String;
+}
+
+impl Highlighter for CLIHelper {}
+
+impl Validator for CLIHelper {}
+
+impl Helper for CLIHelper {}
 
 #[cfg(test)]
 mod tests {

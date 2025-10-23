@@ -39,3 +39,17 @@ show namespaces
 create namespace jamal-us
 create namespace jamalus
 show namespaces
+help
+\help
+\flush
+select * from system.tables
+CREATE USER TABLE jamal.files_inc (uuid BIGINT, test TEXT, name TEXT) FLUSH ROWS 10
+show namespaces
+CREATE USER TABLE jamalus.files_inc (uuid BIGINT, test TEXT, name TEXT) FLUSH ROWS 10
+\q
+\help
+\flush
+select * from system.users
+\health
+\flush
+\q

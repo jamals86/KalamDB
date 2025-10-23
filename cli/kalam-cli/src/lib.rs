@@ -8,6 +8,7 @@ pub mod completer;
 pub mod config;
 pub mod error;
 pub mod formatter;
+pub mod highlighter;
 pub mod history;
 pub mod parser;
 pub mod session;

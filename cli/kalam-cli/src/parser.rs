@@ -26,6 +26,7 @@ pub enum Command {
     SetFormat(String),
     Subscribe(String),
     Unsubscribe,
+    RefreshTables,
     Unknown(String),
 }
 
@@ -111,6 +112,7 @@ impl CommandParser {
                 }
             }
             "\\unsubscribe" | "\\unwatch" => Ok(Command::Unsubscribe),
+            "\\refresh-tables" | "\\refresh" => Ok(Command::RefreshTables),
             _ => Ok(Command::Unknown(command.to_string())),
         }
     }
