@@ -1,11 +1,29 @@
 # KalamDB REST API Reference
 
 **Version**: 0.1.0  
-**Base URL**: `http://localhost:8080`
+**Base URL**: `http://localhost:8080`  
+**API Version**: v1
 
 ## Overview
 
-KalamDB provides a single REST endpoint `/api/sql` that accepts SQL commands for all operations. This unified interface simplifies client integration and enables full SQL expressiveness.
+KalamDB provides a versioned REST API with a single SQL endpoint that accepts SQL commands for all operations. This unified interface simplifies client integration and enables full SQL expressiveness.
+
+### API Versioning
+
+All API endpoints are versioned with a `/v1` prefix to ensure backward compatibility as the API evolves.
+
+**Current Version**: v1  
+**Endpoint Prefix**: `/v1`
+
+**Versioned Endpoints**:
+- `/v1/api/sql` - Execute SQL commands
+- `/v1/ws` - WebSocket for live query subscriptions
+- `/v1/api/healthcheck` - Server health status
+
+**Version Strategy**:
+- **Breaking changes** require a new version (e.g., `/v2/api/sql`)
+- **Non-breaking changes** (new optional fields, new endpoints) can be added to existing versions
+- **Deprecation policy**: Old versions supported for at least 6 months after new version release
 
 ---
 
@@ -26,9 +44,12 @@ Authorization: Bearer <JWT_TOKEN>
 
 ## Endpoints
 
-### POST /api/sql
+### POST /v1/api/sql
 
 Execute a SQL command and receive results.
+
+**Version**: v1  
+**Path**: `/v1/api/sql`
 
 #### Request
 
@@ -762,34 +783,129 @@ Rate limits will be enforced per user:
 
 ```bash
 # 1. Create namespace
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:8080/v1/api/sql \
   -H "X-User-Id: alice" \
   -H "Content-Type: application/json" \
   -d '{"sql": "CREATE NAMESPACE app"}'
 
 # 2. Create user table
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:8080/v1/api/sql \
   -H "X-User-Id: alice" \
   -H "Content-Type: application/json" \
   -d '{"sql": "CREATE USER TABLE app.messages (id BIGINT, content TEXT) FLUSH POLICY ROW_LIMIT 1000"}'
 
 # 3. Insert data
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:8080/v1/api/sql \
   -H "X-User-Id: alice" \
   -H "Content-Type: application/json" \
   -d '{"sql": "INSERT INTO app.messages (id, content) VALUES (1, '\''Hello World'\'')"}'
 
 # 4. Query data
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:8080/v1/api/sql \
   -H "X-User-Id: alice" \
   -H "Content-Type: application/json" \
   -d '{"sql": "SELECT * FROM app.messages LIMIT 10"}'
 
 # 5. Backup database
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:8080/v1/api/sql \
   -H "X-User-Id: alice" \
   -H "Content-Type: application/json" \
   -d '{"sql": "BACKUP DATABASE app TO '\''/backups/app-backup'\''"}'
+```
+
+
+---
+
+### GET /v1/api/healthcheck
+
+Check server health status and readiness.
+
+**Version**: v1  
+**Path**: `/v1/api/healthcheck`
+
+#### Request
+
+**Method**: GET  
+**Headers**: None required
+
+```bash
+curl http://localhost:8080/v1/api/healthcheck
+```
+
+#### Response
+
+**Success (200 OK)**:
+```json
+{
+  "status": "healthy",
+  "version": "0.1.0",
+  "uptime_seconds": 3600,
+  "timestamp": "2025-10-23T15:30:00Z"
+}
+```
+
+**Unhealthy (503 Service Unavailable)**:
+```json
+{
+  "status": "unhealthy",
+  "error": "Database connection failed",
+  "timestamp": "2025-10-23T15:30:00Z"
+}
+```
+
+---
+
+### WebSocket /v1/ws
+
+Real-time live query subscriptions via WebSocket.
+
+**Version**: v1  
+**Path**: `/v1/ws`
+
+#### Connection
+
+**Protocol**: WebSocket (ws:// or wss://)  
+**URL**: `ws://localhost:8080/v1/ws`
+
+**Headers**:
+- `X-User-Id: <user_id>` (required during WebSocket handshake)
+
+**Example**:
+```javascript
+const ws = new WebSocket('ws://localhost:8080/v1/ws', {
+  headers: {
+    'X-User-Id': 'alice'
+  }
+});
+```
+
+#### Protocol
+
+For detailed WebSocket protocol documentation including subscription messages, change notifications, and error handling, see:
+
+**[WebSocket Protocol Documentation](WEBSOCKET_PROTOCOL.md)**
+
+**Quick Example**:
+```javascript
+// Subscribe to live query
+ws.send(JSON.stringify({
+  action: 'subscribe',
+  query_id: 'query-123',
+  sql: 'SELECT * FROM app.messages WHERE user_id = $1',
+  params: ['alice']
+}));
+
+// Receive change notifications
+ws.onmessage = (event) => {
+  const notification = JSON.parse(event.data);
+  console.log('Change:', notification);
+};
+
+// Unsubscribe
+ws.send(JSON.stringify({
+  action: 'unsubscribe',
+  query_id: 'query-123'
+}));
 ```
 
 ---

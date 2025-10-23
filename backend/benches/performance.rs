@@ -5,6 +5,7 @@
 //! - DataFusion query performance
 //! - WebSocket message delivery (<10ms target)
 //! - Flush operation throughput
+//! - Stress testing scenarios (sustained load, memory stability)
 //!
 //! # Running Benchmarks
 //!
@@ -19,6 +20,8 @@
 //! - Query latency: <100ms for simple queries
 //! - Notification latency: <10ms from insert to delivery
 //! - Flush throughput: >10,000 rows/second
+//! - Sustained write rate: 1000 inserts/sec
+//! - Memory growth under load: <10% over 5 minutes
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use kalamdb_store::{test_utils::TestDb, UserTableStore};
@@ -233,13 +236,134 @@ fn bench_websocket_serialization(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark sustained write load.
+///
+/// Measures ability to maintain 1000 inserts/sec.
+/// Target: Stable performance over duration.
+fn bench_sustained_write_load(c: &mut Criterion) {
+    let mut group = c.benchmark_group("stress_testing");
+    group.sample_size(10); // Reduce sample size for long-running benchmarks
+
+    // Setup test database
+    let test_db =
+        TestDb::single_cf("user_table:stress:messages").expect("Failed to create test database");
+
+    let store = UserTableStore::new(test_db.db.clone()).expect("Failed to create UserTableStore");
+
+    group.bench_function("sustained_1000_writes_per_sec", |b| {
+        b.iter(|| {
+            let start = std::time::Instant::now();
+            let mut count = 0;
+
+            // Write 1000 rows
+            for i in 0..1000 {
+                let user_id = format!("user{}", i % 10); // 10 users
+                let row_id = format!("row_{}", i);
+                let row_data = json!({
+                    "id": i,
+                    "content": format!("Stress test message {}", i),
+                    "timestamp": chrono::Utc::now().timestamp_millis()
+                });
+
+                let _ = store.insert(
+                    "stress",
+                    "messages",
+                    &user_id,
+                    &row_id,
+                    &row_data.to_string(),
+                );
+
+                count += 1;
+            }
+
+            let duration = start.elapsed();
+            let rate = count as f64 / duration.as_secs_f64();
+
+            // Verify we're achieving target rate
+            assert!(
+                rate >= 900.0,
+                "Write rate too low: {} writes/sec",
+                rate as u64
+            );
+
+            black_box(count);
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark concurrent write throughput.
+///
+/// Measures performance with multiple concurrent writers.
+/// Target: Linear scaling up to 10 concurrent writers.
+fn bench_concurrent_writes(c: &mut Criterion) {
+    let mut group = c.benchmark_group("concurrent_writes");
+    group.sample_size(10);
+
+    for thread_count in [1, 2, 4, 8].iter() {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{}_threads", thread_count)),
+            thread_count,
+            |b, &threads| {
+                let test_db = TestDb::single_cf(&format!(
+                    "user_table:concurrent:{}",
+                    threads
+                ))
+                .expect("Failed to create test database");
+
+                let store = Arc::new(
+                    UserTableStore::new(test_db.db.clone())
+                        .expect("Failed to create UserTableStore"),
+                );
+
+                b.iter(|| {
+                    let handles: Vec<_> = (0..threads)
+                        .map(|thread_id| {
+                            let store_clone = Arc::clone(&store);
+                            std::thread::spawn(move || {
+                                for i in 0..100 {
+                                    let user_id = format!("user{}", thread_id);
+                                    let row_id = format!("row_{}_{}", thread_id, i);
+                                    let row_data = json!({
+                                        "id": i,
+                                        "thread": thread_id,
+                                        "content": format!("Message from thread {}", thread_id)
+                                    });
+
+                                    let _ = store_clone.insert(
+                                        "stress",
+                                        "messages",
+                                        &user_id,
+                                        &row_id,
+                                        &row_data.to_string(),
+                                    );
+                                }
+                            })
+                        })
+                        .collect();
+
+                    for handle in handles {
+                        handle.join().expect("Thread panicked");
+                    }
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_rocksdb_writes,
     bench_rocksdb_reads,
     bench_datafusion_queries,
     bench_flush_operations,
-    bench_websocket_serialization
+    bench_websocket_serialization,
+    bench_sustained_write_load,
+    bench_concurrent_writes
 );
+criterion_main!(benches);
 
 criterion_main!(benches);

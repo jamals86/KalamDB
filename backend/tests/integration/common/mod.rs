@@ -6,6 +6,7 @@
 //! - Common fixtures for namespaces and tables
 //! - WebSocket connection helpers
 //! - Assertion utilities for validating results
+//! - Stress testing utilities for concurrent load generation
 //!
 //! # Architecture
 //!
@@ -13,6 +14,7 @@
 //! 1. **Server Management**: Start/stop test server instances
 //! 2. **Fixtures**: Create test data (namespaces, tables, sample data)
 //! 3. **WebSocket Utilities**: Connect, subscribe, and validate live queries
+//! 4. **Stress Testing**: Concurrent writers, subscribers, and resource monitors
 //!
 //! # Usage
 //!
@@ -31,6 +33,8 @@
 //!     server.cleanup().await;
 //! }
 //! ```
+
+pub mod stress_utils;
 
 use anyhow::Result;
 use datafusion::catalog::SchemaProvider;

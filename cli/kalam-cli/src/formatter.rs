@@ -37,18 +37,18 @@ impl OutputFormatter {
     /// Format as table
     fn format_table(&self, response: &QueryResponse) -> Result<String> {
         if response.results.is_empty() {
-            let exec_time = response.execution_time_ms.unwrap_or(0) as f64 / 1000.0;
-            return Ok(format!("Query OK, 0 rows affected ({:.2} sec)", exec_time));
+            let exec_time_ms = response.execution_time_ms.unwrap_or(0) as f64;
+            return Ok(format!("Query OK, 0 rows affected\n\nTime: {:.3} ms", exec_time_ms));
         }
 
         let result = &response.results[0];
-        let exec_time = response.execution_time_ms.unwrap_or(0) as f64 / 1000.0;
+        let exec_time_ms = response.execution_time_ms.unwrap_or(0) as f64;
         
         // Check if this is a message-only result (DDL statements)
         if let Some(ref message) = result.message {
             // Format DDL message similar to MySQL/PostgreSQL
             let row_count = result.row_count;
-            return Ok(format!("{}\nQuery OK, {} rows affected ({:.2} sec)", message, row_count, exec_time));
+            return Ok(format!("{}\nQuery OK, {} rows affected\n\nTime: {:.3} ms", message, row_count, exec_time_ms));
         }
 
         // Handle data results
@@ -125,13 +125,18 @@ impl OutputFormatter {
             let row_count = rows.len();
             let row_label = if row_count == 1 { "row" } else { "rows" };
             output.push_str(&format!("({} {})\n", row_count, row_label));
-            output.push_str(&format!("Time: {:.3} s", exec_time));
+            // Add blank line for psql-style formatting
+            output.push('\n');
+            // Display timing in milliseconds like psql
+            let exec_time_ms = response.execution_time_ms.unwrap_or(0) as f64;
+            output.push_str(&format!("Time: {:.3} ms", exec_time_ms));
 
             Ok(output)
         } else {
             // Non-query statement (INSERT, UPDATE, DELETE)
             let row_count = result.row_count;
-            Ok(format!("Query OK, {} rows affected ({:.2} sec)", row_count, exec_time))
+            let exec_time_ms = response.execution_time_ms.unwrap_or(0) as f64;
+            Ok(format!("Query OK, {} rows affected\n\nTime: {:.3} ms", row_count, exec_time_ms))
         }
     }
 

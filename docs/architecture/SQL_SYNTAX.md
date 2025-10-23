@@ -698,6 +698,238 @@ See [DataFusion SQL Reference](https://arrow.apache.org/datafusion/user-guide/sq
 
 ---
 
+## PostgreSQL/MySQL Compatibility
+
+KalamDB aims for maximum compatibility with PostgreSQL and MySQL syntax to ease migration and provide familiar interfaces for developers.
+
+### Supported PostgreSQL Features
+
+#### Data Type Aliases
+
+PostgreSQL-specific type names are automatically mapped to Arrow/DataFusion types:
+
+| PostgreSQL Type | KalamDB Type | Notes |
+|-----------------|--------------|-------|
+| `SERIAL` | `INT` | Auto-increment (sequence-based) |
+| `BIGSERIAL` | `BIGINT` | Auto-increment (sequence-based) |
+| `SMALLSERIAL` | `SMALLINT` | Auto-increment (sequence-based) |
+| `SERIAL2` | `SMALLINT` | Alias for SMALLSERIAL |
+| `SERIAL4` | `INT` | Alias for SERIAL |
+| `SERIAL8` | `BIGINT` | Alias for BIGSERIAL |
+| `INT2` | `SMALLINT` | 16-bit integer |
+| `INT4` | `INT` | 32-bit integer |
+| `INT8` | `BIGINT` | 64-bit integer |
+| `FLOAT4` | `FLOAT` | 32-bit float |
+| `FLOAT8` | `DOUBLE` | 64-bit float |
+| `VARCHAR(n)` | `TEXT` | Variable-length text |
+| `CHAR(n)` | `TEXT` | Fixed-length text (stored as TEXT) |
+| `CHARACTER VARYING` | `TEXT` | Variable-length text |
+| `BOOL` | `BOOLEAN` | True/false |
+| `JSONB` | `TEXT` | JSON data (stored as TEXT) |
+
+**Example**:
+```sql
+-- PostgreSQL-style CREATE TABLE
+CREATE USER TABLE app.users (
+  id SERIAL PRIMARY KEY,
+  username VARCHAR(255) NOT NULL,
+  age INT4,
+  balance FLOAT8,
+  is_active BOOL,
+  metadata JSONB
+) FLUSH POLICY ROW_LIMIT 1000;
+```
+
+#### Error Message Format
+
+KalamDB uses PostgreSQL-style error messages by default:
+
+```
+ERROR: relation "users" does not exist
+ERROR: column "age" does not exist
+ERROR: syntax error at or near "FROM"
+```
+
+**Programmatic Access**:
+```rust
+use kalamdb_sql::compatibility::{
+    format_postgres_error,
+    format_postgres_table_not_found,
+    format_postgres_column_not_found,
+    format_postgres_syntax_error,
+};
+
+// Generate PostgreSQL-style errors
+let err = format_postgres_table_not_found("users");
+// Output: "ERROR: relation \"users\" does not exist"
+```
+
+### Supported MySQL Features
+
+#### Data Type Aliases
+
+MySQL-specific type names are automatically mapped:
+
+| MySQL Type | KalamDB Type | Notes |
+|------------|--------------|-------|
+| `TINYINT` | `SMALLINT` | 8-bit integer |
+| `MEDIUMINT` | `INT` | 24-bit integer (stored as INT) |
+| `INT` | `INT` | 32-bit integer |
+| `BIGINT` | `BIGINT` | 64-bit integer |
+| `UNSIGNED INT` | `UINT` | Unsigned 32-bit integer |
+| `UNSIGNED BIGINT` | `UBIGINT` | Unsigned 64-bit integer |
+| `REAL` | `FLOAT` | 32-bit float |
+| `DOUBLE PRECISION` | `DOUBLE` | 64-bit float |
+| `VARCHAR(n)` | `TEXT` | Variable-length text |
+| `CHAR(n)` | `TEXT` | Fixed-length text |
+| `TEXT` | `TEXT` | Long text |
+| `JSON` | `TEXT` | JSON data |
+
+**Example**:
+```sql
+-- MySQL-style CREATE TABLE
+CREATE USER TABLE app.products (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  price DOUBLE PRECISION,
+  stock MEDIUMINT,
+  description TEXT
+) FLUSH POLICY ROW_LIMIT 1000;
+```
+
+#### Error Message Format
+
+MySQL-style error messages can be generated using compatibility functions:
+
+```
+ERROR 1146 (42S02): Table 'db.users' doesn't exist
+ERROR 1054 (42S22): Unknown column 'age' in 'field list'
+ERROR 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'FROM' at line 1
+```
+
+**Programmatic Access**:
+```rust
+use kalamdb_sql::compatibility::{
+    format_mysql_error,
+    format_mysql_table_not_found,
+    format_mysql_column_not_found,
+    format_mysql_syntax_error,
+};
+
+// Generate MySQL-style errors
+let err = format_mysql_table_not_found("mydb", "users");
+// Output: "ERROR 1146 (42S02): Table 'mydb.users' doesn't exist"
+```
+
+### Syntax Compatibility
+
+#### CREATE TABLE Variants
+
+Both PostgreSQL and MySQL CREATE TABLE syntax variants are supported:
+
+```sql
+-- PostgreSQL style with SERIAL
+CREATE USER TABLE app.users (
+  id SERIAL PRIMARY KEY,
+  username VARCHAR(255) NOT NULL
+) FLUSH POLICY ROW_LIMIT 1000;
+
+-- MySQL style with AUTO_INCREMENT
+CREATE USER TABLE app.users (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  username VARCHAR(255) NOT NULL
+) FLUSH POLICY ROW_LIMIT 1000;
+
+-- Standard SQL with explicit NOT NULL
+CREATE USER TABLE app.users (
+  id BIGINT NOT NULL,
+  username TEXT NOT NULL
+) FLUSH POLICY ROW_LIMIT 1000;
+```
+
+#### INSERT Statement Compatibility
+
+Standard SQL INSERT syntax is fully supported:
+
+```sql
+-- Single row insert
+INSERT INTO app.users (id, username) VALUES (1, 'alice');
+
+-- Multi-row insert (PostgreSQL/MySQL compatible)
+INSERT INTO app.users (id, username) VALUES 
+  (1, 'alice'),
+  (2, 'bob'),
+  (3, 'charlie');
+
+-- Column list inference (if all columns provided)
+INSERT INTO app.users VALUES (1, 'alice');
+```
+
+### CLI Output Format
+
+The KalamDB CLI (`kalam-cli`) uses **psql-style output formatting** for familiarity:
+
+**Table Borders** (psql-compatible):
+```
+┌─────┬──────────┐
+│ id  │ username │
+├─────┼──────────┤
+│ 1   │ alice    │
+│ 2   │ bob      │
+└─────┴──────────┘
+(2 rows)
+
+Time: 45.123 ms
+```
+
+**Row Count Display**:
+- Shows `(N rows)` after query results
+- Uses `(1 row)` for single-row results (singular)
+
+**Timing Display**:
+- Shows `Time: X.XXX ms` in milliseconds
+- 3 decimal places for precision
+- Blank line separator between results and timing
+
+**DDL/DML Results**:
+```
+Query OK, 1 rows affected
+
+Time: 12.456 ms
+```
+
+### Differences from PostgreSQL/MySQL
+
+While KalamDB aims for compatibility, some differences exist:
+
+#### Architecture-Specific Features
+
+1. **Table Types**: KalamDB has USER, SHARED, and STREAM tables (PostgreSQL/MySQL have standard tables)
+2. **FLUSH POLICY**: Required for KalamDB tables (no equivalent in PostgreSQL/MySQL)
+3. **System Columns**: `_updated` and `_deleted` are auto-managed (not user-specified)
+4. **Namespace Operations**: KalamDB uses `CREATE NAMESPACE` (PostgreSQL uses `CREATE SCHEMA`, MySQL uses `CREATE DATABASE`)
+
+#### Not Yet Supported
+
+1. **Transactions**: No BEGIN/COMMIT/ROLLBACK (planned for future)
+2. **Foreign Keys**: No FK constraints (planned for future)
+3. **Triggers**: No CREATE TRIGGER support
+4. **Stored Procedures**: No procedural SQL (PL/pgSQL, MySQL procedures)
+5. **Views**: No CREATE VIEW support (planned for future)
+6. **Indexes**: No explicit index creation (automatic bloom filters only)
+
+#### SQL Parser Implementation
+
+KalamDB uses **sqlparser-rs** (https://github.com/sqlparser-rs/sqlparser-rs) for standard SQL parsing with custom extensions for KalamDB-specific commands:
+
+- **Standard SQL**: Parsed by sqlparser-rs (SELECT, INSERT, UPDATE, DELETE)
+- **Custom Extensions**: Custom parsers for CREATE NAMESPACE, FLUSH POLICY, CREATE STORAGE, etc.
+- **Dialect**: Extends PostgreSQL dialect with KalamDB-specific keywords
+
+See [ADR-012: sqlparser-rs Integration](adrs/ADR-012-sqlparser-integration.md) for implementation details.
+
+---
+
 ## Examples
 
 ### Complete Workflow

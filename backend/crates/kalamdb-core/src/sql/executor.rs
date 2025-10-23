@@ -1827,13 +1827,12 @@ impl SqlExecutor {
                 kalamdb_commons::models::NamespaceId::new(namespace_id.as_str());
             let stmt = CreateUserTableStatement::parse(sql, &namespace_id_for_parse)
                 .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
-            let table_name = crate::catalog::TableName::from(stmt.table_name.clone());
-            let namespace_id = crate::catalog::NamespaceId::from(stmt.namespace_id.clone());
+            
+            // stmt fields are already the right types from kalamdb_commons
+            let table_name = stmt.table_name.clone();
+            let namespace_id = stmt.namespace_id.clone();
             let schema = stmt.schema.clone();
-            let flush_policy = stmt
-                .flush_policy
-                .clone()
-                .map(crate::flush::FlushPolicy::from);
+            let flush_policy = stmt.flush_policy.clone();
             let deleted_retention_hours = stmt.deleted_retention_hours;
             // Extract storage fields before stmt is moved
             let stmt_storage_id = stmt.storage_id.clone();
@@ -2121,11 +2120,11 @@ impl SqlExecutor {
         let stmt = DropTableStatement::parse(sql, &default_namespace)
             .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
-        // No conversion needed - stmt fields are already the right types from kalamdb_commons
+        // Convert TableKind to TableType
         let result = deletion_service.drop_table(
             &stmt.namespace_id,
             &stmt.table_name,
-            stmt.table_type,
+            stmt.table_type.into(),
             stmt.if_exists,
         )?;
 
@@ -2133,16 +2132,16 @@ impl SqlExecutor {
         if result.is_none() {
             return Ok(ExecutionResult::Success(format!(
                 "Table {}.{} does not exist (skipped)",
-                namespace_id.as_str(),
-                table_name.as_str()
+                stmt.namespace_id.as_str(),
+                stmt.table_name.as_str()
             )));
         }
 
         let deletion_result = result.unwrap();
         Ok(ExecutionResult::Success(format!(
             "Table {}.{} dropped successfully ({} Parquet files deleted, {} bytes freed)",
-            namespace_id.as_str(),
-            table_name.as_str(),
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str(),
             deletion_result.files_deleted,
             deletion_result.bytes_freed
         )))

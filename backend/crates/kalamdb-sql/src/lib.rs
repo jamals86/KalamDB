@@ -44,7 +44,12 @@ pub mod query_cache;
 pub mod storage_commands;
 
 pub use adapter::RocksDbAdapter;
-pub use compatibility::map_sql_type_to_arrow;
+pub use compatibility::{
+    format_mysql_column_not_found, format_mysql_error, format_mysql_syntax_error,
+    format_mysql_table_not_found, format_postgres_column_not_found, format_postgres_error,
+    format_postgres_syntax_error, format_postgres_table_not_found, map_sql_type_to_arrow,
+    ErrorStyle,
+};
 pub use executor::SqlExecutor;
 pub use flush_commands::{FlushAllTablesStatement, FlushTableStatement};
 pub use job_commands::{parse_job_command, JobCommand};
@@ -55,6 +60,7 @@ pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
 pub use storage_commands::{
     AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
 };
+
 
 use anyhow::Result;
 use rocksdb::DB;

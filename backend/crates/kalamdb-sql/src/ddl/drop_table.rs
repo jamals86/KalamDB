@@ -8,7 +8,7 @@
 
 use crate::ddl::DdlResult;
 
-use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 
 /// Table categories supported by DROP TABLE statements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +16,16 @@ pub enum TableKind {
     User,
     Shared,
     Stream,
+}
+
+impl From<TableKind> for TableType {
+    fn from(kind: TableKind) -> Self {
+        match kind {
+            TableKind::User => TableType::User,
+            TableKind::Shared => TableType::Shared,
+            TableKind::Stream => TableType::Stream,
+        }
+    }
 }
 
 /// DROP TABLE statement

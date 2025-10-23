@@ -148,3 +148,200 @@ mod tests {
         assert!(err.to_string().contains("Unsupported custom data type"));
     }
 }
+
+/// Database error message style configuration
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorStyle {
+    /// PostgreSQL-style errors (default)
+    /// Examples:
+    /// - "ERROR: relation \"users\" does not exist"
+    /// - "ERROR: column \"age\" does not exist"
+    /// - "ERROR: syntax error at or near \"FROM\""
+    PostgreSQL,
+    
+    /// MySQL-style errors
+    /// Examples:
+    /// - "ERROR 1146 (42S02): Table 'db.users' doesn't exist"
+    /// - "ERROR 1054 (42S22): Unknown column 'age' in 'field list'"
+    MySQL,
+}
+
+impl Default for ErrorStyle {
+    fn default() -> Self {
+        ErrorStyle::PostgreSQL
+    }
+}
+
+/// Format an error message in PostgreSQL style
+///
+/// # Examples
+///
+/// ```
+/// use kalamdb_sql::compatibility::format_postgres_error;
+///
+/// let msg = format_postgres_error("relation \"users\" does not exist");
+/// assert_eq!(msg, "ERROR: relation \"users\" does not exist");
+/// ```
+pub fn format_postgres_error(message: &str) -> String {
+    format!("ERROR: {}", message)
+}
+
+/// Format a table not found error in PostgreSQL style
+///
+/// # Examples
+///
+/// ```
+/// use kalamdb_sql::compatibility::format_postgres_table_not_found;
+///
+/// let msg = format_postgres_table_not_found("users");
+/// assert_eq!(msg, "ERROR: relation \"users\" does not exist");
+/// ```
+pub fn format_postgres_table_not_found(table_name: &str) -> String {
+    format!("ERROR: relation \"{}\" does not exist", table_name)
+}
+
+/// Format a column not found error in PostgreSQL style
+///
+/// # Examples
+///
+/// ```
+/// use kalamdb_sql::compatibility::format_postgres_column_not_found;
+///
+/// let msg = format_postgres_column_not_found("age");
+/// assert_eq!(msg, "ERROR: column \"age\" does not exist");
+/// ```
+pub fn format_postgres_column_not_found(column_name: &str) -> String {
+    format!("ERROR: column \"{}\" does not exist", column_name)
+}
+
+/// Format a syntax error in PostgreSQL style
+///
+/// # Examples
+///
+/// ```
+/// use kalamdb_sql::compatibility::format_postgres_syntax_error;
+///
+/// let msg = format_postgres_syntax_error("FROM");
+/// assert_eq!(msg, "ERROR: syntax error at or near \"FROM\"");
+/// ```
+pub fn format_postgres_syntax_error(token: &str) -> String {
+    format!("ERROR: syntax error at or near \"{}\"", token)
+}
+
+/// Format an error message in MySQL style
+///
+/// # Examples
+///
+/// ```
+/// use kalamdb_sql::compatibility::format_mysql_error;
+///
+/// let msg = format_mysql_error(1146, "42S02", "Table 'db.users' doesn't exist");
+/// assert_eq!(msg, "ERROR 1146 (42S02): Table 'db.users' doesn't exist");
+/// ```
+pub fn format_mysql_error(error_code: u16, sqlstate: &str, message: &str) -> String {
+    format!("ERROR {} ({}): {}", error_code, sqlstate, message)
+}
+
+/// Format a table not found error in MySQL style
+///
+/// # Examples
+///
+/// ```
+/// use kalamdb_sql::compatibility::format_mysql_table_not_found;
+///
+/// let msg = format_mysql_table_not_found("db", "users");
+/// assert_eq!(msg, "ERROR 1146 (42S02): Table 'db.users' doesn't exist");
+/// ```
+pub fn format_mysql_table_not_found(database: &str, table_name: &str) -> String {
+    format!(
+        "ERROR 1146 (42S02): Table '{}.{}' doesn't exist",
+        database, table_name
+    )
+}
+
+/// Format a column not found error in MySQL style
+///
+/// # Examples
+///
+/// ```
+/// use kalamdb_sql::compatibility::format_mysql_column_not_found;
+///
+/// let msg = format_mysql_column_not_found("age");
+/// assert_eq!(msg, "ERROR 1054 (42S22): Unknown column 'age' in 'field list'");
+/// ```
+pub fn format_mysql_column_not_found(column_name: &str) -> String {
+    format!(
+        "ERROR 1054 (42S22): Unknown column '{}' in 'field list'",
+        column_name
+    )
+}
+
+/// Format a syntax error in MySQL style
+///
+/// # Examples
+///
+/// ```
+/// use kalamdb_sql::compatibility::format_mysql_syntax_error;
+///
+/// let msg = format_mysql_syntax_error("FROM", 1);
+/// assert_eq!(msg, "ERROR 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'FROM' at line 1");
+/// ```
+pub fn format_mysql_syntax_error(token: &str, line: usize) -> String {
+    format!(
+        "ERROR 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '{}' at line {}",
+        token, line
+    )
+}
+
+#[cfg(test)]
+mod error_formatting_tests {
+    use super::*;
+
+    #[test]
+    fn test_postgres_table_not_found() {
+        assert_eq!(
+            format_postgres_table_not_found("users"),
+            "ERROR: relation \"users\" does not exist"
+        );
+    }
+
+    #[test]
+    fn test_postgres_column_not_found() {
+        assert_eq!(
+            format_postgres_column_not_found("age"),
+            "ERROR: column \"age\" does not exist"
+        );
+    }
+
+    #[test]
+    fn test_postgres_syntax_error() {
+        assert_eq!(
+            format_postgres_syntax_error("FROM"),
+            "ERROR: syntax error at or near \"FROM\""
+        );
+    }
+
+    #[test]
+    fn test_mysql_table_not_found() {
+        assert_eq!(
+            format_mysql_table_not_found("mydb", "users"),
+            "ERROR 1146 (42S02): Table 'mydb.users' doesn't exist"
+        );
+    }
+
+    #[test]
+    fn test_mysql_column_not_found() {
+        assert_eq!(
+            format_mysql_column_not_found("age"),
+            "ERROR 1054 (42S22): Unknown column 'age' in 'field list'"
+        );
+    }
+
+    #[test]
+    fn test_mysql_syntax_error() {
+        assert_eq!(
+            format_mysql_syntax_error("FROM", 1),
+            "ERROR 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'FROM' at line 1"
+        );
+    }
+}

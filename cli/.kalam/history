@@ -33,3 +33,9 @@ select * from system.tables
 drop table jamal.files_inc
 cd C:\Jamal\git\KalamDB\backend && cargo build --bin kalamdb-server 2>&1 | Select-String -Pattern "error\[|warning: unused|Finished|Compiling kalamdb"
 select * from system.tables
+select * from system.users
+select * from system.tables
+show namespaces
+create namespace jamal-us
+create namespace jamalus
+show namespaces
