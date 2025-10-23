@@ -156,6 +156,10 @@ async fn execute_single_statement(
                     ExecutionResult::RecordBatches(batches) => {
                         record_batch_to_query_result(batches, user_id)
                     }
+                    ExecutionResult::Subscription(subscription_data) => {
+                        // Return subscription metadata as a special query result
+                        Ok(QueryResult::subscription(subscription_data))
+                    }
                 }
             }
             Err(e) => Err(Box::new(e)),

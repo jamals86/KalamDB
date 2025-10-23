@@ -92,3 +92,5 @@ path = "../../tests/integration/test_manual_flush_verification.rs"
 tempfile = "3"
 serde_json.workspace = true
 actix-http = "3.4"
+tokio-tungstenite = "0.21"
+futures-util = "0.3"

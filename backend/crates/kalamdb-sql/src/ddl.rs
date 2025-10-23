@@ -22,6 +22,7 @@ pub mod show_namespaces;
 pub mod show_tables;
 pub mod show_table_stats;
 pub mod storage_commands;
+pub mod subscribe_commands;
 
 /// Result type used by the DDL parsers.
 /// Returns String errors to avoid dependencies and allow easy conversion to KalamDbError.
@@ -46,3 +47,4 @@ pub use show_table_stats::ShowTableStatsStatement;
 pub use storage_commands::{
     AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
 };
+pub use subscribe_commands::{SubscribeStatement, SubscribeOptions};

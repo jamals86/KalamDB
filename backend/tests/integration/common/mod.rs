@@ -38,7 +38,7 @@ pub mod stress_utils;
 
 use anyhow::Result;
 use datafusion::catalog::SchemaProvider;
-use kalamdb_api::models::SqlResponse;
+use kalamdb_api::models::{QueryResult, SqlResponse};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
     UserTableService,
@@ -407,6 +407,32 @@ impl TestServer {
                         SqlResponse {
                             status: "success".to_string(),
                             results,
+                            execution_time_ms: 0,
+                            error: None,
+                        }
+                    }
+                    ExecutionResult::Subscription(subscription_data) => {
+                        // Convert subscription metadata to SqlResponse
+                        let mut row = std::collections::HashMap::new();
+                        if let serde_json::Value::Object(map) = subscription_data {
+                            for (key, value) in map {
+                                row.insert(key, value);
+                            }
+                        }
+                        let query_result = QueryResult {
+                            rows: Some(vec![row]),
+                            row_count: 1,
+                            columns: vec![
+                                "status".to_string(),
+                                "ws_url".to_string(),
+                                "subscription".to_string(),
+                                "message".to_string(),
+                            ],
+                            message: None,
+                        };
+                        SqlResponse {
+                            status: "success".to_string(),
+                            results: vec![query_result],
                             execution_time_ms: 0,
                             error: None,
                         }

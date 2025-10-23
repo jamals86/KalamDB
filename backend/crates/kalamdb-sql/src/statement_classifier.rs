@@ -52,6 +52,10 @@ pub enum SqlStatement {
     /// KILL JOB <job_id>
     KillJob,
 
+    // ===== Live Query Subscriptions =====
+    /// SUBSCRIBE TO <namespace>.<table> [WHERE ...] [OPTIONS (...)]
+    Subscribe,
+
     // ===== DML Operations =====
     /// UPDATE <table> SET ... WHERE ...
     Update,
@@ -137,6 +141,9 @@ impl SqlStatement {
             // Job management
             ["KILL", "JOB", ..] => SqlStatement::KillJob,
 
+            // Live query subscriptions
+            ["SUBSCRIBE", "TO", ..] => SqlStatement::Subscribe,
+
             // DML operations (single word start)
             ["UPDATE", ..] => SqlStatement::Update,
             ["DELETE", ..] => SqlStatement::Delete,
@@ -186,6 +193,7 @@ impl SqlStatement {
             SqlStatement::FlushTable => "FLUSH TABLE",
             SqlStatement::FlushAllTables => "FLUSH ALL TABLES",
             SqlStatement::KillJob => "KILL JOB",
+            SqlStatement::Subscribe => "SUBSCRIBE TO",
             SqlStatement::Update => "UPDATE",
             SqlStatement::Delete => "DELETE",
             SqlStatement::Select => "SELECT",
@@ -308,6 +316,22 @@ mod tests {
         assert_eq!(
             SqlStatement::classify("KILL JOB job-123"),
             SqlStatement::KillJob
+        );
+    }
+
+    #[test]
+    fn test_classify_subscribe_commands() {
+        assert_eq!(
+            SqlStatement::classify("SUBSCRIBE TO app.messages"),
+            SqlStatement::Subscribe
+        );
+        assert_eq!(
+            SqlStatement::classify("SUBSCRIBE TO app.messages WHERE user_id = 'alice'"),
+            SqlStatement::Subscribe
+        );
+        assert_eq!(
+            SqlStatement::classify("subscribe to test.events options (last_rows=10)"),
+            SqlStatement::Subscribe
         );
     }
 

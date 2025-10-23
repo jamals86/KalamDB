@@ -50,6 +50,7 @@ pub use compatibility::{
 pub use ddl::{
     AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
     FlushAllTablesStatement, FlushTableStatement, parse_job_command, JobCommand,
+    SubscribeStatement, SubscribeOptions,
 };
 pub use executor::SqlExecutor;
 pub use models::*;

@@ -71,6 +71,9 @@ pub enum ExecutionResult {
 
     /// Multiple record batches (for streaming results)
     RecordBatches(Vec<RecordBatch>),
+
+    /// Subscription metadata (for SUBSCRIBE TO commands)
+    Subscription(serde_json::Value),
 }
 
 /// SQL executor
@@ -417,6 +420,7 @@ impl SqlExecutor {
             SqlStatement::FlushTable => self.execute_flush_table(sql).await,
             SqlStatement::FlushAllTables => self.execute_flush_all_tables(sql).await,
             SqlStatement::KillJob => self.execute_kill_job(sql).await,
+            SqlStatement::Subscribe => self.execute_subscribe(sql).await,
             SqlStatement::Update => self.execute_update(sql, user_id).await,
             SqlStatement::Delete => self.execute_delete(sql, user_id).await,
             SqlStatement::Select | SqlStatement::Insert => {
@@ -1868,6 +1872,56 @@ impl SqlExecutor {
             "Job '{}' cancelled successfully",
             job_id
         )))
+    }
+
+    /// Execute SUBSCRIBE TO command
+    ///
+    /// Returns metadata instructing the client to establish a WebSocket connection.
+    /// This command does NOT execute a subscription directly - it returns information
+    /// needed for the client to connect via WebSocket.
+    async fn execute_subscribe(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        use kalamdb_sql::ddl::SubscribeStatement;
+
+        // Parse the SUBSCRIBE TO command
+        let stmt = SubscribeStatement::parse(sql)
+            .map_err(|e| KalamDbError::InvalidSql(format!("Failed to parse SUBSCRIBE TO: {}", e)))?;
+
+        // Generate a unique subscription ID
+        use uuid::Uuid;
+        let subscription_id = format!("sub-{}", Uuid::new_v4());
+
+        // Convert SUBSCRIBE statement to SELECT SQL for the subscription
+        let select_sql = stmt.to_select_sql();
+
+        // Build subscription metadata response
+        let ws_url = std::env::var("WEBSOCKET_URL")
+            .unwrap_or_else(|_| "ws://localhost:8080/v1/ws".to_string());
+
+        // Create subscription response as JSON
+        let mut subscription = serde_json::Map::new();
+        subscription.insert("id".to_string(), serde_json::json!(subscription_id));
+        subscription.insert("sql".to_string(), serde_json::json!(select_sql));
+        
+        // Add options if present
+        if let Some(last_rows) = stmt.options.last_rows {
+            let mut options = serde_json::Map::new();
+            options.insert("last_rows".to_string(), serde_json::json!(last_rows));
+            subscription.insert("options".to_string(), serde_json::json!(options));
+        }
+
+        let mut response = serde_json::Map::new();
+        response.insert("status".to_string(), serde_json::json!("subscription_required"));
+        response.insert("ws_url".to_string(), serde_json::json!(ws_url));
+        response.insert("subscription".to_string(), serde_json::json!(subscription));
+        response.insert(
+            "message".to_string(),
+            serde_json::json!(format!(
+                "Connect to WebSocket at {} and send the subscription object",
+                ws_url
+            )),
+        );
+
+        Ok(ExecutionResult::Subscription(serde_json::Value::Object(response)))
     }
 
     /// Execute CREATE TABLE - determines table type from LOCATION and routes to appropriate service
