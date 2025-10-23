@@ -104,8 +104,8 @@ pub mod websocket;
 ///
 /// The server is automatically cleaned up when dropped.
 pub struct TestServer {
-    /// Temporary directory for database files
-    temp_dir: TempDir,
+    /// Temporary directory for database files (shared via Arc to allow cloning)
+    temp_dir: Arc<TempDir>,
     /// KalamSQL instance for direct database access
     pub kalam_sql: Arc<kalamdb_sql::KalamSql>,
     /// SQL executor for query execution
@@ -114,6 +114,18 @@ pub struct TestServer {
     pub namespace_service: Arc<NamespaceService>,
     /// DataFusion session factory (needed for fallback SQL execution)
     pub session_factory: Arc<DataFusionSessionFactory>,
+}
+
+impl Clone for TestServer {
+    fn clone(&self) -> Self {
+        Self {
+            temp_dir: Arc::clone(&self.temp_dir),
+            kalam_sql: Arc::clone(&self.kalam_sql),
+            sql_executor: Arc::clone(&self.sql_executor),
+            namespace_service: Arc::clone(&self.namespace_service),
+            session_factory: Arc::clone(&self.session_factory),
+        }
+    }
 }
 
 impl TestServer {
@@ -319,7 +331,7 @@ impl TestServer {
             .expect("Failed to load existing tables");
 
         Self {
-            temp_dir,
+            temp_dir: Arc::new(temp_dir),
             kalam_sql,
             sql_executor,
             namespace_service,

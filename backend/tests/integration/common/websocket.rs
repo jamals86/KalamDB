@@ -70,10 +70,10 @@ pub struct NotificationMessage {
     #[serde(rename = "type")]
     pub change_type: String,
     /// Changed data (new values for INSERT/UPDATE, old values for DELETE)
-    pub data: Value,
-    /// Old data (for UPDATE operations)
+    pub data: serde_json::Map<String, Value>,
+    /// Old values (for UPDATE operations)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub old_data: Option<Value>,
+    pub old_values: Option<serde_json::Map<String, Value>>,
     /// Timestamp of the change
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
@@ -242,6 +242,23 @@ impl WebSocketClient {
     pub fn is_subscribed(&self, query_id: &str) -> bool {
         self.subscriptions.iter().any(|s| s.query_id == query_id)
     }
+
+    /// Get all received notifications.
+    ///
+    /// Returns a reference to all notifications received since connection.
+    /// In a real implementation, this would collect messages from the WebSocket stream.
+    pub fn get_notifications(&self) -> &[NotificationMessage] {
+        &self.notifications
+    }
+
+    /// Add a notification (for testing purposes).
+    ///
+    /// In a real implementation, this would be called internally when
+    /// a notification is received from the WebSocket.
+    #[allow(dead_code)]
+    pub(crate) fn add_notification(&mut self, notification: NotificationMessage) {
+        self.notifications.push(notification);
+    }
 }
 
 /// Assert that a notification is an INSERT operation.
@@ -260,8 +277,8 @@ pub fn assert_insert_notification(notification: &NotificationMessage, expected_q
     assert_eq!(notification.query_id, expected_query_id);
     assert_eq!(notification.change_type, "INSERT");
     assert!(
-        notification.old_data.is_none(),
-        "INSERT should not have old_data"
+        notification.old_values.is_none(),
+        "INSERT should not have old_values"
     );
 }
 
@@ -281,8 +298,8 @@ pub fn assert_update_notification(notification: &NotificationMessage, expected_q
     assert_eq!(notification.query_id, expected_query_id);
     assert_eq!(notification.change_type, "UPDATE");
     assert!(
-        notification.old_data.is_some(),
-        "UPDATE should have old_data"
+        notification.old_values.is_some(),
+        "UPDATE should have old_values"
     );
 }
 
@@ -315,12 +332,8 @@ pub fn assert_notification_field(
     field: &str,
     expected_value: &Value,
 ) {
-    let data = notification
+    let actual_value = notification
         .data
-        .as_object()
-        .expect("Notification data should be an object");
-
-    let actual_value = data
         .get(field)
         .unwrap_or_else(|| panic!("Field '{}' not found in notification data", field));
 
@@ -443,11 +456,15 @@ mod tests {
 
     #[test]
     fn test_assert_insert_notification() {
+        let mut data = serde_json::Map::new();
+        data.insert("id".to_string(), json!(1));
+        data.insert("content".to_string(), json!("test"));
+
         let notification = NotificationMessage {
             query_id: "messages".to_string(),
             change_type: "INSERT".to_string(),
-            data: json!({"id": 1, "content": "test"}),
-            old_data: None,
+            data,
+            old_values: None,
             timestamp: None,
         };
 
@@ -456,11 +473,19 @@ mod tests {
 
     #[test]
     fn test_assert_update_notification() {
+        let mut data = serde_json::Map::new();
+        data.insert("id".to_string(), json!(1));
+        data.insert("content".to_string(), json!("updated"));
+
+        let mut old_values = serde_json::Map::new();
+        old_values.insert("id".to_string(), json!(1));
+        old_values.insert("content".to_string(), json!("original"));
+
         let notification = NotificationMessage {
             query_id: "messages".to_string(),
             change_type: "UPDATE".to_string(),
-            data: json!({"id": 1, "content": "updated"}),
-            old_data: Some(json!({"id": 1, "content": "original"})),
+            data,
+            old_values: Some(old_values),
             timestamp: None,
         };
 
@@ -469,11 +494,15 @@ mod tests {
 
     #[test]
     fn test_assert_notification_field() {
+        let mut data = serde_json::Map::new();
+        data.insert("id".to_string(), json!(1));
+        data.insert("content".to_string(), json!("test"));
+
         let notification = NotificationMessage {
             query_id: "messages".to_string(),
             change_type: "INSERT".to_string(),
-            data: json!({"id": 1, "content": "test"}),
-            old_data: None,
+            data,
+            old_values: None,
             timestamp: None,
         };
 

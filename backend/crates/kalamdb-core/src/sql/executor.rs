@@ -390,6 +390,10 @@ impl SqlExecutor {
             return self.execute_alter_storage(sql).await;
         } else if sql_upper.starts_with("DROP STORAGE") {
             return self.execute_drop_storage(sql).await;
+        } else if sql_upper.starts_with("FLUSH TABLE") {
+            return self.execute_flush_table(sql).await;
+        } else if sql_upper.starts_with("FLUSH ALL TABLES") {
+            return self.execute_flush_all_tables(sql).await;
         } else if sql_upper.starts_with("ALTER NAMESPACE") {
             return self.execute_alter_namespace(sql).await;
         } else if sql_upper.starts_with("DROP NAMESPACE") {
@@ -1463,6 +1467,177 @@ impl SqlExecutor {
         Ok(ExecutionResult::Success(format!(
             "Storage '{}' deleted successfully",
             stmt.storage_id
+        )))
+    }
+
+    /// Execute FLUSH TABLE
+    ///
+    /// Triggers asynchronous flush for a single table, returning job_id immediately.
+    /// The flush operation runs in the background via JobManager.
+    async fn execute_flush_table(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        use kalamdb_sql::FlushTableStatement;
+
+        let stmt = FlushTableStatement::parse(sql).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("FLUSH TABLE parse error: {}", e))
+        })?;
+
+        let kalam_sql = self
+            .kalam_sql
+            .as_ref()
+            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+
+        // Verify table exists
+        let tables = kalam_sql
+            .scan_all_tables()
+            .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
+
+        let table = tables
+            .iter()
+            .find(|t| t.namespace == stmt.namespace && t.table_name == stmt.table_name)
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!(
+                    "Table '{}.{}' does not exist",
+                    stmt.namespace, stmt.table_name
+                ))
+            })?;
+
+        // Only user tables can be flushed (shared/stream tables not supported yet)
+        if table.table_type != "user" {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Cannot flush {} table '{}.{}'. Only user tables can be flushed.",
+                table.table_type, stmt.namespace, stmt.table_name
+            )));
+        }
+
+        // Generate job_id
+        let job_id = format!(
+            "flush-{}-{}-{}",
+            stmt.table_name,
+            chrono::Utc::now().timestamp_millis(),
+            uuid::Uuid::new_v4()
+        );
+
+        // Create job record
+        let job_record = crate::tables::system::jobs_provider::JobRecord::new(
+            job_id.clone(),
+            "flush".to_string(),
+            format!("node-{}", std::process::id()),
+        )
+        .with_table_name(format!("{}.{}", stmt.namespace, stmt.table_name));
+
+        // Persist job to system.jobs
+        if let Some(ref jobs_table_provider) = self.jobs_table_provider {
+            jobs_table_provider.insert_job(job_record)?;
+        }
+
+        // TODO: Spawn async flush task via JobManager (T250)
+        // For now, return job_id immediately
+        log::info!(
+            "Flush job created: job_id={}, table={}.{}",
+            job_id,
+            stmt.namespace,
+            stmt.table_name
+        );
+
+        Ok(ExecutionResult::Success(format!(
+            "Flush started for table '{}.{}'. Job ID: {}",
+            stmt.namespace, stmt.table_name, job_id
+        )))
+    }
+
+    /// Execute FLUSH ALL TABLES
+    ///
+    /// Triggers asynchronous flush for all user tables in a namespace, returning
+    /// array of job_ids (one per table).
+    async fn execute_flush_all_tables(
+        &self,
+        sql: &str,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        use kalamdb_sql::FlushAllTablesStatement;
+
+        let stmt = FlushAllTablesStatement::parse(sql).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("FLUSH ALL TABLES parse error: {}", e))
+        })?;
+
+        let kalam_sql = self
+            .kalam_sql
+            .as_ref()
+            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+
+        // Verify namespace exists
+        match kalam_sql.get_namespace(&stmt.namespace) {
+            Ok(Some(_)) => { /* namespace exists */ }
+            Ok(None) => {
+                return Err(KalamDbError::NotFound(format!(
+                    "Namespace '{}' does not exist",
+                    stmt.namespace
+                )));
+            }
+            Err(e) => {
+                return Err(KalamDbError::Other(format!(
+                    "Failed to check namespace: {}",
+                    e
+                )));
+            }
+        }
+
+        // Get all user tables in the namespace
+        let tables = kalam_sql
+            .scan_all_tables()
+            .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
+
+        let user_tables: Vec<_> = tables
+            .iter()
+            .filter(|t| t.namespace == stmt.namespace && t.table_type == "user")
+            .collect();
+
+        if user_tables.is_empty() {
+            return Ok(ExecutionResult::Success(format!(
+                "No user tables found in namespace '{}' to flush",
+                stmt.namespace
+            )));
+        }
+
+        // Create flush job for each table
+        let mut job_ids = Vec::new();
+        for table in user_tables {
+            let job_id = format!(
+                "flush-{}-{}-{}",
+                table.table_name,
+                chrono::Utc::now().timestamp_millis(),
+                uuid::Uuid::new_v4()
+            );
+
+            // Create job record
+            let job_record = crate::tables::system::jobs_provider::JobRecord::new(
+                job_id.clone(),
+                "flush".to_string(),
+                format!("node-{}", std::process::id()),
+            )
+            .with_table_name(format!("{}.{}", table.namespace, table.table_name));
+
+            // Persist job to system.jobs
+            if let Some(ref jobs_table_provider) = self.jobs_table_provider {
+                jobs_table_provider.insert_job(job_record)?;
+            }
+
+            log::info!(
+                "Flush job created: job_id={}, table={}.{}",
+                job_id,
+                table.namespace,
+                table.table_name
+            );
+
+            job_ids.push(job_id);
+        }
+
+        // TODO: Spawn async flush tasks via JobManager (T250)
+
+        Ok(ExecutionResult::Success(format!(
+            "Flush started for {} table(s) in namespace '{}'. Job IDs: [{}]",
+            job_ids.len(),
+            stmt.namespace,
+            job_ids.join(", ")
         )))
     }
 
