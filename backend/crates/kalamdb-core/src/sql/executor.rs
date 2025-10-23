@@ -2121,14 +2121,13 @@ impl SqlExecutor {
         let stmt = DropTableStatement::parse(sql, &default_namespace)
             .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
-        let table_type: crate::catalog::TableType = stmt.table_type.into();
-
-        // Execute the drop operation
-        let namespace_id = crate::catalog::NamespaceId::from(&stmt.namespace_id);
-        let table_name = crate::catalog::TableName::from(&stmt.table_name);
-
-        let result =
-            deletion_service.drop_table(&namespace_id, &table_name, table_type, stmt.if_exists)?;
+        // No conversion needed - stmt fields are already the right types from kalamdb_commons
+        let result = deletion_service.drop_table(
+            &stmt.namespace_id,
+            &stmt.table_name,
+            stmt.table_type,
+            stmt.if_exists,
+        )?;
 
         // If if_exists is true and table didn't exist, return success message
         if result.is_none() {

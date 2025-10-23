@@ -23,11 +23,15 @@
 
 use std::fmt;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 /// Type-safe wrapper for user identifiers.
 ///
 /// Ensures user IDs cannot be accidentally used where namespace IDs or table names
 /// are expected.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct UserId(String);
 
 impl UserId {
@@ -76,6 +80,7 @@ impl AsRef<str> for UserId {
 /// Ensures namespace IDs cannot be accidentally used where user IDs or table names
 /// are expected.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct NamespaceId(String);
 
 impl NamespaceId {
@@ -124,6 +129,7 @@ impl AsRef<str> for NamespaceId {
 /// Ensures table names cannot be accidentally used where user IDs or namespace IDs
 /// are expected.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct TableName(String);
 
 impl TableName {
@@ -212,7 +218,9 @@ impl TryFrom<&str> for StorageType {
 /// - **USER**: Per-user table with user_id-based partitioning (key format: `{user_id}:{row_id}`)
 /// - **SHARED**: Shared table without user partitioning (key format: `{row_id}`)
 /// - **STREAM**: Ephemeral stream table with time-based keys (key format: `{timestamp}:{row_id}`)
+/// - **SYSTEM**: Internal KalamDB system tables (e.g., system.namespaces, system.tables)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TableType {
     /// Per-user table with user_id partitioning
     User,
@@ -220,6 +228,8 @@ pub enum TableType {
     Shared,
     /// Ephemeral stream table with time-based eviction
     Stream,
+    /// Internal system table
+    System,
 }
 
 impl TableType {
@@ -229,6 +239,18 @@ impl TableType {
             TableType::User => "USER",
             TableType::Shared => "SHARED",
             TableType::Stream => "STREAM",
+            TableType::System => "SYSTEM",
+        }
+    }
+
+    /// Parse a table type from a string (case-insensitive).
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_uppercase().as_str() {
+            "USER" => Some(TableType::User),
+            "SHARED" => Some(TableType::Shared),
+            "STREAM" => Some(TableType::Stream),
+            "SYSTEM" => Some(TableType::System),
+            _ => None,
         }
     }
 }
@@ -247,6 +269,7 @@ impl TryFrom<&str> for TableType {
             "USER" => Ok(TableType::User),
             "SHARED" => Ok(TableType::Shared),
             "STREAM" => Ok(TableType::Stream),
+            "SYSTEM" => Ok(TableType::System),
             _ => Err(format!("Invalid table type: {}", s)),
         }
     }
@@ -316,6 +339,7 @@ impl StorageConfig {
 ///
 /// Represents a WebSocket connection from a user to the server.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ConnectionId {
     pub user_id: String,
     pub unique_conn_id: String,
@@ -367,6 +391,7 @@ impl fmt::Display for ConnectionId {
 /// Represents a live query subscription for a specific table and query.
 /// Format: {user_id}-{unique_conn_id}-{table_name}-{query_id}
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct LiveId {
     pub connection_id: ConnectionId,
     pub table_name: String,

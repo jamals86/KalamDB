@@ -144,11 +144,10 @@ impl CreateStreamTableStatement {
 
     /// Parse schema from column definitions
     fn parse_schema(columns: &[ColumnDef]) -> DdlResult<Arc<Schema>> {
-        let fields: Result<Vec<Field>, anyhow::Error> = columns
+        let fields: Result<Vec<Field>, String> = columns
             .iter()
             .map(|col| {
-                let data_type = map_sql_type_to_arrow(&col.data_type)
-                    .map_err(|e| e.to_string())?;
+                let data_type = map_sql_type_to_arrow(&col.data_type)?;
                 Ok(Field::new(
                     col.name.value.clone(),
                     data_type,

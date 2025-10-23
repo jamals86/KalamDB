@@ -4,13 +4,12 @@
 //! data types into Arrow data types that KalamDB understands.  Centralising
 //! these conversions keeps the CREATE TABLE parsers in sync across crates.
 
-use anyhow::{anyhow, Result};
 use arrow::datatypes::{DataType, IntervalUnit, TimeUnit};
 use sqlparser::ast::{DataType as SQLDataType, ObjectName};
 
 /// Map a parsed `sqlparser` data type into an Arrow data type while accounting
 /// for PostgreSQL/MySQL aliases (e.g. `SERIAL`, `INT4`, `AUTO_INCREMENT`).
-pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType> {
+pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType, String> {
     use SQLDataType::*;
 
     let dtype = match sql_type {
@@ -68,14 +67,14 @@ pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType> {
         // Otherwise, leave unsupported so callers can surface a friendly error
         Numeric(_) | Decimal(_) | Dec(_) | BigNumeric(_) | BigDecimal(_) | Uuid | Regclass
         | Unspecified => {
-            return Err(anyhow!("Unsupported data type: {:?}", sql_type));
+            return Err(format!("Unsupported data type: {:?}", sql_type));
         }
     };
 
     Ok(dtype)
 }
 
-fn map_custom_type(name: &ObjectName) -> Result<DataType> {
+fn map_custom_type(name: &ObjectName) -> Result<DataType, String> {
     let ident = name
         .0
         .iter()
@@ -99,7 +98,7 @@ fn map_custom_type(name: &ObjectName) -> Result<DataType> {
         // Fallback to treating unknown custom types as UTF8 strings
         other if other.ends_with("text") || other.ends_with("string") => DataType::Utf8,
         other => {
-            return Err(anyhow!("Unsupported custom data type '{}'", other));
+            return Err(format!("Unsupported custom data type '{}'", other));
         }
     };
 
