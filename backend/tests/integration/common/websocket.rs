@@ -34,9 +34,14 @@
 //! ```
 
 use anyhow::{bail, Result};
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
+use tokio::time::timeout;
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message, WebSocketStream};
+use tokio_tungstenite::MaybeTlsStream;
+use tokio::net::TcpStream;
 
 /// WebSocket subscription message format.
 ///
@@ -92,14 +97,12 @@ pub struct InitialDataMessage {
     pub count: usize,
 }
 
-/// Mock WebSocket client for testing.
+/// WebSocket client for testing.
 ///
-/// Note: This is a mock implementation for testing purposes.
-/// In a real integration test, you would use a WebSocket client library
-/// like `tokio-tungstenite` or `actix-web-actors`.
+/// Real implementation using tokio-tungstenite for actual WebSocket connections.
 pub struct WebSocketClient {
-    /// Connection URL
-    url: String,
+    /// WebSocket stream
+    ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
     /// Active subscriptions
     subscriptions: Vec<Subscription>,
     /// Received notifications (for testing)
@@ -118,13 +121,14 @@ impl WebSocketClient {
     /// ```no_run
     /// let ws = WebSocketClient::connect("ws://localhost:8080/ws").await;
     /// ```
-    pub async fn connect(url: &str) -> Self {
-        // In a real implementation, this would establish a WebSocket connection
-        Self {
-            url: url.to_string(),
+    pub async fn connect(url: &str) -> Result<Self> {
+        let (ws_stream, _) = connect_async(url).await?;
+        
+        Ok(Self {
+            ws_stream,
             subscriptions: Vec::new(),
             notifications: Vec::new(),
-        }
+        })
     }
 
     /// Subscribe to a live query.
@@ -148,10 +152,13 @@ impl WebSocketClient {
 
         self.subscriptions.push(subscription.clone());
 
-        // In a real implementation, send subscription message to server
-        let _message = SubscriptionMessage {
+        // Send subscription message to server
+        let message = SubscriptionMessage {
             subscriptions: vec![subscription],
         };
+        
+        let json_str = serde_json::to_string(&message)?;
+        self.ws_stream.send(Message::Text(json_str)).await?;
 
         Ok(())
     }
@@ -177,6 +184,13 @@ impl WebSocketClient {
 
         self.subscriptions.push(subscription.clone());
 
+        let message = SubscriptionMessage {
+            subscriptions: vec![subscription],
+        };
+        
+        let json_str = serde_json::to_string(&message)?;
+        self.ws_stream.send(Message::Text(json_str)).await?;
+
         Ok(())
     }
 
@@ -184,25 +198,33 @@ impl WebSocketClient {
     ///
     /// # Arguments
     ///
-    /// * `timeout` - Maximum time to wait
+    /// * `timeout_duration` - Maximum time to wait
     ///
     /// # Returns
     ///
     /// The next notification, or an error if timeout is reached
     pub async fn wait_for_notification(
         &mut self,
-        timeout: Duration,
+        timeout_duration: Duration,
     ) -> Result<NotificationMessage> {
-        // In a real implementation, this would:
-        // 1. Wait for WebSocket message with timeout
-        // 2. Parse notification from JSON
-        // 3. Return notification or timeout error
-
-        // Mock implementation returns first notification if available
-        if let Some(notification) = self.notifications.first() {
-            Ok(notification.clone())
-        } else {
-            bail!("Timeout waiting for notification after {:?}", timeout)
+        match timeout(timeout_duration, self.ws_stream.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => {
+                let notification: NotificationMessage = serde_json::from_str(&text)?;
+                self.notifications.push(notification.clone());
+                Ok(notification)
+            }
+            Ok(Some(Ok(_))) => {
+                bail!("Received non-text WebSocket message")
+            }
+            Ok(Some(Err(e))) => {
+                bail!("WebSocket error: {}", e)
+            }
+            Ok(None) => {
+                bail!("WebSocket connection closed")
+            }
+            Err(_) => {
+                bail!("Timeout waiting for notification after {:?}", timeout_duration)
+            }
         }
     }
 
@@ -211,23 +233,71 @@ impl WebSocketClient {
     /// # Arguments
     ///
     /// * `query_id` - Query ID to wait for
-    /// * `_timeout` - Maximum time to wait (unused in mock implementation)
+    /// * `timeout_duration` - Maximum time to wait
     pub async fn wait_for_initial_data(
         &mut self,
         query_id: &str,
-        _timeout: Duration,
+        timeout_duration: Duration,
     ) -> Result<InitialDataMessage> {
-        // In a real implementation, parse initial data message
-        Ok(InitialDataMessage {
-            query_id: query_id.to_string(),
-            rows: vec![],
-            count: 0,
-        })
+        match timeout(timeout_duration, self.ws_stream.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => {
+                let initial_data: InitialDataMessage = serde_json::from_str(&text)?;
+                if initial_data.query_id == query_id {
+                    Ok(initial_data)
+                } else {
+                    bail!("Received initial data for different query_id")
+                }
+            }
+            Ok(Some(Ok(_))) => {
+                bail!("Received non-text WebSocket message")
+            }
+            Ok(Some(Err(e))) => {
+                bail!("WebSocket error: {}", e)
+            }
+            Ok(None) => {
+                bail!("WebSocket connection closed")
+            }
+            Err(_) => {
+                bail!("Timeout waiting for initial data after {:?}", timeout_duration)
+            }
+        }
+    }
+
+    /// Receive and buffer multiple notifications without blocking.
+    ///
+    /// Collects all available messages from the WebSocket stream.
+    pub async fn receive_notifications(&mut self, timeout_duration: Duration) -> Result<()> {
+        let deadline = tokio::time::Instant::now() + timeout_duration;
+        
+        while tokio::time::Instant::now() < deadline {
+            match timeout(Duration::from_millis(50), self.ws_stream.next()).await {
+                Ok(Some(Ok(Message::Text(text)))) => {
+                    if let Ok(notification) = serde_json::from_str::<NotificationMessage>(&text) {
+                        self.notifications.push(notification);
+                    }
+                }
+                Ok(Some(Ok(_))) => {
+                    // Ignore non-text messages
+                }
+                Ok(Some(Err(_))) => {
+                    break;
+                }
+                Ok(None) => {
+                    break;
+                }
+                Err(_) => {
+                    // Timeout on this iteration, continue loop
+                    continue;
+                }
+            }
+        }
+        
+        Ok(())
     }
 
     /// Disconnect from WebSocket.
     pub async fn disconnect(&mut self) -> Result<()> {
-        // In a real implementation, close WebSocket connection
+        self.ws_stream.close(None).await?;
         self.subscriptions.clear();
         self.notifications.clear();
         Ok(())
@@ -246,18 +316,13 @@ impl WebSocketClient {
     /// Get all received notifications.
     ///
     /// Returns a reference to all notifications received since connection.
-    /// In a real implementation, this would collect messages from the WebSocket stream.
     pub fn get_notifications(&self) -> &[NotificationMessage] {
         &self.notifications
     }
 
-    /// Add a notification (for testing purposes).
-    ///
-    /// In a real implementation, this would be called internally when
-    /// a notification is received from the WebSocket.
-    #[allow(dead_code)]
-    pub(crate) fn add_notification(&mut self, notification: NotificationMessage) {
-        self.notifications.push(notification);
+    /// Clear notification buffer.
+    pub fn clear_notifications(&mut self) {
+        self.notifications.clear();
     }
 }
 

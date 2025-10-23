@@ -18,7 +18,8 @@ use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 use crate::services::storage_location_service::StorageLocationService;
 use crate::storage::column_family_manager::ColumnFamilyManager;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use kalamdb_sql::ddl::{CreateUserTableStatement, StorageLocation, UserTableFlushPolicy};
+use kalamdb_sql::ddl::{CreateTableStatement, FlushPolicy as DdlFlushPolicy};
+use kalamdb_commons::models::StorageId;
 use kalamdb_sql::KalamSql;
 use kalamdb_store::UserTableStore;
 use std::sync::Arc;
@@ -57,15 +58,13 @@ impl UserTableService {
     /// because Arc<DB> doesn't allow mutable operations.
     ///
     /// # Arguments
-    /// * `stmt` - Parsed CREATE USER TABLE statement
-    /// * `storage_location_service` - Service to resolve location references
+    /// * `stmt` - Parsed CREATE TABLE statement (USER table)
     ///
     /// # Returns
     /// Table metadata for the created table
     pub fn create_table(
         &self,
-        stmt: CreateUserTableStatement,
-        storage_location_service: Option<&StorageLocationService>,
+        stmt: CreateTableStatement,
     ) -> Result<TableMetadata, KalamDbError> {
         // Validate table name
         TableMetadata::validate_table_name(stmt.table_name.as_str())
@@ -98,11 +97,12 @@ impl UserTableService {
         // 2. System column injection (_updated, _deleted)
         let schema = self.inject_system_columns(schema, TableType::User)?;
 
-        // 3. Storage location resolution
-        let storage_location =
-            self.resolve_storage_location(&stmt.storage_location, storage_location_service)?;
+        // 3. Storage location resolution - use storage_id to get the path template
+        let default_storage = StorageId::local();
+        let storage_id = stmt.storage_id.as_ref().unwrap_or(&default_storage);
+        let storage_location = self.resolve_storage_from_id(storage_id)?;
 
-        // 4. Create schema file (schema_v1.json, manifest.json, current.json)
+        // 4. Create schema files (schema_v1.json, manifest.json, current.json)
         self.create_schema_files(
             &namespace_id_core,
             &table_name_core,
@@ -209,46 +209,31 @@ impl UserTableService {
         Ok(Arc::new(Schema::new(fields)))
     }
 
-    /// Resolve storage location from statement
+    /// Resolve storage location from storage_id
     ///
-    /// Handles both direct path templates and location references.
-    fn resolve_storage_location(
+    /// Gets the user table template path from the storage in system.storages
+    fn resolve_storage_from_id(
         &self,
-        storage_location: &Option<StorageLocation>,
-        storage_location_service: Option<&StorageLocationService>,
+        storage_id: &StorageId,
     ) -> Result<String, KalamDbError> {
-        match storage_location {
-            Some(StorageLocation::Path(path)) => {
-                // Validate that path contains ${user_id} template variable
-                if !path.contains("${user_id}") {
-                    return Err(KalamDbError::InvalidOperation(
-                        "User table storage location must contain ${user_id} template variable"
-                            .to_string(),
-                    ));
-                }
-                Ok(path.clone())
-            }
-            Some(StorageLocation::Reference(location_name)) => {
-                // Resolve location reference via storage location service
-                let _service = storage_location_service.ok_or_else(|| {
-                    KalamDbError::InvalidOperation(
-                        "Storage location service required to resolve location references"
-                            .to_string(),
-                    )
-                })?;
+        // Get the storage location from system.storages via KalamSQL
+        let storage = self
+            .kalam_sql
+            .get_storage(storage_id.as_str())
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to get storage '{}': {}",
+                    storage_id,
+                    e
+                ))
+            })?
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!("Storage '{}' not found", storage_id))
+            })?;
 
-                // TODO: Implement get_location method in StorageLocationService
-                // For now, return error
-                Err(KalamDbError::Other(format!(
-                    "Location reference resolution not yet implemented: {}",
-                    location_name
-                )))
-            }
-            None => {
-                // Use default location template
-                Ok("/data/${user_id}/tables".to_string())
-            }
-        }
+        // For user tables, we use the user_tables_template from the storage
+        // The template should be in the format: "{namespace}/users/{tableName}/{shard}/{userId}/"
+        Ok(storage.user_tables_template)
     }
 
     /// Create schema files for the table
@@ -261,7 +246,7 @@ impl UserTableService {
         namespace: &NamespaceId,
         table_name: &TableName,
         schema: &Arc<Schema>,
-        _flush_policy: &Option<UserTableFlushPolicy>,
+        _flush_policy: &Option<DdlFlushPolicy>,
         _deleted_retention_hours: Option<u32>,
     ) -> Result<(), KalamDbError> {
         // Create schema with options wrapper
@@ -430,36 +415,5 @@ mod tests {
         let user_id = UserId::new("user123");
         let result = UserTableService::substitute_user_id(path, &user_id);
         assert_eq!(result, "/data/user123/messages");
-    }
-
-    #[test]
-    fn test_resolve_storage_location_path() {
-        let service = setup_test_service();
-
-        let location = Some(StorageLocation::Path(
-            "/data/${user_id}/messages".to_string(),
-        ));
-        let result = service.resolve_storage_location(&location, None).unwrap();
-        assert_eq!(result, "/data/${user_id}/messages");
-    }
-
-    #[test]
-    fn test_resolve_storage_location_invalid_path() {
-        let service = setup_test_service();
-
-        // Path without ${user_id} should fail
-        let location = Some(StorageLocation::Path("/data/messages".to_string()));
-        let result = service.resolve_storage_location(&location, None);
-        assert!(result.is_err());
-
-        // Cleanup
-    }
-
-    #[test]
-    fn test_resolve_storage_location_default() {
-        let service = setup_test_service();
-
-        let result = service.resolve_storage_location(&None, None).unwrap();
-        assert_eq!(result, "/data/${user_id}/tables");
     }
 }

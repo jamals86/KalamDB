@@ -124,6 +124,66 @@ impl AsRef<str> for NamespaceId {
     }
 }
 
+/// Type-safe wrapper for storage identifiers.
+///
+/// Ensures storage IDs cannot be accidentally used where user IDs, namespace IDs,
+/// or table names are expected.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct StorageId(String);
+
+impl StorageId {
+    /// Creates a new StorageId from a string.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// Returns the storage ID as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Consumes the wrapper and returns the inner String.
+    pub fn into_string(self) -> String {
+        self.0
+    }
+
+    /// Creates a default 'local' storage ID.
+    pub fn local() -> Self {
+        Self("local".to_string())
+    }
+}
+
+impl fmt::Display for StorageId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<String> for StorageId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for StorageId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl AsRef<str> for StorageId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for StorageId {
+    fn default() -> Self {
+        Self::local()
+    }
+}
+
 /// Type-safe wrapper for table names.
 ///
 /// Ensures table names cannot be accidentally used where user IDs or namespace IDs
@@ -233,13 +293,13 @@ pub enum TableType {
 }
 
 impl TableType {
-    /// Returns the table type as a string.
+    /// Returns the table type as a string (lowercase for column family names).
     pub fn as_str(&self) -> &'static str {
         match self {
-            TableType::User => "USER",
-            TableType::Shared => "SHARED",
-            TableType::Stream => "STREAM",
-            TableType::System => "SYSTEM",
+            TableType::User => "user",
+            TableType::Shared => "shared",
+            TableType::Stream => "stream",
+            TableType::System => "system",
         }
     }
 
@@ -488,9 +548,9 @@ mod tests {
 
     #[test]
     fn test_table_type() {
-        assert_eq!(TableType::User.as_str(), "USER");
-        assert_eq!(TableType::Shared.as_str(), "SHARED");
-        assert_eq!(TableType::Stream.as_str(), "STREAM");
+        assert_eq!(TableType::User.as_str(), "user");
+        assert_eq!(TableType::Shared.as_str(), "shared");
+        assert_eq!(TableType::Stream.as_str(), "stream");
 
         assert_eq!(TableType::try_from("USER").unwrap(), TableType::User);
         assert_eq!(TableType::try_from("user").unwrap(), TableType::User);

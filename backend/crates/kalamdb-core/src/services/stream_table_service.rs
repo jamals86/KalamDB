@@ -12,7 +12,7 @@ use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 use datafusion::arrow::datatypes::Schema;
-use kalamdb_sql::ddl::CreateStreamTableStatement;
+use kalamdb_sql::ddl::CreateTableStatement;
 use kalamdb_sql::models::TableSchema;
 use kalamdb_sql::KalamSql;
 use kalamdb_store::StreamTableStore;
@@ -63,10 +63,11 @@ impl StreamTableService {
     /// Table metadata for the created stream table
     pub fn create_table(
         &self,
-        stmt: CreateStreamTableStatement,
+        stmt: CreateTableStatement,
     ) -> Result<TableMetadata, KalamDbError> {
         // Validate table name
-        stmt.validate_table_name()?;
+        TableMetadata::validate_table_name(stmt.table_name.as_str())
+            .map_err(KalamDbError::InvalidOperation)?;
 
         // Check if table already exists
         if self.table_exists(&stmt.namespace_id, &stmt.table_name)? {
@@ -98,9 +99,9 @@ impl StreamTableService {
             &stmt.namespace_id,
             &stmt.table_name,
             &schema,
-            stmt.retention_seconds,
-            stmt.ephemeral,
-            stmt.max_buffer,
+            stmt.ttl_seconds.map(|s| s as u32),
+            false, // ephemeral - removed from unified parser
+            None,  // max_buffer - removed from unified parser
         )?;
 
         // Create and return table metadata
@@ -235,13 +236,16 @@ mod tests {
             ),
         ]));
 
-        let stmt = CreateStreamTableStatement {
+        let stmt = CreateTableStatement {
             table_name: TableName::new("events"),
             namespace_id: NamespaceId::new("app"),
+            table_type: TableType::Stream,
             schema,
-            retention_seconds: Some(300), // 5 minutes
-            ephemeral: false,
-            max_buffer: Some(10000),
+            storage_id: None,
+            use_user_storage: false,
+            flush_policy: None,
+            deleted_retention_hours: None,
+            ttl_seconds: Some(300), // 5 minutes (was retention_seconds)
             if_not_exists: false,
         };
 
@@ -266,13 +270,16 @@ mod tests {
             Field::new("data", DataType::Utf8, false),
         ]));
 
-        let stmt = CreateStreamTableStatement {
+        let stmt = CreateTableStatement {
             table_name: TableName::new("events"),
             namespace_id: NamespaceId::new("app"),
+            table_type: TableType::Stream,
             schema,
-            retention_seconds: None,
-            ephemeral: false,
-            max_buffer: None,
+            storage_id: None,
+            use_user_storage: false,
+            flush_policy: None,
+            deleted_retention_hours: None,
+            ttl_seconds: None, // No retention (was retention_seconds)
             if_not_exists: false,
         };
 
@@ -290,13 +297,16 @@ mod tests {
 
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
-        let stmt1 = CreateStreamTableStatement {
+        let stmt1 = CreateTableStatement {
             table_name: TableName::new("events"),
             namespace_id: NamespaceId::new("app"),
+            table_type: TableType::Stream,
             schema: schema.clone(),
-            retention_seconds: None,
-            ephemeral: false,
-            max_buffer: None,
+            storage_id: None,
+            use_user_storage: false,
+            flush_policy: None,
+            deleted_retention_hours: None,
+            ttl_seconds: None,
             if_not_exists: false,
         };
 
@@ -337,13 +347,16 @@ mod tests {
 
         // Invalid name: starts with uppercase
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
-        let stmt = CreateStreamTableStatement {
+        let stmt = CreateTableStatement {
             table_name: TableName::new("Events"),
             namespace_id: NamespaceId::new("app"),
+            table_type: TableType::Stream,
             schema,
-            retention_seconds: None,
-            ephemeral: false,
-            max_buffer: None,
+            storage_id: None,
+            use_user_storage: false,
+            flush_policy: None,
+            deleted_retention_hours: None,
+            ttl_seconds: None,
             if_not_exists: false,
         };
 

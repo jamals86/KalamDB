@@ -115,6 +115,8 @@ impl RocksDbAdapter {
     // Table schema operations
 
     /// Get table schema by table_id and version
+    ///
+    /// If version is None, returns the latest version (highest version number).
     pub fn get_table_schema(
         &self,
         table_id: &str,
@@ -125,21 +127,33 @@ impl RocksDbAdapter {
             .cf_handle("system_table_schemas")
             .ok_or_else(|| anyhow!("system_table_schemas CF not found"))?;
 
-        let key = match version {
-            Some(v) => format!("schema:{}:{}", table_id, v),
+        match version {
+            Some(v) => {
+                // Get specific version
+                let key = format!("schema:{}:{}", table_id, v);
+                match self.db.get_cf(&cf, key.as_bytes())? {
+                    Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
+                    None => Ok(None),
+                }
+            }
             None => {
-                // Get latest version
-                // TODO: Implement proper versioning lookup
-                format!("schema:{}:1", table_id)
-            }
-        };
+                // Get latest version by scanning all versions
+                let prefix = format!("schema:{}:", table_id);
+                let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
 
-        match self.db.get_cf(&cf, key.as_bytes())? {
-            Some(value) => {
-                let schema: TableSchema = serde_json::from_slice(&value)?;
-                Ok(Some(schema))
+                let mut latest_schema: Option<TableSchema> = None;
+                for item in iter {
+                    let (key_bytes, value) = item?;
+                    let key = String::from_utf8(key_bytes.to_vec())?;
+                    if key.starts_with(&prefix) {
+                        let schema: TableSchema = serde_json::from_slice(&value)?;
+                        if latest_schema.as_ref().is_none_or(|s| schema.version > s.version) {
+                            latest_schema = Some(schema);
+                        }
+                    }
+                }
+                Ok(latest_schema)
             }
-            None => Ok(None),
         }
     }
 

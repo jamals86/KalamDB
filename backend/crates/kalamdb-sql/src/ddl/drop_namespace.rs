@@ -4,8 +4,7 @@
 //! - DROP NAMESPACE app
 //! - DROP NAMESPACE IF EXISTS app
 
-use crate::ddl::DdlResult;
-
+use crate::ddl::{parsing, DdlResult};
 use kalamdb_commons::models::NamespaceId;
 
 /// DROP NAMESPACE statement
@@ -25,35 +24,8 @@ impl DropNamespaceStatement {
     /// - DROP NAMESPACE name
     /// - DROP NAMESPACE IF EXISTS name
     pub fn parse(sql: &str) -> DdlResult<Self> {
-        let sql_upper = sql.trim().to_uppercase();
-
-        if !sql_upper.starts_with("DROP NAMESPACE") {
-            return Err("Expected DROP NAMESPACE statement".to_string());
-        }
-
-        let if_exists = sql_upper.contains("IF EXISTS");
-
-        // Extract namespace name
-        let name_part = if if_exists {
-            sql.trim()
-                .strip_prefix("DROP NAMESPACE")
-                .and_then(|s| s.trim().strip_prefix("IF EXISTS"))
-                .or_else(|| {
-                    sql.trim()
-                        .strip_prefix("drop namespace")
-                        .and_then(|s| s.trim().strip_prefix("if exists"))
-                })
-                .map(|s| s.trim())
-        } else {
-            sql.trim()
-                .strip_prefix("DROP NAMESPACE")
-                .or_else(|| sql.trim().strip_prefix("drop namespace"))
-                .map(|s| s.trim())
-        };
-
-        let name = name_part
-            .and_then(|s| s.split_whitespace().next())
-            .ok_or_else(|| "Namespace name is required".to_string())?;
+        let (name, if_exists) =
+            parsing::parse_create_drop_statement(sql, "DROP NAMESPACE", "IF EXISTS")?;
 
         Ok(Self {
             name: NamespaceId::new(name),

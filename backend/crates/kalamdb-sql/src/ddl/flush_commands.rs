@@ -57,7 +57,7 @@
 //! ## Examples
 //!
 //! ```rust
-//! use kalamdb_sql::flush_commands::{FlushTableStatement, FlushAllTablesStatement};
+//! use kalamdb_sql::ddl::flush_commands::{FlushTableStatement, FlushAllTablesStatement};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Parse FLUSH TABLE
@@ -95,7 +95,7 @@ impl FlushTableStatement {
     /// # Examples
     ///
     /// ```
-    /// # use kalamdb_sql::flush_commands::FlushTableStatement;
+    /// # use kalamdb_sql::ddl::flush_commands::FlushTableStatement;
     /// let stmt = FlushTableStatement::parse("FLUSH TABLE prod.events").unwrap();
     /// assert_eq!(stmt.namespace, "prod");
     /// assert_eq!(stmt.table_name, "events");
@@ -107,31 +107,23 @@ impl FlushTableStatement {
     /// - Syntax is invalid
     /// - Table name is not qualified (missing namespace)
     pub fn parse(sql: &str) -> Result<Self, String> {
-        use crate::parser::utils::{normalize_sql, extract_qualified_table};
+        use crate::ddl::parsing;
+        use crate::parser::utils::normalize_sql;
 
         // Normalize SQL: remove extra whitespace, semicolons
         let normalized = normalize_sql(sql);
-        let sql_upper = normalized.to_uppercase();
 
-        // Check for FLUSH TABLE prefix
-        if !sql_upper.starts_with("FLUSH TABLE") {
-            return Err("SQL must start with FLUSH TABLE".to_string());
-        }
+        // Extract table reference after FLUSH TABLE
+        let table_ref = parsing::extract_after_prefix(&normalized, "FLUSH TABLE")?;
+        let (namespace, table_name) = parsing::parse_table_reference(&table_ref)?;
 
-        // Extract everything after "FLUSH TABLE"
-        let tokens: Vec<&str> = normalized.split_whitespace().collect();
-        if tokens.len() < 3 {
-            return Err("Expected qualified table name after FLUSH TABLE".to_string());
-        }
+        // FLUSH TABLE requires qualified names
+        let namespace = namespace.ok_or_else(|| {
+            "Table name must be qualified (namespace.table) for FLUSH TABLE".to_string()
+        })?;
 
-        // Get table identifier (should be namespace.table_name)
-        let table_ref = tokens[2];
-        let (namespace, table_name) = extract_qualified_table(table_ref)?;
-
-        // Check for extra tokens
-        if tokens.len() > 3 {
-            return Err("Unexpected tokens after table name".to_string());
-        }
+        // Check for extra tokens (should be exactly: FLUSH TABLE namespace.table)
+        parsing::validate_no_extra_tokens(&normalized, 3, "FLUSH TABLE")?;
 
         Ok(Self {
             namespace,
@@ -162,7 +154,7 @@ impl FlushAllTablesStatement {
     /// # Examples
     ///
     /// ```
-    /// # use kalamdb_sql::flush_commands::FlushAllTablesStatement;
+    /// # use kalamdb_sql::ddl::flush_commands::FlushAllTablesStatement;
     /// let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod").unwrap();
     /// assert_eq!(stmt.namespace, "prod");
     /// ```
@@ -174,30 +166,18 @@ impl FlushAllTablesStatement {
     /// - Missing IN keyword
     /// - Extra tokens after namespace
     pub fn parse(sql: &str) -> Result<Self, String> {
+        use crate::ddl::parsing;
         use crate::parser::utils::normalize_sql;
 
         // Normalize SQL: remove extra whitespace, semicolons
         let normalized = normalize_sql(sql);
-        let sql_upper = normalized.to_uppercase();
 
-        // Check for FLUSH ALL TABLES IN prefix
-        if !sql_upper.starts_with("FLUSH ALL TABLES IN") {
-            return Err("SQL must start with FLUSH ALL TABLES IN".to_string());
-        }
-
-        // Extract everything after "FLUSH ALL TABLES IN"
-        let tokens: Vec<&str> = normalized.split_whitespace().collect();
-        if tokens.len() < 5 {
-            return Err("Expected namespace after FLUSH ALL TABLES IN".to_string());
-        }
-
-        // Get namespace (5th token: FLUSH ALL TABLES IN <namespace>)
-        let namespace = tokens[4].to_string();
+        // Parse using utility
+        let namespace = parsing::parse_optional_in_clause(&normalized, "FLUSH ALL TABLES")?
+            .ok_or_else(|| "Expected FLUSH ALL TABLES IN namespace".to_string())?;
 
         // Check for extra tokens
-        if tokens.len() > 5 {
-            return Err("Unexpected tokens after namespace".to_string());
-        }
+        parsing::validate_no_extra_tokens(&normalized, 5, "FLUSH ALL TABLES IN")?;
 
         Ok(Self { namespace })
     }

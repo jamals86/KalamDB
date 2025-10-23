@@ -166,6 +166,31 @@ impl QueryResult {
             message: Some(message),
         }
     }
+
+    /// Create a result for a SUBSCRIBE TO statement
+    ///
+    /// Returns subscription metadata as a single row result
+    pub fn subscription(subscription_data: serde_json::Value) -> Self {
+        // Convert subscription JSON to a single row
+        let mut row = HashMap::new();
+        if let serde_json::Value::Object(map) = subscription_data {
+            for (key, value) in map {
+                row.insert(key, value);
+            }
+        }
+
+        Self {
+            rows: Some(vec![row]),
+            row_count: 1,
+            columns: vec![
+                "status".to_string(),
+                "ws_url".to_string(),
+                "subscription".to_string(),
+                "message".to_string(),
+            ],
+            message: None,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@ use anyhow::{anyhow, Result};
 use sqlparser::ast::Statement;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
+pub use kalamdb_commons::SystemTable;
 
 /// SQL statement types supported for system tables
 #[derive(Debug, Clone)]
@@ -29,45 +30,6 @@ pub enum SystemStatement {
         table: SystemTable,
         where_clause: Option<String>,
     },
-}
-
-/// System table names
-#[derive(Debug, Clone, PartialEq)]
-pub enum SystemTable {
-    Users,
-    LiveQueries,
-    StorageLocations,
-    Jobs,
-    Namespaces,
-    Tables,
-    TableSchemas,
-}
-
-impl SystemTable {
-    pub fn from_name(name: &str) -> Result<Self> {
-        match name {
-            "users" | "system_users" => Ok(SystemTable::Users),
-            "live_queries" | "system_live_queries" => Ok(SystemTable::LiveQueries),
-            "storage_locations" | "system_storage_locations" => Ok(SystemTable::StorageLocations),
-            "jobs" | "system_jobs" => Ok(SystemTable::Jobs),
-            "namespaces" | "system_namespaces" => Ok(SystemTable::Namespaces),
-            "tables" | "system_tables" => Ok(SystemTable::Tables),
-            "table_schemas" | "system_table_schemas" => Ok(SystemTable::TableSchemas),
-            _ => Err(anyhow!("Unknown system table: {}", name)),
-        }
-    }
-
-    pub fn column_family_name(&self) -> &'static str {
-        match self {
-            SystemTable::Users => "system_users",
-            SystemTable::LiveQueries => "system_live_queries",
-            SystemTable::StorageLocations => "system_storage_locations",
-            SystemTable::Jobs => "system_jobs",
-            SystemTable::Namespaces => "system_namespaces",
-            SystemTable::Tables => "system_tables",
-            SystemTable::TableSchemas => "system_table_schemas",
-        }
-    }
 }
 
 /// SQL parser for system tables

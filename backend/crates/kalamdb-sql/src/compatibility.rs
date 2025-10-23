@@ -151,12 +151,14 @@ mod tests {
 
 /// Database error message style configuration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum ErrorStyle {
     /// PostgreSQL-style errors (default)
     /// Examples:
     /// - "ERROR: relation \"users\" does not exist"
     /// - "ERROR: column \"age\" does not exist"
     /// - "ERROR: syntax error at or near \"FROM\""
+    #[default]
     PostgreSQL,
     
     /// MySQL-style errors
@@ -166,11 +168,6 @@ pub enum ErrorStyle {
     MySQL,
 }
 
-impl Default for ErrorStyle {
-    fn default() -> Self {
-        ErrorStyle::PostgreSQL
-    }
-}
 
 /// Format an error message in PostgreSQL style
 ///

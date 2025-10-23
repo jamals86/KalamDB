@@ -35,13 +35,10 @@ pub mod adapter;
 pub mod compatibility;
 pub mod ddl;
 pub mod executor;
-pub mod flush_commands;
-pub mod job_commands;
-pub mod keywords;
 pub mod models;
 pub mod parser;
 pub mod query_cache;
-pub mod storage_commands;
+pub mod statement_classifier;
 
 pub use adapter::RocksDbAdapter;
 pub use compatibility::{
@@ -50,16 +47,15 @@ pub use compatibility::{
     format_postgres_syntax_error, format_postgres_table_not_found, map_sql_type_to_arrow,
     ErrorStyle,
 };
+pub use ddl::{
+    AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
+    FlushAllTablesStatement, FlushTableStatement, parse_job_command, JobCommand,
+    SubscribeStatement, SubscribeOptions,
+};
 pub use executor::SqlExecutor;
-pub use flush_commands::{FlushAllTablesStatement, FlushTableStatement};
-pub use job_commands::{parse_job_command, JobCommand};
-pub use keywords::{KalamDbKeyword, SqlKeyword};
 pub use models::*;
 pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
-pub use storage_commands::{
-    AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
-};
 
 
 use anyhow::Result;

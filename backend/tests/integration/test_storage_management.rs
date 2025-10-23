@@ -620,10 +620,10 @@ async fn test_15_storage_lookup_table_level() {
 
     // Create table with explicit storage
     let create_table = r#"
-        CREATE TABLE lookup_ns.lookup_table (
+        CREATE USER TABLE lookup_ns.lookup_table (
             id BIGINT,
             message TEXT
-        ) TABLE_TYPE user
+        )
         OWNER_ID 'user1'
         STORAGE 'table_storage'
         USE_USER_STORAGE

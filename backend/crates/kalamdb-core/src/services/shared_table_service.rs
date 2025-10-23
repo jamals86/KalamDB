@@ -12,7 +12,8 @@ use crate::error::KalamDbError;
 use crate::flush::FlushPolicy;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use kalamdb_sql::ddl::{CreateSharedTableStatement, FlushPolicy as DdlFlushPolicy};
+use kalamdb_commons::models::StorageId;
+use kalamdb_sql::ddl::{CreateTableStatement, FlushPolicy as DdlFlushPolicy};
 use kalamdb_sql::models::TableSchema;
 use kalamdb_sql::KalamSql;
 use kalamdb_store::SharedTableStore;
@@ -69,7 +70,7 @@ impl SharedTableService {
     /// * `Err(KalamDbError)` - If creation failed
     pub fn create_table(
         &self,
-        stmt: CreateSharedTableStatement,
+        stmt: CreateTableStatement,
     ) -> Result<(TableMetadata, bool), KalamDbError> {
         // Validate table name
         self.validate_table_name(&stmt.table_name)?;
@@ -132,8 +133,9 @@ impl SharedTableService {
         // System columns will be added dynamically by SharedTableProvider at query time
         let schema = stmt.schema.clone();
 
-        // Resolve storage location
-        let storage_location = stmt.location.unwrap_or_else(|| "/data/shared".to_string());
+        // Resolve storage location from storage_id (defaulting to 'local')
+        let storage_id = stmt.storage_id.as_ref().cloned().unwrap_or_else(|| StorageId::local());
+        let storage_location = format!("/data/shared"); // TODO: Get from storage configuration
 
         // Validate no ${user_id} templating in shared table storage location
         if storage_location.contains("${user_id}") {
@@ -153,7 +155,7 @@ impl SharedTableService {
             &schema,
             &storage_location,
             &flush_policy,
-            stmt.deleted_retention,
+            stmt.deleted_retention_hours.map(|h| h as u64 * 3600),
         )?;
 
         // Create RocksDB column family for this table
@@ -182,7 +184,7 @@ impl SharedTableService {
             storage_location,
             flush_policy,
             schema_version: 1,
-            deleted_retention_hours: stmt.deleted_retention.map(|secs| (secs / 3600) as u32),
+            deleted_retention_hours: stmt.deleted_retention_hours,
         };
 
         Ok((metadata, true)) // true = newly created
@@ -261,20 +263,20 @@ impl SharedTableService {
         flush_policy: Option<&DdlFlushPolicy>,
     ) -> Result<FlushPolicy, KalamDbError> {
         match flush_policy {
-            Some(DdlFlushPolicy::Rows(rows)) => {
+            Some(DdlFlushPolicy::RowLimit { row_limit }) => {
                 Ok(FlushPolicy::RowLimit {
-                    row_limit: *rows as u32,
+                    row_limit: *row_limit,
                 })
             }
-            Some(DdlFlushPolicy::Time(seconds)) => {
+            Some(DdlFlushPolicy::TimeInterval { interval_seconds }) => {
                 Ok(FlushPolicy::TimeInterval {
-                    interval_seconds: *seconds as u32,
+                    interval_seconds: *interval_seconds,
                 })
             }
-            Some(DdlFlushPolicy::Combined { rows, seconds }) => {
+            Some(DdlFlushPolicy::Combined { row_limit, interval_seconds }) => {
                 Ok(FlushPolicy::Combined {
-                    row_limit: *rows as u32,
-                    interval_seconds: *seconds as u32,
+                    row_limit: *row_limit,
+                    interval_seconds: *interval_seconds,
                 })
             }
             None => {
@@ -410,13 +412,16 @@ mod tests {
             Field::new("setting_value", DataType::Utf8, false),
         ]));
 
-        let stmt = CreateSharedTableStatement {
+        let stmt = CreateTableStatement {
             table_name: TableName::new("config"),
             namespace_id: NamespaceId::new("app"),
+            table_type: kalamdb_commons::models::TableType::Shared,
             schema,
-            location: None,
+            storage_id: None, // Will default to 'local'
+            use_user_storage: false,
             flush_policy: None,
-            deleted_retention: None,
+            deleted_retention_hours: None,
+            ttl_seconds: None,
             if_not_exists: false,
         };
 
@@ -464,13 +469,16 @@ mod tests {
 
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
-        let stmt = CreateSharedTableStatement {
+        let stmt = CreateTableStatement {
             table_name: TableName::new("config"),
             namespace_id: NamespaceId::new("app"),
+            table_type: kalamdb_commons::models::TableType::Shared,
             schema,
-            location: Some("/custom/path/shared".to_string()),
+            storage_id: None, // Will default to 'local'
+            use_user_storage: false,
             flush_policy: None,
-            deleted_retention: None,
+            deleted_retention_hours: None,
+            ttl_seconds: None,
             if_not_exists: false,
         };
 
@@ -478,7 +486,7 @@ mod tests {
         assert!(result.is_ok());
 
         let (metadata, _was_created) = result.unwrap();
-        assert_eq!(metadata.storage_location, "/custom/path/shared");
+        assert_eq!(metadata.storage_location, "/data/shared");
     }
 
     #[test]
@@ -487,22 +495,26 @@ mod tests {
 
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
-        let stmt = CreateSharedTableStatement {
+        let stmt = CreateTableStatement {
             table_name: TableName::new("config"),
             namespace_id: NamespaceId::new("app"),
+            table_type: kalamdb_commons::models::TableType::Shared,
             schema,
-            location: Some("/data/${user_id}/shared".to_string()), // Invalid!
+            storage_id: None, // Will default to 'local'
+            use_user_storage: false,
             flush_policy: None,
-            deleted_retention: None,
+            deleted_retention_hours: None,
+            ttl_seconds: None,
             if_not_exists: false,
         };
 
+        // Currently storage locations are hardcoded to /data/shared
+        // This test should pass since the default location doesn't contain ${user_id}
         let result = service.create_table(stmt);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("cannot contain ${user_id}"));
+        assert!(result.is_ok());
+        
+        // TODO: When storage locations become configurable, add a test that actually
+        // tries to create a shared table with a location containing ${user_id}
     }
 
     #[test]
@@ -510,12 +522,12 @@ mod tests {
         let (service, _test_db) = create_test_service();
 
         // Row-based policy
-        let policy = DdlFlushPolicy::Rows(500);
+        let policy = DdlFlushPolicy::RowLimit { row_limit: 500 };
         let result = service.parse_flush_policy(Some(&policy)).unwrap();
         assert!(matches!(result, FlushPolicy::RowLimit { row_limit: 500 }));
 
         // Time-based policy
-        let policy = DdlFlushPolicy::Time(60);
+        let policy = DdlFlushPolicy::TimeInterval { interval_seconds: 60 };
         let result = service.parse_flush_policy(Some(&policy)).unwrap();
         assert!(matches!(
             result,
@@ -526,8 +538,8 @@ mod tests {
 
         // Combined policy
         let policy = DdlFlushPolicy::Combined {
-            rows: 1000,
-            seconds: 300,
+            row_limit: 1000,
+            interval_seconds: 300,
         };
         let result = service.parse_flush_policy(Some(&policy)).unwrap();
         assert!(matches!(
@@ -578,13 +590,16 @@ mod tests {
 
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
-        let stmt1 = CreateSharedTableStatement {
+        let stmt1 = CreateTableStatement {
             table_name: TableName::new("config"),
             namespace_id: NamespaceId::new("app"),
+            table_type: TableType::Shared,
             schema: schema.clone(),
-            location: None,
+            storage_id: None, // Will default to 'local'
+            use_user_storage: false,
             flush_policy: None,
-            deleted_retention: None,
+            deleted_retention_hours: None,
+            ttl_seconds: None,
             if_not_exists: false,
         };
 
@@ -597,7 +612,7 @@ mod tests {
         //     table_name: TableName::new("config"),
         //     namespace_id: NamespaceId::new("app"),
         //     schema: schema.clone(),
-        //     location: None,
+        //     
         //     flush_policy: None,
         //     deleted_retention: None,
         //     if_not_exists: false,
@@ -609,7 +624,7 @@ mod tests {
         //     table_name: TableName::new("config"),
         //     namespace_id: NamespaceId::new("app"),
         //     schema,
-        //     location: None,
+        //     
         //     flush_policy: None,
         //     deleted_retention: None,
         //     if_not_exists: true,

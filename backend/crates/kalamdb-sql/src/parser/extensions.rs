@@ -17,17 +17,19 @@
 /// These parsers handle commands that are unique to KalamDB and not part
 /// of standard SQL. They are implemented in separate modules and re-exported
 /// here for a unified parser interface.
-
 // Re-export storage commands
-pub use crate::storage_commands::{
+pub use crate::ddl::storage_commands::{
     AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
 };
 
 // Re-export flush commands
-pub use crate::flush_commands::{FlushAllTablesStatement, FlushTableStatement};
+pub use crate::ddl::flush_commands::{FlushAllTablesStatement, FlushTableStatement};
 
-// Re-export job commands
-pub use crate::job_commands::{parse_job_command, JobCommand};
+// Job commands (KILL JOB)
+pub use crate::ddl::job_commands::{parse_job_command, JobCommand};
+
+// Subscribe commands (SUBSCRIBE TO)
+pub use crate::ddl::subscribe_commands::{SubscribeStatement, SubscribeOptions};
 
 /// Extension statement types that don't fit into standard SQL.
 ///
@@ -49,6 +51,8 @@ pub enum ExtensionStatement {
     FlushAllTables(FlushAllTablesStatement),
     /// KILL JOB command
     KillJob(JobCommand),
+    /// SUBSCRIBE TO command (for live query subscriptions)
+    Subscribe(SubscribeStatement),
 }
 
 impl ExtensionStatement {
@@ -115,9 +119,14 @@ impl ExtensionStatement {
                 .map_err(|e| format!("KILL JOB parsing failed: {}", e));
         }
 
-        Err(format!(
-            "Unknown KalamDB extension command. Supported commands: CREATE/ALTER/DROP/SHOW STORAGE, FLUSH TABLE, FLUSH ALL TABLES, KILL JOB"
-        ))
+        // Try SUBSCRIBE TO
+        if sql_upper.starts_with("SUBSCRIBE TO") {
+            return SubscribeStatement::parse(sql)
+                .map(ExtensionStatement::Subscribe)
+                .map_err(|e| format!("SUBSCRIBE TO parsing failed: {}", e));
+        }
+
+        Err("Unknown KalamDB extension command. Supported commands: CREATE/ALTER/DROP/SHOW STORAGE, FLUSH TABLE, FLUSH ALL TABLES, KILL JOB, SUBSCRIBE TO".to_string())
     }
 }
 
@@ -155,6 +164,22 @@ mod tests {
         let result = ExtensionStatement::parse(sql);
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), ExtensionStatement::KillJob(_)));
+    }
+
+    #[test]
+    fn test_parse_subscribe_to() {
+        let sql = "SUBSCRIBE TO app.messages";
+        let result = ExtensionStatement::parse(sql);
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), ExtensionStatement::Subscribe(_)));
+    }
+
+    #[test]
+    fn test_parse_subscribe_with_where() {
+        let sql = "SUBSCRIBE TO app.messages WHERE user_id = CURRENT_USER()";
+        let result = ExtensionStatement::parse(sql);
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), ExtensionStatement::Subscribe(_)));
     }
 
     #[test]

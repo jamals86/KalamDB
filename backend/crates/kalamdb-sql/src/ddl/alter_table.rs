@@ -45,7 +45,7 @@ pub struct AlterTableStatement {
 }
 
 impl AlterTableStatement {
-    /// Parse an ALTER TABLE statement from SQL
+    /// Parse an ALTER TABLE statement from SQL (optimized)
     ///
     /// Supports syntax:
     /// - ALTER TABLE name ADD COLUMN col_name data_type [NULL | NOT NULL] [DEFAULT value]
@@ -54,27 +54,29 @@ impl AlterTableStatement {
     /// - ALTER USER TABLE ... (explicitly specify table type)
     /// - ALTER SHARED TABLE ... (explicitly specify table type)
     pub fn parse(sql: &str, current_namespace: &NamespaceId) -> DdlResult<Self> {
-        let sql_trim = sql.trim();
-        let sql_upper = sql_trim.to_uppercase();
-
-        if !sql_upper.starts_with("ALTER") {
+        let tokens: Vec<&str> = sql.split_whitespace().collect();
+        
+        if tokens.is_empty() || !tokens[0].eq_ignore_ascii_case("ALTER") {
             return Err("Expected ALTER TABLE statement".to_string());
         }
 
         // Extract table name (handles ALTER TABLE, ALTER USER TABLE, ALTER SHARED TABLE)
-        let table_name = Self::extract_table_name(sql_trim)?;
+        let table_name = Self::extract_table_name_from_tokens(&tokens)?;
 
-        // Determine the operation type
-        let operation = if sql_upper.contains(" ADD COLUMN ") || sql_upper.contains(" ADD ") {
-            Self::parse_add_column(sql_trim)?
-        } else if sql_upper.contains(" DROP COLUMN ") || sql_upper.contains(" DROP ") {
-            Self::parse_drop_column(sql_trim)?
-        } else if sql_upper.contains(" MODIFY COLUMN ") || sql_upper.contains(" MODIFY ") {
-            Self::parse_modify_column(sql_trim)?
-        } else {
-            return Err(
-                "Expected ADD COLUMN, DROP COLUMN, or MODIFY COLUMN operation"
-            .to_string());
+        // Find operation keyword position
+        let op_pos = tokens.iter()
+            .position(|&t| matches!(
+                t.to_uppercase().as_str(),
+                "ADD" | "DROP" | "MODIFY"
+            ))
+            .ok_or_else(|| "Expected ADD COLUMN, DROP COLUMN, or MODIFY COLUMN operation".to_string())?;
+
+        let operation_upper = tokens[op_pos].to_uppercase();
+        let operation = match operation_upper.as_str() {
+            "ADD" => Self::parse_add_column_from_tokens(&tokens[op_pos..])?,
+            "DROP" => Self::parse_drop_column_from_tokens(&tokens[op_pos..])?,
+            "MODIFY" => Self::parse_modify_column_from_tokens(&tokens[op_pos..])?,
+            _ => return Err("Expected ADD COLUMN, DROP COLUMN, or MODIFY COLUMN operation".to_string()),
         };
 
         Ok(Self {
@@ -84,74 +86,52 @@ impl AlterTableStatement {
         })
     }
 
-    /// Extract table name from ALTER TABLE statement
-    fn extract_table_name(sql: &str) -> DdlResult<String> {
-        let sql_upper = sql.to_uppercase();
-
-        // Try different patterns
-        let after_alter = if sql_upper.contains("ALTER USER TABLE") {
-            sql.split_whitespace()
-                .skip(3) // Skip "ALTER USER TABLE"
-                .next()
-        } else if sql_upper.contains("ALTER SHARED TABLE") {
-            sql.split_whitespace()
-                .skip(3) // Skip "ALTER SHARED TABLE"
-                .next()
-        } else if sql_upper.contains("ALTER TABLE") {
-            sql.split_whitespace()
-                .skip(2) // Skip "ALTER TABLE"
-                .next()
+    /// Extract table name from ALTER TABLE statement tokens (optimized)
+    fn extract_table_name_from_tokens(tokens: &[&str]) -> DdlResult<String> {
+        // Skip ALTER, then check for USER/SHARED TABLE or just TABLE
+        let skip = if tokens.len() >= 3 {
+            let second = tokens[1].to_uppercase();
+            if second == "USER" || second == "SHARED" {
+                3 // Skip "ALTER USER/SHARED TABLE"
+            } else if second == "TABLE" {
+                2 // Skip "ALTER TABLE"
+            } else {
+                return Err("Expected TABLE keyword".to_string());
+            }
         } else {
-            None
+            return Err("Table name is required".to_string());
         };
 
-        after_alter
+        tokens.get(skip)
             .map(|s| s.to_string())
             .ok_or_else(|| "Table name is required".to_string())
     }
 
-    /// Parse ADD COLUMN operation
-    fn parse_add_column(sql: &str) -> DdlResult<ColumnOperation> {
-        let sql_upper = sql.to_uppercase();
-
-        // Find the position of ADD COLUMN or ADD
-        let add_pos = if sql_upper.contains(" ADD COLUMN ") {
-            sql_upper.find(" ADD COLUMN ").unwrap()
+    /// Parse ADD COLUMN operation from tokens (optimized)
+    fn parse_add_column_from_tokens(tokens: &[&str]) -> DdlResult<ColumnOperation> {
+        // Expect: ADD [COLUMN] col_name data_type [NOT NULL] [DEFAULT value]
+        let start_idx = if tokens.len() > 1 && tokens[1].eq_ignore_ascii_case("COLUMN") {
+            2
         } else {
-            sql_upper.find(" ADD ").unwrap()
+            1
         };
 
-        // Extract everything after ADD COLUMN
-        let column_def = &sql[add_pos..];
-        let column_def = column_def
-            .strip_prefix(" ADD COLUMN ")
-            .or_else(|| column_def.strip_prefix(" add column "))
-            .or_else(|| column_def.strip_prefix(" ADD "))
-            .or_else(|| column_def.strip_prefix(" add "))
-            .unwrap_or(column_def)
-            .trim();
-
-        // Parse column definition: name type [NULL|NOT NULL] [DEFAULT value]
-        let parts: Vec<&str> = column_def.split_whitespace().collect();
-        if parts.len() < 2 {
+        if tokens.len() < start_idx + 2 {
             return Err("Column definition requires name and data type".to_string());
         }
 
-        let column_name = parts[0].to_string();
-        let data_type = parts[1].to_string();
+        let column_name = tokens[start_idx].to_string();
+        let data_type = tokens[start_idx + 1].to_string();
 
-        let upper_def = column_def.to_uppercase();
-        let nullable = !upper_def.contains("NOT NULL");
+        // Check for NOT NULL
+        let nullable = !tokens[start_idx + 2..]
+            .windows(2)
+            .any(|w| w[0].eq_ignore_ascii_case("NOT") && w[1].eq_ignore_ascii_case("NULL"));
 
         // Extract default value if present
-        let default_value = if upper_def.contains("DEFAULT") {
-            let default_pos = upper_def.find("DEFAULT").unwrap();
-            let default_part = &column_def[default_pos + 7..].trim();
-            let value = default_part.split_whitespace().next();
-            value.map(|s| s.trim_matches('\'').trim_matches('"').to_string())
-        } else {
-            None
-        };
+        let default_value = tokens[start_idx + 2..]
+            .windows(2)
+            .find(|w| w[0].eq_ignore_ascii_case("DEFAULT")).map(|w| w[1].trim_matches('\'').trim_matches('"').to_string());
 
         Ok(ColumnOperation::Add {
             column_name,
@@ -161,67 +141,55 @@ impl AlterTableStatement {
         })
     }
 
-    /// Parse DROP COLUMN operation
-    fn parse_drop_column(sql: &str) -> DdlResult<ColumnOperation> {
-        let sql_upper = sql.to_uppercase();
-
-        // Find the position of DROP COLUMN or DROP
-        let drop_pos = if sql_upper.contains(" DROP COLUMN ") {
-            sql_upper.find(" DROP COLUMN ").unwrap()
+    /// Parse DROP COLUMN operation from tokens (optimized)
+    fn parse_drop_column_from_tokens(tokens: &[&str]) -> DdlResult<ColumnOperation> {
+        // Expect: DROP [COLUMN] col_name
+        let col_idx = if tokens.len() > 1 && tokens[1].eq_ignore_ascii_case("COLUMN") {
+            2
         } else {
-            sql_upper.find(" DROP ").unwrap()
+            1
         };
 
-        // Extract column name after DROP COLUMN
-        let column_part = &sql[drop_pos..];
-        let column_name = column_part
-            .strip_prefix(" DROP COLUMN ")
-            .or_else(|| column_part.strip_prefix(" drop column "))
-            .or_else(|| column_part.strip_prefix(" DROP "))
-            .or_else(|| column_part.strip_prefix(" drop "))
-            .and_then(|s| s.trim().split_whitespace().next())
-            .ok_or_else(|| "Column name is required".to_string())?;
+        let column_name = tokens
+            .get(col_idx)
+            .ok_or_else(|| "Column name is required".to_string())?
+            .to_string();
 
-        Ok(ColumnOperation::Drop {
-            column_name: column_name.to_string(),
-        })
+        Ok(ColumnOperation::Drop { column_name })
     }
 
-    /// Parse MODIFY COLUMN operation
-    fn parse_modify_column(sql: &str) -> DdlResult<ColumnOperation> {
-        let sql_upper = sql.to_uppercase();
-
-        // Find the position of MODIFY COLUMN or MODIFY
-        let modify_pos = if sql_upper.contains(" MODIFY COLUMN ") {
-            sql_upper.find(" MODIFY COLUMN ").unwrap()
+    /// Parse MODIFY COLUMN operation from tokens (optimized)
+    fn parse_modify_column_from_tokens(tokens: &[&str]) -> DdlResult<ColumnOperation> {
+        // Expect: MODIFY [COLUMN] col_name new_data_type [NOT NULL]
+        let start_idx = if tokens.len() > 1 && tokens[1].eq_ignore_ascii_case("COLUMN") {
+            2
         } else {
-            sql_upper.find(" MODIFY ").unwrap()
+            1
         };
 
-        // Extract column definition after MODIFY COLUMN
-        let column_def = &sql[modify_pos..];
-        let column_def = column_def
-            .strip_prefix(" MODIFY COLUMN ")
-            .or_else(|| column_def.strip_prefix(" modify column "))
-            .or_else(|| column_def.strip_prefix(" MODIFY "))
-            .or_else(|| column_def.strip_prefix(" modify "))
-            .unwrap_or(column_def)
-            .trim();
-
-        // Parse column definition: name new_type [NULL|NOT NULL]
-        let parts: Vec<&str> = column_def.split_whitespace().collect();
-        if parts.len() < 2 {
-            return Err(
-                "Column modification requires name and new data type"
-            .to_string());
+        if tokens.len() < start_idx + 2 {
+            return Err("Column modification requires name and new data type".to_string());
         }
 
-        let column_name = parts[0].to_string();
-        let new_data_type = parts[1].to_string();
+        let column_name = tokens[start_idx].to_string();
+        let new_data_type = tokens[start_idx + 1].to_string();
 
-        let upper_def = column_def.to_uppercase();
-        let nullable = if upper_def.contains("NULL") {
-            Some(!upper_def.contains("NOT NULL"))
+        // Check for NULL/NOT NULL
+        let nullable = if tokens.len() > start_idx + 2 {
+            let has_null = tokens[start_idx + 2..]
+                .iter()
+                .any(|&t| t.eq_ignore_ascii_case("NULL"));
+            let has_not_null = tokens[start_idx + 2..]
+                .windows(2)
+                .any(|w| w[0].eq_ignore_ascii_case("NOT") && w[1].eq_ignore_ascii_case("NULL"));
+
+            if has_not_null {
+                Some(false)
+            } else if has_null {
+                Some(true)
+            } else {
+                None
+            }
         } else {
             None
         };

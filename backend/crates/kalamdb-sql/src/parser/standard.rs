@@ -14,7 +14,10 @@
 //! ```rust
 //! use kalamdb_sql::parser::standard::parse_sql;
 //!
+//! # fn main() -> Result<(), String> {
 //! let statements = parse_sql("SELECT * FROM users WHERE id = 1")?;
+//! # Ok(())
+//! # }
 //! ```
 
 use sqlparser::ast::Statement;
