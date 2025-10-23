@@ -462,7 +462,44 @@
 - ✅ Added \refresh-tables command to update cached metadata
 - ✅ Fetch table names on session start automatically
 - ✅ Show query timing for queries exceeding threshold
-- ✅ All 22 unit tests passing
+- ✅ All 24 unit tests passing
+
+**Visual Design Enhancements (NEW)**:
+- ✅ T114e [P] [US0] Add syntax highlighting for SQL queries
+  - ✅ Created highlighter.rs with SqlHighlighter
+  - ✅ Blue bold keywords, magenta types, green strings, yellow numbers
+  - ✅ Integrated with rustyline Highlighter trait
+- ✅ T114f [P] [US0] Design beautiful welcome banner
+  - ✅ Box border with bright blue styling
+  - ✅ Icon-based information display
+  - ✅ Clear screen on startup for clean slate
+- ✅ T114g [P] [US0] Create styled prompt with background color
+  - ✅ Black on bright cyan for connected state
+  - ✅ Black on red for disconnected state
+  - ✅ Arrow indicator for input line
+  - ✅ Left margin for comfortable reading
+- ✅ T114h [P] [US0] Implement Warp-style autocomplete design
+  - ✅ Styled completions with category labels
+  - ✅ Color-coded by type (keyword/table/column/type/command)
+  - ✅ Clear visual hierarchy in suggestion list
+- ✅ T114i [P] [US0] Enhance status messages with colors and icons
+  - ✅ Green checkmarks for success
+  - ✅ Red X for errors
+  - ✅ Yellow warnings
+  - ✅ Dimmed timing info
+- ✅ T114j [P] [US0] Add colored and console dependencies
+
+**Dependencies Added**:
+- `indicatif = "0.17"` - Progress spinners
+- `colored = "2.1"` - ANSI color support
+- `console = "0.15"` - Terminal utilities
+
+**Files Created/Modified**:
+- NEW: `cli/kalam-cli/src/highlighter.rs` (198 lines) - SQL syntax highlighting
+- NEW: `cli/kalam-cli/VISUAL_ENHANCEMENTS.md` - Comprehensive documentation
+- MODIFIED: `cli/kalam-cli/src/completer.rs` (+80 lines) - Styled completions
+- MODIFIED: `cli/kalam-cli/src/session.rs` (+120 lines) - Banner, prompt, colors
+- MODIFIED: `cli/kalam-cli/Cargo.toml` - Added color dependencies
 
 ---
 

@@ -19,7 +19,6 @@ use rustyline::validate::Validator;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::{Duration, Instant};
 use colored::*;
-use console::Term;
 
 use crate::{
     error::Result,
@@ -115,6 +114,7 @@ impl CLISession {
     ///
     /// **Implements T092**: Execute SQL via kalam-link client
     /// **Implements T114a**: Show loading indicator for queries > threshold
+    /// **Enhanced**: Colored output and styled timing
     pub async fn execute(&mut self, sql: &str) -> Result<()> {
         let start = Instant::now();
         
@@ -143,7 +143,12 @@ impl CLISession {
                 
                 // Show timing if query took significant time
                 if elapsed.as_millis() >= self.loading_threshold_ms as u128 {
-                    println!("\nTime: {:.3} ms", elapsed.as_secs_f64() * 1000.0);
+                    let timing = format!("⏱  Time: {:.3} ms", elapsed.as_secs_f64() * 1000.0);
+                    if self.color {
+                        println!("{}", timing.dimmed());
+                    } else {
+                        println!("{}", timing);
+                    }
                 }
                 
                 Ok(())
@@ -184,21 +189,24 @@ impl CLISession {
     ///
     /// **Implements T093**: Interactive REPL with rustyline
     /// **Implements T114b**: Enhanced autocomplete with table names
+    /// **Enhanced**: Beautiful UI with colors and styled prompt
     pub async fn run_interactive(&mut self) -> Result<()> {
-        println!("Kalam CLI v{}", env!("CARGO_PKG_VERSION"));
-        println!("Connected to: {}", self.server_url);
-        println!("Type \\help for help, \\quit to exit\n");
+        // Print welcome banner
+        self.print_banner();
 
         // Create autocompleter and fetch initial table names
         let mut completer = AutoCompleter::new();
         if let Err(e) = self.refresh_tables(&mut completer).await {
-            eprintln!("Warning: Could not fetch table names for autocomplete: {}", e);
+            eprintln!("{}", format!("⚠ Could not fetch table names: {}", e).yellow());
         }
 
-        // Create rustyline helper
-        let helper = CLIHelper { completer };
+        // Create rustyline helper with syntax highlighting
+        let helper = CLIHelper { 
+            completer,
+            highlighter: SqlHighlighter::new(self.color),
+        };
 
-        // Initialize readline with completer
+        // Initialize readline with completer and highlighter
         let mut rl = Editor::<CLIHelper, DefaultHistory>::new()?;
         rl.set_helper(Some(helper));
         
@@ -213,13 +221,10 @@ impl CLISession {
 
         // Main REPL loop
         loop {
-            let prompt = if self.connected {
-                "kalam> "
-            } else {
-                "kalam (disconnected)> "
-            };
+            // Create styled prompt
+            let prompt = self.create_prompt();
 
-            match rl.readline(prompt) {
+            match rl.readline(&prompt) {
                 Ok(line) => {
                     let line = line.trim();
                     if line.is_empty() {
@@ -237,39 +242,77 @@ impl CLISession {
                             if matches!(command, Command::RefreshTables) {
                                 if let Some(helper) = rl.helper_mut() {
                                     if let Err(e) = self.refresh_tables(&mut helper.completer).await {
-                                        eprintln!("Error refreshing tables: {}", e);
+                                        eprintln!("{}", format!("✗ Error refreshing tables: {}", e).red());
                                     } else {
-                                        println!("Table names refreshed");
+                                        println!("{}", "✓ Table names refreshed".green());
                                     }
                                 }
                                 continue;
                             }
 
                             if let Err(e) = self.execute_command(command).await {
-                                eprintln!("Error: {}", e);
+                                eprintln!("{}", format!("✗ Error: {}", e).red().bold());
                             }
                         }
                         Err(e) => {
-                            eprintln!("Parse error: {}", e);
+                            eprintln!("{}", format!("✗ Parse error: {}", e).red());
                         }
                     }
                 }
                 Err(ReadlineError::Interrupted) => {
-                    println!("Use \\quit or \\q to exit");
+                    println!("{}", "Use \\quit or \\q to exit".dimmed());
                     continue;
                 }
                 Err(ReadlineError::Eof) => {
-                    println!("Goodbye!");
+                    println!("\n{}", "👋 Goodbye!".cyan().bold());
                     break;
                 }
                 Err(err) => {
-                    eprintln!("Error: {}", err);
+                    eprintln!("{}", format!("✗ Error: {}", err).red());
                     break;
                 }
             }
         }
 
         Ok(())
+    }
+
+    /// Print welcome banner
+    fn print_banner(&self) {
+        // Removed clear screen to avoid terminal refresh issues
+        println!();
+        println!("{}", "╔═══════════════════════════════════════════════════════════╗".bright_blue().bold());
+        println!("{}", "║                                                           ║".bright_blue().bold());
+        println!("{}{}{}",
+            "║        ".bright_blue().bold(),
+            "🗄️  Kalam CLI - Interactive Database Terminal".white().bold(),
+            "      ║".bright_blue().bold()
+        );
+        println!("{}", "║                                                           ║".bright_blue().bold());
+        println!("{}", "╚═══════════════════════════════════════════════════════════╝".bright_blue().bold());
+        println!();
+        println!("  {}  {}", "📡".dimmed(), format!("Connected to: {}", self.server_url).cyan());
+        println!("  {}  {}", "📚".dimmed(), format!("Version: {}", env!("CARGO_PKG_VERSION")).dimmed());
+        println!("  {}  Type {} for help, {} to exit", "💡".dimmed(), "\\help".cyan().bold(), "\\quit".cyan().bold());
+        println!();
+    }
+
+    /// Create styled prompt
+    fn create_prompt(&self) -> String {
+        if self.color {
+            if self.connected {
+                // Simplified prompt without background color to avoid cursor issues
+                format!("{} {} ", "kalam".bright_cyan().bold(), "❯".bright_cyan())
+            } else {
+                format!("{} {} ", "kalam".red().bold(), "❯".red())
+            }
+        } else {
+            if self.connected {
+                "kalam> ".to_string()
+            } else {
+                "kalam (disconnected)> ".to_string()
+            }
+        }
     }
 
     /// Fetch table names from server and update completer
@@ -579,9 +622,10 @@ impl CLISession {
     }
 }
 
-/// Rustyline helper with autocomplete support
+/// Rustyline helper with autocomplete and syntax highlighting
 struct CLIHelper {
     completer: AutoCompleter,
+    highlighter: SqlHighlighter,
 }
 
 impl Completer for CLIHelper {
@@ -601,7 +645,15 @@ impl Hinter for CLIHelper {
     type Hint = String;
 }
 
-impl Highlighter for CLIHelper {}
+impl Highlighter for CLIHelper {
+    fn highlight<'l>(&self, line: &'l str, pos: usize) -> std::borrow::Cow<'l, str> {
+        self.highlighter.highlight(line, pos)
+    }
+
+    fn highlight_char(&self, line: &str, pos: usize, forced: bool) -> bool {
+        self.highlighter.highlight_char(line, pos, forced)
+    }
+}
 
 impl Validator for CLIHelper {}
 

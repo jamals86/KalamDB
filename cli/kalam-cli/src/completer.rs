@@ -8,7 +8,6 @@
 //! and backslash commands with context-aware suggestions and beautiful styling.
 
 use rustyline::completion::{Completer, Pair};
-use rustyline::Context;
 use std::collections::HashMap;
 use colored::*;
 
@@ -66,7 +65,7 @@ pub struct AutoCompleter {
 impl AutoCompleter {
     /// Create a new auto-completer
     pub fn new() -> Self {
-        let keywords = vec![
+        let mut keywords = vec![
             // DML
             "SELECT", "INSERT", "UPDATE", "DELETE", "FROM", "WHERE", "JOIN", "ON", "AND", "OR",
             "NOT", "IN", "LIKE", "BETWEEN", "IS", "NULL", "AS", "ORDER", "BY", "GROUP", "HAVING",
@@ -82,7 +81,7 @@ impl AutoCompleter {
         ]
         .iter()
         .map(|s| s.to_string())
-        .collect();
+        .collect::<Vec<String>>();
 
         let types = vec![
             "INTEGER", "BIGINT", "TEXT", "VARCHAR", "BOOLEAN", "TIMESTAMP", "FLOAT", "DOUBLE",
@@ -254,7 +253,7 @@ impl Completer for AutoCompleter {
         &self,
         line: &str,
         pos: usize,
-        _ctx: &Context<'_>,
+        _ctx: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Pair>)> {
         // Find the start of the current word
         let start = line[..pos]

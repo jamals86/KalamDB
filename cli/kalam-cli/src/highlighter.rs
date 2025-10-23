@@ -144,16 +144,14 @@ impl SqlHighlighter {
 
 impl RustylineHighlighter for SqlHighlighter {
     fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
-        // Check if it's a meta-command
-        if line.trim_start().starts_with('\\') {
-            return Cow::Owned(line.bright_cyan().to_string());
-        }
-
-        Cow::Owned(self.highlight_sql(line))
+        // Disable highlighting for better performance
+        // The constant repainting causes cursor issues and lag
+        Cow::Borrowed(line)
     }
 
     fn highlight_char(&self, _line: &str, _pos: usize, _forced: bool) -> bool {
-        true
+        // Disable character-by-character highlighting
+        false
     }
 }
 
