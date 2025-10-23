@@ -43,11 +43,11 @@
 //! manager.start_job(
 //!     job_id.clone(),
 //!     "flush".to_string(),
-//!     async move {
+//!     Box::pin(async move {
 //!         // Perform flush operation
 //!         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 //!         Ok("Flushed 1000 rows".to_string())
-//!     }
+//!     })
 //! ).await?;
 //!
 //! // Check status

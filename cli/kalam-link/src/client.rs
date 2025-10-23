@@ -67,7 +67,7 @@ impl KalamLinkClient {
 
     /// Check server health
     pub async fn health_check(&self) -> Result<bool> {
-        let url = format!("{}/health", self.base_url);
+        let url = format!("{}/v1/api/healthcheck", self.base_url);
         let response = self.http_client.get(&url).send().await?;
         Ok(response.status().is_success())
     }

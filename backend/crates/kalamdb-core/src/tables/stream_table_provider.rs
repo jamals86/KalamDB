@@ -627,7 +627,7 @@ mod tests {
     use serde_json::json;
 
     fn create_test_provider() -> (StreamTableProvider, TestDb) {
-        let test_db = TestDb::new(&["stream_table:app:events"]).unwrap();
+        let test_db = TestDb::new(&["stream_app:events"]).unwrap();
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
@@ -809,7 +809,7 @@ mod tests {
     fn test_ephemeral_mode_without_live_queries() {
         // Test ephemeral mode when no LiveQueriesProvider is set
         // Should fall back to normal insert behavior
-        let test_db = TestDb::new(&["stream_table:app:ephemeral_events"]).unwrap();
+        let test_db = TestDb::new(&["stream_app:ephemeral_events"]).unwrap();
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
             Field::new("event_type", DataType::Utf8, false),
@@ -855,7 +855,7 @@ mod tests {
         // Test ephemeral mode when no subscribers exist
         // Events should be discarded
         let test_db =
-            TestDb::new(&["stream_table:app:ephemeral_events2", "system_live_queries"]).unwrap();
+            TestDb::new(&["stream_app:ephemeral_events2", "system_live_queries"]).unwrap();
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
             Field::new("event_type", DataType::Utf8, false),
@@ -905,7 +905,7 @@ mod tests {
     fn test_non_ephemeral_mode_always_stores() {
         // Test that non-ephemeral mode always stores events
         let test_db =
-            TestDb::new(&["stream_table:app:persistent_events", "system_live_queries"]).unwrap();
+            TestDb::new(&["stream_app:persistent_events", "system_live_queries"]).unwrap();
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
             Field::new("event_type", DataType::Utf8, false),

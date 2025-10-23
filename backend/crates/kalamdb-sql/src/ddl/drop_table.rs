@@ -6,8 +6,17 @@
 //! - DROP STREAM TABLE events
 //! - DROP TABLE IF EXISTS messages
 
-use crate::catalog::{NamespaceId, TableName, TableType};
-use crate::error::KalamDbError;
+use crate::ddl::DdlResult;
+use anyhow::anyhow;
+use kalamdb_commons::models::{NamespaceId, TableName};
+
+/// Table categories supported by DROP TABLE statements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableKind {
+    User,
+    Shared,
+    Stream,
+}
 
 /// DROP TABLE statement
 #[derive(Debug, Clone, PartialEq)]
@@ -19,7 +28,7 @@ pub struct DropTableStatement {
     pub namespace_id: NamespaceId,
 
     /// Table type (User, Shared, or Stream)
-    pub table_type: TableType,
+    pub table_type: TableKind,
 
     /// If true, don't error if table doesn't exist
     pub if_exists: bool,
@@ -34,13 +43,11 @@ impl DropTableStatement {
     /// - DROP STREAM TABLE name
     /// - DROP TABLE IF EXISTS name (defaults to USER TABLE)
     /// - DROP USER TABLE IF EXISTS name
-    pub fn parse(sql: &str, current_namespace: &NamespaceId) -> Result<Self, KalamDbError> {
+    pub fn parse(sql: &str, current_namespace: &NamespaceId) -> DdlResult<Self> {
         let sql_upper = sql.trim().to_uppercase();
 
         if !sql_upper.starts_with("DROP") {
-            return Err(KalamDbError::InvalidSql(
-                "Expected DROP TABLE statement".to_string(),
-            ));
+            return Err(anyhow!("Expected DROP TABLE statement"));
         }
 
         // Determine if IF EXISTS is present
@@ -48,17 +55,17 @@ impl DropTableStatement {
 
         // Determine table type
         let table_type = if sql_upper.contains("DROP USER TABLE") {
-            TableType::User
+            TableKind::User
         } else if sql_upper.contains("DROP SHARED TABLE") {
-            TableType::Shared
+            TableKind::Shared
         } else if sql_upper.contains("DROP STREAM TABLE") {
-            TableType::Stream
+            TableKind::Stream
         } else if sql_upper.contains("DROP TABLE") {
             // Default to USER TABLE if no type specified
-            TableType::User
+            TableKind::User
         } else {
-            return Err(KalamDbError::InvalidSql(
-                "Expected DROP [USER|SHARED|STREAM] TABLE statement".to_string(),
+            return Err(anyhow!(
+                "Expected DROP [USER|SHARED|STREAM] TABLE statement"
             ));
         };
 
@@ -96,7 +103,7 @@ impl DropTableStatement {
 
         let name = name_part
             .and_then(|s| s.split_whitespace().next())
-            .ok_or_else(|| KalamDbError::InvalidSql("Table name is required".to_string()))?;
+            .ok_or_else(|| anyhow!("Table name is required"))?;
 
         // Handle qualified name (namespace.table)
         let (namespace_id, table_name) = if let Some(dot_pos) = name.find('.') {
@@ -129,7 +136,7 @@ mod tests {
         let stmt =
             DropTableStatement::parse("DROP USER TABLE messages", &test_namespace()).unwrap();
         assert_eq!(stmt.table_name.as_str(), "messages");
-        assert_eq!(stmt.table_type, TableType::User);
+        assert_eq!(stmt.table_type, TableKind::User);
         assert!(!stmt.if_exists);
     }
 
@@ -138,7 +145,7 @@ mod tests {
         let stmt = DropTableStatement::parse("DROP SHARED TABLE conversations", &test_namespace())
             .unwrap();
         assert_eq!(stmt.table_name.as_str(), "conversations");
-        assert_eq!(stmt.table_type, TableType::Shared);
+        assert_eq!(stmt.table_type, TableKind::Shared);
         assert!(!stmt.if_exists);
     }
 
@@ -147,7 +154,7 @@ mod tests {
         let stmt =
             DropTableStatement::parse("DROP STREAM TABLE events", &test_namespace()).unwrap();
         assert_eq!(stmt.table_name.as_str(), "events");
-        assert_eq!(stmt.table_type, TableType::Stream);
+        assert_eq!(stmt.table_type, TableKind::Stream);
         assert!(!stmt.if_exists);
     }
 
@@ -155,7 +162,7 @@ mod tests {
     fn test_parse_drop_table_defaults_to_user() {
         let stmt = DropTableStatement::parse("DROP TABLE messages", &test_namespace()).unwrap();
         assert_eq!(stmt.table_name.as_str(), "messages");
-        assert_eq!(stmt.table_type, TableType::User);
+        assert_eq!(stmt.table_type, TableKind::User);
         assert!(!stmt.if_exists);
     }
 
@@ -165,7 +172,7 @@ mod tests {
             DropTableStatement::parse("DROP USER TABLE IF EXISTS messages", &test_namespace())
                 .unwrap();
         assert_eq!(stmt.table_name.as_str(), "messages");
-        assert_eq!(stmt.table_type, TableType::User);
+        assert_eq!(stmt.table_type, TableKind::User);
         assert!(stmt.if_exists);
     }
 
@@ -177,7 +184,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(stmt.table_name.as_str(), "conversations");
-        assert_eq!(stmt.table_type, TableType::Shared);
+        assert_eq!(stmt.table_type, TableKind::Shared);
         assert!(stmt.if_exists);
     }
 
@@ -185,7 +192,7 @@ mod tests {
     fn test_parse_drop_table_lowercase() {
         let stmt = DropTableStatement::parse("drop user table mydata", &test_namespace()).unwrap();
         assert_eq!(stmt.table_name.as_str(), "mydata");
-        assert_eq!(stmt.table_type, TableType::User);
+        assert_eq!(stmt.table_type, TableKind::User);
     }
 
     #[test]

@@ -60,6 +60,18 @@ impl AsRef<str> for NamespaceId {
     }
 }
 
+impl From<kalamdb_commons::models::NamespaceId> for NamespaceId {
+    fn from(value: kalamdb_commons::models::NamespaceId) -> Self {
+        NamespaceId::new(value.into_string())
+    }
+}
+
+impl From<&kalamdb_commons::models::NamespaceId> for NamespaceId {
+    fn from(value: &kalamdb_commons::models::NamespaceId) -> Self {
+        NamespaceId::new(value.as_str())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

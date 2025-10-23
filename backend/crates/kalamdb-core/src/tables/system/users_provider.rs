@@ -8,14 +8,14 @@
 
 use crate::error::KalamDbError;
 use crate::tables::system::users::UsersTable;
+use crate::tables::system::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, TimestampMillisecondArray};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::error::Result as DataFusionResult;
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::memory::MemoryExec;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_sql::{KalamSql, User};
 use serde::{Deserialize, Serialize};
@@ -55,7 +55,7 @@ impl UsersTableProvider {
             email: user.email.clone().unwrap_or_default(),
             created_at: user.created_at,
             storage_mode: Some("table".to_string()), // T163c: Default to 'table' mode
-            storage_id: None, // T163c: NULL by default
+            storage_id: None,                        // T163c: NULL by default
         };
 
         self.kalam_sql
@@ -84,7 +84,7 @@ impl UsersTableProvider {
             email: user.email.clone().unwrap_or_default(),
             created_at: user.created_at,
             storage_mode: Some("table".to_string()), // T163c: Default to 'table' mode
-            storage_id: None, // T163c: NULL by default
+            storage_id: None,                        // T163c: NULL by default
         };
 
         self.kalam_sql
@@ -126,6 +126,8 @@ impl UsersTableProvider {
         let mut user_ids = StringBuilder::new();
         let mut usernames = StringBuilder::new();
         let mut emails = StringBuilder::new();
+        let mut storage_modes = StringBuilder::new();
+        let mut storage_ids = StringBuilder::new();
         let mut created_ats = Vec::new();
         let mut updated_ats = Vec::new();
 
@@ -133,6 +135,8 @@ impl UsersTableProvider {
             user_ids.append_value(&user.user_id);
             usernames.append_value(&user.username);
             emails.append_value(&user.email);
+            storage_modes.append_option(user.storage_mode.as_deref());
+            storage_ids.append_option(user.storage_id.as_deref());
             created_ats.push(Some(user.created_at));
             updated_ats.push(Some(user.created_at)); // using created_at for both since updated_at not in model
         }
@@ -143,6 +147,8 @@ impl UsersTableProvider {
                 Arc::new(user_ids.finish()) as ArrayRef,
                 Arc::new(usernames.finish()) as ArrayRef,
                 Arc::new(emails.finish()) as ArrayRef,
+                Arc::new(storage_modes.finish()) as ArrayRef,
+                Arc::new(storage_ids.finish()) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef,
             ],
@@ -150,6 +156,20 @@ impl UsersTableProvider {
         .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))?;
 
         Ok(batch)
+    }
+}
+
+impl SystemTableProviderExt for UsersTableProvider {
+    fn table_name(&self) -> &'static str {
+        kalamdb_commons::constants::SystemTableNames::USERS
+    }
+
+    fn schema_ref(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    fn load_batch(&self) -> Result<RecordBatch, KalamDbError> {
+        self.scan_all_users()
     }
 }
 
@@ -174,17 +194,7 @@ impl TableProvider for UsersTableProvider {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let batch = self.scan_all_users().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to load system.users records: {}", e))
-        })?;
-
-        let partitions = vec![vec![batch]];
-        let exec = MemoryExec::try_new(&partitions, self.schema.clone(), projection.cloned())
-            .map_err(|e| {
-                DataFusionError::Execution(format!("Failed to build MemoryExec: {}", e))
-            })?;
-
-        Ok(Arc::new(exec))
+        self.into_memory_exec(projection)
     }
 }
 
@@ -317,14 +327,14 @@ mod tests {
 
         let batch = provider.scan_all_users().unwrap();
         assert_eq!(batch.num_rows(), 2);
-        assert_eq!(batch.num_columns(), 5);
+        assert_eq!(batch.num_columns(), 7);
     }
 
     #[test]
     fn test_table_provider_schema() {
         let (provider, _temp_dir) = create_test_provider();
         let schema = provider.schema();
-        assert_eq!(schema.fields().len(), 5);
+        assert_eq!(schema.fields().len(), 7);
         assert_eq!(schema.field(0).name(), "user_id");
         assert_eq!(schema.field(1).name(), "username");
     }

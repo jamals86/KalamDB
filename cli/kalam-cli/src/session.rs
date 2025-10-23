@@ -7,6 +7,7 @@
 //! the CLI session lifetime.
 
 use kalam_link::KalamLinkClient;
+use clap::ValueEnum;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 
@@ -18,7 +19,7 @@ use crate::{
 };
 
 /// Output format for query results
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum OutputFormat {
     Table,
     Json,
@@ -59,7 +60,7 @@ impl CLISession {
         jwt_token: Option<String>,
         api_key: Option<String>,
         user_id: Option<String>,
-        format: crate::OutputFormat,
+        format: OutputFormat,
         color: bool,
     ) -> Result<Self> {
         // Build kalam-link client with authentication
@@ -82,19 +83,12 @@ impl CLISession {
 
         let client = builder.build()?;
 
-        // Convert format enum
-        let output_format = match format {
-            crate::OutputFormat::Table => OutputFormat::Table,
-            crate::OutputFormat::Json => OutputFormat::Json,
-            crate::OutputFormat::Csv => OutputFormat::Csv,
-        };
-
         Ok(Self {
             client,
             parser: CommandParser::new(),
-            formatter: OutputFormatter::new(output_format, color),
+            formatter: OutputFormatter::new(format, color),
             server_url,
-            format: output_format,
+            format,
             color,
             connected: true,
             subscription_paused: false,

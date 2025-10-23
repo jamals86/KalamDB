@@ -60,6 +60,18 @@ impl AsRef<str> for TableName {
     }
 }
 
+impl From<kalamdb_commons::models::TableName> for TableName {
+    fn from(value: kalamdb_commons::models::TableName) -> Self {
+        TableName::new(value.into_string())
+    }
+}
+
+impl From<&kalamdb_commons::models::TableName> for TableName {
+    fn from(value: &kalamdb_commons::models::TableName) -> Self {
+        TableName::new(value.as_str())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

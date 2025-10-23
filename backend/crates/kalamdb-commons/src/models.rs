@@ -252,6 +252,66 @@ impl TryFrom<&str> for TableType {
     }
 }
 
+/// Storage configuration resolved from system.storages
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageConfig {
+    storage_id: String,
+    storage_type: StorageType,
+    base_directory: String,
+    shared_tables_template: String,
+    user_tables_template: String,
+    credentials: Option<String>,
+}
+
+impl StorageConfig {
+    /// Create a new storage configuration model
+    pub fn new(
+        storage_id: impl Into<String>,
+        storage_type: StorageType,
+        base_directory: impl Into<String>,
+        shared_tables_template: impl Into<String>,
+        user_tables_template: impl Into<String>,
+        credentials: Option<String>,
+    ) -> Self {
+        Self {
+            storage_id: storage_id.into(),
+            storage_type,
+            base_directory: base_directory.into(),
+            shared_tables_template: shared_tables_template.into(),
+            user_tables_template: user_tables_template.into(),
+            credentials,
+        }
+    }
+
+    pub fn storage_id(&self) -> &str {
+        &self.storage_id
+    }
+
+    pub fn storage_type(&self) -> StorageType {
+        self.storage_type
+    }
+
+    pub fn base_directory(&self) -> &str {
+        &self.base_directory
+    }
+
+    pub fn shared_tables_template(&self) -> &str {
+        &self.shared_tables_template
+    }
+
+    pub fn user_tables_template(&self) -> &str {
+        &self.user_tables_template
+    }
+
+    pub fn credentials(&self) -> Option<&str> {
+        self.credentials.as_deref()
+    }
+
+    pub fn is_s3(&self) -> bool {
+        matches!(self.storage_type, StorageType::S3)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,5 +348,24 @@ mod tests {
         assert_eq!(TableType::try_from("SHARED").unwrap(), TableType::Shared);
         assert_eq!(TableType::try_from("STREAM").unwrap(), TableType::Stream);
         assert!(TableType::try_from("INVALID").is_err());
+    }
+
+    #[test]
+    fn test_storage_config_accessors() {
+        let config = StorageConfig::new(
+            "s3-prod",
+            StorageType::S3,
+            "s3://bucket",
+            "{namespace}/{table}",
+            "{namespace}/{table}/{userId}",
+            Some("{\"access_key\":\"A\",\"secret_key\":\"B\"}".to_string()),
+        );
+
+        assert_eq!(config.storage_id(), "s3-prod");
+        assert!(config.is_s3());
+        assert_eq!(
+            config.credentials(),
+            Some("{\"access_key\":\"A\",\"secret_key\":\"B\"}")
+        );
     }
 }

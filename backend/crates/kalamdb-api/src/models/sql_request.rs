@@ -1,6 +1,6 @@
-//! SQL request model for the REST API
+//! SQL request model
 //!
-//! This module defines the structure for SQL query requests sent to the `/api/sql` endpoint.
+//! This module defines the structure for SQL query requests sent to the `/v1/api/sql` endpoint.
 
 use serde::{Deserialize, Serialize};
 

@@ -1,4 +1,4 @@
-//! SQL execution handler for the `/api/sql` REST API endpoint
+//! SQL execution handler for the `/v1/api/sql` REST API endpoint
 //!
 //! This module provides HTTP handlers for executing SQL statements via the REST API.
 
@@ -13,7 +13,7 @@ use std::time::Instant;
 use crate::models::{QueryResult, SqlRequest, SqlResponse};
 use crate::rate_limiter::RateLimiter;
 
-/// POST /api/sql - Execute SQL statement(s)
+/// POST /v1/api/sql - Execute SQL statement(s)
 ///
 /// Accepts a JSON payload with a `sql` field containing one or more SQL statements.
 /// Multiple statements can be separated by semicolons and will be executed sequentially.
@@ -52,8 +52,8 @@ use crate::rate_limiter::RateLimiter;
 ///   }
 /// }
 /// ```
-#[post("/api/sql")]
-pub async fn execute_sql(
+#[post("/sql")]
+pub async fn execute_sql_v1(
     http_req: HttpRequest,
     req: web::Json<SqlRequest>,
     session_factory: web::Data<Arc<DataFusionSessionFactory>>,
@@ -121,7 +121,7 @@ pub async fn execute_sql(
                 let execution_time_ms = start_time.elapsed().as_millis() as u64;
                 return HttpResponse::BadRequest().json(SqlResponse::error_with_details(
                     "SQL_EXECUTION_ERROR",
-                    &format!("Error executing statement {}: {}", idx + 1, err),
+                    &format!("ERROR: statement {}: {}", idx + 1, err),
                     sql,
                     execution_time_ms,
                 ));
@@ -135,45 +135,44 @@ pub async fn execute_sql(
 
 /// Execute a single SQL statement
 /// Uses SqlExecutor for all SQL (custom DDL and standard DataFusion SQL)
+/// Falls back to DataFusionSessionFactory for testing if SqlExecutor is not available
 async fn execute_single_statement(
     sql: &str,
-    _session_factory: &Arc<DataFusionSessionFactory>,
+    session_factory: &Arc<DataFusionSessionFactory>,
     sql_executor: Option<&Arc<SqlExecutor>>,
     user_id: Option<&UserId>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
-    // Require sql_executor - all SQL goes through it now
-    let sql_executor = sql_executor.ok_or_else(|| {
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "SQL executor not configured",
-        )) as Box<dyn std::error::Error>
-    })?;
-
-    // Execute through SqlExecutor (handles both custom DDL and DataFusion)
-    match sql_executor.execute(sql, user_id).await {
-        Ok(result) => {
-            // Convert ExecutionResult to QueryResult
-            match result {
-                ExecutionResult::Success(message) => {
-                    Ok(QueryResult::with_message(message))
-                }
-                ExecutionResult::RecordBatch(batch) => {
-                    record_batch_to_query_result(vec![batch])
-                }
-                ExecutionResult::RecordBatches(batches) => {
-                    record_batch_to_query_result(batches)
+    // If sql_executor is available, use it (production path)
+    if let Some(sql_executor) = sql_executor {
+        // Execute through SqlExecutor (handles both custom DDL and DataFusion)
+        match sql_executor.execute(sql, user_id).await {
+            Ok(result) => {
+                // Convert ExecutionResult to QueryResult
+                match result {
+                    ExecutionResult::Success(message) => Ok(QueryResult::with_message(message)),
+                    ExecutionResult::RecordBatch(batch) => {
+                        record_batch_to_query_result(vec![batch], user_id)
+                    }
+                    ExecutionResult::RecordBatches(batches) => {
+                        record_batch_to_query_result(batches, user_id)
+                    }
                 }
             }
+            Err(e) => Err(Box::new(e)),
         }
-        Err(e) => {
-            Err(Box::new(e))
-        }
+    } else {
+        // Fallback for testing: use DataFusion directly for simple queries
+        let session = session_factory.create_session();
+        let df = session.sql(sql).await?;
+        let batches = df.collect().await?;
+        record_batch_to_query_result(batches, None)
     }
 }
 
 /// Convert Arrow RecordBatches to QueryResult
 fn record_batch_to_query_result(
     batches: Vec<arrow::record_batch::RecordBatch>,
+    user_id: Option<&UserId>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     if batches.is_empty() {
         return Ok(QueryResult::with_message(
@@ -205,7 +204,37 @@ fn record_batch_to_query_result(
         }
     }
 
-    Ok(QueryResult::with_rows(rows, column_names))
+    let mut result = QueryResult::with_rows(rows, column_names.clone());
+
+    if let Some(rows) = result.rows.as_mut() {
+        if !is_admin(user_id) {
+            if let Some(credentials_col) = column_names
+                .iter()
+                .position(|name| name.eq_ignore_ascii_case("credentials"))
+            {
+                let key = column_names[credentials_col].clone();
+                for row in rows.iter_mut() {
+                    if let Some(value) = row.get_mut(&key) {
+                        if !value.is_null() {
+                            *value = serde_json::Value::String("***".to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+fn is_admin(user_id: Option<&UserId>) -> bool {
+    match user_id {
+        Some(id) => {
+            let lower = id.as_ref().to_lowercase();
+            lower == "admin" || lower == "system"
+        }
+        None => false,
+    }
 }
 
 #[cfg(test)]
@@ -225,7 +254,7 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(session_factory))
                 .app_data(web::Data::new(rate_limiter))
-                .service(execute_sql),
+                .service(execute_sql_v1),
         )
         .await;
 
@@ -234,7 +263,7 @@ mod tests {
         };
 
         let req = test::TestRequest::post()
-            .uri("/api/sql")
+            .uri("/sql")
             .set_json(&req_body)
             .to_request();
 
@@ -257,7 +286,7 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(session_factory))
                 .app_data(web::Data::new(rate_limiter))
-                .service(execute_sql),
+                .service(execute_sql_v1),
         )
         .await;
 
@@ -266,7 +295,7 @@ mod tests {
         };
 
         let req = test::TestRequest::post()
-            .uri("/api/sql")
+            .uri("/sql")
             .set_json(&req_body)
             .to_request();
 
@@ -283,7 +312,7 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(session_factory))
                 .app_data(web::Data::new(rate_limiter))
-                .service(execute_sql),
+                .service(execute_sql_v1),
         )
         .await;
 
@@ -292,7 +321,7 @@ mod tests {
         };
 
         let req = test::TestRequest::post()
-            .uri("/api/sql")
+            .uri("/sql")
             .set_json(&req_body)
             .to_request();
 

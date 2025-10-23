@@ -131,25 +131,25 @@ enum SchedulerState {
 pub struct FlushScheduler {
     /// Job manager for executing flush operations
     job_manager: Arc<dyn JobManager>,
-    
+
     /// Flush trigger monitor for tracking flush conditions
     trigger_monitor: Arc<FlushTriggerMonitor>,
-    
+
     /// Scheduled tables (keyed by column family name)
     scheduled_tables: Arc<RwLock<HashMap<String, ScheduledTable>>>,
-    
+
     /// Active flush jobs (keyed by column family name → job_id)
     active_flushes: Arc<RwLock<HashMap<String, String>>>,
-    
+
     /// Scheduler state
     state: Arc<RwLock<SchedulerState>>,
-    
+
     /// Check interval for monitoring triggers
     check_interval: Duration,
-    
+
     /// Shutdown notification
     shutdown: Arc<Notify>,
-    
+
     /// Jobs table provider for persisting job state (optional)
     jobs_provider: Option<Arc<JobsTableProvider>>,
 }
@@ -273,15 +273,16 @@ impl FlushScheduler {
         policy: FlushPolicy,
     ) -> Result<(), KalamDbError> {
         // Validate the flush policy
-        policy.validate().map_err(|e| {
-            KalamDbError::Other(format!("Invalid flush policy: {}", e))
-        })?;
+        policy
+            .validate()
+            .map_err(|e| KalamDbError::Other(format!("Invalid flush policy: {}", e)))?;
 
         // Check if already scheduled
         {
-            let tables = self.scheduled_tables.read().map_err(|e| {
-                KalamDbError::Other(format!("Failed to acquire read lock: {}", e))
-            })?;
+            let tables = self
+                .scheduled_tables
+                .read()
+                .map_err(|e| KalamDbError::Other(format!("Failed to acquire read lock: {}", e)))?;
 
             if tables.contains_key(&cf_name) {
                 return Err(KalamDbError::Other(format!(
@@ -309,9 +310,10 @@ impl FlushScheduler {
             policy,
         };
 
-        let mut tables = self.scheduled_tables.write().map_err(|e| {
-            KalamDbError::Other(format!("Failed to acquire write lock: {}", e))
-        })?;
+        let mut tables = self
+            .scheduled_tables
+            .write()
+            .map_err(|e| KalamDbError::Other(format!("Failed to acquire write lock: {}", e)))?;
 
         tables.insert(cf_name, scheduled);
 
@@ -331,9 +333,10 @@ impl FlushScheduler {
         self.trigger_monitor.unregister_table(cf_name)?;
 
         // Remove from scheduled tables
-        let mut tables = self.scheduled_tables.write().map_err(|e| {
-            KalamDbError::Other(format!("Failed to acquire write lock: {}", e))
-        })?;
+        let mut tables = self
+            .scheduled_tables
+            .write()
+            .map_err(|e| KalamDbError::Other(format!("Failed to acquire write lock: {}", e)))?;
 
         tables.remove(cf_name);
 
@@ -349,9 +352,10 @@ impl FlushScheduler {
     ///
     /// `Ok(())` if started, or an error if already running
     pub async fn start(&self) -> Result<(), KalamDbError> {
-        let mut state = self.state.write().map_err(|e| {
-            KalamDbError::Other(format!("Failed to acquire write lock: {}", e))
-        })?;
+        let mut state = self
+            .state
+            .write()
+            .map_err(|e| KalamDbError::Other(format!("Failed to acquire write lock: {}", e)))?;
 
         match &*state {
             SchedulerState::Running(_) => {
@@ -378,9 +382,10 @@ impl FlushScheduler {
 
         // Get the handle and wait for task to complete
         let handle = {
-            let mut state = self.state.write().map_err(|e| {
-                KalamDbError::Other(format!("Failed to acquire write lock: {}", e))
-            })?;
+            let mut state = self
+                .state
+                .write()
+                .map_err(|e| KalamDbError::Other(format!("Failed to acquire write lock: {}", e)))?;
 
             match std::mem::replace(&mut *state, SchedulerState::Stopped) {
                 SchedulerState::Running(handle) => Some(handle),
@@ -418,7 +423,7 @@ impl FlushScheduler {
 
         // Query all jobs
         let all_jobs = jobs_provider.list_jobs()?;
-        
+
         // Filter for running jobs (incomplete)
         let incomplete_jobs: Vec<_> = all_jobs
             .into_iter()
@@ -435,7 +440,7 @@ impl FlushScheduler {
         let mut resumed = 0;
         for job in incomplete_jobs {
             let job_id = job.job_id.clone();
-            
+
             log::debug!(
                 "Resuming incomplete job: job_id={}, table={:?}, type={}",
                 job_id,
@@ -451,7 +456,7 @@ impl FlushScheduler {
                 error_message: Some("Job interrupted by server restart".to_string()),
                 ..job
             };
-            
+
             if let Err(e) = jobs_provider.update_job(failed_job) {
                 log::error!("Failed to update job {}: {}", job_id, e);
                 continue;
@@ -474,7 +479,10 @@ impl FlushScheduler {
     ///
     /// - `Ok(Some(job_id))` if a running job exists
     /// - `Ok(None)` if no running job exists
-    pub async fn find_running_flush_job(&self, table_name: &str) -> Result<Option<String>, KalamDbError> {
+    pub async fn find_running_flush_job(
+        &self,
+        table_name: &str,
+    ) -> Result<Option<String>, KalamDbError> {
         let jobs_provider = match &self.jobs_provider {
             Some(provider) => provider,
             None => return Ok(None),
@@ -482,11 +490,11 @@ impl FlushScheduler {
 
         // Query system.jobs for running flush jobs on this table
         let all_jobs = jobs_provider.list_jobs()?;
-        
+
         for job in all_jobs {
-            if job.status == "running" 
-                && job.job_type == "flush" 
-                && job.table_name.as_deref() == Some(table_name) 
+            if job.status == "running"
+                && job.job_type == "flush"
+                && job.table_name.as_deref() == Some(table_name)
             {
                 return Ok(Some(job.job_id));
             }
@@ -599,9 +607,9 @@ impl FlushScheduler {
     ) -> Result<(), KalamDbError> {
         // Clone the data to avoid holding the lock across await points
         let tables_snapshot = {
-            let tables = scheduled_tables.read().map_err(|e| {
-                KalamDbError::Other(format!("Failed to acquire read lock: {}", e))
-            })?;
+            let tables = scheduled_tables
+                .read()
+                .map_err(|e| KalamDbError::Other(format!("Failed to acquire read lock: {}", e)))?;
             tables.clone()
         };
 
@@ -618,11 +626,11 @@ impl FlushScheduler {
                 // Query system.jobs for running flush jobs on this table
                 let all_jobs = provider.list_jobs()?;
                 let table_name_str = scheduled.table_name.as_str();
-                
+
                 for job in all_jobs {
-                    if job.status == "running" 
-                        && job.job_type == "flush" 
-                        && job.table_name.as_deref() == Some(table_name_str) 
+                    if job.status == "running"
+                        && job.job_type == "flush"
+                        && job.table_name.as_deref() == Some(table_name_str)
                     {
                         log::debug!(
                             "Flush already in progress for table {} (job_id={}), skipping",
@@ -639,20 +647,13 @@ impl FlushScheduler {
                 })?;
 
                 if active.contains_key(cf_name) {
-                    log::debug!(
-                        "Flush already in progress for table {}, skipping",
-                        cf_name
-                    );
+                    log::debug!("Flush already in progress for table {}, skipping", cf_name);
                     continue;
                 }
             }
 
             // Generate job ID
-            let job_id = format!(
-                "flush-{}-{}",
-                cf_name,
-                uuid::Uuid::new_v4()
-            );
+            let job_id = format!("flush-{}-{}", cf_name, uuid::Uuid::new_v4());
 
             // Mark flush as active (in-memory for now - actual tracking in system.jobs)
             {
@@ -692,7 +693,10 @@ impl FlushScheduler {
                 Ok("Flush completed".to_string())
             });
 
-            if let Err(e) = job_manager.start_job(job_id.clone(), "flush".to_string(), job_future).await {
+            if let Err(e) = job_manager
+                .start_job(job_id.clone(), "flush".to_string(), job_future)
+                .await
+            {
                 log::error!("Failed to start flush job {}: {}", job_id, e);
 
                 // Remove from active flushes on error

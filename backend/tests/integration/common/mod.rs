@@ -33,6 +33,7 @@
 //! ```
 
 use anyhow::Result;
+use datafusion::catalog::SchemaProvider;
 use kalamdb_api::models::SqlResponse;
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
@@ -42,6 +43,53 @@ use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use std::sync::Arc;
 use tempfile::TempDir;
+
+/// HTTP test server wrapper - simplified to avoid complex type signatures
+pub struct HttpTestServer {
+    /// Note: We store the TestServer and recreate services on each test call
+    /// This avoids complex generic type parameters
+    pub _env: TestServer,
+}
+
+impl HttpTestServer {
+    /// Execute a request against the test server
+    pub async fn execute_request(
+        &self,
+        req: actix_web::test::TestRequest,
+    ) -> actix_web::dev::ServiceResponse {
+        use actix_web::{test, App};
+        use jsonwebtoken::Algorithm;
+        use kalamdb_api::auth::jwt::JwtAuth;
+        use kalamdb_api::rate_limiter::RateLimiter;
+        use std::sync::Arc;
+
+        let jwt_auth = Arc::new(JwtAuth::new(
+            "kalamdb-dev-secret-key-change-in-production".to_string(),
+            Algorithm::HS256,
+        ));
+        let rate_limiter = Arc::new(RateLimiter::new());
+
+        let app = test::init_service(
+            App::new()
+                .app_data(actix_web::web::Data::new(self._env.session_factory.clone()))
+                .app_data(actix_web::web::Data::new(self._env.sql_executor.clone()))
+                .app_data(actix_web::web::Data::new(jwt_auth))
+                .app_data(actix_web::web::Data::new(rate_limiter))
+                .configure(kalamdb_api::routes::configure_routes),
+        )
+        .await;
+
+        let req = req.to_request();
+        test::call_service(&app, req).await
+    }
+}
+
+/// Spin up an Actix test application wired with KalamDB services.
+pub async fn start_test_server() -> HttpTestServer {
+    // Reuse internal TestServer utilities for database + executor setup
+    let env = TestServer::new().await;
+    HttpTestServer { _env: env }
+}
 
 pub mod fixtures;
 pub mod websocket;
@@ -56,8 +104,8 @@ pub mod websocket;
 ///
 /// The server is automatically cleaned up when dropped.
 pub struct TestServer {
-    /// Temporary directory for database files
-    temp_dir: TempDir,
+    /// Temporary directory for database files (shared via Arc to allow cloning)
+    temp_dir: Arc<TempDir>,
     /// KalamSQL instance for direct database access
     pub kalam_sql: Arc<kalamdb_sql::KalamSql>,
     /// SQL executor for query execution
@@ -66,6 +114,18 @@ pub struct TestServer {
     pub namespace_service: Arc<NamespaceService>,
     /// DataFusion session factory (needed for fallback SQL execution)
     pub session_factory: Arc<DataFusionSessionFactory>,
+}
+
+impl Clone for TestServer {
+    fn clone(&self) -> Self {
+        Self {
+            temp_dir: Arc::clone(&self.temp_dir),
+            kalam_sql: Arc::clone(&self.kalam_sql),
+            sql_executor: Arc::clone(&self.sql_executor),
+            namespace_service: Arc::clone(&self.namespace_service),
+            session_factory: Arc::clone(&self.session_factory),
+        }
+    }
 }
 
 impl TestServer {
@@ -119,6 +179,29 @@ impl TestServer {
         let kalam_sql =
             Arc::new(kalamdb_sql::KalamSql::new(db.clone()).expect("Failed to create KalamSQL"));
 
+        // Create default 'local' storage if system.storages is empty
+        let storages = kalam_sql
+            .scan_all_storages()
+            .expect("Failed to scan storages");
+        if storages.is_empty() {
+            let now = chrono::Utc::now().timestamp_millis();
+            let default_storage = kalamdb_sql::Storage {
+                storage_id: "local".to_string(),
+                storage_name: "Local Filesystem".to_string(),
+                description: Some("Default local filesystem storage".to_string()),
+                storage_type: "filesystem".to_string(),
+                base_directory: "".to_string(),
+                credentials: None,
+                shared_tables_template: "{namespace}/{tableName}".to_string(),
+                user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
+                created_at: now,
+                updated_at: now,
+            };
+            kalam_sql
+                .insert_storage(&default_storage)
+                .expect("Failed to create default storage");
+        }
+
         // Initialize stores (needed by some services)
         let user_table_store = Arc::new(
             kalamdb_store::UserTableStore::new(db.clone())
@@ -164,6 +247,63 @@ impl TestServer {
         // Create session context
         let session_context = Arc::new(session_factory.create_session());
 
+        // Create "system" schema in DataFusion and register system table providers
+        use datafusion::catalog::schema::MemorySchemaProvider;
+        use kalamdb_core::tables::system::{
+            JobsTableProvider, LiveQueriesTableProvider, NamespacesTableProvider,
+            StorageLocationsTableProvider, SystemStoragesProvider, SystemTablesTableProvider,
+            UsersTableProvider,
+        };
+
+        let system_schema = Arc::new(MemorySchemaProvider::new());
+        let catalog_name = "kalam";
+
+        session_context
+            .catalog(catalog_name)
+            .expect("Failed to get kalam catalog")
+            .register_schema("system", system_schema.clone())
+            .expect("Failed to register system schema");
+
+        // Register system table providers
+        let users_provider = Arc::new(UsersTableProvider::new(kalam_sql.clone()));
+        let namespaces_provider = Arc::new(NamespacesTableProvider::new(kalam_sql.clone()));
+        let tables_provider = Arc::new(SystemTablesTableProvider::new(kalam_sql.clone()));
+        let storage_locations_provider =
+            Arc::new(StorageLocationsTableProvider::new(kalam_sql.clone()));
+        let storages_provider = Arc::new(SystemStoragesProvider::new(kalam_sql.clone()));
+        let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone()));
+        let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.clone()));
+
+        system_schema
+            .register_table("users".to_string(), users_provider.clone())
+            .expect("Failed to register system.users");
+        system_schema
+            .register_table("namespaces".to_string(), namespaces_provider.clone())
+            .expect("Failed to register system.namespaces");
+        system_schema
+            .register_table("tables".to_string(), tables_provider.clone())
+            .expect("Failed to register system.tables");
+        system_schema
+            .register_table(
+                "storage_locations".to_string(),
+                storage_locations_provider.clone(),
+            )
+            .expect("Failed to register system.storage_locations");
+        system_schema
+            .register_table("storages".to_string(), storages_provider.clone())
+            .expect("Failed to register system.storages");
+        system_schema
+            .register_table("live_queries".to_string(), live_queries_provider.clone())
+            .expect("Failed to register system.live_queries");
+        system_schema
+            .register_table("jobs".to_string(), jobs_provider.clone())
+            .expect("Failed to register system.jobs");
+
+        // Initialize StorageRegistry for template validation
+        let storage_registry = Arc::new(kalamdb_core::storage::StorageRegistry::new(
+            kalam_sql.clone(),
+        ));
+
         // Initialize SqlExecutor with builder pattern
         let sql_executor = Arc::new(
             SqlExecutor::new(
@@ -174,6 +314,7 @@ impl TestServer {
                 stream_table_service.clone(),
             )
             .with_table_deletion_service(table_deletion_service)
+            .with_storage_registry(storage_registry)
             .with_stores(
                 user_table_store.clone(),
                 shared_table_store.clone(),
@@ -190,7 +331,7 @@ impl TestServer {
             .expect("Failed to load existing tables");
 
         Self {
-            temp_dir,
+            temp_dir: Arc::new(temp_dir),
             kalam_sql,
             sql_executor,
             namespace_service,
@@ -255,7 +396,16 @@ impl TestServer {
     /// `SqlResponse` containing status, results, and any errors
     pub async fn execute_sql_with_user(&self, sql: &str, user_id: Option<&str>) -> SqlResponse {
         let user_id_obj = user_id.map(kalamdb_core::catalog::UserId::from);
-        
+
+        let is_admin = user_id_obj
+            .as_ref()
+            .map(|id| {
+                let lower = id.as_ref().to_lowercase();
+                lower == "admin" || lower == "system"
+            })
+            .unwrap_or(false);
+        let mask_credentials = !is_admin;
+
         // Try custom DDL/DML execution first (same as REST API)
         match self.sql_executor.execute(sql, user_id_obj.as_ref()).await {
             Ok(result) => {
@@ -269,7 +419,7 @@ impl TestServer {
                     },
                     ExecutionResult::RecordBatch(batch) => {
                         // Convert single batch to JSON
-                        let query_result = record_batch_to_query_result(&batch);
+                        let query_result = record_batch_to_query_result(&batch, mask_credentials);
                         SqlResponse {
                             status: "success".to_string(),
                             results: vec![query_result],
@@ -279,8 +429,10 @@ impl TestServer {
                     }
                     ExecutionResult::RecordBatches(batches) => {
                         // Convert multiple batches to JSON
-                        let results: Vec<_> =
-                            batches.iter().map(record_batch_to_query_result).collect();
+                        let results: Vec<_> = batches
+                            .iter()
+                            .map(|batch| record_batch_to_query_result(batch, mask_credentials))
+                            .collect();
                         SqlResponse {
                             status: "success".to_string(),
                             results,
@@ -292,7 +444,7 @@ impl TestServer {
             }
             Err(kalamdb_core::error::KalamDbError::InvalidSql(_)) => {
                 // Not a custom DDL, fall back to DataFusion (same as REST API)
-                // This ensures integration tests use the SAME code path as /api/sql
+                // This ensures integration tests use the SAME code path as /v1/api/sql
                 match self.session_factory.create_session().sql(sql).await {
                     Ok(df) => match df.collect().await {
                         Ok(batches) => {
@@ -304,8 +456,12 @@ impl TestServer {
                                     error: None,
                                 }
                             } else {
-                                let results: Vec<_> =
-                                    batches.iter().map(record_batch_to_query_result).collect();
+                                let results: Vec<_> = batches
+                                    .iter()
+                                    .map(|batch| {
+                                        record_batch_to_query_result(batch, mask_credentials)
+                                    })
+                                    .collect();
                                 SqlResponse {
                                     status: "success".to_string(),
                                     results,
@@ -354,6 +510,7 @@ impl TestServer {
 /// Convert Arrow RecordBatch to QueryResult for JSON response
 fn record_batch_to_query_result(
     batch: &datafusion::arrow::record_batch::RecordBatch,
+    mask_credentials: bool,
 ) -> kalamdb_api::models::QueryResult {
     use datafusion::arrow::array::*;
     use datafusion::arrow::datatypes::DataType;
@@ -429,6 +586,14 @@ fn record_batch_to_query_result(
             };
 
             row_map.insert(field.name().clone(), value);
+        }
+
+        if mask_credentials {
+            if let Some(value) = row_map.get_mut("credentials") {
+                if !value.is_null() {
+                    *value = serde_json::Value::String("***".to_string());
+                }
+            }
         }
 
         rows.push(row_map);

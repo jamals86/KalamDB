@@ -1,5 +1,6 @@
 //! System tables module
 
+pub mod base_provider;
 pub mod information_schema_tables;
 pub mod jobs;
 pub mod jobs_provider;
@@ -16,6 +17,7 @@ pub mod system_tables_provider;
 pub mod users;
 pub mod users_provider;
 
+pub use base_provider::SystemTableProviderExt;
 pub use information_schema_tables::InformationSchemaTablesProvider;
 pub use jobs::JobsTable;
 pub use jobs_provider::{JobRecord, JobsTableProvider};

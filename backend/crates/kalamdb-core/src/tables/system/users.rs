@@ -16,7 +16,7 @@ impl UsersTable {
             Field::new("username", DataType::Utf8, false),
             Field::new("email", DataType::Utf8, true),
             Field::new("storage_mode", DataType::Utf8, true), // T163c: 'table' or 'region'
-            Field::new("storage_id", DataType::Utf8, true), // T163c: FK to system.storages
+            Field::new("storage_id", DataType::Utf8, true),   // T163c: FK to system.storages
             Field::new(
                 "created_at",
                 DataType::Timestamp(TimeUnit::Millisecond, None),
@@ -52,8 +52,10 @@ mod tests {
         assert_eq!(schema.field(0).name(), "user_id");
         assert_eq!(schema.field(1).name(), "username");
         assert_eq!(schema.field(2).name(), "email");
-        assert_eq!(schema.field(3).name(), "created_at");
-        assert_eq!(schema.field(4).name(), "updated_at");
+        assert_eq!(schema.field(3).name(), "storage_mode");
+        assert_eq!(schema.field(4).name(), "storage_id");
+        assert_eq!(schema.field(5).name(), "created_at");
+        assert_eq!(schema.field(6).name(), "updated_at");
     }
 
     #[test]
