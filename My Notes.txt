@@ -99,3 +99,24 @@ Notes:
 20) Link - Should be as much light weight as possible, currently its 400kb which can be less
 25) Make a test compiling kalamdb-link into wasm and try include it into a typescript class
 26) Make the logic the same as postgres which whenever insert/update/delete it returns the affected rows correctly
+27) Table must have an auto-inc column when its being created if not then there is an error
+28) show tables - should be the same as: select * from system.tables and it should have a namespace in it
+29) DONE - When creating a table either it's user/shared table you should specify a storage_id for it, if not
+    then the local storage will be used for that, there is no storage_location column need to be there
+    make sure the create user/shared table can have storage_id with it
+30) CLI - 1 row deleted. or 1 row updated. this should be returned inside the cli
+31) parsers for the 3 commands create user/stream/shared table should be a single parser parent for all of them
+    All of them are the same except each one of them has different options/attributes in the end of the command
+    We can trim the word after the CREATE and then parse it the same way from sqlparser and preserving the type in a different value for knowing how to create it
+    Add StorageId just like UserId/NamespaceId
+    CreateSharedTableStatement/CreateUserTableStatement shares many attributes they can be emplementing extending a parent class
+    StorageLocation is not needed anymore check if we can remove it completely
+    
+
+
+
+
+
+
+Future:
+1) Alter a table and move it';s storage from storage_id to different one

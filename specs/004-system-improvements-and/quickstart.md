@@ -93,7 +93,8 @@ kalam> CREATE USER TABLE chat.messages (
 Table created.
 
 -- Insert data
-kalam> INSERT INTO chat.messages VALUES (1, 'jamal', 'Hello, world!', '2025-10-21T14:30:00Z');
+kalam> INSERT INTO chat.messages (user_id,content,created_at) VALUES
+('jamal', 'Hello, world!', now());
 1 row inserted.
 
 -- Query data

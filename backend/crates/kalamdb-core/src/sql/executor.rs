@@ -29,6 +29,7 @@
 
 use crate::catalog::Namespace;
 use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
+use kalamdb_commons::models::StorageId;
 use kalamdb_sql::statement_classifier::SqlStatement;
 use crate::error::KalamDbError;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
@@ -51,10 +52,9 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser;
 use kalamdb_sql::ddl::{
-    AlterNamespaceStatement, CreateNamespaceStatement, CreateSharedTableStatement,
-    CreateStreamTableStatement, CreateUserTableStatement, DescribeTableStatement,
-    DropNamespaceStatement, DropTableStatement, FlushPolicy, ShowNamespacesStatement,
-    ShowTableStatsStatement, ShowTablesStatement, parse_job_command,
+    AlterNamespaceStatement, CreateNamespaceStatement, CreateTableStatement,
+    DescribeTableStatement, DropNamespaceStatement, DropTableStatement, FlushPolicy as DdlFlushPolicy,
+    ShowNamespacesStatement, ShowTableStatsStatement, ShowTablesStatement, parse_job_command,
 };
 use kalamdb_sql::KalamSql;
 use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
@@ -360,6 +360,37 @@ impl SqlExecutor {
         }
 
         Ok(())
+    }
+
+    /// Helper: Validate and resolve storage_id for table creation
+    /// 
+    /// # Arguments
+    /// * `storage_id` - Optional storage_id from the CREATE TABLE statement
+    /// 
+    /// # Returns
+    /// Resolved storage_id (defaults to 'local' if None)
+    /// 
+    /// # Errors
+    /// Returns error if storage_id doesn't exist in system.storages
+    fn validate_storage_id(
+        &self,
+        storage_id: Option<StorageId>,
+    ) -> Result<StorageId, KalamDbError> {
+        // T167a: Default to 'local' if not specified
+        let storage_id = storage_id.unwrap_or_else(|| StorageId::local());
+
+        // T167b & T167c: Validate storage_id exists in system.storages (NOT NULL enforcement)
+        if let Some(kalam_sql) = &self.kalam_sql {
+            let storage_exists = kalam_sql.get_storage(storage_id.as_str()).is_ok();
+            if !storage_exists {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Storage '{}' does not exist in system.storages",
+                    storage_id
+                )));
+            }
+        }
+
+        Ok(storage_id)
     }
 
     /// Execute a SQL statement
@@ -1895,8 +1926,17 @@ impl SqlExecutor {
 
             let namespace_id_for_parse =
                 kalamdb_commons::models::NamespaceId::new(namespace_id.as_str());
-            let stmt = CreateUserTableStatement::parse(sql, &namespace_id_for_parse)
+            
+            // Use unified parser for consistent parsing across all table types
+            let stmt = CreateTableStatement::parse(sql, &namespace_id_for_parse)
                 .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+            
+            // Verify this is actually a USER table
+            if stmt.table_type != kalamdb_commons::models::TableType::User {
+                return Err(KalamDbError::InvalidSql(
+                    "Expected CREATE USER TABLE statement".to_string(),
+                ));
+            }
             
             // stmt fields are already the right types from kalamdb_commons
             let table_name = stmt.table_name.clone();
@@ -1908,22 +1948,10 @@ impl SqlExecutor {
             let stmt_storage_id = stmt.storage_id.clone();
             let stmt_use_user_storage = stmt.use_user_storage;
 
-            // T167b: Validate storage_id exists in system.storages
-            // T167a: Default to 'local' if not specified
-            let storage_id = stmt_storage_id.unwrap_or_else(|| "local".to_string());
+            // Validate and resolve storage_id
+            let storage_id = self.validate_storage_id(stmt_storage_id)?;
 
-            // T167c: NOT NULL enforcement - storage_id must exist
-            if let Some(kalam_sql) = &self.kalam_sql {
-                let storage_exists = kalam_sql.get_storage(&storage_id).is_ok();
-                if !storage_exists {
-                    return Err(KalamDbError::InvalidOperation(format!(
-                        "Storage '{}' does not exist in system.storages",
-                        storage_id
-                    )));
-                }
-            }
-
-            let metadata = self.user_table_service.create_table(stmt, None)?;
+            let metadata = self.user_table_service.create_table(stmt)?;
 
             // Insert into system.tables via KalamSQL
             if let Some(kalam_sql) = &self.kalam_sql {
@@ -1935,7 +1963,7 @@ impl SqlExecutor {
                     table_type: "user".to_string(),
                     created_at: chrono::Utc::now().timestamp_millis(),
                     storage_location: metadata.storage_location.clone(),
-                    storage_id: Some(storage_id.clone()),
+                    storage_id: Some(storage_id.as_str().to_string()),
                     use_user_storage: stmt_use_user_storage,
                     flush_policy: serde_json::to_string(&flush_policy.clone().unwrap_or_default())
                         .unwrap_or_else(|_| "{}".to_string()),
@@ -1970,12 +1998,21 @@ impl SqlExecutor {
             || sql_upper.contains("BUFFER_SIZE")
             || has_table_type_stream
         {
-            // Stream table
-            let stmt = CreateStreamTableStatement::parse(sql, &namespace_id)?;
+            // Stream table - use unified parser
+            let stmt = CreateTableStatement::parse(sql, &namespace_id)
+                .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+                
+            // Verify this is actually a STREAM table
+            if stmt.table_type != kalamdb_commons::models::TableType::Stream {
+                return Err(KalamDbError::InvalidSql(
+                    "Expected CREATE STREAM TABLE statement".to_string(),
+                ));
+            }
+            
             let table_name = stmt.table_name.clone();
             let namespace_id = stmt.namespace_id.clone(); // Use the namespace from the statement
             let schema = stmt.schema.clone();
-            let retention_seconds = stmt.retention_seconds;
+            let retention_seconds = stmt.ttl_seconds.map(|t| t as u32);
 
             let metadata = self.stream_table_service.create_table(stmt)?;
 
@@ -2023,12 +2060,28 @@ impl SqlExecutor {
             ))
         } else if has_table_type_shared {
             // Shared table specified via TABLE_TYPE
-            let stmt = CreateSharedTableStatement::parse(sql, &namespace_id)?;
+            // Use unified parser for consistent parsing
+            let stmt = CreateTableStatement::parse(sql, &namespace_id)
+                .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+            
+            // Verify this is actually a SHARED table
+            if stmt.table_type != kalamdb_commons::models::TableType::Shared {
+                return Err(KalamDbError::InvalidSql(
+                    "Expected CREATE SHARED TABLE statement".to_string(),
+                ));
+            }
+            
             let table_name = stmt.table_name.clone();
             let namespace_id = stmt.namespace_id.clone(); // Use the namespace from the statement
             let schema = stmt.schema.clone();
             let flush_policy = stmt.flush_policy.clone();
-            let deleted_retention = stmt.deleted_retention;
+            let deleted_retention = stmt.deleted_retention_hours.map(|h| h as u64 * 3600);
+            
+            // Extract storage_id before stmt is moved
+            let stmt_storage_id = stmt.storage_id.clone();
+
+            // Validate and resolve storage_id
+            let storage_id = self.validate_storage_id(stmt_storage_id)?;
 
             let (metadata, was_created) = self.shared_table_service.create_table(stmt)?;
 
@@ -2038,22 +2091,9 @@ impl SqlExecutor {
                 if let Some(kalam_sql) = &self.kalam_sql {
                     let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
 
-                    // Convert local FlushPolicy to the global one for serialization
-                    let flush_policy_json = if let Some(fp) = flush_policy {
-                        match fp {
-                            FlushPolicy::Rows(n) => {
-                                serde_json::json!({"type": "row_limit", "row_limit": n}).to_string()
-                            }
-                            FlushPolicy::Time(s) => {
-                                serde_json::json!({"type": "time_interval", "interval_seconds": s}).to_string()
-                            }
-                            FlushPolicy::Combined { rows, seconds } => {
-                                serde_json::json!({"type": "combined", "row_limit": rows, "interval_seconds": seconds}).to_string()
-                            }
-                        }
-                    } else {
-                        "{}".to_string()
-                    };
+                    // Serialize flush policy for storage
+                    let flush_policy_json = serde_json::to_string(&flush_policy.unwrap_or_default())
+                        .unwrap_or_else(|_| "{}".to_string());
 
                     let table = kalamdb_sql::models::Table {
                         table_id,
@@ -2062,7 +2102,7 @@ impl SqlExecutor {
                         table_type: "shared".to_string(),
                         created_at: chrono::Utc::now().timestamp_millis(),
                         storage_location: metadata.storage_location.clone(),
-                        storage_id: Some("local".to_string()), // Shared tables always use local storage
+                        storage_id: Some(storage_id.as_str().to_string()),
                         use_user_storage: false, // Shared tables don't support user storage
                         flush_policy: flush_policy_json,
                         schema_version: 1,
@@ -2102,33 +2142,34 @@ impl SqlExecutor {
             }
         } else {
             // No TABLE_TYPE specified - default to shared table (most common case)
-            let stmt = CreateSharedTableStatement::parse(sql, &namespace_id)?;
+            // Use unified parser for consistent parsing
+            let stmt = CreateTableStatement::parse(sql, &namespace_id)
+                .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+            
+            // The unified parser defaults to SHARED when no table type is specified
+            // So we don't need to verify the type here
+            
             let table_name = stmt.table_name.clone();
             let namespace_id = stmt.namespace_id.clone();
             let schema = stmt.schema.clone();
             let flush_policy = stmt.flush_policy.clone();
-            let deleted_retention = stmt.deleted_retention;
+            let deleted_retention = stmt.deleted_retention_hours.map(|h| h as u64 * 3600);
+            
+            // Extract storage_id before stmt is moved
+            let stmt_storage_id = stmt.storage_id.clone();
+
+            // Validate and resolve storage_id
+            let storage_id = self.validate_storage_id(stmt_storage_id)?;
 
             let (metadata, was_created) = self.shared_table_service.create_table(stmt)?;
 
             if was_created {
                 if let Some(kalam_sql) = &self.kalam_sql {
                     let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
-                    let flush_policy_json = if let Some(fp) = flush_policy {
-                        match fp {
-                            FlushPolicy::Rows(n) => {
-                                serde_json::json!({"type": "row_limit", "row_limit": n}).to_string()
-                            }
-                            FlushPolicy::Time(s) => {
-                                serde_json::json!({"type": "time_interval", "interval_seconds": s}).to_string()
-                            }
-                            FlushPolicy::Combined { rows, seconds } => {
-                                serde_json::json!({"type": "combined", "row_limit": rows, "interval_seconds": seconds}).to_string()
-                            }
-                        }
-                    } else {
-                        "{}".to_string()
-                    };
+                    
+                    // Serialize flush policy for storage
+                    let flush_policy_json = serde_json::to_string(&flush_policy.unwrap_or_default())
+                        .unwrap_or_else(|_| "{}".to_string());
 
                     let table = kalamdb_sql::models::Table {
                         table_id,
@@ -2137,7 +2178,7 @@ impl SqlExecutor {
                         table_type: "shared".to_string(),
                         created_at: chrono::Utc::now().timestamp_millis(),
                         storage_location: metadata.storage_location.clone(),
-                        storage_id: Some("local".to_string()),
+                        storage_id: Some(storage_id.as_str().to_string()),
                         use_user_storage: false,
                         flush_policy: flush_policy_json,
                         schema_version: 1,

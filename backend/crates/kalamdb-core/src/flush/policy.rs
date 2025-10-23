@@ -120,35 +120,15 @@ impl Default for FlushPolicy {
 impl From<kalamdb_sql::ddl::FlushPolicy> for FlushPolicy {
     fn from(policy: kalamdb_sql::ddl::FlushPolicy) -> Self {
         match policy {
-            kalamdb_sql::ddl::FlushPolicy::Rows(rows) => FlushPolicy::RowLimit {
-                row_limit: rows.min(1_000_000) as u32,
+            kalamdb_sql::ddl::FlushPolicy::RowLimit { row_limit } => FlushPolicy::RowLimit {
+                row_limit: row_limit.min(1_000_000),
             },
-            kalamdb_sql::ddl::FlushPolicy::Time(seconds) => FlushPolicy::TimeInterval {
-                interval_seconds: seconds.min(86400) as u32,
+            kalamdb_sql::ddl::FlushPolicy::TimeInterval { interval_seconds } => FlushPolicy::TimeInterval {
+                interval_seconds: interval_seconds.min(86400),
             },
-            kalamdb_sql::ddl::FlushPolicy::Combined { rows, seconds } => FlushPolicy::Combined {
-                row_limit: rows.min(1_000_000) as u32,
-                interval_seconds: seconds.min(86400) as u32,
-            },
-        }
-    }
-}
-
-impl From<kalamdb_sql::ddl::UserTableFlushPolicy> for FlushPolicy {
-    fn from(policy: kalamdb_sql::ddl::UserTableFlushPolicy) -> Self {
-        match policy {
-            kalamdb_sql::ddl::UserTableFlushPolicy::RowLimit { row_limit } => {
-                FlushPolicy::RowLimit { row_limit }
-            }
-            kalamdb_sql::ddl::UserTableFlushPolicy::TimeInterval { interval_seconds } => {
-                FlushPolicy::TimeInterval { interval_seconds }
-            }
-            kalamdb_sql::ddl::UserTableFlushPolicy::Combined {
-                row_limit,
-                interval_seconds,
-            } => FlushPolicy::Combined {
-                row_limit,
-                interval_seconds,
+            kalamdb_sql::ddl::FlushPolicy::Combined { row_limit, interval_seconds } => FlushPolicy::Combined {
+                row_limit: row_limit.min(1_000_000),
+                interval_seconds: interval_seconds.min(86400),
             },
         }
     }
