@@ -17,10 +17,11 @@ KalamDB supports standard SQL via Apache DataFusion with custom DDL extensions f
 4. [Stream Table Operations](#stream-table-operations)
 5. [Schema Evolution](#schema-evolution)
 6. [Data Manipulation](#data-manipulation)
-7. [Backup and Restore](#backup-and-restore)
-8. [Catalog Browsing](#catalog-browsing)
-9. [Data Types](#data-types)
-10. [System Columns](#system-columns)
+7. [Live Query Subscriptions](#live-query-subscriptions)
+8. [Backup and Restore](#backup-and-restore)
+9. [Catalog Browsing](#catalog-browsing)
+10. [Data Types](#data-types)
+11. [System Columns](#system-columns)
 
 ---
 
@@ -460,6 +461,344 @@ SELECT * FROM app.messages WHERE _deleted = true;
 - Queries read from both hot (RocksDB) and cold (Parquet) storage
 - DataFusion optimizes query execution (projection pushdown, filter pushdown, etc.)
 - For user tables: Automatically filtered by current user's data
+
+---
+
+## Live Query Subscriptions
+
+KalamDB supports real-time live queries through WebSocket subscriptions using the `SUBSCRIBE TO` SQL command. When data changes in a subscribed table, clients receive instant notifications over the WebSocket connection.
+
+### SUBSCRIBE TO
+
+The `SUBSCRIBE TO` command initiates a live query subscription, establishing a WebSocket connection for real-time change notifications.
+
+```sql
+SUBSCRIBE TO <namespace>.<table_name>
+[WHERE <condition>]
+[OPTIONS (last_rows=<n>)];
+```
+
+**Parameters**:
+- `<namespace>.<table_name>`: **Required** - Fully qualified table name (namespace must be specified)
+- `WHERE <condition>`: **Optional** - Filter condition for the subscription (only matching changes are sent)
+- `OPTIONS (last_rows=<n>)`: **Optional** - Number of most recent rows to send as initial data
+
+**Returns**: Subscription metadata with WebSocket connection details:
+```json
+{
+  "status": "subscription_required",
+  "ws_url": "ws://localhost:8080/v1/ws",
+  "subscription": {
+    "id": "sub-7f8e9d2a",
+    "sql": "SELECT * FROM chat.messages WHERE user_id = 'user123'",
+    "options": {"last_rows": 10}
+  },
+  "message": "WebSocket connection required for live query subscription"
+}
+```
+
+**Examples**:
+
+```sql
+-- Basic subscription (all rows, all changes)
+SUBSCRIBE TO chat.messages;
+
+-- Subscription with filter (only messages from specific user)
+SUBSCRIBE TO chat.messages WHERE user_id = 'user123';
+
+-- Subscription with initial data (last 10 rows)
+SUBSCRIBE TO chat.messages WHERE room_id = 'general' OPTIONS (last_rows=10);
+
+-- Subscription with complex filter
+SUBSCRIBE TO app.events 
+WHERE event_type IN ('error', 'warning') 
+  AND timestamp > NOW() - INTERVAL '1 hour';
+
+-- Stream table subscription (ephemeral data)
+SUBSCRIBE TO live.sensor_data WHERE sensor_id = 'temp-01';
+```
+
+### WebSocket Protocol
+
+After receiving the subscription metadata from `SUBSCRIBE TO`, clients must:
+
+1. **Connect to WebSocket** using the provided `ws_url`
+2. **Authenticate** with JWT token in Authorization header
+3. **Send subscription message** with the subscription details
+4. **Receive notifications** for matching data changes
+
+**WebSocket Connection Flow**:
+
+```
+1. Execute SUBSCRIBE TO via HTTP POST /v1/api/sql
+   ↓
+2. Receive subscription metadata (subscription_id, ws_url, sql)
+   ↓
+3. Connect WebSocket to ws_url with Authorization: Bearer <token>
+   ↓
+4. Send subscription message with subscription_id and sql
+   ↓
+5. Receive initial data (if last_rows specified)
+   ↓
+6. Receive real-time notifications for INSERT/UPDATE/DELETE
+```
+
+**Subscription Message** (Client → Server):
+```json
+{
+  "subscriptions": [
+    {
+      "query_id": "messages-subscription",
+      "sql": "SELECT * FROM chat.messages WHERE user_id = 'user123'",
+      "options": {"last_rows": 10}
+    }
+  ]
+}
+```
+
+**Initial Data Message** (Server → Client):
+```json
+{
+  "type": "initial_data",
+  "query_id": "messages-subscription",
+  "rows": [
+    {"id": 1, "content": "Hello", "user_id": "user123", "timestamp": "2025-10-20T10:00:00Z"},
+    {"id": 2, "content": "World", "user_id": "user123", "timestamp": "2025-10-20T10:01:00Z"}
+  ],
+  "count": 2
+}
+```
+
+**Change Notification** (Server → Client):
+```json
+{
+  "query_id": "messages-subscription",
+  "type": "INSERT",
+  "data": {
+    "id": 3,
+    "content": "New message",
+    "user_id": "user123",
+    "timestamp": "2025-10-20T10:05:00Z"
+  },
+  "timestamp": "2025-10-20T10:05:00.123Z"
+}
+```
+
+**Change Types**:
+- `INSERT`: New row added matching the subscription filter
+- `UPDATE`: Existing row modified (includes `old_values` field with previous data)
+- `DELETE`: Row deleted matching the subscription filter
+
+**UPDATE Notification** (includes old values):
+```json
+{
+  "query_id": "messages-subscription",
+  "type": "UPDATE",
+  "data": {
+    "id": 2,
+    "content": "Updated message",
+    "user_id": "user123",
+    "timestamp": "2025-10-20T10:06:00Z"
+  },
+  "old_values": {
+    "id": 2,
+    "content": "World",
+    "user_id": "user123",
+    "timestamp": "2025-10-20T10:01:00Z"
+  },
+  "timestamp": "2025-10-20T10:06:00.456Z"
+}
+```
+
+### Supported Table Types
+
+- ✅ **User Tables**: Subscriptions are automatically filtered by authenticated user's data
+- ✅ **Shared Tables**: Subscriptions receive changes from all users
+- ✅ **Stream Tables**: Subscriptions receive ephemeral real-time events
+
+### Subscription Lifecycle
+
+**Active Subscription**:
+- Registered in `system.live_queries` table
+- Monitored by live query manager
+- Sends notifications for all matching changes
+
+**Automatic Cleanup**:
+- When WebSocket connection closes
+- When client explicitly unsubscribes
+- After connection timeout (default: 10 seconds without heartbeat)
+
+**Subscription Limits**:
+- Max subscriptions per connection: Configurable (default: 10)
+- Max connections per user: Configurable (default: 5)
+- Rate limiting: Configurable via `RateLimiter`
+
+### Query System.live_queries
+
+View active subscriptions in the system table:
+
+```sql
+SELECT subscription_id, sql, user_id, created_at
+FROM system.live_queries
+WHERE user_id = 'user123';
+```
+
+### Client Libraries
+
+**JavaScript/TypeScript Example**:
+```javascript
+// 1. Execute SUBSCRIBE TO via REST API
+const response = await fetch('http://localhost:8080/v1/api/sql', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    sql: 'SUBSCRIBE TO chat.messages WHERE user_id = \'user123\' OPTIONS (last_rows=10)'
+  })
+});
+
+const {ws_url, subscription} = await response.json();
+
+// 2. Connect to WebSocket
+const ws = new WebSocket(ws_url, {
+  headers: {'Authorization': `Bearer ${token}`}
+});
+
+// 3. Send subscription message
+ws.onopen = () => {
+  ws.send(JSON.stringify({
+    subscriptions: [{
+      query_id: 'messages-sub',
+      sql: subscription.sql,
+      options: subscription.options
+    }]
+  }));
+};
+
+// 4. Receive notifications
+ws.onmessage = (event) => {
+  const notification = JSON.parse(event.data);
+  console.log('Change:', notification.type, notification.data);
+};
+```
+
+**Rust Example** (using `tokio-tungstenite`):
+```rust
+use tokio_tungstenite::{connect_async, tungstenite::Message};
+use serde_json::json;
+
+// Execute SUBSCRIBE TO via HTTP client first...
+let (subscription_id, ws_url, sql) = /* ... */;
+
+// Connect to WebSocket
+let (mut ws_stream, _) = connect_async(ws_url).await?;
+
+// Send subscription message
+let msg = json!({
+    "subscriptions": [{
+        "query_id": "messages-sub",
+        "sql": sql,
+        "options": {"last_rows": 10}
+    }]
+});
+ws_stream.send(Message::Text(msg.to_string())).await?;
+
+// Receive notifications
+while let Some(msg) = ws_stream.next().await {
+    let notification = serde_json::from_str(&msg?)?;
+    println!("Change: {:?}", notification);
+}
+```
+
+### Error Handling
+
+**Missing Namespace**:
+```sql
+SUBSCRIBE TO messages;  -- ERROR: Namespace must be specified
+```
+
+**Invalid Syntax**:
+```sql
+SUBSCRIBE messages;  -- ERROR: Expected 'TO' after 'SUBSCRIBE'
+```
+
+**Invalid Options**:
+```sql
+SUBSCRIBE TO chat.messages OPTIONS (last_rows=abc);  
+-- ERROR: Invalid option value: last_rows must be a positive integer
+```
+
+**Table Not Found**:
+```sql
+SUBSCRIBE TO chat.nonexistent;
+-- ERROR: Table 'chat.nonexistent' does not exist
+```
+
+### Performance Considerations
+
+**Filter Efficiency**:
+- Use indexed columns in WHERE clauses when possible (`_updated` has bloom filter)
+- Complex filters are evaluated in-memory for each change
+- Consider table design for optimal subscription performance
+
+**Initial Data**:
+- `last_rows` option queries Parquet files and RocksDB
+- Large `last_rows` values may impact initial connection time
+- Default: No initial data sent (only real-time changes)
+
+**Notification Delivery**:
+- Notifications are batched for high-frequency changes
+- WebSocket backpressure handling prevents client overwhelm
+- Failed deliveries trigger automatic subscription cleanup
+
+### Best Practices
+
+1. **Specify Filters**: Use WHERE clauses to reduce notification volume
+```sql
+-- Good: Filtered subscription
+SUBSCRIBE TO chat.messages WHERE room_id = 'general';
+
+-- Bad: Unfiltered (all changes)
+SUBSCRIBE TO chat.messages;
+```
+
+2. **Use Initial Data Sparingly**: Only request last_rows when needed
+```sql
+-- Good: Load initial context
+SUBSCRIBE TO chat.messages WHERE room_id = 'general' OPTIONS (last_rows=10);
+
+-- Avoid: Large initial data loads
+SUBSCRIBE TO chat.messages OPTIONS (last_rows=100000);  -- Too much!
+```
+
+3. **Handle Connection Failures**: Implement reconnection logic with exponential backoff
+```javascript
+let reconnectAttempts = 0;
+ws.onclose = () => {
+  const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+  setTimeout(reconnect, delay);
+  reconnectAttempts++;
+};
+```
+
+4. **Clean Up Subscriptions**: Always close WebSocket connections when done
+```javascript
+// Clean up on component unmount / page unload
+window.addEventListener('beforeunload', () => ws.close());
+```
+
+5. **Monitor Subscription Count**: Track active subscriptions to avoid hitting limits
+```sql
+SELECT COUNT(*) FROM system.live_queries WHERE user_id = 'user123';
+```
+
+### See Also
+
+- [WebSocket Protocol Documentation](WEBSOCKET_PROTOCOL.md) - Detailed protocol specification
+- [REST API Reference](API_REFERENCE.md) - HTTP endpoint for SUBSCRIBE TO
+- [Live Query Architecture](adrs/ADR-015-live-query-architecture.md) - Implementation details
 
 ---
 

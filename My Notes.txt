@@ -105,6 +105,9 @@ Notes:
             Supported aut-inc: SNOWFLAKE/UUID(v7) and in the future SEQUENCE
             These can be sorted and used as keys
         - MUST: stream tables must have primary with aut-inc included
+25) make not null strict and check them whenever we insert/update rows
+26) The fields order when i run select * from table should always be consistent with the created table order of fields
+
 
 24) took_ms instead than execution_time_ms in the api response
 25) in storages table instead of base_directory column name it uri
