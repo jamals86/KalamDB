@@ -17,7 +17,6 @@
 /// These parsers handle commands that are unique to KalamDB and not part
 /// of standard SQL. They are implemented in separate modules and re-exported
 /// here for a unified parser interface.
-
 // Re-export storage commands
 pub use crate::ddl::storage_commands::{
     AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
@@ -115,9 +114,7 @@ impl ExtensionStatement {
                 .map_err(|e| format!("KILL JOB parsing failed: {}", e));
         }
 
-        Err(format!(
-            "Unknown KalamDB extension command. Supported commands: CREATE/ALTER/DROP/SHOW STORAGE, FLUSH TABLE, FLUSH ALL TABLES, KILL JOB"
-        ))
+        Err("Unknown KalamDB extension command. Supported commands: CREATE/ALTER/DROP/SHOW STORAGE, FLUSH TABLE, FLUSH ALL TABLES, KILL JOB".to_string())
     }
 }
 

@@ -28,6 +28,9 @@ use std::sync::Arc;
 /// use datafusion::catalog::schema::MemorySchemaProvider;
 /// use std::sync::Arc;
 /// use kalamdb_core::system_table_registration::register_system_tables;
+/// # use kalamdb_sql::KalamSql;
+/// # let db = Arc::new(rocksdb::DB::open_default("test").unwrap());
+/// # let kalam_sql = Arc::new(KalamSql::new(db).unwrap());
 ///
 /// let system_schema = Arc::new(MemorySchemaProvider::new());
 /// let jobs_provider = register_system_tables(&system_schema, kalam_sql)

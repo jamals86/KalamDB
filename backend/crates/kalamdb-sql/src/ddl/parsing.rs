@@ -5,17 +5,33 @@
 
 use crate::ddl::DdlResult;
 
-/// Normalize SQL and convert to uppercase for pattern matching
+/// Normalize SQL and convert to uppercase for pattern matching (optimized)
 ///
 /// Removes extra whitespace, trailing semicolons, and converts to uppercase.
 #[inline]
 pub fn normalize_and_upper(sql: &str) -> String {
-    sql.trim()
-        .trim_end_matches(';')
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_uppercase()
+    let trimmed = sql.trim().trim_end_matches(';');
+    let mut result = String::with_capacity(trimmed.len());
+    let mut prev_was_space = false;
+    
+    for c in trimmed.chars() {
+        if c.is_whitespace() {
+            if !prev_was_space && !result.is_empty() {
+                result.push(' ');
+                prev_was_space = true;
+            }
+        } else {
+            result.push(c.to_ascii_uppercase());
+            prev_was_space = false;
+        }
+    }
+    
+    // Remove trailing space if any
+    if result.ends_with(' ') {
+        result.pop();
+    }
+    
+    result
 }
 
 /// Parse a simple statement with no arguments (e.g., "SHOW NAMESPACES")
@@ -78,7 +94,7 @@ pub fn parse_optional_in_clause(sql: &str, command: &str) -> DdlResult<Option<St
     }
 }
 
-/// Parse CREATE/DROP statement with optional IF [NOT] EXISTS clause
+/// Parse CREATE/DROP statement with optional IF [NOT] EXISTS clause (optimized)
 ///
 /// # Returns
 ///
@@ -95,33 +111,38 @@ pub fn parse_create_drop_statement(
     command: &str,
     if_clause: &str,
 ) -> DdlResult<(String, bool)> {
-    let sql_normalized = sql
-        .trim()
-        .trim_end_matches(';')
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    let sql_upper = sql_normalized.to_uppercase();
-    let command_upper = command.to_uppercase();
-    let if_clause_upper = if_clause.to_uppercase();
+    let trimmed = sql.trim().trim_end_matches(';');
+    let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+    
+    // Pre-compute counts to avoid multiple iterations
+    let command_token_count = command.split_whitespace().count();
+    let if_clause_tokens: Vec<&str> = if_clause.split_whitespace().collect();
+    let if_clause_token_count = if_clause_tokens.len();
 
-    if !sql_upper.starts_with(&command_upper) {
+    // Check if command matches (case-insensitive)
+    if tokens.len() < command_token_count {
         return Err(format!("Expected {} statement", command));
     }
+    
+    let command_parts: Vec<&str> = command.split_whitespace().collect();
+    for (i, expected) in command_parts.iter().enumerate() {
+        if !tokens[i].eq_ignore_ascii_case(expected) {
+            return Err(format!("Expected {} statement", command));
+        }
+    }
 
-    let has_if_clause = sql_upper.contains(&if_clause_upper);
-
-    // Count tokens to skip (command + optional if clause)
-    let command_token_count = command.split_whitespace().count();
-    let if_clause_token_count = if has_if_clause {
-        if_clause.split_whitespace().count()
+    // Check for IF clause
+    let has_if_clause = if tokens.len() > command_token_count + if_clause_token_count {
+        tokens[command_token_count..command_token_count + if_clause_token_count]
+            .iter()
+            .zip(if_clause_tokens.iter())
+            .all(|(actual, expected)| actual.eq_ignore_ascii_case(expected))
     } else {
-        0
+        false
     };
-    let skip_tokens = command_token_count + if_clause_token_count;
 
-    // Extract the entity name from the original (case-preserved) SQL
-    let tokens: Vec<&str> = sql_normalized.split_whitespace().collect();
+    // Extract entity name
+    let skip_tokens = command_token_count + if has_if_clause { if_clause_token_count } else { 0 };
     let name = tokens
         .get(skip_tokens)
         .ok_or_else(|| format!("Entity name is required after {}", command))?

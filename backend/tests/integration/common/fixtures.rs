@@ -188,12 +188,12 @@ pub async fn create_stream_table(
     ttl_seconds: u32,
 ) -> SqlResponse {
     let sql = format!(
-        r#"CREATE TABLE {}.{} (
+        r#"CREATE STREAM TABLE {}.{} (
             event_id TEXT NOT NULL,
             event_type TEXT,
             payload TEXT,
             timestamp TIMESTAMP
-        ) TYPE STREAM TTL {} SECONDS"#,
+        ) TTL {}"#,
         namespace, table_name, ttl_seconds
     );
     server.execute_sql(&sql).await
@@ -478,7 +478,10 @@ mod tests {
     async fn test_setup_complete_environment() {
         let server = TestServer::new().await;
         let result = setup_complete_environment(&server, "test_env").await;
-        assert!(result.is_ok());
+        if let Err(e) = &result {
+            eprintln!("Setup failed with error: {}", e);
+        }
+        assert!(result.is_ok(), "Setup failed: {:?}", result.err());
 
         // Verify all components exist
         assert!(server.namespace_exists("test_env").await);

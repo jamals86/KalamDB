@@ -55,6 +55,35 @@ Storages for tables:
 8) If a user table when it was created with an option:  "use_user_storage": true, then we will look at the user's define storage_id if it's set there to storage_mode = table then we will fallback to the user's table storage_id which was defined when creating the table
 9) User's table should always have a storage_id defined in it
 10) deleting a storage should only be done when no table is using this storage only
+11) OWNER_ID 'user1' in the create user statement is not needed
+    since this is a user table registered one time
+    and each user when insert his data into it, will be stored into his own storage location based on the storage
+12) no need for this syntax: "TABLE_TYPE shared" when creating a shared table
+13) we should have types of auth into the database
+    - A new column in database users for this role
+    - A table can have a new column called 'access' which: Can be 'public', 'private', or 'restricted', this is only needed for shared tables to choose who can access it if the user's can or its only from a service access or only for dba's
+    - It can have 4 types for now as an enum
+
+Role: user
+Default end-user account
+- Can SELECT from public shared tables- Can SELECT/INSERT/UPDATE/DELETE into their own user tables only- Cannot access system tables
+A normal app user
+
+
+Role: service
+Internal backend or site integration account
+- Can access shared tables and user tables for background jobs- Can trigger backups, or cleanup jobs- No CREATE/DROP of system tables
+API service or background worker
+
+Role: dba
+Database administrator
+- Full access to all tables including system tables- Can CREATE/ALTER/DROP namespaces, tables, storages- Can view logs, jobs, metrics
+System admin (you or operators)
+
+Role: system (internal only) (Localhost only)
+System-level actor (not user-visible)
+- Used by internal maintenance (compaction, flush jobs)- Can perform replication and background tasks
+Raft node replication / internal tasks
 
 
 
@@ -111,7 +140,7 @@ Notes:
     Add StorageId just like UserId/NamespaceId
     CreateSharedTableStatement/CreateUserTableStatement shares many attributes they can be emplementing extending a parent class
     StorageLocation is not needed anymore check if we can remove it completely
-    
+
 
 
 

@@ -293,13 +293,13 @@ pub enum TableType {
 }
 
 impl TableType {
-    /// Returns the table type as a string.
+    /// Returns the table type as a string (lowercase for column family names).
     pub fn as_str(&self) -> &'static str {
         match self {
-            TableType::User => "USER",
-            TableType::Shared => "SHARED",
-            TableType::Stream => "STREAM",
-            TableType::System => "SYSTEM",
+            TableType::User => "user",
+            TableType::Shared => "shared",
+            TableType::Stream => "stream",
+            TableType::System => "system",
         }
     }
 
@@ -548,9 +548,9 @@ mod tests {
 
     #[test]
     fn test_table_type() {
-        assert_eq!(TableType::User.as_str(), "USER");
-        assert_eq!(TableType::Shared.as_str(), "SHARED");
-        assert_eq!(TableType::Stream.as_str(), "STREAM");
+        assert_eq!(TableType::User.as_str(), "user");
+        assert_eq!(TableType::Shared.as_str(), "shared");
+        assert_eq!(TableType::Stream.as_str(), "stream");
 
         assert_eq!(TableType::try_from("USER").unwrap(), TableType::User);
         assert_eq!(TableType::try_from("user").unwrap(), TableType::User);

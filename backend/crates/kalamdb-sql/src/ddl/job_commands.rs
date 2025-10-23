@@ -20,7 +20,7 @@
 //! ## Examples
 //!
 //! ```rust,no_run
-//! use kalamdb_sql::job_commands::{JobCommand, parse_job_command};
+//! use kalamdb_sql::ddl::job_commands::{JobCommand, parse_job_command};
 //!
 //! // Parse KILL JOB command
 //! let cmd = parse_job_command("KILL JOB 'flush-001'").unwrap();
@@ -56,7 +56,7 @@ pub enum JobCommand {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use kalamdb_sql::job_commands::parse_job_command;
+/// use kalamdb_sql::ddl::job_commands::parse_job_command;
 ///
 /// let cmd = parse_job_command("KILL JOB 'flush-001'").unwrap();
 /// ```

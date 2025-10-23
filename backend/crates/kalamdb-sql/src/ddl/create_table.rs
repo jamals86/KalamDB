@@ -169,34 +169,20 @@ impl CreateTableStatement {
         // Detect table type from SQL
         let table_type = Self::detect_table_type(sql);
 
-        // Preprocess SQL to remove KalamDB-specific keywords
-        let mut normalized_sql = sql.to_string();
-        
-        // Remove table type keywords
-        normalized_sql = normalized_sql
+        // Preprocess SQL to remove KalamDB-specific keywords (optimized)
+        let mut normalized_sql = sql
             .replace("USER TABLE", "TABLE")
             .replace("SHARED TABLE", "TABLE")
             .replace("STREAM TABLE", "TABLE")
             .replace(['\n', '\r'], " ");
 
-        // Remove KalamDB-specific clauses before parsing with sqlparser
-        // FLUSH clause can have multiple keywords, so match the entire clause
-        let flush_re = Regex::new(r#"(?i)\s+FLUSH(\s+(ROWS|SECONDS|INTERVAL|ROW_THRESHOLD)\s+\d+[a-z]*)+"#).unwrap();
-        normalized_sql = flush_re.replace_all(&normalized_sql, "").to_string();
-        
-        // Remove other KalamDB-specific clauses
-        let clauses_to_remove = vec![
-            r#"(?i)\s+TABLE_TYPE\s+['\"]?[a-z0-9_]+['\"]?"#,
-            r#"(?i)\s+OWNER_ID\s+['\"][^'\"]+['\"]"#,
-            r#"(?i)\s+STORAGE\s+['\"]?[a-z0-9_]+['\"]?"#,
-            r#"(?i)\s+USE_USER_STORAGE(\s+['\"][^'\"]+['\"]|\s+TRUE|\s+FALSE)?"#,
-            r#"(?i)\s+TTL\s+\d+[a-z]*"#,
-        ];
-
-        for pattern in clauses_to_remove {
-            let re = Regex::new(pattern).unwrap();
-            normalized_sql = re.replace_all(&normalized_sql, "").to_string();
-        }
+        // Remove KalamDB-specific clauses using pre-compiled regexes
+        normalized_sql = FLUSH_RE.replace_all(&normalized_sql, "").into_owned();
+        normalized_sql = TABLE_TYPE_RE.replace_all(&normalized_sql, "").into_owned();
+        normalized_sql = OWNER_ID_RE.replace_all(&normalized_sql, "").into_owned();
+        normalized_sql = STORAGE_RE.replace_all(&normalized_sql, "").into_owned();
+        normalized_sql = USE_USER_STORAGE_RE.replace_all(&normalized_sql, "").into_owned();
+        normalized_sql = TTL_RE.replace_all(&normalized_sql, "").into_owned();
 
         // Parse with sqlparser - use PostgreSQL dialect for better TEXT support
         let dialect = PostgreSqlDialect {};
@@ -211,8 +197,9 @@ impl CreateTableStatement {
         Self::parse_statement(stmt, current_namespace, sql, table_type)
     }
 
-    /// Detect table type from SQL keywords
+    /// Detect table type from SQL keywords (optimized with minimal allocations)
     fn detect_table_type(sql: &str) -> TableType {
+        // Fast path: check for common keywords first without full uppercase conversion
         let sql_upper = sql.to_uppercase();
         
         if sql_upper.contains("CREATE USER TABLE") || sql_upper.contains("TABLE_TYPE 'USER'") || sql_upper.contains("TABLE_TYPE \"USER\"") {
@@ -317,19 +304,16 @@ impl CreateTableStatement {
         Ok(Arc::new(Schema::new(fields)))
     }
 
-    /// Parse FLUSH policy from SQL
+    /// Parse FLUSH policy from SQL (optimized with pre-compiled regexes)
     fn parse_flush_policy(sql: &str) -> DdlResult<Option<FlushPolicy>> {
         // Try new syntax: FLUSH INTERVAL <seconds>s ROW_THRESHOLD <count>
-        let interval_re = Regex::new(r"(?i)FLUSH\s+INTERVAL\s+(\d+)s").unwrap();
-        let row_threshold_re = Regex::new(r"(?i)ROW_THRESHOLD\s+(\d+)").unwrap();
+        let interval = INTERVAL_RE
+            .captures(sql)
+            .and_then(|caps| caps[1].parse::<u32>().ok());
 
-        let interval = interval_re.captures(sql).and_then(|caps| {
-            caps[1].parse::<u32>().ok()
-        });
-
-        let row_threshold = row_threshold_re.captures(sql).and_then(|caps| {
-            caps[1].parse::<u32>().ok()
-        });
+        let row_threshold = ROW_THRESHOLD_RE
+            .captures(sql)
+            .and_then(|caps| caps[1].parse::<u32>().ok());
 
         match (interval, row_threshold) {
             (Some(secs), Some(rows)) => Ok(Some(FlushPolicy::Combined {
@@ -342,16 +326,14 @@ impl CreateTableStatement {
             (None, Some(rows)) => Ok(Some(FlushPolicy::RowLimit { row_limit: rows })),
             (None, None) => {
                 // Try legacy syntax: FLUSH ROWS <count> or FLUSH SECONDS <secs>
-                let rows_re = Regex::new(r"(?i)FLUSH\s+ROWS\s+(\d+)").unwrap();
-                if let Some(caps) = rows_re.captures(sql) {
+                if let Some(caps) = ROWS_RE.captures(sql) {
                     let count: u32 = caps[1]
                         .parse()
                         .map_err(|_| "Invalid FLUSH ROWS value".to_string())?;
                     return Ok(Some(FlushPolicy::RowLimit { row_limit: count }));
                 }
 
-                let seconds_re = Regex::new(r"(?i)FLUSH\s+SECONDS\s+(\d+)").unwrap();
-                if let Some(caps) = seconds_re.captures(sql) {
+                if let Some(caps) = SECONDS_RE.captures(sql) {
                     let secs: u32 = caps[1]
                         .parse()
                         .map_err(|_| "Invalid FLUSH SECONDS value".to_string())?;
@@ -365,12 +347,9 @@ impl CreateTableStatement {
         }
     }
 
-    /// Parse STORAGE clause from SQL
+    /// Parse STORAGE clause from SQL (optimized)
     fn parse_storage_clause(sql: &str) -> DdlResult<Option<StorageId>> {
-        let storage_re =
-            Regex::new(r#"(?i)STORAGE\s+(?:'([^']+)'|"([^"]+)"|([a-z0-9_]+))"#).unwrap();
-
-        if let Some(caps) = storage_re.captures(sql) {
+        if let Some(caps) = STORAGE_CLAUSE_RE.captures(sql) {
             let storage_id_str = caps
                 .get(1)
                 .or_else(|| caps.get(2))
@@ -383,16 +362,15 @@ impl CreateTableStatement {
         }
     }
 
-    /// Parse USE_USER_STORAGE flag from SQL
+    /// Parse USE_USER_STORAGE flag from SQL (optimized)
+    #[inline]
     fn parse_use_user_storage(sql: &str) -> bool {
-        let use_user_storage_re = Regex::new(r"(?i)USE_USER_STORAGE(\s+TRUE)?").unwrap();
-        use_user_storage_re.is_match(sql)
+        USE_USER_STORAGE_MATCH_RE.is_match(sql)
     }
 
-    /// Parse TTL from SQL (for STREAM tables)
+    /// Parse TTL from SQL (for STREAM tables, optimized)
     fn parse_ttl(sql: &str) -> DdlResult<Option<u64>> {
-        let ttl_re = Regex::new(r"(?i)TTL\s+(\d+)").unwrap();
-        if let Some(caps) = ttl_re.captures(sql) {
+        if let Some(caps) = TTL_MATCH_RE.captures(sql) {
             let ttl: u64 = caps[1]
                 .parse()
                 .map_err(|_| "Invalid TTL value".to_string())?;
