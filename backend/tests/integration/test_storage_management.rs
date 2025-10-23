@@ -10,7 +10,7 @@
 //! 7. Storage lookup chain (default storage, namespace storage, table storage)
 //! 8. Error handling (duplicate storage_id, invalid templates, deleting in-use storage)
 //!
-//! Uses the REST API `/api/sql` endpoint to test end-to-end functionality.
+//! Uses the REST API `/v1/api/sql` endpoint to test end-to-end functionality.
 
 mod common;
 
@@ -25,9 +25,7 @@ async fn test_01_default_storage_exists() {
     let server = TestServer::new().await;
 
     // Use SHOW STORAGES instead of querying system.storages directly
-    let response = server
-        .execute_sql("SHOW STORAGES")
-        .await;
+    let response = server.execute_sql("SHOW STORAGES").await;
 
     assert_eq!(
         response.status, "success",
@@ -38,7 +36,7 @@ async fn test_01_default_storage_exists() {
     // Verify 'local' storage exists
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
         assert!(rows.len() >= 1, "Expected at least 1 storage");
-        
+
         let local_storage = &rows[0];
         assert_eq!(
             local_storage.get("storage_id").and_then(|v| v.as_str()),
@@ -80,7 +78,7 @@ async fn test_02_show_storages_basic() {
     // Verify at least 'local' storage exists
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
         assert!(rows.len() >= 1, "Expected at least 1 storage (local)");
-        
+
         // First storage should be 'local' (ordered by storage_id)
         let first_storage = &rows[0];
         assert_eq!(
@@ -109,7 +107,7 @@ async fn test_03_create_storage_filesystem() {
         DESCRIPTION 'Cold storage for archived data'
         PATH '/data/archive'
         SHARED_TABLES_TEMPLATE '/data/archive/shared/{namespace}/{tableName}'
-        USER_TABLES_TEMPLATE '/data/archive/users/{userId}/{namespace}/{tableName}'
+        USER_TABLES_TEMPLATE '/data/archive/users/{namespace}/{tableName}/{userId}'
     "#;
 
     let response = server.execute_sql(sql).await;
@@ -133,7 +131,7 @@ async fn test_03_create_storage_filesystem() {
 
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(rows.len(), 1, "Expected exactly 1 'archive' storage");
-        
+
         let archive = &rows[0];
         assert_eq!(
             archive.get("storage_id").and_then(|v| v.as_str()),
@@ -173,7 +171,7 @@ async fn test_04_create_storage_s3() {
         BUCKET 'kalamdb-main'
         REGION 'us-west-2'
         SHARED_TABLES_TEMPLATE 's3://kalamdb-main/shared/{namespace}/{tableName}'
-        USER_TABLES_TEMPLATE 's3://kalamdb-main/users/{userId}/{namespace}/{tableName}'
+        USER_TABLES_TEMPLATE 's3://kalamdb-main/users/{namespace}/{tableName}/{userId}'
     "#;
 
     let response = server.execute_sql(sql).await;
@@ -197,7 +195,7 @@ async fn test_04_create_storage_s3() {
 
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(rows.len(), 1, "Expected exactly 1 's3_main' storage");
-        
+
         let s3_storage = &rows[0];
         assert_eq!(
             s3_storage.get("storage_id").and_then(|v| v.as_str()),
@@ -274,7 +272,9 @@ async fn test_06_create_storage_invalid_template() {
     // Verify error message mentions template validation
     if let Some(error) = &response.error {
         assert!(
-            error.message.contains("template") || error.message.contains("order") || error.message.contains("namespace"),
+            error.message.contains("template")
+                || error.message.contains("order")
+                || error.message.contains("namespace"),
             "Error should mention template validation issue: {}",
             error.message
         );
@@ -300,7 +300,11 @@ async fn test_07_alter_storage_all_fields() {
     "#;
 
     let response = server.execute_sql(create_sql).await;
-    assert_eq!(response.status, "success", "CREATE STORAGE failed: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "CREATE STORAGE failed: {:?}",
+        response.error
+    );
 
     // Now alter all fields
     let alter_sql = r#"
@@ -308,22 +312,30 @@ async fn test_07_alter_storage_all_fields() {
         SET NAME = 'Updated Storage'
         SET DESCRIPTION = 'Updated description'
         SET SHARED_TABLES_TEMPLATE = '/data/temp/shared/{namespace}/{tableName}'
-        SET USER_TABLES_TEMPLATE = '/data/temp/users/{userId}/{namespace}/{tableName}'
+        SET USER_TABLES_TEMPLATE = '/data/temp/users/{namespace}/{tableName}/{userId}'
     "#;
 
     let response = server.execute_sql(alter_sql).await;
-    assert_eq!(response.status, "success", "ALTER STORAGE failed: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "ALTER STORAGE failed: {:?}",
+        response.error
+    );
 
     // Verify changes
     let response = server
         .execute_sql("SELECT * FROM system.storages WHERE storage_id = 'temp_storage'")
         .await;
 
-    assert_eq!(response.status, "success", "Failed to query: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "Failed to query: {:?}",
+        response.error
+    );
 
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(rows.len(), 1, "Expected exactly 1 storage");
-        
+
         let storage = &rows[0];
         assert_eq!(
             storage.get("storage_name").and_then(|v| v.as_str()),
@@ -335,7 +347,7 @@ async fn test_07_alter_storage_all_fields() {
         );
         assert_eq!(
             storage.get("user_tables_template").and_then(|v| v.as_str()),
-            Some("/data/temp/users/{userId}/{namespace}/{tableName}")
+            Some("/data/temp/users/{namespace}/{tableName}/{userId}")
         );
     } else {
         panic!("No rows returned for temp_storage");
@@ -360,13 +372,21 @@ async fn test_08_alter_storage_partial() {
     "#;
 
     let response = server.execute_sql(create_sql).await;
-    assert_eq!(response.status, "success", "CREATE STORAGE failed: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "CREATE STORAGE failed: {:?}",
+        response.error
+    );
 
     // Only update description
     let alter_sql = "ALTER STORAGE partial_test SET DESCRIPTION = 'Updated description only'";
 
     let response = server.execute_sql(alter_sql).await;
-    assert_eq!(response.status, "success", "ALTER STORAGE failed: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "ALTER STORAGE failed: {:?}",
+        response.error
+    );
 
     // Verify only description changed
     let response = server
@@ -405,7 +425,11 @@ async fn test_09_alter_storage_invalid_template() {
     "#;
 
     let response = server.execute_sql(create_sql).await;
-    assert_eq!(response.status, "success", "CREATE STORAGE failed: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "CREATE STORAGE failed: {:?}",
+        response.error
+    );
 
     // Try to alter with invalid template
     let alter_sql = r#"
@@ -445,12 +469,20 @@ async fn test_10_drop_storage_basic() {
     "#;
 
     let response = server.execute_sql(create_sql).await;
-    assert_eq!(response.status, "success", "CREATE STORAGE failed: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "CREATE STORAGE failed: {:?}",
+        response.error
+    );
 
     // Drop the storage
     let drop_sql = "DROP STORAGE drop_test";
     let response = server.execute_sql(drop_sql).await;
-    assert_eq!(response.status, "success", "DROP STORAGE failed: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "DROP STORAGE failed: {:?}",
+        response.error
+    );
 
     // Verify storage no longer exists
     let response = server
@@ -485,7 +517,9 @@ async fn test_11_drop_storage_referential_integrity() {
 
     if let Some(error) = &response.error {
         assert!(
-            error.message.contains("in use") || error.message.contains("reference") || error.message.contains("table"),
+            error.message.contains("in use")
+                || error.message.contains("reference")
+                || error.message.contains("table"),
             "Error should mention storage is in use: {}",
             error.message
         );
@@ -526,13 +560,13 @@ async fn test_12_drop_storage_not_exists() {
 async fn test_13_template_validation_correct_order() {
     let server = TestServer::new().await;
 
-    // Valid template: {namespace} -> {tableName} -> {userId} -> {shard}
+    // Valid template: {namespace} -> {tableName} -> {shard} -> {userId}
     let sql = r#"
         CREATE STORAGE valid_order
         TYPE filesystem
         NAME 'Valid Order Storage'
         PATH '/data/valid'
-        USER_TABLES_TEMPLATE '/data/{namespace}/{tableName}/{userId}/{shard}/data'
+        USER_TABLES_TEMPLATE '/data/{namespace}/{tableName}/{shard}/{userId}/data'
     "#;
 
     let response = server.execute_sql(sql).await;
@@ -561,10 +595,7 @@ async fn test_14_template_validation_invalid_order() {
     "#;
 
     let response = server.execute_sql(sql).await;
-    assert_eq!(
-        response.status, "error",
-        "Invalid template should fail"
-    );
+    assert_eq!(response.status, "error", "Invalid template should fail");
 }
 
 // ============================================================================
@@ -594,7 +625,8 @@ async fn test_15_storage_lookup_table_level() {
             message TEXT
         ) TABLE_TYPE user
         OWNER_ID 'user1'
-        USE_USER_STORAGE 'table_storage'
+        STORAGE 'table_storage'
+        USE_USER_STORAGE
     "#;
 
     let response = server.execute_sql(create_table).await;
@@ -605,16 +637,22 @@ async fn test_15_storage_lookup_table_level() {
     );
 
     // Verify table has correct storage
-    let query = "SELECT * FROM system.tables WHERE namespace = 'lookup_ns' AND table_name = 'lookup_table'";
+    let query =
+        "SELECT * FROM system.tables WHERE namespace = 'lookup_ns' AND table_name = 'lookup_table'";
     let response = server.execute_sql(query).await;
 
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(rows.len(), 1, "Expected 1 table");
         let table = &rows[0];
         assert_eq!(
-            table.get("use_user_storage").and_then(|v| v.as_str()),
+            table.get("storage_id").and_then(|v| v.as_str()),
             Some("table_storage"),
-            "Table should use 'table_storage'"
+            "Table should use 'table_storage' storage"
+        );
+        assert_eq!(
+            table.get("use_user_storage").and_then(|v| v.as_bool()),
+            Some(true),
+            "Table should have use_user_storage enabled"
         );
     }
 }
@@ -628,37 +666,53 @@ async fn test_16_show_storages_ordered() {
     let server = TestServer::new().await;
 
     // Create multiple storages
-    server.execute_sql("CREATE STORAGE z_last TYPE filesystem NAME 'Z Last' PATH '/z'").await;
-    server.execute_sql("CREATE STORAGE a_first TYPE filesystem NAME 'A First' PATH '/a'").await;
-    server.execute_sql("CREATE STORAGE m_middle TYPE filesystem NAME 'M Middle' PATH '/m'").await;
+    server
+        .execute_sql("CREATE STORAGE z_last TYPE filesystem NAME 'Z Last' PATH '/z'")
+        .await;
+    server
+        .execute_sql("CREATE STORAGE a_first TYPE filesystem NAME 'A First' PATH '/a'")
+        .await;
+    server
+        .execute_sql("CREATE STORAGE m_middle TYPE filesystem NAME 'M Middle' PATH '/m'")
+        .await;
 
     // Show storages (should be ordered with 'local' first, then alphabetically)
     let response = server.execute_sql("SHOW STORAGES").await;
-    assert_eq!(response.status, "success", "SHOW STORAGES failed: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "SHOW STORAGES failed: {:?}",
+        response.error
+    );
 
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
         assert!(rows.len() >= 4, "Expected at least 4 storages");
-        
+
         // First should be 'local'
         assert_eq!(
             rows[0].get("storage_id").and_then(|v| v.as_str()),
             Some("local"),
             "First storage should be 'local'"
         );
-        
+
         // Rest should be alphabetical
         let storage_ids: Vec<&str> = rows[1..]
             .iter()
             .filter_map(|r| r.get("storage_id").and_then(|v| v.as_str()))
             .collect();
-        
+
         // Check that a_first comes before m_middle and m_middle before z_last
         let a_pos = storage_ids.iter().position(|&id| id == "a_first");
         let m_pos = storage_ids.iter().position(|&id| id == "m_middle");
         let z_pos = storage_ids.iter().position(|&id| id == "z_last");
-        
-        assert!(a_pos.is_some() && m_pos.is_some() && z_pos.is_some(), "All storages should be present");
-        assert!(a_pos < m_pos && m_pos < z_pos, "Storages should be in alphabetical order");
+
+        assert!(
+            a_pos.is_some() && m_pos.is_some() && z_pos.is_some(),
+            "All storages should be present"
+        );
+        assert!(
+            a_pos < m_pos && m_pos < z_pos,
+            "Storages should be in alphabetical order"
+        );
     }
 }
 
@@ -671,18 +725,27 @@ async fn test_17_concurrent_storage_operations() {
     let server = TestServer::new().await;
 
     // Create storage
-    let create = "CREATE STORAGE concurrent TYPE filesystem NAME 'Concurrent' PATH '/data/concurrent'";
+    let create =
+        "CREATE STORAGE concurrent TYPE filesystem NAME 'Concurrent' PATH '/data/concurrent'";
     server.execute_sql(create).await;
 
     // Concurrent ALTER operations (simulated sequentially - actual concurrency would need tokio::spawn)
     let alter1 = "ALTER STORAGE concurrent SET DESCRIPTION = 'Update 1'";
     let alter2 = "ALTER STORAGE concurrent SET NAME = 'Updated Name'";
-    
+
     let response1 = server.execute_sql(alter1).await;
     let response2 = server.execute_sql(alter2).await;
 
-    assert_eq!(response1.status, "success", "First ALTER failed: {:?}", response1.error);
-    assert_eq!(response2.status, "success", "Second ALTER failed: {:?}", response2.error);
+    assert_eq!(
+        response1.status, "success",
+        "First ALTER failed: {:?}",
+        response1.error
+    );
+    assert_eq!(
+        response2.status, "success",
+        "Second ALTER failed: {:?}",
+        response2.error
+    );
 
     // Verify final state
     let response = server
@@ -726,7 +789,9 @@ async fn test_18_invalid_storage_type() {
 
     if let Some(error) = &response.error {
         assert!(
-            error.message.contains("storage_type") || error.message.contains("invalid") || error.message.contains("type"),
+            error.message.contains("storage_type")
+                || error.message.contains("invalid")
+                || error.message.contains("type"),
             "Error should mention invalid storage type: {}",
             error.message
         );
@@ -794,7 +859,6 @@ async fn test_20_storage_with_namespace() {
     server.execute_sql(create_storage).await;
 
     // Create namespace with storage reference
-    let create_ns = "CREATE NAMESPACE storage_ns";
     fixtures::create_namespace(&server, "storage_ns").await;
 
     // Create shared table in namespace (implicitly uses namespace's storage or default)
@@ -813,7 +877,8 @@ async fn test_20_storage_with_namespace() {
     );
 
     // Verify table exists
-    let query = "SELECT * FROM system.tables WHERE namespace = 'storage_ns' AND table_name = 'shared_data'";
+    let query =
+        "SELECT * FROM system.tables WHERE namespace = 'storage_ns' AND table_name = 'shared_data'";
     let response = server.execute_sql(query).await;
 
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {

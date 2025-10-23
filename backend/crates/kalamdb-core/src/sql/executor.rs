@@ -36,12 +36,6 @@ use crate::services::{
     UserTableService,
 };
 use crate::sql::datafusion_session::DataFusionSessionFactory;
-use crate::sql::ddl::{
-    AlterNamespaceStatement, CreateNamespaceStatement, CreateSharedTableStatement,
-    CreateStreamTableStatement, CreateUserTableStatement, DescribeTableStatement,
-    DropNamespaceStatement, DropTableStatement, ShowNamespacesStatement, ShowTableStatsStatement,
-    ShowTablesStatement,
-};
 use crate::tables::{
     system::{
         NamespacesTableProvider, SystemTablesTableProvider,
@@ -55,6 +49,12 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser;
+use kalamdb_sql::ddl::{
+    AlterNamespaceStatement, CreateNamespaceStatement, CreateSharedTableStatement,
+    CreateStreamTableStatement, CreateUserTableStatement, DescribeTableStatement,
+    DropNamespaceStatement, DropTableStatement, FlushPolicy, ShowNamespacesStatement,
+    ShowTableStatsStatement, ShowTablesStatement,
+};
 use kalamdb_sql::{job_commands::parse_job_command, KalamSql};
 use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::sync::Arc;
@@ -295,10 +295,11 @@ impl SqlExecutor {
 
                 // Check if table already exists
                 let table_exists = df_schema.table_exist(table_name.as_str());
-                
+
                 if table_exists {
                     // Deregister the old table first
-                    df_schema.deregister_table(table_name.as_str())
+                    df_schema
+                        .deregister_table(table_name.as_str())
                         .map_err(|e| {
                             KalamDbError::Other(format!("Failed to deregister shared table: {}", e))
                         })?;
@@ -326,10 +327,11 @@ impl SqlExecutor {
 
                 // Check if table already exists
                 let table_exists = df_schema.table_exist(table_name.as_str());
-                
+
                 if table_exists {
                     // Deregister the old table first
-                    df_schema.deregister_table(table_name.as_str())
+                    df_schema
+                        .deregister_table(table_name.as_str())
                         .map_err(|e| {
                             KalamDbError::Other(format!("Failed to deregister stream table: {}", e))
                         })?;
@@ -359,7 +361,13 @@ impl SqlExecutor {
         let sql_upper = sql.trim().to_uppercase();
 
         // Check for job commands first
-        if sql_upper.split_whitespace().take(2).collect::<Vec<_>>().join(" ") == "KILL JOB" {
+        if sql_upper
+            .split_whitespace()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(" ")
+            == "KILL JOB"
+        {
             return self.execute_kill_job(sql).await;
         }
 
@@ -371,7 +379,7 @@ impl SqlExecutor {
         } else if sql_upper.starts_with("SHOW TABLES") {
             return self.execute_show_tables(sql).await;
         } else if sql_upper.starts_with("SHOW STORAGES") {
-            return self.execute_show_storages(sql).await;
+            return self.execute_show_storages(sql, user_id).await;
         } else if sql_upper.starts_with("SHOW STATS") {
             return self.execute_show_table_stats(sql).await;
         } else if sql_upper.starts_with("DESCRIBE TABLE") || sql_upper.starts_with("DESC TABLE") {
@@ -382,6 +390,10 @@ impl SqlExecutor {
             return self.execute_alter_storage(sql).await;
         } else if sql_upper.starts_with("DROP STORAGE") {
             return self.execute_drop_storage(sql).await;
+        } else if sql_upper.starts_with("FLUSH TABLE") {
+            return self.execute_flush_table(sql).await;
+        } else if sql_upper.starts_with("FLUSH ALL TABLES") {
+            return self.execute_flush_all_tables(sql).await;
         } else if sql_upper.starts_with("ALTER NAMESPACE") {
             return self.execute_alter_namespace(sql).await;
         } else if sql_upper.starts_with("DROP NAMESPACE") {
@@ -405,7 +417,9 @@ impl SqlExecutor {
         } else if sql_upper.starts_with("SELECT") || sql_upper.starts_with("INSERT") {
             // Extract referenced tables from SQL and load only those
             let referenced_tables = Self::extract_table_references(sql);
-            return self.execute_datafusion_query_with_tables(sql, user_id, referenced_tables).await;
+            return self
+                .execute_datafusion_query_with_tables(sql, user_id, referenced_tables)
+                .await;
         }
 
         // Otherwise, unsupported
@@ -426,9 +440,9 @@ impl SqlExecutor {
 
         let dialect = GenericDialect {};
         let parsed = Parser::parse_sql(&dialect, sql).ok()?;
-        
+
         let mut tables = std::collections::HashSet::new();
-        
+
         for statement in parsed {
             match statement {
                 Statement::Query(query) => {
@@ -443,7 +457,7 @@ impl SqlExecutor {
                 _ => {}
             }
         }
-        
+
         if tables.is_empty() {
             None
         } else {
@@ -463,7 +477,7 @@ impl SqlExecutor {
                 // Extract from FROM clause
                 for table_with_joins in &select.from {
                     Self::extract_table_from_factor(&table_with_joins.relation, tables);
-                    
+
                     // Also check JOINs
                     for join in &table_with_joins.joins {
                         Self::extract_table_from_factor(&join.relation, tables);
@@ -502,7 +516,9 @@ impl SqlExecutor {
             TableFactor::TableFunction { .. } | TableFactor::UNNEST { .. } => {
                 // Skip table functions for now
             }
-            TableFactor::NestedJoin { table_with_joins, .. } => {
+            TableFactor::NestedJoin {
+                table_with_joins, ..
+            } => {
                 // Nested join
                 Self::extract_table_from_factor(&table_with_joins.relation, tables);
                 for join in &table_with_joins.joins {
@@ -519,8 +535,9 @@ impl SqlExecutor {
     fn is_system_only_query(sql_upper: &str) -> bool {
         // Check if query contains FROM or JOIN with system.* tables only
         // Simple heuristic: if it contains "FROM SYSTEM." or "JOIN SYSTEM." and no other FROM/JOIN
-        let has_system_table = sql_upper.contains("FROM SYSTEM.") || sql_upper.contains("JOIN SYSTEM.");
-        
+        let has_system_table =
+            sql_upper.contains("FROM SYSTEM.") || sql_upper.contains("JOIN SYSTEM.");
+
         if !has_system_table {
             return false;
         }
@@ -542,13 +559,10 @@ impl SqlExecutor {
     }
 
     /// Execute a query that only accesses system tables (optimized - no user table loading)
-    async fn execute_system_query(
-        &self,
-        sql: &str,
-    ) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_system_query(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
         // Create a lightweight session with ONLY system tables registered
         let session = self.session_factory.create_session();
-        
+
         let kalam_sql = self
             .kalam_sql
             .as_ref()
@@ -558,19 +572,16 @@ impl SqlExecutor {
         self.register_system_tables_in_session(&session, kalam_sql)?;
 
         // Execute SQL via DataFusion
-        let df = session
-            .sql(sql)
-            .await
-            .map_err(|e| {
-                // Extract the root cause to avoid "Error planning query: Error during planning:" duplication
-                let err_msg = e.to_string();
-                if err_msg.contains("Error during planning:") {
-                    // DataFusion already says "Error during planning", don't duplicate
-                    KalamDbError::Other(err_msg)
-                } else {
-                    KalamDbError::Other(format!("Error planning query: {}", err_msg))
-                }
-            })?;
+        let df = session.sql(sql).await.map_err(|e| {
+            // Extract the root cause to avoid "Error planning query: Error during planning:" duplication
+            let err_msg = e.to_string();
+            if err_msg.contains("Error during planning:") {
+                // DataFusion already says "Error during planning", don't duplicate
+                KalamDbError::Other(err_msg)
+            } else {
+                KalamDbError::Other(format!("Error planning query: {}", err_msg))
+            }
+        })?;
 
         // Collect results
         let batches = df
@@ -642,7 +653,17 @@ impl SqlExecutor {
         // Register additional system tables
         use crate::tables::system::{
             JobsTableProvider, LiveQueriesTableProvider, StorageLocationsTableProvider,
+            SystemStoragesProvider,
         };
+
+        system_schema
+            .register_table(
+                "storages".to_string(),
+                Arc::new(SystemStoragesProvider::new(kalam_sql.clone())),
+            )
+            .map_err(|e| {
+                KalamDbError::Other(format!("Failed to register system.storages: {}", e))
+            })?;
 
         system_schema
             .register_table(
@@ -713,7 +734,7 @@ impl SqlExecutor {
                     let qualified = format!("{}.{}", t.namespace, t.table_name);
                     filter.contains(&qualified)
                         || filter.contains(&t.table_name)  // Also match unqualified
-                        || filter.contains(&format!("system.{}", t.table_name))  // System table reference
+                        || filter.contains(&format!("system.{}", t.table_name)) // System table reference
                 })
                 .collect()
         } else {
@@ -721,8 +742,10 @@ impl SqlExecutor {
         };
 
         // Create namespaces for all unique namespaces in the tables
-        let unique_namespaces: std::collections::HashSet<_> =
-            tables_to_load.iter().map(|t| t.namespace.as_str()).collect();
+        let unique_namespaces: std::collections::HashSet<_> = tables_to_load
+            .iter()
+            .map(|t| t.namespace.as_str())
+            .collect();
 
         for namespace_str in unique_namespaces {
             if catalog.schema(namespace_str).is_none() {
@@ -805,10 +828,11 @@ impl SqlExecutor {
             let df_schema = catalog.schema(namespace_id.as_str()).ok_or_else(|| {
                 KalamDbError::Other(format!("Schema '{}' not found", namespace_id.as_str()))
             })?;
-            
+
             // Check if table already exists and deregister it first
             if df_schema.table_exist(table_name.as_str()) {
-                df_schema.deregister_table(table_name.as_str())
+                df_schema
+                    .deregister_table(table_name.as_str())
                     .map_err(|e| {
                         KalamDbError::Other(format!(
                             "Failed to deregister existing shared table {} in schema {}: {}",
@@ -818,7 +842,7 @@ impl SqlExecutor {
                         ))
                     })?;
             }
-            
+
             df_schema
                 .register_table(table_name.as_str().to_string(), provider)
                 .map_err(|e| {
@@ -904,10 +928,11 @@ impl SqlExecutor {
             let df_schema = catalog.schema(namespace_id.as_str()).ok_or_else(|| {
                 KalamDbError::Other(format!("Schema '{}' not found", namespace_id.as_str()))
             })?;
-            
+
             // Check if table already exists and deregister it first
             if df_schema.table_exist(table_name.as_str()) {
-                df_schema.deregister_table(table_name.as_str())
+                df_schema
+                    .deregister_table(table_name.as_str())
                     .map_err(|e| {
                         KalamDbError::Other(format!(
                             "Failed to deregister existing user table {} in schema {}: {}",
@@ -917,7 +942,7 @@ impl SqlExecutor {
                         ))
                     })?;
             }
-            
+
             df_schema
                 .register_table(table_name.as_str().to_string(), provider)
                 .map_err(|e| {
@@ -1005,10 +1030,11 @@ impl SqlExecutor {
             let df_schema = catalog.schema(namespace_id.as_str()).ok_or_else(|| {
                 KalamDbError::Other(format!("Schema '{}' not found", namespace_id.as_str()))
             })?;
-            
+
             // Check if table already exists and deregister it first
             if df_schema.table_exist(table_name.as_str()) {
-                df_schema.deregister_table(table_name.as_str())
+                df_schema
+                    .deregister_table(table_name.as_str())
                     .map_err(|e| {
                         KalamDbError::Other(format!(
                             "Failed to deregister existing stream table {} in schema {}: {}",
@@ -1018,7 +1044,7 @@ impl SqlExecutor {
                         ))
                     })?;
             }
-            
+
             df_schema
                 .register_table(table_name.as_str().to_string(), provider)
                 .map_err(|e| {
@@ -1046,24 +1072,23 @@ impl SqlExecutor {
     ) -> Result<ExecutionResult, KalamDbError> {
         let anonymous_user = UserId::from("anonymous");
         let uid = user_id.unwrap_or(&anonymous_user);
-        
+
         // Create session with selective table loading
-        let session = self.create_user_session_context(uid, table_refs.as_ref()).await?;
+        let session = self
+            .create_user_session_context(uid, table_refs.as_ref())
+            .await?;
 
         // Execute SQL via DataFusion
-        let df = session
-            .sql(sql)
-            .await
-            .map_err(|e| {
-                // Extract the root cause to avoid "Error planning query: Error during planning:" duplication
-                let err_msg = e.to_string();
-                if err_msg.contains("Error during planning:") {
-                    // DataFusion already says "Error during planning", don't duplicate
-                    KalamDbError::Other(err_msg)
-                } else {
-                    KalamDbError::Other(format!("Error planning query: {}", err_msg))
-                }
-            })?;
+        let df = session.sql(sql).await.map_err(|e| {
+            // Extract the root cause to avoid "Error planning query: Error during planning:" duplication
+            let err_msg = e.to_string();
+            if err_msg.contains("Error during planning:") {
+                // DataFusion already says "Error during planning", don't duplicate
+                KalamDbError::Other(err_msg)
+            } else {
+                KalamDbError::Other(format!("Error planning query: {}", err_msg))
+            }
+        })?;
 
         // Collect results
         let batches = df
@@ -1098,19 +1123,16 @@ impl SqlExecutor {
         let session = self.create_user_session_context(uid, None).await?;
 
         // Execute SQL via DataFusion
-        let df = session
-            .sql(sql)
-            .await
-            .map_err(|e| {
-                // Extract the root cause to avoid "Error planning query: Error during planning:" duplication
-                let err_msg = e.to_string();
-                if err_msg.contains("Error during planning:") {
-                    // DataFusion already says "Error during planning", don't duplicate
-                    KalamDbError::Other(err_msg)
-                } else {
-                    KalamDbError::Other(format!("Error planning query: {}", err_msg))
-                }
-            })?;
+        let df = session.sql(sql).await.map_err(|e| {
+            // Extract the root cause to avoid "Error planning query: Error during planning:" duplication
+            let err_msg = e.to_string();
+            if err_msg.contains("Error during planning:") {
+                // DataFusion already says "Error during planning", don't duplicate
+                KalamDbError::Other(err_msg)
+            } else {
+                KalamDbError::Other(format!("Error planning query: {}", err_msg))
+            }
+        })?;
 
         // Collect results
         let batches = df
@@ -1131,10 +1153,11 @@ impl SqlExecutor {
 
     /// Execute CREATE NAMESPACE
     async fn execute_create_namespace(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
-        let stmt = CreateNamespaceStatement::parse(sql)?;
+        let stmt = CreateNamespaceStatement::parse(sql)
+            .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
         let created = self
             .namespace_service
-            .create(stmt.name.clone(), stmt.if_not_exists)?;
+            .create(stmt.name.as_str(), stmt.if_not_exists)?;
 
         let message = if created {
             format!("Namespace '{}' created successfully", stmt.name.as_str())
@@ -1187,11 +1210,14 @@ impl SqlExecutor {
     }
 
     /// Execute SHOW STORAGES
-    async fn execute_show_storages(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_show_storages(
+        &self,
+        sql: &str,
+        user_id: Option<&UserId>,
+    ) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::ShowStoragesStatement;
-        
-        let _stmt = ShowStoragesStatement::parse(sql)
-            .map_err(|e| KalamDbError::InvalidSql(e))?;
+
+        let _stmt = ShowStoragesStatement::parse(sql).map_err(|e| KalamDbError::InvalidSql(e))?;
 
         let kalam_sql = self
             .kalam_sql
@@ -1216,7 +1242,8 @@ impl SqlExecutor {
         });
 
         // Convert to RecordBatch
-        let batch = Self::storages_to_record_batch(sorted_storages)?;
+        let mask_credentials = !Self::is_admin(user_id);
+        let batch = Self::storages_to_record_batch(sorted_storages, mask_credentials)?;
 
         Ok(ExecutionResult::RecordBatch(batch))
     }
@@ -1224,9 +1251,10 @@ impl SqlExecutor {
     /// Execute CREATE STORAGE
     async fn execute_create_storage(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::CreateStorageStatement;
-        
-        let stmt = CreateStorageStatement::parse(sql)
-            .map_err(|e| KalamDbError::InvalidSql(e))?;
+
+        let stmt = CreateStorageStatement::parse(sql).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("CREATE STORAGE parse error: {}", e))
+        })?;
 
         let kalam_sql = self
             .kalam_sql
@@ -1244,11 +1272,37 @@ impl SqlExecutor {
             )));
         }
 
-        // Validate templates using StorageRegistry
+        // Validate templates using StorageRegistry (only if provided)
         if let Some(storage_registry) = &self.storage_registry {
-            storage_registry.validate_template(&stmt.shared_tables_template, false)?;
-            storage_registry.validate_template(&stmt.user_tables_template, true)?;
+            if !stmt.shared_tables_template.is_empty() {
+                storage_registry.validate_template(&stmt.shared_tables_template, false)?;
+            }
+            if !stmt.user_tables_template.is_empty() {
+                storage_registry.validate_template(&stmt.user_tables_template, true)?;
+            }
         }
+
+        // Validate credentials JSON (if provided)
+        let normalized_credentials = if let Some(raw) = stmt.credentials.as_ref() {
+            let value: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Invalid credentials JSON: {}", e))
+            })?;
+
+            if !value.is_object() {
+                return Err(KalamDbError::InvalidOperation(
+                    "Credentials must be a JSON object".to_string(),
+                ));
+            }
+
+            Some(serde_json::to_string(&value).map_err(|e| {
+                KalamDbError::InvalidOperation(format!(
+                    "Failed to normalize credentials JSON: {}",
+                    e
+                ))
+            })?)
+        } else {
+            None
+        };
 
         // Create storage record
         let storage = kalamdb_sql::Storage {
@@ -1257,6 +1311,7 @@ impl SqlExecutor {
             description: stmt.description,
             storage_type: stmt.storage_type,
             base_directory: stmt.base_directory,
+            credentials: normalized_credentials,
             shared_tables_template: stmt.shared_tables_template,
             user_tables_template: stmt.user_tables_template,
             created_at: chrono::Utc::now().timestamp(),
@@ -1277,9 +1332,10 @@ impl SqlExecutor {
     /// Execute ALTER STORAGE
     async fn execute_alter_storage(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::AlterStorageStatement;
-        
-        let stmt = AlterStorageStatement::parse(sql)
-            .map_err(|e| KalamDbError::InvalidSql(e))?;
+
+        let stmt = AlterStorageStatement::parse(sql).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("ALTER STORAGE parse error: {}", e))
+        })?;
 
         let kalam_sql = self
             .kalam_sql
@@ -1332,20 +1388,33 @@ impl SqlExecutor {
     /// Execute DROP STORAGE
     async fn execute_drop_storage(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::DropStorageStatement;
-        
-        let stmt = DropStorageStatement::parse(sql)
-            .map_err(|e| KalamDbError::InvalidSql(e))?;
+
+        let stmt = DropStorageStatement::parse(sql).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("DROP STORAGE parse error: {}", e))
+        })?;
 
         let kalam_sql = self
             .kalam_sql
             .as_ref()
             .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
 
-        // Prevent deletion of 'local' storage
-        if stmt.storage_id == "local" {
-            return Err(KalamDbError::InvalidOperation(
-                "Cannot delete 'local' storage (protected)".to_string(),
-            ));
+        // Check if storage exists
+        match kalam_sql.get_storage(&stmt.storage_id) {
+            Ok(Some(_)) => {
+                // Storage exists, continue with the deletion logic
+            }
+            Ok(None) => {
+                return Err(KalamDbError::NotFound(format!(
+                    "Storage '{}' does not exist and cannot be dropped",
+                    stmt.storage_id
+                )));
+            }
+            Err(e) => {
+                return Err(KalamDbError::Other(format!(
+                    "Failed to check storage: {}",
+                    e
+                )));
+            }
         }
 
         // Check if any tables reference this storage
@@ -1383,6 +1452,13 @@ impl SqlExecutor {
             )));
         }
 
+        // Prevent deletion of 'local' storage (after referential integrity check)
+        if stmt.storage_id == "local" {
+            return Err(KalamDbError::InvalidOperation(
+                "Cannot delete 'local' storage (protected)".to_string(),
+            ));
+        }
+
         // Delete the storage
         kalam_sql
             .delete_storage(&stmt.storage_id)
@@ -1391,6 +1467,177 @@ impl SqlExecutor {
         Ok(ExecutionResult::Success(format!(
             "Storage '{}' deleted successfully",
             stmt.storage_id
+        )))
+    }
+
+    /// Execute FLUSH TABLE
+    ///
+    /// Triggers asynchronous flush for a single table, returning job_id immediately.
+    /// The flush operation runs in the background via JobManager.
+    async fn execute_flush_table(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        use kalamdb_sql::FlushTableStatement;
+
+        let stmt = FlushTableStatement::parse(sql).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("FLUSH TABLE parse error: {}", e))
+        })?;
+
+        let kalam_sql = self
+            .kalam_sql
+            .as_ref()
+            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+
+        // Verify table exists
+        let tables = kalam_sql
+            .scan_all_tables()
+            .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
+
+        let table = tables
+            .iter()
+            .find(|t| t.namespace == stmt.namespace && t.table_name == stmt.table_name)
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!(
+                    "Table '{}.{}' does not exist",
+                    stmt.namespace, stmt.table_name
+                ))
+            })?;
+
+        // Only user tables can be flushed (shared/stream tables not supported yet)
+        if table.table_type != "user" {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Cannot flush {} table '{}.{}'. Only user tables can be flushed.",
+                table.table_type, stmt.namespace, stmt.table_name
+            )));
+        }
+
+        // Generate job_id
+        let job_id = format!(
+            "flush-{}-{}-{}",
+            stmt.table_name,
+            chrono::Utc::now().timestamp_millis(),
+            uuid::Uuid::new_v4()
+        );
+
+        // Create job record
+        let job_record = crate::tables::system::jobs_provider::JobRecord::new(
+            job_id.clone(),
+            "flush".to_string(),
+            format!("node-{}", std::process::id()),
+        )
+        .with_table_name(format!("{}.{}", stmt.namespace, stmt.table_name));
+
+        // Persist job to system.jobs
+        if let Some(ref jobs_table_provider) = self.jobs_table_provider {
+            jobs_table_provider.insert_job(job_record)?;
+        }
+
+        // TODO: Spawn async flush task via JobManager (T250)
+        // For now, return job_id immediately
+        log::info!(
+            "Flush job created: job_id={}, table={}.{}",
+            job_id,
+            stmt.namespace,
+            stmt.table_name
+        );
+
+        Ok(ExecutionResult::Success(format!(
+            "Flush started for table '{}.{}'. Job ID: {}",
+            stmt.namespace, stmt.table_name, job_id
+        )))
+    }
+
+    /// Execute FLUSH ALL TABLES
+    ///
+    /// Triggers asynchronous flush for all user tables in a namespace, returning
+    /// array of job_ids (one per table).
+    async fn execute_flush_all_tables(
+        &self,
+        sql: &str,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        use kalamdb_sql::FlushAllTablesStatement;
+
+        let stmt = FlushAllTablesStatement::parse(sql).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("FLUSH ALL TABLES parse error: {}", e))
+        })?;
+
+        let kalam_sql = self
+            .kalam_sql
+            .as_ref()
+            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+
+        // Verify namespace exists
+        match kalam_sql.get_namespace(&stmt.namespace) {
+            Ok(Some(_)) => { /* namespace exists */ }
+            Ok(None) => {
+                return Err(KalamDbError::NotFound(format!(
+                    "Namespace '{}' does not exist",
+                    stmt.namespace
+                )));
+            }
+            Err(e) => {
+                return Err(KalamDbError::Other(format!(
+                    "Failed to check namespace: {}",
+                    e
+                )));
+            }
+        }
+
+        // Get all user tables in the namespace
+        let tables = kalam_sql
+            .scan_all_tables()
+            .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
+
+        let user_tables: Vec<_> = tables
+            .iter()
+            .filter(|t| t.namespace == stmt.namespace && t.table_type == "user")
+            .collect();
+
+        if user_tables.is_empty() {
+            return Ok(ExecutionResult::Success(format!(
+                "No user tables found in namespace '{}' to flush",
+                stmt.namespace
+            )));
+        }
+
+        // Create flush job for each table
+        let mut job_ids = Vec::new();
+        for table in user_tables {
+            let job_id = format!(
+                "flush-{}-{}-{}",
+                table.table_name,
+                chrono::Utc::now().timestamp_millis(),
+                uuid::Uuid::new_v4()
+            );
+
+            // Create job record
+            let job_record = crate::tables::system::jobs_provider::JobRecord::new(
+                job_id.clone(),
+                "flush".to_string(),
+                format!("node-{}", std::process::id()),
+            )
+            .with_table_name(format!("{}.{}", table.namespace, table.table_name));
+
+            // Persist job to system.jobs
+            if let Some(ref jobs_table_provider) = self.jobs_table_provider {
+                jobs_table_provider.insert_job(job_record)?;
+            }
+
+            log::info!(
+                "Flush job created: job_id={}, table={}.{}",
+                job_id,
+                table.namespace,
+                table.table_name
+            );
+
+            job_ids.push(job_id);
+        }
+
+        // TODO: Spawn async flush tasks via JobManager (T250)
+
+        Ok(ExecutionResult::Success(format!(
+            "Flush started for {} table(s) in namespace '{}'. Job IDs: [{}]",
+            job_ids.len(),
+            stmt.namespace,
+            job_ids.join(", ")
         )))
     }
 
@@ -1535,17 +1782,55 @@ impl SqlExecutor {
             .cloned()
             .unwrap_or_else(|| crate::catalog::UserId::from("system"));
 
-        if sql_upper.contains("USER TABLE") || sql_upper.contains("${USER_ID}") {
-            // User table - requires user_id
-            let actual_user_id = user_id.ok_or_else(|| {
-                KalamDbError::InvalidOperation(
-                    "CREATE USER TABLE requires X-USER-ID header to be set".to_string(),
-                )
-            })?;
+        // Check for TABLE_TYPE clause to determine table type
+        let has_table_type_user = sql_upper.contains("TABLE_TYPE")
+            && (sql_upper.contains("TABLE_TYPE USER")
+                || sql_upper.contains("TABLE_TYPE 'USER'")
+                || sql_upper.contains("TABLE_TYPE \"USER\""));
+        let has_table_type_shared = sql_upper.contains("TABLE_TYPE")
+            && (sql_upper.contains("TABLE_TYPE SHARED")
+                || sql_upper.contains("TABLE_TYPE 'SHARED'")
+                || sql_upper.contains("TABLE_TYPE \"SHARED\""));
+        let has_table_type_stream = sql_upper.contains("TABLE_TYPE")
+            && (sql_upper.contains("TABLE_TYPE STREAM")
+                || sql_upper.contains("TABLE_TYPE 'STREAM'")
+                || sql_upper.contains("TABLE_TYPE \"STREAM\""));
 
-            let stmt = CreateUserTableStatement::parse(sql, &namespace_id)?;
+        if sql_upper.contains("USER TABLE")
+            || sql_upper.contains("${USER_ID}")
+            || has_table_type_user
+        {
+            // User table - requires user_id (from header or OWNER_ID clause)
+            // Try to extract OWNER_ID from SQL if user_id header is not provided
+            let extracted_owner_id: Option<crate::catalog::UserId> = if user_id.is_none() {
+                // Extract OWNER_ID from SQL using regex
+                use regex::Regex;
+                let owner_id_re = Regex::new(r#"(?i)OWNER_ID\s+['"]([^'"]+)['"]"#).unwrap();
+                owner_id_re
+                    .captures(sql)
+                    .map(|caps| crate::catalog::UserId::from(caps[1].to_string().as_str()))
+            } else {
+                None
+            };
+
+            let actual_user_id = if let Some(uid) = user_id {
+                uid
+            } else if let Some(ref extracted_uid) = extracted_owner_id {
+                extracted_uid
+            } else {
+                return Err(KalamDbError::InvalidOperation(
+                    "CREATE USER TABLE requires X-USER-ID header or OWNER_ID clause".to_string(),
+                ));
+            };
+
+            let namespace_id_for_parse =
+                kalamdb_commons::models::NamespaceId::new(namespace_id.as_str());
+            let stmt = CreateUserTableStatement::parse(sql, &namespace_id_for_parse)
+                .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+            
+            // stmt fields are already the right types from kalamdb_commons
             let table_name = stmt.table_name.clone();
-            let namespace_id = stmt.namespace_id.clone(); // Use the namespace from the statement
+            let namespace_id = stmt.namespace_id.clone();
             let schema = stmt.schema.clone();
             let flush_policy = stmt.flush_policy.clone();
             let deleted_retention_hours = stmt.deleted_retention_hours;
@@ -1556,16 +1841,15 @@ impl SqlExecutor {
             // T167b: Validate storage_id exists in system.storages
             // T167a: Default to 'local' if not specified
             let storage_id = stmt_storage_id.unwrap_or_else(|| "local".to_string());
-            
+
             // T167c: NOT NULL enforcement - storage_id must exist
             if let Some(kalam_sql) = &self.kalam_sql {
-                let storage_exists = kalam_sql
-                    .get_storage(&storage_id)
-                    .is_ok();
+                let storage_exists = kalam_sql.get_storage(&storage_id).is_ok();
                 if !storage_exists {
-                    return Err(KalamDbError::InvalidOperation(
-                        format!("Storage '{}' does not exist in system.storages", storage_id)
-                    ));
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "Storage '{}' does not exist in system.storages",
+                        storage_id
+                    )));
                 }
             }
 
@@ -1583,7 +1867,7 @@ impl SqlExecutor {
                     storage_location: metadata.storage_location.clone(),
                     storage_id: Some(storage_id.clone()),
                     use_user_storage: stmt_use_user_storage,
-                    flush_policy: serde_json::to_string(&flush_policy.unwrap_or_default())
+                    flush_policy: serde_json::to_string(&flush_policy.clone().unwrap_or_default())
                         .unwrap_or_else(|_| "{}".to_string()),
                     schema_version: 1,
                     deleted_retention_hours: deleted_retention_hours.unwrap_or(0) as i32,
@@ -1603,7 +1887,7 @@ impl SqlExecutor {
                     &table_name,
                     crate::catalog::TableType::User,
                     schema,
-                    default_user_id,
+                    actual_user_id.clone(),
                 )
                 .await?;
             }
@@ -1614,6 +1898,7 @@ impl SqlExecutor {
         } else if sql_upper.contains("STREAM TABLE")
             || sql_upper.contains("TTL")
             || sql_upper.contains("BUFFER_SIZE")
+            || has_table_type_stream
         {
             // Stream table
             let stmt = CreateStreamTableStatement::parse(sql, &namespace_id)?;
@@ -1666,8 +1951,8 @@ impl SqlExecutor {
             Ok(ExecutionResult::Success(
                 "Stream table created successfully".to_string(),
             ))
-        } else {
-            // Default to shared table (most common case)
+        } else if has_table_type_shared {
+            // Shared table specified via TABLE_TYPE
             let stmt = CreateSharedTableStatement::parse(sql, &namespace_id)?;
             let table_name = stmt.table_name.clone();
             let namespace_id = stmt.namespace_id.clone(); // Use the namespace from the statement
@@ -1686,13 +1971,13 @@ impl SqlExecutor {
                     // Convert local FlushPolicy to the global one for serialization
                     let flush_policy_json = if let Some(fp) = flush_policy {
                         match fp {
-                            crate::sql::ddl::create_shared_table::FlushPolicy::Rows(n) => {
+                            FlushPolicy::Rows(n) => {
                                 serde_json::json!({"type": "row_limit", "row_limit": n}).to_string()
                             }
-                            crate::sql::ddl::create_shared_table::FlushPolicy::Time(s) => {
+                            FlushPolicy::Time(s) => {
                                 serde_json::json!({"type": "time_interval", "interval_seconds": s}).to_string()
                             }
-                            crate::sql::ddl::create_shared_table::FlushPolicy::Combined { rows, seconds } => {
+                            FlushPolicy::Combined { rows, seconds } => {
                                 serde_json::json!({"type": "combined", "row_limit": rows, "interval_seconds": seconds}).to_string()
                             }
                         }
@@ -1745,6 +2030,79 @@ impl SqlExecutor {
                     namespace_id, table_name
                 )))
             }
+        } else {
+            // No TABLE_TYPE specified - default to shared table (most common case)
+            let stmt = CreateSharedTableStatement::parse(sql, &namespace_id)?;
+            let table_name = stmt.table_name.clone();
+            let namespace_id = stmt.namespace_id.clone();
+            let schema = stmt.schema.clone();
+            let flush_policy = stmt.flush_policy.clone();
+            let deleted_retention = stmt.deleted_retention;
+
+            let (metadata, was_created) = self.shared_table_service.create_table(stmt)?;
+
+            if was_created {
+                if let Some(kalam_sql) = &self.kalam_sql {
+                    let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
+                    let flush_policy_json = if let Some(fp) = flush_policy {
+                        match fp {
+                            FlushPolicy::Rows(n) => {
+                                serde_json::json!({"type": "row_limit", "row_limit": n}).to_string()
+                            }
+                            FlushPolicy::Time(s) => {
+                                serde_json::json!({"type": "time_interval", "interval_seconds": s}).to_string()
+                            }
+                            FlushPolicy::Combined { rows, seconds } => {
+                                serde_json::json!({"type": "combined", "row_limit": rows, "interval_seconds": seconds}).to_string()
+                            }
+                        }
+                    } else {
+                        "{}".to_string()
+                    };
+
+                    let table = kalamdb_sql::models::Table {
+                        table_id,
+                        table_name: table_name.as_str().to_string(),
+                        namespace: namespace_id.as_str().to_string(),
+                        table_type: "shared".to_string(),
+                        created_at: chrono::Utc::now().timestamp_millis(),
+                        storage_location: metadata.storage_location.clone(),
+                        storage_id: Some("local".to_string()),
+                        use_user_storage: false,
+                        flush_policy: flush_policy_json,
+                        schema_version: 1,
+                        deleted_retention_hours: deleted_retention
+                            .map(|s| (s / 3600) as i32)
+                            .unwrap_or(0),
+                    };
+                    kalam_sql.insert_table(&table).map_err(|e| {
+                        KalamDbError::Other(format!(
+                            "Failed to insert table into system catalog: {}",
+                            e
+                        ))
+                    })?;
+                }
+
+                if self.shared_table_store.is_some() {
+                    self.register_table_with_datafusion(
+                        &namespace_id,
+                        &table_name,
+                        crate::catalog::TableType::Shared,
+                        schema,
+                        default_user_id,
+                    )
+                    .await?;
+                }
+
+                Ok(ExecutionResult::Success(
+                    "Table created successfully".to_string(),
+                ))
+            } else {
+                Ok(ExecutionResult::Success(format!(
+                    "Table {}.{} already exists (skipped)",
+                    namespace_id, table_name
+                )))
+            }
         }
     }
 
@@ -1758,14 +2116,15 @@ impl SqlExecutor {
         })?;
 
         // Use default namespace - the SQL parser will extract namespace from qualified name (namespace.table)
-        let default_namespace = crate::catalog::NamespaceId::new("default");
-        let stmt = DropTableStatement::parse(sql, &default_namespace)?;
+        let default_namespace = kalamdb_commons::NamespaceId::new("default".to_string());
+        let stmt = DropTableStatement::parse(sql, &default_namespace)
+            .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
-        // Execute the drop operation
+        // Convert TableKind to TableType
         let result = deletion_service.drop_table(
             &stmt.namespace_id,
             &stmt.table_name,
-            stmt.table_type,
+            stmt.table_type.into(),
             stmt.if_exists,
         )?;
 
@@ -1773,15 +2132,16 @@ impl SqlExecutor {
         if result.is_none() {
             return Ok(ExecutionResult::Success(format!(
                 "Table {}.{} does not exist (skipped)",
-                stmt.namespace_id, stmt.table_name
+                stmt.namespace_id.as_str(),
+                stmt.table_name.as_str()
             )));
         }
 
         let deletion_result = result.unwrap();
         Ok(ExecutionResult::Success(format!(
             "Table {}.{} dropped successfully ({} Parquet files deleted, {} bytes freed)",
-            stmt.namespace_id,
-            stmt.table_name,
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str(),
             deletion_result.files_deleted,
             deletion_result.bytes_freed
         )))
@@ -1811,13 +2171,15 @@ impl SqlExecutor {
         let effective_user_id = user_id
             .cloned()
             .unwrap_or_else(|| UserId::from("anonymous"));
-        
+
         // For UPDATE, only load the table being updated
         let table_name = format!("{}.{}", update_info.namespace, update_info.table);
         let mut table_refs = std::collections::HashSet::new();
         table_refs.insert(table_name);
-        
-        let session = self.create_user_session_context(&effective_user_id, Some(&table_refs)).await?;
+
+        let session = self
+            .create_user_session_context(&effective_user_id, Some(&table_refs))
+            .await?;
 
         // Get table provider from the appropriate session
         let table_ref = datafusion::sql::TableReference::parse_str(&format!(
@@ -1950,13 +2312,15 @@ impl SqlExecutor {
         let effective_user_id = user_id
             .cloned()
             .unwrap_or_else(|| UserId::from("anonymous"));
-        
+
         // For DELETE, only load the table being deleted from
         let table_name = format!("{}.{}", delete_info.namespace, delete_info.table);
         let mut table_refs = std::collections::HashSet::new();
         table_refs.insert(table_name);
-        
-        let session = self.create_user_session_context(&effective_user_id, Some(&table_refs)).await?;
+
+        let session = self
+            .create_user_session_context(&effective_user_id, Some(&table_refs))
+            .await?;
 
         // Get table provider from the appropriate session
         let table_ref = datafusion::sql::TableReference::parse_str(&format!(
@@ -2231,12 +2595,14 @@ impl SqlExecutor {
     /// Convert storage list to RecordBatch for SHOW STORAGES
     fn storages_to_record_batch(
         storages: Vec<kalamdb_sql::Storage>,
+        mask_credentials: bool,
     ) -> Result<RecordBatch, KalamDbError> {
         let schema = Arc::new(Schema::new(vec![
             Field::new("storage_id", DataType::Utf8, false),
             Field::new("storage_name", DataType::Utf8, false),
             Field::new("storage_type", DataType::Utf8, false),
             Field::new("base_directory", DataType::Utf8, false),
+            Field::new("credentials", DataType::Utf8, true),
             Field::new("description", DataType::Utf8, true),
         ]));
 
@@ -2268,6 +2634,17 @@ impl SqlExecutor {
                 .collect::<Vec<_>>(),
         ));
 
+        let credentials_values: Vec<Option<String>> = storages
+            .iter()
+            .map(|s| match (&s.credentials, mask_credentials) {
+                (Some(_), true) => Some("***".to_string()),
+                (Some(value), false) => Some(value.clone()),
+                (None, _) => None,
+            })
+            .collect();
+
+        let credentials: ArrayRef = Arc::new(StringArray::from(credentials_values));
+
         let descriptions: ArrayRef = Arc::new(StringArray::from(
             storages
                 .iter()
@@ -2275,8 +2652,21 @@ impl SqlExecutor {
                 .collect::<Vec<_>>(),
         ));
 
-        RecordBatch::try_new(schema, vec![ids, names, types, directories, descriptions])
-            .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
+        RecordBatch::try_new(
+            schema,
+            vec![ids, names, types, directories, credentials, descriptions],
+        )
+        .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
+    }
+
+    fn is_admin(user_id: Option<&UserId>) -> bool {
+        match user_id {
+            Some(id) => {
+                let id_str = id.as_ref().to_lowercase();
+                id_str == "admin" || id_str == "system"
+            }
+            None => false,
+        }
     }
 
     /// Convert table details to RecordBatch for DESCRIBE TABLE
@@ -2317,7 +2707,8 @@ impl SqlExecutor {
                     table.table_type.to_string(),
                     schema_version_str,
                     created_at_str,
-                    "Stream tables: NO _updated/_deleted columns, NO Parquet storage (ephemeral)".to_string(),
+                    "Stream tables: NO _updated/_deleted columns, NO Parquet storage (ephemeral)"
+                        .to_string(),
                 ],
             )
         } else {
@@ -2507,22 +2898,26 @@ mod tests {
     #[tokio::test]
     async fn test_describe_stream_table_shows_no_system_columns() {
         // Create test database with necessary column families
-        let test_db = TestDb::new(&["system_namespaces", "system_tables", "system_table_schemas"]).unwrap();
+        let test_db =
+            TestDb::new(&["system_namespaces", "system_tables", "system_table_schemas"]).unwrap();
         let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
         let session_context = Arc::new(SessionContext::new());
 
-        let user_table_store = Arc::new(kalamdb_store::UserTableStore::new(test_db.db.clone()).unwrap());
+        let user_table_store =
+            Arc::new(kalamdb_store::UserTableStore::new(test_db.db.clone()).unwrap());
         let user_table_service = Arc::new(crate::services::UserTableService::new(
             kalam_sql.clone(),
             user_table_store.clone(),
         ));
-        let shared_table_store = Arc::new(kalamdb_store::SharedTableStore::new(test_db.db.clone()).unwrap());
+        let shared_table_store =
+            Arc::new(kalamdb_store::SharedTableStore::new(test_db.db.clone()).unwrap());
         let shared_table_service = Arc::new(crate::services::SharedTableService::new(
             shared_table_store.clone(),
             kalam_sql.clone(),
         ));
-        let stream_table_store = Arc::new(kalamdb_store::StreamTableStore::new(test_db.db.clone()).unwrap());
+        let stream_table_store =
+            Arc::new(kalamdb_store::StreamTableStore::new(test_db.db.clone()).unwrap());
         let stream_table_service = Arc::new(crate::services::StreamTableService::new(
             stream_table_store.clone(),
             kalam_sql.clone(),
@@ -2556,7 +2951,7 @@ mod tests {
             schema_version: 1,
             deleted_retention_hours: 0,
         };
-        
+
         kalam_sql.insert_table(&table).unwrap();
 
         // Execute DESCRIBE TABLE
@@ -2570,20 +2965,20 @@ mod tests {
             ExecutionResult::RecordBatch(batch) => {
                 assert_eq!(batch.num_columns(), 2);
                 assert!(batch.num_rows() > 0);
-                
+
                 // Convert to string to check content
                 let properties_col = batch
                     .column(0)
                     .as_any()
                     .downcast_ref::<StringArray>()
                     .unwrap();
-                
+
                 let values_col = batch
                     .column(1)
                     .as_any()
                     .downcast_ref::<StringArray>()
                     .unwrap();
-                
+
                 // Check that table_type is Stream
                 let mut found_stream_type = false;
                 let mut found_note = false;

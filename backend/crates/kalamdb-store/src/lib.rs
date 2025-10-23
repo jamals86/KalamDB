@@ -32,8 +32,7 @@ pub mod user_table_store;
 pub use rocksdb_impl::RocksDBBackend;
 // pub use s3_storage::S3Storage; // T171: Export S3Storage (requires cmake)
 pub use sharding::{
-    AlphabeticSharding, ConsistentHashSharding, NumericSharding, ShardingRegistry,
-    ShardingStrategy,
+    AlphabeticSharding, ConsistentHashSharding, NumericSharding, ShardingRegistry, ShardingStrategy,
 };
 pub use shared_table_store::SharedTableStore;
 pub use storage_trait::{Operation, Partition, StorageBackend, StorageError};

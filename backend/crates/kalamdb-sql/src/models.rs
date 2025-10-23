@@ -83,8 +83,8 @@ pub struct Table {
     pub created_at: i64,
     pub storage_location: String,
     pub storage_id: Option<String>, // T167: FK to system.storages
-    pub use_user_storage: bool, // T168: Allow per-user storage override
-    pub flush_policy: String, // JSON
+    pub use_user_storage: bool,     // T168: Allow per-user storage override
+    pub flush_policy: String,       // JSON
     pub schema_version: i32,
     pub deleted_retention_hours: i32,
 }
@@ -108,6 +108,8 @@ pub struct Storage {
     pub description: Option<String>,
     pub storage_type: String, // "filesystem" or "s3"
     pub base_directory: String,
+    #[serde(default)]
+    pub credentials: Option<String>,
     pub shared_tables_template: String,
     pub user_tables_template: String,
     pub created_at: i64,

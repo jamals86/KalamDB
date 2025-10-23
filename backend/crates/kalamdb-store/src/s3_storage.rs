@@ -3,9 +3,11 @@
 //! Provides write and read operations for Parquet files stored in AWS S3.
 //! This module implements the S3 storage backend for KalamDB's multi-storage architecture.
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::primitives::ByteStream;
+use kalamdb_commons::models::StorageConfig;
+use serde::Deserialize;
 use std::path::Path;
 
 /// S3 storage backend
@@ -27,6 +29,8 @@ use std::path::Path;
 pub struct S3Storage {
     client: S3Client,
     bucket: String,
+    prefix: Option<String>,
+    credentials: Option<S3Credentials>,
 }
 
 impl S3Storage {
@@ -36,7 +40,31 @@ impl S3Storage {
     /// * `client` - AWS S3 client
     /// * `bucket` - S3 bucket name
     pub fn new(client: S3Client, bucket: String) -> Self {
-        Self { client, bucket }
+        Self {
+            client,
+            bucket,
+            prefix: None,
+            credentials: None,
+        }
+    }
+
+    /// Build storage backend from a storage configuration.
+    pub fn from_storage_config(client: S3Client, config: &StorageConfig) -> Result<Self> {
+        let base_directory = config.base_directory();
+        let bucket = Self::parse_bucket_from_url(base_directory)
+            .ok_or_else(|| anyhow!("Invalid S3 base_directory: {}", base_directory))?;
+        let prefix = Self::parse_prefix_from_url(base_directory);
+        let credentials = config
+            .credentials()
+            .map(S3Credentials::from_json)
+            .transpose()?;
+
+        Ok(Self {
+            client,
+            bucket,
+            prefix,
+            credentials,
+        })
     }
 
     /// Write a Parquet file to S3 (T171b)
@@ -121,6 +149,11 @@ impl S3Storage {
         Ok(data)
     }
 
+    /// Return parsed credentials if available.
+    pub fn credentials(&self) -> Option<&S3Credentials> {
+        self.credentials.as_ref()
+    }
+
     /// Extract bucket name from s3:// URL
     ///
     /// # Arguments
@@ -162,9 +195,48 @@ impl S3Storage {
     }
 }
 
+/// Parsed credential payload for S3 operations
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct S3Credentials {
+    #[serde(alias = "accessKey", alias = "access_key")]
+    pub access_key: String,
+    #[serde(alias = "secretKey", alias = "secret_key")]
+    pub secret_key: String,
+    #[serde(default, alias = "sessionToken", alias = "session_token")]
+    pub session_token: Option<String>,
+    #[serde(default)]
+    pub region: Option<String>,
+}
+
+impl S3Credentials {
+    pub fn from_json(raw: &str) -> Result<Self> {
+        let creds: S3Credentials = serde_json::from_str(raw)
+            .map_err(|e| anyhow!("Invalid S3 credentials JSON: {}", e))?;
+        Ok(creds)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_credentials_from_json() {
+        let json = r#"{"access_key":"AKIA","secret_key":"SECRET","session_token":"token","region":"us-west-2"}"#;
+        let creds = S3Credentials::from_json(json).unwrap();
+        assert_eq!(creds.access_key, "AKIA");
+        assert_eq!(creds.secret_key, "SECRET");
+        assert_eq!(creds.session_token, Some("token".to_string()));
+        assert_eq!(creds.region, Some("us-west-2".to_string()));
+    }
+
+    #[test]
+    fn test_parse_credentials_from_json_missing_optional() {
+        let json = r#"{"access_key":"AKIA","secret_key":"SECRET"}"#;
+        let creds = S3Credentials::from_json(json).unwrap();
+        assert!(creds.session_token.is_none());
+        assert!(creds.region.is_none());
+    }
 
     #[test]
     fn test_parse_bucket_from_url() {

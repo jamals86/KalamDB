@@ -199,6 +199,19 @@ impl ChangeEvent {
     }
 }
 
+/// Health check response from the server
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthCheckResponse {
+    /// Health status (e.g., "healthy")
+    pub status: String,
+
+    /// Server version
+    pub version: String,
+
+    /// API version (e.g., "v1")
+    pub api_version: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

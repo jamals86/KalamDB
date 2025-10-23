@@ -11,8 +11,8 @@ use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::flush::FlushPolicy;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
-use crate::sql::ddl::create_shared_table::CreateSharedTableStatement;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use kalamdb_sql::ddl::{CreateSharedTableStatement, FlushPolicy as DdlFlushPolicy};
 use kalamdb_sql::models::TableSchema;
 use kalamdb_sql::KalamSql;
 use kalamdb_store::SharedTableStore;
@@ -258,20 +258,20 @@ impl SharedTableService {
     /// Parse flush policy from statement
     fn parse_flush_policy(
         &self,
-        flush_policy: Option<&crate::sql::ddl::create_shared_table::FlushPolicy>,
+        flush_policy: Option<&DdlFlushPolicy>,
     ) -> Result<FlushPolicy, KalamDbError> {
         match flush_policy {
-            Some(crate::sql::ddl::create_shared_table::FlushPolicy::Rows(rows)) => {
+            Some(DdlFlushPolicy::Rows(rows)) => {
                 Ok(FlushPolicy::RowLimit {
                     row_limit: *rows as u32,
                 })
             }
-            Some(crate::sql::ddl::create_shared_table::FlushPolicy::Time(seconds)) => {
+            Some(DdlFlushPolicy::Time(seconds)) => {
                 Ok(FlushPolicy::TimeInterval {
                     interval_seconds: *seconds as u32,
                 })
             }
-            Some(crate::sql::ddl::create_shared_table::FlushPolicy::Combined { rows, seconds }) => {
+            Some(DdlFlushPolicy::Combined { rows, seconds }) => {
                 Ok(FlushPolicy::Combined {
                     row_limit: *rows as u32,
                     interval_seconds: *seconds as u32,
@@ -510,12 +510,12 @@ mod tests {
         let (service, _test_db) = create_test_service();
 
         // Row-based policy
-        let policy = crate::sql::ddl::create_shared_table::FlushPolicy::Rows(500);
+        let policy = DdlFlushPolicy::Rows(500);
         let result = service.parse_flush_policy(Some(&policy)).unwrap();
         assert!(matches!(result, FlushPolicy::RowLimit { row_limit: 500 }));
 
         // Time-based policy
-        let policy = crate::sql::ddl::create_shared_table::FlushPolicy::Time(60);
+        let policy = DdlFlushPolicy::Time(60);
         let result = service.parse_flush_policy(Some(&policy)).unwrap();
         assert!(matches!(
             result,
@@ -525,7 +525,7 @@ mod tests {
         ));
 
         // Combined policy
-        let policy = crate::sql::ddl::create_shared_table::FlushPolicy::Combined {
+        let policy = DdlFlushPolicy::Combined {
             rows: 1000,
             seconds: 300,
         };

@@ -2,16 +2,16 @@
 
 use crate::error::KalamDbError;
 use crate::tables::system::system_tables::SystemTables;
+use crate::tables::system::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+    ArrayRef, BooleanBuilder, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
 };
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::error::Result as DataFusionResult;
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::memory::MemoryExec;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_sql::KalamSql;
 use std::any::Any;
@@ -32,7 +32,7 @@ impl SystemTablesTableProvider {
         }
     }
 
-    fn load_records(&self) -> Result<RecordBatch, KalamDbError> {
+    fn build_batch(&self) -> Result<RecordBatch, KalamDbError> {
         let tables = self
             .kalam_sql
             .scan_all_tables()
@@ -44,6 +44,8 @@ impl SystemTablesTableProvider {
         let mut table_types = StringBuilder::new();
         let mut created_ats = Vec::with_capacity(tables.len());
         let mut storage_locations = StringBuilder::new();
+        let mut storage_ids = StringBuilder::new();
+        let mut use_user_storage_flags = BooleanBuilder::new();
         let mut flush_policies = StringBuilder::new();
         let mut schema_versions = Vec::with_capacity(tables.len());
         let mut retention_hours = Vec::with_capacity(tables.len());
@@ -55,6 +57,12 @@ impl SystemTablesTableProvider {
             table_types.append_value(&table.table_type);
             created_ats.push(Some(table.created_at));
             storage_locations.append_value(&table.storage_location);
+            if let Some(ref storage_id) = table.storage_id {
+                storage_ids.append_value(storage_id);
+            } else {
+                storage_ids.append_null();
+            }
+            use_user_storage_flags.append_value(table.use_user_storage);
             flush_policies.append_value(&table.flush_policy);
             schema_versions.push(Some(table.schema_version));
             retention_hours.push(Some(table.deleted_retention_hours));
@@ -69,6 +77,8 @@ impl SystemTablesTableProvider {
                 Arc::new(table_types.finish()) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
                 Arc::new(storage_locations.finish()) as ArrayRef,
+                Arc::new(storage_ids.finish()) as ArrayRef,
+                Arc::new(use_user_storage_flags.finish()) as ArrayRef,
                 Arc::new(flush_policies.finish()) as ArrayRef,
                 Arc::new(Int32Array::from(schema_versions)) as ArrayRef,
                 Arc::new(Int32Array::from(retention_hours)) as ArrayRef,
@@ -77,6 +87,20 @@ impl SystemTablesTableProvider {
         .map_err(|e| KalamDbError::Other(format!("Failed to create system.tables batch: {}", e)))?;
 
         Ok(batch)
+    }
+}
+
+impl SystemTableProviderExt for SystemTablesTableProvider {
+    fn table_name(&self) -> &'static str {
+        kalamdb_commons::constants::SystemTableNames::TABLES
+    }
+
+    fn schema_ref(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    fn load_batch(&self) -> Result<RecordBatch, KalamDbError> {
+        self.build_batch()
     }
 }
 
@@ -101,16 +125,6 @@ impl TableProvider for SystemTablesTableProvider {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let batch = self.load_records().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to load system.tables records: {}", e))
-        })?;
-
-        let partitions = vec![vec![batch]];
-        let exec = MemoryExec::try_new(&partitions, self.schema.clone(), projection.cloned())
-            .map_err(|e| {
-                DataFusionError::Execution(format!("Failed to build MemoryExec: {}", e))
-            })?;
-
-        Ok(Arc::new(exec))
+        self.into_memory_exec(projection)
     }
 }

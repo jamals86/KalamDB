@@ -1,0 +1,272 @@
+//! FLUSH TABLE and FLUSH ALL TABLES command parsing
+//!
+//! This module provides SQL command parsing for manual flush operations. Flush commands
+//! trigger immediate data migration from RocksDB to Parquet files asynchronously,
+//! returning a job_id for monitoring via system.jobs.
+//!
+//! ## Commands
+//!
+//! ### FLUSH TABLE
+//!
+//! Triggers an asynchronous flush for a single table:
+//!
+//! ```sql
+//! FLUSH TABLE namespace.table_name;
+//! ```
+//!
+//! **Response**: Returns job_id immediately (< 100ms)
+//! **Monitoring**: Poll `SELECT * FROM system.jobs WHERE job_id = 'returned_id'`
+//! **Result**: When complete, system.jobs.result contains records_flushed and storage_location
+//!
+//! ### FLUSH ALL TABLES
+//!
+//! Triggers asynchronous flush for all user tables in a namespace:
+//!
+//! ```sql
+//! FLUSH ALL TABLES IN namespace;
+//! ```
+//!
+//! **Response**: Returns array of job_ids (one per table)
+//! **Monitoring**: Poll system.jobs for each job_id
+//! **Concurrent Safety**: Multiple flush jobs for different tables can run concurrently
+//!
+//! ## Asynchronous Execution
+//!
+//! FLUSH commands return immediately with a job_id. The actual flush operation runs
+//! in the background via the JobManager. This design prevents long-running SQL
+//! commands from blocking the API.
+//!
+//! **Job Lifecycle**:
+//! 1. Parse FLUSH command → validate table/namespace exists
+//! 2. Create job record in system.jobs with status='running'
+//! 3. Return job_id to client (< 100ms)
+//! 4. JobManager spawns async task for flush execution
+//! 5. Flush task updates system.jobs.result with metrics
+//! 6. Final status: 'completed' (success) or 'failed' (error)
+//!
+//! ## Error Handling
+//!
+//! **Parse Errors**:
+//! - Invalid syntax → immediate error response
+//! - Non-existent table/namespace → immediate error response
+//!
+//! **Execution Errors**:
+//! - Parquet write failure → job status='failed', error in system.jobs.result
+//! - In-progress detection → Allow both jobs or return existing job_id (T252)
+//!
+//! ## Examples
+//!
+//! ```rust
+//! use kalamdb_sql::flush_commands::{FlushTableStatement, FlushAllTablesStatement};
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Parse FLUSH TABLE
+//! let stmt = FlushTableStatement::parse("FLUSH TABLE prod.events")?;
+//! assert_eq!(stmt.namespace, "prod");
+//! assert_eq!(stmt.table_name, "events");
+//!
+//! // Parse FLUSH ALL TABLES
+//! let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod")?;
+//! assert_eq!(stmt.namespace, "prod");
+//! # Ok(())
+//! # }
+//! ```
+
+/// FLUSH TABLE statement
+///
+/// Triggers asynchronous flush for a single table, returning job_id immediately.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlushTableStatement {
+    /// Namespace containing the table
+    pub namespace: String,
+    /// Table name to flush
+    pub table_name: String,
+}
+
+impl FlushTableStatement {
+    /// Parse FLUSH TABLE command from SQL string
+    ///
+    /// # Syntax
+    ///
+    /// ```sql
+    /// FLUSH TABLE <namespace>.<table_name>;
+    /// ```
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use kalamdb_sql::flush_commands::FlushTableStatement;
+    /// let stmt = FlushTableStatement::parse("FLUSH TABLE prod.events").unwrap();
+    /// assert_eq!(stmt.namespace, "prod");
+    /// assert_eq!(stmt.table_name, "events");
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns error string if:
+    /// - Syntax is invalid
+    /// - Table name is not qualified (missing namespace)
+    pub fn parse(sql: &str) -> Result<Self, String> {
+        use crate::parser::utils::{normalize_sql, extract_qualified_table};
+
+        // Normalize SQL: remove extra whitespace, semicolons
+        let normalized = normalize_sql(sql);
+        let sql_upper = normalized.to_uppercase();
+
+        // Check for FLUSH TABLE prefix
+        if !sql_upper.starts_with("FLUSH TABLE") {
+            return Err("SQL must start with FLUSH TABLE".to_string());
+        }
+
+        // Extract everything after "FLUSH TABLE"
+        let tokens: Vec<&str> = normalized.split_whitespace().collect();
+        if tokens.len() < 3 {
+            return Err("Expected qualified table name after FLUSH TABLE".to_string());
+        }
+
+        // Get table identifier (should be namespace.table_name)
+        let table_ref = tokens[2];
+        let (namespace, table_name) = extract_qualified_table(table_ref)?;
+
+        // Check for extra tokens
+        if tokens.len() > 3 {
+            return Err("Unexpected tokens after table name".to_string());
+        }
+
+        Ok(Self {
+            namespace,
+            table_name,
+        })
+    }
+}
+
+/// FLUSH ALL TABLES statement
+///
+/// Triggers asynchronous flush for all user tables in a namespace, returning
+/// array of job_ids (one per table).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlushAllTablesStatement {
+    /// Namespace to flush all tables from
+    pub namespace: String,
+}
+
+impl FlushAllTablesStatement {
+    /// Parse FLUSH ALL TABLES command from SQL string
+    ///
+    /// # Syntax
+    ///
+    /// ```sql
+    /// FLUSH ALL TABLES IN <namespace>;
+    /// ```
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use kalamdb_sql::flush_commands::FlushAllTablesStatement;
+    /// let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod").unwrap();
+    /// assert_eq!(stmt.namespace, "prod");
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns error string if:
+    /// - Syntax is invalid
+    /// - Missing IN keyword
+    /// - Extra tokens after namespace
+    pub fn parse(sql: &str) -> Result<Self, String> {
+        use crate::parser::utils::normalize_sql;
+
+        // Normalize SQL: remove extra whitespace, semicolons
+        let normalized = normalize_sql(sql);
+        let sql_upper = normalized.to_uppercase();
+
+        // Check for FLUSH ALL TABLES IN prefix
+        if !sql_upper.starts_with("FLUSH ALL TABLES IN") {
+            return Err("SQL must start with FLUSH ALL TABLES IN".to_string());
+        }
+
+        // Extract everything after "FLUSH ALL TABLES IN"
+        let tokens: Vec<&str> = normalized.split_whitespace().collect();
+        if tokens.len() < 5 {
+            return Err("Expected namespace after FLUSH ALL TABLES IN".to_string());
+        }
+
+        // Get namespace (5th token: FLUSH ALL TABLES IN <namespace>)
+        let namespace = tokens[4].to_string();
+
+        // Check for extra tokens
+        if tokens.len() > 5 {
+            return Err("Unexpected tokens after namespace".to_string());
+        }
+
+        Ok(Self { namespace })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_flush_table_basic() {
+        let stmt = FlushTableStatement::parse("FLUSH TABLE prod.events").unwrap();
+        assert_eq!(stmt.namespace, "prod");
+        assert_eq!(stmt.table_name, "events");
+    }
+
+    #[test]
+    fn test_parse_flush_table_with_semicolon() {
+        let stmt = FlushTableStatement::parse("FLUSH TABLE prod.events;").unwrap();
+        assert_eq!(stmt.namespace, "prod");
+        assert_eq!(stmt.table_name, "events");
+    }
+
+    #[test]
+    fn test_parse_flush_table_unqualified_error() {
+        let result = FlushTableStatement::parse("FLUSH TABLE events");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("must be qualified"));
+    }
+
+    #[test]
+    fn test_parse_flush_table_extra_tokens_error() {
+        let result = FlushTableStatement::parse("FLUSH TABLE prod.events WHERE id > 100");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unexpected tokens"));
+    }
+
+    #[test]
+    fn test_parse_flush_all_tables_basic() {
+        let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod").unwrap();
+        assert_eq!(stmt.namespace, "prod");
+    }
+
+    #[test]
+    fn test_parse_flush_all_tables_with_semicolon() {
+        let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod;").unwrap();
+        assert_eq!(stmt.namespace, "prod");
+    }
+
+    #[test]
+    fn test_parse_flush_all_tables_missing_in_error() {
+        let result = FlushAllTablesStatement::parse("FLUSH ALL TABLES prod");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("FLUSH ALL TABLES IN"));
+    }
+
+    #[test]
+    fn test_parse_flush_all_tables_extra_tokens_error() {
+        let result = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod WHERE id > 100");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unexpected tokens"));
+    }
+}

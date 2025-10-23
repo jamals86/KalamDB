@@ -4,7 +4,7 @@
 //! using the jsonwebtoken crate.
 
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
-use kalamdb_core::catalog::UserId;
+use kalamdb_commons::models::UserId;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -34,7 +34,9 @@ impl fmt::Display for JwtError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             JwtError::MissingToken => write!(f, "Missing JWT token"),
-            JwtError::InvalidFormat => write!(f, "Invalid token format (expected 'Bearer <token>')"),
+            JwtError::InvalidFormat => {
+                write!(f, "Invalid token format (expected 'Bearer <token>')")
+            }
             JwtError::InvalidSignature(msg) => write!(f, "Invalid token signature: {}", msg),
             JwtError::Expired => write!(f, "Token has expired"),
             JwtError::MissingClaims(field) => write!(f, "Missing required claim: {}", field),
@@ -118,8 +120,7 @@ impl JwtAuth {
     /// ```
     pub fn validate_token(&self, token: &str) -> Result<Claims, JwtError> {
         // Check algorithm support
-        let header = decode_header(token)
-            .map_err(|e| JwtError::InvalidSignature(e.to_string()))?;
+        let header = decode_header(token).map_err(|e| JwtError::InvalidSignature(e.to_string()))?;
 
         if header.alg != self.validation.algorithms[0] {
             return Err(JwtError::UnsupportedAlgorithm);

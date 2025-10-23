@@ -32,22 +32,35 @@
 //! ```
 
 pub mod adapter;
+pub mod compatibility;
+pub mod ddl;
 pub mod executor;
+pub mod flush_commands;
 pub mod job_commands;
+pub mod keywords;
 pub mod models;
 pub mod parser;
 pub mod query_cache;
 pub mod storage_commands;
 
 pub use adapter::RocksDbAdapter;
+pub use compatibility::{
+    format_mysql_column_not_found, format_mysql_error, format_mysql_syntax_error,
+    format_mysql_table_not_found, format_postgres_column_not_found, format_postgres_error,
+    format_postgres_syntax_error, format_postgres_table_not_found, map_sql_type_to_arrow,
+    ErrorStyle,
+};
 pub use executor::SqlExecutor;
+pub use flush_commands::{FlushAllTablesStatement, FlushTableStatement};
 pub use job_commands::{parse_job_command, JobCommand};
+pub use keywords::{KalamDbKeyword, SqlKeyword};
 pub use models::*;
 pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
 pub use storage_commands::{
     AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
 };
+
 
 use anyhow::Result;
 use rocksdb::DB;

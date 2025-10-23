@@ -2,9 +2,9 @@
 //!
 //! Defines metadata for user, shared, and stream tables in KalamDB.
 
-use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::flush::FlushPolicy;
 use chrono::{DateTime, Utc};
+use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use serde::{Deserialize, Serialize};
 
 /// Table metadata entity

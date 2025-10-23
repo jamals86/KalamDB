@@ -15,6 +15,7 @@ impl SystemStorages {
             Field::new("description", DataType::Utf8, true),
             Field::new("storage_type", DataType::Utf8, false),
             Field::new("base_directory", DataType::Utf8, false),
+            Field::new("credentials", DataType::Utf8, true),
             Field::new("shared_tables_template", DataType::Utf8, false),
             Field::new("user_tables_template", DataType::Utf8, false),
             Field::new(

@@ -1,6 +1,6 @@
-//! SQL response models for the REST API
+//! SQL response model
 //!
-//! This module defines the structure for SQL execution responses from the `/api/sql` endpoint.
+//! This module defines the structure for SQL execution responses from the `/v1/api/sql` endpoint.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

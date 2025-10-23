@@ -6,8 +6,9 @@
 //! **Architecture Update (T031a)**: Cache now loads from system_tables and system_namespaces CFs
 //! via kalamdb-sql instead of JSON configuration files.
 
-use crate::catalog::{NamespaceId, TableMetadata, TableName};
+use crate::catalog::TableMetadata;
 use crate::error::KalamDbError;
+use kalamdb_commons::models::{NamespaceId, TableName};
 use kalamdb_sql::KalamSql;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};

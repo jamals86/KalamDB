@@ -16,9 +16,9 @@ use crate::error::KalamDbError;
 use crate::flush::FlushPolicy;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 use crate::services::storage_location_service::StorageLocationService;
-use crate::sql::ddl::create_user_table::{CreateUserTableStatement, StorageLocation};
 use crate::storage::column_family_manager::ColumnFamilyManager;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use kalamdb_sql::ddl::{CreateUserTableStatement, StorageLocation, UserTableFlushPolicy};
 use kalamdb_sql::KalamSql;
 use kalamdb_store::UserTableStore;
 use std::sync::Arc;
@@ -71,20 +71,23 @@ impl UserTableService {
         TableMetadata::validate_table_name(stmt.table_name.as_str())
             .map_err(KalamDbError::InvalidOperation)?;
 
+        let namespace_id_core = NamespaceId::from(stmt.namespace_id.clone());
+        let table_name_core = TableName::from(stmt.table_name.clone());
+
         // Check if table already exists
-        if self.table_exists(&stmt.namespace_id, &stmt.table_name)? {
+        if self.table_exists(&namespace_id_core, &table_name_core)? {
             if stmt.if_not_exists {
                 // Return error with special message that can be handled by caller
                 return Err(KalamDbError::AlreadyExists(format!(
                     "Table {}.{} already exists",
-                    stmt.namespace_id.as_str(),
-                    stmt.table_name.as_str()
+                    namespace_id_core.as_str(),
+                    table_name_core.as_str()
                 )));
             } else {
                 return Err(KalamDbError::AlreadyExists(format!(
                     "Table {}.{} already exists",
-                    stmt.namespace_id.as_str(),
-                    stmt.table_name.as_str()
+                    namespace_id_core.as_str(),
+                    table_name_core.as_str()
                 )));
             }
         }
@@ -101,8 +104,8 @@ impl UserTableService {
 
         // 4. Create schema file (schema_v1.json, manifest.json, current.json)
         self.create_schema_files(
-            &stmt.namespace_id,
-            &stmt.table_name,
+            &namespace_id_core,
+            &table_name_core,
             &schema,
             &stmt.flush_policy,
             stmt.deleted_retention_hours,
@@ -111,24 +114,28 @@ impl UserTableService {
         // 5. Create RocksDB column family for this table
         // This ensures the table is ready for data operations immediately after creation
         self.user_table_store
-            .create_column_family(stmt.namespace_id.as_str(), stmt.table_name.as_str())
+            .create_column_family(namespace_id_core.as_str(), table_name_core.as_str())
             .map_err(|e| {
                 KalamDbError::Other(format!(
                     "Failed to create column family for user table {}.{}: {}",
-                    stmt.namespace_id.as_str(),
-                    stmt.table_name.as_str(),
+                    namespace_id_core.as_str(),
+                    table_name_core.as_str(),
                     e
                 ))
             })?;
 
         // 6. Create and return table metadata
         let metadata = TableMetadata {
-            table_name: stmt.table_name.clone(),
+            table_name: table_name_core.clone(),
             table_type: TableType::User,
-            namespace: stmt.namespace_id.clone(),
+            namespace: namespace_id_core.clone(),
             created_at: chrono::Utc::now(),
             storage_location,
-            flush_policy: stmt.flush_policy.unwrap_or_default(),
+            flush_policy: stmt
+                .flush_policy
+                .clone()
+                .map(crate::flush::FlushPolicy::from)
+                .unwrap_or_default(),
             schema_version: 1,
             deleted_retention_hours: stmt.deleted_retention_hours,
         };
@@ -254,7 +261,7 @@ impl UserTableService {
         namespace: &NamespaceId,
         table_name: &TableName,
         schema: &Arc<Schema>,
-        _flush_policy: &Option<FlushPolicy>,
+        _flush_policy: &Option<UserTableFlushPolicy>,
         _deleted_retention_hours: Option<u32>,
     ) -> Result<(), KalamDbError> {
         // Create schema with options wrapper
@@ -310,7 +317,7 @@ impl UserTableService {
     ) -> Result<bool, KalamDbError> {
         // Query system.tables using KalamSQL
         let table_id = format!("{}:{}", namespace.as_str(), table_name.as_str());
-        
+
         match self.kalam_sql.get_table(&table_id) {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false),

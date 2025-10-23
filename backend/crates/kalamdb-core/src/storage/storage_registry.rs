@@ -3,7 +3,9 @@
 //! Provides centralized access to storage configurations and path template validation.
 
 use crate::error::KalamDbError;
+use kalamdb_commons::models::{StorageConfig, StorageType};
 use kalamdb_sql::{KalamSql, Storage};
+use std::convert::TryFrom;
 use std::sync::Arc;
 
 /// Registry for managing storage backends
@@ -41,9 +43,34 @@ impl StorageRegistry {
     /// # }
     /// ```
     pub fn get_storage(&self, storage_id: &str) -> Result<Option<Storage>, KalamDbError> {
-        self.kalam_sql
-            .get_storage(storage_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e)))
+        self.kalam_sql.get_storage(storage_id).map_err(|e| {
+            KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e))
+        })
+    }
+
+    /// Get a typed storage configuration (including credentials).
+    pub fn get_storage_config(
+        &self,
+        storage_id: &str,
+    ) -> Result<Option<StorageConfig>, KalamDbError> {
+        match self.get_storage(storage_id)? {
+            Some(storage) => {
+                let storage_type = StorageType::try_from(storage.storage_type.as_str())
+                    .map_err(|e| KalamDbError::Other(e))?;
+
+                let config = StorageConfig::new(
+                    storage.storage_id,
+                    storage_type,
+                    storage.base_directory,
+                    storage.shared_tables_template,
+                    storage.user_tables_template,
+                    storage.credentials,
+                );
+
+                Ok(Some(config))
+            }
+            None => Ok(None),
+        }
     }
 
     /// List all storage configurations
@@ -121,7 +148,11 @@ impl StorageRegistry {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn validate_template(&self, template: &str, is_user_table: bool) -> Result<(), KalamDbError> {
+    pub fn validate_template(
+        &self,
+        template: &str,
+        is_user_table: bool,
+    ) -> Result<(), KalamDbError> {
         if is_user_table {
             // User table template validation
             self.validate_user_table_template(template)
@@ -144,7 +175,8 @@ impl StorageRegistry {
                     Ok(())
                 } else {
                     Err(KalamDbError::InvalidOperation(
-                        "Shared table template: {namespace} must appear before {tableName}".to_string(),
+                        "Shared table template: {namespace} must appear before {tableName}"
+                            .to_string(),
                     ))
                 }
             }
@@ -186,7 +218,8 @@ impl StorageRegistry {
             if let Some(tn_pos) = table_name_pos {
                 if ns_pos >= tn_pos {
                     return Err(KalamDbError::InvalidOperation(
-                        "User table template: {namespace} must appear before {tableName}".to_string(),
+                        "User table template: {namespace} must appear before {tableName}"
+                            .to_string(),
                     ));
                 }
             }
@@ -288,6 +321,11 @@ impl StorageRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::RocksDbInit;
+    use once_cell::sync::Lazy;
+    use std::fs;
+    use std::sync::{Arc, Mutex};
+    use tempfile::Builder;
 
     // Note: Full integration tests require a RocksDB instance
     // These are unit tests for template validation logic
@@ -298,8 +336,12 @@ mod tests {
         let registry = create_mock_registry();
 
         // Valid shared table templates
-        assert!(registry.validate_template("{namespace}/{tableName}", false).is_ok());
-        assert!(registry.validate_template("{namespace}/tables/{tableName}", false).is_ok());
+        assert!(registry
+            .validate_template("{namespace}/{tableName}", false)
+            .is_ok());
+        assert!(registry
+            .validate_template("{namespace}/tables/{tableName}", false)
+            .is_ok());
     }
 
     #[test]
@@ -307,7 +349,9 @@ mod tests {
         let registry = create_mock_registry();
 
         // Invalid: {tableName} before {namespace}
-        assert!(registry.validate_template("{tableName}/{namespace}", false).is_err());
+        assert!(registry
+            .validate_template("{tableName}/{namespace}", false)
+            .is_err());
     }
 
     #[test]
@@ -315,7 +359,9 @@ mod tests {
         let registry = create_mock_registry();
 
         // Valid user table templates
-        assert!(registry.validate_template("{namespace}/{tableName}/{userId}", true).is_ok());
+        assert!(registry
+            .validate_template("{namespace}/{tableName}/{userId}", true)
+            .is_ok());
         assert!(registry
             .validate_template("{namespace}/{tableName}/{shard}/{userId}", true)
             .is_ok());
@@ -326,7 +372,9 @@ mod tests {
         let registry = create_mock_registry();
 
         // Invalid: {userId} missing
-        assert!(registry.validate_template("{namespace}/{tableName}", true).is_err());
+        assert!(registry
+            .validate_template("{namespace}/{tableName}", true)
+            .is_err());
     }
 
     #[test]
@@ -334,7 +382,9 @@ mod tests {
         let registry = create_mock_registry();
 
         // Invalid: {userId} before {tableName}
-        assert!(registry.validate_template("{namespace}/{userId}/{tableName}", true).is_err());
+        assert!(registry
+            .validate_template("{namespace}/{userId}/{tableName}", true)
+            .is_err());
 
         // Invalid: {shard} before {tableName}
         assert!(registry
@@ -344,9 +394,33 @@ mod tests {
 
     // Helper to create a mock registry for tests that don't need DB
     fn create_mock_registry() -> StorageRegistry {
-        // For validation tests, we don't actually need a real DB
-        // We'll need to refactor this for proper testing
-        // For now, these tests document expected behavior
-        unimplemented!("Mock registry creation requires DB refactoring")
+        static TEST_DIRS: Lazy<Mutex<Vec<tempfile::TempDir>>> =
+            Lazy::new(|| Mutex::new(Vec::new()));
+
+        let temp_dir = Builder::new()
+            .prefix("kalamdb-storage-registry-tests")
+            .tempdir()
+            .expect("Failed to create temp directory for storage registry tests");
+
+        let db_path = temp_dir.path().join("rocksdb");
+        fs::create_dir_all(&db_path)
+            .expect("Failed to create RocksDB directory for storage registry tests");
+
+        let db_path_string = db_path.to_string_lossy().into_owned();
+        TEST_DIRS
+            .lock()
+            .expect("Temp dir mutex poisoned")
+            .push(temp_dir);
+
+        let db_init = RocksDbInit::new(db_path_string);
+        let db = db_init
+            .open()
+            .expect("Failed to open RocksDB for storage registry tests");
+
+        let kalam_sql = Arc::new(
+            KalamSql::new(db).expect("Failed to create KalamSQL for storage registry tests"),
+        );
+
+        StorageRegistry::new(kalam_sql)
     }
 }

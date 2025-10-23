@@ -72,13 +72,13 @@ impl JobCleanupTask {
     /// Number of job records deleted
     pub async fn run_cleanup(&self) -> Result<usize, KalamDbError> {
         let retention_days = self.retention_period.as_secs() / (24 * 60 * 60);
-        
+
         log::debug!("Running job cleanup with {} day retention", retention_days);
-        
+
         let deleted = self.jobs_provider.cleanup_old_jobs(retention_days as i64)?;
-        
+
         log::info!("Job cleanup completed: deleted {} old records", deleted);
-        
+
         Ok(deleted)
     }
 
@@ -96,10 +96,10 @@ impl JobCleanupTask {
     pub async fn start_scheduled(self, interval: Duration) -> JoinHandle<()> {
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
-            
+
             loop {
                 ticker.tick().await;
-                
+
                 match self.run_cleanup().await {
                     Ok(deleted) => {
                         log::info!("Scheduled cleanup deleted {} jobs", deleted);

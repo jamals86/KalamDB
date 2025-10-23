@@ -2,13 +2,13 @@
 
 use crate::error::KalamDbError;
 use crate::tables::system::storages::SystemStorages;
+use crate::tables::system::SystemTableProviderExt;
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringArray, TimestampMillisecondArray};
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::execution::context::SessionState;
-use datafusion::physical_plan::memory::MemoryExec;
-use datafusion::physical_plan::ExecutionPlan;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::DataFusionError;
+use datafusion::error::Result as DataFusionResult;
+use datafusion::execution::context::SessionState;
+use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_sql::KalamSql;
 use std::any::Any;
 use std::sync::Arc;
@@ -36,6 +36,7 @@ impl SystemStoragesProvider {
         let mut descriptions = Vec::new();
         let mut storage_types = Vec::new();
         let mut base_directories = Vec::new();
+        let mut credentials = Vec::new();
         let mut shared_tables_templates = Vec::new();
         let mut user_tables_templates = Vec::new();
         let mut created_ats = Vec::new();
@@ -47,6 +48,7 @@ impl SystemStoragesProvider {
             descriptions.push(storage.description);
             storage_types.push(storage.storage_type);
             base_directories.push(storage.base_directory);
+            credentials.push(storage.credentials);
             shared_tables_templates.push(storage.shared_tables_template);
             user_tables_templates.push(storage.user_tables_template);
             created_ats.push(storage.created_at);
@@ -61,15 +63,32 @@ impl SystemStoragesProvider {
                 Arc::new(StringArray::from(descriptions)) as ArrayRef,
                 Arc::new(StringArray::from(storage_types)) as ArrayRef,
                 Arc::new(StringArray::from(base_directories)) as ArrayRef,
+                Arc::new(StringArray::from(credentials)) as ArrayRef,
                 Arc::new(StringArray::from(shared_tables_templates)) as ArrayRef,
                 Arc::new(StringArray::from(user_tables_templates)) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef,
             ],
         )
-        .map_err(|e| KalamDbError::Other(format!("Failed to create system.storages batch: {}", e)))?;
+        .map_err(|e| {
+            KalamDbError::Other(format!("Failed to create system.storages batch: {}", e))
+        })?;
 
         Ok(batch)
+    }
+}
+
+impl SystemTableProviderExt for SystemStoragesProvider {
+    fn table_name(&self) -> &'static str {
+        kalamdb_commons::constants::SystemTableNames::STORAGES
+    }
+
+    fn schema_ref(&self) -> SchemaRef {
+        SystemStorages::schema()
+    }
+
+    fn load_batch(&self) -> Result<RecordBatch, KalamDbError> {
+        self.create_batch()
     }
 }
 
@@ -89,13 +108,8 @@ impl TableProvider for SystemStoragesProvider {
         projection: Option<&Vec<usize>>,
         _filters: &[datafusion::prelude::Expr],
         _limit: Option<usize>,
-    ) -> Result<Arc<dyn ExecutionPlan>, DataFusionError> {
-        let batch = self.create_batch().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to load system.storages records: {}", e))
-        })?;
-
-        let exec = MemoryExec::try_new(&[vec![batch]], SystemStorages::schema(), projection.cloned())?;
-        Ok(Arc::new(exec))
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        self.into_memory_exec(projection)
     }
 
     fn table_type(&self) -> TableType {

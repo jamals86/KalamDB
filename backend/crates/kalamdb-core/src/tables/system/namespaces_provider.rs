@@ -2,16 +2,16 @@
 
 use crate::error::KalamDbError;
 use crate::tables::system::namespaces::NamespacesTable;
+use crate::tables::system::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
     ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
 };
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::error::Result as DataFusionResult;
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::memory::MemoryExec;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_sql::KalamSql;
 use std::any::Any;
@@ -32,7 +32,7 @@ impl NamespacesTableProvider {
         }
     }
 
-    fn load_records(&self) -> Result<RecordBatch, KalamDbError> {
+    fn build_batch(&self) -> Result<RecordBatch, KalamDbError> {
         let namespaces = self
             .kalam_sql
             .scan_all_namespaces()
@@ -69,6 +69,20 @@ impl NamespacesTableProvider {
     }
 }
 
+impl SystemTableProviderExt for NamespacesTableProvider {
+    fn table_name(&self) -> &'static str {
+        kalamdb_commons::constants::SystemTableNames::NAMESPACES
+    }
+
+    fn schema_ref(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    fn load_batch(&self) -> Result<RecordBatch, KalamDbError> {
+        self.build_batch()
+    }
+}
+
 #[async_trait]
 impl TableProvider for NamespacesTableProvider {
     fn as_any(&self) -> &dyn Any {
@@ -90,16 +104,6 @@ impl TableProvider for NamespacesTableProvider {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let batch = self.load_records().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to load system.namespaces records: {}", e))
-        })?;
-
-        let partitions = vec![vec![batch]];
-        let exec = MemoryExec::try_new(&partitions, self.schema.clone(), projection.cloned())
-            .map_err(|e| {
-                DataFusionError::Execution(format!("Failed to build MemoryExec: {}", e))
-            })?;
-
-        Ok(Arc::new(exec))
+        self.into_memory_exec(projection)
     }
 }

@@ -188,7 +188,7 @@ impl UserTableProvider {
             // Check each field in the schema
             for field in self.schema.fields() {
                 let field_name = field.name();
-                
+
                 // Skip system columns - they're auto-populated
                 if field_name == "_updated" || field_name == "_deleted" {
                     continue;
@@ -454,13 +454,15 @@ impl TableProvider for UserTableProvider {
                 // Use RecordBatch with a dummy null column to preserve row count
                 use datafusion::arrow::array::new_null_array;
                 use datafusion::arrow::datatypes::DataType;
-                
+
                 // RecordBatch with 0 columns but preserving row count
                 // We need at least one column to preserve row count, so add a dummy null column
                 let dummy_field = Arc::new(Field::new("__dummy", DataType::Null, true));
-                let projected_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(vec![dummy_field.clone()]));
+                let projected_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(vec![
+                    dummy_field.clone(),
+                ]));
                 let null_array = new_null_array(&DataType::Null, batch.num_rows());
-                
+
                 let projected_batch = datafusion::arrow::record_batch::RecordBatch::try_new(
                     projected_schema.clone(),
                     vec![null_array],
@@ -532,8 +534,9 @@ impl TableProvider for UserTableProvider {
             })?;
 
             // Validate schema constraints (NOT NULL, etc.) before insert
-            self.validate_insert_rows(&json_rows)
-                .map_err(|e| DataFusionError::Execution(format!("Schema validation failed: {}", e)))?;
+            self.validate_insert_rows(&json_rows).map_err(|e| {
+                DataFusionError::Execution(format!("Schema validation failed: {}", e))
+            })?;
 
             // Populate auto-increment IDs when missing
             self.prepare_insert_rows(&mut json_rows)

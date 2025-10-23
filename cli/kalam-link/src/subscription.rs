@@ -58,7 +58,7 @@ impl SubscriptionManager {
         let ws_url = base_url
             .replace("http://", "ws://")
             .replace("https://", "wss://");
-        let ws_url = format!("{}/ws", ws_url);
+        let ws_url = format!("{}/v1/ws", ws_url);
 
         // Build WebSocket connection URL
         let request_url = match auth {

@@ -349,6 +349,13 @@ impl From<String> for KalamDbError {
     }
 }
 
+// Conversion from anyhow::Error to KalamDbError
+impl From<anyhow::Error> for KalamDbError {
+    fn from(err: anyhow::Error) -> Self {
+        KalamDbError::Other(err.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

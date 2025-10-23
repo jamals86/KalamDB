@@ -30,6 +30,13 @@ tabled = { workspace = true }
 # Terminal control
 crossterm = { workspace = true }
 
+# Progress indicators
+indicatif = "0.17"
+
+# Terminal colors and styling
+colored = "2.1"
+console = "0.15"
+
 # Config file parsing
 toml = { workspace = true }
 

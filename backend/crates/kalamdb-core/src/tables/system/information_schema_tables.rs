@@ -4,16 +4,16 @@
 //! virtual table, which exposes all table metadata from system.tables.
 
 use crate::error::KalamDbError;
+use crate::tables::system::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
     ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::error::Result as DataFusionResult;
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::memory::MemoryExec;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_sql::KalamSql;
 use std::any::Any;
@@ -119,6 +119,20 @@ impl InformationSchemaTablesProvider {
     }
 }
 
+impl SystemTableProviderExt for InformationSchemaTablesProvider {
+    fn table_name(&self) -> &'static str {
+        "information_schema.tables"
+    }
+
+    fn schema_ref(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    fn load_batch(&self) -> Result<RecordBatch, KalamDbError> {
+        self.scan_all_tables()
+    }
+}
+
 #[async_trait]
 impl TableProvider for InformationSchemaTablesProvider {
     fn as_any(&self) -> &dyn Any {
@@ -140,20 +154,7 @@ impl TableProvider for InformationSchemaTablesProvider {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let batch = self
-            .scan_all_tables()
-            .map_err(|e| DataFusionError::Execution(format!("Failed to scan tables: {}", e)))?;
-
-        let schema = if let Some(proj) = projection {
-            let projected_fields: Vec<_> =
-                proj.iter().map(|&i| self.schema.field(i).clone()).collect();
-            Arc::new(Schema::new(projected_fields))
-        } else {
-            self.schema.clone()
-        };
-
-        let exec = MemoryExec::try_new(&[vec![batch]], schema, projection.cloned())?;
-        Ok(Arc::new(exec))
+        self.into_memory_exec(projection)
     }
 }
 

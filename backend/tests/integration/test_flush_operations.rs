@@ -66,10 +66,7 @@ fn check_user_table_parquet_files(
                     if let Some(extension) = entry.path().extension() {
                         if extension == "parquet" {
                             parquet_count += 1;
-                            println!(
-                                "  Found Parquet file: {}",
-                                entry.path().display()
-                            );
+                            println!("  Found Parquet file: {}", entry.path().display());
                         }
                     }
                 }
@@ -104,10 +101,7 @@ fn check_shared_table_parquet_files(namespace: &str, table_name: &str) -> (usize
                     if let Some(extension) = entry.path().extension() {
                         if extension == "parquet" {
                             parquet_count += 1;
-                            println!(
-                                "  Found Parquet file: {}",
-                                entry.path().display()
-                            );
+                            println!("  Found Parquet file: {}", entry.path().display());
                         }
                     }
                 }
@@ -141,7 +135,9 @@ async fn test_01_auto_flush_user_table() {
         is_ai BOOLEAN
     ) FLUSH ROWS 100"#;
 
-    let response = server.execute_sql_with_user(create_sql, Some("test_user_001")).await;
+    let response = server
+        .execute_sql_with_user(create_sql, Some("test_user_001"))
+        .await;
     assert_eq!(
         response.status, "success",
         "Failed to create user table with auto-flush: {:?}",
@@ -162,8 +158,10 @@ async fn test_01_auto_flush_user_table() {
             i % 60,
             if i % 5 == 0 { "true" } else { "false" }
         );
-        
-        let response = server.execute_sql_with_user(&insert_sql, Some("test_user_001")).await;
+
+        let response = server
+            .execute_sql_with_user(&insert_sql, Some("test_user_001"))
+            .await;
         if response.status != "success" {
             panic!("Failed to insert row {}: {:?}", i, response.error);
         }
@@ -183,7 +181,10 @@ async fn test_01_auto_flush_user_table() {
     // Query the table - should return all 110 rows (currently all from RocksDB buffer)
     println!("Querying after auto-flush...");
     let query_response = server
-        .execute_sql_with_user("SELECT COUNT(message_id) as count FROM auto_user_ns.messages", Some("test_user_001"))
+        .execute_sql_with_user(
+            "SELECT COUNT(message_id) as count FROM auto_user_ns.messages",
+            Some("test_user_001"),
+        )
         .await;
 
     assert_eq!(
@@ -216,17 +217,25 @@ async fn test_01_auto_flush_user_table() {
             i % 60,
             if i % 6 == 0 { "true" } else { "false" }
         );
-        
-        let response = server.execute_sql_with_user(&insert_sql, Some("test_user_001")).await;
+
+        let response = server
+            .execute_sql_with_user(&insert_sql, Some("test_user_001"))
+            .await;
         if response.status != "success" {
-            panic!("Failed to insert additional row {}: {:?}", i, response.error);
+            panic!(
+                "Failed to insert additional row {}: {:?}",
+                i, response.error
+            );
         }
     }
 
     // Query again - should return all 160 rows (100 flushed + 60 buffered)
     println!("Querying combined flushed and buffered data...");
     let final_response = server
-        .execute_sql_with_user("SELECT COUNT(*) as total FROM auto_user_ns.messages", Some("test_user_001"))
+        .execute_sql_with_user(
+            "SELECT COUNT(*) as total FROM auto_user_ns.messages",
+            Some("test_user_001"),
+        )
         .await;
 
     assert_eq!(
@@ -249,7 +258,7 @@ async fn test_01_auto_flush_user_table() {
     let avg_response = server
         .execute_sql_with_user(
             "SELECT AVG(tokens) as avg_tokens, MAX(cost) as max_cost FROM auto_user_ns.messages",
-            Some("test_user_001")
+            Some("test_user_001"),
         )
         .await;
 
@@ -291,7 +300,9 @@ async fn test_02_large_dataset_user_table() {
         is_ai BOOLEAN
     ) FLUSH ROWS 100"#;
 
-    server.execute_sql_with_user(create_sql, Some("test_user_002")).await;
+    server
+        .execute_sql_with_user(create_sql, Some("test_user_002"))
+        .await;
 
     // Insert 1000 rows (should trigger multiple flushes)
     println!("Inserting 1000 rows...");
@@ -308,8 +319,10 @@ async fn test_02_large_dataset_user_table() {
             i % 60,
             if i % 3 == 0 { "true" } else { "false" }
         );
-        
-        let response = server.execute_sql_with_user(&insert_sql, Some("test_user_002")).await;
+
+        let response = server
+            .execute_sql_with_user(&insert_sql, Some("test_user_002"))
+            .await;
         if response.status != "success" {
             panic!("Failed to insert row {}: {:?}", i, response.error);
         }
@@ -326,7 +339,10 @@ async fn test_02_large_dataset_user_table() {
     // Query and verify all 1000 rows are returned (currently all from RocksDB buffer)
     println!("Querying large dataset...");
     let query_response = server
-        .execute_sql_with_user("SELECT COUNT(*) as count FROM large_user_ns.messages", Some("test_user_002"))
+        .execute_sql_with_user(
+            "SELECT COUNT(*) as count FROM large_user_ns.messages",
+            Some("test_user_002"),
+        )
         .await;
 
     assert_eq!(query_response.status, "success");
@@ -341,11 +357,15 @@ async fn test_02_large_dataset_user_table() {
     let filter_response = server
         .execute_sql_with_user(
             "SELECT COUNT(*) as ai_count FROM large_user_ns.messages WHERE is_ai = true",
-            Some("test_user_002")
+            Some("test_user_002"),
         )
         .await;
 
-    if let Some(rows) = filter_response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(rows) = filter_response
+        .results
+        .first()
+        .and_then(|r| r.rows.as_ref())
+    {
         let ai_count = rows[0]
             .get("ai_count")
             .and_then(|v| v.as_i64())
@@ -418,10 +438,13 @@ async fn test_03_auto_flush_shared_table() {
             i % 60,
             if i % 5 == 0 { "true" } else { "false" }
         );
-        
+
         let response = server.execute_sql(&insert_sql).await;
         if response.status != "success" {
-            panic!("Failed to insert row {} into auto-flush shared table: {:?}", i, response.error);
+            panic!(
+                "Failed to insert row {} into auto-flush shared table: {:?}",
+                i, response.error
+            );
         }
     }
     println!("Inserted 110 rows into auto-flush shared table");
@@ -466,10 +489,13 @@ async fn test_03_auto_flush_shared_table() {
             i % 60,
             if i % 6 == 0 { "true" } else { "false" }
         );
-        
+
         let response = server.execute_sql(&insert_sql).await;
         if response.status != "success" {
-            panic!("Failed to insert additional row {}: {:?}", i, response.error);
+            panic!(
+                "Failed to insert additional row {}: {:?}",
+                i, response.error
+            );
         }
     }
 
@@ -503,7 +529,11 @@ async fn test_03_auto_flush_shared_table() {
 
     assert_eq!(complex_response.status, "success");
 
-    if let Some(rows) = complex_response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(rows) = complex_response
+        .results
+        .first()
+        .and_then(|r| r.rows.as_ref())
+    {
         assert!(rows.len() >= 1, "Expected grouped results");
         println!("✓ Complex aggregations work across flushed and buffered shared table data");
     }
@@ -551,10 +581,13 @@ async fn test_04_large_dataset_shared_table() {
             i % 60,
             if i % 3 == 0 { "true" } else { "false" }
         );
-        
+
         let response = server.execute_sql(&insert_sql).await;
         if response.status != "success" {
-            panic!("Failed to insert row {} into shared table: {:?}", i, response.error);
+            panic!(
+                "Failed to insert row {} into shared table: {:?}",
+                i, response.error
+            );
         }
     }
     println!("Inserted 1000 rows into shared table");
@@ -586,12 +619,21 @@ async fn test_04_large_dataset_shared_table() {
 
     // Verify filtering works across multiple flush cycles
     let filter_response = server
-        .execute_sql("SELECT COUNT(message_id) as count FROM large_shared_ns.messages WHERE is_ai = true")
+        .execute_sql(
+            "SELECT COUNT(message_id) as count FROM large_shared_ns.messages WHERE is_ai = true",
+        )
         .await;
 
-    if let Some(rows) = filter_response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(rows) = filter_response
+        .results
+        .first()
+        .and_then(|r| r.rows.as_ref())
+    {
         let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap_or(0);
-        assert!(count >= 333 && count <= 334, "Expected ~333 AI messages in shared table");
+        assert!(
+            count >= 333 && count <= 334,
+            "Expected ~333 AI messages in shared table"
+        );
     }
 
     // Test data distribution across conversations
@@ -602,7 +644,10 @@ async fn test_04_large_dataset_shared_table() {
         .await;
 
     if let Some(rows) = conv_response.results.first().and_then(|r| r.rows.as_ref()) {
-        assert!(rows.len() >= 10, "Expected at least 10 conversations in shared table");
+        assert!(
+            rows.len() >= 10,
+            "Expected at least 10 conversations in shared table"
+        );
         println!("✓ Shared table data correctly distributed across multiple flush cycles");
     }
 
@@ -632,13 +677,31 @@ async fn test_05_flush_data_integrity() {
         is_ai BOOLEAN
     ) FLUSH ROWS 50"#;
 
-    server.execute_sql_with_user(create_sql, Some("test_user_003")).await;
+    server
+        .execute_sql_with_user(create_sql, Some("test_user_003"))
+        .await;
 
     // Insert data with specific values to verify integrity
     let test_data = vec![
         (1, "user_001", "conv_001", "Test message 1", 100, 0.01, true),
-        (2, "user_002", "conv_001", "Test message 2", 200, 0.02, false),
-        (3, "user_001", "conv_002", "Test message 3", 150, 0.015, true),
+        (
+            2,
+            "user_002",
+            "conv_001",
+            "Test message 2",
+            200,
+            0.02,
+            false,
+        ),
+        (
+            3,
+            "user_001",
+            "conv_002",
+            "Test message 3",
+            150,
+            0.015,
+            true,
+        ),
     ];
 
     for (id, user, conv, content, tokens, cost, is_ai) in test_data {
@@ -647,7 +710,9 @@ async fn test_05_flush_data_integrity() {
                VALUES ({}, '{}', '{}', '{}', {}, {}, '2025-10-21T18:00:00', {})"#,
             id, user, conv, content, tokens, cost, is_ai
         );
-        server.execute_sql_with_user(&insert_sql, Some("test_user_003")).await;
+        server
+            .execute_sql_with_user(&insert_sql, Some("test_user_003"))
+            .await;
     }
 
     // Wait for potential flush
@@ -661,7 +726,11 @@ async fn test_05_flush_data_integrity() {
         )
         .await;
 
-    if let Some(rows) = verify_response.results.first().and_then(|r| r.rows.as_ref()) {
+    if let Some(rows) = verify_response
+        .results
+        .first()
+        .and_then(|r| r.rows.as_ref())
+    {
         assert_eq!(rows.len(), 3, "Expected 3 rows");
 
         // Verify first row
@@ -674,10 +743,7 @@ async fn test_05_flush_data_integrity() {
             "user_001"
         );
         assert_eq!(rows[0].get("tokens").and_then(|v| v.as_i64()).unwrap(), 100);
-        assert_eq!(
-            rows[0].get("cost").and_then(|v| v.as_f64()).unwrap(),
-            0.01
-        );
+        assert_eq!(rows[0].get("cost").and_then(|v| v.as_f64()).unwrap(), 0.01);
         assert_eq!(
             rows[0].get("is_ai").and_then(|v| v.as_bool()).unwrap(),
             true

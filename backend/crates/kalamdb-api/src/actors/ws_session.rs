@@ -4,6 +4,7 @@
 
 use actix::{Actor, ActorContext, AsyncContext, Handler, Message, StreamHandler};
 use actix_web_actors::ws;
+use kalamdb_commons::models::UserId;
 use log::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -32,7 +33,7 @@ pub struct WebSocketSession {
 
     /// Authenticated user ID (from JWT token)
     /// None if authentication is disabled/optional
-    pub user_id: Option<kalamdb_core::catalog::UserId>,
+    pub user_id: Option<UserId>,
 
     /// Rate limiter for message and subscription limits
     pub rate_limiter: Option<Arc<RateLimiter>>,
@@ -54,7 +55,7 @@ impl WebSocketSession {
     /// * `rate_limiter` - Optional rate limiter for message and subscription limits
     pub fn new(
         connection_id: String,
-        user_id: Option<kalamdb_core::catalog::UserId>,
+        user_id: Option<UserId>,
         rate_limiter: Option<Arc<RateLimiter>>,
     ) -> Self {
         Self {
@@ -103,7 +104,7 @@ impl Actor for WebSocketSession {
         // Cleanup rate limiter state
         if let Some(ref limiter) = self.rate_limiter {
             limiter.cleanup_connection(&self.connection_id);
-            
+
             // Decrement subscription counts for this user
             if let Some(ref uid) = self.user_id {
                 for _ in 0..self.subscriptions.len() {
@@ -175,7 +176,9 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                             }
 
                             // Rate limiting: Check subscription limit per user
-                            if let (Some(ref uid), Some(ref limiter)) = (&self.user_id, &self.rate_limiter) {
+                            if let (Some(ref uid), Some(ref limiter)) =
+                                (&self.user_id, &self.rate_limiter)
+                            {
                                 if !limiter.check_subscription_limit(uid) {
                                     warn!(
                                         "Subscription limit exceeded: user_id={}, subscription_id={}",
@@ -184,7 +187,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                                     let error_msg = Notification::error(
                                         subscription.id.clone(),
                                         "SUBSCRIPTION_LIMIT_EXCEEDED".to_string(),
-                                        "Maximum number of subscriptions reached for this user.".to_string(),
+                                        "Maximum number of subscriptions reached for this user."
+                                            .to_string(),
                                     );
                                     if let Ok(json) = serde_json::to_string(&error_msg) {
                                         ctx.text(json);
@@ -198,12 +202,15 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                             // Authorization: For user tables, enforce user_id filtering
                             // This is enforced at the live query manager level (T174)
                             // The manager will automatically inject WHERE user_id = {current_user_id}
-                            
+
                             info!(
                                 "Subscription registered: id={}, sql={}, user_id={}",
-                                subscription.id, 
+                                subscription.id,
                                 subscription.sql,
-                                self.user_id.as_ref().map(|id| id.as_ref()).unwrap_or("none")
+                                self.user_id
+                                    .as_ref()
+                                    .map(|id| id.as_ref())
+                                    .unwrap_or("none")
                             );
                             self.subscriptions.push(subscription.id.clone());
 
@@ -212,7 +219,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                             // 1. Parse the SQL to detect if it targets a user table
                             // 2. Automatically inject user_id filter for user tables (T174)
                             // 3. Reject subscriptions that try to access other users' data
-                            
+
                             // TODO: Fetch initial data if last_rows is set (T052)
                         }
 
@@ -276,7 +283,7 @@ mod tests {
 
     #[test]
     fn test_websocket_session_creation() {
-        let user_id = Some(kalamdb_core::catalog::UserId::from("user-123"));
+        let user_id = Some(UserId::from("user-123"));
         let session = WebSocketSession::new("test-conn-123".to_string(), user_id.clone(), None);
         assert_eq!(session.connection_id, "test-conn-123");
         assert_eq!(session.user_id, user_id);

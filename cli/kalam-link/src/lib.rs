@@ -27,7 +27,7 @@
 //!
 //!     // Execute a query
 //!     let response = client.execute_query("SELECT * FROM users LIMIT 10").await?;
-//!     println!("Results: {:?}", response.data);
+//!     println!("Results: {:?}", response.results);
 //!
 //!     // Subscribe to real-time changes
 //!     let mut subscription = client.subscribe("SELECT * FROM messages").await?;
@@ -71,7 +71,7 @@ pub mod subscription;
 pub use auth::AuthProvider;
 pub use client::KalamLinkClient;
 pub use error::{KalamLinkError, Result};
-pub use models::{ChangeEvent, ErrorDetail, QueryRequest, QueryResponse};
+pub use models::{ChangeEvent, ErrorDetail, HealthCheckResponse, QueryRequest, QueryResponse};
 pub use query::QueryExecutor;
 pub use subscription::SubscriptionManager;
 

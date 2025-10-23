@@ -6,7 +6,7 @@
 //! - WebSocket message throughput (counter per connection_id)
 //! - Column family sizes (gauge per CF)
 
-use crate::catalog::table_name::TableName;
+use crate::catalog::TableName;
 use metrics::{counter, gauge, histogram};
 use std::time::Duration;
 

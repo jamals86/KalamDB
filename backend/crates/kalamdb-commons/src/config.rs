@@ -18,13 +18,13 @@
 pub enum FlushPolicy {
     /// Flush after N rows per user-table combination
     Rows(u64),
-    
+
     /// Flush after time interval (in seconds)
     Interval(u64),
-    
+
     /// Flush when either condition is met
     Combined { rows: u64, interval_seconds: u64 },
-    
+
     /// Manual flush only (no automatic flushing)
     Manual,
 }
@@ -43,7 +43,9 @@ impl FlushPolicy {
     pub fn interval_seconds(&self) -> Option<u64> {
         match self {
             FlushPolicy::Interval(s) => Some(*s),
-            FlushPolicy::Combined { interval_seconds, .. } => Some(*interval_seconds),
+            FlushPolicy::Combined {
+                interval_seconds, ..
+            } => Some(*interval_seconds),
             _ => None,
         }
     }
@@ -66,9 +68,7 @@ pub struct StorageLocation {
 impl StorageLocation {
     /// Creates a new storage location.
     pub fn new(path: impl Into<String>) -> Self {
-        Self {
-            path: path.into(),
-        }
+        Self { path: path.into() }
     }
 
     /// Returns the storage path.
@@ -127,10 +127,10 @@ impl Default for RetentionPolicy {
 pub struct StreamConfig {
     /// Time-to-live in seconds (rows older than this are evicted)
     pub ttl_seconds: Option<u64>,
-    
+
     /// Maximum buffer size (evict oldest when exceeded)
     pub max_buffer: Option<usize>,
-    
+
     /// Whether data is ephemeral (no disk persistence)
     pub ephemeral: bool,
 }
@@ -181,7 +181,10 @@ mod tests {
         assert_eq!(policy.interval_seconds(), None);
         assert!(policy.is_automatic());
 
-        let policy = FlushPolicy::Combined { rows: 1000, interval_seconds: 300 };
+        let policy = FlushPolicy::Combined {
+            rows: 1000,
+            interval_seconds: 300,
+        };
         assert_eq!(policy.row_threshold(), Some(1000));
         assert_eq!(policy.interval_seconds(), Some(300));
         assert!(policy.is_automatic());

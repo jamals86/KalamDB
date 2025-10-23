@@ -27,12 +27,12 @@
 //! let id_str: &str = user_id.as_str();
 //! ```
 
-pub mod models;
+pub mod config;
 pub mod constants;
 pub mod errors;
-pub mod config;
+pub mod models;
 
 // Re-export commonly used types at crate root
-pub use models::{UserId, NamespaceId, TableName, TableType};
-pub use constants::{SYSTEM_TABLES, COLUMN_FAMILIES};
+pub use constants::{COLUMN_FAMILIES, SYSTEM_TABLES};
 pub use errors::{CommonError, Result};
+pub use models::{NamespaceId, TableName, TableType, UserId};

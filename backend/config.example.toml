@@ -16,6 +16,10 @@ port = 8080
 # Number of worker threads (0 = number of CPU cores)
 workers = 0
 
+# API version (default: "v1")
+# Controls the versioned endpoint prefix (e.g., /v1/api/sql)
+api_version = "v1"
+
 [storage]
 # RocksDB data directory path (relative or absolute)
 rocksdb_path = "./data/rocksdb"

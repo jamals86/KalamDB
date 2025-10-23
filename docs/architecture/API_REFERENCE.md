@@ -1,11 +1,29 @@
 # KalamDB REST API Reference
 
 **Version**: 0.1.0  
-**Base URL**: `http://localhost:8080`
+**Base URL**: `http://localhost:8080`  
+**API Version**: v1
 
 ## Overview
 
-KalamDB provides a single REST endpoint `/api/sql` that accepts SQL commands for all operations. This unified interface simplifies client integration and enables full SQL expressiveness.
+KalamDB provides a versioned REST API with a single SQL endpoint that accepts SQL commands for all operations. This unified interface simplifies client integration and enables full SQL expressiveness.
+
+### API Versioning
+
+All API endpoints are versioned with a `/v1` prefix to ensure backward compatibility as the API evolves.
+
+**Current Version**: v1  
+**Endpoint Prefix**: `/v1`
+
+**Versioned Endpoints**:
+- `/v1/api/sql` - Execute SQL commands
+- `/v1/ws` - WebSocket for live query subscriptions
+- `/v1/api/healthcheck` - Server health status
+
+**Version Strategy**:
+- **Breaking changes** require a new version (e.g., `/v2/api/sql`)
+- **Non-breaking changes** (new optional fields, new endpoints) can be added to existing versions
+- **Deprecation policy**: Old versions supported for at least 6 months after new version release
 
 ---
 
@@ -26,9 +44,12 @@ Authorization: Bearer <JWT_TOKEN>
 
 ## Endpoints
 
-### POST /api/sql
+### POST /v1/api/sql
 
 Execute a SQL command and receive results.
+
+**Version**: v1  
+**Path**: `/v1/api/sql`
 
 #### Request
 
@@ -391,6 +412,185 @@ DROP TABLE IF EXISTS app.messages;
 
 ---
 
+### Storage Management
+
+KalamDB supports multiple storage backends for flushing table data to Parquet files. Storage backends can be managed dynamically via SQL commands.
+
+#### CREATE STORAGE
+
+Define a new storage backend for table data.
+
+**Filesystem Storage**:
+```sql
+CREATE STORAGE archive
+TYPE filesystem
+NAME 'Archive Storage'
+DESCRIPTION 'Cold storage for archived data'
+PATH '/data/archive'
+SHARED_TABLES_TEMPLATE '{namespace}/{tableName}'
+USER_TABLES_TEMPLATE '{namespace}/{tableName}/{userId}';
+```
+
+**S3 Storage**:
+```sql
+CREATE STORAGE s3_prod
+TYPE s3
+NAME 'S3 Production Storage'
+DESCRIPTION 'Primary production S3 bucket'
+BUCKET 'kalamdb-prod'
+REGION 'us-west-2'
+SHARED_TABLES_TEMPLATE 's3://kalamdb-prod/shared/{namespace}/{tableName}'
+USER_TABLES_TEMPLATE 's3://kalamdb-prod/users/{userId}/{namespace}/{tableName}';
+```
+
+**Parameters**:
+- `storage_id` (required): Unique identifier for the storage backend
+- `TYPE` (required): Storage type - `filesystem` or `s3`
+- `NAME` (required): Human-readable name
+- `DESCRIPTION` (optional): Description of the storage backend
+- **For filesystem**:
+  - `PATH`: Base directory path
+- **For S3**:
+  - `BUCKET`: S3 bucket name
+  - `REGION`: AWS region
+- `SHARED_TABLES_TEMPLATE` (required): Path template for shared tables
+- `USER_TABLES_TEMPLATE` (required): Path template for user tables
+
+**Template Variables**:
+- `{namespace}`: Namespace identifier
+- `{tableName}`: Table name
+- `{userId}`: User identifier (required for user tables)
+- `{shard}`: Shard identifier (optional)
+
+**Template Ordering Rules**:
+- **Shared tables**: `{namespace}` must appear before `{tableName}`
+- **User tables**: Must include `{userId}` and follow ordering: `{namespace}` → `{tableName}` → `{userId}` → `{shard}`
+
+**Response**:
+```json
+{
+  "status": "success",
+  "message": "Storage 'archive' created successfully"
+}
+```
+
+**Errors**:
+- `400` - Invalid storage type
+- `400` - Invalid template (wrong variable ordering)
+- `400` - Duplicate storage_id
+- `400` - Missing required parameters
+
+#### ALTER STORAGE
+
+Update an existing storage backend configuration.
+
+```sql
+ALTER STORAGE archive
+SET NAME = 'Updated Archive Storage'
+SET DESCRIPTION = 'Long-term cold storage'
+SET SHARED_TABLES_TEMPLATE = '{namespace}/v2/{tableName}'
+SET USER_TABLES_TEMPLATE = '{namespace}/v2/{tableName}/{userId}';
+```
+
+**Note**: You can update any field except `storage_id` and `storage_type`. Template changes are validated before application.
+
+**Response**:
+```json
+{
+  "status": "success",
+  "message": "Storage 'archive' updated successfully"
+}
+```
+
+#### DROP STORAGE
+
+Delete a storage backend. Protected by referential integrity - cannot delete if tables reference it.
+
+```sql
+DROP STORAGE old_storage;
+```
+
+**Response**:
+```json
+{
+  "status": "success",
+  "message": "Storage 'old_storage' deleted successfully"
+}
+```
+
+**Errors**:
+- `400` - Storage not found
+- `400` - Cannot delete 'local' storage (protected)
+- `400` - Cannot delete storage: N table(s) still reference it
+
+#### SHOW STORAGES
+
+List all registered storage backends.
+
+```sql
+SHOW STORAGES;
+```
+
+**Response**:
+```json
+{
+  "status": "success",
+  "results": [
+    {
+      "storage_id": "local",
+      "storage_name": "Local Filesystem",
+      "description": "Default local filesystem storage",
+      "storage_type": "filesystem",
+      "base_directory": "",
+      "shared_tables_template": "{namespace}/{tableName}",
+      "user_tables_template": "{namespace}/{tableName}/{userId}",
+      "created_at": 1729612800000,
+      "updated_at": 1729612800000
+    },
+    {
+      "storage_id": "s3_prod",
+      "storage_name": "S3 Production Storage",
+      "description": "Primary production S3 bucket",
+      "storage_type": "s3",
+      "base_directory": "s3://kalamdb-prod",
+      "shared_tables_template": "s3://kalamdb-prod/shared/{namespace}/{tableName}",
+      "user_tables_template": "s3://kalamdb-prod/users/{userId}/{namespace}/{tableName}",
+      "created_at": 1729612900000,
+      "updated_at": 1729612900000
+    }
+  ]
+}
+```
+
+**Note**: Results are ordered with 'local' first, then alphabetically by storage_id.
+
+#### Using Storage with Tables
+
+Specify storage backend when creating tables:
+
+```sql
+-- Use specific storage for a table
+CREATE USER TABLE app.messages (
+    id BIGINT,
+    content TEXT
+) TABLE_TYPE user
+OWNER_ID 'alice'
+USE_USER_STORAGE 's3_prod';
+
+-- Use default 'local' storage (implicit)
+CREATE SHARED TABLE app.shared_data (
+    id BIGINT,
+    data TEXT
+) TABLE_TYPE shared;
+```
+
+**Storage Lookup Chain** (for user tables):
+1. If `USE_USER_STORAGE` specified in CREATE TABLE → use that storage
+2. If user has `storage_id` preference → use user's preferred storage
+3. Otherwise → use 'local' storage (default)
+
+---
+
 ### Backup and Restore
 
 #### BACKUP DATABASE
@@ -583,34 +783,129 @@ Rate limits will be enforced per user:
 
 ```bash
 # 1. Create namespace
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:8080/v1/api/sql \
   -H "X-User-Id: alice" \
   -H "Content-Type: application/json" \
   -d '{"sql": "CREATE NAMESPACE app"}'
 
 # 2. Create user table
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:8080/v1/api/sql \
   -H "X-User-Id: alice" \
   -H "Content-Type: application/json" \
   -d '{"sql": "CREATE USER TABLE app.messages (id BIGINT, content TEXT) FLUSH POLICY ROW_LIMIT 1000"}'
 
 # 3. Insert data
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:8080/v1/api/sql \
   -H "X-User-Id: alice" \
   -H "Content-Type: application/json" \
   -d '{"sql": "INSERT INTO app.messages (id, content) VALUES (1, '\''Hello World'\'')"}'
 
 # 4. Query data
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:8080/v1/api/sql \
   -H "X-User-Id: alice" \
   -H "Content-Type: application/json" \
   -d '{"sql": "SELECT * FROM app.messages LIMIT 10"}'
 
 # 5. Backup database
-curl -X POST http://localhost:8080/api/sql \
+curl -X POST http://localhost:8080/v1/api/sql \
   -H "X-User-Id: alice" \
   -H "Content-Type: application/json" \
   -d '{"sql": "BACKUP DATABASE app TO '\''/backups/app-backup'\''"}'
+```
+
+
+---
+
+### GET /v1/api/healthcheck
+
+Check server health status and readiness.
+
+**Version**: v1  
+**Path**: `/v1/api/healthcheck`
+
+#### Request
+
+**Method**: GET  
+**Headers**: None required
+
+```bash
+curl http://localhost:8080/v1/api/healthcheck
+```
+
+#### Response
+
+**Success (200 OK)**:
+```json
+{
+  "status": "healthy",
+  "version": "0.1.0",
+  "uptime_seconds": 3600,
+  "timestamp": "2025-10-23T15:30:00Z"
+}
+```
+
+**Unhealthy (503 Service Unavailable)**:
+```json
+{
+  "status": "unhealthy",
+  "error": "Database connection failed",
+  "timestamp": "2025-10-23T15:30:00Z"
+}
+```
+
+---
+
+### WebSocket /v1/ws
+
+Real-time live query subscriptions via WebSocket.
+
+**Version**: v1  
+**Path**: `/v1/ws`
+
+#### Connection
+
+**Protocol**: WebSocket (ws:// or wss://)  
+**URL**: `ws://localhost:8080/v1/ws`
+
+**Headers**:
+- `X-User-Id: <user_id>` (required during WebSocket handshake)
+
+**Example**:
+```javascript
+const ws = new WebSocket('ws://localhost:8080/v1/ws', {
+  headers: {
+    'X-User-Id': 'alice'
+  }
+});
+```
+
+#### Protocol
+
+For detailed WebSocket protocol documentation including subscription messages, change notifications, and error handling, see:
+
+**[WebSocket Protocol Documentation](WEBSOCKET_PROTOCOL.md)**
+
+**Quick Example**:
+```javascript
+// Subscribe to live query
+ws.send(JSON.stringify({
+  action: 'subscribe',
+  query_id: 'query-123',
+  sql: 'SELECT * FROM app.messages WHERE user_id = $1',
+  params: ['alice']
+}));
+
+// Receive change notifications
+ws.onmessage = (event) => {
+  const notification = JSON.parse(event.data);
+  console.log('Change:', notification);
+};
+
+// Unsubscribe
+ws.send(JSON.stringify({
+  action: 'unsubscribe',
+  query_id: 'query-123'
+}));
 ```
 
 ---

@@ -7,7 +7,7 @@
 
 ## Summary
 
-This feature encompasses comprehensive system improvements across multiple areas: interactive CLI client (kalam-cli with kalam-link library), query optimization (parametrized queries with global LRU execution plan caching), data persistence (automatic/manual flushing with Tokio-based job scheduling and cancellation using dual triggers: time interval OR row count threshold, with crash recovery via system.jobs persistence, duplicate prevention, graceful shutdown coordination, debug logging, and automated history cleanup), performance enhancements (session-level table caching, memory leak testing), architectural refactoring (storage abstraction, code quality improvements, commons crate), API enhancements (batch SQL with sequential non-transactional semantics, enhanced system tables, soft-delete user management with grace period), operational improvements (CLEAR CACHE command, server port validation, CLI progress indicators, log rotation, healthcheck endpoint), and infrastructure improvements (Docker deployment, documentation organization). The technical approach involves creating a new `/cli` project with WebAssembly-compatible library, implementing DataFusion query plan caching with LRU eviction, adding Tokio-based job registry for flush operations with generic JobManager trait interface (designed for future actor migration), implementing robust flush reliability features (crash recovery, duplicate detection, shutdown wait, jobs table optimization), introducing storage trait abstraction for pluggable backends, and comprehensive integration/stress testing for live query reliability and memory stability.
+This feature encompasses comprehensive system improvements across multiple areas: API versioning for future compatibility (versioned endpoints /v1/api/sql, /v1/ws, /v1/api/healthcheck), storage credentials support for S3/cloud authentication, server code organization (main.rs refactored into modules), SQL parser architectural consolidation with sqlparser-rs integration (centralized keyword enums, PostgreSQL/MySQL compatibility, clean parser architecture, move executor.rs to kalamdb-sql), interactive CLI client (kalam-cli with kalam-link library), query optimization (parametrized queries with global LRU execution plan caching), data persistence (automatic/manual flushing with Tokio-based job scheduling and cancellation using dual triggers: time interval OR row count threshold, with crash recovery via system.jobs persistence, duplicate prevention, graceful shutdown coordination, debug logging, and automated history cleanup), performance enhancements (session-level table caching, memory leak testing), architectural refactoring (storage abstraction with credentials column, code quality improvements, commons crate), API enhancements (batch SQL with sequential non-transactional semantics, enhanced system tables, soft-delete user management with grace period), operational improvements (CLEAR CACHE command, server port validation, CLI progress indicators, log rotation, healthcheck endpoint), and infrastructure improvements (Docker deployment, documentation organization). The technical approach involves establishing versioned API routes as foundation, integrating sqlparser-rs for standard SQL parsing with custom extensions for KalamDB-specific commands, centralizing all SQL keywords in enum-based architecture, ensuring PostgreSQL/MySQL syntax compatibility for familiarity, adding credentials field to system.storages for cloud storage authentication, refactoring server startup into logical modules, relocating all SQL parsing to kalamdb-sql crate with clean separation from execution logic, creating a new `/cli` project with WebAssembly-compatible library, implementing DataFusion query plan caching with LRU eviction, adding Tokio-based job registry for flush operations with generic JobManager trait interface (designed for future actor migration), implementing robust flush reliability features (crash recovery, duplicate detection, shutdown wait, jobs table optimization), introducing storage trait abstraction for pluggable backends, and comprehensive integration/stress testing for live query reliability and memory stability.
 
 ## Technical Context
 
@@ -15,13 +15,21 @@ This feature encompasses comprehensive system improvements across multiple areas
 
 **Primary Dependencies**: 
 - **CLI/Link**: tokio (async runtime), reqwest (HTTP client), tungstenite/tokio-tungstenite (WebSocket), ratatui/crossterm (terminal UI), rustyline (readline), clap (CLI args), tabled/prettytable-rs (table formatting), toml (config parsing)
-- **Backend**: RocksDB (storage), Apache Arrow (zero-copy data), Apache Parquet (storage format), DataFusion (SQL query engine, execution plan caching), actix-web (API server), serde (serialization)
+- **Backend**: RocksDB (storage), Apache Arrow (zero-copy data), Apache Parquet (storage format), DataFusion (SQL query engine, execution plan caching), sqlparser-rs 0.40+ (SQL parsing), actix-web (API server), serde (serialization)
+
+**Design Principles** (User Requirements):
+1. **PostgreSQL/MySQL Compatibility**: SQL syntax, error messages, and CLI output follow PostgreSQL and MySQL conventions for familiarity
+2. **Simplicity First**: Prefer simple, clear architecture over complex solutions; avoid unnecessary abstraction
+3. **Clean Code**: Centralized keywords as enums, minimal duplication, clear separation of concerns
+4. **Parser Architecture**: Use sqlparser-rs for standard SQL; custom extensions only for KalamDB-specific commands
+5. **Consistent Output**: CLI formatting matches psql/mysql style (table borders, row counts, timing)
 
 **New Components**:
 - **kalam-link crate**: WebAssembly-compatible library for KalamDB connectivity (HTTP queries, WebSocket subscriptions, authentication)
 - **kalam-cli binary**: Interactive terminal client using kalam-link for all database operations
 - **kalamdb-commons crate**: Shared type-safe models (UserId, NamespaceId, TableName), system constants, error types, configuration models
 - **kalamdb-live crate**: Live query subscription management (WebSocket lifecycle, client notifications, DataFusion expression caching)
+- **SQL parser architecture**: Centralized keywords (enum-based) plus sqlparser-rs integration with custom KalamDB dialect for proprietary commands
 - **Storage abstraction trait**: Pluggable backend interface (initially RocksDB, designed for Sled/Redis alternatives)
 
 **Key Technical Unknowns (NEEDS CLARIFICATION)**:
@@ -33,6 +41,7 @@ This feature encompasses comprehensive system improvements across multiple areas
 6. **Query plan cache key structure**: How to normalize SQL queries to create stable cache keys (AST hash vs string normalization)
 7. **JobManager trait methods**: Exact signatures for start(), cancel(), get_status() to support both Tokio JoinHandles and future actor supervision
 8. **DataFusion expression serialization**: How to persist cached expressions for live query filters across restarts
+9. **sqlparser-rs customization**: Scope of custom dialect extensions and keyword handling required for KalamDB-specific commands without diverging from PostgreSQL/MySQL compatibility
 
 **Storage**: RocksDB for write path (<1ms), Parquet for flushed storage (compressed columnar format)
 
