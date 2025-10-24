@@ -6,6 +6,9 @@
 // - ID generation functions (SNOWFLAKE_ID, UUID_V7, ULID)
 // - NOT NULL enforcement
 // - SELECT * column order preservation
+// - information_schema.tables and information_schema.columns queries
+
+mod common;
 
 use crate::common::TestServer;
 use serde_json::Value;
@@ -709,8 +712,10 @@ async fn test_column_order_preserved_after_alter() {
         "New column should be added at the end");
 }
 
-// T488: test_column_order_metadata_storage
+// T488: test_column_order_metadata_storage (DEPRECATED - uses old system.columns)
+// Kept for backward compatibility testing
 #[tokio::test]
+#[ignore = "Deprecated: system.columns replaced by information_schema.columns"]
 async fn test_column_order_metadata_storage() {
     let server = TestServer::start().await;
     
@@ -748,4 +753,297 @@ async fn test_column_order_metadata_storage() {
     
     assert_eq!(result.rows[3]["column_name"].as_str().unwrap(), "gamma");
     assert_eq!(result.rows[3]["ordinal_position"].as_i64().unwrap(), 3);
+}
+
+// ============================================================================
+// Phase 2b: information_schema Integration Tests
+// ============================================================================
+
+// T533-NEW21: Query information_schema.tables and verify complete TableDefinition
+#[tokio::test]
+async fn test_information_schema_tables_query() {
+    let server = TestServer::start().await;
+    
+    server.execute_sql("CREATE NAMESPACE app").await.unwrap();
+    
+    // Create a USER table with various features
+    server.execute_sql(
+        "CREATE USER TABLE app.users (
+            id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+            username TEXT NOT NULL,
+            email TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        )"
+    ).await.unwrap();
+    
+    // Query information_schema.tables
+    let result = server.execute_sql(
+        "SELECT table_schema, table_name, table_type, table_id, schema_version, use_user_storage
+         FROM information_schema.tables 
+         WHERE table_name = 'users'"
+    ).await.unwrap();
+    
+    assert_eq!(result.rows.len(), 1, "Should find exactly one table");
+    
+    let row = &result.rows[0];
+    assert_eq!(row["table_schema"].as_str().unwrap(), "app");
+    assert_eq!(row["table_name"].as_str().unwrap(), "users");
+    assert_eq!(row["table_type"].as_str().unwrap(), "USER");
+    assert!(row["table_id"].as_str().is_some(), "Should have table_id");
+    assert_eq!(row["schema_version"].as_u64().unwrap(), 1, "Initial schema version should be 1");
+    assert_eq!(row["use_user_storage"].as_bool().unwrap(), true, "USER tables should use user storage");
+}
+
+// T533-NEW22: Verify CREATE TABLE writes complete TableDefinition with all columns
+#[tokio::test]
+async fn test_create_table_writes_complete_definition() {
+    let server = TestServer::start().await;
+    
+    server.execute_sql("CREATE NAMESPACE test_ns").await.unwrap();
+    
+    // Create table with multiple columns and defaults
+    server.execute_sql(
+        "CREATE USER TABLE test_ns.products (
+            product_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+            product_name TEXT NOT NULL,
+            price DOUBLE,
+            stock_count INT,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP
+        )"
+    ).await.unwrap();
+    
+    // Query information_schema.columns to verify all columns were stored
+    let result = server.execute_sql(
+        "SELECT column_name, data_type, is_nullable, column_default, is_primary_key
+         FROM information_schema.columns 
+         WHERE table_name = 'products'
+         ORDER BY ordinal_position"
+    ).await.unwrap();
+    
+    assert_eq!(result.rows.len(), 6, "Should have all 6 columns");
+    
+    // Verify product_id column
+    assert_eq!(result.rows[0]["column_name"].as_str().unwrap(), "product_id");
+    assert!(result.rows[0]["data_type"].as_str().unwrap().contains("Int64") || 
+            result.rows[0]["data_type"].as_str().unwrap().contains("BIGINT"));
+    assert_eq!(result.rows[0]["is_nullable"].as_bool().unwrap(), false);
+    assert!(result.rows[0]["column_default"].as_str().unwrap().contains("SNOWFLAKE_ID"));
+    assert_eq!(result.rows[0]["is_primary_key"].as_bool().unwrap(), true);
+    
+    // Verify product_name column
+    assert_eq!(result.rows[1]["column_name"].as_str().unwrap(), "product_name");
+    assert_eq!(result.rows[1]["is_nullable"].as_bool().unwrap(), false);
+    
+    // Verify created_at has DEFAULT NOW()
+    assert_eq!(result.rows[4]["column_name"].as_str().unwrap(), "created_at");
+    assert!(result.rows[4]["column_default"].as_str().unwrap().contains("NOW"));
+}
+
+// T533-NEW23: Verify information_schema.columns returns correct ordinal_position
+#[tokio::test]
+async fn test_information_schema_columns_ordinal_position() {
+    let server = TestServer::start().await;
+    
+    server.execute_sql("CREATE NAMESPACE test_ns").await.unwrap();
+    
+    // Create table with specific column order
+    server.execute_sql(
+        "CREATE USER TABLE test_ns.ordered_table (
+            id BIGINT PRIMARY KEY,
+            alpha TEXT NOT NULL,
+            beta INT,
+            gamma TIMESTAMP,
+            delta DOUBLE
+        )"
+    ).await.unwrap();
+    
+    // Query information_schema.columns ordered by ordinal_position
+    let result = server.execute_sql(
+        "SELECT column_name, ordinal_position 
+         FROM information_schema.columns 
+         WHERE table_name = 'ordered_table' 
+         ORDER BY ordinal_position"
+    ).await.unwrap();
+    
+    assert_eq!(result.rows.len(), 5);
+    
+    // Verify ordinal positions are 1-indexed and sequential
+    assert_eq!(result.rows[0]["column_name"].as_str().unwrap(), "id");
+    assert_eq!(result.rows[0]["ordinal_position"].as_u64().unwrap(), 1);
+    
+    assert_eq!(result.rows[1]["column_name"].as_str().unwrap(), "alpha");
+    assert_eq!(result.rows[1]["ordinal_position"].as_u64().unwrap(), 2);
+    
+    assert_eq!(result.rows[2]["column_name"].as_str().unwrap(), "beta");
+    assert_eq!(result.rows[2]["ordinal_position"].as_u64().unwrap(), 3);
+    
+    assert_eq!(result.rows[3]["column_name"].as_str().unwrap(), "gamma");
+    assert_eq!(result.rows[3]["ordinal_position"].as_u64().unwrap(), 4);
+    
+    assert_eq!(result.rows[4]["column_name"].as_str().unwrap(), "delta");
+    assert_eq!(result.rows[4]["ordinal_position"].as_u64().unwrap(), 5);
+}
+
+// T533-NEW24: Verify column defaults stored in TableDefinition.columns
+#[tokio::test]
+async fn test_information_schema_column_defaults() {
+    let server = TestServer::start().await;
+    
+    server.execute_sql("CREATE NAMESPACE test_ns").await.unwrap();
+    
+    // Create table with various DEFAULT functions
+    server.execute_sql(
+        "CREATE USER TABLE test_ns.defaults_test (
+            id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+            user_id TEXT DEFAULT UUID_V7(),
+            ulid_field TEXT DEFAULT ULID(),
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+            no_default TEXT
+        )"
+    ).await.unwrap();
+    
+    // Query column defaults
+    let result = server.execute_sql(
+        "SELECT column_name, column_default
+         FROM information_schema.columns 
+         WHERE table_name = 'defaults_test'
+         ORDER BY ordinal_position"
+    ).await.unwrap();
+    
+    assert_eq!(result.rows.len(), 6);
+    
+    // Verify each DEFAULT is stored correctly
+    assert!(result.rows[0]["column_default"].as_str().unwrap().contains("SNOWFLAKE_ID"));
+    assert!(result.rows[1]["column_default"].as_str().unwrap().contains("UUID_V7"));
+    assert!(result.rows[2]["column_default"].as_str().unwrap().contains("ULID"));
+    assert!(result.rows[3]["column_default"].as_str().unwrap().contains("NOW"));
+    assert!(result.rows[4]["column_default"].as_str().unwrap().contains("CURRENT_TIMESTAMP"));
+    assert!(result.rows[5]["column_default"].is_null(), "no_default should have NULL default");
+}
+
+// T533-NEW25: Verify schema_history array tracks versions correctly
+#[tokio::test]
+async fn test_information_schema_schema_versioning() {
+    let server = TestServer::start().await;
+    
+    server.execute_sql("CREATE NAMESPACE test_ns").await.unwrap();
+    
+    // Create initial table
+    server.execute_sql(
+        "CREATE USER TABLE test_ns.versioned (
+            id BIGINT PRIMARY KEY,
+            name TEXT NOT NULL
+        )"
+    ).await.unwrap();
+    
+    // Query schema_version for the table
+    let result = server.execute_sql(
+        "SELECT table_name, schema_version, created_at
+         FROM information_schema.tables 
+         WHERE table_name = 'versioned'"
+    ).await.unwrap();
+    
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0]["schema_version"].as_u64().unwrap(), 1, "Initial version should be 1");
+    assert!(result.rows[0]["created_at"].as_str().is_some(), "Should have created_at timestamp");
+    
+    // Note: Full schema evolution (ALTER TABLE) is deferred to future work
+    // This test verifies initial version tracking is working
+}
+
+// Additional test: Verify information_schema works for SHARED tables
+#[tokio::test]
+async fn test_information_schema_shared_tables() {
+    let server = TestServer::start().await;
+    
+    server.execute_sql("CREATE NAMESPACE app").await.unwrap();
+    
+    // Create SHARED table
+    server.execute_sql(
+        "CREATE SHARED TABLE app.config (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT NOW()
+        )"
+    ).await.unwrap();
+    
+    // Query information_schema.tables
+    let result = server.execute_sql(
+        "SELECT table_name, table_type, use_user_storage
+         FROM information_schema.tables 
+         WHERE table_name = 'config'"
+    ).await.unwrap();
+    
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0]["table_type"].as_str().unwrap(), "SHARED");
+    assert_eq!(result.rows[0]["use_user_storage"].as_bool().unwrap(), false, "SHARED tables should not use user storage");
+}
+
+// Additional test: Verify information_schema works for STREAM tables
+#[tokio::test]
+async fn test_information_schema_stream_tables() {
+    let server = TestServer::start().await;
+    
+    server.execute_sql("CREATE NAMESPACE app").await.unwrap();
+    
+    // Create STREAM table with TTL
+    server.execute_sql(
+        "CREATE STREAM TABLE app.events (
+            id BIGINT PRIMARY KEY,
+            event_type TEXT NOT NULL,
+            data TEXT
+        ) WITH (ttl_seconds = 3600)"
+    ).await.unwrap();
+    
+    // Query information_schema.tables
+    let result = server.execute_sql(
+        "SELECT table_name, table_type, ttl_seconds
+         FROM information_schema.tables 
+         WHERE table_name = 'events'"
+    ).await.unwrap();
+    
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0]["table_type"].as_str().unwrap(), "STREAM");
+    assert_eq!(result.rows[0]["ttl_seconds"].as_u64().unwrap(), 3600);
+}
+
+// Additional test: Verify information_schema query across multiple namespaces
+#[tokio::test]
+async fn test_information_schema_multiple_namespaces() {
+    let server = TestServer::start().await;
+    
+    server.execute_sql("CREATE NAMESPACE ns1").await.unwrap();
+    server.execute_sql("CREATE NAMESPACE ns2").await.unwrap();
+    
+    // Create tables in different namespaces
+    server.execute_sql(
+        "CREATE USER TABLE ns1.table1 (id BIGINT PRIMARY KEY, name TEXT)"
+    ).await.unwrap();
+    
+    server.execute_sql(
+        "CREATE USER TABLE ns2.table2 (id BIGINT PRIMARY KEY, title TEXT)"
+    ).await.unwrap();
+    
+    // Query all tables across namespaces
+    let result = server.execute_sql(
+        "SELECT table_schema, table_name 
+         FROM information_schema.tables 
+         WHERE table_schema IN ('ns1', 'ns2')
+         ORDER BY table_schema, table_name"
+    ).await.unwrap();
+    
+    assert!(result.rows.len() >= 2, "Should find at least 2 tables");
+    
+    // Verify we can filter by specific namespace
+    let ns1_result = server.execute_sql(
+        "SELECT table_name 
+         FROM information_schema.tables 
+         WHERE table_schema = 'ns1'"
+    ).await.unwrap();
+    
+    assert!(ns1_result.rows.iter().any(|row| 
+        row["table_name"].as_str().unwrap() == "table1"
+    ));
 }

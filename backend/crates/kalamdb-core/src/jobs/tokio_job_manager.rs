@@ -64,7 +64,6 @@ use crate::error::KalamDbError;
 use async_trait::async_trait;
 use chrono::Utc;
 use std::collections::HashMap;
-use std::future::Future;
 use std::sync::{Arc, RwLock};
 use tokio::task::JoinHandle;
 

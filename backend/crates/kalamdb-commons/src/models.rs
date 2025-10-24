@@ -594,6 +594,176 @@ impl Default for ColumnDefault {
     }
 }
 
+// ===================================
+// information_schema.tables Support
+// ===================================
+
+/// Complete table definition stored in information_schema_tables CF.
+/// Single source of truth for all table metadata following MySQL/PostgreSQL
+/// information_schema pattern.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct TableDefinition {
+    /// Unique table identifier: "{namespace_id}:{table_name}"
+    pub table_id: String,
+    /// Table name (e.g., "users")
+    pub table_name: String,
+    /// Namespace ID (e.g., "app")
+    pub namespace_id: String,
+    /// Table type (USER, SHARED, STREAM, SYSTEM)
+    pub table_type: TableType,
+    /// Creation timestamp (Unix milliseconds)
+    pub created_at: i64,
+    /// Last update timestamp (Unix milliseconds)
+    pub updated_at: i64,
+    /// Current schema version (incremented on ALTER TABLE)
+    pub schema_version: u32,
+    /// Storage ID reference (e.g., "local", "s3-prod")
+    pub storage_id: String,
+    /// Whether to use user-specific storage partitioning
+    pub use_user_storage: bool,
+    /// Flush policy for write-ahead buffer
+    pub flush_policy: Option<FlushPolicyDef>,
+    /// Soft-delete retention in hours (for USER tables)
+    pub deleted_retention_hours: Option<u32>,
+    /// TTL in seconds (for STREAM tables)
+    pub ttl_seconds: Option<u64>,
+    /// Array of column definitions with ordinal positions
+    pub columns: Vec<ColumnDefinition>,
+    /// Schema change history for migrations
+    pub schema_history: Vec<SchemaVersion>,
+}
+
+/// Serializable flush policy definition for TableDefinition JSON storage.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct FlushPolicyDef {
+    /// Row threshold for flush trigger
+    pub row_threshold: Option<u64>,
+    /// Time interval in seconds for flush trigger
+    pub interval_seconds: Option<u64>,
+}
+
+/// Column metadata with ordinal position for SELECT * ordering.
+/// Stored within TableDefinition.columns array.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct ColumnDefinition {
+    /// Column name
+    pub column_name: String,
+    /// 1-indexed position in CREATE TABLE (preserved for SELECT *)
+    pub ordinal_position: u32,
+    /// Arrow DataType as string (e.g., "Int64", "Utf8", "Timestamp(Millisecond, None)")
+    pub data_type: String,
+    /// Whether column allows NULL values
+    pub is_nullable: bool,
+    /// DEFAULT expression (e.g., "NOW()", "SNOWFLAKE_ID()", "'literal'")
+    pub column_default: Option<String>,
+    /// Whether this column is the PRIMARY KEY
+    pub is_primary_key: bool,
+}
+
+/// Schema version record for change tracking and migrations.
+/// Stored within TableDefinition.schema_history array.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct SchemaVersion {
+    /// Schema version number
+    pub version: u32,
+    /// When this version was created (Unix milliseconds)
+    pub created_at: i64,
+    /// Human-readable description of changes (e.g., "Initial schema", "Added email column")
+    pub changes: String,
+    /// Full Arrow schema as JSON for this version
+    pub arrow_schema_json: String,
+}
+
+impl TableDefinition {
+    /// Extract column definitions from Arrow Schema and column_defaults map.
+    /// Assigns ordinal_position based on field order (1-indexed).
+    ///
+    /// # Arguments
+    /// * `schema` - Arrow schema with field definitions
+    /// * `column_defaults` - Map of column_name -> ColumnDefault
+    /// * `primary_key_column` - Optional primary key column name
+    ///
+    /// # Returns
+    /// Vector of ColumnDefinition with ordinal positions assigned
+    pub fn extract_columns_from_schema(
+        schema: &arrow_schema::Schema,
+        column_defaults: &std::collections::HashMap<String, ColumnDefault>,
+        primary_key_column: Option<&str>,
+    ) -> Vec<ColumnDefinition> {
+        schema
+            .fields()
+            .iter()
+            .enumerate()
+            .map(|(idx, field)| {
+                let column_name = field.name().to_string();
+                let is_primary_key = primary_key_column
+                    .map(|pk| pk == column_name.as_str())
+                    .unwrap_or(false);
+                
+                // Get default value if specified
+                let column_default = column_defaults
+                    .get(&column_name)
+                    .and_then(|def| {
+                        match def {
+                            ColumnDefault::None => None,
+                            ColumnDefault::FunctionCall(func) => Some(format!("{}()", func)),
+                            ColumnDefault::Literal(lit) => Some(lit.clone()),
+                        }
+                    });
+
+                ColumnDefinition {
+                    column_name,
+                    ordinal_position: (idx + 1) as u32, // 1-indexed
+                    data_type: format!("{:?}", field.data_type()), // e.g., "Int64", "Utf8"
+                    is_nullable: field.is_nullable(),
+                    column_default,
+                    is_primary_key,
+                }
+            })
+            .collect()
+    }
+
+    /// Serialize Arrow Schema to JSON string for schema_history.
+    ///
+    /// # Arguments
+    /// * `schema` - Arrow schema to serialize
+    ///
+    /// # Returns
+    /// JSON string representation of the schema
+    pub fn serialize_arrow_schema(schema: &arrow_schema::Schema) -> Result<String, serde_json::Error> {
+        // Convert schema to JSON-compatible structure
+        #[cfg_attr(feature = "serde", derive(Serialize))]
+        struct SchemaJson {
+            fields: Vec<FieldJson>,
+        }
+
+        #[cfg_attr(feature = "serde", derive(Serialize))]
+        struct FieldJson {
+            name: String,
+            data_type: String,
+            nullable: bool,
+        }
+
+        let schema_json = SchemaJson {
+            fields: schema
+                .fields()
+                .iter()
+                .map(|f| FieldJson {
+                    name: f.name().to_string(),
+                    data_type: format!("{:?}", f.data_type()),
+                    nullable: f.is_nullable(),
+                })
+                .collect(),
+        };
+
+        serde_json::to_string(&schema_json)
+    }
+}
+
 #[cfg(test)]
 mod tests {
 

@@ -10,7 +10,7 @@
 
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
-use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use arrow::datatypes::Schema;
 use kalamdb_commons::models::ColumnDefault;
 use kalamdb_store::UserTableStore;
 use serde_json::{json, Value as JsonValue};
@@ -271,7 +271,9 @@ impl UserTableInsertHandler {
                         // Generate snowflake ID
                         use crate::ids::SnowflakeGenerator;
                         let generator = SnowflakeGenerator::new(0);
-                        let id = generator.next_id();
+                        let id = generator.next_id().map_err(|e| {
+                            KalamDbError::InvalidOperation(format!("Failed to generate snowflake ID: {}", e))
+                        })?;
                         Ok(json!(id))
                     }
                     "UUID_V7" => {

@@ -297,6 +297,67 @@ impl KalamSql {
     pub fn get_table(&self, table_id: &str) -> Result<Option<Table>> {
         self.adapter.get_table(table_id)
     }
+
+    // ===================================
+    // information_schema.tables Operations
+    // ===================================
+
+    /// Insert or update complete table definition in information_schema_tables.
+    /// Single atomic write for all table metadata (replaces fragmented writes).
+    ///
+    /// # Arguments
+    /// * `table_def` - Complete table definition with metadata, columns, and schema history
+    ///
+    /// # Returns
+    /// Ok(()) on success, error on failure
+    pub fn upsert_table_definition(
+        &self,
+        table_def: &kalamdb_commons::models::TableDefinition,
+    ) -> Result<()> {
+        self.adapter.upsert_table_definition(table_def)
+    }
+
+    /// Get complete table definition from information_schema_tables.
+    /// Single atomic read for all table metadata.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - Namespace identifier
+    /// * `table_name` - Table name
+    ///
+    /// # Returns
+    /// Some(TableDefinition) if found, None if not found
+    pub fn get_table_definition(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> Result<Option<kalamdb_commons::models::TableDefinition>> {
+        self.adapter.get_table_definition(namespace_id, table_name)
+    }
+
+    /// Scan all table definitions in a namespace from information_schema_tables.
+    /// Used for SHOW TABLES and metadata queries.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - Namespace identifier
+    ///
+    /// # Returns
+    /// Vector of all TableDefinition in the namespace
+    pub fn scan_table_definitions(
+        &self,
+        namespace_id: &str,
+    ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
+        self.adapter.scan_table_definitions(namespace_id)
+    }
+
+    /// Scan ALL table definitions across ALL namespaces
+    ///
+    /// # Returns
+    /// Vector of all TableDefinition in the database
+    pub fn scan_all_table_definitions(
+        &self,
+    ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
+        self.adapter.scan_all_table_definitions()
+    }
 }
 
 #[cfg(test)]

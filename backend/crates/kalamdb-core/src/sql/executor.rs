@@ -53,7 +53,7 @@ use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser;
 use kalamdb_sql::ddl::{
     AlterNamespaceStatement, CreateNamespaceStatement, CreateTableStatement,
-    DescribeTableStatement, DropNamespaceStatement, DropTableStatement, FlushPolicy as DdlFlushPolicy,
+    DescribeTableStatement, DropNamespaceStatement, DropTableStatement,
     ShowNamespacesStatement, ShowTableStatsStatement, ShowTablesStatement, parse_job_command,
 };
 use kalamdb_sql::KalamSql;
@@ -706,6 +706,47 @@ impl SqlExecutor {
                 Arc::new(JobsTableProvider::new(kalam_sql.clone())),
             )
             .map_err(|e| KalamDbError::Other(format!("Failed to register system.jobs: {}", e)))?;
+
+        // Register information_schema tables
+        use crate::tables::system::{InformationSchemaColumnsProvider, InformationSchemaTablesProvider};
+
+        // Check if information_schema exists, if not create it
+        if catalog.schema("information_schema").is_none() {
+            let info_schema = Arc::new(MemorySchemaProvider::new());
+            catalog
+                .register_schema("information_schema", info_schema)
+                .map_err(|e| {
+                    KalamDbError::Other(format!("Failed to register information_schema: {}", e))
+                })?;
+        }
+
+        let info_schema = catalog.schema("information_schema").ok_or_else(|| {
+            KalamDbError::Other("information_schema not found after registration".to_string())
+        })?;
+
+        info_schema
+            .register_table(
+                "tables".to_string(),
+                Arc::new(InformationSchemaTablesProvider::new(kalam_sql.clone())),
+            )
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to register information_schema.tables: {}",
+                    e
+                ))
+            })?;
+
+        info_schema
+            .register_table(
+                "columns".to_string(),
+                Arc::new(InformationSchemaColumnsProvider::new(kalam_sql.clone())),
+            )
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to register information_schema.columns: {}",
+                    e
+                ))
+            })?;
 
         Ok(())
     }

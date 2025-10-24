@@ -104,14 +104,8 @@ impl UserTableService {
         let storage_id = stmt.storage_id.as_ref().unwrap_or(&default_storage);
         let storage_location = self.resolve_storage_from_id(storage_id)?;
 
-        // 4. Create schema files (schema_v1.json, manifest.json, current.json)
-        self.create_schema_files(
-            &namespace_id_core,
-            &table_name_core,
-            &schema,
-            &stmt.flush_policy,
-            stmt.deleted_retention_hours,
-        )?;
+        // 4. Save complete table definition to information_schema_tables (atomic write)
+        self.save_table_definition(&stmt, &schema)?;
 
         // 5. Create RocksDB column family for this table
         // This ensures the table is ready for data operations immediately after creation
@@ -238,8 +232,107 @@ impl UserTableService {
         Ok(storage.user_tables_template)
     }
 
-    /// Create schema files for the table
+    /// Create and save table definition to information_schema_tables.
+    /// Replaces fragmented schema storage with single atomic write.
     ///
+    /// # Arguments
+    /// * `stmt` - CREATE TABLE statement with all metadata
+    /// * `schema` - Final Arrow schema (after auto-increment and system column injection)
+    ///
+    /// # Returns
+    /// Ok(()) on success, error on failure
+    fn save_table_definition(
+        &self,
+        stmt: &CreateTableStatement,
+        schema: &Arc<Schema>,
+    ) -> Result<(), KalamDbError> {
+        use kalamdb_commons::models::{
+            ColumnDefinition, FlushPolicyDef, SchemaVersion, TableDefinition,
+        };
+        use std::collections::HashMap;
+
+        // Extract columns from schema with ordinal positions
+        let columns = TableDefinition::extract_columns_from_schema(
+            schema.as_ref(),
+            &stmt.column_defaults,
+            stmt.primary_key_column.as_deref(),
+        );
+
+        // Serialize Arrow schema for history
+        let arrow_schema_json = TableDefinition::serialize_arrow_schema(schema.as_ref()).map_err(|e| {
+            KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
+        })?;
+
+        // Build flush policy definition
+        let flush_policy_def = stmt.flush_policy.as_ref().map(|policy| match policy {
+            DdlFlushPolicy::RowLimit { row_limit } => FlushPolicyDef {
+                row_threshold: Some(*row_limit as u64),
+                interval_seconds: None,
+            },
+            DdlFlushPolicy::TimeInterval { interval_seconds } => FlushPolicyDef {
+                row_threshold: None,
+                interval_seconds: Some(*interval_seconds as u64),
+            },
+            DdlFlushPolicy::Combined {
+                row_limit,
+                interval_seconds,
+            } => FlushPolicyDef {
+                row_threshold: Some(*row_limit as u64),
+                interval_seconds: Some(*interval_seconds as u64),
+            },
+        });
+
+        // Build complete table definition
+        let now_millis = chrono::Utc::now().timestamp_millis();
+        let table_def = TableDefinition {
+            table_id: format!("{}:{}", stmt.namespace_id.as_str(), stmt.table_name.as_str()),
+            table_name: stmt.table_name.as_str().to_string(),
+            namespace_id: stmt.namespace_id.as_str().to_string(),
+            table_type: TableType::User,
+            created_at: now_millis,
+            updated_at: now_millis,
+            schema_version: 1,
+            storage_id: stmt
+                .storage_id
+                .as_ref()
+                .map(|s| s.as_str().to_string())
+                .unwrap_or_else(|| "local".to_string()),
+            use_user_storage: stmt.use_user_storage,
+            flush_policy: flush_policy_def,
+            deleted_retention_hours: stmt.deleted_retention_hours,
+            ttl_seconds: stmt.ttl_seconds,
+            columns,
+            schema_history: vec![SchemaVersion {
+                version: 1,
+                created_at: now_millis,
+                changes: "Initial schema".to_string(),
+                arrow_schema_json,
+            }],
+        };
+
+        // Single atomic write to information_schema_tables
+        self.kalam_sql
+            .upsert_table_definition(&table_def)
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to save table definition to information_schema.tables: {}",
+                    e
+                ))
+            })?;
+
+        log::info!(
+            "Table definition for {}.{} saved to information_schema.tables (version 1)",
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str()
+        );
+
+        Ok(())
+    }
+
+    /// DEPRECATED: Create schema files for the table
+    ///
+    /// **REPLACED BY**: save_table_definition() which writes to information_schema_tables
+    /// 
     /// Creates:
     /// - schema_v1.json: Arrow schema in JSON format
     /// - manifest.json: Schema versioning metadata

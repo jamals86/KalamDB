@@ -320,6 +320,123 @@ impl RocksDbAdapter {
         Ok(())
     }
 
+    // ===================================
+    // information_schema.tables Operations
+    // ===================================
+
+    /// Insert or update complete table definition in information_schema_tables.
+    /// Single atomic write for all table metadata (replaces fragmented writes).
+    ///
+    /// # Arguments
+    /// * `table_def` - Complete table definition with metadata, columns, and schema history
+    ///
+    /// # Returns
+    /// Ok(()) on success, error on failure
+    pub fn upsert_table_definition(
+        &self,
+        table_def: &kalamdb_commons::models::TableDefinition,
+    ) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle("information_schema_tables")
+            .ok_or_else(|| anyhow!("information_schema_tables CF not found"))?;
+
+        let key = format!("{}:{}", table_def.namespace_id, table_def.table_name);
+        let value = serde_json::to_vec(table_def)?;
+        self.db.put_cf(&cf, key.as_bytes(), &value)?;
+        Ok(())
+    }
+
+    /// Get complete table definition from information_schema_tables.
+    /// Single atomic read for all table metadata.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - Namespace identifier
+    /// * `table_name` - Table name
+    ///
+    /// # Returns
+    /// Some(TableDefinition) if found, None if not found
+    pub fn get_table_definition(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> Result<Option<kalamdb_commons::models::TableDefinition>> {
+        let cf = self
+            .db
+            .cf_handle("information_schema_tables")
+            .ok_or_else(|| anyhow!("information_schema_tables CF not found"))?;
+
+        let key = format!("{}:{}", namespace_id, table_name);
+        match self.db.get_cf(&cf, key.as_bytes())? {
+            Some(value) => {
+                let table_def: kalamdb_commons::models::TableDefinition =
+                    serde_json::from_slice(&value)?;
+                Ok(Some(table_def))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Scan all table definitions in a namespace from information_schema_tables.
+    /// Used for SHOW TABLES and metadata queries.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - Namespace identifier
+    ///
+    /// # Returns
+    /// Vector of all TableDefinition in the namespace
+    pub fn scan_table_definitions(
+        &self,
+        namespace_id: &str,
+    ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
+        let cf = self
+            .db
+            .cf_handle("information_schema_tables")
+            .ok_or_else(|| anyhow!("information_schema_tables CF not found"))?;
+
+        let prefix = format!("{}:", namespace_id);
+        let mut tables = Vec::new();
+
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+        for item in iter {
+            let (key, value) = item?;
+            let key_str = String::from_utf8_lossy(&key);
+
+            if key_str.starts_with(&prefix) {
+                let table_def: kalamdb_commons::models::TableDefinition =
+                    serde_json::from_slice(&value)?;
+                tables.push(table_def);
+            }
+        }
+
+        Ok(tables)
+    }
+
+    /// Scan ALL table definitions across ALL namespaces
+    ///
+    /// # Returns
+    /// Vector of all TableDefinition in the database
+    pub fn scan_all_table_definitions(
+        &self,
+    ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
+        let cf = self
+            .db
+            .cf_handle("information_schema_tables")
+            .ok_or_else(|| anyhow!("information_schema_tables CF not found"))?;
+
+        let mut tables = Vec::new();
+
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+        for item in iter {
+            let (_key, value) = item?;
+            let table_def: kalamdb_commons::models::TableDefinition =
+                serde_json::from_slice(&value)?;
+            tables.push(table_def);
+        }
+
+        Ok(tables)
+    }
+
     // Storage operations
 
     /// Get a storage by ID
