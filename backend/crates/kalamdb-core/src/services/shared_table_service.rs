@@ -134,7 +134,11 @@ impl SharedTableService {
         let schema = stmt.schema.clone();
 
         // Resolve storage location from storage_id (defaulting to 'local')
-        let storage_id = stmt.storage_id.as_ref().cloned().unwrap_or_else(|| StorageId::local());
+        let storage_id = stmt
+            .storage_id
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| StorageId::local());
         let storage_location = format!("/data/shared"); // TODO: Get from storage configuration
 
         // Validate no ${user_id} templating in shared table storage location
@@ -256,22 +260,21 @@ impl SharedTableService {
         flush_policy: Option<&DdlFlushPolicy>,
     ) -> Result<FlushPolicy, KalamDbError> {
         match flush_policy {
-            Some(DdlFlushPolicy::RowLimit { row_limit }) => {
-                Ok(FlushPolicy::RowLimit {
-                    row_limit: *row_limit,
-                })
-            }
+            Some(DdlFlushPolicy::RowLimit { row_limit }) => Ok(FlushPolicy::RowLimit {
+                row_limit: *row_limit,
+            }),
             Some(DdlFlushPolicy::TimeInterval { interval_seconds }) => {
                 Ok(FlushPolicy::TimeInterval {
                     interval_seconds: *interval_seconds,
                 })
             }
-            Some(DdlFlushPolicy::Combined { row_limit, interval_seconds }) => {
-                Ok(FlushPolicy::Combined {
-                    row_limit: *row_limit,
-                    interval_seconds: *interval_seconds,
-                })
-            }
+            Some(DdlFlushPolicy::Combined {
+                row_limit,
+                interval_seconds,
+            }) => Ok(FlushPolicy::Combined {
+                row_limit: *row_limit,
+                interval_seconds: *interval_seconds,
+            }),
             None => {
                 // Default flush policy: 1000 rows
                 Ok(FlushPolicy::RowLimit { row_limit: 1000 })
@@ -301,9 +304,7 @@ impl SharedTableService {
         schema: &Arc<Schema>,
         storage_location: &str,
     ) -> Result<(), KalamDbError> {
-        use kalamdb_commons::models::{
-            FlushPolicyDef, SchemaVersion, TableDefinition,
-        };
+        use kalamdb_commons::models::{FlushPolicyDef, SchemaVersion, TableDefinition};
 
         // Extract columns from schema with ordinal positions
         let columns = TableDefinition::extract_columns_from_schema(
@@ -313,9 +314,10 @@ impl SharedTableService {
         );
 
         // Serialize Arrow schema for history
-        let arrow_schema_json = TableDefinition::serialize_arrow_schema(schema.as_ref()).map_err(|e| {
-            KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
-        })?;
+        let arrow_schema_json =
+            TableDefinition::serialize_arrow_schema(schema.as_ref()).map_err(|e| {
+                KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
+            })?;
 
         // Build flush policy definition
         let flush_policy_def = stmt.flush_policy.as_ref().map(|policy| match policy {
@@ -339,7 +341,11 @@ impl SharedTableService {
         // Build complete table definition
         let now_millis = chrono::Utc::now().timestamp_millis();
         let table_def = TableDefinition {
-            table_id: format!("{}:{}", stmt.namespace_id.as_str(), stmt.table_name.as_str()),
+            table_id: format!(
+                "{}:{}",
+                stmt.namespace_id.as_str(),
+                stmt.table_name.as_str()
+            ),
             table_name: stmt.table_name.as_str().to_string(),
             namespace_id: stmt.namespace_id.as_str().to_string(),
             table_type: TableType::Shared,
@@ -608,7 +614,7 @@ mod tests {
         // This test should pass since the default location doesn't contain ${user_id}
         let result = service.create_table(stmt);
         assert!(result.is_ok());
-        
+
         // TODO: When storage locations become configurable, add a test that actually
         // tries to create a shared table with a location containing ${user_id}
     }
@@ -623,7 +629,9 @@ mod tests {
         assert!(matches!(result, FlushPolicy::RowLimit { row_limit: 500 }));
 
         // Time-based policy
-        let policy = DdlFlushPolicy::TimeInterval { interval_seconds: 60 };
+        let policy = DdlFlushPolicy::TimeInterval {
+            interval_seconds: 60,
+        };
         let result = service.parse_flush_policy(Some(&policy)).unwrap();
         assert!(matches!(
             result,
@@ -710,7 +718,7 @@ mod tests {
         //     table_name: TableName::new("config"),
         //     namespace_id: NamespaceId::new("app"),
         //     schema: schema.clone(),
-        //     
+        //
         //     flush_policy: None,
         //     deleted_retention: None,
         //     if_not_exists: false,
@@ -722,7 +730,7 @@ mod tests {
         //     table_name: TableName::new("config"),
         //     namespace_id: NamespaceId::new("app"),
         //     schema,
-        //     
+        //
         //     flush_policy: None,
         //     deleted_retention: None,
         //     if_not_exists: true,

@@ -76,7 +76,8 @@ impl DropTableStatement {
         };
 
         // Parse using shared utility (handles IF EXISTS)
-        let (name, if_exists) = parsing::parse_create_drop_statement(sql, type_keyword, "IF EXISTS")?;
+        let (name, if_exists) =
+            parsing::parse_create_drop_statement(sql, type_keyword, "IF EXISTS")?;
 
         // Handle qualified name (namespace.table)
         let (namespace_id, table_name) = if let Some(dot_pos) = name.find('.') {

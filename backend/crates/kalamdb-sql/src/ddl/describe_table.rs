@@ -48,7 +48,7 @@ impl DescribeTableStatement {
 
         // Extract remainder after prefix
         let remainder = sql_trimmed[prefix_len..].trim();
-        
+
         // Check for HISTORY keyword at the end
         let remainder_upper = remainder.to_uppercase();
         let (table_ref, show_history) = if remainder_upper.ends_with(" HISTORY") {

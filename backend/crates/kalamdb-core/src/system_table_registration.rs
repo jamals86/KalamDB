@@ -3,10 +3,13 @@
 //! Provides centralized registration of all system tables to avoid code duplication.
 
 use crate::tables::system::{
-    JobsTableProvider, LiveQueriesTableProvider, NamespacesTableProvider,
+    JobsTableProvider,
+    LiveQueriesTableProvider,
+    NamespacesTableProvider,
     // TODO: Phase 2b - StorageLocationsTableProvider deprecated (replaced by system_storages)
-    // StorageLocationsTableProvider, 
-    SystemStoragesProvider, SystemTablesTableProvider,
+    // StorageLocationsTableProvider,
+    SystemStoragesProvider,
+    SystemTablesTableProvider,
     UsersTableProvider,
 };
 use datafusion::catalog::schema::{MemorySchemaProvider, SchemaProvider};
@@ -54,10 +57,7 @@ pub fn register_system_tables(
 
     // Register each system table using the SystemTable enum
     system_schema
-        .register_table(
-            SystemTable::Users.table_name().to_string(),
-            users_provider,
-        )
+        .register_table(SystemTable::Users.table_name().to_string(), users_provider)
         .map_err(|e| format!("Failed to register system.users: {}", e))?;
 
     system_schema

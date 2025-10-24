@@ -150,8 +150,7 @@ mod tests {
 }
 
 /// Database error message style configuration
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ErrorStyle {
     /// PostgreSQL-style errors (default)
     /// Examples:
@@ -160,14 +159,13 @@ pub enum ErrorStyle {
     /// - "ERROR: syntax error at or near \"FROM\""
     #[default]
     PostgreSQL,
-    
+
     /// MySQL-style errors
     /// Examples:
     /// - "ERROR 1146 (42S02): Table 'db.users' doesn't exist"
     /// - "ERROR 1054 (42S22): Unknown column 'age' in 'field list'"
     MySQL,
 }
-
 
 /// Format an error message in PostgreSQL style
 ///

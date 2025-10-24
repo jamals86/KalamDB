@@ -306,11 +306,8 @@ fn bench_concurrent_writes(c: &mut Criterion) {
             BenchmarkId::from_parameter(format!("{}_threads", thread_count)),
             thread_count,
             |b, &threads| {
-                let test_db = TestDb::single_cf(&format!(
-                    "user_table:concurrent:{}",
-                    threads
-                ))
-                .expect("Failed to create test database");
+                let test_db = TestDb::single_cf(&format!("user_table:concurrent:{}", threads))
+                    .expect("Failed to create test database");
 
                 let store = Arc::new(
                     UserTableStore::new(test_db.db.clone())

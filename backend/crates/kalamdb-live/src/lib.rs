@@ -26,29 +26,20 @@
 //!
 //! ## Status
 //!
-//! Phase 6 (Integration Testing): Test infrastructure complete, implementation deferred.
-//! Most live query functionality exists in kalamdb-core/src/live_query/.
-//! This crate will eventually provide a cleaner separation of concerns.
+//! Phase 6 Complete: Core subscription and expression caching implemented.
+//! Integration with WebSocket handling exists in kalamdb-core/src/live_query/.
 
-// Module declarations for future implementation
+// Module implementations
 
-/// Subscription management (T208)
+/// Subscription management (T208, T212)
 ///
 /// Contains LiveQuerySubscription struct with filter_sql and cached_expr fields.
-pub mod subscription {
-    //! Live query subscription data structures and lifecycle management.
-    //!
-    //! # Future Implementation
-    //!
-    //! This module will contain:
-    //! - `LiveQuerySubscription` struct with fields:
-    //!   - `live_id`: Unique subscription identifier
-    //!   - `filter_sql`: SQL WHERE clause for filtering
-    //!   - `cached_expr`: Compiled DataFusion expression
-    //!   - `changes`: Counter for delivered notifications
-    //! - Subscription creation and validation logic
-    //! - Filter expression compilation
-}
+pub mod subscription;
+
+/// DataFusion expression caching (T211, T213)
+///
+/// Compiles and caches SQL filter expressions for efficient evaluation.
+pub mod expression_cache;
 
 /// Subscription lifecycle management (T209)
 ///
@@ -63,6 +54,12 @@ pub mod manager {
     //! - Subscription creation and removal
     //! - Connection tracking per user
     //! - Cleanup on WebSocket disconnect
+    //!
+    //! # Note
+    //!
+    //! Most of this functionality currently exists in:
+    //! - `kalamdb-core/src/live_query/manager.rs`
+    //! - `kalamdb-core/src/live_query/registry.rs`
 }
 
 /// Client notification logic (T210)
@@ -78,24 +75,15 @@ pub mod notifier {
     //! - WebSocket message serialization
     //! - Client-specific filtering
     //! - Delivery error handling
+    //!
+    //! # Note
+    //!
+    //! Most of this functionality currently exists in:
+    //! - `kalamdb-core/src/live_query/notifier.rs`
+    //! - `kalamdb-api/src/websocket/session.rs`
 }
 
-/// DataFusion expression caching (T211)
-///
-/// Compiles and caches SQL filter expressions for efficient evaluation.
-pub mod expression_cache {
-    //! Compiled expression caching for live query filters.
-    //!
-    //! # Future Implementation
-    //!
-    //! This module will provide:
-    //! - `CachedExpression` struct wrapping DataFusion `Expr`
-    //! - Expression compilation from SQL WHERE clauses
-    //! - Cache invalidation on schema changes
-    //! - Expression evaluation against record batches
-    //!
-    //! # Performance
-    //!
-    //! Caching compiled expressions provides ~50% performance improvement
-    //! over re-parsing SQL filters for each change notification.
-}
+// Re-export main types for convenience
+pub use subscription::LiveQuerySubscription;
+pub use expression_cache::CachedExpression;
+

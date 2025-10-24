@@ -638,15 +638,17 @@ impl UserTableFlushJob {
         );
 
         let writer = ParquetWriter::new(output_path.to_str().unwrap());
-        writer.write(self.schema.clone(), vec![batch]).map_err(|e| {
-            log::error!(
-                "❌ Failed to write Parquet file for user_id={}, path={}: {}",
-                user_id,
-                output_path.display(),
+        writer
+            .write(self.schema.clone(), vec![batch])
+            .map_err(|e| {
+                log::error!(
+                    "❌ Failed to write Parquet file for user_id={}, path={}: {}",
+                    user_id,
+                    output_path.display(),
+                    e
+                );
                 e
-            );
-            e
-        })?;
+            })?;
 
         parquet_files.push(output_path.to_string_lossy().to_string());
 

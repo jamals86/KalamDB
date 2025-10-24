@@ -901,7 +901,9 @@ async fn test_21_storage_locations_table_removed() {
     let server = TestServer::new().await;
 
     // Attempt to query deprecated system.storage_locations
-    let response = server.execute_sql("SELECT * FROM system.storage_locations").await;
+    let response = server
+        .execute_sql("SELECT * FROM system.storage_locations")
+        .await;
 
     assert_eq!(
         response.status, "error",
@@ -909,15 +911,27 @@ async fn test_21_storage_locations_table_removed() {
     );
 
     assert!(
-        response.error.as_ref().unwrap().message.contains("table") 
-            || response.error.as_ref().unwrap().message.contains("not found")
-            || response.error.as_ref().unwrap().message.contains("does not exist"),
+        response.error.as_ref().unwrap().message.contains("table")
+            || response
+                .error
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("not found")
+            || response
+                .error
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("does not exist"),
         "Error should indicate table not found, got: {:?}",
         response.error
     );
 
     // Verify system.storages exists instead
-    let response = server.execute_sql("SELECT storage_id FROM system.storages WHERE storage_id = 'local'").await;
+    let response = server
+        .execute_sql("SELECT storage_id FROM system.storages WHERE storage_id = 'local'")
+        .await;
     assert_eq!(
         response.status, "success",
         "system.storages should exist: {:?}",
@@ -934,7 +948,9 @@ async fn test_22_credentials_column_exists() {
     let server = TestServer::new().await;
 
     // Query system.storages and verify credentials column is present
-    let response = server.execute_sql("SELECT storage_id, credentials FROM system.storages").await;
+    let response = server
+        .execute_sql("SELECT storage_id, credentials FROM system.storages")
+        .await;
 
     assert_eq!(
         response.status, "success",
@@ -945,7 +961,10 @@ async fn test_22_credentials_column_exists() {
     // Verify schema includes credentials column
     if let Some(result) = response.results.first() {
         let has_credentials = result.columns.iter().any(|col| col == "credentials");
-        assert!(has_credentials, "system.storages should have 'credentials' column");
+        assert!(
+            has_credentials,
+            "system.storages should have 'credentials' column"
+        );
     } else {
         panic!("No results returned");
     }
@@ -979,15 +998,20 @@ async fn test_23_storage_with_credentials() {
     );
 
     // Query to verify credentials stored (should be masked or present)
-    let query = "SELECT storage_id, credentials FROM system.storages WHERE storage_id = 's3_with_creds'";
+    let query =
+        "SELECT storage_id, credentials FROM system.storages WHERE storage_id = 's3_with_creds'";
     let response = server.execute_sql(query).await;
 
-    assert_eq!(response.status, "success", "Query failed: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "Query failed: {:?}",
+        response.error
+    );
 
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(rows.len(), 1, "Expected 1 storage");
         let storage = &rows[0];
-        
+
         // Verify credentials field exists (may be masked or shown)
         assert!(
             storage.contains_key("credentials"),
@@ -1018,7 +1042,8 @@ async fn test_24_credentials_masked_in_query() {
     server.execute_sql(create_storage).await;
 
     // Query system.storages
-    let query = "SELECT storage_id, credentials FROM system.storages WHERE storage_id = 's3_masked'";
+    let query =
+        "SELECT storage_id, credentials FROM system.storages WHERE storage_id = 's3_masked'";
     let response = server.execute_sql(query).await;
 
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
@@ -1153,16 +1178,26 @@ async fn test_27_create_table_invalid_storage() {
     "#;
 
     let response = server.execute_sql(create_table).await;
-    
+
     // Current implementation allows table creation with invalid storage
     // Validation happens at flush time, not creation time
     // This test documents current behavior
     if response.status == "error" {
         // If validation is added in future, check error message
         assert!(
-            response.error.as_ref().unwrap().message.contains("storage") 
-                || response.error.as_ref().unwrap().message.contains("not found")
-                || response.error.as_ref().unwrap().message.contains("does not exist"),
+            response.error.as_ref().unwrap().message.contains("storage")
+                || response
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .message
+                    .contains("not found")
+                || response
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .message
+                    .contains("does not exist"),
             "Error should indicate invalid storage, got: {:?}",
             response.error
         );
@@ -1181,7 +1216,7 @@ async fn test_28_table_storage_assignment() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "storage_ns").await;
 
-    // Create shared table with default storage  
+    // Create shared table with default storage
     // (Testing storage assignment, not user table specifics)
     let create_table = r#"
         CREATE TABLE storage_ns.data_table (
@@ -1200,14 +1235,14 @@ async fn test_28_table_storage_assignment() {
     // Verify default storage is assigned
     let query = "SELECT storage_id FROM system.tables WHERE namespace = 'storage_ns' AND table_name = 'data_table'";
     let check = server.execute_sql(query).await;
-    
+
     if let Some(rows) = &check.results.first().and_then(|r| r.rows.as_ref()) {
         let table = &rows[0];
         assert!(
             table.get("storage_id").is_some(),
             "Table must have storage_id assigned"
         );
-        
+
         // Should default to 'local' if not specified
         assert_eq!(
             table.get("storage_id").and_then(|v| v.as_str()),
@@ -1254,8 +1289,13 @@ async fn test_29_delete_storage_with_tables() {
     );
 
     assert!(
-        response.error.as_ref().unwrap().message.contains("table") 
-            || response.error.as_ref().unwrap().message.contains("dependent")
+        response.error.as_ref().unwrap().message.contains("table")
+            || response
+                .error
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("dependent")
             || response.error.as_ref().unwrap().message.contains("in use"),
         "Error should mention dependent tables, got: {:?}",
         response.error
@@ -1280,8 +1320,13 @@ async fn test_30_delete_storage_local_protected() {
     );
 
     assert!(
-        response.error.as_ref().unwrap().message.contains("local") 
-            || response.error.as_ref().unwrap().message.contains("protected")
+        response.error.as_ref().unwrap().message.contains("local")
+            || response
+                .error
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("protected")
             || response.error.as_ref().unwrap().message.contains("cannot"),
         "Error should mention 'local' is protected, got: {:?}",
         response.error
@@ -1333,13 +1378,23 @@ async fn test_32_show_storages_ordering() {
     let server = TestServer::new().await;
 
     // Create multiple storages
-    server.execute_sql("CREATE STORAGE z_storage TYPE filesystem NAME 'Z Storage' PATH '/data/z'").await;
-    server.execute_sql("CREATE STORAGE a_storage TYPE filesystem NAME 'A Storage' PATH '/data/a'").await;
-    server.execute_sql("CREATE STORAGE m_storage TYPE filesystem NAME 'M Storage' PATH '/data/m'").await;
+    server
+        .execute_sql("CREATE STORAGE z_storage TYPE filesystem NAME 'Z Storage' PATH '/data/z'")
+        .await;
+    server
+        .execute_sql("CREATE STORAGE a_storage TYPE filesystem NAME 'A Storage' PATH '/data/a'")
+        .await;
+    server
+        .execute_sql("CREATE STORAGE m_storage TYPE filesystem NAME 'M Storage' PATH '/data/m'")
+        .await;
 
     // Query SHOW STORAGES
     let response = server.execute_sql("SHOW STORAGES").await;
-    assert_eq!(response.status, "success", "SHOW STORAGES failed: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "SHOW STORAGES failed: {:?}",
+        response.error
+    );
 
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
         assert!(rows.len() >= 4, "Expected at least 4 storages");
@@ -1354,7 +1409,11 @@ async fn test_32_show_storages_ordering() {
         // Rest should be alphabetical
         let storage_ids: Vec<String> = rows[1..]
             .iter()
-            .filter_map(|row| row.get("storage_id").and_then(|v| v.as_str()).map(String::from))
+            .filter_map(|row| {
+                row.get("storage_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            })
             .collect();
 
         let mut sorted_ids = storage_ids.clone();
@@ -1387,14 +1446,24 @@ async fn test_33_storage_template_validation() {
     "#;
 
     let response = server.execute_sql(create_storage).await;
-    
+
     // Current implementation may allow this - template validation happens at different stages
     // This test documents expected behavior for future implementation
     if response.status == "error" {
         assert!(
-            response.error.as_ref().unwrap().message.contains("template") 
+            response
+                .error
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("template")
                 || response.error.as_ref().unwrap().message.contains("order")
-                || response.error.as_ref().unwrap().message.contains("variable"),
+                || response
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .message
+                    .contains("variable"),
             "Error should mention template validation issue, got: {:?}",
             response.error
         );
@@ -1429,7 +1498,7 @@ async fn test_34_shared_table_template_ordering() {
     // Verify storage created
     let query = "SELECT storage_id FROM system.storages WHERE storage_id = 'correct_shared'";
     let check = server.execute_sql(query).await;
-    
+
     if let Some(rows) = &check.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(rows.len(), 1, "Storage should be created");
     }
@@ -1479,14 +1548,24 @@ async fn test_36_user_table_template_requires_userId() {
     "#;
 
     let response = server.execute_sql(create_storage).await;
-    
+
     // Current implementation may allow this - validation happens at flush time
     // This test documents expected behavior
     if response.status == "error" {
         assert!(
-            response.error.as_ref().unwrap().message.contains("userId") 
-                || response.error.as_ref().unwrap().message.contains("template")
-                || response.error.as_ref().unwrap().message.contains("required"),
+            response.error.as_ref().unwrap().message.contains("userId")
+                || response
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .message
+                    .contains("template")
+                || response
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .message
+                    .contains("required"),
             "Error should mention missing userId variable, got: {:?}",
             response.error
         );
@@ -1534,7 +1613,7 @@ async fn test_37_flush_with_use_user_storage() {
     // Verify table uses custom storage
     let query = "SELECT storage_id FROM system.tables WHERE namespace = 'storage_test' AND table_name = 'user_data'";
     let check = server.execute_sql(query).await;
-    
+
     if let Some(rows) = &check.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(
             rows[0].get("storage_id").and_then(|v| v.as_str()),
@@ -1556,7 +1635,7 @@ async fn test_38_user_storage_mode_region() {
     // NOTE: user.storage_mode is a planned feature for per-user storage routing
     // Current implementation uses table.storage_id
     // This test documents the expected behavior for future implementation
-    
+
     // Create table with default storage
     let create_table = r#"
         CREATE TABLE region_test.data (
@@ -1566,7 +1645,11 @@ async fn test_38_user_storage_mode_region() {
     "#;
 
     let response = server.execute_sql(create_table).await;
-    assert_eq!(response.status, "success", "CREATE TABLE failed: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "CREATE TABLE failed: {:?}",
+        response.error
+    );
 
     // In future: When user.storage_mode='region', flush should use user.storage_id
     // Currently: All tables use table.storage_id (defaults to 'local')
@@ -1583,7 +1666,7 @@ async fn test_39_user_storage_mode_table() {
 
     // NOTE: user.storage_mode='table' means use table.storage_id (current default behavior)
     // This test verifies current implementation
-    
+
     let create_table = r#"
         CREATE TABLE table_mode_test.data (
             id BIGINT,
@@ -1592,12 +1675,16 @@ async fn test_39_user_storage_mode_table() {
     "#;
 
     let response = server.execute_sql(create_table).await;
-    assert_eq!(response.status, "success", "CREATE TABLE failed: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "CREATE TABLE failed: {:?}",
+        response.error
+    );
 
     // Verify table uses table-level storage (default 'local')
     let query = "SELECT storage_id FROM system.tables WHERE namespace = 'table_mode_test' AND table_name = 'data'";
     let check = server.execute_sql(query).await;
-    
+
     if let Some(rows) = &check.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(
             rows[0].get("storage_id").and_then(|v| v.as_str()),
@@ -1637,12 +1724,16 @@ async fn test_40_flush_resolves_s3_storage() {
     "#;
 
     let response = server.execute_sql(create_table).await;
-    assert_eq!(response.status, "success", "CREATE TABLE failed: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "CREATE TABLE failed: {:?}",
+        response.error
+    );
 
     // Verify table references S3 storage
     let query = "SELECT storage_id FROM system.tables WHERE namespace = 's3_flush_test' AND table_name = 'data'";
     let check = server.execute_sql(query).await;
-    
+
     if let Some(rows) = &check.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(
             rows[0].get("storage_id").and_then(|v| v.as_str()),
@@ -1665,66 +1756,99 @@ async fn test_41_multi_storage_flush() {
     fixtures::create_namespace(&server, "multi_storage").await;
 
     // Create three different storages
-    server.execute_sql(r#"
+    server
+        .execute_sql(
+            r#"
         CREATE STORAGE fs_storage_1
         TYPE filesystem
         NAME 'Filesystem Storage 1'
         PATH '/data/fs1'
         SHARED_TABLES_TEMPLATE '/data/fs1/{namespace}/{tableName}'
-    "#).await;
+    "#,
+        )
+        .await;
 
-    server.execute_sql(r#"
+    server
+        .execute_sql(
+            r#"
         CREATE STORAGE fs_storage_2
         TYPE filesystem
         NAME 'Filesystem Storage 2'
         PATH '/data/fs2'
         SHARED_TABLES_TEMPLATE '/data/fs2/{namespace}/{tableName}'
-    "#).await;
+    "#,
+        )
+        .await;
 
-    server.execute_sql(r#"
+    server
+        .execute_sql(
+            r#"
         CREATE STORAGE s3_storage
         TYPE s3
         NAME 'S3 Storage'
         BUCKET 'multi-test-bucket'
         REGION 'eu-west-1'
         SHARED_TABLES_TEMPLATE 's3://multi-test-bucket/{namespace}/{tableName}'
-    "#).await;
+    "#,
+        )
+        .await;
 
     // Create three tables, each with different storage
-    server.execute_sql(r#"
+    server
+        .execute_sql(
+            r#"
         CREATE TABLE multi_storage.table1 (
             id BIGINT,
             data TEXT
         ) TABLE_TYPE shared
         STORAGE fs_storage_1
-    "#).await;
+    "#,
+        )
+        .await;
 
-    server.execute_sql(r#"
+    server
+        .execute_sql(
+            r#"
         CREATE TABLE multi_storage.table2 (
             id BIGINT,
             data TEXT
         ) TABLE_TYPE shared
         STORAGE fs_storage_2
-    "#).await;
+    "#,
+        )
+        .await;
 
-    server.execute_sql(r#"
+    server
+        .execute_sql(
+            r#"
         CREATE TABLE multi_storage.table3 (
             id BIGINT,
             data TEXT
         ) TABLE_TYPE shared
         STORAGE s3_storage
-    "#).await;
+    "#,
+        )
+        .await;
 
     // Verify all tables created with correct storage assignments
     let query = "SELECT table_name, storage_id FROM system.tables WHERE namespace = 'multi_storage' ORDER BY table_name";
     let response = server.execute_sql(query).await;
-    
+
     if let Some(rows) = &response.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(rows.len(), 3, "Expected 3 tables");
-        
-        assert_eq!(rows[0].get("storage_id").and_then(|v| v.as_str()), Some("fs_storage_1"));
-        assert_eq!(rows[1].get("storage_id").and_then(|v| v.as_str()), Some("fs_storage_2"));
-        assert_eq!(rows[2].get("storage_id").and_then(|v| v.as_str()), Some("s3_storage"));
+
+        assert_eq!(
+            rows[0].get("storage_id").and_then(|v| v.as_str()),
+            Some("fs_storage_1")
+        );
+        assert_eq!(
+            rows[1].get("storage_id").and_then(|v| v.as_str()),
+            Some("fs_storage_2")
+        );
+        assert_eq!(
+            rows[2].get("storage_id").and_then(|v| v.as_str()),
+            Some("s3_storage")
+        );
     }
 
     // NOTE: Actual flush coordination testing requires flush scheduler to be running

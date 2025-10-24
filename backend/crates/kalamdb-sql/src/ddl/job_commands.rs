@@ -62,7 +62,7 @@ pub enum JobCommand {
 /// ```
 pub fn parse_job_command(sql: &str) -> Result<JobCommand> {
     use crate::parser::utils::normalize_sql;
-    
+
     let normalized = normalize_sql(sql);
     let sql_upper = normalized.to_uppercase();
 

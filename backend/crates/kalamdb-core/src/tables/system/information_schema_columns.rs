@@ -5,9 +5,7 @@
 
 use crate::error::KalamDbError;
 use async_trait::async_trait;
-use datafusion::arrow::array::{
-    BooleanArray, RecordBatch, StringArray, UInt32Array,
-};
+use datafusion::arrow::array::{BooleanArray, RecordBatch, StringArray, UInt32Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::datasource::TableProvider;
 use datafusion::error::Result as DataFusionResult;
@@ -37,17 +35,12 @@ impl InformationSchemaColumnsProvider {
             Field::new("is_primary_key", DataType::Boolean, false),
         ]));
 
-        Self {
-            kalam_sql,
-            schema,
-        }
+        Self { kalam_sql, schema }
     }
 
     async fn scan_all_columns(&self) -> Result<RecordBatch, KalamDbError> {
         // Read all table definitions across all namespaces
-        let tables = self
-            .kalam_sql
-            .scan_all_table_definitions()?;
+        let tables = self.kalam_sql.scan_all_table_definitions()?;
 
         // Flatten columns from all tables
         let mut table_catalog_values = Vec::new();

@@ -129,10 +129,10 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
 
     // Storage registry and SQL executor
     let storage_registry = Arc::new(StorageRegistry::new(kalam_sql.clone()));
-    
+
     // Create job manager first
     let job_manager = Arc::new(TokioJobManager::new());
-    
+
     let sql_executor = Arc::new(
         SqlExecutor::new(
             namespace_service.clone(),

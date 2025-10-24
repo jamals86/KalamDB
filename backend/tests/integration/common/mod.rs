@@ -731,10 +731,10 @@ pub async fn start_http_server_for_websocket_tests() -> (TestServer, String) {
     use std::sync::Arc;
 
     let server = TestServer::new().await;
-    
+
     let session_factory = server.session_factory.clone();
     let sql_executor = server.sql_executor.clone();
-    
+
     let jwt_auth = Arc::new(JwtAuth::new(
         "kalamdb-dev-secret-key-change-in-production".to_string(),
         Algorithm::HS256,
@@ -756,7 +756,7 @@ pub async fn start_http_server_for_websocket_tests() -> (TestServer, String) {
 
     // Spawn server in background
     tokio::spawn(http_server);
-    
+
     // Give server time to start
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 

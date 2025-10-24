@@ -7,7 +7,7 @@
 
 use crate::adapter::RocksDbAdapter;
 use crate::parser::SystemStatement;
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
 /// SQL executor
 pub struct SqlExecutor {

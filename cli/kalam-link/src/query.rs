@@ -30,6 +30,11 @@ impl QueryExecutor {
         }
     }
 
+    /// Returns the user ID configured for this executor, if any
+    pub fn user_id(&self) -> Option<&str> {
+        self.user_id.as_deref()
+    }
+
     /// Execute a SQL query with optional parameters
     pub async fn execute(
         &self,

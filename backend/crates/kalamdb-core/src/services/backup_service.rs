@@ -220,7 +220,7 @@ impl BackupService {
         // TODO: Phase 2b - Fetch schema from information_schema.tables (TableDefinition.schema_history)
         // For now, skip schema backup until information_schema is implemented
         let table_schemas = HashMap::new();
-        
+
         // Fetch schema versions for each table
         // let mut table_schemas = HashMap::new();
         // for table in &tables {

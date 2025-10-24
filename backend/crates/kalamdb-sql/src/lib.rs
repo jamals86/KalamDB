@@ -48,15 +48,14 @@ pub use compatibility::{
     ErrorStyle,
 };
 pub use ddl::{
-    AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
-    FlushAllTablesStatement, FlushTableStatement, parse_job_command, JobCommand,
-    SubscribeStatement, SubscribeOptions,
+    parse_job_command, AlterStorageStatement, CreateStorageStatement, DropStorageStatement,
+    FlushAllTablesStatement, FlushTableStatement, JobCommand, ShowStoragesStatement,
+    SubscribeOptions, SubscribeStatement,
 };
 pub use executor::SqlExecutor;
 pub use models::*;
 pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
-
 
 use anyhow::Result;
 use rocksdb::DB;

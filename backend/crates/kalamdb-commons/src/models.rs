@@ -703,17 +703,13 @@ impl TableDefinition {
                 let is_primary_key = primary_key_column
                     .map(|pk| pk == column_name.as_str())
                     .unwrap_or(false);
-                
+
                 // Get default value if specified
-                let column_default = column_defaults
-                    .get(&column_name)
-                    .and_then(|def| {
-                        match def {
-                            ColumnDefault::None => None,
-                            ColumnDefault::FunctionCall(func) => Some(format!("{}()", func)),
-                            ColumnDefault::Literal(lit) => Some(lit.clone()),
-                        }
-                    });
+                let column_default = column_defaults.get(&column_name).and_then(|def| match def {
+                    ColumnDefault::None => None,
+                    ColumnDefault::FunctionCall(func) => Some(format!("{}()", func)),
+                    ColumnDefault::Literal(lit) => Some(lit.clone()),
+                });
 
                 ColumnDefinition {
                     column_name,
@@ -734,7 +730,9 @@ impl TableDefinition {
     ///
     /// # Returns
     /// JSON string representation of the schema
-    pub fn serialize_arrow_schema(schema: &arrow_schema::Schema) -> Result<String, serde_json::Error> {
+    pub fn serialize_arrow_schema(
+        schema: &arrow_schema::Schema,
+    ) -> Result<String, serde_json::Error> {
         // Convert schema to JSON-compatible structure
         #[cfg_attr(feature = "serde", derive(Serialize))]
         struct SchemaJson {
@@ -847,7 +845,7 @@ mod tests {
     fn test_live_id() {
         let conn_id = ConnectionId::new("user123".to_string(), "conn_abc".to_string());
         let live_id = LiveId::new(conn_id, "messages".to_string(), "q1".to_string());
-        
+
         assert_eq!(live_id.user_id(), "user123");
         assert_eq!(live_id.connection_id().unique_conn_id(), "conn_abc");
         assert_eq!(live_id.table_name(), "messages");
@@ -905,5 +903,4 @@ mod tests {
         let default = ColumnDefault::default();
         assert!(default.is_none());
     }
-
 }

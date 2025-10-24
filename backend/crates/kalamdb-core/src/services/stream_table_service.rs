@@ -61,10 +61,7 @@ impl StreamTableService {
     ///
     /// # Returns
     /// Table metadata for the created stream table
-    pub fn create_table(
-        &self,
-        stmt: CreateTableStatement,
-    ) -> Result<TableMetadata, KalamDbError> {
+    pub fn create_table(&self, stmt: CreateTableStatement) -> Result<TableMetadata, KalamDbError> {
         // Validate table name
         TableMetadata::validate_table_name(stmt.table_name.as_str())
             .map_err(KalamDbError::InvalidOperation)?;
@@ -126,9 +123,7 @@ impl StreamTableService {
         stmt: &CreateTableStatement,
         schema: &Arc<Schema>,
     ) -> Result<(), KalamDbError> {
-        use kalamdb_commons::models::{
-            SchemaVersion, TableDefinition,
-        };
+        use kalamdb_commons::models::{SchemaVersion, TableDefinition};
 
         // Extract columns from schema with ordinal positions
         let columns = TableDefinition::extract_columns_from_schema(
@@ -138,15 +133,20 @@ impl StreamTableService {
         );
 
         // Serialize Arrow schema for history
-        let arrow_schema_json = TableDefinition::serialize_arrow_schema(schema.as_ref()).map_err(|e| {
-            KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
-        })?;
+        let arrow_schema_json =
+            TableDefinition::serialize_arrow_schema(schema.as_ref()).map_err(|e| {
+                KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
+            })?;
 
         // Build complete table definition
         // Stream tables don't have flush policies (no Parquet persistence)
         let now_millis = chrono::Utc::now().timestamp_millis();
         let table_def = TableDefinition {
-            table_id: format!("{}:{}", stmt.namespace_id.as_str(), stmt.table_name.as_str()),
+            table_id: format!(
+                "{}:{}",
+                stmt.namespace_id.as_str(),
+                stmt.table_name.as_str()
+            ),
             table_name: stmt.table_name.as_str().to_string(),
             namespace_id: stmt.namespace_id.as_str().to_string(),
             table_type: TableType::Stream,
@@ -155,17 +155,14 @@ impl StreamTableService {
             schema_version: 1,
             storage_id: "local".to_string(), // Stream tables don't use external storage
             use_user_storage: false,
-            flush_policy: None, // Stream tables don't flush to Parquet
+            flush_policy: None,            // Stream tables don't flush to Parquet
             deleted_retention_hours: None, // Stream tables don't have soft deletes
             ttl_seconds: stmt.ttl_seconds,
             columns,
             schema_history: vec![SchemaVersion {
                 version: 1,
                 created_at: now_millis,
-                changes: format!(
-                    "Initial stream table schema. TTL: {:?}s",
-                    stmt.ttl_seconds
-                ),
+                changes: format!("Initial stream table schema. TTL: {:?}s", stmt.ttl_seconds),
                 arrow_schema_json,
             }],
         };

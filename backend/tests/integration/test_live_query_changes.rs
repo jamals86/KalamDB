@@ -11,7 +11,10 @@
 
 mod common;
 
-use common::{create_test_jwt, fixtures, websocket::WebSocketClient, start_http_server_for_websocket_tests, TestServer};
+use common::{
+    create_test_jwt, fixtures, start_http_server_for_websocket_tests, websocket::WebSocketClient,
+    TestServer,
+};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -22,7 +25,7 @@ async fn setup_http_server_and_table(
     user_id: &str,
 ) -> (TestServer, String) {
     let (server, base_url) = start_http_server_for_websocket_tests().await;
-    
+
     // Create namespace
     fixtures::create_namespace(&server, namespace).await;
 
@@ -43,7 +46,7 @@ async fn setup_http_server_and_table(
         "Failed to create table: {:?}",
         response.error
     );
-    
+
     (server, base_url)
 }
 
@@ -80,12 +83,14 @@ async fn setup_test_table(server: &TestServer, namespace: &str, table_name: &str
 async fn test_live_query_detects_inserts() {
     let (server, base_url) = setup_http_server_and_table("test_ns", "messages", "user1").await;
     let ws_url = format!("{}/v1/ws", base_url.replace("http", "ws"));
-    
+
     // Create JWT token for authentication
     let token = create_test_jwt("user1", "kalamdb-dev-secret-key-change-in-production", 3600);
 
     // Connect WebSocket with authentication and subscribe
-    let mut ws = WebSocketClient::connect_with_auth(&ws_url, Some(&token)).await.unwrap();
+    let mut ws = WebSocketClient::connect_with_auth(&ws_url, Some(&token))
+        .await
+        .unwrap();
     ws.subscribe(
         "messages",
         "SELECT * FROM test_ns.messages WHERE created_at > 0",
@@ -107,7 +112,9 @@ async fn test_live_query_detects_inserts() {
     }
 
     // Receive notifications with timeout
-    ws.receive_notifications(Duration::from_secs(2)).await.unwrap();
+    ws.receive_notifications(Duration::from_secs(2))
+        .await
+        .unwrap();
 
     // Verify 100 notifications received
     let notifications = ws.get_notifications();
@@ -137,7 +144,9 @@ async fn test_live_query_detects_updates() {
     let server = TestServer::new().await;
     setup_test_table(&server, "test_ns", "messages", "user1").await;
 
-    let mut ws = WebSocketClient::connect("ws://localhost:8080/ws").await.unwrap();
+    let mut ws = WebSocketClient::connect("ws://localhost:8080/ws")
+        .await
+        .unwrap();
     ws.subscribe("messages", "SELECT * FROM test_ns.messages")
         .await
         .unwrap();
@@ -164,7 +173,10 @@ async fn test_live_query_detects_updates() {
     sleep(Duration::from_millis(100)).await;
 
     let notifications = ws.get_notifications();
-    assert!(notifications.len() >= 2, "Expected INSERT and UPDATE notifications");
+    assert!(
+        notifications.len() >= 2,
+        "Expected INSERT and UPDATE notifications"
+    );
 
     // Find the UPDATE notification
     let update_notif = notifications
@@ -195,7 +207,9 @@ async fn test_live_query_detects_deletes() {
     let server = TestServer::new().await;
     setup_test_table(&server, "test_ns", "messages", "user1").await;
 
-    let mut ws = WebSocketClient::connect("ws://localhost:8080/ws").await.unwrap();
+    let mut ws = WebSocketClient::connect("ws://localhost:8080/ws")
+        .await
+        .unwrap();
     ws.subscribe("messages", "SELECT * FROM test_ns.messages")
         .await
         .unwrap();
@@ -213,16 +227,16 @@ async fn test_live_query_detects_deletes() {
 
     // Delete the row (soft delete)
     server
-        .execute_sql_as_user(
-            r#"DELETE FROM test_ns.messages WHERE id = 'msg1'"#,
-            "user1",
-        )
+        .execute_sql_as_user(r#"DELETE FROM test_ns.messages WHERE id = 'msg1'"#, "user1")
         .await;
 
     sleep(Duration::from_millis(100)).await;
 
     let notifications = ws.get_notifications();
-    assert!(notifications.len() >= 2, "Expected INSERT and DELETE notifications");
+    assert!(
+        notifications.len() >= 2,
+        "Expected INSERT and DELETE notifications"
+    );
 
     // Find the DELETE notification
     let delete_notif = notifications
@@ -251,7 +265,9 @@ async fn test_concurrent_writers_no_message_loss() {
     let server = TestServer::new().await;
     setup_test_table(&server, "test_ns", "messages", "user1").await;
 
-    let mut ws = WebSocketClient::connect("ws://localhost:8080/ws").await.unwrap();
+    let mut ws = WebSocketClient::connect("ws://localhost:8080/ws")
+        .await
+        .unwrap();
     ws.subscribe("messages", "SELECT * FROM test_ns.messages")
         .await
         .unwrap();
@@ -320,7 +336,9 @@ async fn test_ai_message_scenario() {
     setup_test_table(&server, "test_ns", "messages", "user1").await;
 
     // Human client subscribes
-    let mut human_ws = WebSocketClient::connect("ws://localhost:8080/ws").await.unwrap();
+    let mut human_ws = WebSocketClient::connect("ws://localhost:8080/ws")
+        .await
+        .unwrap();
     human_ws
         .subscribe("messages", "SELECT * FROM test_ns.messages")
         .await
@@ -378,7 +396,9 @@ async fn test_mixed_operations_ordering() {
     let server = TestServer::new().await;
     setup_test_table(&server, "test_ns", "messages", "user1").await;
 
-    let mut ws = WebSocketClient::connect("ws://localhost:8080/ws").await.unwrap();
+    let mut ws = WebSocketClient::connect("ws://localhost:8080/ws")
+        .await
+        .unwrap();
     ws.subscribe("messages", "SELECT * FROM test_ns.messages")
         .await
         .unwrap();
@@ -406,10 +426,7 @@ async fn test_mixed_operations_ordering() {
 
     // DELETE
     server
-        .execute_sql_as_user(
-            r#"DELETE FROM test_ns.messages WHERE id = 'msg1'"#,
-            "user1",
-        )
+        .execute_sql_as_user(r#"DELETE FROM test_ns.messages WHERE id = 'msg1'"#, "user1")
         .await;
 
     sleep(Duration::from_millis(50)).await;
@@ -439,7 +456,9 @@ async fn test_changes_counter_accuracy() {
     let server = TestServer::new().await;
     setup_test_table(&server, "test_ns", "messages", "user1").await;
 
-    let mut ws = WebSocketClient::connect("ws://localhost:8080/ws").await.unwrap();
+    let mut ws = WebSocketClient::connect("ws://localhost:8080/ws")
+        .await
+        .unwrap();
     ws.subscribe("messages", "SELECT * FROM test_ns.messages")
         .await
         .unwrap();
@@ -485,9 +504,15 @@ async fn test_multiple_listeners_same_table() {
     setup_test_table(&server, "test_ns", "messages", "user1").await;
 
     // Create 3 WebSocket connections
-    let mut ws1 = WebSocketClient::connect("ws://localhost:8080/ws").await.unwrap();
-    let mut ws2 = WebSocketClient::connect("ws://localhost:8080/ws").await.unwrap();
-    let mut ws3 = WebSocketClient::connect("ws://localhost:8080/ws").await.unwrap();
+    let mut ws1 = WebSocketClient::connect("ws://localhost:8080/ws")
+        .await
+        .unwrap();
+    let mut ws2 = WebSocketClient::connect("ws://localhost:8080/ws")
+        .await
+        .unwrap();
+    let mut ws3 = WebSocketClient::connect("ws://localhost:8080/ws")
+        .await
+        .unwrap();
 
     // All subscribe to the same table
     ws1.subscribe("messages", "SELECT * FROM test_ns.messages")
@@ -548,7 +573,9 @@ async fn test_listener_reconnect_no_data_loss() {
     setup_test_table(&server, "test_ns", "messages", "user1").await;
 
     // Initial connection and subscription
-    let mut ws = WebSocketClient::connect("ws://localhost:8080/ws").await.unwrap();
+    let mut ws = WebSocketClient::connect("ws://localhost:8080/ws")
+        .await
+        .unwrap();
     ws.subscribe("messages", "SELECT * FROM test_ns.messages")
         .await
         .unwrap();
@@ -573,7 +600,9 @@ async fn test_listener_reconnect_no_data_loss() {
     ws.disconnect().await.unwrap();
 
     // Reconnect with new subscription
-    let mut ws2 = WebSocketClient::connect("ws://localhost:8080/ws").await.unwrap();
+    let mut ws2 = WebSocketClient::connect("ws://localhost:8080/ws")
+        .await
+        .unwrap();
     ws2.subscribe("messages", "SELECT * FROM test_ns.messages")
         .await
         .unwrap();
@@ -613,7 +642,9 @@ async fn test_high_frequency_changes() {
     let server = TestServer::new().await;
     setup_test_table(&server, "test_ns", "messages", "user1").await;
 
-    let mut ws = WebSocketClient::connect("ws://localhost:8080/ws").await.unwrap();
+    let mut ws = WebSocketClient::connect("ws://localhost:8080/ws")
+        .await
+        .unwrap();
     ws.subscribe("messages", "SELECT * FROM test_ns.messages")
         .await
         .unwrap();

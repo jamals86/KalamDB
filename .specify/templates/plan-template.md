@@ -17,15 +17,15 @@
   the iteration process.
 -->
 
-**Language/Version**: Rust 1.75+ (stable toolchain)
-**Primary Dependencies**: RocksDB (writes), Apache Arrow (zero-copy data), Apache Parquet (storage), DataFusion (SQL queries), tokio (async runtime), serde (serialization)
-**Storage**: RocksDB for write path (<1ms), Parquet for analytics-ready compressed storage
-**Testing**: cargo test, criterion.rs (benchmarks), property-based tests for data transformations
-**Target Platform**: Linux server, embeddable library
-**Project Type**: single (database server with library interface)
-**Performance Goals**: Writes <1ms (p99 RocksDB path), SQL query performance via DataFusion
-**Constraints**: Zero-copy efficiency via Arrow IPC, tenant isolation enforcement, JWT authentication required
-**Scale/Scope**: Real-time chat/AI conversation storage, user-partitioned data, streaming + durable persistence
+**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]  
+**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]  
+**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]  
+**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]  
+**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
+**Project Type**: [single/web/mobile - determines source structure]  
+**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]  
+**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]  
+**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
 
 ## Constitution Check
 
@@ -33,18 +33,11 @@
 
 [Gates determined based on constitution file]
 
-**Documentation Requirements (Principle VIII - Self-Documenting Code)**:
-- [ ] Module-level rustdoc comments planned for all new modules
-- [ ] Public API documentation strategy defined (structs, enums, traits, functions)
-- [ ] Inline comment strategy for complex algorithms and architectural patterns identified
-- [ ] Architecture Decision Records (ADRs) planned for key design choices
-- [ ] Code examples planned for non-trivial public APIs
-
 ## Project Structure
 
 ### Documentation (this feature)
 
-```
+```text
 specs/[###-feature]/
 ├── plan.md              # This file (/speckit.plan command output)
 ├── research.md          # Phase 0 output (/speckit.plan command)
@@ -62,7 +55,7 @@ specs/[###-feature]/
   not include Option labels.
 -->
 
-```
+```text
 # [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
 src/
 ├── models/
@@ -103,7 +96,7 @@ directories captured above]
 
 ## Complexity Tracking
 
-*Fill ONLY if Constitution Check has violations that must be justified*
+> **Fill ONLY if Constitution Check has violations that must be justified**
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|

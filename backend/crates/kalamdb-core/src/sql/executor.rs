@@ -29,8 +29,6 @@
 
 use crate::catalog::Namespace;
 use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
-use kalamdb_commons::models::StorageId;
-use kalamdb_sql::statement_classifier::SqlStatement;
 use crate::error::KalamDbError;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 use crate::services::{
@@ -51,11 +49,13 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser;
+use kalamdb_commons::models::StorageId;
 use kalamdb_sql::ddl::{
-    AlterNamespaceStatement, CreateNamespaceStatement, CreateTableStatement,
-    DescribeTableStatement, DropNamespaceStatement, DropTableStatement,
-    ShowNamespacesStatement, ShowTableStatsStatement, ShowTablesStatement, parse_job_command,
+    parse_job_command, AlterNamespaceStatement, CreateNamespaceStatement, CreateTableStatement,
+    DescribeTableStatement, DropNamespaceStatement, DropTableStatement, ShowNamespacesStatement,
+    ShowTableStatsStatement, ShowTablesStatement,
 };
+use kalamdb_sql::statement_classifier::SqlStatement;
 use kalamdb_sql::KalamSql;
 use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::sync::Arc;
@@ -198,33 +198,43 @@ impl SqlExecutor {
 
         for table in tables {
             // Phase 2b: Get schema from information_schema.tables (TableDefinition.schema_history)
-            let table_def = match kalam_sql.get_table_definition(&table.namespace, &table.table_name) {
-                Ok(Some(def)) => def,
-                Ok(None) => {
-                    // No TableDefinition found - skip this table (might be legacy)
-                    continue;
-                }
-                Err(e) => {
-                    // Log error but continue loading other tables
-                    eprintln!("Warning: Failed to load schema for {}.{}: {:?}", 
-                        table.namespace, table.table_name, e);
-                    continue;
-                }
-            };
+            let table_def =
+                match kalam_sql.get_table_definition(&table.namespace, &table.table_name) {
+                    Ok(Some(def)) => def,
+                    Ok(None) => {
+                        // No TableDefinition found - skip this table (might be legacy)
+                        continue;
+                    }
+                    Err(e) => {
+                        // Log error but continue loading other tables
+                        eprintln!(
+                            "Warning: Failed to load schema for {}.{}: {:?}",
+                            table.namespace, table.table_name, e
+                        );
+                        continue;
+                    }
+                };
 
             // Get the latest schema from schema_history
             if table_def.schema_history.is_empty() {
-                eprintln!("Warning: No schema history for {}.{}", 
-                    table.namespace, table.table_name);
+                eprintln!(
+                    "Warning: No schema history for {}.{}",
+                    table.namespace, table.table_name
+                );
                 continue;
             }
 
             // Use the latest schema version (last in array)
-            let latest_schema_version = &table_def.schema_history[table_def.schema_history.len() - 1];
+            let latest_schema_version =
+                &table_def.schema_history[table_def.schema_history.len() - 1];
             let schema_with_opts =
                 ArrowSchemaWithOptions::from_json_string(&latest_schema_version.arrow_schema_json)
-                    .map_err(|e| KalamDbError::Other(format!("Failed to parse schema for {}.{}: {:?}", 
-                        table.namespace, table.table_name, e)))?;
+                    .map_err(|e| {
+                        KalamDbError::Other(format!(
+                            "Failed to parse schema for {}.{}: {:?}",
+                            table.namespace, table.table_name, e
+                        ))
+                    })?;
             let schema = schema_with_opts.schema;
 
             // Parse namespace and table_name
@@ -380,13 +390,13 @@ impl SqlExecutor {
     }
 
     /// Helper: Validate and resolve storage_id for table creation
-    /// 
+    ///
     /// # Arguments
     /// * `storage_id` - Optional storage_id from the CREATE TABLE statement
-    /// 
+    ///
     /// # Returns
     /// Resolved storage_id (defaults to 'local' if None)
-    /// 
+    ///
     /// # Errors
     /// Returns error if storage_id doesn't exist in system.storages
     fn validate_storage_id(
@@ -673,7 +683,8 @@ impl SqlExecutor {
 
         // Register additional system tables
         use crate::tables::system::{
-            JobsTableProvider, LiveQueriesTableProvider, 
+            JobsTableProvider,
+            LiveQueriesTableProvider,
             // TODO: Phase 2b - StorageLocationsTableProvider deprecated (replaced by system_storages)
             // StorageLocationsTableProvider,
             SystemStoragesProvider,
@@ -718,7 +729,9 @@ impl SqlExecutor {
             .map_err(|e| KalamDbError::Other(format!("Failed to register system.jobs: {}", e)))?;
 
         // Register information_schema tables
-        use crate::tables::system::{InformationSchemaColumnsProvider, InformationSchemaTablesProvider};
+        use crate::tables::system::{
+            InformationSchemaColumnsProvider, InformationSchemaTablesProvider,
+        };
 
         // Check if information_schema exists, if not create it
         if catalog.schema("information_schema").is_none() {
@@ -1575,17 +1588,20 @@ impl SqlExecutor {
         }
 
         // Get required dependencies
-        let job_manager = self.job_manager.as_ref().ok_or_else(|| {
-            KalamDbError::Other("JobManager not initialized".to_string())
-        })?;
+        let job_manager = self
+            .job_manager
+            .as_ref()
+            .ok_or_else(|| KalamDbError::Other("JobManager not initialized".to_string()))?;
 
-        let user_table_store = self.user_table_store.as_ref().ok_or_else(|| {
-            KalamDbError::Other("UserTableStore not initialized".to_string())
-        })?;
+        let user_table_store = self
+            .user_table_store
+            .as_ref()
+            .ok_or_else(|| KalamDbError::Other("UserTableStore not initialized".to_string()))?;
 
-        let storage_registry = self.storage_registry.as_ref().ok_or_else(|| {
-            KalamDbError::Other("StorageRegistry not initialized".to_string())
-        })?;
+        let storage_registry = self
+            .storage_registry
+            .as_ref()
+            .ok_or_else(|| KalamDbError::Other("StorageRegistry not initialized".to_string()))?;
 
         let jobs_provider = self.jobs_table_provider.clone();
 
@@ -1626,10 +1642,10 @@ impl SqlExecutor {
 
         // Use the latest schema version (last in array)
         let latest_schema_version = &table_def.schema_history[table_def.schema_history.len() - 1];
-        
+
         // Convert to Arrow schema
         let arrow_schema = crate::schema::arrow_schema::ArrowSchemaWithOptions::from_json_string(
-            &latest_schema_version.arrow_schema_json
+            &latest_schema_version.arrow_schema_json,
         )?;
 
         // Generate job_id for tracking
@@ -1644,7 +1660,7 @@ impl SqlExecutor {
         // Create flush job
         let namespace_id = NamespaceId::from(stmt.namespace.as_str());
         let table_name = TableName::new(stmt.table_name.clone());
-        
+
         let flush_job = crate::flush::UserTableFlushJob::new(
             user_table_store.clone(),
             namespace_id,
@@ -1653,7 +1669,7 @@ impl SqlExecutor {
             table.storage_location.clone(),
         )
         .with_storage_registry(storage_registry.clone());
-        
+
         // Add jobs_provider if available
         let flush_job = if let Some(ref provider) = jobs_provider {
             flush_job.with_jobs_provider(provider.clone())
@@ -1684,22 +1700,19 @@ impl SqlExecutor {
                     );
                     Ok(format!(
                         "Flushed {} rows for {} users",
-                        result.rows_flushed,
-                        result.users_count
+                        result.rows_flushed, result.users_count
                     ))
                 }
                 Err(e) => {
-                    log::error!(
-                        "Flush job failed: job_id={}, error={}",
-                        job_id_clone,
-                        e
-                    );
+                    log::error!("Flush job failed: job_id={}, error={}", job_id_clone, e);
                     Err(format!("Flush failed: {}", e))
                 }
             }
         });
 
-        job_manager.start_job(job_id.clone(), "flush".to_string(), job_future).await?;
+        job_manager
+            .start_job(job_id.clone(), "flush".to_string(), job_future)
+            .await?;
 
         log::info!(
             "Flush job spawned: job_id={}, table={}.{}",
@@ -1718,10 +1731,7 @@ impl SqlExecutor {
     ///
     /// Triggers asynchronous flush for all user tables in a namespace, returning
     /// array of job_ids (one per table).
-    async fn execute_flush_all_tables(
-        &self,
-        sql: &str,
-    ) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_flush_all_tables(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::FlushAllTablesStatement;
 
         let stmt = FlushAllTablesStatement::parse(sql).map_err(|e| {
@@ -1947,8 +1957,9 @@ impl SqlExecutor {
         use kalamdb_sql::ddl::SubscribeStatement;
 
         // Parse the SUBSCRIBE TO command
-        let stmt = SubscribeStatement::parse(sql)
-            .map_err(|e| KalamDbError::InvalidSql(format!("Failed to parse SUBSCRIBE TO: {}", e)))?;
+        let stmt = SubscribeStatement::parse(sql).map_err(|e| {
+            KalamDbError::InvalidSql(format!("Failed to parse SUBSCRIBE TO: {}", e))
+        })?;
 
         // Generate a unique subscription ID
         use uuid::Uuid;
@@ -1965,7 +1976,7 @@ impl SqlExecutor {
         let mut subscription = serde_json::Map::new();
         subscription.insert("id".to_string(), serde_json::json!(subscription_id));
         subscription.insert("sql".to_string(), serde_json::json!(select_sql));
-        
+
         // Add options if present
         if let Some(last_rows) = stmt.options.last_rows {
             let mut options = serde_json::Map::new();
@@ -1974,7 +1985,10 @@ impl SqlExecutor {
         }
 
         let mut response = serde_json::Map::new();
-        response.insert("status".to_string(), serde_json::json!("subscription_required"));
+        response.insert(
+            "status".to_string(),
+            serde_json::json!("subscription_required"),
+        );
         response.insert("ws_url".to_string(), serde_json::json!(ws_url));
         response.insert("subscription".to_string(), serde_json::json!(subscription));
         response.insert(
@@ -1985,7 +1999,9 @@ impl SqlExecutor {
             )),
         );
 
-        Ok(ExecutionResult::Subscription(serde_json::Value::Object(response)))
+        Ok(ExecutionResult::Subscription(serde_json::Value::Object(
+            response,
+        )))
     }
 
     /// Execute CREATE TABLE - determines table type from LOCATION and routes to appropriate service
@@ -2044,18 +2060,18 @@ impl SqlExecutor {
 
             let namespace_id_for_parse =
                 kalamdb_commons::models::NamespaceId::new(namespace_id.as_str());
-            
+
             // Use unified parser for consistent parsing across all table types
             let stmt = CreateTableStatement::parse(sql, &namespace_id_for_parse)
                 .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
-            
+
             // Verify this is actually a USER table
             if stmt.table_type != kalamdb_commons::models::TableType::User {
                 return Err(KalamDbError::InvalidSql(
                     "Expected CREATE USER TABLE statement".to_string(),
                 ));
             }
-            
+
             // stmt fields are already the right types from kalamdb_commons
             let table_name = stmt.table_name.clone();
             let namespace_id = stmt.namespace_id.clone();
@@ -2119,14 +2135,14 @@ impl SqlExecutor {
             // Stream table - use unified parser
             let stmt = CreateTableStatement::parse(sql, &namespace_id)
                 .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
-                
+
             // Verify this is actually a STREAM table
             if stmt.table_type != kalamdb_commons::models::TableType::Stream {
                 return Err(KalamDbError::InvalidSql(
                     "Expected CREATE STREAM TABLE statement".to_string(),
                 ));
             }
-            
+
             let table_name = stmt.table_name.clone();
             let namespace_id = stmt.namespace_id.clone(); // Use the namespace from the statement
             let schema = stmt.schema.clone();
@@ -2181,20 +2197,20 @@ impl SqlExecutor {
             // Use unified parser for consistent parsing
             let stmt = CreateTableStatement::parse(sql, &namespace_id)
                 .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
-            
+
             // Verify this is actually a SHARED table
             if stmt.table_type != kalamdb_commons::models::TableType::Shared {
                 return Err(KalamDbError::InvalidSql(
                     "Expected CREATE SHARED TABLE statement".to_string(),
                 ));
             }
-            
+
             let table_name = stmt.table_name.clone();
             let namespace_id = stmt.namespace_id.clone(); // Use the namespace from the statement
             let schema = stmt.schema.clone();
             let flush_policy = stmt.flush_policy.clone();
             let deleted_retention = stmt.deleted_retention_hours.map(|h| h as u64 * 3600);
-            
+
             // Extract storage_id before stmt is moved
             let stmt_storage_id = stmt.storage_id.clone();
 
@@ -2210,8 +2226,9 @@ impl SqlExecutor {
                     let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
 
                     // Serialize flush policy for storage
-                    let flush_policy_json = serde_json::to_string(&flush_policy.unwrap_or_default())
-                        .unwrap_or_else(|_| "{}".to_string());
+                    let flush_policy_json =
+                        serde_json::to_string(&flush_policy.unwrap_or_default())
+                            .unwrap_or_else(|_| "{}".to_string());
 
                     let table = kalamdb_sql::models::Table {
                         table_id,
@@ -2263,16 +2280,16 @@ impl SqlExecutor {
             // Use unified parser for consistent parsing
             let stmt = CreateTableStatement::parse(sql, &namespace_id)
                 .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
-            
+
             // The unified parser defaults to SHARED when no table type is specified
             // So we don't need to verify the type here
-            
+
             let table_name = stmt.table_name.clone();
             let namespace_id = stmt.namespace_id.clone();
             let schema = stmt.schema.clone();
             let flush_policy = stmt.flush_policy.clone();
             let deleted_retention = stmt.deleted_retention_hours.map(|h| h as u64 * 3600);
-            
+
             // Extract storage_id before stmt is moved
             let stmt_storage_id = stmt.storage_id.clone();
 
@@ -2284,10 +2301,11 @@ impl SqlExecutor {
             if was_created {
                 if let Some(kalam_sql) = &self.kalam_sql {
                     let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
-                    
+
                     // Serialize flush policy for storage
-                    let flush_policy_json = serde_json::to_string(&flush_policy.unwrap_or_default())
-                        .unwrap_or_else(|_| "{}".to_string());
+                    let flush_policy_json =
+                        serde_json::to_string(&flush_policy.unwrap_or_default())
+                            .unwrap_or_else(|_| "{}".to_string());
 
                     let table = kalamdb_sql::models::Table {
                         table_id,

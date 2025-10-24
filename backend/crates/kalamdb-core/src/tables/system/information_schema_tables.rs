@@ -2,7 +2,7 @@
 //!
 //! This module provides a DataFusion TableProvider for the information_schema.tables
 //! virtual table, which exposes all table metadata from information_schema_tables CF.
-//! 
+//!
 //! **Updated**: Now uses unified TableDefinition from information_schema_tables instead
 //! of fragmented system.tables storage.
 
@@ -60,10 +60,7 @@ impl InformationSchemaTablesProvider {
             Field::new("ttl_seconds", DataType::UInt64, true),             // nullable
         ]));
 
-        Self {
-            kalam_sql,
-            schema,
-        }
+        Self { kalam_sql, schema }
     }
 
     /// Scan all tables across all namespaces and return as RecordBatch

@@ -21,53 +21,38 @@ static FLUSH_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"(?i)\s+FLUSH(\s+(ROWS|SECONDS|INTERVAL|ROW_THRESHOLD)\s+\d+[a-z]*)+"#).unwrap()
 });
 
-static TABLE_TYPE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?i)\s+TABLE_TYPE\s+['\"]?[a-z0-9_]+['\"]?"#).unwrap()
-});
+static TABLE_TYPE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)\s+TABLE_TYPE\s+['\"]?[a-z0-9_]+['\"]?"#).unwrap());
 
-static OWNER_ID_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?i)\s+OWNER_ID\s+['\"][^'\"]+['\"]"#).unwrap()
-});
+static OWNER_ID_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)\s+OWNER_ID\s+['\"][^'\"]+['\"]"#).unwrap());
 
-static STORAGE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?i)\s+STORAGE\s+['\"]?[a-z0-9_]+['\"]?"#).unwrap()
-});
+static STORAGE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)\s+STORAGE\s+['\"]?[a-z0-9_]+['\"]?"#).unwrap());
 
 static USE_USER_STORAGE_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"(?i)\s+USE_USER_STORAGE(\s+['\"][^'\"]+['\"]|\s+TRUE|\s+FALSE)?"#).unwrap()
 });
 
-static TTL_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?i)\s+TTL\s+\d+[a-z]*"#).unwrap()
-});
+static TTL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)\s+TTL\s+\d+[a-z]*"#).unwrap());
 
-static INTERVAL_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)FLUSH\s+INTERVAL\s+(\d+)s").unwrap()
-});
+static INTERVAL_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)FLUSH\s+INTERVAL\s+(\d+)s").unwrap());
 
-static ROW_THRESHOLD_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)ROW_THRESHOLD\s+(\d+)").unwrap()
-});
+static ROW_THRESHOLD_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)ROW_THRESHOLD\s+(\d+)").unwrap());
 
-static ROWS_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)FLUSH\s+ROWS\s+(\d+)").unwrap()
-});
+static ROWS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)FLUSH\s+ROWS\s+(\d+)").unwrap());
 
-static SECONDS_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)FLUSH\s+SECONDS\s+(\d+)").unwrap()
-});
+static SECONDS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)FLUSH\s+SECONDS\s+(\d+)").unwrap());
 
-static STORAGE_CLAUSE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?i)STORAGE\s+(?:'([^']+)'|"([^"]+)"|([a-z0-9_]+))"#).unwrap()
-});
+static STORAGE_CLAUSE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)STORAGE\s+(?:'([^']+)'|"([^"]+)"|([a-z0-9_]+))"#).unwrap());
 
-static USE_USER_STORAGE_MATCH_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)USE_USER_STORAGE(\s+TRUE)?").unwrap()
-});
+static USE_USER_STORAGE_MATCH_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)USE_USER_STORAGE(\s+TRUE)?").unwrap());
 
-static TTL_MATCH_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)TTL\s+(\d+)").unwrap()
-});
+static TTL_MATCH_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)TTL\s+(\d+)").unwrap());
 
 /// Common flush policy for all table types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,7 +171,9 @@ impl CreateTableStatement {
         normalized_sql = TABLE_TYPE_RE.replace_all(&normalized_sql, "").into_owned();
         normalized_sql = OWNER_ID_RE.replace_all(&normalized_sql, "").into_owned();
         normalized_sql = STORAGE_RE.replace_all(&normalized_sql, "").into_owned();
-        normalized_sql = USE_USER_STORAGE_RE.replace_all(&normalized_sql, "").into_owned();
+        normalized_sql = USE_USER_STORAGE_RE
+            .replace_all(&normalized_sql, "")
+            .into_owned();
         normalized_sql = TTL_RE.replace_all(&normalized_sql, "").into_owned();
 
         // Parse with sqlparser - use PostgreSQL dialect for better TEXT support
@@ -206,10 +193,16 @@ impl CreateTableStatement {
     fn detect_table_type(sql: &str) -> TableType {
         // Fast path: check for common keywords first without full uppercase conversion
         let sql_upper = sql.to_uppercase();
-        
-        if sql_upper.contains("CREATE USER TABLE") || sql_upper.contains("TABLE_TYPE 'USER'") || sql_upper.contains("TABLE_TYPE \"USER\"") {
+
+        if sql_upper.contains("CREATE USER TABLE")
+            || sql_upper.contains("TABLE_TYPE 'USER'")
+            || sql_upper.contains("TABLE_TYPE \"USER\"")
+        {
             TableType::User
-        } else if sql_upper.contains("CREATE STREAM TABLE") || sql_upper.contains("TABLE_TYPE 'STREAM'") || sql_upper.contains("TABLE_TYPE \"STREAM\"") {
+        } else if sql_upper.contains("CREATE STREAM TABLE")
+            || sql_upper.contains("TABLE_TYPE 'STREAM'")
+            || sql_upper.contains("TABLE_TYPE \"STREAM\"")
+        {
             TableType::Stream
         } else {
             // Default to SHARED if not specified
@@ -242,7 +235,8 @@ impl CreateTableStatement {
                 };
 
                 // Parse schema from columns
-                let (schema, column_defaults, primary_key_column) = Self::parse_schema_and_defaults(columns)?;
+                let (schema, column_defaults, primary_key_column) =
+                    Self::parse_schema_and_defaults(columns)?;
 
                 // Parse common clauses from original SQL
                 let flush_policy = Self::parse_flush_policy(original_sql)?;
@@ -290,7 +284,9 @@ impl CreateTableStatement {
     }
 
     /// Parse schema and column defaults from column definitions
-    fn parse_schema_and_defaults(columns: &[ColumnDef]) -> DdlResult<(Arc<Schema>, HashMap<String, ColumnDefault>, Option<String>)> {
+    fn parse_schema_and_defaults(
+        columns: &[ColumnDef],
+    ) -> DdlResult<(Arc<Schema>, HashMap<String, ColumnDefault>, Option<String>)> {
         if columns.is_empty() {
             return Err("Table must have at least one column".to_string());
         }
@@ -298,21 +294,27 @@ impl CreateTableStatement {
         let mut fields = Vec::new();
         let mut column_defaults = HashMap::new();
         let mut primary_key_column: Option<String> = None;
-        
+
         for col in columns {
             let field_name = col.name.value.clone();
-            let data_type = map_sql_type_to_arrow(&col.data_type)
-                .map_err(|e| e.to_string())?;
-            
-            let nullable = !col.options.iter().any(|opt| {
-                matches!(opt.option, sqlparser::ast::ColumnOption::NotNull)
-            });
+            let data_type = map_sql_type_to_arrow(&col.data_type).map_err(|e| e.to_string())?;
+
+            let nullable = !col
+                .options
+                .iter()
+                .any(|opt| matches!(opt.option, sqlparser::ast::ColumnOption::NotNull));
 
             // Check if this column is PRIMARY KEY
             let is_primary_key = col.options.iter().any(|opt| {
-                matches!(opt.option, sqlparser::ast::ColumnOption::Unique { is_primary: true, .. })
+                matches!(
+                    opt.option,
+                    sqlparser::ast::ColumnOption::Unique {
+                        is_primary: true,
+                        ..
+                    }
+                )
             });
-            
+
             if is_primary_key {
                 if primary_key_column.is_some() {
                     return Err("Multiple PRIMARY KEY columns not supported".to_string());
@@ -331,32 +333,39 @@ impl CreateTableStatement {
             fields.push(Field::new(field_name, data_type, nullable));
         }
 
-        Ok((Arc::new(Schema::new(fields)), column_defaults, primary_key_column))
+        Ok((
+            Arc::new(Schema::new(fields)),
+            column_defaults,
+            primary_key_column,
+        ))
     }
 
     /// Parse a DEFAULT expression into a ColumnDefault
     fn parse_default_expression(expr: &sqlparser::ast::Expr) -> DdlResult<ColumnDefault> {
         use sqlparser::ast::Expr;
-        
+
         match expr {
             // Function call: DEFAULT NOW(), DEFAULT SNOWFLAKE_ID(), etc.
             Expr::Function(func) => {
                 let func_name = func.name.to_string().to_uppercase();
-                
+
                 // Validate function has no arguments
                 let has_args = match &func.args {
                     sqlparser::ast::FunctionArguments::None => false,
                     sqlparser::ast::FunctionArguments::Subquery(_) => true,
                     sqlparser::ast::FunctionArguments::List(list) => !list.args.is_empty(),
                 };
-                
+
                 if has_args {
-                    return Err(format!("DEFAULT function {}() should not have arguments", func_name));
+                    return Err(format!(
+                        "DEFAULT function {}() should not have arguments",
+                        func_name
+                    ));
                 }
-                
+
                 Ok(ColumnDefault::FunctionCall(func_name))
             }
-            
+
             // Literal value: DEFAULT 'text', DEFAULT 42, DEFAULT TRUE
             Expr::Value(value) => {
                 let literal_str = match value {
@@ -369,7 +378,7 @@ impl CreateTableStatement {
                 };
                 Ok(ColumnDefault::Literal(literal_str))
             }
-            
+
             _ => Err(format!("Unsupported DEFAULT expression: {:?}", expr)),
         }
     }
@@ -489,9 +498,11 @@ impl CreateTableStatement {
                 }
 
                 // Find the column's data type
-                let field = self.schema.field_with_name(column_name)
+                let field = self
+                    .schema
+                    .field_with_name(column_name)
                     .map_err(|_| format!("Column '{}' not found in schema", column_name))?;
-                
+
                 let data_type = field.data_type();
 
                 // T531 & T532: Validate function return type matches column type
@@ -566,11 +577,15 @@ impl CreateTableStatement {
             ))?;
 
         // T551: Check PRIMARY KEY type is BIGINT or STRING
-        let field = self.schema.field_with_name(pk_column_name)
-            .map_err(|_| format!("PRIMARY KEY column '{}' not found in schema", pk_column_name))?;
-        
+        let field = self.schema.field_with_name(pk_column_name).map_err(|_| {
+            format!(
+                "PRIMARY KEY column '{}' not found in schema",
+                pk_column_name
+            )
+        })?;
+
         let data_type = field.data_type();
-        
+
         match data_type {
             DataType::Int64 => Ok(()), // BIGINT
             DataType::Utf8 | DataType::LargeUtf8 => Ok(()), // STRING/TEXT/VARCHAR
@@ -663,9 +678,10 @@ mod tests {
     // T530: Test DEFAULT function validation - unknown function
     #[test]
     fn test_validate_default_unknown_function() {
-        let sql = "CREATE USER TABLE users (id BIGINT, created_at TIMESTAMP DEFAULT UNKNOWN_FUNC())";
+        let sql =
+            "CREATE USER TABLE users (id BIGINT, created_at TIMESTAMP DEFAULT UNKNOWN_FUNC())";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         let result = stmt.validate_default_functions();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Unknown DEFAULT function"));
@@ -676,7 +692,7 @@ mod tests {
     fn test_validate_now_on_timestamp_success() {
         let sql = "CREATE USER TABLE users (id BIGINT, created_at TIMESTAMP DEFAULT NOW())";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         let result = stmt.validate_default_functions();
         assert!(result.is_ok());
     }
@@ -685,10 +701,12 @@ mod tests {
     fn test_validate_now_on_non_timestamp_fails() {
         let sql = "CREATE USER TABLE users (id BIGINT, name TEXT DEFAULT NOW())";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         let result = stmt.validate_default_functions();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("can only be used on TIMESTAMP columns"));
+        assert!(result
+            .unwrap_err()
+            .contains("can only be used on TIMESTAMP columns"));
     }
 
     // T532: Test SNOWFLAKE_ID() type validation - must be on BIGINT
@@ -696,7 +714,7 @@ mod tests {
     fn test_validate_snowflake_id_on_bigint_success() {
         let sql = "CREATE USER TABLE users (id BIGINT DEFAULT SNOWFLAKE_ID(), name TEXT)";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         let result = stmt.validate_default_functions();
         assert!(result.is_ok());
     }
@@ -705,10 +723,12 @@ mod tests {
     fn test_validate_snowflake_id_on_non_bigint_fails() {
         let sql = "CREATE USER TABLE users (id TEXT DEFAULT SNOWFLAKE_ID(), name TEXT)";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         let result = stmt.validate_default_functions();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("can only be used on BIGINT columns"));
+        assert!(result
+            .unwrap_err()
+            .contains("can only be used on BIGINT columns"));
     }
 
     // T532: Test UUID_V7() type validation - must be on STRING/TEXT
@@ -716,7 +736,7 @@ mod tests {
     fn test_validate_uuid_v7_on_text_success() {
         let sql = "CREATE USER TABLE users (id TEXT DEFAULT UUID_V7(), name TEXT)";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         let result = stmt.validate_default_functions();
         assert!(result.is_ok());
     }
@@ -725,10 +745,12 @@ mod tests {
     fn test_validate_uuid_v7_on_non_text_fails() {
         let sql = "CREATE USER TABLE users (id BIGINT DEFAULT UUID_V7(), name TEXT)";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         let result = stmt.validate_default_functions();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("can only be used on STRING/TEXT/VARCHAR columns"));
+        assert!(result
+            .unwrap_err()
+            .contains("can only be used on STRING/TEXT/VARCHAR columns"));
     }
 
     // T532: Test ULID() type validation - must be on STRING/TEXT
@@ -736,7 +758,7 @@ mod tests {
     fn test_validate_ulid_on_text_success() {
         let sql = "CREATE USER TABLE users (id TEXT DEFAULT ULID(), name TEXT)";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         let result = stmt.validate_default_functions();
         assert!(result.is_ok());
     }
@@ -745,10 +767,12 @@ mod tests {
     fn test_validate_ulid_on_non_text_fails() {
         let sql = "CREATE USER TABLE users (id BIGINT DEFAULT ULID(), name TEXT)";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         let result = stmt.validate_default_functions();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("can only be used on STRING/TEXT/VARCHAR columns"));
+        assert!(result
+            .unwrap_err()
+            .contains("can only be used on STRING/TEXT/VARCHAR columns"));
     }
 
     // Test multiple DEFAULT functions in one table
@@ -760,7 +784,7 @@ mod tests {
             created_at TIMESTAMP DEFAULT NOW()
         )";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         let result = stmt.validate_default_functions();
         assert!(result.is_ok());
     }
@@ -772,7 +796,7 @@ mod tests {
     fn test_primary_key_detection() {
         let sql = "CREATE USER TABLE users (id BIGINT PRIMARY KEY, name TEXT)";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         assert_eq!(stmt.primary_key_column, Some("id".to_string()));
     }
 
@@ -781,7 +805,7 @@ mod tests {
     fn test_primary_key_required_user_table() {
         let sql = "CREATE USER TABLE users (id BIGINT, name TEXT)";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         let result = stmt.validate_primary_key();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("PRIMARY KEY is required"));
@@ -792,7 +816,7 @@ mod tests {
     fn test_primary_key_required_shared_table() {
         let sql = "CREATE SHARED TABLE config (key TEXT, value TEXT)";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         let result = stmt.validate_primary_key();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("PRIMARY KEY is required"));
@@ -803,7 +827,7 @@ mod tests {
     fn test_primary_key_required_stream_table() {
         let sql = "CREATE STREAM TABLE events (id BIGINT, data TEXT)";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         let result = stmt.validate_primary_key();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("PRIMARY KEY is required"));
@@ -814,7 +838,7 @@ mod tests {
     fn test_primary_key_bigint_allowed() {
         let sql = "CREATE USER TABLE users (id BIGINT PRIMARY KEY, name TEXT)";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         let result = stmt.validate_primary_key();
         assert!(result.is_ok());
     }
@@ -824,7 +848,7 @@ mod tests {
     fn test_primary_key_string_allowed() {
         let sql = "CREATE USER TABLE users (id TEXT PRIMARY KEY, name TEXT)";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         let result = stmt.validate_primary_key();
         assert!(result.is_ok());
     }
@@ -834,7 +858,7 @@ mod tests {
     fn test_primary_key_invalid_type_rejected() {
         let sql = "CREATE USER TABLE users (id BOOLEAN PRIMARY KEY, name TEXT)";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         let result = stmt.validate_primary_key();
         assert!(result.is_err());
         let err_msg = result.unwrap_err();
@@ -845,9 +869,10 @@ mod tests {
     // Test PRIMARY KEY with DEFAULT SNOWFLAKE_ID()
     #[test]
     fn test_primary_key_with_default_snowflake_id() {
-        let sql = "CREATE USER TABLE users (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), name TEXT)";
+        let sql =
+            "CREATE USER TABLE users (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), name TEXT)";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         // Both validations should pass
         assert!(stmt.validate_primary_key().is_ok());
         assert!(stmt.validate_default_functions().is_ok());
@@ -856,9 +881,10 @@ mod tests {
     // Test PRIMARY KEY with DEFAULT UUID_V7()
     #[test]
     fn test_primary_key_with_default_uuid_v7() {
-        let sql = "CREATE USER TABLE events (event_id TEXT PRIMARY KEY DEFAULT UUID_V7(), data TEXT)";
+        let sql =
+            "CREATE USER TABLE events (event_id TEXT PRIMARY KEY DEFAULT UUID_V7(), data TEXT)";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         // Both validations should pass
         assert!(stmt.validate_primary_key().is_ok());
         assert!(stmt.validate_default_functions().is_ok());
@@ -867,9 +893,10 @@ mod tests {
     // Test PRIMARY KEY with DEFAULT ULID()
     #[test]
     fn test_primary_key_with_default_ulid() {
-        let sql = "CREATE USER TABLE requests (request_id TEXT PRIMARY KEY DEFAULT ULID(), data TEXT)";
+        let sql =
+            "CREATE USER TABLE requests (request_id TEXT PRIMARY KEY DEFAULT ULID(), data TEXT)";
         let stmt = CreateTableStatement::parse(sql, &test_namespace()).unwrap();
-        
+
         // Both validations should pass
         assert!(stmt.validate_primary_key().is_ok());
         assert!(stmt.validate_default_functions().is_ok());

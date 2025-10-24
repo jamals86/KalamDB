@@ -91,6 +91,7 @@ fn append_query(base: &str, key: &str, value: &str) -> String {
 fn apply_ws_auth_headers(
     request: &mut tokio_tungstenite::tungstenite::http::Request<()>,
     auth: &AuthProvider,
+    user_id: Option<&str>,
 ) -> Result<()> {
     match auth {
         AuthProvider::JwtToken(token) => {
@@ -112,6 +113,16 @@ fn apply_ws_auth_headers(
                 .insert(HeaderName::from_static("x-api-key"), header_value);
         }
         AuthProvider::None => {}
+    }
+
+    if let Some(uid) = user_id {
+        if !uid.is_empty() {
+            if let Ok(header_value) = HeaderValue::from_str(uid) {
+                request
+                    .headers_mut()
+                    .insert(HeaderName::from_static("x-user-id"), header_value);
+            }
+        }
     }
 
     Ok(())
@@ -385,6 +396,7 @@ impl SubscriptionManager {
         base_url: &str,
         config: SubscriptionConfig,
         auth: &AuthProvider,
+        user_id: Option<&str>,
     ) -> Result<Self> {
         let SubscriptionConfig {
             id,
@@ -401,7 +413,7 @@ impl SubscriptionManager {
             KalamLinkError::WebSocketError(format!("Failed to build WebSocket request: {}", e))
         })?;
 
-        apply_ws_auth_headers(&mut request, auth)?;
+        apply_ws_auth_headers(&mut request, auth, user_id)?;
 
         let (ws_stream, _) = match connect_async(request).await {
             Ok(result) => result,

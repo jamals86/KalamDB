@@ -55,7 +55,7 @@ impl AlterTableStatement {
     /// - ALTER SHARED TABLE ... (explicitly specify table type)
     pub fn parse(sql: &str, current_namespace: &NamespaceId) -> DdlResult<Self> {
         let tokens: Vec<&str> = sql.split_whitespace().collect();
-        
+
         if tokens.is_empty() || !tokens[0].eq_ignore_ascii_case("ALTER") {
             return Err("Expected ALTER TABLE statement".to_string());
         }
@@ -64,19 +64,23 @@ impl AlterTableStatement {
         let table_name = Self::extract_table_name_from_tokens(&tokens)?;
 
         // Find operation keyword position
-        let op_pos = tokens.iter()
-            .position(|&t| matches!(
-                t.to_uppercase().as_str(),
-                "ADD" | "DROP" | "MODIFY"
-            ))
-            .ok_or_else(|| "Expected ADD COLUMN, DROP COLUMN, or MODIFY COLUMN operation".to_string())?;
+        let op_pos = tokens
+            .iter()
+            .position(|&t| matches!(t.to_uppercase().as_str(), "ADD" | "DROP" | "MODIFY"))
+            .ok_or_else(|| {
+                "Expected ADD COLUMN, DROP COLUMN, or MODIFY COLUMN operation".to_string()
+            })?;
 
         let operation_upper = tokens[op_pos].to_uppercase();
         let operation = match operation_upper.as_str() {
             "ADD" => Self::parse_add_column_from_tokens(&tokens[op_pos..])?,
             "DROP" => Self::parse_drop_column_from_tokens(&tokens[op_pos..])?,
             "MODIFY" => Self::parse_modify_column_from_tokens(&tokens[op_pos..])?,
-            _ => return Err("Expected ADD COLUMN, DROP COLUMN, or MODIFY COLUMN operation".to_string()),
+            _ => {
+                return Err(
+                    "Expected ADD COLUMN, DROP COLUMN, or MODIFY COLUMN operation".to_string(),
+                )
+            }
         };
 
         Ok(Self {
@@ -102,7 +106,8 @@ impl AlterTableStatement {
             return Err("Table name is required".to_string());
         };
 
-        tokens.get(skip)
+        tokens
+            .get(skip)
             .map(|s| s.to_string())
             .ok_or_else(|| "Table name is required".to_string())
     }
@@ -131,7 +136,8 @@ impl AlterTableStatement {
         // Extract default value if present
         let default_value = tokens[start_idx + 2..]
             .windows(2)
-            .find(|w| w[0].eq_ignore_ascii_case("DEFAULT")).map(|w| w[1].trim_matches('\'').trim_matches('"').to_string());
+            .find(|w| w[0].eq_ignore_ascii_case("DEFAULT"))
+            .map(|w| w[1].trim_matches('\'').trim_matches('"').to_string());
 
         Ok(ColumnOperation::Add {
             column_name,

@@ -267,16 +267,18 @@ impl SharedTableFlushJob {
         );
 
         let writer = ParquetWriter::new(output_path.to_str().unwrap());
-        writer.write(self.schema.clone(), vec![batch]).map_err(|e| {
-            log::error!(
-                "❌ Failed to write Parquet file for shared table={}.{}, path={}: {}",
-                self.namespace_id.as_str(),
-                self.table_name.as_str(),
-                output_path.display(),
+        writer
+            .write(self.schema.clone(), vec![batch])
+            .map_err(|e| {
+                log::error!(
+                    "❌ Failed to write Parquet file for shared table={}.{}, path={}: {}",
+                    self.namespace_id.as_str(),
+                    self.table_name.as_str(),
+                    output_path.display(),
+                    e
+                );
                 e
-            );
-            e
-        })?;
+            })?;
 
         let output_path_str = output_path.to_string_lossy().to_string();
 

@@ -63,7 +63,9 @@ impl CreateStorageStatement {
     ///
     /// This is a simple keyword-based parser since sqlparser-rs doesn't support custom DDL.
     pub fn parse(sql: &str) -> Result<Self, String> {
-        use crate::parser::utils::{normalize_sql, extract_identifier, extract_keyword_value, extract_quoted_keyword_value};
+        use crate::parser::utils::{
+            extract_identifier, extract_keyword_value, extract_quoted_keyword_value, normalize_sql,
+        };
 
         // Normalize SQL: remove extra whitespace and newlines
         let normalized = normalize_sql(sql);
@@ -124,8 +126,9 @@ impl CreateStorageStatement {
                 .unwrap_or_else(|_| "".to_string());
 
         // Extract USER_TABLES_TEMPLATE (optional)
-        let user_tables_template = extract_quoted_keyword_value(&normalized, "USER_TABLES_TEMPLATE")
-            .unwrap_or_else(|_| "".to_string());
+        let user_tables_template =
+            extract_quoted_keyword_value(&normalized, "USER_TABLES_TEMPLATE")
+                .unwrap_or_else(|_| "".to_string());
 
         Ok(CreateStorageStatement {
             storage_id,
@@ -178,7 +181,7 @@ pub struct AlterStorageStatement {
 impl AlterStorageStatement {
     /// Parse ALTER STORAGE from SQL
     pub fn parse(sql: &str) -> Result<Self, String> {
-        use crate::parser::utils::{normalize_sql, extract_identifier};
+        use crate::parser::utils::{extract_identifier, normalize_sql};
 
         // Normalize SQL: remove extra whitespace and newlines
         let normalized = normalize_sql(sql);
@@ -210,7 +213,7 @@ impl AlterStorageStatement {
 
     fn extract_set_value(sql: &str, keyword: &str) -> Result<String, String> {
         use crate::parser::utils::extract_quoted_keyword_value;
-        
+
         // For SET clauses, we need to find "SET KEYWORD" pattern
         let pattern = format!("SET {}", keyword.to_uppercase());
         let sql_upper = sql.to_uppercase();
@@ -245,7 +248,7 @@ pub struct DropStorageStatement {
 impl DropStorageStatement {
     /// Parse DROP STORAGE from SQL
     pub fn parse(sql: &str) -> Result<Self, String> {
-        use crate::parser::utils::{normalize_sql, extract_identifier};
+        use crate::parser::utils::{extract_identifier, normalize_sql};
 
         let normalized = normalize_sql(sql);
         let sql_upper = normalized.to_uppercase();

@@ -129,24 +129,28 @@ impl RocksDbAdapter {
         // Parse table_id (format: "namespace:table_name")
         let parts: Vec<&str> = table_id.split(':').collect();
         if parts.len() != 2 {
-            return Err(anyhow!("Invalid table_id format. Expected 'namespace:table_name', got '{}'", table_id));
+            return Err(anyhow!(
+                "Invalid table_id format. Expected 'namespace:table_name', got '{}'",
+                table_id
+            ));
         }
         let namespace_id = parts[0];
         let table_name = parts[1];
-        
+
         // Get table definition from information_schema.tables
         let table_def = self.get_table_definition(namespace_id, table_name)?;
-        
+
         match table_def {
             None => Ok(None),
             Some(def) => {
                 match version {
                     None => {
                         // Return latest schema from TableDefinition
-                        let latest_schema_ver = def.schema_history
+                        let latest_schema_ver = def
+                            .schema_history
                             .last()
                             .ok_or_else(|| anyhow!("No schema versions found for {}", table_id))?;
-                        
+
                         Ok(Some(TableSchema {
                             schema_id: format!("{}:{}", table_id, def.schema_version),
                             table_id: table_id.to_string(),
@@ -159,11 +163,14 @@ impl RocksDbAdapter {
                     }
                     Some(v) => {
                         // Find specific version in schema_history
-                        let schema_ver = def.schema_history
+                        let schema_ver = def
+                            .schema_history
                             .iter()
                             .find(|sv| sv.version == v as u32)
-                            .ok_or_else(|| anyhow!("Schema version {} not found for {}", v, table_id))?;
-                        
+                            .ok_or_else(|| {
+                                anyhow!("Schema version {} not found for {}", v, table_id)
+                            })?;
+
                         Ok(Some(TableSchema {
                             schema_id: format!("{}:{}", table_id, v),
                             table_id: table_id.to_string(),
@@ -207,7 +214,7 @@ impl RocksDbAdapter {
 
         // Key format: {table_id}:{column_name}
         let key = format!("{}:{}", table_id, column_name);
-        
+
         let column_meta = serde_json::json!({
             "table_id": table_id,
             "column_name": column_name,
@@ -216,7 +223,7 @@ impl RocksDbAdapter {
             "ordinal_position": ordinal_position,
             "default_expression": default_expression,
         });
-        
+
         let value = serde_json::to_vec(&column_meta)?;
         self.db.put_cf(&cf, key.as_bytes(), &value)?;
         Ok(())

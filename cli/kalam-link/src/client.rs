@@ -71,7 +71,13 @@ impl KalamLinkClient {
         &self,
         config: SubscriptionConfig,
     ) -> Result<SubscriptionManager> {
-        SubscriptionManager::new(&self.base_url, config, &self.auth).await
+        SubscriptionManager::new(
+            &self.base_url,
+            config,
+            &self.auth,
+            self.query_executor.user_id(),
+        )
+        .await
     }
 
     /// Check server health and get server information

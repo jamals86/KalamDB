@@ -385,8 +385,10 @@ impl TableDeletionService {
     fn decrement_storage_usage(&self, location_name: &str) -> Result<(), KalamDbError> {
         // TODO: Phase 2b - system_storages no longer tracks usage_count, validation happens differently
         // Storage location usage tracking will be reimplemented when needed
-        log::warn!("Storage usage tracking temporarily disabled during migration to information_schema");
-        
+        log::warn!(
+            "Storage usage tracking temporarily disabled during migration to information_schema"
+        );
+
         // Get current storage location
         // let mut location = self
         //     .kalam_sql

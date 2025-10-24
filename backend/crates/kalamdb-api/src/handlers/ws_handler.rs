@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::actors::WebSocketSession;
 use crate::auth::{JwtAuth, JwtError};
 use crate::rate_limiter::RateLimiter;
+use kalamdb_commons::models::UserId;
 
 /// GET /v1/ws - Establish WebSocket connection
 ///
@@ -55,7 +56,7 @@ use crate::rate_limiter::RateLimiter;
 pub async fn websocket_handler_v1(
     req: HttpRequest,
     stream: web::Payload,
-    jwt_auth: web::Data<JwtAuth>,
+    jwt_auth: web::Data<Arc<JwtAuth>>,
     rate_limiter: web::Data<Arc<RateLimiter>>,
 ) -> Result<HttpResponse, Error> {
     // Generate unique connection ID
@@ -112,14 +113,28 @@ pub async fn websocket_handler_v1(
             }
         },
         None => {
-            warn!(
-                "WebSocket connection rejected: missing Authorization header (connection_id={})",
-                connection_id
-            );
-            return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
-                "error": "MISSING_AUTHORIZATION",
-                "message": "Authorization header is required"
-            })));
+            // Fallback to X-USER-ID header (development/local mode)
+            match req.headers().get("X-USER-ID").and_then(|h| h.to_str().ok()) {
+                Some(user_header) if !user_header.is_empty() => {
+                    let user_id = UserId::from(user_header);
+                    info!(
+                        "WebSocket connection using X-USER-ID header: connection_id={}, user_id={}",
+                        connection_id,
+                        user_id.as_ref()
+                    );
+                    Some(user_id)
+                }
+                _ => {
+                    warn!(
+                        "WebSocket connection rejected: missing Authorization header and X-USER-ID (connection_id={})",
+                        connection_id
+                    );
+                    return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+                        "error": "MISSING_AUTHORIZATION",
+                        "message": "Authorization header or X-USER-ID is required"
+                    })));
+                }
+            }
         }
     };
 
@@ -141,7 +156,7 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_websocket_endpoint() {
-        let jwt_auth = JwtAuth::new("test-secret".to_string(), Algorithm::HS256);
+        let jwt_auth = Arc::new(JwtAuth::new("test-secret".to_string(), Algorithm::HS256));
         let rate_limiter = Arc::new(RateLimiter::new());
 
         let app = test::init_service(

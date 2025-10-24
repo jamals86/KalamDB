@@ -19,8 +19,8 @@ pub mod kill_live_query;
 pub mod restore_namespace;
 pub mod show_backup;
 pub mod show_namespaces;
-pub mod show_tables;
 pub mod show_table_stats;
+pub mod show_tables;
 pub mod storage_commands;
 pub mod subscribe_commands;
 
@@ -42,9 +42,9 @@ pub use kill_live_query::KillLiveQueryStatement;
 pub use restore_namespace::RestoreDatabaseStatement;
 pub use show_backup::ShowBackupStatement;
 pub use show_namespaces::ShowNamespacesStatement;
-pub use show_tables::ShowTablesStatement;
 pub use show_table_stats::ShowTableStatsStatement;
+pub use show_tables::ShowTablesStatement;
 pub use storage_commands::{
     AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
 };
-pub use subscribe_commands::{SubscribeStatement, SubscribeOptions};
+pub use subscribe_commands::{SubscribeOptions, SubscribeStatement};

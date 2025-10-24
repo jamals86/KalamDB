@@ -11,12 +11,12 @@
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use arrow::datatypes::Schema;
+use chrono::Utc;
 use kalamdb_commons::models::ColumnDefault;
 use kalamdb_store::UserTableStore;
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
 use std::sync::Arc;
-use chrono::Utc;
 
 /// User table INSERT handler
 ///
@@ -196,14 +196,14 @@ impl UserTableInsertHandler {
         user_id: &UserId,
     ) -> Result<(), KalamDbError> {
         // Get the object map (we already validated it's an object in insert_row)
-        let row_obj = row_data
-            .as_object_mut()
-            .ok_or_else(|| KalamDbError::InvalidOperation("Row data must be an object".to_string()))?;
+        let row_obj = row_data.as_object_mut().ok_or_else(|| {
+            KalamDbError::InvalidOperation("Row data must be an object".to_string())
+        })?;
 
         // Iterate through all columns in schema
         for field in schema.fields() {
             let column_name = field.name();
-            
+
             // Skip system columns (handled by UserTableStore)
             if column_name.starts_with('_') {
                 continue;
@@ -260,7 +260,7 @@ impl UserTableInsertHandler {
         match default_spec {
             ColumnDefault::FunctionCall(func_name) => {
                 let func_upper = func_name.to_uppercase();
-                
+
                 match func_upper.as_str() {
                     "NOW" | "CURRENT_TIMESTAMP" => {
                         // Return current timestamp in ISO 8601 format
@@ -272,7 +272,10 @@ impl UserTableInsertHandler {
                         use crate::ids::SnowflakeGenerator;
                         let generator = SnowflakeGenerator::new(0);
                         let id = generator.next_id().map_err(|e| {
-                            KalamDbError::InvalidOperation(format!("Failed to generate snowflake ID: {}", e))
+                            KalamDbError::InvalidOperation(format!(
+                                "Failed to generate snowflake ID: {}",
+                                e
+                            ))
                         })?;
                         Ok(json!(id))
                     }
@@ -304,8 +307,7 @@ impl UserTableInsertHandler {
             ColumnDefault::Literal(literal_str) => {
                 // Return literal value as-is
                 // Try to parse as JSON, fallback to string
-                serde_json::from_str(literal_str)
-                    .or_else(|_| Ok(json!(literal_str)))
+                serde_json::from_str(literal_str).or_else(|_| Ok(json!(literal_str)))
             }
             ColumnDefault::None => {
                 // No default - return NULL
@@ -445,11 +447,18 @@ mod tests {
 
         let schema = Schema::new(vec![
             Field::new("id", DataType::Int64, false),
-            Field::new("created_at", DataType::Timestamp(TimeUnit::Millisecond, None), false),
+            Field::new(
+                "created_at",
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                false,
+            ),
         ]);
 
         let mut column_defaults = HashMap::new();
-        column_defaults.insert("created_at".to_string(), ColumnDefault::FunctionCall("NOW".to_string()));
+        column_defaults.insert(
+            "created_at".to_string(),
+            ColumnDefault::FunctionCall("NOW".to_string()),
+        );
 
         let mut row_data = json!({ "id": 123 });
         let user_id = UserId::from("test_user");
@@ -479,7 +488,10 @@ mod tests {
         ]);
 
         let mut column_defaults = HashMap::new();
-        column_defaults.insert("id".to_string(), ColumnDefault::FunctionCall("SNOWFLAKE_ID".to_string()));
+        column_defaults.insert(
+            "id".to_string(),
+            ColumnDefault::FunctionCall("SNOWFLAKE_ID".to_string()),
+        );
 
         let mut row_data = json!({ "name": "test" });
         let user_id = UserId::from("test_user");
@@ -508,7 +520,10 @@ mod tests {
         ]);
 
         let mut column_defaults = HashMap::new();
-        column_defaults.insert("id".to_string(), ColumnDefault::FunctionCall("UUID_V7".to_string()));
+        column_defaults.insert(
+            "id".to_string(),
+            ColumnDefault::FunctionCall("UUID_V7".to_string()),
+        );
 
         let mut row_data = json!({ "name": "test" });
         let user_id = UserId::from("test_user");
@@ -539,7 +554,10 @@ mod tests {
         ]);
 
         let mut column_defaults = HashMap::new();
-        column_defaults.insert("id".to_string(), ColumnDefault::FunctionCall("ULID".to_string()));
+        column_defaults.insert(
+            "id".to_string(),
+            ColumnDefault::FunctionCall("ULID".to_string()),
+        );
 
         let mut row_data = json!({ "name": "test" });
         let user_id = UserId::from("test_user");
@@ -569,7 +587,10 @@ mod tests {
         ]);
 
         let mut column_defaults = HashMap::new();
-        column_defaults.insert("owner".to_string(), ColumnDefault::FunctionCall("CURRENT_USER".to_string()));
+        column_defaults.insert(
+            "owner".to_string(),
+            ColumnDefault::FunctionCall("CURRENT_USER".to_string()),
+        );
 
         let mut row_data = json!({ "id": 123 });
         let user_id = UserId::from("alice");
@@ -675,11 +696,18 @@ mod tests {
 
         let schema = Schema::new(vec![
             Field::new("id", DataType::Int64, false),
-            Field::new("created_at", DataType::Timestamp(TimeUnit::Millisecond, None), false), // NOT NULL with DEFAULT
+            Field::new(
+                "created_at",
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                false,
+            ), // NOT NULL with DEFAULT
         ]);
 
         let mut column_defaults = HashMap::new();
-        column_defaults.insert("created_at".to_string(), ColumnDefault::FunctionCall("NOW".to_string()));
+        column_defaults.insert(
+            "created_at".to_string(),
+            ColumnDefault::FunctionCall("NOW".to_string()),
+        );
 
         let mut row_data = json!({ "id": 123 }); // 'created_at' omitted but has DEFAULT
         let user_id = UserId::from("test_user");
@@ -706,7 +734,10 @@ mod tests {
         ]);
 
         let mut column_defaults = HashMap::new();
-        column_defaults.insert("value".to_string(), ColumnDefault::FunctionCall("UNKNOWN_FUNC".to_string()));
+        column_defaults.insert(
+            "value".to_string(),
+            ColumnDefault::FunctionCall("UNKNOWN_FUNC".to_string()),
+        );
 
         let mut row_data = json!({ "id": 123 });
         let user_id = UserId::from("test_user");

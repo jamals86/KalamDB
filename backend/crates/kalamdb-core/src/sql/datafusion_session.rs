@@ -62,11 +62,11 @@ impl DataFusionSessionFactory {
             .with_default_catalog_and_schema("kalam", "default");
 
         let ctx = SessionContext::new_with_config_rt(config, self.runtime_env.clone());
-        
+
         // Register custom functions that are not built-in to DataFusion
         // Note: NOW() and CURRENT_TIMESTAMP() are already built-in to DataFusion
         self.register_custom_functions(&ctx, None);
-        
+
         ctx
     }
 
@@ -118,11 +118,8 @@ impl DataFusionSessionFactory {
         let current_user_fn = if let Some(uid) = user_id {
             // Use a session state-aware version when we have full state
             // For now, just use the user_id string directly
-            let state = KalamSessionState::new(
-                uid.clone(),
-                NamespaceId::new("default"),
-                TableCache::new(),
-            );
+            let state =
+                KalamSessionState::new(uid.clone(), NamespaceId::new("default"), TableCache::new());
             CurrentUserFunction::with_session_state(&state)
         } else {
             CurrentUserFunction::new()

@@ -223,7 +223,10 @@ fn parse_subscribe_options(options_str: &str) -> DdlResult<SubscribeOptions> {
 
     // Expect options wrapped in parentheses
     if !options_str.starts_with('(') || !options_str.ends_with(')') {
-        return Err("OPTIONS clause must be wrapped in parentheses, e.g., OPTIONS (last_rows=10)".to_string());
+        return Err(
+            "OPTIONS clause must be wrapped in parentheses, e.g., OPTIONS (last_rows=10)"
+                .to_string(),
+        );
     }
 
     let inner = &options_str[1..options_str.len() - 1].trim();
@@ -286,22 +289,18 @@ mod tests {
 
     #[test]
     fn test_parse_subscribe_with_where_clause() {
-        let stmt = SubscribeStatement::parse(
-            "SUBSCRIBE TO app.messages WHERE user_id = CURRENT_USER()",
-        )
-        .unwrap();
+        let stmt =
+            SubscribeStatement::parse("SUBSCRIBE TO app.messages WHERE user_id = CURRENT_USER()")
+                .unwrap();
         assert_eq!(stmt.namespace, "app");
         assert_eq!(stmt.table_name, "messages");
-        assert_eq!(
-            stmt.where_clause.unwrap(),
-            "user_id = CURRENT_USER()"
-        );
+        assert_eq!(stmt.where_clause.unwrap(), "user_id = CURRENT_USER()");
     }
 
     #[test]
     fn test_parse_subscribe_with_options() {
-        let stmt = SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (last_rows=10)")
-            .unwrap();
+        let stmt =
+            SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (last_rows=10)").unwrap();
         assert_eq!(stmt.namespace, "app");
         assert_eq!(stmt.table_name, "messages");
         assert_eq!(stmt.options.last_rows, Some(10));
@@ -358,8 +357,7 @@ mod tests {
     #[test]
     fn test_to_select_sql_with_where() {
         let stmt =
-            SubscribeStatement::parse("SUBSCRIBE TO app.messages WHERE user_id = 'alice'")
-                .unwrap();
+            SubscribeStatement::parse("SUBSCRIBE TO app.messages WHERE user_id = 'alice'").unwrap();
         assert_eq!(
             stmt.to_select_sql(),
             "SELECT * FROM app.messages WHERE user_id = 'alice'"

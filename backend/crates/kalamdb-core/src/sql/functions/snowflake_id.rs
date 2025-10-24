@@ -231,9 +231,7 @@ mod tests {
     #[test]
     fn test_snowflake_id_with_arguments_fails() {
         let func_impl = SnowflakeIdFunction::new();
-        let args = vec![ColumnarValue::Array(Arc::new(Int64Array::from(vec![
-            123,
-        ])))];
+        let args = vec![ColumnarValue::Array(Arc::new(Int64Array::from(vec![123])))];
         let result = func_impl.invoke(&args);
         assert!(result.is_err());
     }

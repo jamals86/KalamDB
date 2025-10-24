@@ -462,10 +462,16 @@ mod tests {
 
         for (i, response) in responses.iter().enumerate() {
             if response.status != "success" {
-                eprintln!("Response {}: status={}, error={:?}", 
-                    i, response.status, response.error);
+                eprintln!(
+                    "Response {}: status={}, error={:?}",
+                    i, response.status, response.error
+                );
             }
-            assert_eq!(response.status, "success", "Insert {} failed: {:?}", i, response.error);
+            assert_eq!(
+                response.status, "success",
+                "Insert {} failed: {:?}",
+                i, response.error
+            );
         }
     }
 

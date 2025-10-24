@@ -57,7 +57,10 @@ pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, String> {
 }
 
 /// Attempt to parse SQL with a specific dialect.
-fn try_parse_with_dialect(sql: &str, dialect: &dyn Dialect) -> Result<Vec<Statement>, sqlparser::parser::ParserError> {
+fn try_parse_with_dialect(
+    sql: &str,
+    dialect: &dyn Dialect,
+) -> Result<Vec<Statement>, sqlparser::parser::ParserError> {
     Parser::parse_sql(dialect, sql)
 }
 
@@ -78,14 +81,14 @@ fn try_parse_with_dialect(sql: &str, dialect: &dyn Dialect) -> Result<Vec<Statem
 /// - The SQL syntax is invalid
 pub fn parse_single_statement(sql: &str) -> Result<Statement, String> {
     let statements = parse_sql(sql)?;
-    
+
     if statements.len() != 1 {
         return Err(format!(
             "Expected exactly one statement, got {}",
             statements.len()
         ));
     }
-    
+
     Ok(statements.into_iter().next().unwrap())
 }
 
@@ -156,6 +159,8 @@ mod tests {
         let sql = "SELECT * FROM users; SELECT * FROM posts;";
         let result = parse_single_statement(sql);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Expected exactly one statement"));
+        assert!(result
+            .unwrap_err()
+            .contains("Expected exactly one statement"));
     }
 }

@@ -123,10 +123,15 @@ impl From<kalamdb_sql::ddl::FlushPolicy> for FlushPolicy {
             kalamdb_sql::ddl::FlushPolicy::RowLimit { row_limit } => FlushPolicy::RowLimit {
                 row_limit: row_limit.min(1_000_000),
             },
-            kalamdb_sql::ddl::FlushPolicy::TimeInterval { interval_seconds } => FlushPolicy::TimeInterval {
-                interval_seconds: interval_seconds.min(86400),
-            },
-            kalamdb_sql::ddl::FlushPolicy::Combined { row_limit, interval_seconds } => FlushPolicy::Combined {
+            kalamdb_sql::ddl::FlushPolicy::TimeInterval { interval_seconds } => {
+                FlushPolicy::TimeInterval {
+                    interval_seconds: interval_seconds.min(86400),
+                }
+            }
+            kalamdb_sql::ddl::FlushPolicy::Combined {
+                row_limit,
+                interval_seconds,
+            } => FlushPolicy::Combined {
                 row_limit: row_limit.min(1_000_000),
                 interval_seconds: interval_seconds.min(86400),
             },

@@ -20,8 +20,8 @@ use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 // use crate::services::storage_location_service::StorageLocationService;
 use crate::storage::column_family_manager::ColumnFamilyManager;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use kalamdb_sql::ddl::{CreateTableStatement, FlushPolicy as DdlFlushPolicy};
 use kalamdb_commons::models::StorageId;
+use kalamdb_sql::ddl::{CreateTableStatement, FlushPolicy as DdlFlushPolicy};
 use kalamdb_sql::KalamSql;
 use kalamdb_store::UserTableStore;
 use std::sync::Arc;
@@ -64,10 +64,7 @@ impl UserTableService {
     ///
     /// # Returns
     /// Table metadata for the created table
-    pub fn create_table(
-        &self,
-        stmt: CreateTableStatement,
-    ) -> Result<TableMetadata, KalamDbError> {
+    pub fn create_table(&self, stmt: CreateTableStatement) -> Result<TableMetadata, KalamDbError> {
         // Validate table name
         TableMetadata::validate_table_name(stmt.table_name.as_str())
             .map_err(KalamDbError::InvalidOperation)?;
@@ -208,24 +205,15 @@ impl UserTableService {
     /// Resolve storage location from storage_id
     ///
     /// Gets the user table template path from the storage in system.storages
-    fn resolve_storage_from_id(
-        &self,
-        storage_id: &StorageId,
-    ) -> Result<String, KalamDbError> {
+    fn resolve_storage_from_id(&self, storage_id: &StorageId) -> Result<String, KalamDbError> {
         // Get the storage location from system.storages via KalamSQL
         let storage = self
             .kalam_sql
             .get_storage(storage_id.as_str())
             .map_err(|e| {
-                KalamDbError::Other(format!(
-                    "Failed to get storage '{}': {}",
-                    storage_id,
-                    e
-                ))
+                KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e))
             })?
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!("Storage '{}' not found", storage_id))
-            })?;
+            .ok_or_else(|| KalamDbError::NotFound(format!("Storage '{}' not found", storage_id)))?;
 
         // For user tables, we use the user_tables_template from the storage
         // The template should be in the format: "{namespace}/users/{tableName}/{shard}/{userId}/"
@@ -259,9 +247,10 @@ impl UserTableService {
         );
 
         // Serialize Arrow schema for history
-        let arrow_schema_json = TableDefinition::serialize_arrow_schema(schema.as_ref()).map_err(|e| {
-            KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
-        })?;
+        let arrow_schema_json =
+            TableDefinition::serialize_arrow_schema(schema.as_ref()).map_err(|e| {
+                KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
+            })?;
 
         // Build flush policy definition
         let flush_policy_def = stmt.flush_policy.as_ref().map(|policy| match policy {
@@ -285,7 +274,11 @@ impl UserTableService {
         // Build complete table definition
         let now_millis = chrono::Utc::now().timestamp_millis();
         let table_def = TableDefinition {
-            table_id: format!("{}:{}", stmt.namespace_id.as_str(), stmt.table_name.as_str()),
+            table_id: format!(
+                "{}:{}",
+                stmt.namespace_id.as_str(),
+                stmt.table_name.as_str()
+            ),
             table_name: stmt.table_name.as_str().to_string(),
             namespace_id: stmt.namespace_id.as_str().to_string(),
             table_type: TableType::User,
@@ -332,7 +325,7 @@ impl UserTableService {
     /// DEPRECATED: Create schema files for the table
     ///
     /// **REPLACED BY**: save_table_definition() which writes to information_schema_tables
-    /// 
+    ///
     /// Creates:
     /// - schema_v1.json: Arrow schema in JSON format
     /// - manifest.json: Schema versioning metadata

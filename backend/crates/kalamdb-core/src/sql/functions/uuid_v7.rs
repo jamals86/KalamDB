@@ -131,11 +131,7 @@ mod tests {
         assert_eq!(&uuid_str[23..24], "-", "Expected hyphen at position 23");
 
         // Verify version 7 (14th character should be '7')
-        assert_eq!(
-            &uuid_str[14..15],
-            "7",
-            "UUIDv7 version bit should be 7"
-        );
+        assert_eq!(&uuid_str[14..15], "7", "UUIDv7 version bit should be 7");
 
         // Verify variant (19th character should be 8, 9, a, or b)
         let variant_char = uuid_str.chars().nth(19).unwrap();
