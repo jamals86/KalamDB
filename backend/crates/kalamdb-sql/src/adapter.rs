@@ -116,43 +116,65 @@ impl RocksDbAdapter {
 
     /// Get table schema by table_id and version
     ///
-    /// If version is None, returns the latest version (highest version number).
+    /// **DEPRECATED**: This method is maintained for backward compatibility.
+    /// New code should use `get_table_definition()` which provides complete table metadata.
+    ///
+    /// If version is None, returns the latest version from information_schema.tables.
+    /// If version is Some(v), returns the specific version from schema_history.
     pub fn get_table_schema(
         &self,
         table_id: &str,
         version: Option<i32>,
     ) -> Result<Option<TableSchema>> {
-        let cf = self
-            .db
-            .cf_handle("system_table_schemas")
-            .ok_or_else(|| anyhow!("system_table_schemas CF not found"))?;
-
-        match version {
-            Some(v) => {
-                // Get specific version
-                let key = format!("schema:{}:{}", table_id, v);
-                match self.db.get_cf(&cf, key.as_bytes())? {
-                    Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
-                    None => Ok(None),
-                }
-            }
-            None => {
-                // Get latest version by scanning all versions
-                let prefix = format!("schema:{}:", table_id);
-                let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-
-                let mut latest_schema: Option<TableSchema> = None;
-                for item in iter {
-                    let (key_bytes, value) = item?;
-                    let key = String::from_utf8(key_bytes.to_vec())?;
-                    if key.starts_with(&prefix) {
-                        let schema: TableSchema = serde_json::from_slice(&value)?;
-                        if latest_schema.as_ref().is_none_or(|s| schema.version > s.version) {
-                            latest_schema = Some(schema);
-                        }
+        // Parse table_id (format: "namespace:table_name")
+        let parts: Vec<&str> = table_id.split(':').collect();
+        if parts.len() != 2 {
+            return Err(anyhow!("Invalid table_id format. Expected 'namespace:table_name', got '{}'", table_id));
+        }
+        let namespace_id = parts[0];
+        let table_name = parts[1];
+        
+        // Get table definition from information_schema.tables
+        let table_def = self.get_table_definition(namespace_id, table_name)?;
+        
+        match table_def {
+            None => Ok(None),
+            Some(def) => {
+                match version {
+                    None => {
+                        // Return latest schema from TableDefinition
+                        let latest_schema_ver = def.schema_history
+                            .last()
+                            .ok_or_else(|| anyhow!("No schema versions found for {}", table_id))?;
+                        
+                        Ok(Some(TableSchema {
+                            schema_id: format!("{}:{}", table_id, def.schema_version),
+                            table_id: table_id.to_string(),
+                            version: def.schema_version as i32,
+                            arrow_schema: latest_schema_ver.arrow_schema_json.clone(),
+                            created_at: def.created_at,
+                            changes: serde_json::to_string(&latest_schema_ver.changes)
+                                .unwrap_or_else(|_| "[]".to_string()),
+                        }))
+                    }
+                    Some(v) => {
+                        // Find specific version in schema_history
+                        let schema_ver = def.schema_history
+                            .iter()
+                            .find(|sv| sv.version == v as u32)
+                            .ok_or_else(|| anyhow!("Schema version {} not found for {}", v, table_id))?;
+                        
+                        Ok(Some(TableSchema {
+                            schema_id: format!("{}:{}", table_id, v),
+                            table_id: table_id.to_string(),
+                            version: v,
+                            arrow_schema: schema_ver.arrow_schema_json.clone(),
+                            created_at: schema_ver.created_at,
+                            changes: serde_json::to_string(&schema_ver.changes)
+                                .unwrap_or_else(|_| "[]".to_string()),
+                        }))
                     }
                 }
-                Ok(latest_schema)
             }
         }
     }

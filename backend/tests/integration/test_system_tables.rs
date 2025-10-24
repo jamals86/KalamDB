@@ -78,7 +78,7 @@ async fn test_02_query_system_table_schemas() {
         "system.users",
         "system.namespaces",
         "system.tables",
-        "system.storage_locations",
+        "system.storages",
         "system.live_queries",
         "system.jobs",
     ];

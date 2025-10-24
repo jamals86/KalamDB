@@ -29,8 +29,8 @@ async fn create_user_table(
                 id TEXT,
                 content TEXT,
                 priority INT
-            ) LOCATION 's3://bucket/users/${{user_id}}/{}/'"#,
-                namespace, table_name, table_name
+            ) STORAGE local"#,
+                namespace, table_name
             ),
             user_id,
         )

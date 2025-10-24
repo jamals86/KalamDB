@@ -181,8 +181,20 @@ Notes:
 38) Search all table_name: String - Use TableName model instead of String - check where we can add it as well
 39) Search all storage_id: String - Use StorageId model instead of String - check where we can add it as well
 40) Search all user_id: String - Use UserId model instead of String - check where we can add it as well
+41) the integration tests need to have folders:
+    - combined
+    - storage_management
 
-
+    - tables\user
+    - tables\shared
+    - tables\stream
+    - tables\system
+    
+    - flush
+    - jobs
+    - cli
+    - api
+    - auth
 
 
 

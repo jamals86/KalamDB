@@ -275,6 +275,9 @@ impl TestServer {
             kalam_sql.clone(),
         ));
 
+        // Initialize JobManager for FLUSH TABLE support
+        let job_manager = Arc::new(kalamdb_core::jobs::TokioJobManager::new());
+
         // Initialize SqlExecutor with builder pattern
         let sql_executor = Arc::new(
             SqlExecutor::new(
@@ -286,6 +289,7 @@ impl TestServer {
             )
             .with_table_deletion_service(table_deletion_service)
             .with_storage_registry(storage_registry)
+            .with_job_manager(job_manager)
             .with_stores(
                 user_table_store.clone(),
                 shared_table_store.clone(),
@@ -382,9 +386,14 @@ impl TestServer {
             Ok(result) => {
                 use kalamdb_core::sql::ExecutionResult;
                 match result {
-                    ExecutionResult::Success(_msg) => SqlResponse {
+                    ExecutionResult::Success(msg) => SqlResponse {
                         status: "success".to_string(),
-                        results: vec![],
+                        results: vec![QueryResult {
+                            rows: None,
+                            row_count: 0,
+                            columns: vec![],
+                            message: Some(msg),
+                        }],
                         execution_time_ms: 0,
                         error: None,
                     },

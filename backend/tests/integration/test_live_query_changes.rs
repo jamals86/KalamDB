@@ -33,8 +33,8 @@ async fn setup_http_server_and_table(
             content TEXT,
             priority INT,
             created_at BIGINT
-        ) LOCATION 's3://bucket/users/${{user_id}}/{}/'"#,
-        namespace, table_name, table_name
+        ) STORAGE local"#,
+        namespace, table_name
     );
 
     let response = server.execute_sql_as_user(&create_table, user_id).await;
@@ -59,8 +59,8 @@ async fn setup_test_table(server: &TestServer, namespace: &str, table_name: &str
             content TEXT,
             priority INT,
             created_at BIGINT
-        ) LOCATION 's3://bucket/users/${{user_id}}/{}/'"#,
-        namespace, table_name, table_name
+        ) STORAGE local"#,
+        namespace, table_name
     );
 
     let response = server.execute_sql_as_user(&create_table, user_id).await;
