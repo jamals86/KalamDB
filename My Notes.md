@@ -160,41 +160,6 @@ Notes:
 25) Make a test compiling kalamdb-link into wasm and try include it into a typescript class
 26) Make the logic the same as postgres which whenever insert/update/delete it returns the affected rows correctly
 30) CLI - 1 row deleted. or 1 row updated. this should be returned inside the cli
-31) Can TableDefinition use NamespaceId/StorageId and table_name also we need to check if we dont have any duplicated models for this and this is the only one used everywhere
-    I also see that we have Table in here as well: backend\crates\kalamdb-sql\src\models.rs
-    I guess we can do some improvements and use the model from one place only if this is a correct architecture, so we dont have a lot of code duplication
-31) Its better to have a folder for models and each model inside backend\crates\kalamdb-commons\src\models.rs will have its own file for better organization
-    Like NamepsaceId in namespace_id.rs
-    TableDefinition in table_definition.rs
-
-    We need to do the same for: backend\crates\kalamdb-sql\src\models.rs
-    A folder backend\crates\kalamdb-sql\src\models\ and each model in its own file
-32) (Requirement) - Add always models in a separate file for better organization
-33) (Requirement) - Whenever you see your repeating your-self in any code check if it can be written using generic code or a parent class for better re-usability and no code duplication
-34) (Requirement) - Whenever you create a new SQL statement parser check if it can extend from an existing parent class for better re-usability and no code duplication
-35) (Requirement) - Use enums instead of String whenever possible for better typo prevention and better code completion
-36) Check if we can extract common code from:
-        - backend\crates\kalamdb-store\src\shared_table_store.rs
-        - backend\crates\kalamdb-store\src\user_table_store.rs
-        - backend\crates\kalamdb-store\src\stream_table_store.rs
-37) Search all namespace_id: String - Use NameposaceId model instead of String - check where we can add it as well
-38) Search all table_name: String - Use TableName model instead of String - check where we can add it as well
-39) Search all storage_id: String - Use StorageId model instead of String - check where we can add it as well
-40) Search all user_id: String - Use UserId model instead of String - check where we can add it as well
-41) the integration tests need to have folders:
-    - combined
-    - storage_management
-
-    - tables\user
-    - tables\shared
-    - tables\stream
-    - tables\system
-    
-    - flush
-    - jobs
-    - cli
-    - api
-    - auth
 
 
 

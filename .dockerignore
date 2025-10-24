@@ -1,0 +1,35 @@
+# Version control
+.git
+.gitignore
+
+# Build artifacts
+target/
+**/target/
+dist/
+build/
+
+# Dependencies
+node_modules/
+
+# Docker files
+Dockerfile*
+.dockerignore
+
+# Environment and secrets
+.env
+.env.*
+config.toml
+config/*.toml
+
+# Logs and coverage
+*.log*
+logs/
+coverage/
+
+# Data directories
+data/
+**/data/
+
+# Temporary files
+tmp/
+*.tmp

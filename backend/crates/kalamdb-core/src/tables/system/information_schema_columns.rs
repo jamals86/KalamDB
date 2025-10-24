@@ -57,7 +57,7 @@ impl InformationSchemaColumnsProvider {
             for column in &table_def.columns {
                 table_catalog_values.push(None::<String>); // NULL for now
                 table_schema_values.push(table_def.namespace_id.to_string());
-                table_name_values.push(table_def.table_name.clone());
+                table_name_values.push(table_def.table_name.to_string());
                 column_name_values.push(column.column_name.clone());
                 ordinal_position_values.push(column.ordinal_position);
                 data_type_values.push(column.data_type.clone());

@@ -12,6 +12,7 @@ use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 use datafusion::arrow::datatypes::Schema;
+use kalamdb_commons::models::StorageId;
 use kalamdb_sql::ddl::CreateTableStatement;
 use kalamdb_sql::models::TableSchema;
 use kalamdb_sql::KalamSql;
@@ -147,13 +148,13 @@ impl StreamTableService {
                 stmt.namespace_id.as_str(),
                 stmt.table_name.as_str()
             ),
-            table_name: stmt.table_name.as_str().to_string(),
-            namespace_id: stmt.namespace_id.as_str().to_string(),
+            table_name: stmt.table_name.clone(),
+            namespace_id: stmt.namespace_id.clone(),
             table_type: TableType::Stream,
             created_at: now_millis,
             updated_at: now_millis,
             schema_version: 1,
-            storage_id: "local".to_string(), // Stream tables don't use external storage
+            storage_id: StorageId::from("local"), // Stream tables don't use external storage
             use_user_storage: false,
             flush_policy: None,            // Stream tables don't flush to Parquet
             deleted_retention_hours: None, // Stream tables don't have soft deletes

@@ -117,6 +117,11 @@ impl KalamSql {
         self.adapter.get_namespace(namespace_id)
     }
 
+    /// Check if a namespace exists.
+    pub fn namespace_exists(&self, namespace_id: &str) -> Result<bool> {
+        self.adapter.namespace_exists(namespace_id)
+    }
+
     /// Insert a new namespace
     pub fn insert_namespace(&self, namespace_id: &str, options: &str) -> Result<()> {
         let namespace = Namespace {

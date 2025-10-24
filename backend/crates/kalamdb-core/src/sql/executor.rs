@@ -49,7 +49,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser;
-use kalamdb_commons::models::StorageId;
+use kalamdb_commons::models::{NamespaceId as CommonNamespaceId, StorageId};
 use kalamdb_sql::ddl::{
     parse_job_command, AlterNamespaceStatement, CreateNamespaceStatement, CreateTableStatement,
     DescribeTableStatement, DropNamespaceStatement, DropTableStatement, ShowNamespacesStatement,
@@ -418,6 +418,26 @@ impl SqlExecutor {
         }
 
         Ok(storage_id)
+    }
+
+    /// Ensure the namespace referenced by a CREATE TABLE statement exists.
+    ///
+    /// We consult NamespaceService so the check shares the same RocksDB view as
+    /// subsequent metadata writes; this keeps table creation from racing ahead
+    /// of namespace persistence during concurrent workloads.
+    fn ensure_namespace_exists(
+        &self,
+        namespace_id: &CommonNamespaceId,
+    ) -> Result<(), KalamDbError> {
+        let namespace_name = namespace_id.as_str();
+        let exists = self.namespace_service.namespace_exists(namespace_name)?;
+        if !exists {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}.",
+                namespace_name, namespace_name
+            )));
+        }
+        Ok(())
     }
 
     /// Execute a SQL statement
@@ -1680,6 +1700,7 @@ impl SqlExecutor {
         // Clone necessary data for the async task
         let namespace_str = stmt.namespace.clone();
         let table_name_str = stmt.table_name.clone();
+        let storage_location_clone = table.storage_location.clone();
 
         // Spawn async flush task via JobManager
         let job_future = Box::pin(async move {
@@ -1693,14 +1714,18 @@ impl SqlExecutor {
             match flush_job.execute() {
                 Ok(result) => {
                     log::info!(
-                        "Flush job completed successfully: job_id={}, rows_flushed={}, users_count={}",
+                        "Flush job completed successfully: job_id={}, rows_flushed={}, users_count={}, parquet_files={}",
                         job_id_clone,
                         result.rows_flushed,
-                        result.users_count
+                        result.users_count,
+                        result.parquet_files.len()
                     );
                     Ok(format!(
-                        "Flushed {} rows for {} users",
-                        result.rows_flushed, result.users_count
+                        "Flushed {} rows for {} users. Storage location: {}. Parquet files: {}",
+                        result.rows_flushed,
+                        result.users_count,
+                        storage_location_clone,
+                        result.parquet_files.len()
                     ))
                 }
                 Err(e) => {
@@ -2075,6 +2100,7 @@ impl SqlExecutor {
             // stmt fields are already the right types from kalamdb_commons
             let table_name = stmt.table_name.clone();
             let namespace_id = stmt.namespace_id.clone();
+            self.ensure_namespace_exists(&namespace_id)?;
             let schema = stmt.schema.clone();
             let flush_policy = stmt.flush_policy.clone();
             let deleted_retention_hours = stmt.deleted_retention_hours;
@@ -2145,6 +2171,7 @@ impl SqlExecutor {
 
             let table_name = stmt.table_name.clone();
             let namespace_id = stmt.namespace_id.clone(); // Use the namespace from the statement
+            self.ensure_namespace_exists(&namespace_id)?;
             let schema = stmt.schema.clone();
             let retention_seconds = stmt.ttl_seconds.map(|t| t as u32);
 
@@ -2207,6 +2234,7 @@ impl SqlExecutor {
 
             let table_name = stmt.table_name.clone();
             let namespace_id = stmt.namespace_id.clone(); // Use the namespace from the statement
+            self.ensure_namespace_exists(&namespace_id)?;
             let schema = stmt.schema.clone();
             let flush_policy = stmt.flush_policy.clone();
             let deleted_retention = stmt.deleted_retention_hours.map(|h| h as u64 * 3600);
@@ -2286,6 +2314,7 @@ impl SqlExecutor {
 
             let table_name = stmt.table_name.clone();
             let namespace_id = stmt.namespace_id.clone();
+            self.ensure_namespace_exists(&namespace_id)?;
             let schema = stmt.schema.clone();
             let flush_policy = stmt.flush_policy.clone();
             let deleted_retention = stmt.deleted_retention_hours.map(|h| h as u64 * 3600);

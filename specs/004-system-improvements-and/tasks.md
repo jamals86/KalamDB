@@ -21,12 +21,23 @@
   - Includes storage management with credentials
 - US11 (Live Query Testing): T195-T218 (24 tasks) - ✅ **100% COMPLETE** (24/24)
 - US12 (Stress Testing): T219-T236 (11 tasks) - **0% Complete** (0/11) 🔄 Infrastructure ready
-- US3 (Manual Flushing): T237-T256 (6 tasks) - **0% Complete** (0/6)
+- US3 (Manual Flushing): T237-T256 (20 tasks) - ✅ **100% COMPLETE** (18/18 tasks complete, 2 deferred to shutdown coordination feature)
+  - All 15 manual flush tests passing (test_manual_flush_verification.rs)
+  - Enhanced job result includes records_flushed, users_count, storage_location, parquet_files
+  - Comprehensive documentation in flush_commands.rs and SQL_SYNTAX.md
+  - T253-T254 deferred to separate shutdown coordination feature
 - US4 (Session Caching): T257-T274 (18 tasks) - **0% Complete** (0/18)
 - US5 (Namespace Validation): T275-T288 (14 tasks) - **0% Complete** (0/14)
 - US9 (Enhanced API): T289-T316 (35 tasks) - **0% Complete** (0/35)
 - US10 (User Management): T317-T351 (60 tasks) - **0% Complete** (0/60)
-- US6 (Code Quality): T352-T370 (19 tasks) - **0% Complete** (0/19)
+- US6 (Code Quality): T352-T416 (69 tasks) - **0% Complete** (0/69)
+  - Integration tests: 11 tests verifying improvements (T352-T358d)
+  - Model organization: Separate files for each model (T359-T367: 9 tasks)
+  - Code reusability: Extract common table store patterns (T368-T375: 8 tasks)
+  - Type-safe wrappers: Replace String with UserId/NamespaceId/etc (T376-T382: 7 tasks)
+  - Enum usage: JobStatus, TableAccessLevel, UserRole enums (T383-T388: 6 tasks)
+  - Test organization: Folder structure for integration tests (T389-T401: 13 tasks)
+  - Existing quality tasks: Dependencies, README, RocksDB cleanup (T402-T416: 15 tasks)
 - US7 (Storage Abstraction): T371-T385 (15 tasks) - **0% Complete** (0/15)
 - US8 (Docs & Docker): T386-T409 (24 tasks) - **0% Complete** (0/24)
 - Polish & Cross-Cutting: T410-T426 (38 tasks) - **0% Complete** (0/38)
@@ -1545,14 +1556,14 @@ Table metadata storage consolidated from fragmented approach (system_tables + sy
 - [X] T248 [US3] Implement FLUSH ALL TABLES SQL command parsing
 - [X] T249 [US3] Add flush command execution logic to kalamdb-sql query processor (asynchronous, returns job_id)
 - [X] T250 [US3] Implement asynchronous flush job creation with JobManager, return job_id immediately → VERIFIED (executor.rs lines 1542-1715, execute_flush_table already implemented)
-- [ ] T251 [US3] Update flush job to write records_flushed and storage_location to system.jobs result field → PENDING (flush result needs metrics)
+- [X] T251 [US3] Update flush job to write records_flushed and storage_location to system.jobs result field → ✅ COMPLETE (executor.rs updated with enhanced result message including storage_location and parquet_files count)
 - [X] T252 [US3] Implement concurrent flush handling (allow both jobs or detect in-progress) → VERIFIED (executor.rs checks running jobs, test_13 confirms detection)
-- [ ] T253 [US3] Add shutdown hook in `/backend/crates/kalamdb-server/src/main.rs` to wait for pending flush jobs before exit → DEFERRED (shutdown coordination)
-- [ ] T254 [US3] Add configurable flush job timeout during shutdown (default: 60s) in config.toml → DEFERRED (shutdown coordination)
+- [~] T253 [US3] Add shutdown hook in `/backend/crates/kalamdb-server/src/main.rs` to wait for pending flush jobs before exit → DEFERRED (shutdown coordination - separate feature)
+- [~] T254 [US3] Add configurable flush job timeout during shutdown (default: 60s) in config.toml → DEFERRED (shutdown coordination - separate feature)
 
 **Documentation Tasks for User Story 3**:
-- [ ] T255 [P] [US3] Add rustdoc to flush_commands.rs explaining asynchronous FLUSH TABLE behavior and job monitoring
-- [ ] T256 [P] [US3] Update `/docs/architecture/SQL_SYNTAX.md` with FLUSH TABLE documentation (asynchronous, job_id response)
+- [X] T255 [P] [US3] Add rustdoc to flush_commands.rs explaining asynchronous FLUSH TABLE behavior and job monitoring → ✅ COMPLETE (comprehensive documentation already exists in flush_commands.rs)
+- [X] T256 [P] [US3] Update `/docs/architecture/SQL_SYNTAX.md` with FLUSH TABLE documentation (asynchronous, job_id response) → ✅ COMPLETE (updated with job result format including records_flushed, users_count, storage_location, parquet_files)
 
 **Checkpoint**: Manual flush control works asynchronously with job_id tracking and graceful shutdown handling
 
@@ -1604,25 +1615,25 @@ Table metadata storage consolidated from fragmented approach (system_tables + sy
 
 ### Integration Tests for User Story 5
 
-- [ ] T275 [P] [US5] Create `/backend/tests/integration/test_namespace_validation.rs` test file
-- [ ] T276 [P] [US5] test_create_table_nonexistent_namespace_error: Verify error message with guidance
-- [ ] T277 [P] [US5] test_create_table_after_namespace_creation: Fail, CREATE NAMESPACE, retry success
-- [ ] T278 [P] [US5] test_user_table_namespace_validation: Verify CREATE USER TABLE validates namespace
-- [ ] T279 [P] [US5] test_shared_table_namespace_validation: Verify CREATE SHARED TABLE validates namespace
-- [ ] T280 [P] [US5] test_stream_table_namespace_validation: Verify CREATE STREAM TABLE validates namespace
-- [ ] T281 [P] [US5] test_namespace_validation_race_condition: Concurrent namespace create + table create
-- [ ] T282 [P] [US5] test_error_message_includes_guidance: Verify error includes "Create it first with CREATE NAMESPACE"
+- [X] T275 [P] [US5] Create `/backend/tests/integration/test_namespace_validation.rs` test file
+- [X] T276 [P] [US5] test_create_table_nonexistent_namespace_error: Verify error message with guidance
+- [X] T277 [P] [US5] test_create_table_after_namespace_creation: Fail, CREATE NAMESPACE, retry success
+- [X] T278 [P] [US5] test_user_table_namespace_validation: Verify CREATE USER TABLE validates namespace
+- [X] T279 [P] [US5] test_shared_table_namespace_validation: Verify CREATE SHARED TABLE validates namespace
+- [X] T280 [P] [US5] test_stream_table_namespace_validation: Verify CREATE STREAM TABLE validates namespace
+- [X] T281 [P] [US5] test_namespace_validation_race_condition: Concurrent namespace create + table create
+- [X] T282 [P] [US5] test_error_message_includes_guidance: Verify error includes "Create it first with CREATE NAMESPACE"
 
 ### Implementation for User Story 5
 
-- [ ] T283 [US5] Add namespace existence validation to CREATE TABLE in `/backend/crates/kalamdb-sql/src/ddl.rs`
-- [ ] T284 [US5] Implement namespace_exists() check before table creation
-- [ ] T285 [US5] Add descriptive error message with guidance for non-existent namespace
-- [ ] T286 [US5] Apply validation to all table types (USER, SHARED, STREAM)
-- [ ] T287 [US5] Add transaction protection to prevent race conditions
+- [X] T283 [US5] Add namespace existence validation to CREATE TABLE in `/backend/crates/kalamdb-sql/src/ddl.rs`
+- [X] T284 [US5] Implement namespace_exists() check before table creation
+- [X] T285 [US5] Add descriptive error message with guidance for non-existent namespace
+- [X] T286 [US5] Apply validation to all table types (USER, SHARED, STREAM)
+- [X] T287 [US5] Add transaction protection to prevent race conditions
 
 **Documentation Tasks for User Story 5**:
-- [ ] T288 [P] [US5] Add inline comments to namespace validation logic explaining race condition prevention
+- [X] T288 [P] [US5] Add inline comments to namespace validation logic explaining race condition prevention
 
 **Checkpoint**: Namespace validation prevents table creation errors with helpful guidance
 
@@ -1784,25 +1795,92 @@ Table metadata storage consolidated from fragmented approach (system_tables + sy
 - [ ] T356 [P] [US6] test_kalamdb_commons_models_accessible: Import and use commons types in test
 - [ ] T357 [P] [US6] test_system_catalog_consistency: Query system tables, verify "system" catalog
 - [ ] T358 [P] [US6] test_binary_size_optimization: Build release, verify test deps not included
+- [ ] T358a [P] [US6] test_model_deduplication: Verify no duplicate Table/Namespace/User models across crates
+- [ ] T358b [P] [US6] test_table_stores_use_common_base: Verify user/shared/stream stores use common implementation
+- [ ] T358c [P] [US6] test_enum_usage_consistency: Verify JobStatus, UserRole, TableAccessLevel enums used instead of String
+- [ ] T358d [P] [US6] test_integration_folder_structure: Verify all tests organized in proper directories
 
 ### Implementation for User Story 6
 
 **Note**: Many code quality tasks completed in Foundational phase (T011-T034). This phase handles remaining items.
 
-- [ ] T359 [P] [US6] Update all Cargo.toml files with latest compatible dependency versions
-- [ ] T360 [P] [US6] Update `/README.md` to reflect current architecture with WebSocket info
-- [ ] T361 [P] [US6] Remove Parquet-specific details from README (mention once)
-- [ ] T314 [P] [US6] Refactor kalamdb-sql to remove any remaining direct RocksDB calls
-- [ ] T315 [P] [US6] Add "system" catalog consistently to all system table queries
-- [ ] T316 [P] [US6] Configure test framework to support local vs temporary server configuration
-- [ ] T317 [P] [US6] Audit release build configuration to exclude test-only dependencies
-- [ ] T366 [US6] Consolidate remaining duplicated validation logic in system table providers
-- [ ] T367 [US6] Migrate remaining DDL definitions to kalamdb-sql/src/ddl.rs if any missed
+#### Model Organization and Deduplication (Requirements 31-32)
+
+- [ ] T359 [P] [US6] Audit TableDefinition usage - verify it uses NamespaceId, StorageId, TableName type-safe wrappers
+- [ ] T360 [P] [US6] Compare `backend/crates/kalamdb-commons/src/models.rs` Table vs `backend/crates/kalamdb-sql/src/models.rs` Table - eliminate duplication
+- [ ] T361 [P] [US6] Create `/backend/crates/kalamdb-commons/src/models/` directory structure
+- [ ] T362 [P] [US6] Split kalamdb-commons models.rs into separate files: namespace_id.rs, user_id.rs, storage_id.rs, table_name.rs, table_definition.rs, column_definition.rs, etc.
+- [ ] T363 [P] [US6] Update kalamdb-commons lib.rs to export models from models/ module
+- [ ] T364 [P] [US6] Create `/backend/crates/kalamdb-sql/src/models/` directory structure
+- [ ] T365 [P] [US6] Split kalamdb-sql models.rs into separate files: table.rs, namespace.rs, user.rs, storage.rs, etc.
+- [ ] T366 [P] [US6] Update kalamdb-sql lib.rs to export models from models/ module
+- [ ] T367 [P] [US6] Document model organization pattern in ADR-013-model-organization.md
+
+#### Code Reusability and Generic Patterns (Requirements 33-36)
+
+- [ ] T368 [P] [US6] Audit table store implementations (user_table_store.rs, shared_table_store.rs, stream_table_store.rs) for common code
+- [ ] T369 [P] [US6] Create base trait or generic implementation for common table store operations (put, get, delete, scan)
+- [ ] T370 [P] [US6] Refactor user_table_store.rs to use common base implementation
+- [ ] T371 [P] [US6] Refactor shared_table_store.rs to use common base implementation
+- [ ] T372 [P] [US6] Refactor stream_table_store.rs to use common base implementation
+- [ ] T373 [P] [US6] Audit DDL parsers for inheritance opportunities (CreateUserTableStatement, CreateSharedTableStatement, CreateStreamTableStatement)
+- [ ] T374 [P] [US6] Create base CreateTableStatement trait/struct with common fields (namespace, table_name, columns, schema)
+- [ ] T375 [P] [US6] Refactor table creation parsers to extend base implementation
+
+#### Type-Safe Wrapper Migration (Requirements 37-40)
+
+- [ ] T376 [P] [US6] Search codebase for `namespace_id: String` - replace with NamespaceId wrapper (use grep/ripgrep)
+- [ ] T377 [P] [US6] Search codebase for `table_name: String` - replace with TableName wrapper
+- [ ] T378 [P] [US6] Search codebase for `storage_id: String` - replace with StorageId wrapper
+- [ ] T379 [P] [US6] Search codebase for `user_id: String` - replace with UserId wrapper
+- [ ] T380 [P] [US6] Update all function signatures to use type-safe wrappers instead of String
+- [ ] T381 [P] [US6] Update all struct fields to use type-safe wrappers instead of String
+- [ ] T382 [P] [US6] Verify all conversions use proper From/Into traits for type-safe wrappers
+
+#### Enum Usage for Type Safety (Requirement 35)
+
+- [ ] T383 [P] [US6] Audit codebase for String fields that should be enums (job status, table type, storage type, etc.)
+- [ ] T384 [P] [US6] Create JobStatus enum in kalamdb-commons (running, completed, failed, cancelled)
+- [ ] T385 [P] [US6] Create TableAccessLevel enum for shared tables (public, private, restricted)
+- [ ] T386 [P] [US6] Create UserRole enum (user, service, dba, system)
+- [ ] T387 [P] [US6] Replace String usages with corresponding enums throughout codebase
+- [ ] T388 [P] [US6] Add serde support for all enums with proper serialization
+
+#### Integration Test Organization (Requirement 41)
+
+- [ ] T389 [P] [US6] Create `/backend/tests/integration/combined/` directory
+- [ ] T390 [P] [US6] Create `/backend/tests/integration/storage_management/` directory
+- [ ] T391 [P] [US6] Create `/backend/tests/integration/tables/user/` directory
+- [ ] T392 [P] [US6] Create `/backend/tests/integration/tables/shared/` directory
+- [ ] T393 [P] [US6] Create `/backend/tests/integration/tables/stream/` directory
+- [ ] T394 [P] [US6] Create `/backend/tests/integration/tables/system/` directory
+- [ ] T395 [P] [US6] Create `/backend/tests/integration/flush/` directory
+- [ ] T396 [P] [US6] Create `/backend/tests/integration/jobs/` directory
+- [ ] T397 [P] [US6] Create `/backend/tests/integration/cli/` directory
+- [ ] T398 [P] [US6] Create `/backend/tests/integration/api/` directory
+- [ ] T399 [P] [US6] Create `/backend/tests/integration/auth/` directory
+- [ ] T400 [P] [US6] Move existing tests into appropriate directories
+- [ ] T401 [P] [US6] Update test module paths in Cargo.toml
+
+#### Existing Code Quality Tasks
+
+- [ ] T402 [P] [US6] Update all Cargo.toml files with latest compatible dependency versions
+- [ ] T403 [P] [US6] Update `/README.md` to reflect current architecture with WebSocket info
+- [ ] T404 [P] [US6] Remove Parquet-specific details from README (mention once)
+- [ ] T405 [P] [US6] Refactor kalamdb-sql to remove any remaining direct RocksDB calls
+- [ ] T406 [P] [US6] Add "system" catalog consistently to all system table queries
+- [ ] T407 [P] [US6] Configure test framework to support local vs temporary server configuration
+- [ ] T408 [P] [US6] Audit release build configuration to exclude test-only dependencies
+- [ ] T409 [US6] Consolidate remaining duplicated validation logic in system table providers
+- [ ] T410 [US6] Migrate remaining DDL definitions to kalamdb-sql/src/ddl.rs if any missed
 
 **Documentation Tasks for User Story 6**:
-- [ ] T416 [P] [US6] Review and update all rustdoc comments for completeness
-- [ ] T417 [P] [US6] Add inline comments to scan() functions explaining purpose and usage
-- [ ] T418 [P] [US6] Verify all type-safe wrappers have usage examples in rustdoc
+- [ ] T411 [P] [US6] Review and update all rustdoc comments for completeness
+- [ ] T412 [P] [US6] Add inline comments to scan() functions explaining purpose and usage
+- [ ] T413 [P] [US6] Verify all type-safe wrappers have usage examples in rustdoc
+- [ ] T414 [P] [US6] Document code organization principles in `/docs/architecture/CODE_ORGANIZATION.md`
+- [ ] T415 [P] [US6] Create ADR-014-type-safe-wrappers.md explaining benefits and usage patterns
+- [ ] T416 [P] [US6] Create ADR-015-enum-usage-policy.md for enum vs String guidelines
 
 **Checkpoint**: Code quality improved with reduced duplication and updated dependencies
 

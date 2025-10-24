@@ -279,17 +279,16 @@ impl UserTableService {
                 stmt.namespace_id.as_str(),
                 stmt.table_name.as_str()
             ),
-            table_name: stmt.table_name.as_str().to_string(),
-            namespace_id: stmt.namespace_id.as_str().to_string(),
+            table_name: stmt.table_name.clone(),
+            namespace_id: stmt.namespace_id.clone(),
             table_type: TableType::User,
             created_at: now_millis,
             updated_at: now_millis,
             schema_version: 1,
             storage_id: stmt
                 .storage_id
-                .as_ref()
-                .map(|s| s.as_str().to_string())
-                .unwrap_or_else(|| "local".to_string()),
+                .clone()
+                .unwrap_or_else(|| StorageId::from("local")),
             use_user_storage: stmt.use_user_storage,
             flush_policy: flush_policy_def,
             deleted_retention_hours: stmt.deleted_retention_hours,

@@ -607,9 +607,9 @@ pub struct TableDefinition {
     /// Unique table identifier: "{namespace_id}:{table_name}"
     pub table_id: String,
     /// Table name (e.g., "users")
-    pub table_name: String,
+    pub table_name: TableName,
     /// Namespace ID (e.g., "app")
-    pub namespace_id: String,
+    pub namespace_id: NamespaceId,
     /// Table type (USER, SHARED, STREAM, SYSTEM)
     pub table_type: TableType,
     /// Creation timestamp (Unix milliseconds)
@@ -619,7 +619,7 @@ pub struct TableDefinition {
     /// Current schema version (incremented on ALTER TABLE)
     pub schema_version: u32,
     /// Storage ID reference (e.g., "local", "s3-prod")
-    pub storage_id: String,
+    pub storage_id: StorageId,
     /// Whether to use user-specific storage partitioning
     pub use_user_storage: bool,
     /// Flush policy for write-ahead buffer
@@ -689,6 +689,7 @@ impl TableDefinition {
     ///
     /// # Returns
     /// Vector of ColumnDefinition with ordinal positions assigned
+    #[cfg(feature = "serde")]
     pub fn extract_columns_from_schema(
         schema: &arrow_schema::Schema,
         column_defaults: &std::collections::HashMap<String, ColumnDefault>,
@@ -730,6 +731,7 @@ impl TableDefinition {
     ///
     /// # Returns
     /// JSON string representation of the schema
+    #[cfg(feature = "serde")]
     pub fn serialize_arrow_schema(
         schema: &arrow_schema::Schema,
     ) -> Result<String, serde_json::Error> {

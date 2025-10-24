@@ -88,6 +88,10 @@ path = "../../tests/integration/test_live_query_changes.rs"
 name = "test_manual_flush_verification"
 path = "../../tests/integration/test_manual_flush_verification.rs"
 
+[[test]]
+name = "test_namespace_validation"
+path = "../../tests/integration/test_namespace_validation.rs"
+
 [dev-dependencies]
 tempfile = "3"
 serde_json.workspace = true

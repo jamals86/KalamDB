@@ -87,6 +87,11 @@ impl RocksDbAdapter {
         }
     }
 
+    /// Check whether a namespace exists without loading the full record.
+    pub fn namespace_exists(&self, namespace_id: &str) -> Result<bool> {
+        Ok(self.get_namespace(namespace_id)?.is_some())
+    }
+
     /// Insert a new namespace
     pub fn insert_namespace(&self, namespace: &Namespace) -> Result<()> {
         let cf = self
