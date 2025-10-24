@@ -75,6 +75,47 @@
    - *Impact*: User Story 2, storage management commands, data integrity
    - *Rationale*: Prevents orphaned tables and data loss. Explicit error message helps administrators identify dependent tables before deletion. Follows database FK constraint pattern for referential integrity.
 
+### Session 2025-10-24 — Schema & API Semantics Update
+
+New requirements confirmed and added to align SQL semantics, constraints, and API shapes with the product direction and PostgreSQL/MySQL conventions.
+
+16. **Q: Can TIMESTAMP columns use DEFAULT NOW()?** → A: Yes. `DEFAULT NOW()` is supported for TIMESTAMP/DATE-TIME columns and evaluated on the server during INSERT when the column is omitted. All DEFAULT functions (NOW, SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER) are implemented in a unified SQL function registry compatible with DataFusion, with each function in its own .rs file
+   - *Impact*: DDL parser and execution; INSERT path default evaluation; unified function architecture in `/backend/crates/kalamdb-core/src/sql/functions` (snowflake_id.rs, uuid_v7.rs, ulid.rs, now.rs, current_timestamp.rs, current_user.rs)
+   - *Rationale*: Matches common SQL engines; enables function reuse in SELECT, WHERE, and DEFAULT clauses; extensible for custom functions and future scripting support; one file per function for clean separation
+
+17. **Q: Must every table declare a PRIMARY KEY and which types are allowed?** → A: Yes. All table types (user/shared/stream) MUST define a primary key. Allowed PK types: BIGINT or STRING. DEFAULT value functions supported: `SNOWFLAKE_ID()` (BIGINT), `UUID_V7()` (STRING), `ULID()` (STRING). These functions follow the same architecture as NOW() and CURRENT_USER() and can be used in SELECT, WHERE, and DEFAULT clauses. Each function lives in its own module file
+   - *Impact*: Unified SQL function registry; function evaluation in multiple contexts (DEFAULT, SELECT, WHERE); extensible architecture for custom functions; clean file structure (one function per .rs file)
+   - *Rationale*: Ensures addressable rows, ordering, and efficient storage access keys; treating ID generators as SQL functions enables reuse across query contexts and aligns with DataFusion patterns; separate files improve maintainability
+
+18. **Q: Are NOT NULL constraints strictly enforced?** → A: Yes. NOT NULL is enforced on INSERT and UPDATE; violations return a clear error
+   - *Impact*: Write path validation
+   - *Rationale*: Prevents silent data quality issues
+
+19. **Q: What column order should SELECT * use?** → A: Column order MUST match the table creation order. This is enforced at the engine level and reflected by API and CLI
+   - *Impact*: Projection planning and response serialization
+   - *Rationale*: Predictability and parity with common RDBMS
+
+20. **Q: API timing field name?** → A: Rename to `took_ms` (was `execution_time_ms`)
+   - *Impact*: API response schema; CLI formatter and tests
+   - *Rationale*: Short, standard naming used by many tools
+
+21. **Q: system.storages path column name?** → A: Use `uri` (was `base_directory`); applies to filesystem paths and S3 URIs
+   - *Impact*: Schema, DDL, S3/filesystem backends, documentation
+   - *Rationale*: Unifies local and cloud locations
+
+22. **Q: Can a storage be deleted while referenced by tables?** → A: No. Deletion is rejected with an error containing dependent table count
+   - *Impact*: Storage management; already aligned with Item 15 above
+
+23. **Q: Is OWNER_ID required in CREATE USER?** → A: No. `OWNER_ID 'user1'` is not part of the CREATE USER syntax
+   - *Impact*: DDL grammar and examples
+
+24. **Q: Do we require `TABLE_TYPE shared` when creating shared tables?** → A: No. Use explicit statement kinds: `CREATE USER TABLE`, `CREATE SHARED TABLE`, `CREATE STREAM TABLE`. Parser has a shared parent that normalizes common attributes
+   - *Impact*: Parser; docs; examples
+
+25. **Q: What are the built-in roles and shared table access modes?** → A: Roles enum = { user, service, dba, system }. Shared tables may declare an `access` attribute: { public | private | restricted }
+   - *Impact*: system.users schema (role), shared table metadata (access); auth checks
+   - *Rationale*: Clear authorization model covering end-users, services, DBAs, and internal system actors
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 14 - API Versioning and Server Refactoring (Priority: P0)
@@ -159,6 +200,43 @@ System administrators and developers need consistent API versioning for future c
 - **FR-VER-031**: Parser code MUST be clean with minimal duplication and clear separation of concerns
 
 ---
+
+### SQL DDL and Data Integrity Functional Requirements (New)
+
+These requirements formalize schema semantics requested on 2025-10-24.
+
+- **FR-DB-001**: DDL MUST support `DEFAULT NOW()` for TIMESTAMP/DATE-TIME columns; evaluation occurs server-side when the column is omitted on INSERT
+- **FR-DB-002**: All tables (USER/SHARED/STREAM) MUST declare a PRIMARY KEY
+- **FR-DB-003**: Allowed PRIMARY KEY base types are BIGINT or STRING (TEXT/VARCHAR)
+- **FR-DB-004**: DDL MUST support SQL functions in DEFAULT clauses: `NOW()`, `SNOWFLAKE_ID()`, `UUID_V7()`, `ULID()`, `CURRENT_USER()`; all functions implemented in unified registry at `/backend/crates/kalamdb-core/src/sql/functions` aligned with DataFusion architecture
+- **FR-DB-005**: SQL functions MUST be usable in DEFAULT clauses, SELECT expressions, and WHERE conditions; function evaluation occurs server-side with consistent semantics across all contexts; architecture supports custom function extensions and future scripting
+- **FR-DB-006**: NOT NULL constraints MUST be strictly enforced on INSERT and UPDATE; violations return errors without partial writes
+- **FR-DB-007**: The projection order for `SELECT *` MUST match the table’s creation-time column order (engine-level guarantee)
+- **FR-DB-008**: `CREATE USER` syntax MUST NOT require or accept `OWNER_ID`
+- **FR-DB-009**: Shared table creation MUST NOT use `TABLE_TYPE shared`; use explicit forms: `CREATE USER TABLE`, `CREATE SHARED TABLE`, `CREATE STREAM TABLE`
+- **FR-DB-010**: System roles MUST be the enum { user, service, dba, system } and be persisted in `system.users.role`
+- **FR-DB-011**: Shared table metadata MAY include `access` with enum { public, private, restricted } controlling visibility/permissions
+- **FR-DB-012**: API responses that include execution timing MUST expose `took_ms` (not `execution_time_ms`)
+- **FR-DB-013**: `system.storages` MUST use column name `uri` (was `base_directory`) and accept filesystem paths or S3 URIs
+- **FR-DB-014**: Deleting a storage referenced by any table MUST be rejected with an error indicating dependent table count
+
+#### Integration Tests (Schema & Integrity)
+
+Create `backend/tests/integration/test_schema_integrity.rs` with cases:
+1. `test_default_now_timestamp`: CREATE TABLE with `created_at TIMESTAMP DEFAULT NOW()`, INSERT without column, SELECT verifies non-null recent timestamp
+2. `test_primary_key_required`: Attempt CREATE TABLE without PRIMARY KEY → error
+3. `test_default_id_functions`: CREATE TABLE with `id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID()`; CREATE TABLE with `event_id STRING PRIMARY KEY DEFAULT UUID_V7()`; CREATE TABLE with `request_id STRING PRIMARY KEY DEFAULT ULID()`; INSERT verifies generation behavior and uniqueness
+4. `test_default_functions_on_non_pk_columns`: CREATE TABLE with non-PK column using DEFAULT SNOWFLAKE_ID(), verify server-side generation
+5. `test_functions_in_select`: SELECT NOW(), SNOWFLAKE_ID(), UUID_V7(), ULID(), CURRENT_USER(), verify all execute
+6. `test_functions_in_where`: SELECT WHERE created_at < NOW(), verify function evaluation in predicates
+7. `test_not_null_enforced`: Define NOT NULL column, INSERT/UPDATE with NULL → error
+8. `test_select_star_column_order`: CREATE TABLE with columns A,B,C; SELECT * returns A,B,C order
+6. `test_api_took_ms_field`: Execute query via HTTP, verify `took_ms` present and numeric
+7. `test_storages_uses_uri_column`: CREATE STORAGE with `URI 's3://bucket/prefix'`, SELECT system.storages shows `uri`
+8. `test_storage_delete_blocked_when_in_use`: Create table referencing a storage; attempt DELETE STORAGE → error with dependent count
+9. `test_create_user_without_owner_id`: CREATE USER without OWNER_ID succeeds
+10. `test_create_shared_no_table_type`: CREATE SHARED TABLE succeeds; legacy `TABLE_TYPE shared` rejected
+11. `test_roles_and_access_enums`: Insert users with roles {user,service,dba,system}; CREATE SHARED TABLE with `access=public|private|restricted`; verify permissions applied
 
 ### User Story 0 - Kalam CLI: Interactive Command-Line Client (Priority: P0)
 
@@ -355,7 +433,7 @@ Database users need to execute queries efficiently with dynamic parameters while
 5. **test_cache_hit_miss_metrics**: Execute new query (cache miss), execute same query again (cache hit), verify response includes cache_hit:true/false indicator
 6. **test_parameter_count_mismatch**: Submit query with 2 placeholders but 1 parameter value, verify error message includes "parameter mismatch"
 7. **test_parameter_type_validation**: Submit parametrized INSERT with wrong type (string for INT column), verify type error returned
-8. **test_query_timing_in_response**: Enable timing in config, execute parametrized query, verify response includes execution_time_ms field
+8. **test_query_timing_in_response**: Enable timing in config, execute parametrized query, verify response includes took_ms field
 9. **test_parametrized_insert_update_delete**: Test parametrized INSERT, UPDATE, DELETE operations with parameter substitution
 10. **test_concurrent_parametrized_queries**: Execute multiple parametrized queries concurrently, verify no cache contention or errors
 
@@ -906,11 +984,11 @@ Developers and operators need reliable server startup, better CLI user experienc
 #### Storage Location Management
 
 - **FR-021i**: System MUST maintain a system.storages table registering all available storage locations
-- **FR-021j**: system.storages schema MUST include: storage_id (PRIMARY KEY), storage_name, description, storage_type (enum), base_directory, credentials (TEXT, nullable, JSON), shared_tables_template, user_tables_template, created_at, updated_at
+- **FR-021j**: system.storages schema MUST include: storage_id (PRIMARY KEY), storage_name, description, storage_type (enum), uri, credentials (TEXT, nullable, JSON), shared_tables_template, user_tables_template, created_at, updated_at
 - **FR-021k**: storage_type MUST be an enum with values: "filesystem", "s3" (extensible for future backends like Azure Blob, GCS)
-- **FR-021l**: On fresh installation, system MUST automatically create default storage with storage_id="local", storage_type="filesystem", base_directory="" (reads from config.toml)
-- **FR-021m**: When base_directory is empty string for storage_id="local", system MUST read storage location from config.toml default_storage_path (default: "./data/storage")
-- **FR-021n**: For S3 storage type, base_directory MUST follow format: "s3://bucket-name/" or "s3://bucket-name/prefix/"
+- **FR-021l**: On fresh installation, system MUST automatically create default storage with storage_id="local", storage_type="filesystem", uri="" (reads from config.toml)
+- **FR-021m**: When `uri` is an empty string for storage_id="local", system MUST read storage location from config.toml default_storage_path (default: "./data/storage")
+- **FR-021n**: For S3 storage type, uri MUST follow format: "s3://bucket-name/" or "s3://bucket-name/prefix/"
 - **FR-021o**: shared_tables_template MUST enforce variable ordering: {namespace} MUST appear before {tableName}
 - **FR-021p**: shared_tables_template default value: "{namespace}/shared/{tableName}"
 - **FR-021q**: user_tables_template MUST enforce variable ordering: {namespace} → {tableName} → {shard} → {userId} (in this exact order)

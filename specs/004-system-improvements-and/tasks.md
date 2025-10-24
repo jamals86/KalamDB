@@ -317,6 +317,16 @@
 - [X] Updated compatibility.rs to return Result<DataType, String> instead of anyhow::Result
 - [X] Full workspace builds successfully with all 180 DDL parser tests passing
 
+#### DDL Syntax Cleanup (FR-DB-008, FR-DB-009)
+
+- [ ] T082a [P] [US14] Update CREATE USER parser in `/backend/crates/kalamdb-sql/src/ddl/user_management.rs` to reject OWNER_ID parameter
+- [ ] T083a [P] [US14] Add validation error for CREATE USER with OWNER_ID: "OWNER_ID is not supported; use CREATE USER <username>"
+- [ ] T084a [P] [US14] Update CREATE SHARED TABLE parser to reject TABLE_TYPE parameter in favor of explicit CREATE SHARED TABLE syntax
+- [ ] T085a [P] [US14] Add validation error for TABLE_TYPE usage: "Use CREATE USER TABLE | CREATE SHARED TABLE | CREATE STREAM TABLE"
+- [ ] T086a [P] [US14] Add integration test test_create_user_rejects_owner_id in test_api_versioning.rs
+- [ ] T087a [P] [US14] Add integration test test_create_table_rejects_table_type_shared in test_api_versioning.rs
+- [ ] T088a [P] [US14] Update all example SQL in documentation to use explicit table creation syntax
+
 **Documentation Tasks for User Story 14**:
 - [X] T072a [P] [US14] Update `/docs/architecture/API_REFERENCE.md` with versioned endpoint documentation
 - [X] T073a [P] [US14] Create ADR-009-api-versioning.md explaining versioning strategy and migration path
@@ -329,7 +339,175 @@
 - [ ] T080a [P] [US14] Document keyword enum usage in `/docs/architecture/sql-architecture.md`
 - [ ] T081a [P] [US14] Add parser extension guide for future KalamDB-specific commands
 
-**Checkpoint**: ✅ **API versioning established, storage credentials supported, server organized, SQL parsers consolidated with sqlparser-rs, PostgreSQL/MySQL compatibility** - All future features use versioned endpoints and clean parser architecture
+**Checkpoint**: ✅ **API versioning established, storage credentials supported, server organized, SQL parsers consolidated with sqlparser-rs, PostgreSQL/MySQL compatibility, DDL syntax cleanups** - All future features use versioned endpoints and clean parser architecture
+
+---
+
+## Phase 2b: User Story 15 - Schema Integrity and Unified SQL Functions (Priority: P1) 🔴 FOUNDATIONAL
+
+**Goal**: Implement unified SQL function registry with DEFAULT support, ID generation functions (SNOWFLAKE_ID(), UUID_V7(), ULID()), temporal functions (NOW()), context functions (CURRENT_USER()), function usage in SELECT/WHERE, PRIMARY KEY requirements, NOT NULL enforcement, and SELECT * column order preservation
+
+**Independent Test**: Create table with DEFAULT NOW() and DEFAULT CURRENT_USER(), verify server-side evaluation; create table with DEFAULT SNOWFLAKE_ID(), verify time-ordered IDs; create table with DEFAULT ULID() on non-PK column, verify generation; SELECT NOW(), SNOWFLAKE_ID(), CURRENT_USER(); WHERE created_at < NOW(); violate NOT NULL, verify transaction rollback; SELECT *, verify column order matches CREATE TABLE
+
+**⚠️ FOUNDATIONAL**: Unified SQL function architecture provides extensibility for custom functions and future scripting support; affects core DDL, execution, and query semantics used by all user stories
+
+### Integration Tests for User Story 15
+
+- [ ] T465 [P] [US15] Create `/backend/tests/integration/test_schema_integrity.rs` test file
+- [ ] T466 [P] [US15] test_default_now_server_side_evaluation: CREATE TABLE with DEFAULT NOW(), INSERT without timestamp, verify server-side value
+- [ ] T467 [P] [US15] test_default_now_explicit_value_override: INSERT with explicit timestamp, verify DEFAULT NOW() not applied
+- [ ] T468 [P] [US15] test_primary_key_required_user_table: CREATE USER TABLE without PRIMARY KEY, verify error
+- [ ] T469 [P] [US15] test_primary_key_required_shared_table: CREATE SHARED TABLE without PRIMARY KEY, verify error
+- [ ] T470 [P] [US15] test_primary_key_required_stream_table: CREATE STREAM TABLE without PRIMARY KEY, verify error
+- [ ] T471 [P] [US15] test_primary_key_bigint_allowed: CREATE TABLE with PRIMARY KEY BIGINT, verify accepted
+- [ ] T472 [P] [US15] test_primary_key_string_allowed: CREATE TABLE with PRIMARY KEY TEXT, verify accepted
+- [ ] T473 [P] [US15] test_primary_key_invalid_type_rejected: CREATE TABLE with PRIMARY KEY BOOLEAN, verify error
+- [ ] T474 [P] [US15] test_default_snowflake_id_on_pk: CREATE TABLE with id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), INSERT 100 rows, verify time-ordered IDs
+- [ ] T475 [P] [US15] test_default_uuid_v7_on_pk: CREATE TABLE with event_id STRING PRIMARY KEY DEFAULT UUID_V7(), INSERT rows, verify UUIDv7 format (RFC 9562)
+- [ ] T476 [P] [US15] test_default_ulid_on_pk: CREATE TABLE with request_id STRING PRIMARY KEY DEFAULT ULID(), INSERT rows, verify 26-char URL-safe format
+- [ ] T477 [P] [US15] test_snowflake_id_time_component: Generate 1000 IDs, verify 41-bit timestamp monotonic increase
+- [ ] T478 [P] [US15] test_snowflake_id_uniqueness: Generate 10000 IDs concurrently, verify no duplicates
+- [ ] T479 [P] [US15] test_uuidv7_rfc9562_compliance: Generate UUID_V7(), verify 48-bit timestamp + 80-bit random format
+- [ ] T480 [P] [US15] test_ulid_format_compliance: Generate ULID(), verify 26-char Crockford base32, time-sortable
+- [ ] T481 [P] [US15] test_default_functions_on_non_pk_columns: CREATE TABLE with correlation_id STRING DEFAULT ULID() (non-PK), INSERT rows, verify generation
+- [ ] T482 [P] [US15] test_multiple_default_functions_same_table: CREATE TABLE with DEFAULT NOW(), DEFAULT SNOWFLAKE_ID(), DEFAULT ULID(), verify all work
+- [ ] T483 [P] [US15] test_not_null_enforcement_insert: INSERT with NULL in NOT NULL column, verify error and no partial write
+- [ ] T484 [P] [US15] test_not_null_enforcement_update: UPDATE to set NOT NULL column to NULL, verify error and no change
+- [ ] T485 [P] [US15] test_not_null_validation_before_write: Trigger NOT NULL violation, verify RocksDB write never occurs
+- [ ] T486 [P] [US15] test_select_star_column_order: CREATE TABLE with columns (id, name, email, created_at), SELECT *, verify exact order
+- [ ] T487 [P] [US15] test_column_order_preserved_after_alter: ALTER TABLE ADD COLUMN, SELECT *, verify new column at end
+- [ ] T488 [P] [US15] test_column_order_metadata_storage: Query system.columns, verify ordinal_position matches creation order
+
+### Implementation for User Story 15
+
+#### SQL Function Registry Foundation (FR-DB-004, FR-DB-005)
+
+- [ ] T489 [P] [US15] Create `/backend/crates/kalamdb-core/src/sql/` module directory
+- [ ] T490 [P] [US15] Create `/backend/crates/kalamdb-core/src/sql/functions/mod.rs` with FunctionRegistry struct
+- [ ] T491 [P] [US15] Design FunctionRegistry API: register_function(), evaluate_function(), list_functions()
+- [ ] T492 [P] [US15] Implement DataFusion ScalarUDF integration in FunctionRegistry
+- [ ] T493 [US15] Add SqlFunction trait with evaluate() method for custom functions
+- [ ] T494 [US15] Add function metadata: name, return_type, signature, volatility (STABLE, VOLATILE)
+- [ ] T495 [US15] Implement function resolution by name (case-insensitive lookup)
+- [ ] T496 [US15] Add function validation: type checking, argument count validation
+
+#### ID Generation Functions (FR-DB-002, FR-DB-004, FR-DB-005)
+
+- [ ] T497 [P] [US15] Create `/backend/crates/kalamdb-core/src/sql/functions/snowflake_id.rs`
+- [ ] T498 [P] [US15] Implement SNOWFLAKE_ID() function: 64-bit BIGINT (41-bit timestamp + 10-bit node + 12-bit sequence)
+- [ ] T499 [US15] Add node_id configuration parameter to config.toml (default: 0, range: 0-1023)
+- [ ] T500 [US15] Implement atomic sequence counter with clock skew handling in SNOWFLAKE_ID()
+- [ ] T501 [US15] Register SNOWFLAKE_ID() in FunctionRegistry with signature (no args → BIGINT)
+- [ ] T502 [US15] Mark SNOWFLAKE_ID() as VOLATILE (new value each call)
+- [ ] T503 [P] [US15] Create `/backend/crates/kalamdb-core/src/sql/functions/uuid_v7.rs`
+- [ ] T504 [P] [US15] Implement UUID_V7() function: 128-bit STRING following RFC 9562 (48-bit timestamp + 80-bit random)
+- [ ] T505 [US15] Add uuid = { version = "1.6", features = ["v7"] } dependency to kalamdb-core
+- [ ] T506 [US15] Register UUID_V7() in FunctionRegistry with signature (no args → STRING)
+- [ ] T507 [US15] Mark UUID_V7() as VOLATILE (new value each call)
+- [ ] T508 [P] [US15] Create `/backend/crates/kalamdb-core/src/sql/functions/ulid.rs`
+- [ ] T509 [P] [US15] Implement ULID() function: 26-char Crockford base32 STRING (time-sortable, URL-safe)
+- [ ] T510 [US15] Add ulid = "1.1" dependency to kalamdb-core/Cargo.toml
+- [ ] T511 [US15] Register ULID() in FunctionRegistry with signature (no args → STRING)
+- [ ] T512 [US15] Mark ULID() as VOLATILE (new value each call)
+
+#### Temporal Functions (FR-DB-001, FR-DB-004, FR-DB-005)
+
+- [ ] T513 [P] [US15] Create `/backend/crates/kalamdb-core/src/sql/functions/now.rs`
+- [ ] T514 [P] [US15] Implement NOW() function returning TIMESTAMP using Utc::now() (chrono::Utc)
+- [ ] T515 [US15] Register NOW() in FunctionRegistry with signature (no args → TIMESTAMP)
+- [ ] T516 [US15] Mark NOW() as VOLATILE (time-dependent)
+- [ ] T517 [P] [US15] Create `/backend/crates/kalamdb-core/src/sql/functions/current_timestamp.rs`
+- [ ] T518 [US15] Implement CURRENT_TIMESTAMP() as alias to NOW()
+- [ ] T519 [US15] Register CURRENT_TIMESTAMP() in FunctionRegistry with signature (no args → TIMESTAMP)
+- [ ] T520 [US15] Mark CURRENT_TIMESTAMP() as VOLATILE (time-dependent)
+
+#### Context Functions (FR-DB-004, FR-DB-005)
+
+- [ ] T521 [P] [US15] Create `/backend/crates/kalamdb-core/src/sql/functions/current_user.rs`
+- [ ] T522 [P] [US15] Implement CURRENT_USER() function returning authenticated username as STRING
+- [ ] T523 [US15] Pass ExecutionContext to function evaluation (contains user_id, session info)
+- [ ] T524 [US15] Register CURRENT_USER() in FunctionRegistry with signature (no args → STRING)
+- [ ] T525 [US15] Mark CURRENT_USER() as STABLE (same value within transaction)
+
+#### DEFAULT Function Support in DDL (FR-DB-004)
+
+- [ ] T526 [P] [US15] Update CREATE TABLE parser in `/backend/crates/kalamdb-sql/src/ddl/create_table.rs` to accept DEFAULT function_name()
+- [ ] T527 [US15] Parse DEFAULT expressions: function calls, literals, NULL
+- [ ] T528 [US15] Add ColumnDefault enum in `/backend/crates/kalamdb-commons/src/models.rs`: None, FunctionCall(name), Literal(Value)
+- [ ] T529 [US15] Update ColumnDefinition struct to include default: ColumnDefault field
+- [ ] T530 [US15] Validate DEFAULT function exists in FunctionRegistry during CREATE TABLE
+- [ ] T531 [US15] Validate DEFAULT function return type matches column data type
+- [ ] T532 [US15] Add special validation: NOW() only on TIMESTAMP columns, SNOWFLAKE_ID() only on BIGINT, UUID_V7()/ULID() only on STRING
+- [ ] T533 [US15] Store default_expression in system.columns table (new column: default_expression TEXT nullable)
+
+#### Function Evaluation in INSERT/UPDATE (FR-DB-004)
+
+- [ ] T534 [P] [US15] Update INSERT execution in `/backend/crates/kalamdb-core/src/execution/insert.rs` to evaluate DEFAULT functions
+- [ ] T535 [US15] Detect omitted columns in INSERT statement
+- [ ] T536 [US15] For each omitted column with DEFAULT function, evaluate via FunctionRegistry
+- [ ] T537 [US15] Pass ExecutionContext to function evaluation (for CURRENT_USER)
+- [ ] T538 [US15] Apply generated values before write (same timing for all DEFAULT functions)
+- [ ] T539 [US15] Add error handling: function evaluation failure returns detailed error with column name
+
+#### Function Support in SELECT Queries (FR-DB-005)
+
+- [ ] T540 [P] [US15] Update SELECT expression parsing in `/backend/crates/kalamdb-core/src/execution/select.rs` to recognize function calls
+- [ ] T541 [US15] Implement function call evaluation in SELECT projection list
+- [ ] T542 [US15] Support scalar function calls: SELECT NOW(), SNOWFLAKE_ID(), CURRENT_USER()
+- [ ] T543 [US15] Integrate with DataFusion expression evaluation pipeline
+- [ ] T544 [US15] Handle function evaluation errors gracefully with descriptive messages
+
+#### Function Support in WHERE Clauses (FR-DB-005)
+
+- [ ] T545 [P] [US15] Update WHERE expression parsing to support function calls in predicates
+- [ ] T546 [US15] Implement function evaluation in WHERE conditions: WHERE created_at < NOW()
+- [ ] T547 [US15] Support function calls in comparison operators, BETWEEN, IN clauses
+- [ ] T548 [US15] Optimize: Cache STABLE function results within query execution
+- [ ] T549 [US15] Optimize: Re-evaluate VOLATILE functions for each row (NOW, SNOWFLAKE_ID, UUID_V7, ULID)
+
+#### PRIMARY KEY Requirements (FR-DB-002)
+
+- [ ] T550 [P] [US15] Add primary_key_required validation in CREATE TABLE handler in kalamdb-sql
+- [ ] T551 [US15] Validate PRIMARY KEY type is BIGINT or STRING (TEXT/VARCHAR) in CREATE TABLE
+- [ ] T552 [US15] Return error if PRIMARY KEY missing or wrong type in user/shared/stream tables
+- [ ] T553 [US15] Add integration test to verify PRIMARY KEY enforcement
+
+#### NOT NULL Enforcement (FR-DB-006)
+
+- [ ] T554 [US15] Update INSERT validator in `/backend/crates/kalamdb-core/src/execution/insert.rs` to enforce NOT NULL before write
+- [ ] T555 [US15] Update UPDATE validator in `/backend/crates/kalamdb-core/src/execution/update.rs` to enforce NOT NULL before write
+- [ ] T556 [US15] Add comprehensive NOT NULL validation for all columns in affected rows
+- [ ] T557 [US15] Return detailed error with column name: "NOT NULL violation: column 'email' cannot be null"
+- [ ] T558 [US15] Ensure validation occurs before any RocksDB write (atomic guarantee)
+- [ ] T559 [US15] Add integration test to verify no partial writes on NOT NULL violation
+
+#### SELECT * Column Order Preservation (FR-DB-007)
+
+- [ ] T560 [US15] Add ordinal_position column to system.columns table (INTEGER NOT NULL, 1-indexed)
+- [ ] T561 [US15] Update CREATE TABLE to store column ordinal_position in creation order
+- [ ] T562 [US15] Update SELECT * projection planning in `/backend/crates/kalamdb-core/src/execution/select.rs` to use ordinal_position
+- [ ] T563 [US15] Implement sort by ordinal_position when building projection list for SELECT *
+- [ ] T564 [US15] Update ALTER TABLE ADD COLUMN to assign next ordinal_position (MAX + 1)
+- [ ] T565 [US15] Add integration test to verify column order persists across server restarts
+- [ ] T566 [US15] Update DataFusion schema registration to respect ordinal_position ordering
+
+**Documentation Tasks for User Story 15**:
+- [ ] T567 [P] [US15] Create ADR-013-sql-function-architecture.md explaining unified function registry and DataFusion alignment
+- [ ] T568 [P] [US15] Create ADR-014-id-generation-functions.md comparing SNOWFLAKE_ID, UUID_V7, ULID with use cases
+- [ ] T569 [P] [US15] Create ADR-015-function-evaluation.md explaining DEFAULT, SELECT, WHERE contexts and timing
+- [ ] T570 [P] [US15] Create ADR-016-not-null-enforcement.md explaining validation timing and atomicity
+- [ ] T571 [P] [US15] Add rustdoc to FunctionRegistry explaining extension points and custom function support
+- [ ] T572 [P] [US15] Add rustdoc to SNOWFLAKE_ID() explaining 64-bit structure and clock skew handling
+- [ ] T573 [P] [US15] Add rustdoc to UUID_V7() explaining RFC 9562 compliance
+- [ ] T574 [P] [US15] Add rustdoc to ULID() explaining Crockford base32 and time-sortability
+- [ ] T575 [P] [US15] Update `/docs/architecture/SQL_SYNTAX.md` with function syntax and examples (DEFAULT, SELECT, WHERE)
+- [ ] T576 [P] [US15] Update `/docs/architecture/SQL_SYNTAX.md` with ID generation function comparison table
+- [ ] T577 [P] [US15] Update `/docs/architecture/SQL_SYNTAX.md` with custom function extension guide
+- [ ] T578 [P] [US15] Update `/docs/architecture/SQL_SYNTAX.md` with PRIMARY KEY requirements
+- [ ] T579 [P] [US15] Add inline comments to function implementations explaining bit layouts and algorithms
+- [ ] T580 [P] [US15] Document ordinal_position column in `/docs/architecture/system-tables-schema.md`
+
+**Checkpoint**: Schema integrity features complete - DEFAULT NOW(), DEFAULT ID functions (SNOWFLAKE_ID/UUID_V7/ULID), NOT NULL enforcement, column order preservation
 
 ---
 
@@ -675,11 +853,27 @@
 - [X] T173c [P] [US2] Implement DROP STORAGE command parsing
 - [X] T173d [P] [US2] Implement SHOW STORAGES command parsing
 
+**Storage URI Support (FR-DB-013, FR-DB-014)**:
+- [ ] T536 [P] [US2] Rename base_directory column to uri in system.storages table schema
+- [ ] T537 [P] [US2] Update StorageConfig model in `/backend/crates/kalamdb-commons/src/models.rs` to use uri field
+- [ ] T538 [P] [US2] Update CREATE STORAGE parser to accept PATH or URI for filesystem and S3 paths
+- [ ] T539 [P] [US2] Add URI validation in CREATE STORAGE handler: accept file:// paths and s3:// URIs
+- [ ] T540 [P] [US2] Update DELETE FROM system.storages to check table references (FR-DB-014)
+- [ ] T541 [P] [US2] Add referential integrity check: COUNT(*) FROM system.tables WHERE storage_id = target_id
+- [ ] T542 [P] [US2] Return error with table count: "Cannot delete storage 'X': N table(s) depend on it"
+- [ ] T543 [P] [US2] Update all storage path resolution code to use uri instead of base_directory
+- [ ] T544 [P] [US2] Update S3 storage backend to parse s3:// URIs for bucket and prefix extraction
+
 **Integration Tests for Storage Management**:
 **STATUS: 19/35 passing (54%) - Parser fixed, remaining failures due to test templates using wrong variable ordering**
 - [X] T174 [P] [US2] test_default_storage_creation: Start server, query system.storages, verify storage_id='local' exists
 - [ ] T174a [P] [US2] test_storage_locations_table_removed: Verify system.storage_locations does NOT exist (renamed to system.storages), verify no code references remain
 - [ ] T174b [P] [US2] test_credentials_column_exists: Query system.storages, verify credentials column present and nullable
+- [ ] T545 [P] [US2] test_storage_uri_column_exists: Query system.storages, verify uri column exists (not base_directory)
+- [ ] T546 [P] [US2] test_create_storage_with_s3_uri: CREATE STORAGE with uri='s3://bucket/prefix/', verify accepted
+- [ ] T547 [P] [US2] test_create_storage_with_file_path: CREATE STORAGE with uri='/var/data/', verify accepted
+- [ ] T548 [P] [US2] test_delete_storage_with_table_references: Create table, DELETE storage, verify error with count
+- [ ] T549 [P] [US2] test_delete_storage_error_message_format: Verify error includes "N table(s) depend on it"
 - [~] T175 [P] [US2] test_create_storage_filesystem: Execute CREATE STORAGE, verify new storage in system.storages (template ordering issue)
 - [~] T176 [P] [US2] test_create_storage_s3: Create S3 storage with s3://bucket-name/ base_directory, verify accepted (template ordering issue)
 - [ ] T176a [P] [US2] test_storage_with_credentials: CREATE STORAGE with CREDENTIALS '{"access_key":"XXX","secret_key":"YYY"}', verify stored as JSON
@@ -959,6 +1153,16 @@
 
 ### Implementation for User Story 9
 
+#### API Response Field Rename (FR-DB-012)
+
+- [ ] T550 [P] [US9] Rename execution_time_ms to took_ms in `/backend/crates/kalamdb-api/src/models/sql_response.rs`
+- [ ] T551 [P] [US9] Update all API response serialization to use took_ms field name
+- [ ] T552 [P] [US9] Update CLI formatter in `/cli/kalam-cli/src/formatter.rs` to display "Took: X.XXX ms"
+- [ ] T553 [P] [US9] Update API documentation in `/docs/architecture/API_REFERENCE.md` with took_ms field
+- [ ] T554 [P] [US9] Add integration test test_api_response_uses_took_ms in test_enhanced_api_features.rs
+
+#### Batch SQL Execution
+
 - [ ] T300 [P] [US9] Create `/backend/crates/kalamdb-sql/src/batch_execution.rs` for multi-statement parsing
 - [ ] T301 [US9] Implement sequential non-transactional batch SQL execution (each statement commits independently)
 - [ ] T302 [US9] Implement batch failure handling (stop at failure, return statement number in error)
@@ -1007,8 +1211,34 @@
 - [ ] T330 [P] [US10] test_partial_update_preserves_fields: UPDATE only username, verify metadata unchanged
 - [ ] T331 [P] [US10] test_required_fields_validation: INSERT without user_id or username, verify error
 - [ ] T332 [P] [US10] test_select_with_filtering: INSERT multiple users, SELECT with WHERE filter, verify non-deleted only
+- [ ] T568 [P] [US10] test_user_role_enum_validation: CREATE USER with role='user', 'service', 'dba', 'system', verify all accepted
+- [ ] T569 [P] [US10] test_user_role_invalid_value_rejected: CREATE USER with role='admin', verify error
+- [ ] T570 [P] [US10] test_user_role_default_value: CREATE USER without role, verify defaults to 'user'
+- [ ] T571 [P] [US10] test_shared_table_access_public: CREATE SHARED TABLE with access='public', query from different user, verify allowed
+- [ ] T572 [P] [US10] test_shared_table_access_private: CREATE SHARED TABLE with access='private', query from different user, verify denied
+- [ ] T573 [P] [US10] test_shared_table_access_restricted: CREATE SHARED TABLE with access='restricted', verify explicit grants required
+- [ ] T574 [P] [US10] test_dba_role_accesses_all_tables: CREATE USER with role='dba', verify can access all tables regardless of access level
+- [ ] T575 [P] [US10] test_system_role_internal_only: Verify system role cannot be assigned via CREATE USER (internal use only)
 
 ### Implementation for User Story 10
+
+#### Role Enum and Access Control (FR-DB-010, FR-DB-011)
+
+- [ ] T555 [P] [US10] Create Role enum in `/backend/crates/kalamdb-commons/src/models.rs` with variants: User, Service, DBA, System
+- [ ] T556 [P] [US10] Create AccessLevel enum in `/backend/crates/kalamdb-commons/src/models.rs` with variants: Public, Private, Restricted
+- [ ] T557 [P] [US10] Add role column (TEXT NOT NULL DEFAULT 'user') to system.users table schema
+- [ ] T558 [P] [US10] Add access column (TEXT nullable) to system.tables table schema for shared tables
+- [ ] T559 [US10] Update CREATE USER parser to accept ROLE parameter (optional, defaults to 'user')
+- [ ] T560 [US10] Update CREATE SHARED TABLE parser to accept ACCESS parameter (optional)
+- [ ] T561 [US10] Add role validation: only allow values from Role enum { user, service, dba, system }
+- [ ] T562 [US10] Add access validation: only allow values from AccessLevel enum { public, private, restricted }
+- [ ] T563 [US10] Implement role-based authorization checks in `/backend/crates/kalamdb-core/src/auth/authorization.rs`
+- [ ] T564 [US10] Add authorization rules: dba role can access all tables, system role is internal-only
+- [ ] T565 [US10] Implement access-level checks for shared tables: public=all, private=owner+dba, restricted=explicit grants
+- [ ] T566 [P] [US10] Add integration tests for role-based access control
+- [ ] T567 [P] [US10] Add integration tests for shared table access level enforcement
+
+#### User CRUD Operations
 
 - [ ] T333 [P] [US10] Create `/backend/crates/kalamdb-sql/src/user_management.rs` for user CRUD operations
 - [ ] T334 [US10] Implement INSERT INTO system.users command parsing and execution
@@ -1031,8 +1261,12 @@
 - [ ] T349 [P] [US10] Add rustdoc to user_management.rs explaining soft delete with grace period
 - [ ] T350 [P] [US10] Update contracts/system-tables-schema.md with deleted_at column and soft delete behavior
 - [ ] T351 [P] [US10] Update contracts/sql-commands.md with user management examples
+- [ ] T576 [P] [US10] Create ADR-016-roles-and-access.md explaining role enum, access levels, and authorization model
+- [ ] T577 [P] [US10] Add rustdoc to Role and AccessLevel enums with use cases and authorization rules
+- [ ] T578 [P] [US10] Update `/docs/architecture/SQL_SYNTAX.md` with role and access syntax in CREATE USER and CREATE SHARED TABLE
+- [ ] T579 [P] [US10] Document authorization middleware in `/docs/architecture/API_REFERENCE.md`
 
-**Checkpoint**: User management via SQL commands works with proper validation
+**Checkpoint**: User management via SQL commands works with proper validation, role-based access control, and shared table access levels
 
 ---
 
@@ -1171,12 +1405,17 @@
 - [ ] T420 Ensure all Architecture Decision Records (ADRs) are complete and linked
 - [ ] T421 Code review checklist verification for documentation compliance
 - [ ] T422 Validate all contracts/ documentation matches implementation
+- [ ] T580 Verify ADR-013 (DEFAULT ID Functions), ADR-014 (DEFAULT NOW), ADR-015 (NOT NULL) are complete
+- [ ] T581 Update main README.md with new DDL features (DEFAULT NOW, SNOWFLAKE_ID, UUID_V7, ULID)
+- [ ] T582 Add quickstart examples demonstrating DEFAULT ID functions on PK and non-PK columns
 
 **Final Tasks**:
 - [ ] T423 Code cleanup and refactoring for consistency
-- [ ] T424 Final integration test run for all 130 tests
-- [ ] T425 Update CHANGELOG.md with all feature additions
+- [ ] T424 Final integration test run for all 184+ tests (includes 24 new tests from US15)
+- [ ] T425 Update CHANGELOG.md with all feature additions (DEFAULT NOW, SNOWFLAKE_ID, UUID_V7, ULID, NOT NULL, roles, URI column, took_ms)
 - [ ] T426 Prepare release notes
+- [ ] T583 Run integration tests for FR-DB-001 through FR-DB-014
+- [ ] T584 Validate all integration tests from test_schema_integrity.rs (24 tests)
 
 ---
 
@@ -1383,10 +1622,10 @@ With 3+ developers after Foundational phase completes:
 
 ## Summary
 
-**Total Tasks**: 540+ tasks
-**Integration Tests**: 160+ tests (one test file per user story)
+**Total Tasks**: 661+ tasks
+**Integration Tests**: 184+ tests (one test file per user story)
 **Task Distribution by User Story**:
-- **US14 (API Versioning & Refactoring): 81 tasks (P0 - CRITICAL - MUST DO FIRST)**
+- **US14 (API Versioning & Refactoring): 88 tasks (P0 - CRITICAL - MUST DO FIRST)**
   - API versioning: /v1/api/sql, /v1/ws, /v1/api/healthcheck
   - Storage credentials support for S3/cloud authentication
   - Server refactoring: main.rs split into modules
@@ -1396,18 +1635,34 @@ With 3+ developers after Foundational phase completes:
   - **NEW**: PostgreSQL/MySQL syntax compatibility
   - **NEW**: psql-style CLI output formatting
   - **NEW**: PostgreSQL-style error messages
+  - **NEW**: DDL syntax cleanups (FR-DB-008, FR-DB-009)
+- **US15 (Schema Integrity & Unified SQL Functions): 92 tasks (P1 - NEW - FOUNDATIONAL)**
+  - **Unified SQL Function Architecture**: Each function in its own .rs file at `/backend/crates/kalamdb-core/src/sql/functions`
+  - **DataFusion Alignment**: ScalarUDF patterns for function implementation
+  - **Extensibility**: Clean extension points for custom functions and future scripting
+  - **ID Generation Functions**: SNOWFLAKE_ID() → snowflake_id.rs, UUID_V7() → uuid_v7.rs, ULID() → ulid.rs
+  - **Temporal Functions**: NOW() → now.rs, CURRENT_TIMESTAMP() → current_timestamp.rs
+  - **Context Functions**: CURRENT_USER() → current_user.rs
+  - **Function Contexts**: DEFAULT clauses, SELECT expressions, WHERE conditions
+  - PRIMARY KEY requirements (FR-DB-002, FR-DB-003)
+  - DEFAULT functions available on ANY column, not just PRIMARY KEY
+  - NOT NULL strict enforcement (FR-DB-006)
+  - SELECT * column order preservation (FR-DB-007)
 - US0 (CLI): 80 tasks (P0 - MVP) ✅ 71% COMPLETE
 - US1 (Parametrized Queries): 26 tasks (P1)
-- US2 (Automatic Flushing + Storage Management): 35+ tasks (P1)
+- US2 (Automatic Flushing + Storage Management): 41 tasks (P1)
   - Includes system.storages with credentials column
+  - **NEW**: URI column support for S3 URIs (FR-DB-013, FR-DB-014)
   - Note: system.storage_locations fully removed/renamed to system.storages
 - US11 (Live Query Testing): 24 tasks (P1)
 - US12 (Stress Testing): 14 tasks (P1)
 - US3 (Manual Flushing): 21 tasks (P2)
 - US4 (Session Caching): 18 tasks (P2)
 - US5 (Namespace Validation): 14 tasks (P2)
-- US9 (Enhanced API): 30 tasks (P2)
-- US10 (User Management): 28 tasks (P2)
+- US9 (Enhanced API): 32 tasks (P2)
+  - **NEW**: took_ms field in API responses (FR-DB-012)
+- US10 (User Management): 37 tasks (P2)
+  - **NEW**: Role enum and access control (FR-DB-010, FR-DB-011)
 - US13 (Operational Improvements): 38 tasks (P2)
 - US6 (Code Quality): 19 tasks (P3)
 - US7 (Storage Abstraction): 15 tasks (P3)
@@ -1421,11 +1676,12 @@ With 3+ developers after Foundational phase completes:
 **UPDATED CRITICAL PATH**: 
 1. Setup → Foundational (BLOCKS ALL)
 2. **US14 - API Versioning & Refactoring (P0 - MUST DO FIRST)**
-3. US0 - CLI (P0 - MVP) ✅ 71% COMPLETE
-4. P1 user stories (US1, US2, US11, US12)
-5. P2 enhancements (US3, US4, US5, US9, US10, US13)
-6. P3 polish (US6, US7, US8)
-7. Final Polish
+3. **US15 - Schema Integrity & DDL (P1 - FOUNDATIONAL - affects all DDL and execution)**
+4. US0 - CLI (P0 - MVP) ✅ 71% COMPLETE
+5. P1 user stories (US1, US2, US11, US12)
+6. P2 enhancements (US3, US4, US5, US9, US10, US13)
+7. P3 polish (US6, US7, US8)
+8. Final Polish
 
 **Documentation Compliance**: Constitution Principle VIII tasks integrated throughout (70+ documentation tasks)
 
