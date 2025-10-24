@@ -157,60 +157,46 @@ impl RocksDbAdapter {
         }
     }
 
-    /// Insert a new table schema
-    pub fn insert_table_schema(&self, schema: &TableSchema) -> Result<()> {
+    /// Insert column metadata into system.columns
+    ///
+    /// Stores metadata about a single column including DEFAULT expression,
+    /// data type, nullability, and ordinal position.
+    ///
+    /// # Arguments
+    /// * `table_id` - Table identifier (format: "namespace:table_name")
+    /// * `column_name` - Name of the column
+    /// * `data_type` - Arrow DataType as string (e.g., "Int64", "Utf8")
+    /// * `is_nullable` - Whether column accepts NULL values
+    /// * `ordinal_position` - 1-indexed column position in table
+    /// * `default_expression` - Optional DEFAULT expression (e.g., "NOW()", "SNOWFLAKE_ID()")
+    pub fn insert_column_metadata(
+        &self,
+        table_id: &str,
+        column_name: &str,
+        data_type: &str,
+        is_nullable: bool,
+        ordinal_position: i32,
+        default_expression: Option<&str>,
+    ) -> Result<()> {
         let cf = self
             .db
-            .cf_handle("system_table_schemas")
-            .ok_or_else(|| anyhow!("system_table_schemas CF not found"))?;
+            .cf_handle("system_columns")
+            .ok_or_else(|| anyhow!("system_columns CF not found"))?;
 
-        let key = format!("schema:{}:{}", schema.table_id, schema.version);
-        let value = serde_json::to_vec(schema)?;
+        // Key format: {table_id}:{column_name}
+        let key = format!("{}:{}", table_id, column_name);
+        
+        let column_meta = serde_json::json!({
+            "table_id": table_id,
+            "column_name": column_name,
+            "data_type": data_type,
+            "is_nullable": is_nullable,
+            "ordinal_position": ordinal_position,
+            "default_expression": default_expression,
+        });
+        
+        let value = serde_json::to_vec(&column_meta)?;
         self.db.put_cf(&cf, key.as_bytes(), &value)?;
-        Ok(())
-    }
-
-    // Storage location operations
-
-    /// Get a storage location by name
-    pub fn get_storage_location(&self, location_name: &str) -> Result<Option<StorageLocation>> {
-        let cf = self
-            .db
-            .cf_handle("system_storage_locations")
-            .ok_or_else(|| anyhow!("system_storage_locations CF not found"))?;
-
-        let key = format!("loc:{}", location_name);
-        match self.db.get_cf(&cf, key.as_bytes())? {
-            Some(value) => {
-                let location: StorageLocation = serde_json::from_slice(&value)?;
-                Ok(Some(location))
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// Insert a new storage location
-    pub fn insert_storage_location(&self, location: &StorageLocation) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_storage_locations")
-            .ok_or_else(|| anyhow!("system_storage_locations CF not found"))?;
-
-        let key = format!("loc:{}", location.location_name);
-        let value = serde_json::to_vec(location)?;
-        self.db.put_cf(&cf, key.as_bytes(), &value)?;
-        Ok(())
-    }
-
-    /// Delete a storage location
-    pub fn delete_storage_location(&self, location_name: &str) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_storage_locations")
-            .ok_or_else(|| anyhow!("system_storage_locations CF not found"))?;
-
-        let key = format!("loc:{}", location_name);
-        self.db.delete_cf(&cf, key.as_bytes())?;
         Ok(())
     }
 
@@ -418,25 +404,6 @@ impl RocksDbAdapter {
         Ok(namespaces)
     }
 
-    /// Scan all storage locations
-    pub fn scan_all_storage_locations(&self) -> Result<Vec<StorageLocation>> {
-        let cf = self
-            .db
-            .cf_handle("system_storage_locations")
-            .ok_or_else(|| anyhow!("system_storage_locations CF not found"))?;
-
-        let mut locations = Vec::new();
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-
-        for item in iter {
-            let (_, value) = item?;
-            let location: StorageLocation = serde_json::from_slice(&value)?;
-            locations.push(location);
-        }
-
-        Ok(locations)
-    }
-
     /// Scan all live queries
     pub fn scan_all_live_queries(&self) -> Result<Vec<LiveQuery>> {
         let cf = self
@@ -494,25 +461,6 @@ impl RocksDbAdapter {
         Ok(tables)
     }
 
-    /// Scan all table schemas
-    pub fn scan_all_table_schemas(&self) -> Result<Vec<TableSchema>> {
-        let cf = self
-            .db
-            .cf_handle("system_table_schemas")
-            .ok_or_else(|| anyhow!("system_table_schemas CF not found"))?;
-
-        let mut schemas = Vec::new();
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-
-        for item in iter {
-            let (_, value) = item?;
-            let schema: TableSchema = serde_json::from_slice(&value)?;
-            schemas.push(schema);
-        }
-
-        Ok(schemas)
-    }
-
     /// Scan all storages
     pub fn scan_all_storages(&self) -> Result<Vec<Storage>> {
         let cf = self
@@ -549,39 +497,6 @@ impl RocksDbAdapter {
         Ok(())
     }
 
-    /// Delete all table schemas for a given table_id
-    pub fn delete_table_schemas_for_table(&self, table_id: &str) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_table_schemas")
-            .ok_or_else(|| anyhow!("system_table_schemas CF not found"))?;
-
-        // Iterate and delete all schemas with prefix "schema:{table_id}:"
-        let prefix = format!("schema:{}:", table_id);
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-
-        let mut keys_to_delete = Vec::new();
-        for item in iter {
-            let (key_bytes, _) = item?;
-            let key = String::from_utf8(key_bytes.to_vec())?;
-            if key.starts_with(&prefix) {
-                keys_to_delete.push(key);
-            }
-        }
-
-        // Delete all matching keys
-        for key in keys_to_delete {
-            self.db.delete_cf(&cf, key.as_bytes())?;
-        }
-
-        Ok(())
-    }
-
-    /// Update a storage location
-    pub fn update_storage_location(&self, location: &StorageLocation) -> Result<()> {
-        self.insert_storage_location(location) // Same as insert (upsert)
-    }
-
     /// Update a job
     pub fn update_job(&self, job: &Job) -> Result<()> {
         self.insert_job(job) // Same as insert (upsert)
@@ -595,32 +510,6 @@ impl RocksDbAdapter {
     /// Update a storage
     pub fn update_storage(&self, storage: &Storage) -> Result<()> {
         self.insert_storage(storage) // Same as insert (upsert)
-    }
-
-    /// Get all table schemas for a given table_id
-    pub fn get_table_schemas_for_table(&self, table_id: &str) -> Result<Vec<TableSchema>> {
-        let cf = self
-            .db
-            .cf_handle("system_table_schemas")
-            .ok_or_else(|| anyhow!("system_table_schemas CF not found"))?;
-
-        let prefix = format!("schema:{}:", table_id);
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-
-        let mut schemas = Vec::new();
-        for item in iter {
-            let (key_bytes, value) = item?;
-            let key = String::from_utf8(key_bytes.to_vec())?;
-            if key.starts_with(&prefix) {
-                let schema: TableSchema = serde_json::from_slice(&value)?;
-                schemas.push(schema);
-            }
-        }
-
-        // Sort by version descending (newest first)
-        schemas.sort_by(|a, b| b.version.cmp(&a.version));
-
-        Ok(schemas)
     }
 }
 

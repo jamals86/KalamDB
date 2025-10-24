@@ -16,16 +16,21 @@ pub struct ColumnFamilyManager {
 }
 
 /// System column families that must be created on DB initialization
+///
+/// **ARCHITECTURE NOTE (Phase 2a → Phase 2b Migration):**
+/// - `system_tables` is TEMPORARY - exists only for backward compatibility during migration
+/// - `information_schema_tables` is the TARGET - will be the SINGLE SOURCE OF TRUTH
+/// - Once Phase 2b is complete, `system_tables` CF will be removed entirely
+/// - The migration path: system_tables (Phase 2a) → information_schema_tables (Phase 2b)
 pub const SYSTEM_COLUMN_FAMILIES: &[&str] = &[
     "system_users",             // User management (user_id, username, email, created_at)
-    "system_live_queries", // Live query subscriptions (live_id, connection_id, table_name, query_id, user_id, query, options, created_at, updated_at, changes, node)
-    "system_storage_locations", // Storage location definitions (location_name, location_type, path, credentials_ref, usage_count)
-    "system_jobs", // Background job tracking (job_id, job_type, table_name, status, start_time, end_time, parameters, result, trace, memory_used_mb, cpu_used_percent, node_id, error_message)
-    "system_namespaces", // Namespace metadata (namespace_id, name, created_at, options, table_count)
-    "system_storages", // Storage backend configurations (storage_id, storage_name, description, storage_type, base_directory, shared_tables_template, user_tables_template, created_at, updated_at)
-    "system_tables", // Table metadata (table_id, table_name, namespace, table_type, created_at, storage_location, flush_policy, schema_version, deleted_retention_hours)
-    "system_table_schemas", // Table schema versions (schema_id, table_id, version, arrow_schema, created_at, changes)
-    "user_table_counters",  // Per-user flush tracking (user_id, table_name, row_count)
+    "system_live_queries",      // Live query subscriptions (live_id, connection_id, table_name, query_id, user_id, query, options, created_at, updated_at, changes, node)
+    "system_jobs",              // Background job tracking (job_id, job_type, table_name, status, start_time, end_time, parameters, result, trace, memory_used_mb, cpu_used_percent, node_id, error_message)
+    "system_namespaces",        // Namespace metadata (namespace_id, name, created_at, options, table_count)
+    "system_tables",            // TEMPORARY: Basic table metadata (will be removed in Phase 2b)
+    "system_storages",          // Storage backend configurations (storage_id, storage_name, description, storage_type, base_directory, shared_tables_template, user_tables_template, created_at, updated_at)
+    "information_schema_tables", // TARGET (Phase 2b): SINGLE SOURCE OF TRUTH - Complete table definitions (replaces system_tables + system_table_schemas - includes metadata + schema + columns + defaults + constraints + history)
+    "user_table_counters",      // Per-user flush tracking (user_id, table_name, row_count)
 ];
 
 impl ColumnFamilyManager {

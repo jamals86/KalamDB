@@ -88,11 +88,11 @@ impl RocksDbInit {
     /// Creates column families for all system tables defined in SYSTEM_COLUMN_FAMILIES:
     /// - system_users
     /// - system_live_queries
-    /// - system_storage_locations
     /// - system_jobs
     /// - system_namespaces
-    /// - system_tables
-    /// - system_table_schemas
+    /// - system_tables (TEMPORARY - Phase 2a, will be removed in Phase 2b)
+    /// - system_storages (renamed from system_storage_locations)
+    /// - information_schema_tables (TARGET - Phase 2b SINGLE SOURCE OF TRUTH)
     /// - user_table_counters
     fn create_default_system_tables(&self, db: &Arc<DB>) -> Result<(), KalamDbError> {
         for cf_name in SYSTEM_COLUMN_FAMILIES {
@@ -135,11 +135,11 @@ mod tests {
         // Verify system tables exist by checking CF handles
         assert!(db.cf_handle("system_users").is_some());
         assert!(db.cf_handle("system_live_queries").is_some());
-        assert!(db.cf_handle("system_storage_locations").is_some());
+        assert!(db.cf_handle("system_storages").is_some());
         assert!(db.cf_handle("system_jobs").is_some());
         assert!(db.cf_handle("system_namespaces").is_some());
-        assert!(db.cf_handle("system_tables").is_some());
-        assert!(db.cf_handle("system_table_schemas").is_some());
+        assert!(db.cf_handle("system_tables").is_some()); // TEMPORARY - will be removed in Phase 2b
+        assert!(db.cf_handle("information_schema_tables").is_some());
         assert!(db.cf_handle("user_table_counters").is_some());
 
         // Close database

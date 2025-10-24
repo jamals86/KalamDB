@@ -253,20 +253,22 @@ impl RestoreService {
             log::debug!("Restored table metadata: {}", table.table_name);
         }
 
+        // TODO: Replace with information_schema_tables storage (Phase 2b)
+        // Schema history will be stored in TableDefinition.schema_history array
         // Step 3: Create schema versions
-        for (table_id, schemas) in &manifest.table_schemas {
-            for schema in schemas {
-                self.kalam_sql.insert_table_schema(schema).map_err(|e| {
-                    KalamDbError::IoError(format!("Failed to insert schema: {}", e))
-                })?;
-
-                log::debug!(
-                    "Restored schema version {} for table '{}'",
-                    schema.version,
-                    table_id
-                );
-            }
-        }
+        // for (table_id, schemas) in &manifest.table_schemas {
+        //     for schema in schemas {
+        //         self.kalam_sql.insert_table_schema(schema).map_err(|e| {
+        //             KalamDbError::IoError(format!("Failed to insert schema: {}", e))
+        //         })?;
+        //
+        //         log::debug!(
+        //             "Restored schema version {} for table '{}'",
+        //             schema.version,
+        //             table_id
+        //         );
+        //     }
+        // }
 
         log::info!(
             "Restored metadata: {} tables, {} schemas",
@@ -497,12 +499,13 @@ impl RestoreService {
             manifest.namespace.namespace_id
         );
 
+        // TODO: Phase 2b - Schema history stored in TableDefinition.schema_history, no separate deletion needed
         // Delete table schemas
-        for table_id in manifest.table_schemas.keys() {
-            if let Err(e) = self.kalam_sql.delete_table_schemas_for_table(table_id) {
-                log::error!("Failed to delete schemas for table '{}': {}", table_id, e);
-            }
-        }
+        // for table_id in manifest.table_schemas.keys() {
+        //     if let Err(e) = self.kalam_sql.delete_table_schemas_for_table(table_id) {
+        //         log::error!("Failed to delete schemas for table '{}': {}", table_id, e);
+        //     }
+        // }
 
         // Delete tables
         for table in &manifest.tables {

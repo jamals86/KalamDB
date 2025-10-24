@@ -299,8 +299,15 @@ The following technical decisions were researched and documented in `research.md
 1. **system.users**: Add `role` column (Role enum, NOT NULL, default='user')
 2. **system.storages**: Rename `base_directory` → `uri`; keep `credentials` (TEXT, nullable)
 3. **system.tables** (shared tables): Add `access` column (Access enum, nullable, default='public')
-4. **system.columns**: Add `default_expression` column (TEXT, nullable) to store DEFAULT function calls (NOW(), SNOWFLAKE_ID(), UUID_V7(), ULID(), CURRENT_USER())
+4. **information_schema.tables** (NEW - SINGLE SOURCE OF TRUTH ⭐): Unified table metadata storage replacing fragmented system_tables + system_table_schemas + system_columns approach. Each table stored as complete JSON document with metadata, schema, and all columns including defaults/constraints. Benefits: atomic CREATE/ALTER TABLE, single-read DESCRIBE TABLE, simpler consistency model, MySQL/PostgreSQL compatibility. See `CRITICAL_DESIGN_CHANGE_information_schema.md` for complete architecture.
 5. **User/Shared/Stream Tables**: Enforce PRIMARY KEY requirement; support DEFAULT SQL functions on ANY column
+
+**Storage Architecture** (CRITICAL CHANGE):
+- **OLD (DEPRECATED)**: `system_tables` + `system_table_schemas` + `system_columns` = 3 separate CFs, 3 writes per CREATE TABLE, complex consistency
+- **NEW (IMPLEMENTED)**: `information_schema_tables` = 1 CF storing complete TableDefinition as JSON, atomic operations, simpler code
+- **Migration Path**: Phase-by-phase transition documented in data-model.md
+- **Column Family**: Registered in column_family_manager.rs as "information_schema_tables"
+
 
 **SQL Function Registry** (`/backend/crates/kalamdb-core/src/sql/functions`):
 - **ID Generation Functions**: SNOWFLAKE_ID() → BIGINT, UUID_V7() → STRING, ULID() → STRING

@@ -4,7 +4,9 @@
 
 use crate::tables::system::{
     JobsTableProvider, LiveQueriesTableProvider, NamespacesTableProvider,
-    StorageLocationsTableProvider, SystemStoragesProvider, SystemTablesTableProvider,
+    // TODO: Phase 2b - StorageLocationsTableProvider deprecated (replaced by system_storages)
+    // StorageLocationsTableProvider, 
+    SystemStoragesProvider, SystemTablesTableProvider,
     UsersTableProvider,
 };
 use datafusion::catalog::schema::{MemorySchemaProvider, SchemaProvider};
@@ -44,8 +46,8 @@ pub fn register_system_tables(
     let users_provider = Arc::new(UsersTableProvider::new(kalam_sql.clone()));
     let namespaces_provider = Arc::new(NamespacesTableProvider::new(kalam_sql.clone()));
     let tables_provider = Arc::new(SystemTablesTableProvider::new(kalam_sql.clone()));
-    let storage_locations_provider =
-        Arc::new(StorageLocationsTableProvider::new(kalam_sql.clone()));
+    // TODO: Phase 2b - storage_locations deprecated (replaced by system_storages)
+    // let storage_locations_provider = Arc::new(StorageLocationsTableProvider::new(kalam_sql.clone()));
     let storages_provider = Arc::new(SystemStoragesProvider::new(kalam_sql.clone()));
     let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone()));
     let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.clone()));
@@ -72,12 +74,13 @@ pub fn register_system_tables(
         )
         .map_err(|e| format!("Failed to register system.tables: {}", e))?;
 
-    system_schema
-        .register_table(
-            SystemTable::StorageLocations.table_name().to_string(),
-            storage_locations_provider,
-        )
-        .map_err(|e| format!("Failed to register system.storage_locations: {}", e))?;
+    // TODO: Phase 2b - system.storage_locations deprecated (replaced by system.storages)
+    // system_schema
+    //     .register_table(
+    //         SystemTable::StorageLocations.table_name().to_string(),
+    //         storage_locations_provider,
+    //     )
+    //     .map_err(|e| format!("Failed to register system.storage_locations: {}", e))?;
 
     system_schema
         .register_table(

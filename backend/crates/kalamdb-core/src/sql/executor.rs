@@ -197,38 +197,42 @@ impl SqlExecutor {
             .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {:?}", e)))?;
 
         for table in tables {
+            // TODO: Phase 2b - Get schema from information_schema.tables (TableDefinition.schema_history)
+            // For now, skip schema loading until information_schema is implemented
+            continue;
+            
             // Get schema for the table
-            let schemas = kalam_sql
-                .get_table_schemas_for_table(&table.table_id)
-                .map_err(|e| KalamDbError::Other(format!("Failed to get schemas: {:?}", e)))?;
+            // let schemas = kalam_sql
+            //     .get_table_schemas_for_table(&table.table_id)
+            //     .map_err(|e| KalamDbError::Other(format!("Failed to get schemas: {:?}", e)))?;
 
-            if schemas.is_empty() {
-                continue; // Skip tables without schemas
-            }
+            // if schemas.is_empty() {
+            //     continue; // Skip tables without schemas
+            // }
 
             // Use the latest schema version
-            let latest_schema = &schemas[0];
-            let schema_with_opts =
-                ArrowSchemaWithOptions::from_json_string(&latest_schema.arrow_schema)
-                    .map_err(|e| KalamDbError::Other(format!("Failed to parse schema: {:?}", e)))?;
-            let schema = schema_with_opts.schema;
+            // let latest_schema = &schemas[0];
+            // let schema_with_opts =
+            //     ArrowSchemaWithOptions::from_json_string(&latest_schema.arrow_schema)
+            //         .map_err(|e| KalamDbError::Other(format!("Failed to parse schema: {:?}", e)))?;
+            // let schema = schema_with_opts.schema;
 
             // Parse namespace and table_name
-            let namespace_id = NamespaceId::from(table.namespace.as_str());
-            let table_name = TableName::from(table.table_name.as_str());
-            let table_type = TableType::from_str(&table.table_type).ok_or_else(|| {
-                KalamDbError::Other(format!("Invalid table type: {}", table.table_type))
-            })?;
+            // let namespace_id = NamespaceId::from(table.namespace.as_str());
+            // let table_name = TableName::from(table.table_name.as_str());
+            // let table_type = TableType::from_str(&table.table_type).ok_or_else(|| {
+            //     KalamDbError::Other(format!("Invalid table type: {}", table.table_type))
+            // })?;
 
             // Register based on table type
-            self.register_table_with_datafusion(
-                &namespace_id,
-                &table_name,
-                table_type,
-                schema,
-                default_user_id.clone(),
-            )
-            .await?;
+            // self.register_table_with_datafusion(
+            //     &namespace_id,
+            //     &table_name,
+            //     table_type,
+            //     schema,
+            //     default_user_id.clone(),
+            // )
+            // .await?;
         }
 
         Ok(())
@@ -659,7 +663,9 @@ impl SqlExecutor {
 
         // Register additional system tables
         use crate::tables::system::{
-            JobsTableProvider, LiveQueriesTableProvider, StorageLocationsTableProvider,
+            JobsTableProvider, LiveQueriesTableProvider, 
+            // TODO: Phase 2b - StorageLocationsTableProvider deprecated (replaced by system_storages)
+            // StorageLocationsTableProvider,
             SystemStoragesProvider,
         };
 
@@ -672,17 +678,18 @@ impl SqlExecutor {
                 KalamDbError::Other(format!("Failed to register system.storages: {}", e))
             })?;
 
-        system_schema
-            .register_table(
-                "storage_locations".to_string(),
-                Arc::new(StorageLocationsTableProvider::new(kalam_sql.clone())),
-            )
-            .map_err(|e| {
-                KalamDbError::Other(format!(
-                    "Failed to register system.storage_locations: {}",
-                    e
-                ))
-            })?;
+        // TODO: Phase 2b - system.storage_locations deprecated (replaced by system.storages)
+        // system_schema
+        //     .register_table(
+        //         "storage_locations".to_string(),
+        //         Arc::new(StorageLocationsTableProvider::new(kalam_sql.clone())),
+        //     )
+        //     .map_err(|e| {
+        //         KalamDbError::Other(format!(
+        //             "Failed to register system.storage_locations: {}",
+        //             e
+        //         ))
+        //     })?;
 
         system_schema
             .register_table(
@@ -1548,106 +1555,112 @@ impl SqlExecutor {
             }
         }
 
-        // Get table schema
-        let schemas = kalam_sql
-            .get_table_schemas_for_table(&table.table_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to get schemas: {:?}", e)))?;
+        // TODO: Phase 2b - Get schema from information_schema.tables (TableDefinition.schema_history)
+        return Err(KalamDbError::Other(
+            "FLUSH TABLE temporarily unavailable - schema storage being migrated to information_schema".to_string()
+        ));
 
-        if schemas.is_empty() {
-            return Err(KalamDbError::NotFound(format!(
-                "No schema found for table '{}.{}'",
-                stmt.namespace, stmt.table_name
-            )));
-        }
+        // Get table schema
+        // let schemas = kalam_sql
+        //     .get_table_schemas_for_table(&table.table_id)
+        //     .map_err(|e| KalamDbError::Other(format!("Failed to get schemas: {:?}", e)))?;
+
+        // if schemas.is_empty() {
+        //     return Err(KalamDbError::NotFound(format!(
+        //         "No schema found for table '{}.{}'",
+        //         stmt.namespace, stmt.table_name
+        //     )));
+        // }
 
         // Use the latest schema
-        let latest_schema = schemas.into_iter().max_by_key(|s| s.version).unwrap();
+        // let latest_schema = schemas.into_iter().max_by_key(|s| s.version).unwrap();
         
         // Convert to Arrow schema
-        let arrow_schema = crate::schema::arrow_schema::ArrowSchemaWithOptions::from_json_string(
-            &latest_schema.arrow_schema
-        )?;
+        // let arrow_schema = crate::schema::arrow_schema::ArrowSchemaWithOptions::from_json_string(
+        //     &latest_schema.arrow_schema
+        // )?;
 
+        // TODO: Phase 2b - All flush logic temporarily disabled until information_schema is implemented
         // Generate job_id for tracking
-        let job_id = format!(
-            "flush-{}-{}-{}",
-            stmt.table_name,
-            chrono::Utc::now().timestamp_millis(),
-            uuid::Uuid::new_v4()
-        );
-        let job_id_clone = job_id.clone();
+        // let job_id = format!(
+        //     "flush-{}-{}-{}",
+        //     stmt.table_name,
+        //     chrono::Utc::now().timestamp_millis(),
+        //     uuid::Uuid::new_v4()
+        // );
+        // let job_id_clone = job_id.clone();
 
         // Create flush job
-        let namespace_id = NamespaceId::from(stmt.namespace.as_str());
-        let table_name = TableName::new(stmt.table_name.clone());
+        // let namespace_id = NamespaceId::from(stmt.namespace.as_str());
+        // let table_name = TableName::new(stmt.table_name.clone());
         
-        let flush_job = crate::flush::UserTableFlushJob::new(
-            user_table_store.clone(),
-            namespace_id,
-            table_name.clone(),
-            arrow_schema.schema,
-            table.storage_location.clone(),
-        )
-        .with_storage_registry(storage_registry.clone());
+        // let flush_job = crate::flush::UserTableFlushJob::new(
+        //     user_table_store.clone(),
+        //     namespace_id,
+        //     table_name.clone(),
+        //     arrow_schema.schema,
+        //     table.storage_location.clone(),
+        // )
+        // .with_storage_registry(storage_registry.clone());
         
         // Add jobs_provider if available
-        let flush_job = if let Some(ref provider) = jobs_provider {
-            flush_job.with_jobs_provider(provider.clone())
-        } else {
-            flush_job
-        };
+        // let flush_job = if let Some(ref provider) = jobs_provider {
+        //     flush_job.with_jobs_provider(provider.clone())
+        // } else {
+        //     flush_job
+        // };
 
         // Clone necessary data for the async task
-        let namespace_str = stmt.namespace.clone();
-        let table_name_str = stmt.table_name.clone();
+        // let namespace_str = stmt.namespace.clone();
+        // let table_name_str = stmt.table_name.clone();
 
         // Spawn async flush task via JobManager
-        let job_future = Box::pin(async move {
-            log::info!(
-                "Executing flush job: job_id={}, table={}.{}",
-                job_id_clone,
-                namespace_str,
-                table_name_str
-            );
+        // let job_future = Box::pin(async move {
+        //     log::info!(
+        //         "Executing flush job: job_id={}, table={}.{}",
+        //         job_id_clone,
+        //         namespace_str,
+        //         table_name_str
+        //     );
 
-            match flush_job.execute() {
-                Ok(result) => {
-                    log::info!(
-                        "Flush job completed successfully: job_id={}, rows_flushed={}, users_count={}",
-                        job_id_clone,
-                        result.rows_flushed,
-                        result.users_count
-                    );
-                    Ok(format!(
-                        "Flushed {} rows for {} users",
-                        result.rows_flushed,
-                        result.users_count
-                    ))
-                }
-                Err(e) => {
-                    log::error!(
-                        "Flush job failed: job_id={}, error={}",
-                        job_id_clone,
-                        e
-                    );
-                    Err(format!("Flush failed: {}", e))
-                }
-            }
-        });
+        //     match flush_job.execute() {
+        //         Ok(result) => {
+        //             log::info!(
+        //                 "Flush job completed successfully: job_id={}, rows_flushed={}, users_count={}",
+        //                 job_id_clone,
+        //                 result.rows_flushed,
+        //                 result.users_count
+        //             );
+        //             Ok(format!(
+        //                 "Flushed {} rows for {} users",
+        //                 result.rows_flushed,
+        //                 result.users_count
+        //             ))
+        //         }
+        //         Err(e) => {
+        //             log::error!(
+        //                 "Flush job failed: job_id={}, error={}",
+        //                 job_id_clone,
+        //                 e
+        //             );
+        //             Err(format!("Flush failed: {}", e))
+        //         }
+        //     }
+        // });
 
-        job_manager.start_job(job_id.clone(), "flush".to_string(), job_future).await?;
+        // job_manager.start_job(job_id.clone(), "flush".to_string(), job_future).await?;
 
-        log::info!(
-            "Flush job spawned: job_id={}, table={}.{}",
-            job_id,
-            stmt.namespace,
-            stmt.table_name
-        );
+        // log::info!(
+        //     "Flush job spawned: job_id={}, table={}.{}",
+        //     job_id,
+        //     stmt.namespace,
+        //     stmt.table_name
+        // );
 
-        Ok(ExecutionResult::Success(format!(
-            "Flush started for table '{}.{}'. Job ID: {}",
-            stmt.namespace, stmt.table_name, job_id
-        )))
+        // Ok(ExecutionResult::Success(format!(
+        //     "Flush started for table '{}.{}'. Job ID: {}",
+        //     stmt.namespace, stmt.table_name, job_id
+        // )))
     }
 
     /// Execute FLUSH ALL TABLES

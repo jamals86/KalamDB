@@ -33,6 +33,7 @@ pub struct LiveQuery {
     pub node: String,
 }
 
+//TODO: Remove StorageLocation model in favor of using Storage directly
 /// Storage location in system_storage_locations table
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StorageLocation {
@@ -81,7 +82,7 @@ pub struct Table {
     pub namespace: String,
     pub table_type: String, // "user", "shared", "system", "stream"
     pub created_at: i64,
-    pub storage_location: String,
+    pub storage_location: String, //TODO: Remove in favor of storage_id
     pub storage_id: Option<String>, // T167: FK to system.storages
     pub use_user_storage: bool,     // T168: Allow per-user storage override
     pub flush_policy: String,       // JSON

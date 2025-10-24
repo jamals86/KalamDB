@@ -58,7 +58,10 @@ actix = "0.13"  # Actor framework
 actix-cors = "0.7"  # CORS middleware
 
 # UUID generation
-uuid = { version = "1.10", features = ["v4", "serde"] }
+uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
+
+# ULID generation
+ulid = "1.1"
 
 # JWT authentication
 jsonwebtoken = "9.2"

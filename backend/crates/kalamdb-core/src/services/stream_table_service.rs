@@ -154,12 +154,9 @@ impl StreamTableService {
             ),
         };
 
-        // Insert schema into system_table_schemas
-        self.kalam_sql
-            .insert_table_schema(&table_schema)
-            .map_err(|e| {
-                KalamDbError::SchemaError(format!("Failed to insert table schema: {}", e))
-            })?;
+        // TODO: Replace with information_schema_tables storage (Phase 2b)
+        // Schema will be stored in TableDefinition.schema_history array
+        // self.kalam_sql.insert_table_schema(&table_schema)?;
 
         // Create Table record in system_tables
         let table = kalamdb_sql::models::Table {
@@ -247,6 +244,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: Some(300), // 5 minutes (was retention_seconds)
             if_not_exists: false,
+            column_defaults: std::collections::HashMap::new(),
         };
 
         let result = service.create_table(stmt);
@@ -281,6 +279,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None, // No retention (was retention_seconds)
             if_not_exists: false,
+            column_defaults: std::collections::HashMap::new(),
         };
 
         let result = service.create_table(stmt);
@@ -308,6 +307,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None,
             if_not_exists: false,
+            column_defaults: std::collections::HashMap::new(),
         };
 
         // First creation should succeed
@@ -358,6 +358,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None,
             if_not_exists: false,
+            column_defaults: std::collections::HashMap::new(),
         };
 
         let result = service.create_table(stmt);

@@ -521,8 +521,82 @@ impl fmt::Display for LiveId {
     }
 }
 
+/// Column default value specification for CREATE TABLE.
+///
+/// Represents the default value strategy for a column when no value is provided
+/// during INSERT operations.
+///
+/// ## Examples
+///
+/// ```rust
+/// use kalamdb_commons::models::ColumnDefault;
+///
+/// // No default - column must be specified or NULL
+/// let no_default = ColumnDefault::None;
+///
+/// // Call a function to generate default
+/// let now_default = ColumnDefault::FunctionCall("NOW".to_string());
+/// let id_default = ColumnDefault::FunctionCall("SNOWFLAKE_ID".to_string());
+///
+/// // Literal value
+/// let literal_default = ColumnDefault::Literal("default_value".to_string());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
+pub enum ColumnDefault {
+    /// No default value specified
+    None,
+    /// Call a SQL function to generate the default value
+    /// Function name should be uppercase (e.g., "NOW", "SNOWFLAKE_ID", "UUID_V7", "ULID", "CURRENT_USER")
+    FunctionCall(String),
+    /// Use a literal value as default
+    /// Value is stored as string and will be cast to the column's data type
+    Literal(String),
+}
+
+impl ColumnDefault {
+    /// Check if a default value is specified
+    pub fn is_none(&self) -> bool {
+        matches!(self, ColumnDefault::None)
+    }
+
+    /// Check if this is a function call
+    pub fn is_function(&self) -> bool {
+        matches!(self, ColumnDefault::FunctionCall(_))
+    }
+
+    /// Check if this is a literal value
+    pub fn is_literal(&self) -> bool {
+        matches!(self, ColumnDefault::Literal(_))
+    }
+
+    /// Get the function name if this is a function call
+    pub fn function_name(&self) -> Option<&str> {
+        match self {
+            ColumnDefault::FunctionCall(name) => Some(name.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Get the literal value if this is a literal
+    pub fn literal_value(&self) -> Option<&str> {
+        match self {
+            ColumnDefault::Literal(value) => Some(value.as_str()),
+            _ => None,
+        }
+    }
+}
+
+impl Default for ColumnDefault {
+    fn default() -> Self {
+        ColumnDefault::None
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     #[test]
@@ -625,4 +699,41 @@ mod tests {
         assert!(LiveId::from_string("user-conn-table").is_err());
         assert!(LiveId::from_string("").is_err());
     }
+
+    #[test]
+    fn test_column_default_none() {
+        let default = ColumnDefault::None;
+        assert!(default.is_none());
+        assert!(!default.is_function());
+        assert!(!default.is_literal());
+        assert_eq!(default.function_name(), None);
+        assert_eq!(default.literal_value(), None);
+    }
+
+    #[test]
+    fn test_column_default_function() {
+        let default = ColumnDefault::FunctionCall("NOW".to_string());
+        assert!(!default.is_none());
+        assert!(default.is_function());
+        assert!(!default.is_literal());
+        assert_eq!(default.function_name(), Some("NOW"));
+        assert_eq!(default.literal_value(), None);
+    }
+
+    #[test]
+    fn test_column_default_literal() {
+        let default = ColumnDefault::Literal("42".to_string());
+        assert!(!default.is_none());
+        assert!(!default.is_function());
+        assert!(default.is_literal());
+        assert_eq!(default.function_name(), None);
+        assert_eq!(default.literal_value(), Some("42"));
+    }
+
+    #[test]
+    fn test_column_default_default_trait() {
+        let default = ColumnDefault::default();
+        assert!(default.is_none());
+    }
+
 }

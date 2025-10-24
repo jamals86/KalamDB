@@ -323,15 +323,9 @@ impl SharedTableService {
             ),
         };
 
-        // Insert schema into system_table_schemas via KalamSQL so DataFusion can load it
-        self.kalam_sql
-            .insert_table_schema(&table_schema)
-            .map_err(|e| {
-                KalamDbError::SchemaError(format!(
-                    "Failed to insert schema for {}: {}",
-                    table_id, e
-                ))
-            })?;
+        // TODO: Replace with information_schema_tables storage (Phase 2b)
+        // Schema will be stored in TableDefinition.schema_history array
+        // self.kalam_sql.insert_table_schema(&table_schema)?;
 
         // Create Table record in system_tables
         let flush_policy_str = match flush_policy {
@@ -423,6 +417,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None,
             if_not_exists: false,
+            column_defaults: std::collections::HashMap::new(),
         };
 
         let result = service.create_table(stmt);
@@ -480,6 +475,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None,
             if_not_exists: false,
+            column_defaults: std::collections::HashMap::new(),
         };
 
         let result = service.create_table(stmt);
@@ -506,6 +502,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None,
             if_not_exists: false,
+            column_defaults: std::collections::HashMap::new(),
         };
 
         // Currently storage locations are hardcoded to /data/shared
@@ -601,6 +598,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None,
             if_not_exists: false,
+            column_defaults: std::collections::HashMap::new(),
         };
 
         // First creation should succeed

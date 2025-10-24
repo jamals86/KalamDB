@@ -3,14 +3,20 @@
 //! This module handles INSERT operations for user tables with:
 //! - UserId-scoped key format: {UserId}:{row_id}
 //! - Automatic system column injection (_updated = NOW(), _deleted = false)
+//! - DEFAULT function evaluation (T534-T539)
+//! - NOT NULL constraint enforcement (T554-T559)
 //! - kalamdb-store for RocksDB operations
 //! - Data isolation enforcement
 
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
+use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use kalamdb_commons::models::ColumnDefault;
 use kalamdb_store::UserTableStore;
-use serde_json::Value as JsonValue;
+use serde_json::{json, Value as JsonValue};
+use std::collections::HashMap;
 use std::sync::Arc;
+use chrono::Utc;
 
 /// User table INSERT handler
 ///
@@ -166,6 +172,145 @@ impl UserTableInsertHandler {
         // Format: timestamp_counter (e.g., 1703001234567_42)
         Ok(format!("{}_{}", now_ms, counter))
     }
+
+    /// Apply DEFAULT functions and validate NOT NULL constraints (T534-T539, T554-T559)
+    ///
+    /// This method:
+    /// 1. Detects omitted columns (T535)
+    /// 2. Evaluates DEFAULT functions for omitted columns (T536)
+    /// 3. Validates NOT NULL constraints (T554-T559)
+    ///
+    /// # Arguments
+    /// * `row_data` - Mutable row data to update with DEFAULT values
+    /// * `schema` - Arrow schema with nullable information
+    /// * `column_defaults` - Map of column_name -> ColumnDefault
+    /// * `user_id` - User ID for CURRENT_USER function
+    ///
+    /// # Returns
+    /// Ok(()) if validation passes and defaults applied
+    /// Err if NOT NULL violation or DEFAULT function evaluation fails
+    pub fn apply_defaults_and_validate(
+        row_data: &mut JsonValue,
+        schema: &Schema,
+        column_defaults: &HashMap<String, ColumnDefault>,
+        user_id: &UserId,
+    ) -> Result<(), KalamDbError> {
+        // Get the object map (we already validated it's an object in insert_row)
+        let row_obj = row_data
+            .as_object_mut()
+            .ok_or_else(|| KalamDbError::InvalidOperation("Row data must be an object".to_string()))?;
+
+        // Iterate through all columns in schema
+        for field in schema.fields() {
+            let column_name = field.name();
+            
+            // Skip system columns (handled by UserTableStore)
+            if column_name.starts_with('_') {
+                continue;
+            }
+
+            let value_present = row_obj.contains_key(column_name);
+            let value_is_null = row_obj.get(column_name).map_or(false, |v| v.is_null());
+
+            // T535: Detect omitted columns and apply DEFAULT
+            if !value_present {
+                // Column omitted - check if DEFAULT exists
+                if let Some(default_spec) = column_defaults.get(column_name) {
+                    // T536-T537: Evaluate DEFAULT function
+                    let default_value = Self::evaluate_default_function(default_spec, user_id)?;
+                    row_obj.insert(column_name.to_string(), default_value);
+                } else if !field.is_nullable() {
+                    // T554-T557: NOT NULL violation for omitted column without DEFAULT
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "NOT NULL violation: column '{}' cannot be null and has no DEFAULT value",
+                        column_name
+                    )));
+                }
+            } else if value_is_null && !field.is_nullable() {
+                // T554-T557: NOT NULL violation for explicitly NULL value
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "NOT NULL violation: column '{}' cannot be null",
+                    column_name
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Evaluate a DEFAULT function call (T536-T537, T538)
+    ///
+    /// Supported functions:
+    /// - NOW() / CURRENT_TIMESTAMP() - returns current timestamp in ISO 8601 format
+    /// - SNOWFLAKE_ID() - returns 64-bit snowflake ID
+    /// - UUID_V7() - returns UUID v7 (time-sortable)
+    /// - ULID() - returns ULID (26-char URL-safe)
+    /// - CURRENT_USER() - returns current user ID
+    ///
+    /// # Arguments
+    /// * `default_spec` - The DEFAULT specification
+    /// * `user_id` - User ID for CURRENT_USER function
+    ///
+    /// # Returns
+    /// JSON value with the evaluated result
+    fn evaluate_default_function(
+        default_spec: &ColumnDefault,
+        user_id: &UserId,
+    ) -> Result<JsonValue, KalamDbError> {
+        match default_spec {
+            ColumnDefault::FunctionCall(func_name) => {
+                let func_upper = func_name.to_uppercase();
+                
+                match func_upper.as_str() {
+                    "NOW" | "CURRENT_TIMESTAMP" => {
+                        // Return current timestamp in ISO 8601 format
+                        let now = Utc::now();
+                        Ok(json!(now.to_rfc3339()))
+                    }
+                    "SNOWFLAKE_ID" => {
+                        // Generate snowflake ID
+                        use crate::ids::SnowflakeGenerator;
+                        let generator = SnowflakeGenerator::new(0);
+                        let id = generator.next_id();
+                        Ok(json!(id))
+                    }
+                    "UUID_V7" => {
+                        // Generate UUID v7 (time-sortable UUID)
+                        use uuid::Uuid;
+                        let uuid = Uuid::now_v7();
+                        Ok(json!(uuid.to_string()))
+                    }
+                    "ULID" => {
+                        // Generate ULID (26-char URL-safe, time-sortable)
+                        use ulid::Ulid;
+                        let ulid = Ulid::new();
+                        Ok(json!(ulid.to_string()))
+                    }
+                    "CURRENT_USER" => {
+                        // Return current user ID
+                        Ok(json!(user_id.as_str()))
+                    }
+                    _ => {
+                        // T539: Unknown function error
+                        Err(KalamDbError::InvalidOperation(format!(
+                            "Unknown DEFAULT function: {}. Supported functions: NOW, CURRENT_TIMESTAMP, SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER",
+                            func_name
+                        )))
+                    }
+                }
+            }
+            ColumnDefault::Literal(literal_str) => {
+                // Return literal value as-is
+                // Try to parse as JSON, fallback to string
+                serde_json::from_str(literal_str)
+                    .or_else(|_| Ok(json!(literal_str)))
+            }
+            ColumnDefault::None => {
+                // No default - return NULL
+                Ok(JsonValue::Null)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -287,5 +432,293 @@ mod tests {
             }
             _ => panic!("Expected InvalidOperation error"),
         }
+    }
+
+    // T534-T539: DEFAULT function evaluation tests
+
+    #[test]
+    fn test_apply_default_now() {
+        use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+        use std::collections::HashMap;
+
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("created_at", DataType::Timestamp(TimeUnit::Millisecond, None), false),
+        ]);
+
+        let mut column_defaults = HashMap::new();
+        column_defaults.insert("created_at".to_string(), ColumnDefault::FunctionCall("NOW".to_string()));
+
+        let mut row_data = json!({ "id": 123 });
+        let user_id = UserId::from("test_user");
+
+        let result = UserTableInsertHandler::apply_defaults_and_validate(
+            &mut row_data,
+            &schema,
+            &column_defaults,
+            &user_id,
+        );
+
+        assert!(result.is_ok());
+        assert!(row_data["created_at"].is_string());
+        // Verify it looks like an ISO 8601 timestamp
+        let timestamp_str = row_data["created_at"].as_str().unwrap();
+        assert!(timestamp_str.contains('T'));
+    }
+
+    #[test]
+    fn test_apply_default_snowflake_id() {
+        use arrow::datatypes::{DataType, Field, Schema};
+        use std::collections::HashMap;
+
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]);
+
+        let mut column_defaults = HashMap::new();
+        column_defaults.insert("id".to_string(), ColumnDefault::FunctionCall("SNOWFLAKE_ID".to_string()));
+
+        let mut row_data = json!({ "name": "test" });
+        let user_id = UserId::from("test_user");
+
+        let result = UserTableInsertHandler::apply_defaults_and_validate(
+            &mut row_data,
+            &schema,
+            &column_defaults,
+            &user_id,
+        );
+
+        assert!(result.is_ok());
+        assert!(row_data["id"].is_number());
+        let id = row_data["id"].as_i64().unwrap();
+        assert!(id > 0);
+    }
+
+    #[test]
+    fn test_apply_default_uuid_v7() {
+        use arrow::datatypes::{DataType, Field, Schema};
+        use std::collections::HashMap;
+
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("name", DataType::Utf8, true),
+        ]);
+
+        let mut column_defaults = HashMap::new();
+        column_defaults.insert("id".to_string(), ColumnDefault::FunctionCall("UUID_V7".to_string()));
+
+        let mut row_data = json!({ "name": "test" });
+        let user_id = UserId::from("test_user");
+
+        let result = UserTableInsertHandler::apply_defaults_and_validate(
+            &mut row_data,
+            &schema,
+            &column_defaults,
+            &user_id,
+        );
+
+        assert!(result.is_ok());
+        assert!(row_data["id"].is_string());
+        let uuid_str = row_data["id"].as_str().unwrap();
+        // UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+        assert_eq!(uuid_str.len(), 36);
+        assert_eq!(uuid_str.chars().filter(|&c| c == '-').count(), 4);
+    }
+
+    #[test]
+    fn test_apply_default_ulid() {
+        use arrow::datatypes::{DataType, Field, Schema};
+        use std::collections::HashMap;
+
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("name", DataType::Utf8, true),
+        ]);
+
+        let mut column_defaults = HashMap::new();
+        column_defaults.insert("id".to_string(), ColumnDefault::FunctionCall("ULID".to_string()));
+
+        let mut row_data = json!({ "name": "test" });
+        let user_id = UserId::from("test_user");
+
+        let result = UserTableInsertHandler::apply_defaults_and_validate(
+            &mut row_data,
+            &schema,
+            &column_defaults,
+            &user_id,
+        );
+
+        assert!(result.is_ok());
+        assert!(row_data["id"].is_string());
+        let ulid_str = row_data["id"].as_str().unwrap();
+        // ULID format: 26 characters (Crockford base32)
+        assert_eq!(ulid_str.len(), 26);
+    }
+
+    #[test]
+    fn test_apply_default_current_user() {
+        use arrow::datatypes::{DataType, Field, Schema};
+        use std::collections::HashMap;
+
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("owner", DataType::Utf8, false),
+        ]);
+
+        let mut column_defaults = HashMap::new();
+        column_defaults.insert("owner".to_string(), ColumnDefault::FunctionCall("CURRENT_USER".to_string()));
+
+        let mut row_data = json!({ "id": 123 });
+        let user_id = UserId::from("alice");
+
+        let result = UserTableInsertHandler::apply_defaults_and_validate(
+            &mut row_data,
+            &schema,
+            &column_defaults,
+            &user_id,
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(row_data["owner"].as_str().unwrap(), "alice");
+    }
+
+    // T554-T559: NOT NULL constraint tests
+
+    #[test]
+    fn test_not_null_violation_omitted_column() {
+        use arrow::datatypes::{DataType, Field, Schema};
+        use std::collections::HashMap;
+
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, false), // NOT NULL, no DEFAULT
+        ]);
+
+        let column_defaults = HashMap::new(); // No DEFAULT for 'name'
+
+        let mut row_data = json!({ "id": 123 }); // 'name' omitted
+        let user_id = UserId::from("test_user");
+
+        let result = UserTableInsertHandler::apply_defaults_and_validate(
+            &mut row_data,
+            &schema,
+            &column_defaults,
+            &user_id,
+        );
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("NOT NULL violation"));
+        assert!(err_msg.contains("name"));
+    }
+
+    #[test]
+    fn test_not_null_violation_explicit_null() {
+        use arrow::datatypes::{DataType, Field, Schema};
+        use std::collections::HashMap;
+
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, false), // NOT NULL
+        ]);
+
+        let column_defaults = HashMap::new();
+
+        let mut row_data = json!({ "id": 123, "name": null }); // Explicit NULL
+        let user_id = UserId::from("test_user");
+
+        let result = UserTableInsertHandler::apply_defaults_and_validate(
+            &mut row_data,
+            &schema,
+            &column_defaults,
+            &user_id,
+        );
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("NOT NULL violation"));
+        assert!(err_msg.contains("name"));
+    }
+
+    #[test]
+    fn test_nullable_column_allows_null() {
+        use arrow::datatypes::{DataType, Field, Schema};
+        use std::collections::HashMap;
+
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("description", DataType::Utf8, true), // NULLABLE
+        ]);
+
+        let column_defaults = HashMap::new();
+
+        let mut row_data = json!({ "id": 123, "description": null });
+        let user_id = UserId::from("test_user");
+
+        let result = UserTableInsertHandler::apply_defaults_and_validate(
+            &mut row_data,
+            &schema,
+            &column_defaults,
+            &user_id,
+        );
+
+        assert!(result.is_ok()); // Should succeed
+    }
+
+    #[test]
+    fn test_not_null_with_default_success() {
+        use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+        use std::collections::HashMap;
+
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("created_at", DataType::Timestamp(TimeUnit::Millisecond, None), false), // NOT NULL with DEFAULT
+        ]);
+
+        let mut column_defaults = HashMap::new();
+        column_defaults.insert("created_at".to_string(), ColumnDefault::FunctionCall("NOW".to_string()));
+
+        let mut row_data = json!({ "id": 123 }); // 'created_at' omitted but has DEFAULT
+        let user_id = UserId::from("test_user");
+
+        let result = UserTableInsertHandler::apply_defaults_and_validate(
+            &mut row_data,
+            &schema,
+            &column_defaults,
+            &user_id,
+        );
+
+        assert!(result.is_ok());
+        assert!(row_data["created_at"].is_string());
+    }
+
+    #[test]
+    fn test_unknown_default_function_error() {
+        use arrow::datatypes::{DataType, Field, Schema};
+        use std::collections::HashMap;
+
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("value", DataType::Utf8, false),
+        ]);
+
+        let mut column_defaults = HashMap::new();
+        column_defaults.insert("value".to_string(), ColumnDefault::FunctionCall("UNKNOWN_FUNC".to_string()));
+
+        let mut row_data = json!({ "id": 123 });
+        let user_id = UserId::from("test_user");
+
+        let result = UserTableInsertHandler::apply_defaults_and_validate(
+            &mut row_data,
+            &schema,
+            &column_defaults,
+            &user_id,
+        );
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Unknown DEFAULT function"));
+        assert!(err_msg.contains("UNKNOWN_FUNC"));
     }
 }

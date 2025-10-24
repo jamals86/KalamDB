@@ -5,17 +5,19 @@
 //! - Auto-increment field injection (snowflake ID)
 //! - System column injection (_updated, _deleted)
 //! - Storage location resolution
-//! - Schema storage in RocksDB via kalamdb-sql (system_table_schemas CF)
+//! - Schema storage in information_schema.tables (Phase 2b - currently TODO)
 //! - Column family creation
 //! - Deleted retention configuration
 //!
-//! **REFACTORED**: Now uses kalamdb-sql for schema persistence instead of filesystem JSON files
+//! **REFACTORED**: Migrating from system_table_schemas to information_schema.tables
 
 use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
 use crate::error::KalamDbError;
-use crate::flush::FlushPolicy;
+// TODO: Phase 2b - FlushPolicy import will be needed again
+// use crate::flush::FlushPolicy;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
-use crate::services::storage_location_service::StorageLocationService;
+// TODO: Phase 2b - StorageLocationService deprecated (replaced by system_storages)
+// use crate::services::storage_location_service::StorageLocationService;
 use crate::storage::column_family_manager::ColumnFamilyManager;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use kalamdb_sql::ddl::{CreateTableStatement, FlushPolicy as DdlFlushPolicy};
@@ -252,7 +254,7 @@ impl UserTableService {
         // Create schema with options wrapper
         let schema_with_options = ArrowSchemaWithOptions::new(schema.clone());
 
-        // Save schema to RocksDB via kalamdb-sql (system_table_schemas CF)
+        // TODO: Phase 2b - Save schema to information_schema.tables (TableDefinition.schema_history)
         let schema_json = schema_with_options.to_json()?;
         let schema_str = serde_json::to_string(&schema_json)
             .map_err(|e| KalamDbError::SchemaError(format!("Failed to serialize schema: {}", e)))?;
@@ -268,15 +270,9 @@ impl UserTableService {
             changes: "Initial schema".to_string(),
         };
 
-        // Insert into system.table_schemas via KalamSQL
-        self.kalam_sql
-            .insert_table_schema(&table_schema)
-            .map_err(|e| {
-                KalamDbError::SchemaError(format!(
-                    "Failed to insert schema for {}: {}",
-                    table_id, e
-                ))
-            })?;
+        // TODO: Replace with information_schema_tables storage (Phase 2b)
+        // Schema will be stored in TableDefinition.schema_history array
+        // self.kalam_sql.insert_table_schema(&table_schema)?;
 
         log::info!(
             "Schema for table {} saved to system.table_schemas (version 1)",

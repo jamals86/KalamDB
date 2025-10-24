@@ -367,10 +367,11 @@ impl TableDeletionService {
 
     /// Delete metadata (T171)
     fn cleanup_metadata(&self, table_id: &str) -> Result<(), KalamDbError> {
+        // TODO: Phase 2b - Schema history stored in TableDefinition.schema_history, no separate deletion needed
         // Delete table schemas
-        self.kalam_sql
-            .delete_table_schemas_for_table(table_id)
-            .map_err(|e| KalamDbError::IoError(format!("Failed to delete table schemas: {}", e)))?;
+        // self.kalam_sql
+        //     .delete_table_schemas_for_table(table_id)
+        //     .map_err(|e| KalamDbError::IoError(format!("Failed to delete table schemas: {}", e)))?;
 
         // Delete table metadata
         self.kalam_sql
@@ -382,26 +383,30 @@ impl TableDeletionService {
 
     /// Decrement storage location usage count (T172)
     fn decrement_storage_usage(&self, location_name: &str) -> Result<(), KalamDbError> {
+        // TODO: Phase 2b - system_storages no longer tracks usage_count, validation happens differently
+        // Storage location usage tracking will be reimplemented when needed
+        log::warn!("Storage usage tracking temporarily disabled during migration to information_schema");
+        
         // Get current storage location
-        let mut location = self
-            .kalam_sql
-            .get_storage_location(location_name)
-            .map_err(|e| KalamDbError::IoError(format!("Failed to get storage location: {}", e)))?
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!("Storage location '{}' not found", location_name))
-            })?;
+        // let mut location = self
+        //     .kalam_sql
+        //     .get_storage_location(location_name)
+        //     .map_err(|e| KalamDbError::IoError(format!("Failed to get storage location: {}", e)))?
+        //     .ok_or_else(|| {
+        //         KalamDbError::NotFound(format!("Storage location '{}' not found", location_name))
+        //     })?;
 
         // Decrement usage count (don't go below 0)
-        if location.usage_count > 0 {
-            location.usage_count -= 1;
-        }
+        // if location.usage_count > 0 {
+        //     location.usage_count -= 1;
+        // }
 
         // Update storage location
-        self.kalam_sql
-            .update_storage_location(&location)
-            .map_err(|e| {
-                KalamDbError::IoError(format!("Failed to update storage location: {}", e))
-            })?;
+        // self.kalam_sql
+        //     .update_storage_location(&location)
+        //     .map_err(|e| {
+        //         KalamDbError::IoError(format!("Failed to update storage location: {}", e))
+        //     })?;
 
         Ok(())
     }

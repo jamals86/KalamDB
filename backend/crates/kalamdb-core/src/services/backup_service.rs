@@ -217,18 +217,22 @@ impl BackupService {
             .filter(|t| t.namespace == namespace_id.as_str())
             .collect();
 
+        // TODO: Phase 2b - Fetch schema from information_schema.tables (TableDefinition.schema_history)
+        // For now, skip schema backup until information_schema is implemented
+        let table_schemas = HashMap::new();
+        
         // Fetch schema versions for each table
-        let mut table_schemas = HashMap::new();
-        for table in &tables {
-            let schemas = self
-                .kalam_sql
-                .get_table_schemas_for_table(&table.table_id)
-                .map_err(|e| {
-                    KalamDbError::IoError(format!("Failed to get schemas for table: {}", e))
-                })?;
+        // let mut table_schemas = HashMap::new();
+        // for table in &tables {
+        //     let schemas = self
+        //         .kalam_sql
+        //         .get_table_schemas_for_table(&table.table_id)
+        //         .map_err(|e| {
+        //             KalamDbError::IoError(format!("Failed to get schemas for table: {}", e))
+        //         })?;
 
-            table_schemas.insert(table.table_id.clone(), schemas);
-        }
+        //     table_schemas.insert(table.table_id.clone(), schemas);
+        // }
 
         Ok((tables, table_schemas))
     }
