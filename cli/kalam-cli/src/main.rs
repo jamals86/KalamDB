@@ -18,13 +18,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 
-use kalam_cli::{
-    CLIConfiguration,
-    CLISession,
-    CLIError,
-    OutputFormat,
-    Result,
-};
+use kalam_cli::{CLIConfiguration, CLIError, CLISession, OutputFormat, Result};
 
 /// Kalam CLI - Terminal client for KalamDB
 #[derive(Parser, Debug)]
@@ -136,8 +130,15 @@ async fn main() -> Result<()> {
         .or_else(|| config.auth.as_ref().and_then(|a| a.api_key.clone()));
     let user_id = cli.user_id;
 
-    let mut session = CLISession::new(server_url, jwt_token, api_key, user_id, format, !cli.no_color)
-        .await?;
+    let mut session = CLISession::new(
+        server_url,
+        jwt_token,
+        api_key,
+        user_id,
+        format,
+        !cli.no_color,
+    )
+    .await?;
 
     // Execute based on mode
     match (cli.file, cli.command) {

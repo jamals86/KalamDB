@@ -921,6 +921,638 @@ Developers and operators need reliable server startup, better CLI user experienc
 
 ---
 
+### User Story 15 - Enhanced information_schema for Complete Table Metadata (Priority: P2)
+
+Database users and SQL tools expect `information_schema.tables` to show ALL tables in the database, including user/shared/stream tables with complete metadata. Currently, DataFusion's built-in `information_schema.tables` only shows catalog-registered system tables, not KalamDB's dynamically registered user tables stored in RocksDB+Parquet. The system should provide a unified SQL-standard-compliant view combining all table types with both standard columns and KalamDB-specific extension columns.
+
+**Why this priority**: SQL standard compliance improves tool compatibility (DBeaver, DataGrip, pgAdmin, ORMs). Users familiar with PostgreSQL/MySQL expect `information_schema.tables` to show all database tables without learning KalamDB-specific system tables. This enhancement makes KalamDB feel like a standard SQL database while preserving detailed metadata access through extension columns and the `system.table_options` view.
+
+**Independent Test**: Can be tested by creating user/shared/stream tables, querying `information_schema.tables` and verifying all tables appear with correct standard columns (table_catalog, table_schema, table_name, table_type) and KalamDB extension columns (kalamdb_table_type, storage_id, flush policies, TTL). Then query `system.table_options` for detailed JSON-based metadata inspection.
+
+**Acceptance Scenarios**:
+
+1. **Given** user tables exist in namespace "app", **When** user executes `SELECT * FROM information_schema.tables WHERE table_schema = 'app'`, **Then** all user tables in "app" namespace are returned with `table_type = 'BASE TABLE'` and `kalamdb_table_type = 'USER'`
+2. **Given** shared tables exist in namespace "analytics", **When** user executes `SELECT * FROM information_schema.tables WHERE table_schema = 'analytics'`, **Then** shared tables are returned with `table_type = 'BASE TABLE'` and `kalamdb_table_type = 'SHARED'`
+3. **Given** stream tables exist in namespace "events", **When** user executes `SELECT * FROM information_schema.tables WHERE table_schema = 'events'`, **Then** stream tables are returned with `table_type = 'BASE TABLE'` and `kalamdb_table_type = 'STREAM'` and `ttl_seconds` populated
+4. **Given** system tables exist, **When** user executes `SELECT * FROM information_schema.tables WHERE table_schema = 'system'`, **Then** system tables are returned with `table_type = 'SYSTEM TABLE'` and `kalamdb_table_type = NULL`
+5. **Given** a user table has flush policy configured, **When** user queries `information_schema.tables`, **Then** extension columns `flush_row_threshold` and `flush_interval_seconds` show configured values
+6. **Given** a user table references a storage configuration, **When** user queries `information_schema.tables`, **Then** extension column `storage_id` shows the storage identifier from `system.storages`
+7. **Given** tables have complex configurations (custom retention, webhooks, etc.), **When** user queries `system.table_options`, **Then** detailed JSON metadata is returned for each table with all configuration options
+8. **Given** SQL tool (e.g., DBeaver) connects to KalamDB, **When** tool queries `information_schema.tables` for table list, **Then** tool displays all tables without errors and recognizes standard columns
+9. **Given** user wants to see all tables across all namespaces, **When** user executes `SELECT table_schema, table_name, kalamdb_table_type, storage_id FROM information_schema.tables ORDER BY table_schema, table_name`, **Then** complete table inventory is returned with clear categorization
+
+**Integration Tests** (backend/tests/integration/test_information_schema_enhanced.rs):
+
+1. **test_information_schema_includes_user_tables**: Create 3 user tables in namespace "app", query information_schema.tables, verify all 3 appear with table_type='BASE TABLE' and kalamdb_table_type='USER'
+2. **test_information_schema_includes_shared_tables**: Create 2 shared tables in namespace "analytics", query information_schema.tables, verify both appear with table_type='BASE TABLE' and kalamdb_table_type='SHARED'
+3. **test_information_schema_includes_stream_tables**: Create stream table with TTL=3600, query information_schema.tables, verify it appears with table_type='BASE TABLE', kalamdb_table_type='STREAM', and ttl_seconds=3600
+4. **test_information_schema_standard_columns**: Query information_schema.tables and verify presence of standard SQL columns: table_catalog, table_schema, table_name, table_type
+5. **test_information_schema_kalamdb_extensions**: Create table with flush policy and storage_id, query information_schema.tables, verify extension columns: kalamdb_table_type, storage_id, flush_row_threshold, flush_interval_seconds, created_at, updated_at
+6. **test_system_table_options_detailed_metadata**: Create table with complex config, query system.table_options, verify JSON includes all metadata (flush policies, storage config, TTL, custom options)
+7. **test_information_schema_combines_all_table_types**: Create mix of user/shared/stream/system tables, query information_schema.tables, verify all types appear in single result set
+8. **test_information_schema_filter_by_schema**: Create tables in namespaces "app" and "analytics", query with WHERE table_schema='app', verify only "app" tables returned
+9. **test_information_schema_null_handling**: Create table without flush policy, query information_schema.tables, verify flush_row_threshold and flush_interval_seconds are NULL
+10. **test_information_schema_system_tables_marked_correctly**: Query information_schema.tables WHERE table_schema='system', verify all system tables have table_type='SYSTEM TABLE' and kalamdb_table_type IS NULL
+
+**Technical Design Notes**:
+
+- **Implementation Approach**: Create custom `InformationSchemaTablesProvider` that combines DataFusion's catalog metadata with KalamDB's `system.tables` metadata
+- **Standard Columns** (SQL-92 compliance):
+  - `table_catalog` (String) - always "kalamdb"
+  - `table_schema` (String) - namespace_id from system.tables
+  - `table_name` (String) - table_name from system.tables
+  - `table_type` (String) - "BASE TABLE" for user/shared/stream, "SYSTEM TABLE" for system tables
+- **KalamDB Extension Columns**:
+  - `kalamdb_table_type` (String) - "USER", "SHARED", "STREAM", NULL for system tables
+  - `storage_id` (String, nullable) - from system.tables.storage_id
+  - `use_user_storage` (Boolean, nullable) - from system.tables.use_user_storage
+  - `flush_row_threshold` (Int64, nullable) - from system.tables.flush_row_limit
+  - `flush_interval_seconds` (Int64, nullable) - from system.tables.flush_interval_seconds
+  - `ttl_seconds` (Int64, nullable) - from system.tables.ttl_seconds
+  - `schema_version` (Int32) - from system.tables.schema_version
+  - `created_at` (Timestamp) - from system.tables.created_at
+  - `updated_at` (Timestamp, nullable) - from system.tables.updated_at
+- **system.table_options Design**:
+  - Schema: `(namespace_id: String, table_name: String, option_key: String, option_value: String, value_type: String, description: String)`
+  - Stores flexible JSON-based metadata for complex configurations not fitting standard columns
+  - Example rows: `('app', 'messages', 'webhook_url', 'https://...', 'string', 'Notification webhook')`, `('app', 'messages', 'retention_days', '90', 'integer', 'Data retention period')`
+
+---
+
+### User Story 16 - Data Type Standardization and Complete Flush Support (Priority: P1)
+
+Currently, KalamDB accepts all DataFusion/Arrow data types in table creation via the SQL parser (INT, BIGINT, TEXT, FLOAT, DOUBLE, BOOLEAN, TIMESTAMP, DATE, TIME, BINARY, etc.), but the flush operation only supports **3 data types** (Utf8, Int64, Boolean) when writing buffered data to Parquet files. This causes a critical gap where users can create tables with TIMESTAMP, FLOAT, or other types, successfully insert data, but then flush fails with "Unsupported data type for flush" errors. The system should standardize on a canonical set of KalamDB-supported data types and ensure complete parity between table creation, data insertion, querying, and flush operations.
+
+**Root Cause Analysis**: The issue stems from having **two separate implementations** for data type handling:
+1. **SQL Parser** (`kalamdb-sql/src/compatibility.rs::map_sql_type_to_arrow`): Maps 30+ SQL types to Arrow DataType (supports TIMESTAMP, FLOAT, DATE, TIME, BINARY, INTERVAL, etc.)
+2. **Flush Operation** (`kalamdb-core/src/flush/user_table_flush.rs::rows_to_record_batch`): Only handles Utf8, Int64, Boolean when converting JSON to Arrow RecordBatch
+
+This creates a **validation gap** where tables are created successfully but fail at flush time. Users discover the limitation only after inserting data and triggering flush, leading to data stuck in buffer and job failures.
+
+**Why this priority (P1)**: This is a **data correctness and reliability issue**. Currently affecting production use cases:
+- User tables with TIMESTAMP columns cannot flush (error: "Unsupported data type for flush: Timestamp(Millisecond, None)")
+- Float/Double columns fail at flush despite being valid Arrow types
+- No upfront validation prevents users from creating "trap" tables that appear to work but silently fail
+
+Without this fix, KalamDB cannot reliably handle time-series data (timestamps), financial data (precise decimals), or scientific data (floats), severely limiting practical use cases.
+
+**Independent Test**: Create user table with all supported KalamDB types (INT, BIGINT, TEXT, FLOAT, DOUBLE, BOOLEAN, TIMESTAMP, DATE, BINARY), insert data with all type combinations, trigger manual flush, verify Parquet files created successfully, query flushed data, and verify type preservation across full lifecycle (insert → buffer → flush → Parquet → query).
+
+**Acceptance Scenarios**:
+
+1. **Given** user creates table with TIMESTAMP column, **When** user inserts rows with NOW() and triggers flush, **Then** flush completes successfully and Parquet file contains Timestamp(Microsecond) Arrow type
+2. **Given** user creates table with DOUBLE column, **When** user inserts numeric values (3.14159, -2.71828) and triggers flush, **Then** Float64 Arrow type is written correctly to Parquet
+3. **Given** user creates table with DATE column, **When** user inserts date values ('2025-10-24') and triggers flush, **Then** Date32 Arrow type is preserved in Parquet
+4. **Given** user creates table with TIME column, **When** user inserts time values ('14:30:00.123456') and triggers flush, **Then** Time64(Microsecond) Arrow type is written to Parquet
+5. **Given** user creates table with JSON column, **When** user inserts valid JSON ('{"key":"value"}') and triggers flush, **Then** JSON is stored as Utf8 in Parquet
+6. **Given** user creates table with BYTES column, **When** user inserts hex data (0xDEADBEEF) and triggers flush, **Then** Binary Arrow type is written to Parquet
+7. **Given** user creates table with all 10 supported types, **When** user queries flushed data, **Then** all type values are retrieved correctly with proper type preservation
+8. **Given** user attempts to create table with unsupported type (DECIMAL, FLOAT, SMALLINT), **When** CREATE TABLE executes, **Then** system returns error "Data type DECIMAL not supported. Use DOUBLE for floating point or BIGINT for large integers" (fail-fast validation)
+9. **Given** existing table has TIMESTAMP column with buffered data, **When** auto-flush triggers, **Then** flush job completes without errors and marks job as "completed" (not "failed")
+10. **Given** user inserts NULL values for nullable columns of any supported type, **When** flush executes, **Then** Parquet files correctly represent NULL values using Arrow null bitmaps
+11. **Given** shared table has TIMESTAMP, DOUBLE, DATE, JSON columns, **When** flush executes, **Then** shared table flush operation handles all types identically to user table flush
+12. **Given** user inserts invalid JSON to JSON column, **When** INSERT executes, **Then** system returns error "Invalid JSON value for column 'metadata': expected object or array" (validation before storage)
+
+**Integration Tests** (backend/tests/integration/test_data_type_flush.rs):
+
+1. **test_flush_timestamp_microsecond_precision**: Create table with TIMESTAMP, insert 10 rows with NOW(), flush, verify Parquet contains Timestamp(Microsecond, None)
+2. **test_flush_double_values**: Create table with DOUBLE column, insert decimal values (3.14159, 2.71828, -123.456), flush, verify Float64 Arrow type
+3. **test_flush_date_values**: Create table with DATE column, insert various dates ('2025-01-01', '2025-12-31', '1970-01-01'), flush, verify Date32 type
+4. **test_flush_time_microsecond**: Create table with TIME column, insert time values ('14:30:00.123456', '23:59:59.999999'), flush, verify Time64(Microsecond) type
+5. **test_flush_json_validated_on_insert**: Create table with JSON column, attempt insert with invalid JSON '{"broken', verify error before data reaches buffer
+6. **test_flush_json_valid_data**: Create table with JSON column, insert valid JSON objects/arrays, flush, verify stored as Utf8 in Parquet
+7. **test_flush_bytes_hex_format**: Create table with BYTES column, insert hex data (0xDEADBEEF, 0xCAFEBABE), flush, verify Binary Arrow type
+8. **test_flush_bytes_base64_format**: Create table with BYTES column, insert base64 data, flush, verify Binary Arrow type
+9. **test_flush_int_and_bigint**: Create table with INT and BIGINT columns, insert various integers including INT32_MAX and INT64_MAX, flush, verify Int32 and Int64 types
+10. **test_flush_all_10_types_combined**: Create table with one column of each supported type (10 columns total), insert 100 rows, flush, verify all types preserved
+11. **test_flush_null_values_all_types**: Create table with nullable columns of each type, insert NULL values, flush, verify NULL bitmap correctness in Parquet
+12. **test_create_table_with_unsupported_type_fails**: Attempt CREATE TABLE with DECIMAL/FLOAT/SMALLINT columns, verify error messages with helpful suggestions before table creation
+13. **test_shared_table_flush_all_types**: Create shared table with TIMESTAMP, DOUBLE, DATE, JSON columns, insert data, flush, verify same type support as user tables
+14. **test_roundtrip_insert_flush_query**: Create table with all types, INSERT 50 rows, trigger flush, query flushed data, verify values match exactly (roundtrip test)
+
+**Technical Design**:
+
+**Phase 1: Define KalamDB Canonical Type System**
+
+**KalamDB Basic Data Types** (simplified, production-ready set):
+
+| KalamDB Type | DataFusion Type Expression | SQL Aliases | Notes |
+|--------------|----------------------------|-------------|-------|
+| **BOOLEAN** | `DataType::Boolean` | BOOL | true/false values |
+| **INT** | `DataType::Int32` | INTEGER, INT4 | 32-bit signed (-2B to 2B) |
+| **BIGINT** | `DataType::Int64` | INT8 | 64-bit signed (-9 quintillion to 9 quintillion) |
+| **DOUBLE** | `DataType::Float64` | FLOAT8, DOUBLE PRECISION | 64-bit IEEE 754 floating point |
+| **TEXT** | `DataType::Utf8` | VARCHAR, STRING | Variable-length UTF-8 text |
+| **TIMESTAMP** | `DataType::Timestamp(TimeUnit::Microsecond, None)` | DATETIME | Microsecond precision, no timezone |
+| **DATE** | `DataType::Date32` | - | Days since Unix epoch (1970-01-01) |
+| **TIME** | `DataType::Time64(TimeUnit::Microsecond)` | - | Microseconds since midnight |
+| **JSON** | `DataType::Utf8` (serialized) | OBJECT | Stored as TEXT, validated on insert |
+| **BYTES** | `DataType::Binary` | BINARY, BYTEA, BLOB | Variable-length byte array |
+
+**Future Addition** (reserved for upcoming release):
+- **OBJECT** - Structured JSON with schema validation (stored internally, queryable fields)
+
+Create centralized type system in `backend/crates/kalamdb-commons/src/types/` directory:
+
+**File: `kalamdb-commons/src/types/mod.rs`**
+```rust
+//! KalamDB Canonical Type System
+//! 
+//! This module provides the single source of truth for all data type handling in KalamDB.
+//! ALL type conversions, validations, and serialization logic MUST go through this module.
+//!
+//! Architecture:
+//! - types/core.rs       - KalamDbType enum and trait definitions
+//! - types/conversions.rs - Arrow, SQL, RocksDB conversion logic
+//! - types/codec.rs      - RocksDB encoding/decoding (JSON ↔ Bytes)
+//! - types/parquet.rs    - Parquet serialization (JSON ↔ Arrow arrays)
+//! - types/validation.rs - Type validation and schema checking
+
+mod core;
+mod conversions;
+mod codec;
+mod parquet;
+mod validation;
+
+pub use core::KalamDbType;
+pub use conversions::{ArrowTypeConverter, SqlTypeConverter, RocksDbCodec};
+pub use codec::{TypedValue, encode_value, decode_value};
+pub use parquet::{JsonToArrowConverter, ArrowToJsonConverter};
+pub use validation::TypeValidator;
+```
+
+**File: `kalamdb-commons/src/types/core.rs`**
+```rust
+/// KalamDB canonical data types
+/// 
+/// This is the ONLY enum that defines supported types.
+/// Adding a new type requires updates in exactly these places:
+/// 1. Add variant to this enum
+/// 2. Add Arrow mapping in conversions.rs::to_arrow()
+/// 3. Add RocksDB encoding in codec.rs::encode_value()
+/// 4. Add Parquet conversion in parquet.rs::json_to_arrow_array()
+/// 5. Add validation in validation.rs::validate_value()
+/// 6. Add tests in types/tests.rs
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub enum KalamDbType {
+    /// Boolean: true/false
+    Boolean,
+    
+    /// 32-bit signed integer (-2,147,483,648 to 2,147,483,647)
+    Int,
+    
+    /// 64-bit signed integer (-9,223,372,036,854,775,808 to 9,223,372,036,854,775,807)
+    BigInt,
+    
+    /// 64-bit IEEE 754 floating point (Double precision)
+    Double,
+    
+    /// Variable-length UTF-8 text
+    Text,
+    
+    /// Timestamp with microsecond precision (no timezone)
+    /// Stored as microseconds since Unix epoch (1970-01-01 00:00:00 UTC)
+    Timestamp,
+    
+    /// Date (days since Unix epoch)
+    Date,
+    
+    /// Time of day (microseconds since midnight)
+    Time,
+    
+    /// JSON data stored as UTF-8 text (validated on insert)
+    /// Future: Will be upgraded to structured OBJECT type with schema
+    Json,
+    
+    /// Variable-length byte array
+    Bytes,
+}
+
+impl KalamDbType {
+    /// Get SQL type name for error messages and documentation
+    pub fn sql_name(&self) -> &'static str {
+        match self {
+            KalamDbType::Boolean => "BOOLEAN",
+            KalamDbType::Int => "INT",
+            KalamDbType::BigInt => "BIGINT",
+            KalamDbType::Double => "DOUBLE",
+            KalamDbType::Text => "TEXT",
+            KalamDbType::Timestamp => "TIMESTAMP",
+            KalamDbType::Date => "DATE",
+            KalamDbType::Time => "TIME",
+            KalamDbType::Json => "JSON",
+            KalamDbType::Bytes => "BYTES",
+        }
+    }
+    
+    /// Get all SQL aliases for this type
+    pub fn sql_aliases(&self) -> &'static [&'static str] {
+        match self {
+            KalamDbType::Boolean => &["BOOLEAN", "BOOL"],
+            KalamDbType::Int => &["INT", "INTEGER", "INT4"],
+            KalamDbType::BigInt => &["BIGINT", "INT8"],
+            KalamDbType::Double => &["DOUBLE", "FLOAT8", "DOUBLE PRECISION"],
+            KalamDbType::Text => &["TEXT", "VARCHAR", "STRING"],
+            KalamDbType::Timestamp => &["TIMESTAMP", "DATETIME"],
+            KalamDbType::Date => &["DATE"],
+            KalamDbType::Time => &["TIME"],
+            KalamDbType::Json => &["JSON", "OBJECT"],
+            KalamDbType::Bytes => &["BYTES", "BINARY", "BYTEA", "BLOB"],
+        }
+    }
+}
+```
+
+**File: `kalamdb-commons/src/types/conversions.rs`**
+```rust
+/// Convert KalamDbType to Arrow DataType for DataFusion execution
+pub trait ArrowTypeConverter {
+    fn to_arrow(&self) -> DataType;
+    fn from_arrow(dt: &DataType) -> Result<Self, String> where Self: Sized;
+}
+
+impl ArrowTypeConverter for KalamDbType {
+    fn to_arrow(&self) -> DataType {
+        match self {
+            KalamDbType::Boolean => DataType::Boolean,
+            KalamDbType::Int => DataType::Int32,
+            KalamDbType::BigInt => DataType::Int64,
+            KalamDbType::Double => DataType::Float64,
+            KalamDbType::Text => DataType::Utf8,
+            KalamDbType::Timestamp => DataType::Timestamp(TimeUnit::Microsecond, None),
+            KalamDbType::Date => DataType::Date32,
+            KalamDbType::Time => DataType::Time64(TimeUnit::Microsecond),
+            KalamDbType::Json => DataType::Utf8, // Stored as text
+            KalamDbType::Bytes => DataType::Binary,
+        }
+    }
+    
+    fn from_arrow(dt: &DataType) -> Result<Self, String> {
+        match dt {
+            DataType::Boolean => Ok(KalamDbType::Boolean),
+            DataType::Int32 => Ok(KalamDbType::Int),
+            DataType::Int64 => Ok(KalamDbType::BigInt),
+            DataType::Float64 => Ok(KalamDbType::Double),
+            DataType::Utf8 => Ok(KalamDbType::Text),
+            DataType::Timestamp(TimeUnit::Microsecond, None) => Ok(KalamDbType::Timestamp),
+            DataType::Date32 => Ok(KalamDbType::Date),
+            DataType::Time64(TimeUnit::Microsecond) => Ok(KalamDbType::Time),
+            DataType::Binary => Ok(KalamDbType::Bytes),
+            _ => Err(format!(
+                "Data type {:?} not supported. Supported types: BOOLEAN, INT, BIGINT, DOUBLE, TEXT, TIMESTAMP, DATE, TIME, JSON, BYTES",
+                dt
+            ))
+        }
+    }
+}
+```
+
+**File: `kalamdb-commons/src/types/codec.rs`**
+```rust
+/// Encode a JSON value to bytes for RocksDB storage
+/// 
+/// This is the SINGLE PLACE where we define how each type is stored in RocksDB.
+/// Format is type-tagged for type safety during reads.
+/// 
+/// Encoding Format (prefix byte + data):
+/// - Boolean: [0x01][1 byte: 0x00=false, 0x01=true]
+/// - Int:     [0x02][4 bytes: i32 little-endian]
+/// - BigInt:  [0x03][8 bytes: i64 little-endian]
+/// - Double:  [0x04][8 bytes: f64 little-endian]
+/// - Text:    [0x05][4 bytes: length][UTF-8 bytes]
+/// - Timestamp: [0x06][8 bytes: i64 microseconds little-endian]
+/// - Date:    [0x07][4 bytes: i32 days little-endian]
+/// - Time:    [0x08][8 bytes: i64 microseconds little-endian]
+/// - Json:    [0x09][4 bytes: length][UTF-8 bytes]
+/// - Bytes:   [0x0A][4 bytes: length][raw bytes]
+/// - Null:    [0xFF]
+pub fn encode_value(value: &JsonValue, expected_type: &KalamDbType) -> Result<Vec<u8>, String> {
+    if value.is_null() {
+        return Ok(vec![0xFF]); // Null marker
+    }
+    
+    match (expected_type, value) {
+        (KalamDbType::Boolean, JsonValue::Bool(b)) => {
+            Ok(vec![0x01, if *b { 0x01 } else { 0x00 }])
+        }
+        (KalamDbType::Int, JsonValue::Number(n)) => {
+            let i = n.as_i64().ok_or("INT value out of range")?;
+            if i < i32::MIN as i64 || i > i32::MAX as i64 {
+                return Err("INT value out of range".to_string());
+            }
+            let bytes = (i as i32).to_le_bytes();
+            Ok([&[0x02][..], &bytes[..]].concat())
+        }
+        (KalamDbType::BigInt, JsonValue::Number(n)) => {
+            let i = n.as_i64().ok_or("BIGINT value out of range")?;
+            let bytes = i.to_le_bytes();
+            Ok([&[0x03][..], &bytes[..]].concat())
+        }
+        (KalamDbType::Double, JsonValue::Number(n)) => {
+            let f = n.as_f64().ok_or("DOUBLE value out of range")?;
+            let bytes = f.to_le_bytes();
+            Ok([&[0x04][..], &bytes[..]].concat())
+        }
+        (KalamDbType::Text, JsonValue::String(s)) => {
+            let len = (s.len() as u32).to_le_bytes();
+            Ok([&[0x05][..], &len[..], s.as_bytes()].concat())
+        }
+        (KalamDbType::Timestamp, JsonValue::String(s)) => {
+            let micros = parse_timestamp_to_microseconds(s)?;
+            let bytes = micros.to_le_bytes();
+            Ok([&[0x06][..], &bytes[..]].concat())
+        }
+        (KalamDbType::Date, JsonValue::String(s)) => {
+            let days = parse_date_to_days(s)?;
+            let bytes = days.to_le_bytes();
+            Ok([&[0x07][..], &bytes[..]].concat())
+        }
+        (KalamDbType::Time, JsonValue::String(s)) => {
+            let micros = parse_time_to_microseconds(s)?;
+            let bytes = micros.to_le_bytes();
+            Ok([&[0x08][..], &bytes[..]].concat())
+        }
+        (KalamDbType::Json, JsonValue::String(s)) | (KalamDbType::Json, JsonValue::Object(_)) | (KalamDbType::Json, JsonValue::Array(_)) => {
+            let json_str = if let JsonValue::String(s) = value {
+                s.clone()
+            } else {
+                serde_json::to_string(value).map_err(|e| e.to_string())?
+            };
+            let len = (json_str.len() as u32).to_le_bytes();
+            Ok([&[0x09][..], &len[..], json_str.as_bytes()].concat())
+        }
+        (KalamDbType::Bytes, JsonValue::String(s)) => {
+            let bytes = decode_hex_or_base64(s)?;
+            let len = (bytes.len() as u32).to_le_bytes();
+            Ok([&[0x0A][..], &len[..], &bytes[..]].concat())
+        }
+        _ => Err(format!(
+            "Type mismatch: expected {:?}, got {:?}",
+            expected_type, value
+        ))
+    }
+}
+
+/// Decode bytes from RocksDB back to JSON value
+pub fn decode_value(bytes: &[u8]) -> Result<(KalamDbType, JsonValue), String> {
+    if bytes.is_empty() {
+        return Err("Empty byte array".to_string());
+    }
+    
+    match bytes[0] {
+        0xFF => Ok((KalamDbType::Text, JsonValue::Null)), // Type doesn't matter for null
+        0x01 => Ok((KalamDbType::Boolean, JsonValue::Bool(bytes[1] != 0))),
+        0x02 => {
+            let i = i32::from_le_bytes(bytes[1..5].try_into().map_err(|_| "Invalid INT encoding")?);
+            Ok((KalamDbType::Int, JsonValue::Number(i.into())))
+        }
+        0x03 => {
+            let i = i64::from_le_bytes(bytes[1..9].try_into().map_err(|_| "Invalid BIGINT encoding")?);
+            Ok((KalamDbType::BigInt, JsonValue::Number(i.into())))
+        }
+        0x04 => {
+            let f = f64::from_le_bytes(bytes[1..9].try_into().map_err(|_| "Invalid DOUBLE encoding")?);
+            Ok((KalamDbType::Double, serde_json::Number::from_f64(f).map(JsonValue::Number).unwrap_or(JsonValue::Null)))
+        }
+        0x05 => {
+            let len = u32::from_le_bytes(bytes[1..5].try_into().map_err(|_| "Invalid TEXT length")?);
+            let s = String::from_utf8(bytes[5..5 + len as usize].to_vec()).map_err(|e| e.to_string())?;
+            Ok((KalamDbType::Text, JsonValue::String(s)))
+        }
+        0x06 => {
+            let micros = i64::from_le_bytes(bytes[1..9].try_into().map_err(|_| "Invalid TIMESTAMP encoding")?);
+            let timestamp_str = format_microseconds_to_timestamp(micros);
+            Ok((KalamDbType::Timestamp, JsonValue::String(timestamp_str)))
+        }
+        0x07 => {
+            let days = i32::from_le_bytes(bytes[1..5].try_into().map_err(|_| "Invalid DATE encoding")?);
+            let date_str = format_days_to_date(days);
+            Ok((KalamDbType::Date, JsonValue::String(date_str)))
+        }
+        0x08 => {
+            let micros = i64::from_le_bytes(bytes[1..9].try_into().map_err(|_| "Invalid TIME encoding")?);
+            let time_str = format_microseconds_to_time(micros);
+            Ok((KalamDbType::Time, JsonValue::String(time_str)))
+        }
+        0x09 => {
+            let len = u32::from_le_bytes(bytes[1..5].try_into().map_err(|_| "Invalid JSON length")?);
+            let s = String::from_utf8(bytes[5..5 + len as usize].to_vec()).map_err(|e| e.to_string())?;
+            Ok((KalamDbType::Json, JsonValue::String(s)))
+        }
+        0x0A => {
+            let len = u32::from_le_bytes(bytes[1..5].try_into().map_err(|_| "Invalid BYTES length")?);
+            let hex_str = hex::encode(&bytes[5..5 + len as usize]);
+            Ok((KalamDbType::Bytes, JsonValue::String(format!("0x{}", hex_str))))
+        }
+        _ => Err(format!("Unknown type tag: 0x{:02X}", bytes[0]))
+    }
+}
+```
+
+**File: `kalamdb-commons/src/types/parquet.rs`**
+```rust
+/// Convert JSON values to Arrow arrays for Parquet serialization
+/// 
+/// This is the SINGLE PLACE where we define Parquet encoding for each type.
+pub trait JsonToArrowConverter {
+    fn json_to_arrow_array(
+        values: &[Option<&JsonValue>],
+        kalamdb_type: &KalamDbType,
+    ) -> Result<ArrayRef, String>;
+}
+
+impl JsonToArrowConverter for KalamDbType {
+    fn json_to_arrow_array(
+        values: &[Option<&JsonValue>],
+        kalamdb_type: &KalamDbType,
+    ) -> Result<ArrayRef, String> {
+        match kalamdb_type {
+            KalamDbType::Boolean => {
+                let typed: Vec<Option<bool>> = values.iter()
+                    .map(|v| v.and_then(|j| j.as_bool()))
+                    .collect();
+                Ok(Arc::new(BooleanArray::from(typed)))
+            }
+            KalamDbType::Int => {
+                let typed: Vec<Option<i32>> = values.iter()
+                    .map(|v| v.and_then(|j| j.as_i64()).map(|i| i as i32))
+                    .collect();
+                Ok(Arc::new(Int32Array::from(typed)))
+            }
+            KalamDbType::BigInt => {
+                let typed: Vec<Option<i64>> = values.iter()
+                    .map(|v| v.and_then(|j| j.as_i64()))
+                    .collect();
+                Ok(Arc::new(Int64Array::from(typed)))
+            }
+            KalamDbType::Double => {
+                let typed: Vec<Option<f64>> = values.iter()
+                    .map(|v| v.and_then(|j| j.as_f64()))
+                    .collect();
+                Ok(Arc::new(Float64Array::from(typed)))
+            }
+            KalamDbType::Text => {
+                let typed: Vec<Option<String>> = values.iter()
+                    .map(|v| v.and_then(|j| j.as_str()).map(|s| s.to_string()))
+                    .collect();
+                Ok(Arc::new(StringArray::from(typed)))
+            }
+            KalamDbType::Timestamp => {
+                let typed: Vec<Option<i64>> = values.iter()
+                    .map(|v| v.and_then(|j| j.as_str()).and_then(|s| parse_timestamp_to_microseconds(s).ok()))
+                    .collect();
+                Ok(Arc::new(TimestampMicrosecondArray::from(typed)))
+            }
+            KalamDbType::Date => {
+                let typed: Vec<Option<i32>> = values.iter()
+                    .map(|v| v.and_then(|j| j.as_str()).and_then(|s| parse_date_to_days(s).ok()))
+                    .collect();
+                Ok(Arc::new(Date32Array::from(typed)))
+            }
+            KalamDbType::Time => {
+                let typed: Vec<Option<i64>> = values.iter()
+                    .map(|v| v.and_then(|j| j.as_str()).and_then(|s| parse_time_to_microseconds(s).ok()))
+                    .collect();
+                Ok(Arc::new(Time64MicrosecondArray::from(typed)))
+            }
+            KalamDbType::Json => {
+                let typed: Vec<Option<String>> = values.iter()
+                    .map(|v| v.map(|j| {
+                        if let JsonValue::String(s) = j {
+                            s.clone()
+                        } else {
+                            serde_json::to_string(j).unwrap_or_default()
+                        }
+                    }))
+                    .collect();
+                Ok(Arc::new(StringArray::from(typed)))
+            }
+            KalamDbType::Bytes => {
+                let typed: Vec<Option<Vec<u8>>> = values.iter()
+                    .map(|v| v.and_then(|j| j.as_str()).and_then(|s| decode_hex_or_base64(s).ok()))
+                    .collect();
+                Ok(Arc::new(BinaryArray::from(typed)))
+            }
+        }
+    }
+}
+```
+
+**Phase 2: Update CREATE TABLE Validation**
+
+Modify `kalamdb-sql/src/ddl/create_table.rs`:
+
+```rust
+pub fn validate_column_types(&self) -> DdlResult<()> {
+    for column in &self.columns {
+        let arrow_type = &column.data_type;
+        
+        // Validate type is supported
+        KalamDbType::from_arrow(arrow_type).map_err(|e| {
+            format!("Column '{}': {}", column.name, e)
+        })?;
+    }
+    Ok(())
+}
+```
+
+**Phase 3: Extend Flush Operations for All Types**
+
+Update flush operations to use the centralized type system:
+
+**File: `kalamdb-core/src/flush/user_table_flush.rs`** and **`shared_table_flush.rs`**
+
+```rust
+use kalamdb_commons::types::{KalamDbType, JsonToArrowConverter, ArrowTypeConverter};
+
+fn rows_to_record_batch(&self, rows: &[(Vec<u8>, JsonValue)]) -> Result<RecordBatch, KalamDbError> {
+    let mut arrays: Vec<ArrayRef> = Vec::new();
+
+    for field in self.schema.fields() {
+        let field_name = field.name();
+        let arrow_type = field.data_type();
+        
+        // Convert Arrow type to KalamDB type (validation happens here)
+        let kalamdb_type = KalamDbType::from_arrow(arrow_type)
+            .map_err(|e| KalamDbError::Other(format!("Column '{}': {}", field_name, e)))?;
+        
+        // Extract JSON values for this field
+        let values: Vec<Option<&JsonValue>> = rows.iter()
+            .map(|(_, row)| row.get(field_name))
+            .collect();
+        
+        // Convert JSON to Arrow array (centralized in types module)
+        let array = KalamDbType::json_to_arrow_array(&values, &kalamdb_type)
+            .map_err(|e| KalamDbError::Other(format!("Failed to convert column '{}': {}", field_name, e)))?;
+        
+        arrays.push(array);
+    }
+
+    RecordBatch::try_new(self.schema.clone(), arrays)
+        .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
+}
+```
+
+**Benefits of this approach**:
+1. **Single source of truth**: All type handling in `kalamdb-commons/src/types/`
+2. **Easy to extend**: Add new type → update 6 clearly marked places
+3. **Type safety**: Validation at CREATE TABLE, encoding/decoding type-tagged
+4. **Performance tunable**: Can optimize encoding per type without touching other code
+5. **Testable**: Each module has isolated unit tests
+
+**Architecture Requirements**:
+
+**AR-001**: ALL data type conversions MUST go through `kalamdb-commons/src/types/` module (no direct Arrow type handling elsewhere)
+
+**AR-002**: RocksDB storage format MUST be type-tagged (first byte identifies type) for safe decoding and future migration
+
+**AR-003**: Type encoding MUST be versioned (reserve 0xF0-0xFF range for version tags) to support future encoding changes
+
+**AR-004**: Each type MUST have deterministic encoding (same value → same bytes) for consistent storage
+
+**AR-005**: Microsecond precision MUST be used for all temporal types (TIMESTAMP, TIME) for consistency with modern databases
+
+**AR-006**: JSON type MUST validate JSON syntax on INSERT (reject malformed JSON early)
+
+**AR-007**: BYTES type MUST accept both hex format (0x...) and base64 format for flexibility
+
+**AR-008**: Adding new type MUST require changes in exactly 6 locations (enforced by compiler):
+  1. `types/core.rs::KalamDbType` enum variant
+  2. `types/conversions.rs::to_arrow()` match arm
+  3. `types/conversions.rs::from_arrow()` match arm
+  4. `types/codec.rs::encode_value()` match arm
+  5. `types/codec.rs::decode_value()` match arm (with new type tag byte)
+  6. `types/parquet.rs::json_to_arrow_array()` match arm
+
+**AR-009**: Type conversion errors MUST include helpful messages showing expected type and actual value
+
+**AR-010**: Future OBJECT type MUST support schema validation (JSON Schema) and be stored with metadata for queryable fields
+
+**Migration Path**:
+1. **Phase 1** (Immediate): Create `kalamdb-commons/src/types/` directory with 10 basic types
+2. **Phase 2** (Week 1): Migrate CREATE TABLE validation to use `KalamDbType::from_arrow()`
+3. **Phase 3** (Week 2): Migrate flush operations to use centralized converters
+4. **Phase 4** (Week 3): Migrate INSERT/UPDATE validation to use `TypeValidator`
+5. **Phase 5** (Month 2): Add OBJECT type with JSON Schema support
+
+**Not Supported** (explicitly excluded from v1.0):
+- FLOAT (32-bit) - use DOUBLE instead for consistency
+- SMALLINT/TINYINT - use INT for simplicity
+- UNSIGNED types - use BIGINT for larger positive ranges
+- DECIMAL/NUMERIC (arbitrary precision) - deferred to v1.1 with decimal library
+- UUID (native type) - use TEXT with UUID_V7() function
+- INTERVAL - complex temporal arithmetic, deferred
+- Array/List types - deferred to OBJECT type implementation
+- Struct types - deferred to OBJECT type implementation
+
+**Future Roadmap**:
+- **v1.1**: Add OBJECT type with JSON Schema validation
+- **v1.2**: Add DECIMAL type with arbitrary precision (using rust_decimal crate)
+- **v2.0**: Add Array types with element type validation
+- **v2.1**: Add nested Struct types for complex data modeling
+
+---
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements

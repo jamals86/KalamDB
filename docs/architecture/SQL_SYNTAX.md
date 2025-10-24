@@ -12,16 +12,18 @@ KalamDB supports standard SQL via Apache DataFusion with custom DDL extensions f
 ## Table of Contents
 
 1. [Namespace Operations](#namespace-operations)
-2. [User Table Operations](#user-table-operations)
-3. [Shared Table Operations](#shared-table-operations)
-4. [Stream Table Operations](#stream-table-operations)
-5. [Schema Evolution](#schema-evolution)
-6. [Data Manipulation](#data-manipulation)
-7. [Live Query Subscriptions](#live-query-subscriptions)
-8. [Backup and Restore](#backup-and-restore)
-9. [Catalog Browsing](#catalog-browsing)
-10. [Data Types](#data-types)
-11. [System Columns](#system-columns)
+2. [Storage Management](#storage-management)
+3. [User Table Operations](#user-table-operations)
+4. [Shared Table Operations](#shared-table-operations)
+5. [Stream Table Operations](#stream-table-operations)
+6. [Schema Evolution](#schema-evolution)
+7. [Data Manipulation](#data-manipulation)
+8. [Manual Flushing](#manual-flushing)
+9. [Live Query Subscriptions](#live-query-subscriptions)
+10. [Backup and Restore](#backup-and-restore)
+11. [Catalog Browsing](#catalog-browsing)
+12. [Data Types](#data-types)
+13. [System Columns](#system-columns)
 
 ---
 
@@ -67,6 +69,159 @@ DROP NAMESPACE IF EXISTS old_namespace;
 
 ---
 
+## Storage Management
+
+Storage locations define where table data (Parquet files) are stored. Each table references a storage_id from the `system.storages` table.
+
+### CREATE STORAGE
+
+```sql
+CREATE STORAGE <storage_id>
+TYPE <filesystem|s3|azure_blob|gcs>
+PATH '<storage_path>'
+[CREDENTIALS <credentials_json>];
+```
+
+**Storage Types**:
+- `filesystem`: Local or network filesystem storage
+- `s3`: Amazon S3 or S3-compatible storage (MinIO, etc.)
+- `azure_blob`: Azure Blob Storage
+- `gcs`: Google Cloud Storage
+
+**Examples**:
+```sql
+-- Local filesystem storage (default)
+CREATE STORAGE local
+TYPE filesystem
+PATH './data';
+
+-- S3 storage with credentials
+CREATE STORAGE s3_prod
+TYPE s3
+PATH 's3://my-bucket/kalamdb-data'
+CREDENTIALS '{
+  "access_key_id": "AKIAIOSFODNN7EXAMPLE",
+  "secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+  "region": "us-west-2"
+}';
+
+-- S3-compatible storage (MinIO)
+CREATE STORAGE minio_local
+TYPE s3
+PATH 's3://kalamdb/data'
+CREDENTIALS '{
+  "access_key_id": "minioadmin",
+  "secret_access_key": "minioadmin",
+  "endpoint": "http://localhost:9000",
+  "region": "us-east-1"
+}';
+
+-- Azure Blob Storage
+CREATE STORAGE azure_prod
+TYPE azure_blob
+PATH 'azure://container-name/kalamdb'
+CREDENTIALS '{
+  "account_name": "mystorageaccount",
+  "account_key": "base64-encoded-key"
+}';
+
+-- Google Cloud Storage
+CREATE STORAGE gcs_backup
+TYPE gcs
+PATH 'gs://my-bucket/kalamdb-backups'
+CREDENTIALS '{
+  "service_account_key": "path/to/service-account.json"
+}';
+```
+
+**Notes**:
+- Storage ID 'local' is pre-configured and always available
+- Credentials are stored encrypted in `system.storages`
+- Path supports template variables: `${namespace}`, `${table_name}`, `${user_id}`
+
+---
+
+### ALTER STORAGE
+
+```sql
+ALTER STORAGE <storage_id>
+[SET PATH '<new_path>']
+[SET CREDENTIALS <credentials_json>];
+```
+
+**Examples**:
+```sql
+-- Update S3 path
+ALTER STORAGE s3_prod
+SET PATH 's3://new-bucket/kalamdb';
+
+-- Rotate credentials
+ALTER STORAGE s3_prod
+SET CREDENTIALS '{
+  "access_key_id": "NEW_ACCESS_KEY",
+  "secret_access_key": "NEW_SECRET_KEY",
+  "region": "us-west-2"
+}';
+
+-- Update both
+ALTER STORAGE azure_prod
+SET PATH 'azure://new-container/kalamdb'
+SET CREDENTIALS '{
+  "account_name": "newaccount",
+  "account_key": "new-key"
+}';
+```
+
+---
+
+### DROP STORAGE
+
+```sql
+DROP STORAGE <storage_id>;
+DROP STORAGE IF EXISTS <storage_id>;
+```
+
+**Examples**:
+```sql
+DROP STORAGE old_s3_storage;
+DROP STORAGE IF EXISTS temp_storage;
+```
+
+**Restrictions**:
+- Cannot drop 'local' storage (system reserved)
+- Cannot drop storage if tables are using it (check `system.tables` first)
+
+**Error Handling**:
+```sql
+DROP STORAGE s3_prod;
+-- ERROR: Cannot drop storage 's3_prod': 3 table(s) still reference it
+-- Hint: DROP tables first or migrate them to different storage
+```
+
+---
+
+### SHOW STORAGES
+
+```sql
+SHOW STORAGES;
+```
+
+**Example Output**:
+```
+storage_id   | type       | path                          | table_count
+-------------|------------|-------------------------------|------------
+local        | filesystem | ./data                        | 5
+s3_prod      | s3         | s3://my-bucket/kalamdb-data  | 12
+minio_local  | s3         | s3://kalamdb/data            | 3
+```
+
+**Notes**:
+- Credentials are not displayed (security)
+- `table_count` shows how many tables reference each storage
+- Query `system.storages` table directly for full details
+
+---
+
 ## User Table Operations
 
 User tables create one table instance per user with isolated storage.
@@ -75,39 +230,61 @@ User tables create one table instance per user with isolated storage.
 
 ```sql
 CREATE USER TABLE [<namespace>.]<table_name> (
-  <column_name> <data_type> [NOT NULL],
+  <column_name> <data_type> [NOT NULL] [DEFAULT <value|function>],
   ...
-) FLUSH POLICY <policy>;
+) [STORAGE <storage_id>] [FLUSH <flush_policy>];
 ```
 
-**Flush Policies**:
-- `ROW_LIMIT <n>`: Flush after `n` rows inserted
-- `TIME_INTERVAL <seconds>`: Flush every `<seconds>` seconds
-- `COMBINED ROW_LIMIT <n> TIME_INTERVAL <s>`: Flush when either condition is met
+**Storage Options**:
+- `STORAGE <storage_id>`: Storage location reference from `system.storages` (defaults to `local`)
+- Storage IDs must be pre-configured via `CREATE STORAGE` command
+
+**Flush Policies** (new syntax):
+- `FLUSH ROW_THRESHOLD <n>`: Flush after `n` rows inserted
+- `FLUSH INTERVAL <seconds>s`: Flush every `<seconds>` seconds
+- `FLUSH INTERVAL <s>s ROW_THRESHOLD <n>`: Flush when either condition is met (combined)
+
+**Legacy Flush Syntax** (still supported):
+- `FLUSH ROWS <n>`: Same as `ROW_THRESHOLD`
+- `FLUSH SECONDS <s>`: Same as `INTERVAL`
 
 **Examples**:
 ```sql
--- Simple user table with row-based flush
-CREATE USER TABLE app.messages (
-  id BIGINT NOT NULL,
+-- Simple user table with row-based flush (new syntax)
+CREATE USER TABLE app.messages2 (
+  id BIGINT NOT NULL DEFAULT SNOWFLAKE_ID(),
   content TEXT,
   author TEXT,
   timestamp TIMESTAMP
-) FLUSH POLICY ROW_LIMIT 1000;
+) STORAGE local FLUSH ROW_THRESHOLD 1000;
 
 -- Time-based flush (every 5 minutes)
 CREATE USER TABLE app.events (
   event_id TEXT NOT NULL,
   event_type TEXT,
   data TEXT
-) FLUSH POLICY TIME_INTERVAL 300;
+) STORAGE local FLUSH INTERVAL 300s;
 
 -- Combined flush (flush when either 5000 rows OR 10 minutes)
 CREATE USER TABLE app.analytics (
   metric_name TEXT NOT NULL,
   value DOUBLE,
   tags TEXT
-) FLUSH POLICY COMBINED ROW_LIMIT 5000 TIME_INTERVAL 600;
+) STORAGE s3_prod FLUSH INTERVAL 600s ROW_THRESHOLD 5000;
+
+-- With DEFAULT values (auto-generated IDs and timestamps)
+CREATE USER TABLE app.users (
+  id BIGINT DEFAULT SNOWFLAKE_ID(),
+  username TEXT NOT NULL,
+  email TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+) STORAGE local FLUSH ROW_THRESHOLD 1000;
+
+-- Legacy syntax (still works)
+CREATE USER TABLE app.logs (
+  id BIGINT,
+  message TEXT
+) STORAGE local FLUSH ROWS 500;
 ```
 
 **System Columns** (automatically added):
@@ -116,7 +293,20 @@ CREATE USER TABLE app.analytics (
 
 **Storage**:
 - Hot tier: `RocksDB column family: user_table:{table_name}`
-- Cold tier: `{storage_path}/user/{user_id}/{table_name}/batch-*.parquet`
+- Cold tier (after flush): `{storage_path}/users/{user_id}/{namespace}/{table_name}/batch-{timestamp}-{uuid}.parquet`
+- Storage path determined by storage_id from system.storages
+
+**DEFAULT Functions**:
+- `NOW()`: Current timestamp (for TIMESTAMP columns)
+- `SNOWFLAKE_ID()`: Distributed unique ID (for BIGINT columns)
+- `UUID_V7()`: Time-ordered UUID v7 (for TEXT/VARCHAR columns)
+- `ULID()`: Universally unique lexicographically sortable ID (for TEXT/VARCHAR columns)
+
+**Notes**:
+- Storage defaults to 'local' if not specified
+- Flush policy is optional (no auto-flush if not specified)
+- User tables create isolated storage per user_id
+- System columns cannot be specified in INSERT/UPDATE
 
 ---
 
@@ -145,9 +335,9 @@ Shared tables are accessible to all users with centralized storage.
 
 ```sql
 CREATE SHARED TABLE [<namespace>.]<table_name> (
-  <column_name> <data_type> [NOT NULL],
+  <column_name> <data_type> [NOT NULL] [DEFAULT <value|function>],
   ...
-) FLUSH POLICY <policy>;
+) [STORAGE <storage_id>] [FLUSH <flush_policy>];
 ```
 
 **Examples**:
@@ -156,15 +346,21 @@ CREATE SHARED TABLE [<namespace>.]<table_name> (
 CREATE SHARED TABLE app.config (
   config_key TEXT NOT NULL,
   config_value TEXT,
-  updated_at TIMESTAMP
-) FLUSH POLICY ROW_LIMIT 100;
+  updated_at TIMESTAMP DEFAULT NOW()
+) STORAGE local FLUSH ROW_THRESHOLD 100;
 
--- Shared analytics
+-- Shared analytics with combined flush
 CREATE SHARED TABLE app.global_metrics (
   metric_name TEXT NOT NULL,
   value DOUBLE,
-  timestamp TIMESTAMP
-) FLUSH POLICY TIME_INTERVAL 60;
+  timestamp TIMESTAMP DEFAULT NOW()
+) STORAGE s3_shared FLUSH INTERVAL 60s ROW_THRESHOLD 1000;
+
+-- Simple shared table (no auto-flush)
+CREATE SHARED TABLE app.settings (
+  setting_key TEXT NOT NULL,
+  setting_value TEXT
+) STORAGE local;
 ```
 
 **System Columns** (automatically added):
@@ -173,7 +369,8 @@ CREATE SHARED TABLE app.global_metrics (
 
 **Storage**:
 - Hot tier: `RocksDB column family: shared_table:{table_name}`
-- Cold tier: `{storage_path}/shared/{table_name}/batch-*.parquet`
+- Cold tier (after flush): `{storage_path}/shared/{namespace}/{table_name}/batch-{timestamp}-{uuid}.parquet`
+- Accessible to all users (no per-user isolation)
 
 ---
 
@@ -461,6 +658,136 @@ SELECT * FROM app.messages WHERE _deleted = true;
 - Queries read from both hot (RocksDB) and cold (Parquet) storage
 - DataFusion optimizes query execution (projection pushdown, filter pushdown, etc.)
 - For user tables: Automatically filtered by current user's data
+
+---
+
+## Manual Flushing
+
+Manual flushing allows you to explicitly trigger the flush of data from RocksDB (hot tier) to Parquet files (cold tier) without waiting for automatic flush policies.
+
+### FLUSH TABLE
+
+```sql
+FLUSH TABLE [<namespace>.]<table_name>;
+```
+
+**Behavior**:
+- Triggers asynchronous flush job (returns immediately with job_id)
+- Flush executes in background via JobManager
+- Only works for USER and SHARED tables (not STREAM tables)
+- Prevents concurrent flushes on the same table
+
+**Examples**:
+```sql
+-- Flush a user table
+FLUSH TABLE app.messages;
+
+-- Flush a shared table
+FLUSH TABLE app.config;
+```
+
+**Response**:
+```json
+{
+  "status": "success",
+  "message": "Flush started for table 'app.messages'. Job ID: flush-messages-1761332099970-f14aa44d"
+}
+```
+
+**Job Tracking**:
+```sql
+-- Check job status
+SELECT job_id, status, result, created_at, completed_at
+FROM system.jobs
+WHERE job_id = 'flush-messages-1761332099970-f14aa44d';
+
+-- View all flush jobs
+SELECT * FROM system.jobs
+WHERE job_id LIKE 'flush-%'
+ORDER BY created_at DESC;
+```
+
+---
+
+### FLUSH ALL TABLES
+
+```sql
+FLUSH ALL TABLES IN <namespace>;
+```
+
+**Behavior**:
+- Triggers flush for all USER and SHARED tables in namespace
+- Each table gets its own async flush job
+- Returns array of job_ids (one per table)
+
+**Examples**:
+```sql
+-- Flush all tables in app namespace
+FLUSH ALL TABLES IN app;
+
+-- Flush all tables in production namespace
+FLUSH ALL TABLES IN production;
+```
+
+**Response**:
+```json
+{
+  "status": "success",
+  "message": "Flush started for 3 table(s) in namespace 'app'. Job IDs: [flush-messages-..., flush-config-..., flush-logs-...]"
+}
+```
+
+---
+
+### FLUSH Restrictions
+
+**Stream Tables**:
+```sql
+FLUSH TABLE app.live_events;
+-- ERROR: Cannot flush stream table 'app.live_events'. Only user and shared tables support flushing.
+```
+
+**Concurrent Flush Detection**:
+```sql
+-- First flush
+FLUSH TABLE app.messages;
+-- Returns: job_id_1
+
+-- Immediate second flush (before first completes)
+FLUSH TABLE app.messages;
+-- ERROR: Flush job already running for table 'app.messages'
+-- Or returns different job_id if first flush completed
+```
+
+**Non-Existent Table**:
+```sql
+FLUSH TABLE app.nonexistent;
+-- ERROR: Table 'app.nonexistent' does not exist
+```
+
+---
+
+### KILL JOB
+
+Cancel a running flush job:
+
+```sql
+KILL JOB '<job_id>';
+```
+
+**Examples**:
+```sql
+-- Cancel a specific flush job
+KILL JOB 'flush-messages-1761332099970-f14aa44d';
+
+-- Response
+-- "Job 'flush-messages-...' has been cancelled"
+```
+
+**Notes**:
+- Only works for jobs in 'pending' or 'running' state
+- Completed/failed jobs cannot be killed
+- Job status updated to 'cancelled' in system.jobs
 
 ---
 
@@ -1277,30 +1604,41 @@ See [ADR-012: sqlparser-rs Integration](adrs/ADR-012-sqlparser-integration.md) f
 -- 1. Create namespace
 CREATE NAMESPACE app;
 
--- 2. Create user table
+-- 2. Create storage (optional, 'local' is default)
+CREATE STORAGE s3_prod
+TYPE s3
+PATH 's3://my-bucket/kalamdb-data'
+CREDENTIALS '{
+  "access_key_id": "AKIAIOSFODNN7EXAMPLE",
+  "secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+  "region": "us-west-2"
+}';
+
+-- 3. Create user table with DEFAULT functions
 CREATE USER TABLE app.messages (
-  id BIGINT NOT NULL,
+  id BIGINT DEFAULT SNOWFLAKE_ID(),
   content TEXT,
   author TEXT,
-  timestamp TIMESTAMP
-) FLUSH POLICY ROW_LIMIT 1000;
+  created_at TIMESTAMP DEFAULT NOW()
+) STORAGE local FLUSH INTERVAL 300s ROW_THRESHOLD 1000;
 
--- 3. Create shared table
+-- 4. Create shared table
 CREATE SHARED TABLE app.config (
   config_key TEXT NOT NULL,
-  config_value TEXT
-) FLUSH POLICY ROW_LIMIT 100;
+  config_value TEXT,
+  updated_at TIMESTAMP DEFAULT NOW()
+) STORAGE local FLUSH ROW_THRESHOLD 100;
 
--- 4. Create stream table
+-- 5. Create stream table
 CREATE STREAM TABLE app.events (
   event_id TEXT NOT NULL,
   event_type TEXT,
-  payload TEXT
+  payload TEXT,
+  timestamp TIMESTAMP DEFAULT NOW()
 ) RETENTION 10 EPHEMERAL MAX_BUFFER 5000;
 
--- 5. Insert data
-INSERT INTO app.messages (id, content, author, timestamp)
-VALUES (1, 'Hello World', 'alice', NOW());
+-- 6. Insert data (using DEFAULT functions)
+INSERT INTO app.messages2 (content, author) VALUES ('Hello World', 'alice');
 
 INSERT INTO app.config (config_key, config_value)
 VALUES ('app_name', 'KalamDB');
@@ -1308,33 +1646,50 @@ VALUES ('app_name', 'KalamDB');
 INSERT INTO app.events (event_id, event_type, payload)
 VALUES ('evt_123', 'user_action', '{"action":"click"}');
 
--- 6. Query data
+-- 7. Query data
 SELECT * FROM app.messages
-WHERE timestamp > NOW() - INTERVAL '1 hour'
-ORDER BY timestamp DESC;
+WHERE created_at > NOW() - INTERVAL '1 hour'
+ORDER BY created_at DESC;
 
 SELECT * FROM app.config WHERE config_key = 'app_name';
 
 SELECT * FROM app.events LIMIT 10;
 
--- 7. Update data
+-- 8. Update data
 UPDATE app.messages SET content = 'Updated' WHERE id = 1;
 
--- 8. Schema evolution
+-- 9. Schema evolution
 ALTER TABLE app.messages ADD COLUMN reaction TEXT;
 
--- 9. Backup
+-- 10. Manual flush
+FLUSH TABLE app.messages;
+
+-- Check flush job status
+SELECT job_id, status, result 
+FROM system.jobs 
+WHERE job_id LIKE 'flush-messages-%' 
+ORDER BY created_at DESC 
+LIMIT 1;
+
+-- 11. Subscribe to live changes (WebSocket)
+SUBSCRIBE TO app.messages 
+WHERE author = 'alice' 
+OPTIONS (last_rows=10);
+
+-- 12. Backup
 BACKUP DATABASE app TO '/backups/app-snapshot';
 
--- 10. Catalog browsing
+-- 13. Catalog browsing
+SHOW STORAGES;
 SHOW TABLES IN app;
 DESCRIBE TABLE app.messages;
 SHOW STATS FOR TABLE app.messages;
 
--- 11. Cleanup
+-- 14. Cleanup
 DROP TABLE app.events;
 DROP TABLE app.messages;
 DROP TABLE app.config;
+DROP STORAGE s3_prod;
 DROP NAMESPACE app;
 ```
 

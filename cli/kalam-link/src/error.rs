@@ -137,10 +137,7 @@ mod tests {
             status_code: 500,
             message: "Internal server error".to_string(),
         };
-        assert_eq!(
-            err.to_string(),
-            "Server error (500): Internal server error"
-        );
+        assert_eq!(err.to_string(), "Server error (500): Internal server error");
 
         let err = KalamLinkError::Cancelled;
         assert_eq!(err.to_string(), "Operation cancelled");

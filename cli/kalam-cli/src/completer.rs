@@ -7,9 +7,9 @@
 //! Provides intelligent autocompletion for SQL keywords, table names, column names,
 //! and backslash commands with context-aware suggestions and beautiful styling.
 
+use colored::*;
 use rustyline::completion::{Completer, Pair};
 use std::collections::HashMap;
-use colored::*;
 
 /// Styled completion candidate
 #[derive(Debug, Clone)]
@@ -23,10 +23,14 @@ pub struct StyledPair {
 impl StyledPair {
     fn new(text: String, category: CompletionCategory) -> Self {
         let display = match category {
-            CompletionCategory::Keyword => format!("{}  {}", text.blue().bold(), "keyword".dimmed()),
+            CompletionCategory::Keyword => {
+                format!("{}  {}", text.blue().bold(), "keyword".dimmed())
+            }
             CompletionCategory::Table => format!("{}  {}", text.green(), "table".dimmed()),
             CompletionCategory::Column => format!("{}  {}", text.yellow(), "column".dimmed()),
-            CompletionCategory::MetaCommand => format!("{}  {}", text.cyan().bold(), "command".dimmed()),
+            CompletionCategory::MetaCommand => {
+                format!("{}  {}", text.cyan().bold(), "command".dimmed())
+            }
             CompletionCategory::Type => format!("{}  {}", text.magenta(), "type".dimmed()),
         };
 
@@ -67,24 +71,81 @@ impl AutoCompleter {
     pub fn new() -> Self {
         let mut keywords = vec![
             // DML
-            "SELECT", "INSERT", "UPDATE", "DELETE", "FROM", "WHERE", "JOIN", "ON", "AND", "OR",
-            "NOT", "IN", "LIKE", "BETWEEN", "IS", "NULL", "AS", "ORDER", "BY", "GROUP", "HAVING",
-            "LIMIT", "OFFSET", "DISTINCT", "VALUES", "SET",
+            "SELECT",
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "FROM",
+            "WHERE",
+            "JOIN",
+            "ON",
+            "AND",
+            "OR",
+            "NOT",
+            "IN",
+            "LIKE",
+            "BETWEEN",
+            "IS",
+            "NULL",
+            "AS",
+            "ORDER",
+            "BY",
+            "GROUP",
+            "HAVING",
+            "LIMIT",
+            "OFFSET",
+            "DISTINCT",
+            "VALUES",
+            "SET",
             // DDL
-            "CREATE", "DROP", "ALTER", "TABLE", "INDEX", "VIEW", "DATABASE", "SCHEMA",
+            "CREATE",
+            "DROP",
+            "ALTER",
+            "TABLE",
+            "INDEX",
+            "VIEW",
+            "DATABASE",
+            "SCHEMA",
             // Constraints
-            "PRIMARY", "KEY", "FOREIGN", "REFERENCES", "UNIQUE", "NOT", "NULL", "DEFAULT",
-            "CHECK", "AUTO_INCREMENT",
+            "PRIMARY",
+            "KEY",
+            "FOREIGN",
+            "REFERENCES",
+            "UNIQUE",
+            "NOT",
+            "NULL",
+            "DEFAULT",
+            "CHECK",
+            "AUTO_INCREMENT",
             // Functions
-            "COUNT", "SUM", "AVG", "MIN", "MAX", "COALESCE", "CAST", "CONCAT", "LENGTH",
-            "UPPER", "LOWER", "TRIM", "NOW", "CURRENT_TIMESTAMP",
+            "COUNT",
+            "SUM",
+            "AVG",
+            "MIN",
+            "MAX",
+            "COALESCE",
+            "CAST",
+            "CONCAT",
+            "LENGTH",
+            "UPPER",
+            "LOWER",
+            "TRIM",
+            "NOW",
+            "CURRENT_TIMESTAMP",
         ]
         .iter()
         .map(|s| s.to_string())
         .collect::<Vec<String>>();
 
         let types = vec![
-            "INTEGER", "BIGINT", "TEXT", "VARCHAR", "BOOLEAN", "TIMESTAMP", "FLOAT", "DOUBLE",
+            "INTEGER",
+            "BIGINT",
+            "TEXT",
+            "VARCHAR",
+            "BOOLEAN",
+            "TIMESTAMP",
+            "FLOAT",
+            "DOUBLE",
             "JSON",
         ];
         keywords.extend(types.iter().map(|s| s.to_string()));
@@ -138,21 +199,23 @@ impl AutoCompleter {
     /// Detect completion context from the line
     fn detect_context(&self, line: &str) -> CompletionContext {
         let line_upper = line.to_uppercase();
-        
+
         // Check if we're after FROM or JOIN (table name context)
         if line_upper.contains(" FROM ") || line_upper.contains(" JOIN ") {
             // Check if there's a dot (table.column context)
             if let Some(dot_pos) = line.rfind('.') {
                 // Extract table name before the dot
                 let before_dot = &line[..dot_pos];
-                if let Some(word_start) = before_dot.rfind(|c: char| c.is_whitespace() || c == '(' || c == ',') {
+                if let Some(word_start) =
+                    before_dot.rfind(|c: char| c.is_whitespace() || c == '(' || c == ',')
+                {
                     let table_name = before_dot[word_start + 1..].trim().to_string();
                     return CompletionContext::Column(table_name);
                 }
             }
             return CompletionContext::Table;
         }
-        
+
         // Default to keyword/table mixed context
         CompletionContext::Mixed
     }
@@ -166,14 +229,17 @@ impl AutoCompleter {
         if input.starts_with('\\') {
             for cmd in &self.meta_commands {
                 if cmd.to_uppercase().starts_with(&input_upper) {
-                    results.push(StyledPair::new(cmd.clone(), CompletionCategory::MetaCommand));
+                    results.push(StyledPair::new(
+                        cmd.clone(),
+                        CompletionCategory::MetaCommand,
+                    ));
                 }
             }
             return results;
         }
 
         let context = self.detect_context(line);
-        
+
         match context {
             CompletionContext::Table => {
                 // Only suggest table names
@@ -224,7 +290,15 @@ impl AutoCompleter {
     fn is_type(word: &str) -> bool {
         matches!(
             word,
-            "INTEGER" | "BIGINT" | "TEXT" | "VARCHAR" | "BOOLEAN" | "TIMESTAMP" | "FLOAT" | "DOUBLE" | "JSON"
+            "INTEGER"
+                | "BIGINT"
+                | "TEXT"
+                | "VARCHAR"
+                | "BOOLEAN"
+                | "TIMESTAMP"
+                | "FLOAT"
+                | "DOUBLE"
+                | "JSON"
         )
     }
 }
@@ -319,7 +393,10 @@ mod tests {
     fn test_column_completion() {
         let mut completer = AutoCompleter::new();
         completer.set_tables(vec!["users".to_string()]);
-        completer.set_columns("users".to_string(), vec!["id".to_string(), "name".to_string(), "email".to_string()]);
+        completer.set_columns(
+            "users".to_string(),
+            vec!["id".to_string(), "name".to_string(), "email".to_string()],
+        );
 
         // After table., should suggest columns (with FROM keyword present)
         let completions = completer.get_styled_completions("na", "SELECT users.na FROM users");

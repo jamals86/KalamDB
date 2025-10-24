@@ -11,7 +11,6 @@
 /// ```bash
 /// cargo run --example simple_query
 /// ```
-
 use kalam_link::{KalamLinkClient, KalamLinkError};
 
 #[tokio::main]
@@ -56,9 +55,7 @@ async fn main() -> Result<(), KalamLinkError> {
 
     // Example 4: Query data
     println!("\n4️⃣ Querying all users...");
-    let response = client
-        .execute_query("SELECT * FROM example.users")
-        .await?;
+    let response = client.execute_query("SELECT * FROM example.users").await?;
 
     println!("   Status: {}", response.status);
     if let Some(exec_time) = response.execution_time_ms {
@@ -91,7 +88,9 @@ async fn main() -> Result<(), KalamLinkError> {
     // Example 6: Update data
     println!("\n6️⃣ Updating alice's email...");
     let response = client
-        .execute_query("UPDATE example.users SET email = 'alice.updated@example.com' WHERE username = 'alice'")
+        .execute_query(
+            "UPDATE example.users SET email = 'alice.updated@example.com' WHERE username = 'alice'",
+        )
         .await?;
     println!("   Status: {}", response.status);
 
@@ -105,7 +104,9 @@ async fn main() -> Result<(), KalamLinkError> {
     // Example 8: Query system tables
     println!("\n8️⃣ Querying system tables...");
     let response = client
-        .execute_query("SELECT table_name, table_type FROM system.tables WHERE namespace = 'example'")
+        .execute_query(
+            "SELECT table_name, table_type FROM system.tables WHERE namespace = 'example'",
+        )
         .await?;
 
     println!("   Status: {}", response.status);
@@ -131,14 +132,10 @@ async fn main() -> Result<(), KalamLinkError> {
 
     // Example 10: Cleanup
     println!("\n🔟 Cleaning up...");
-    let response = client
-        .execute_query("DROP TABLE example.users")
-        .await?;
+    let response = client.execute_query("DROP TABLE example.users").await?;
     println!("   Status: {}", response.status);
 
-    let response = client
-        .execute_query("DROP NAMESPACE example")
-        .await?;
+    let response = client.execute_query("DROP NAMESPACE example").await?;
     println!("   Status: {}", response.status);
 
     println!("\n✅ Example completed successfully!");

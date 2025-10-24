@@ -71,9 +71,11 @@ pub mod subscription;
 pub use auth::AuthProvider;
 pub use client::KalamLinkClient;
 pub use error::{KalamLinkError, Result};
-pub use models::{ChangeEvent, ErrorDetail, HealthCheckResponse, QueryRequest, QueryResponse};
+pub use models::{
+    ChangeEvent, ErrorDetail, HealthCheckResponse, QueryRequest, QueryResponse, SubscriptionOptions,
+};
 pub use query::QueryExecutor;
-pub use subscription::SubscriptionManager;
+pub use subscription::{SubscriptionConfig, SubscriptionManager};
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

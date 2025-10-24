@@ -30,6 +30,8 @@
 - US8 (Docs & Docker): T386-T409
 - Polish & Cross-Cutting: T410-T426
 - US13 (Operational Improvements): T427-T464
+- US15 (Enhanced information_schema): T465-T493
+- US16 (Data Type Standardization): T494-T630
 
 ## Phase 2a Status: ✅ SQL Parser Consolidation COMPLETE
 
@@ -764,6 +766,237 @@ Table metadata storage consolidated from fragmented approach (system_tables + sy
 - [ ] T580 [P] [US15] Document information_schema.tables architecture in `/docs/architecture/system-tables-schema.md` (unified TableDefinition with ordinal_position in columns array)
 
 **Checkpoint**: Schema integrity features complete - DEFAULT NOW(), DEFAULT ID functions (SNOWFLAKE_ID/UUID_V7/ULID), NOT NULL enforcement, column order preservation
+
+---
+
+## Phase 2c: User Story 16 - Data Type Standardization and Complete Flush Support (Priority: P1) 🔴 FOUNDATIONAL
+
+**Goal**: Establish canonical KalamDB type system with 10 basic types, implement centralized type handling in kalamdb-commons/src/types/, fix flush operation to support all types (TIMESTAMP, DOUBLE, DATE, TIME, JSON, BYTES), ensure complete parity across CREATE TABLE, INSERT, flush, and query operations.
+
+**Root Cause**: SQL parser supports 30+ types but flush only handles 3 (Utf8, Int64, Boolean), causing flush failures for TIMESTAMP and other valid types.
+
+**Independent Test**: Create table with all 10 types, insert data, flush to Parquet, query flushed data, verify type preservation across full lifecycle. Test with various timezones, UTF-8 encodings, and edge cases.
+
+### Integration Tests for User Story 16
+
+#### Core Type System Tests (test_data_type_core.rs)
+
+- [ ] T494 [P] [US16] Create `/backend/tests/integration/test_data_type_core.rs` test file
+- [ ] T495 [P] [US16] test_kalamdb_type_enum_complete: Verify all 10 types defined in KalamDbType enum
+- [ ] T496 [P] [US16] test_arrow_type_conversion_roundtrip: For each type, convert KalamDbType→Arrow→KalamDbType, verify identity
+- [ ] T497 [P] [US16] test_sql_type_aliases_all_recognized: Test all aliases (BOOL→Boolean, INT4→Int, VARCHAR→Text, etc.)
+- [ ] T498 [P] [US16] test_unsupported_type_rejection: Attempt CREATE TABLE with DECIMAL, FLOAT, SMALLINT, verify helpful error
+- [ ] T499 [P] [US16] test_type_tag_bytes_unique: Verify all 10 type tags (0x01-0x0A) are unique and 0xFF reserved for NULL
+
+#### RocksDB Storage Tests (test_data_type_rocksdb.rs)
+
+- [ ] T500 [P] [US16] Create `/backend/tests/integration/test_data_type_rocksdb.rs` test file
+- [ ] T501 [P] [US16] test_rocksdb_boolean_encoding: Insert true/false, verify [0x01][0x01/0x00] encoding
+- [ ] T502 [P] [US16] test_rocksdb_int_encoding: Insert INT values (-2147483648, 0, 2147483647), verify [0x02][4 bytes LE]
+- [ ] T503 [P] [US16] test_rocksdb_bigint_encoding: Insert BIGINT values (MIN, 0, MAX), verify [0x03][8 bytes LE]
+- [ ] T504 [P] [US16] test_rocksdb_double_encoding: Insert DOUBLE (3.14159, -2.71828, 0.0), verify [0x04][8 bytes LE]
+- [ ] T505 [P] [US16] test_rocksdb_text_encoding: Insert TEXT ('hello', '世界', '🚀'), verify [0x05][len][UTF-8]
+- [ ] T506 [P] [US16] test_rocksdb_text_utf8_emojis: Insert emojis (👨‍👩‍👧‍👦, 🌈, ✨), verify correct byte length
+- [ ] T507 [P] [US16] test_rocksdb_text_utf8_multibyte: Insert Arabic (مرحبا), Chinese (你好), Hebrew (שלום), verify encoding
+- [ ] T508 [P] [US16] test_rocksdb_text_utf8_combining: Insert combining characters (é vs e+´), verify normalization
+- [ ] T509 [P] [US16] test_rocksdb_timestamp_encoding: Insert TIMESTAMP, verify [0x06][8 bytes microseconds LE]
+- [ ] T510 [P] [US16] test_rocksdb_date_encoding: Insert DATE ('2025-10-24'), verify [0x07][4 bytes days LE]
+- [ ] T511 [P] [US16] test_rocksdb_time_encoding: Insert TIME ('14:30:00.123456'), verify [0x08][8 bytes microseconds LE]
+- [ ] T512 [P] [US16] test_rocksdb_json_encoding: Insert JSON ('{"key":"value"}'), verify [0x09][len][JSON text]
+- [ ] T513 [P] [US16] test_rocksdb_bytes_encoding: Insert BYTES (0xDEADBEEF), verify [0x0A][len][raw bytes]
+- [ ] T514 [P] [US16] test_rocksdb_null_encoding: Insert NULL values for each type, verify [0xFF] tag
+- [ ] T515 [P] [US16] test_rocksdb_decode_type_safety: Decode each type tag, verify correct KalamDbType returned
+- [ ] T516 [P] [US16] test_rocksdb_roundtrip_all_types: Insert→Encode→Decode→Verify for all 10 types
+- [ ] T517 [P] [US16] test_rocksdb_encoding_deterministic: Insert same value twice, verify identical byte sequences
+
+#### INSERT and Query Tests (test_data_type_insert_query.rs)
+
+- [ ] T518 [P] [US16] Create `/backend/tests/integration/test_data_type_insert_query.rs` test file
+- [ ] T519 [P] [US16] test_insert_query_boolean: INSERT true/false, SELECT, verify values match
+- [ ] T520 [P] [US16] test_insert_query_int: INSERT INT (-2147483648, 0, 2147483647), SELECT, verify
+- [ ] T521 [P] [US16] test_insert_query_bigint: INSERT BIGINT (MIN, 0, MAX), SELECT, verify
+- [ ] T522 [P] [US16] test_insert_query_double: INSERT DOUBLE (3.14159, -2.71828, 1.23e-10), SELECT, verify
+- [ ] T523 [P] [US16] test_insert_query_double_special: INSERT Inf, -Inf, NaN, verify handling
+- [ ] T524 [P] [US16] test_insert_query_text: INSERT TEXT ('hello world', ''), SELECT, verify
+- [ ] T525 [P] [US16] test_insert_query_text_unicode: INSERT Arabic/Chinese/Hebrew/Emoji, SELECT, verify
+- [ ] T526 [P] [US16] test_insert_query_text_long: INSERT 10MB text, SELECT, verify (stress test)
+- [ ] T527 [P] [US16] test_insert_query_timestamp_now: INSERT with NOW(), SELECT, verify within 1 second
+- [ ] T528 [P] [US16] test_insert_query_timestamp_explicit: INSERT '2025-10-24T14:30:00', SELECT, verify
+- [ ] T529 [P] [US16] test_insert_query_timestamp_microsecond: INSERT '2025-10-24T14:30:00.123456', verify precision
+- [ ] T530 [P] [US16] test_insert_query_timestamp_utc: INSERT '2025-10-24T14:30:00Z', verify UTC
+- [ ] T531 [P] [US16] test_insert_query_timestamp_timezone_offset: INSERT '2025-10-24T14:30:00+05:30', verify conversion
+- [ ] T532 [P] [US16] test_insert_query_timestamp_various_formats: Test ISO8601, RFC3339, SQL format parsing
+- [ ] T533 [P] [US16] test_insert_query_date: INSERT DATE '2025-10-24', SELECT, verify
+- [ ] T534 [P] [US16] test_insert_query_date_edge_cases: INSERT '1970-01-01', '2099-12-31', verify
+- [ ] T535 [P] [US16] test_insert_query_time: INSERT TIME '14:30:00.123456', SELECT, verify
+- [ ] T536 [P] [US16] test_insert_query_time_midnight: INSERT '00:00:00', '23:59:59.999999', verify
+- [ ] T537 [P] [US16] test_insert_query_json_object: INSERT JSON '{"key":"value"}', SELECT, verify
+- [ ] T538 [P] [US16] test_insert_query_json_array: INSERT JSON '[1,2,3]', SELECT, verify
+- [ ] T539 [P] [US16] test_insert_query_json_nested: INSERT complex nested JSON, SELECT, verify
+- [ ] T540 [P] [US16] test_insert_query_json_validation: INSERT invalid JSON, verify error before storage
+- [ ] T541 [P] [US16] test_insert_query_bytes_hex: INSERT 0xDEADBEEF, SELECT, verify
+- [ ] T542 [P] [US16] test_insert_query_bytes_base64: INSERT base64 data, SELECT, verify
+- [ ] T543 [P] [US16] test_insert_query_null_all_types: INSERT NULL for each type, SELECT, verify NULL returned
+- [ ] T544 [P] [US16] test_insert_query_all_10_types: Create table with all types, INSERT, SELECT, verify all
+
+#### Flush to Parquet Tests (test_data_type_flush.rs)
+
+- [ ] T545 [P] [US16] Create `/backend/tests/integration/test_data_type_flush.rs` test file
+- [ ] T546 [P] [US16] test_flush_boolean_to_parquet: Insert BOOLEAN, flush, verify BooleanArray in Parquet
+- [ ] T547 [P] [US16] test_flush_int_to_parquet: Insert INT, flush, verify Int32Array in Parquet
+- [ ] T548 [P] [US16] test_flush_bigint_to_parquet: Insert BIGINT, flush, verify Int64Array in Parquet
+- [ ] T549 [P] [US16] test_flush_double_to_parquet: Insert DOUBLE, flush, verify Float64Array in Parquet
+- [ ] T550 [P] [US16] test_flush_text_to_parquet: Insert TEXT (ASCII + Unicode), flush, verify StringArray
+- [ ] T551 [P] [US16] test_flush_text_utf8_preservation: Insert emojis/Arabic/Chinese, flush, verify no corruption
+- [ ] T552 [P] [US16] test_flush_timestamp_microsecond: Insert TIMESTAMP, flush, verify TimestampMicrosecondArray
+- [ ] T553 [P] [US16] test_flush_timestamp_utc_normalized: Insert mixed timezone timestamps, flush, verify UTC normalization
+- [ ] T554 [P] [US16] test_flush_date_to_parquet: Insert DATE, flush, verify Date32Array
+- [ ] T555 [P] [US16] test_flush_time_to_parquet: Insert TIME, flush, verify Time64MicrosecondArray
+- [ ] T556 [P] [US16] test_flush_json_as_text: Insert JSON, flush, verify stored as StringArray
+- [ ] T557 [P] [US16] test_flush_bytes_to_parquet: Insert BYTES, flush, verify BinaryArray
+- [ ] T558 [P] [US16] test_flush_null_bitmap: Insert mix of values and NULLs, flush, verify Arrow null bitmap
+- [ ] T559 [P] [US16] test_flush_all_10_types_combined: Create table with all types, insert 100 rows, flush, verify all arrays
+- [ ] T560 [P] [US16] test_flush_shared_table_all_types: Create SHARED TABLE with all types, flush, verify same behavior
+- [ ] T561 [P] [US16] test_flush_stream_table_all_types: Create STREAM TABLE with all types, flush, verify same behavior
+
+#### Parquet to Query Roundtrip Tests (test_data_type_roundtrip.rs)
+
+- [ ] T562 [P] [US16] Create `/backend/tests/integration/test_data_type_roundtrip.rs` test file
+- [ ] T563 [P] [US16] test_roundtrip_boolean: Insert→Flush→Query, verify BOOLEAN values exact match
+- [ ] T564 [P] [US16] test_roundtrip_int: Insert→Flush→Query, verify INT values exact match
+- [ ] T565 [P] [US16] test_roundtrip_bigint: Insert→Flush→Query, verify BIGINT values exact match
+- [ ] T566 [P] [US16] test_roundtrip_double: Insert→Flush→Query, verify DOUBLE values within epsilon
+- [ ] T567 [P] [US16] test_roundtrip_text: Insert→Flush→Query, verify TEXT (Unicode) exact match
+- [ ] T568 [P] [US16] test_roundtrip_timestamp: Insert→Flush→Query, verify TIMESTAMP microsecond precision
+- [ ] T569 [P] [US16] test_roundtrip_timestamp_timezone: Insert with timezone→Flush→Query, verify UTC conversion
+- [ ] T570 [P] [US16] test_roundtrip_date: Insert→Flush→Query, verify DATE exact match
+- [ ] T571 [P] [US16] test_roundtrip_time: Insert→Flush→Query, verify TIME microsecond precision
+- [ ] T572 [P] [US16] test_roundtrip_json: Insert→Flush→Query, verify JSON text exact match
+- [ ] T573 [P] [US16] test_roundtrip_bytes: Insert→Flush→Query, verify BYTES exact match
+- [ ] T574 [P] [US16] test_roundtrip_null_preservation: Insert NULLs→Flush→Query, verify NULL for all types
+- [ ] T575 [P] [US16] test_roundtrip_all_10_types_1000_rows: Insert 1000 rows with all types, flush, query, verify all
+
+#### Edge Cases and Error Handling Tests (test_data_type_edge_cases.rs)
+
+- [ ] T576 [P] [US16] Create `/backend/tests/integration/test_data_type_edge_cases.rs` test file
+- [ ] T577 [P] [US16] test_int_overflow: INSERT INT value > INT32_MAX, verify error "INT value out of range"
+- [ ] T578 [P] [US16] test_int_underflow: INSERT INT value < INT32_MIN, verify error
+- [ ] T579 [P] [US16] test_bigint_max_value: INSERT INT64_MAX, verify accepted
+- [ ] T580 [P] [US16] test_double_infinity: INSERT Inf/-Inf, verify storage and retrieval
+- [ ] T581 [P] [US16] test_double_nan: INSERT NaN, verify storage (or rejection with clear error)
+- [ ] T582 [P] [US16] test_text_empty_string: INSERT '', verify stored and retrieved as empty
+- [ ] T583 [P] [US16] test_text_whitespace_only: INSERT '   ', verify preserved
+- [ ] T584 [P] [US16] test_text_null_byte: INSERT 'hello\0world', verify handling or error
+- [ ] T585 [P] [US16] test_timestamp_year_1970: INSERT '1970-01-01T00:00:00', verify epoch handling
+- [ ] T586 [P] [US16] test_timestamp_year_2100: INSERT '2100-12-31T23:59:59', verify far future
+- [ ] T587 [P] [US16] test_timestamp_invalid_format: INSERT 'not-a-timestamp', verify error message
+- [ ] T588 [P] [US16] test_date_invalid_format: INSERT 'invalid-date', verify error
+- [ ] T589 [P] [US16] test_time_invalid_format: INSERT '25:00:00', verify error
+- [ ] T590 [P] [US16] test_json_deeply_nested: INSERT JSON with 100 levels, verify or error
+- [ ] T591 [P] [US16] test_json_large_array: INSERT JSON array with 10000 elements, verify
+- [ ] T592 [P] [US16] test_bytes_max_size: INSERT 16MB BYTES, verify or document limit
+- [ ] T593 [P] [US16] test_bytes_empty: INSERT 0x (empty bytes), verify stored as empty
+
+#### Timezone Handling Tests (test_data_type_timezones.rs)
+
+- [ ] T594 [P] [US16] Create `/backend/tests/integration/test_data_type_timezones.rs` test file
+- [ ] T595 [P] [US16] test_timestamp_utc_z_suffix: INSERT '2025-10-24T14:30:00Z', verify Z parsed as UTC
+- [ ] T596 [P] [US16] test_timestamp_utc_plus_zero: INSERT '2025-10-24T14:30:00+00:00', verify same as Z
+- [ ] T597 [P] [US16] test_timestamp_offset_positive: INSERT '2025-10-24T20:00:00+05:30' (IST), verify UTC conversion
+- [ ] T598 [P] [US16] test_timestamp_offset_negative: INSERT '2025-10-24T09:30:00-05:00' (EST), verify UTC conversion
+- [ ] T599 [P] [US16] test_timestamp_no_timezone: INSERT '2025-10-24T14:30:00' (naive), verify stored as-is
+- [ ] T600 [P] [US16] test_timestamp_mixed_timezones: INSERT rows with different TZ, flush, query, verify all UTC
+- [ ] T601 [P] [US16] test_timestamp_dst_boundary: INSERT during DST transition, verify correct conversion
+- [ ] T602 [P] [US16] test_timestamp_leap_second: INSERT '2025-06-30T23:59:60', verify handling
+
+### Implementation Tasks for User Story 16
+
+#### Phase 1: Centralized Type System
+
+- [ ] T603 [P] [US16] Create `/backend/crates/kalamdb-commons/src/types/` directory
+- [ ] T604 [P] [US16] Create `types/mod.rs` with public API exports and module documentation
+- [ ] T605 [P] [US16] Create `types/core.rs` with KalamDbType enum (10 variants: Boolean, Int, BigInt, Double, Text, Timestamp, Date, Time, Json, Bytes)
+- [ ] T606 [P] [US16] Implement `KalamDbType::sql_name()` returning canonical SQL type name
+- [ ] T607 [P] [US16] Implement `KalamDbType::sql_aliases()` returning array of all aliases
+- [ ] T608 [P] [US16] Add rustdoc to KalamDbType explaining each variant with examples
+
+#### Phase 2: Type Conversions
+
+- [ ] T609 [P] [US16] Create `types/conversions.rs` with ArrowTypeConverter trait
+- [ ] T610 [P] [US16] Implement `KalamDbType::to_arrow()` for all 10 types with correct Arrow types
+- [ ] T611 [P] [US16] Implement `KalamDbType::from_arrow()` with validation and helpful error messages
+- [ ] T612 [P] [US16] Add unit tests for to_arrow() covering all 10 types
+- [ ] T613 [P] [US16] Add unit tests for from_arrow() covering all 10 types + unsupported type rejection
+- [ ] T614 [P] [US16] Implement SqlTypeConverter trait for sqlparser::ast::DataType → KalamDbType
+
+#### Phase 3: RocksDB Codec
+
+- [ ] T615 [P] [US16] Create `types/codec.rs` with encode_value() and decode_value() functions
+- [ ] T616 [P] [US16] Define type tag constants (BOOLEAN=0x01, INT=0x02, ..., BYTES=0x0A, NULL=0xFF)
+- [ ] T617 [P] [US16] Implement encode_value() for BOOLEAN: [0x01][0x00 or 0x01]
+- [ ] T618 [P] [US16] Implement encode_value() for INT: [0x02][4 bytes i32 LE]
+- [ ] T619 [P] [US16] Implement encode_value() for BIGINT: [0x03][8 bytes i64 LE]
+- [ ] T620 [P] [US16] Implement encode_value() for DOUBLE: [0x04][8 bytes f64 LE]
+- [ ] T621 [P] [US16] Implement encode_value() for TEXT: [0x05][4 bytes len LE][UTF-8 bytes]
+- [ ] T622 [P] [US16] Implement encode_value() for TIMESTAMP: [0x06][8 bytes microseconds LE]
+- [ ] T623 [P] [US16] Implement encode_value() for DATE: [0x07][4 bytes days LE]
+- [ ] T624 [P] [US16] Implement encode_value() for TIME: [0x08][8 bytes microseconds LE]
+- [ ] T625 [P] [US16] Implement encode_value() for JSON: [0x09][4 bytes len LE][JSON text], validate JSON syntax
+- [ ] T626 [P] [US16] Implement encode_value() for BYTES: [0x0A][4 bytes len LE][raw bytes], support hex and base64
+- [ ] T627 [P] [US16] Implement encode_value() for NULL: [0xFF]
+- [ ] T628 [P] [US16] Implement decode_value() matching all 11 type tags (0x01-0x0A, 0xFF)
+- [ ] T629 [P] [US16] Add unit tests for encode/decode roundtrip for all 10 types + NULL
+- [ ] T630 [P] [US16] Add helper functions: parse_timestamp_to_microseconds(), parse_date_to_days(), parse_time_to_microseconds(), decode_hex_or_base64()
+
+#### Phase 4: Parquet Conversion
+
+- [ ] T631 [P] [US16] Create `types/parquet.rs` with JsonToArrowConverter trait
+- [ ] T632 [P] [US16] Implement json_to_arrow_array() for BOOLEAN → BooleanArray
+- [ ] T633 [P] [US16] Implement json_to_arrow_array() for INT → Int32Array
+- [ ] T634 [P] [US16] Implement json_to_arrow_array() for BIGINT → Int64Array
+- [ ] T635 [P] [US16] Implement json_to_arrow_array() for DOUBLE → Float64Array
+- [ ] T636 [P] [US16] Implement json_to_arrow_array() for TEXT → StringArray
+- [ ] T637 [P] [US16] Implement json_to_arrow_array() for TIMESTAMP → TimestampMicrosecondArray
+- [ ] T638 [P] [US16] Implement json_to_arrow_array() for DATE → Date32Array
+- [ ] T639 [P] [US16] Implement json_to_arrow_array() for TIME → Time64MicrosecondArray
+- [ ] T640 [P] [US16] Implement json_to_arrow_array() for JSON → StringArray (serialized)
+- [ ] T641 [P] [US16] Implement json_to_arrow_array() for BYTES → BinaryArray
+- [ ] T642 [P] [US16] Add NULL handling to all json_to_arrow_array() implementations
+- [ ] T643 [P] [US16] Add unit tests for json_to_arrow_array() covering all types + NULL values
+
+#### Phase 5: Validation
+
+- [ ] T644 [P] [US16] Create `types/validation.rs` with TypeValidator
+- [ ] T645 [P] [US16] Implement validate_value() for type checking (JSON value matches expected KalamDbType)
+- [ ] T646 [P] [US16] Implement validate_json_syntax() for JSON type validation
+- [ ] T647 [P] [US16] Add unit tests for validation covering all types + edge cases
+
+#### Phase 6: CREATE TABLE Integration
+
+- [ ] T648 [P] [US16] Update `kalamdb-sql/src/ddl/create_table.rs` to call KalamDbType::from_arrow() for validation
+- [ ] T649 [P] [US16] Add validate_column_types() method that validates all columns at CREATE TABLE time
+- [ ] T650 [P] [US16] Return helpful error for unsupported types: "Data type DECIMAL not supported. Use DOUBLE for floating point."
+- [ ] T651 [P] [US16] Add integration test: CREATE TABLE with DECIMAL/FLOAT/SMALLINT, verify rejection
+
+#### Phase 7: Flush Operation Integration
+
+- [ ] T652 [P] [US16] Update `/backend/crates/kalamdb-core/src/flush/user_table_flush.rs` to use centralized type system
+- [ ] T653 [P] [US16] Replace hardcoded match on DataType in rows_to_record_batch() with KalamDbType::json_to_arrow_array()
+- [ ] T654 [P] [US16] Update `/backend/crates/kalamdb-core/src/flush/shared_table_flush.rs` identically
+- [ ] T655 [P] [US16] Remove old parse_date_to_days(), parse_time_to_nanos(), etc. helper functions (now in types/)
+- [ ] T656 [P] [US16] Add error handling: If KalamDbType::from_arrow() fails, return error "Unsupported type - bug, please report"
+
+#### Phase 8: Testing and Documentation
+
+- [ ] T657 [P] [US16] Run all 137 integration tests for US16 (T494-T602 + T651)
+- [ ] T658 [P] [US16] Create `/docs/architecture/adrs/ADR-017-data-type-system.md` explaining architecture
+- [ ] T659 [P] [US16] Create `/docs/architecture/adrs/ADR-018-type-storage-encoding.md` documenting RocksDB encoding
+- [ ] T660 [P] [US16] Update `/docs/architecture/SQL_SYNTAX.md` with supported types table
+- [ ] T661 [P] [US16] Add rustdoc to types/ module explaining extension process (6-step guide)
+- [ ] T662 [P] [US16] Document timezone handling in TIMESTAMP type rustdoc
+- [ ] T663 [P] [US16] Document UTF-8 handling and emoji support in TEXT type rustdoc
+
+**Checkpoint**: All 10 data types work end-to-end (CREATE→INSERT→FLUSH→QUERY) with comprehensive test coverage (137 tests)
 
 ---
 
@@ -1885,6 +2118,43 @@ With 3+ developers after Foundational phase completes:
 - [ ] T463 [P] [US13] Document log rotation configuration in `/docs/build/DEVELOPMENT_SETUP.md`
 - [ ] T464 [P] [US13] Add /health endpoint to `/docs/architecture/API_REFERENCE.md`
 
+### Integration Tests for User Story 15
+
+- [ ] T465 [P] [US15] Create `/backend/tests/integration/test_information_schema_enhanced.rs` test file
+- [ ] T466 [P] [US15] test_information_schema_includes_user_tables: Create 3 user tables, query information_schema.tables, verify all appear
+- [ ] T467 [P] [US15] test_information_schema_includes_shared_tables: Create 2 shared tables, query information_schema.tables, verify both appear
+- [ ] T468 [P] [US15] test_information_schema_includes_stream_tables: Create stream table with TTL, verify it appears with ttl_seconds populated
+- [ ] T469 [P] [US15] test_information_schema_standard_columns: Verify presence of table_catalog, table_schema, table_name, table_type
+- [ ] T470 [P] [US15] test_information_schema_kalamdb_extensions: Verify kalamdb_table_type, storage_id, flush policies, timestamps
+- [ ] T471 [P] [US15] test_system_table_options_detailed_metadata: Create table with complex config, query system.table_options for JSON
+- [ ] T472 [P] [US15] test_information_schema_combines_all_table_types: Mix of user/shared/stream/system, verify all in single result
+- [ ] T473 [P] [US15] test_information_schema_filter_by_schema: Tables in multiple namespaces, filter by WHERE table_schema='app'
+- [ ] T474 [P] [US15] test_information_schema_null_handling: Table without flush policy, verify flush columns are NULL
+- [ ] T475 [P] [US15] test_information_schema_system_tables_marked_correctly: Verify system tables have table_type='SYSTEM TABLE'
+
+### Implementation for User Story 15
+
+- [ ] T476 [P] [US15] Create `/backend/crates/kalamdb-core/src/catalog/information_schema_tables_provider.rs`
+- [ ] T477 [US15] Implement InformationSchemaTablesProvider struct combining DataFusion + system.tables metadata
+- [ ] T478 [US15] Define standard SQL columns schema: table_catalog, table_schema, table_name, table_type
+- [ ] T479 [US15] Define KalamDB extension columns: kalamdb_table_type, storage_id, flush policies, TTL, timestamps
+- [ ] T480 [US15] Implement TableProvider trait for InformationSchemaTablesProvider
+- [ ] T481 [US15] Query system.tables and combine with DataFusion catalog metadata
+- [ ] T482 [US15] Map table types: USER/SHARED/STREAM → BASE TABLE, system → SYSTEM TABLE
+- [ ] T483 [US15] Register InformationSchemaTablesProvider in information_schema replacing default tables view
+- [ ] T484 [P] [US15] Create `system.table_options` table provider
+- [ ] T485 [US15] Define system.table_options schema: (namespace_id, table_name, option_key, option_value, value_type, description)
+- [ ] T486 [US15] Implement table_options population from system.tables metadata
+- [ ] T487 [US15] Support JSON-based flexible metadata storage for complex configurations
+- [ ] T488 [US15] Register system.table_options in system schema
+
+**Documentation Tasks for User Story 15**:
+- [ ] T489 [P] [US15] Update `/docs/architecture/SQL_SYNTAX.md` with information_schema.tables examples
+- [ ] T490 [P] [US15] Document KalamDB extension columns in SQL_SYNTAX.md
+- [ ] T491 [P] [US15] Add system.table_options usage examples
+- [ ] T492 [P] [US15] Create ADR documenting information_schema enhancement decision
+- [ ] T493 [P] [US15] Document SQL standard compliance in architecture docs
+
 ## Summary
 
 **Total Tasks**: 661+ tasks
@@ -1929,6 +2199,10 @@ With 3+ developers after Foundational phase completes:
 - US10 (User Management): 37 tasks (P2)
   - **NEW**: Role enum and access control (FR-DB-010, FR-DB-011)
 - US13 (Operational Improvements): 38 tasks (P2)
+- US15 (Enhanced information_schema): 29 tasks (P2)
+  - **NEW**: information_schema.tables combining all table types (system + user + shared + stream)
+  - **NEW**: SQL standard columns + KalamDB extension columns
+  - **NEW**: system.table_options for detailed JSON-based metadata
 - US6 (Code Quality): 19 tasks (P3)
 - US7 (Storage Abstraction): 15 tasks (P3)
 - US8 (Docs & Docker): 24 tasks (P3)

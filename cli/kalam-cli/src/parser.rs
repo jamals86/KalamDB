@@ -146,10 +146,7 @@ mod tests {
     fn test_parse_connect() {
         let parser = CommandParser::new();
         let cmd = parser.parse("\\connect http://localhost:3000").unwrap();
-        assert_eq!(
-            cmd,
-            Command::Connect("http://localhost:3000".to_string())
-        );
+        assert_eq!(cmd, Command::Connect("http://localhost:3000".to_string()));
     }
 
     #[test]

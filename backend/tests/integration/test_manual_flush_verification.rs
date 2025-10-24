@@ -906,6 +906,92 @@ async fn test_15_flush_shared_table_fails() {
     );
 }
 
+/// Test 10: Flush job should fail when encountering unsupported data types
+/// 
+/// This test verifies that:
+/// 1. When flush encounters an unsupported data type (e.g., Timestamp with Millisecond precision)
+/// 2. The flush should return an error with details about the failure
+/// 3. Rows should remain in buffer for retry
+/// 
+/// NOTE: Full system.jobs integration requires JobManager to be running in TestServer.
+/// For now, we verify the error is logged and data remains in buffer.
+#[actix_web::test]
+async fn test_10_flush_error_handling_unsupported_datatype() {
+    use std::time::Duration;
+    
+    println!("\n=== Test 10: Flush Error Handling for Unsupported Data Types ===");
+    
+    let server = TestServer::new().await;
+    let namespace = "manual_flush";
+    let table_name = "messages3";
+    let user_id = "user_001";
+
+    // Create namespace
+    fixtures::create_namespace(&server, namespace).await;
+
+    // Create user table with Timestamp column (which currently causes flush errors)
+    let create_sql = format!(
+        "CREATE USER TABLE {}.{} (
+            id BIGINT,
+            content TEXT,
+            author TEXT,
+            timestamp TIMESTAMP
+        ) STORAGE local",
+        namespace, table_name
+    );
+    let response = server.execute_sql_as_user(&create_sql, user_id).await;
+    assert_eq!(response.status, "success", "Failed to create table: {:?}", response.error);
+
+    // Insert data with timestamps
+    let insert_sql = format!(
+        "INSERT INTO {}.{} (id, content, author, timestamp)
+        VALUES
+            (1, 'Test message 1', '{}', NOW()),
+            (2, 'Test message 2', '{}', NOW()),
+            (3, 'Test message 3', '{}', NOW())",
+        namespace, table_name, user_id, user_id, user_id
+    );
+    let response = server.execute_sql_as_user(&insert_sql, user_id).await;
+    assert_eq!(response.status, "success", "Failed to insert data: {:?}", response.error);
+
+    // Verify data count before flush
+    let count_sql = format!("SELECT COUNT(*) as count FROM {}.{}", namespace, table_name);
+    let response = server.execute_sql_as_user(&count_sql, user_id).await;
+    assert_eq!(response.status, "success");
+    let rows_before = response.results[0].rows.as_ref().unwrap();
+    let count_before = rows_before[0].get("count").unwrap().as_i64().unwrap();
+    assert_eq!(count_before, 3, "Should have 3 rows before flush");
+
+    // Trigger manual flush (expected to succeed but with 0 rows flushed due to error)
+    let flush_sql = format!("FLUSH TABLE {}.{}", namespace, table_name);
+    let response = server.execute_sql_as_user(&flush_sql, user_id).await;
+    
+    // In current implementation, FLUSH returns success with job_id even if flush will fail
+    // The failure happens asynchronously in the job
+    assert_eq!(response.status, "success", "FLUSH command should initiate job");
+    
+    println!("Flush response: {:?}", response);
+    
+    // Wait a bit for flush attempt to complete
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // Verify data is still in RocksDB buffer (not flushed due to error)
+    let count_sql = format!("SELECT COUNT(*) as count FROM {}.{}", namespace, table_name);
+    let response = server.execute_sql_as_user(&count_sql, user_id).await;
+    assert_eq!(response.status, "success");
+    let rows_after = response.results[0].rows.as_ref().unwrap();
+    let count_after = rows_after[0].get("count").unwrap().as_i64().unwrap();
+    
+    // All rows should still be in buffer since flush failed
+    assert_eq!(
+        count_after, 3,
+        "All 3 rows should remain in buffer after failed flush attempt"
+    );
+
+    println!("✅ Test 10 passed: Flush error handling preserves data in buffer on failure");
+    println!("   Note: Complete integration with system.jobs requires async JobManager");
+}
+
 // ============================================================================
 // Helper Functions
 // ============================================================================

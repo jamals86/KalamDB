@@ -41,9 +41,8 @@ impl CommandHistory {
             return Ok(Vec::new());
         }
 
-        let contents = std::fs::read_to_string(&self.path).map_err(|e| {
-            CLIError::HistoryError(format!("Failed to read history file: {}", e))
-        })?;
+        let contents = std::fs::read_to_string(&self.path)
+            .map_err(|e| CLIError::HistoryError(format!("Failed to read history file: {}", e)))?;
 
         let lines: Vec<String> = contents
             .lines()
@@ -72,9 +71,8 @@ impl CommandHistory {
             .collect::<Vec<_>>()
             .join("\n");
 
-        std::fs::write(&self.path, contents).map_err(|e| {
-            CLIError::HistoryError(format!("Failed to write history file: {}", e))
-        })?;
+        std::fs::write(&self.path, contents)
+            .map_err(|e| CLIError::HistoryError(format!("Failed to write history file: {}", e)))?;
 
         Ok(())
     }
