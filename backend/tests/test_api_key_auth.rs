@@ -9,7 +9,7 @@
 #[path = "integration/common/mod.rs"]
 mod common;
 
-use common::TestServer;
+use common::{start_test_server, TestServer};
 use actix_web::test;
 use serde_json::json;
 
@@ -30,7 +30,7 @@ async fn test_localhost_bypasses_api_key() {
 
 #[actix_web::test]
 async fn test_missing_api_key_returns_401() {
-    let server = TestServer::new().await;
+    let http_server = start_test_server().await;
 
     // Make request without X-API-KEY header from non-localhost
     let req = test::TestRequest::post()
@@ -39,10 +39,9 @@ async fn test_missing_api_key_returns_401() {
         .insert_header(("X-Forwarded-For", "192.168.1.100")) // Simulate non-localhost
         .set_json(json!({
             "sql": "SELECT 1"
-        }))
-        .to_request();
+        }));
 
-    let resp = test::call_service(&server.app, req).await;
+    let resp = http_server.execute_request(req).await;
 
     // Note: This test would require modifying TestServer to support non-localhost requests
     // For now, we verify the logic exists in the handler
@@ -52,7 +51,7 @@ async fn test_missing_api_key_returns_401() {
 
 #[actix_web::test]
 async fn test_invalid_api_key_returns_401() {
-    let server = TestServer::new().await;
+    let http_server = start_test_server().await;
 
     // Make request with invalid API key
     let req = test::TestRequest::post()
@@ -62,10 +61,9 @@ async fn test_invalid_api_key_returns_401() {
         .insert_header(("X-Forwarded-For", "192.168.1.100")) // Simulate non-localhost
         .set_json(json!({
             "sql": "SELECT 1"
-        }))
-        .to_request();
+        }));
 
-    let resp = test::call_service(&server.app, req).await;
+    let resp = http_server.execute_request(req).await;
 
     // Note: Similar to above, full E2E test requires server configuration
     // The validation logic is implemented in execute_sql_v1 handler

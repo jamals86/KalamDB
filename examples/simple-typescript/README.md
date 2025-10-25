@@ -10,6 +10,55 @@ A real-time TODO application built with React, TypeScript, and KalamDB using Web
 - 🔐 **API key authentication**: Secure connection to KalamDB server
 - 🌐 **WASM-powered**: Uses KalamDB's WebAssembly client for browser compatibility
 
+## Testing
+
+The project includes comprehensive test suites to verify functionality:
+
+### Run All Tests
+
+```bash
+npm test
+```
+
+This runs both the WASM module tests and database integration tests.
+
+### WASM Module Tests
+
+```bash
+npm run test:wasm
+```
+
+Tests the KalamDB WASM client module:
+- ✅ Module initialization and loading
+- ✅ Client constructor with parameter validation
+- ✅ Connection state management
+- ✅ Error handling for invalid inputs
+- ✅ Method presence verification (8 methods)
+
+**Note:** The WASM client currently has stub implementations for HTTP methods. See `cli/kalam-link/src/wasm.rs` for implementation status.
+
+### Database Integration Tests
+
+```bash
+npm run test:db
+```
+
+Tests actual database operations with the KalamDB server:
+- ✅ INSERT operations with auto-increment IDs
+- ✅ SELECT queries with various clauses
+- ✅ UPDATE operations (modify existing rows)
+- ✅ DELETE operations (soft delete behavior)
+- ✅ COUNT aggregation queries
+- ✅ Batch INSERT (multiple rows)
+- ✅ WHERE clause filtering
+- ✅ LIKE pattern matching
+- ✅ Cleanup and verification
+
+**Known Limitations:**
+- UPDATE and DELETE return "0 rows affected" for USER tables (limitation being investigated)
+- DELETE with LIKE pattern not supported (use simple `col=value` syntax)
+- Soft delete behavior means deleted rows may still appear in queries
+
 ## Prerequisites
 
 1. **KalamDB server** must be running:

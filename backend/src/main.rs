@@ -3,12 +3,10 @@
 //! The heavy lifting (initialization, middleware wiring, graceful shutdown)
 //! lives in dedicated modules so this file remains a thin orchestrator.
 
-mod commands;
-mod config;
+use kalamdb_server::{commands, config, middleware, routes};
+
 mod lifecycle;
 mod logging;
-mod middleware;
-mod routes;
 
 use anyhow::Result;
 use config::ServerConfig;

@@ -8,8 +8,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "echo \"Run setup.sh first to create database tables\" && exit 0",
-    "test:wasm": "node test-wasm.mjs"
+    "test": "npm run test:wasm && npm run test:db",
+    "test:wasm": "node test-wasm.mjs",
+    "test:db": "node test-database.mjs"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -19,6 +20,7 @@
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
     "@vitejs/plugin-react": "^4.2.1",
+    "node-fetch": "^2.7.0",
     "typescript": "^5.3.3",
     "vite": "^5.0.8"
   }

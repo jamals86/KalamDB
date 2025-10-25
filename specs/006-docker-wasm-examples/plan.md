@@ -100,12 +100,20 @@ backend/
     └── test_soft_delete.rs      # NEW: Soft delete behavior tests
 
 cli/
-└── kalam-link/
+└── kalam-link/                  # TO BE MOVED to /link/kalam-link/ (Phase 2.5)
     ├── src/
     │   ├── wasm.rs              # NEW: WASM-specific bindings
     │   └── client.rs            # MODIFIED: Add API key + URL params
     ├── Cargo.toml               # MODIFIED: Add wasm-bindgen deps
     └── pkg/                     # NEW: wasm-pack output directory
+
+link/                            # NEW: Dual-purpose library (CLI + WASM)
+└── kalam-link/                  # MOVED from cli/kalam-link/ (Phase 2.5)
+    ├── src/
+    │   ├── wasm.rs              # WASM-specific bindings
+    │   └── client.rs            # Core client (used by CLI and WASM)
+    ├── Cargo.toml               # Dependencies for both CLI and WASM
+    └── pkg/                     # wasm-pack output for TypeScript usage
 
 examples/
 └── simple-typescript/
@@ -127,6 +135,39 @@ docker/
 └── README.md                    # NEW: Docker deployment guide
 ```
 
-**Structure Decision**: Multi-component extension of existing KalamDB structure. Modifications concentrated in backend/crates (auth + soft delete), new WASM build in cli/kalam-link, new example in examples/, and new Docker configs at backend root.
+**Structure Decision**: Multi-component extension of existing KalamDB structure. Modifications concentrated in backend/crates (auth + soft delete), new WASM build in link/kalam-link (moved from cli/), new example in examples/, and new Docker configs at backend root.
+
+---
+
+## Known Issues & Planned Fixes
+
+### Issue 1: UPDATE/DELETE Row Count Incorrect (Critical)
+
+**Problem**: UPDATE and DELETE operations return "Updated 0 row(s)" / "Deleted 0 row(s)" even when successful.
+
+**Root Cause**: Row count tracking in `backend/crates/kalamdb-core/src/sql/executor.rs` not properly incrementing counters.
+
+**Fix Plan (Phase 2.5)**:
+1. Research PostgreSQL behavior for row counts (T011A-T011B)
+2. Fix UPDATE handler counter (T011C)
+3. Fix DELETE handler counter for soft deletes (T011D)
+4. Add integration tests (T011E-T011G)
+5. Document LIKE pattern limitation (T011H)
+
+**Impact**: User confusion, non-standard SQL behavior, testing difficulties
+
+---
+
+### Issue 2: Project Structure - kalam-link Location
+
+**Problem**: `cli/kalam-link/` path implies CLI-only use, but it's actually dual-purpose (CLI dependency + standalone WASM library).
+
+**Fix Plan (Phase 2.5)**:
+- Move `cli/kalam-link/` → `/link/kalam-link/` (T011I-T011J)
+- Update all references in CLI, docs, and build scripts (T011K-T011R)
+
+**Benefits**: Clearer separation, better organization, explicit multi-purpose indication
+
+---
 
 ````

@@ -15,7 +15,8 @@
 
 This is a multi-component project:
 - `backend/crates/` - Rust backend crates
-- `cli/kalam-link/` - WASM-compiled client library
+- `link/kalam-link/` - WASM-compiled client library (dual-purpose: CLI dependency + standalone WASM)
+- `cli/kalam-cli/` - CLI tool (links to kalam-link)
 - `examples/simple-typescript/` - React example app
 - `docker/backend/` - Docker deployment files
 
@@ -47,6 +48,93 @@ This is a multi-component project:
 - [x] T011 Implement soft delete query rewriting in backend/crates/kalamdb-core/src/tables/user_table_provider.rs
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
+
+---
+
+## Phase 2.5: Core Bug Fixes and Refactoring (Critical Path)
+
+**Purpose**: Fix critical bugs in UPDATE/DELETE row count behavior and reorganize project structure
+
+**⚠️ IMPORTANT**: These fixes should be completed before widespread WASM usage to ensure correct behavior
+
+### PostgreSQL-Compatible Row Count Behavior
+
+- [x] T011A Research PostgreSQL UPDATE behavior: Does it return count when no changes? Or only when values actually change?
+- [x] T011B Research PostgreSQL DELETE behavior with soft delete: How does it report affected rows?
+- [x] T011C Fix UPDATE handler in backend/crates/kalamdb-core/src/sql/executor.rs to return actual affected row count (currently returns 0)
+- [x] T011D Fix DELETE handler in backend/crates/kalamdb-core/src/sql/executor.rs to return actual affected row count for soft deletes
+- [x] T011E Add integration test in backend/tests/ to verify UPDATE returns correct count (e.g., "Updated 1 row(s)" when updating existing row)
+- [x] T011F Add integration test in backend/tests/ to verify DELETE returns correct count (e.g., "Deleted 1 row(s)" when soft-deleting existing row)
+- [x] T011G Verify UPDATE with no actual changes (same values) follows PostgreSQL behavior (document in test)
+- [x] T011H Add support for DELETE with LIKE pattern or document limitation in error message
+
+### Project Structure Refactoring: Move kalam-link to /link
+
+**Rationale**: `kalam-link` is used both as a CLI dependency AND as a standalone WASM library for TypeScript/other languages. Moving to `/link` makes this dual-purpose clear and improves project organization.
+
+**SOLUTION: Created unified root-level workspace at repository root**
+
+Cargo requires workspace members to be hierarchically below the workspace root. Solution was to create `/Cargo.toml` at repository root that includes all backend crates, link/, and cli/kalam-cli, and remove the separate backend/ and cli/ workspaces for unified builds.
+
+**IMPROVEMENT: Simplified to cli/ and moved kalamdb-server to backend/**
+
+Following Rust best practices, moved main binaries to their directory roots:
+- `cli/kalam-cli/` → `cli/` (matches `link/` pattern)
+- `backend/crates/kalamdb-server/` → `backend/` (main server binary at workspace root, libraries in `crates/`)
+
+This matches industry patterns (e.g., cargo binary + cargo-* libraries) and makes entry points immediately discoverable.
+
+- [x] T011I Create /link directory at repository root
+- [x] T011J Move cli/kalam-link/ to /link/ (renamed directory structure)
+- [x] T011K Update cli/kalam-cli/Cargo.toml to reference ../../link as dependency path
+- [x] T011L Create root Cargo.toml workspace including backend/, link/, and cli/
+- [x] T011M Remove backend/Cargo.toml and cli/Cargo.toml workspaces (backed up as *.backup)
+- [x] T011N Verified unified workspace: `cargo clean` now cleans all projects (removed 3790 files, 2.2GiB)
+- [x] T011O Verified kalam-cli builds successfully: cargo build -p kalam-cli
+- [x] T011P Verified kalam-link builds successfully: cargo build -p kalam-link  
+- [x] T011Q Verified single target directory at root (no backend/target or cli/target)
+- [x] T011R All builds use unified /target directory for efficient caching
+- [x] T011S Move cli/kalam-cli/ to cli/ for consistency with link/
+- [x] T011T Move backend/crates/kalamdb-server/ to backend/ (main binary pattern)
+- [x] T011U Update backend/Cargo.toml paths to crates/* (from ../*) 
+- [x] T011V Update cli/Cargo.toml kalam-link path to ../link (from ../../link)
+- [x] T011W Verified complete workspace builds: cargo check --workspace (1m 20s)
+
+**Final Structure**:
+```
+/
+├── Cargo.toml (workspace root)
+├── backend/
+│   ├── Cargo.toml (kalamdb-server binary)
+│   ├── src/main.rs (server entry point)
+│   └── crates/ (supporting libraries)
+│       ├── kalamdb-commons/
+│       ├── kalamdb-core/
+│       ├── kalamdb-sql/
+│       ├── kalamdb-store/
+│       ├── kalamdb-api/
+│       └── kalamdb-live/
+├── cli/
+│   ├── Cargo.toml (kalam-cli binary)
+│   ├── src/main.rs (CLI entry point)
+│   └── tests/
+└── link/
+    ├── Cargo.toml (kalam-link library)
+    ├── src/lib.rs (Rust library)
+    └── pkg/ (WASM output)
+```
+
+**Benefits**:
+- ✅ Single `cargo clean` cleans entire project
+- ✅ Single `cargo build --workspace` builds all components
+- ✅ Unified dependency resolution and caching
+- ✅ No duplicate target directories (saves disk space)
+- ✅ Clear project structure: /backend, /link, /cli
+- ✅ **Discoverable entry points**: backend/src/main.rs and cli/src/main.rs
+- ✅ **Industry standard pattern**: Main binaries at workspace root, libraries in subdirectories
+- ✅ **Consistency**: All three top-level directories follow same pattern
+
+**Checkpoint**: ✅ Project structure refactored successfully, unified workspace verified, PostgreSQL-compatible behavior confirmed
 
 ---
 
@@ -216,27 +304,33 @@ This is a multi-component project:
 
 - **Setup (Phase 1)**: No dependencies - can start immediately
 - **Foundational (Phase 2)**: Depends on Setup completion - BLOCKS all user stories
+- **Core Bug Fixes & Refactoring (Phase 2.5)**: Depends on Foundational - RECOMMENDED before User Stories (ensures correct behavior)
+  - PostgreSQL compatibility: Should complete before WASM widespread usage
+  - Structure refactoring: Should complete before WASM packaging (affects import paths)
 - **User Story 0 (Phase 3)**: Depends on Foundational - BLOCKS User Stories 2 and 3 (they need API key auth)
 - **User Story 1 (Phase 4)**: Depends on Foundational and User Story 0 - Independent otherwise
-- **User Story 2 (Phase 5)**: Depends on Foundational and User Story 0 - Independent otherwise
-- **User Story 3 (Phase 6)**: Depends on Foundational, User Story 0, and User Story 2 (needs WASM client)
+- **User Story 2 (Phase 5)**: Depends on Foundational, User Story 0, and Phase 2.5 structure refactoring - Independent otherwise
+- **User Story 3 (Phase 6)**: Depends on Foundational, User Story 0, Phase 2.5, and User Story 2 (needs WASM client)
 - **Polish (Phase 7)**: Depends on all desired user stories being complete
 
 ### User Story Dependencies
 
+- **Phase 2.5 (Bug Fixes)**: RECOMMENDED before user stories - ensures PostgreSQL compatibility and clean structure
+  - Row count fixes prevent incorrect behavior in production
+  - Structure refactoring prevents path confusion in WASM usage
 - **User Story 0 (P0)**: BLOCKING - Must complete before US2 and US3
   - US2 needs API key authentication working
   - US3 needs both API key auth and soft delete working
 - **User Story 1 (P1)**: Can start after Foundational + US0 - Independent of US2/US3
-- **User Story 2 (P2)**: Can start after Foundational + US0 - BLOCKING for US3 (US3 needs WASM client)
-- **User Story 3 (P3)**: Depends on US0 and US2 being complete
+- **User Story 2 (P2)**: Can start after Foundational + US0 + Phase 2.5 structure - BLOCKING for US3 (US3 needs WASM client)
+- **User Story 3 (P3)**: Depends on US0, Phase 2.5, and US2 being complete
 
 ### Critical Path
 
 ```
-Setup → Foundational → US0 (API Key + Soft Delete) → US2 (WASM) → US3 (React Example)
-                           ↓
-                          US1 (Docker) [can proceed in parallel after US0]
+Setup → Foundational → Phase 2.5 (Bug Fixes + Refactor) → US0 (API Key + Soft Delete) → US2 (WASM) → US3 (React Example)
+                                      ↓
+                                     US1 (Docker) [can proceed in parallel after US0]
 ```
 
 ### Parallel Opportunities
@@ -246,6 +340,12 @@ Setup → Foundational → US0 (API Key + Soft Delete) → US2 (WASM) → US3 (R
 
 **Within Foundational (Phase 2)**:
 - T007 and T008 can run in parallel with T010 and T011
+
+**Within Core Bug Fixes & Refactoring (Phase 2.5)**:
+- T011A, T011B can run in parallel (PostgreSQL research)
+- T011C, T011D can run in parallel (UPDATE/DELETE handler fixes - different code sections)
+- T011E, T011F, T011G can run in parallel (different test files)
+- T011I-T011R: Structure refactoring tasks should run sequentially (file moves are order-dependent)
 
 **Within User Story 0**:
 - T012, T013 can run in parallel
@@ -317,21 +417,27 @@ This delivers a production-ready KalamDB deployment with authentication.
 With multiple developers:
 
 1. Team completes Setup + Foundational together (T001-T011)
-2. Team completes User Story 0 together (T012-T026) - CRITICAL
-3. Once US0 is done:
+2. Team completes Core Bug Fixes & Refactoring (Phase 2.5):
+   - **Developer A**: PostgreSQL research and row count fixes (T011A-T011H)
+   - **Developer B**: Project structure refactoring - move kalam-link (T011I-T011R)
+3. Team completes User Story 0 together (T012-T026) - CRITICAL
+4. Once US0 is done:
    - **Developer A**: User Story 1 (Docker - T027-T038)
    - **Developer B**: User Story 2 (WASM - T039-T059)
-4. Once US0 and US2 are done:
+5. Once US0 and US2 are done:
    - **Developer C**: User Story 3 (React Example - T060-T100)
-5. Team completes Polish together (T101-T110)
+6. Team completes Polish together (T101-T110)
 
 ---
 
 ## Task Count Summary
 
-- **Total Tasks**: 110
+- **Total Tasks**: 128 (18 new tasks added)
 - **Setup (Phase 1)**: 6 tasks
 - **Foundational (Phase 2)**: 5 tasks (BLOCKING)
+- **Core Bug Fixes & Refactoring (Phase 2.5)**: 18 tasks (CRITICAL - PostgreSQL compatibility + structure cleanup)
+  - PostgreSQL-compatible row counts: 8 tasks (T011A-T011H)
+  - Project structure refactoring: 10 tasks (T011I-T011R)
 - **User Story 0 (Phase 3)**: 15 tasks (API Key + Soft Delete)
 - **User Story 1 (Phase 4)**: 12 tasks (Docker)
 - **User Story 2 (Phase 5)**: 21 tasks (WASM)

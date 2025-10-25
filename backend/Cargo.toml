@@ -1,85 +1,137 @@
-[workspace]
-resolver = "2"
-members = [
-    "crates/kalamdb-commons",
-    "crates/kalamdb-core",
-    "crates/kalamdb-sql",
-    "crates/kalamdb-store",
-    "crates/kalamdb-api",
-    "crates/kalamdb-server",
-    "crates/kalamdb-live",
-]
+[package]
+name = "kalamdb-server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 
-[workspace.package]
-version = "0.1.0"
-edition = "2021"
-authors = ["KalamDB Team"]
-license = "Apache-2.0"
-repository = "https://github.com/jamals86/KalamDB"
+[dependencies]
+# Core library
+kalamdb-core = { path = "crates/kalamdb-core" }
+kalamdb-api = { path = "crates/kalamdb-api" }
+kalamdb-sql = { path = "crates/kalamdb-sql" }
+kalamdb-store = { path = "crates/kalamdb-store" }
+kalamdb-commons = { path = "crates/kalamdb-commons" }
 
-[workspace.dependencies]
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-
-# Error handling
-thiserror = "2.0.17"
-anyhow = "1.0"
-
-# Logging
-log = "0.4"
-env_logger = "0.11"
+# DataFusion for system schema registration
+datafusion.workspace = true
 
 # Async runtime
-tokio = { version = "1.48.0", features = ["full"] }
-
-# Time handling
-# Pinned to 0.4.39 to avoid conflict with arrow-arith 52.2.0's ChronoDateExt::quarter()
-# chrono 0.4.40+ added Datelike::quarter() which creates ambiguity
-# See: https://github.com/apache/arrow-rs/issues/7196
-chrono = { version = "=0.4.39", features = ["serde"] }
-
-# Storage - using minimal features to avoid build issues on Windows
-rocksdb = { version = "0.24.0", default-features = false, features = ["snappy"] }
-
-# Apache Arrow ecosystem  
-# NOTE: Arrow 52.2.0 has a known issue with chrono 0.4.42 (quarter() method ambiguity)
-# Using chrono 0.4.38 as workaround until arrow-arith is fixed
-arrow = { version = "52.0", features = ["prettyprint"] }
-parquet = { version = "52.0", features = ["arrow", "async"] }
-datafusion = { version = "40.0" }
-sqlparser = { version = "0.47" }
+tokio.workspace = true
 
 # Web framework
-actix-web = "4.4"
-actix-rt = "2.9"
-actix-web-actors = "4.3.0"  # For WebSocket support
-actix = "0.13"  # Actor framework
-actix-cors = "0.7"  # CORS middleware
+actix-web.workspace = true
+actix-cors.workspace = true
 
-# UUID generation
-uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
-
-# ULID generation
-ulid = "1.1"
+# Configuration
+toml.workspace = true
 
 # JWT authentication
 jsonwebtoken = "9.2"
 
-# Configuration
-toml = "0.9.8"
+# Logging
+log.workspace = true
+env_logger.workspace = true
+colored = "3.0.0"
+fern = "0.7.1"
+
+# Time handling
+chrono.workspace = true
+
+# UUID generation
+uuid.workspace = true
+
+# Serialization
+serde.workspace = true
+
+# Error handling
+anyhow.workspace = true
 
 # System
-num_cpus = "1.16"
+num_cpus.workspace = true
 
-# Testing
-tempfile = "3.8"
+[lib]
+name = "kalamdb_server"
+path = "src/lib.rs"
 
-# Benchmarking
-criterion = { version = "0.5", features = ["html_reports"] }
+[[bin]]
+name = "kalamdb-server"
+path = "src/main.rs"
 
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-strip = true
+[[test]]
+name = "test_shared_tables"
+path = "tests/integration/tables/shared/test_shared_tables.rs"
+
+[[test]]
+name = "test_user_tables"
+path = "tests/integration/tables/user/test_user_tables.rs"
+
+[[test]]
+name = "test_stream_tables"
+path = "tests/integration/tables/stream/test_stream_tables.rs"
+
+[[test]]
+name = "test_quickstart"
+path = "tests/integration/combined/test_quickstart.rs"
+
+[[test]]
+name = "test_system_tables"
+path = "tests/integration/tables/system/test_system_tables.rs"
+
+[[test]]
+name = "test_flush_operations"
+path = "tests/integration/flush/test_flush_operations.rs"
+
+[[test]]
+name = "test_storage_management"
+path = "tests/integration/storage_management/test_storage_management.rs"
+
+[[test]]
+name = "test_live_query_changes"
+path = "tests/integration/combined/test_live_query_changes.rs"
+
+[[test]]
+name = "test_manual_flush_verification"
+path = "tests/integration/flush/test_manual_flush_verification.rs"
+
+[[test]]
+name = "test_namespace_validation"
+path = "tests/integration/combined/test_namespace_validation.rs"
+
+[[test]]
+name = "test_enhanced_api_features"
+path = "tests/integration/api/test_enhanced_api_features.rs"
+
+[[test]]
+name = "test_automatic_flushing"
+path = "tests/integration/flush/test_automatic_flushing.rs"
+
+[[test]]
+name = "test_automatic_flushing_comprehensive"
+path = "tests/integration/flush/test_automatic_flushing_comprehensive.rs"
+
+# [[test]]
+# name = "test_schema_integrity"
+# path = "tests/integration/combined/test_schema_integrity.rs"
+
+[[test]]
+name = "test_stress_and_memory"
+path = "tests/integration/combined/test_stress_and_memory.rs"
+
+[[test]]
+name = "test_code_quality"
+path = "tests/test_code_quality.rs"
+
+[[test]]
+name = "test_row_count_behavior"
+path = "tests/test_row_count_behavior.rs"
+
+[dev-dependencies]
+tempfile = "3"
+serde_json.workspace = true
+actix-http = "3.4"
+tokio-tungstenite = "0.21"
+futures-util = "0.3"
+uuid.workspace = true
+rocksdb.workspace = true

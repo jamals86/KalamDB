@@ -1,0 +1,90 @@
+[workspace]
+resolver = "2"
+members = [
+    "backend/crates/kalamdb-commons",
+    "backend/crates/kalamdb-core",
+    "backend/crates/kalamdb-sql",
+    "backend/crates/kalamdb-store",
+    "backend/crates/kalamdb-api",
+    "backend/crates/kalamdb-live",
+    "backend",
+    "link",
+    "cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["KalamDB Team"]
+license = "Apache-2.0"
+repository = "https://github.com/jamals86/KalamDB"
+
+# Shared dependencies for all crates
+[workspace.dependencies]
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "2.0.17"
+anyhow = "1.0"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Async runtime
+tokio = { version = "1.48.0", features = ["full"] }
+
+# HTTP client
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+
+# WebSocket
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
+
+# Time handling
+chrono = { version = "=0.4.39", features = ["serde"] }
+
+# Storage
+rocksdb = { version = "0.24.0", default-features = false, features = ["snappy"] }
+
+# Apache Arrow ecosystem
+arrow = { version = "52.0", features = ["prettyprint"] }
+parquet = { version = "52.0", features = ["arrow", "async"] }
+datafusion = { version = "40.0" }
+sqlparser = { version = "0.47" }
+
+# Web framework
+actix-web = "4.4"
+actix-rt = "2.9"
+actix-web-actors = "4.3.0"
+actix = "0.13"
+actix-cors = "0.7"
+
+# UUID generation
+uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
+
+# ULID generation
+ulid = "1.1"
+
+# JWT authentication
+jsonwebtoken = "9.2"
+
+# Configuration
+toml = "0.9.8"
+
+# CLI tools
+clap = { version = "4.4", features = ["derive", "color"] }
+rustyline = { version = "13.0" }
+tabled = { version = "0.15" }
+crossterm = { version = "0.27" }
+
+# System
+num_cpus = "1.16"
+
+# Testing
+tempfile = "3.8"
+
+# Benchmarking
+criterion = { version = "0.5", features = ["html_reports"] }

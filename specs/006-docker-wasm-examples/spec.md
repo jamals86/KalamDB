@@ -250,3 +250,68 @@ Developers evaluating KalamDB need a complete, working example demonstrating rea
 - Offline write capability (app requires active WebSocket connection for add/delete operations)
 - Conflict resolution UI (KalamDB subscription is source of truth)
 - IndexedDB or other advanced client storage mechanisms (localStorage is sufficient for read cache)
+
+---
+
+## Known Issues & Planned Fixes
+
+### Critical: PostgreSQL-Compatible Row Count Behavior
+
+**Issue**: UPDATE and DELETE operations currently return "Updated 0 row(s)" and "Deleted 0 row(s)" even when rows are successfully modified.
+
+**Root Cause**: The row count tracking in `backend/crates/kalamdb-core/src/sql/executor.rs` is not properly incrementing counters after successful operations.
+
+**Impact**: 
+- User confusion (operations appear to fail when they succeed)
+- Integration testing difficulties (cannot verify operation success by row count)
+- Non-standard SQL behavior (PostgreSQL returns actual affected row counts)
+
+**Planned Fix (Phase 2.5)**:
+1. Research PostgreSQL behavior: Does it return count when values don't actually change (UPDATE with same values)?
+2. Fix UPDATE handler to properly increment and return `updated_count`
+3. Fix DELETE handler to properly increment and return `deleted_count` for soft deletes
+4. Add integration tests verifying correct row counts
+5. Document any behavioral differences from PostgreSQL in SQL syntax guide
+
+**Tasks**: T011A through T011H
+
+---
+
+### Enhancement: DELETE with LIKE Pattern Support
+
+**Issue**: DELETE operations with LIKE patterns (e.g., `DELETE FROM table WHERE name LIKE 'test%'`) are not currently supported. Only simple equality conditions work (e.g., `col='value'`).
+
+**Root Cause**: The `parse_simple_where()` function in executor only handles exact equality matching.
+
+**Impact**: Limited DELETE capabilities compared to standard SQL
+
+**Planned Fix (Phase 2.5)**:
+- Either: Implement LIKE pattern support in WHERE clause parser
+- Or: Document this limitation clearly in error messages and documentation
+
+**Task**: T011H
+
+---
+
+### Project Structure: Move kalam-link to /link
+
+**Rationale**: The `cli/kalam-link/` library serves dual purposes:
+1. Linked as a dependency by `kalam-cli` for CLI functionality
+2. Compiled to WASM as a standalone library for TypeScript/JavaScript and other languages
+
+**Current Issue**: The current path `cli/kalam-link/` suggests it's only for CLI use, which is misleading.
+
+**Planned Change (Phase 2.5)**:
+- Move `cli/kalam-link/` → `/link/kalam-link/`
+- Update all import paths in `kalam-cli`
+- Update all documentation and build scripts
+- Update WASM compilation paths
+
+**Benefits**:
+- Clearer separation of concerns
+- Better project organization
+- Explicit indication that this is a multi-purpose library
+
+**Tasks**: T011I through T011R
+
+---
