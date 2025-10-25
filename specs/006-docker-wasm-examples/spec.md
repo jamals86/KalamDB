@@ -14,6 +14,7 @@
 - Q: What should happen when Docker container starts with missing environment variables? → A: Container starts with documented default values (e.g., port 8080, data dir /data/kalamdb, log level INFO)
 - Q: How should the app display WebSocket connection status to users? → A: Status badge with text (e.g., "Connected" / "Disconnected") and color coding, plus disabled button state when disconnected
 - Q: How should setup.sh validate KalamDB server accessibility? → A: Use kalam-cli to run a simple query (e.g., query system table). SQL statements are loaded from todo-app.sql file via kalam-cli.
+- Q: What parameters does kalam-link WASM client require? → A: KalamDB server URL and user's API key are required parameters for initialization. The WASM library cannot function without these. CLI tools work on localhost without API key for development.
 - Q: How should UserId be passed for authentication? → A: kalam-link WASM client accepts UserId as a parameter for basic authentication (future enhancement will add OAuth/JWT support)
 
 ## User Scenarios & Testing *(mandatory)*
@@ -30,9 +31,10 @@ Backend developers and API users need a simple authentication mechanism using AP
 
 1. **Given** a user table exists, **When** a user record is created with an API key, **Then** the API key is stored and associated with that user
 2. **Given** a user has an API key, **When** a SQL API request is made with X-API-KEY header containing that key, **Then** the request is authorized and executes against that user's tables
-3. **Given** a user table with records, **When** a DELETE operation is executed on a row, **Then** the row is marked as deleted (soft delete) rather than physically removed
-4. **Given** a row marked as deleted, **When** a SELECT query is executed, **Then** the deleted row is not returned in results by default
-5. **Given** existing tests for user tables, **When** the test suite runs, **Then** all tests pass with the new soft delete and API key functionality
+3. **Given** kalam-cli is used on localhost, **When** commands are executed without API key, **Then** the CLI works normally for local development
+4. **Given** a user table with records, **When** a DELETE operation is executed on a row, **Then** the row is marked as deleted (soft delete) rather than physically removed
+5. **Given** a row marked as deleted, **When** a SELECT query is executed, **Then** the deleted row is not returned in results by default
+6. **Given** existing tests for user tables, **When** the test suite runs, **Then** all tests pass with the new soft delete and API key functionality
 
 ---
 
@@ -119,54 +121,57 @@ Developers evaluating KalamDB need a complete, working example demonstrating rea
 - **FR-003**: System MUST authenticate requests by matching X-API-KEY header value to user's apikey field
 - **FR-004**: System MUST execute SQL operations in the context of the authenticated user's tables when valid API key is provided
 - **FR-005**: System MUST return 401 Unauthorized response when X-API-KEY header is missing or invalid
-- **FR-006**: System MUST implement soft delete for user table rows by marking them as deleted instead of physically removing them
-- **FR-007**: System MUST add a `deleted` boolean field (or deleted_at timestamp) to user tables to track deletion status
-- **FR-008**: System MUST exclude soft-deleted rows from SELECT query results by default
-- **FR-009**: System MUST update all existing tests to work with soft delete behavior
-- **FR-010**: System MUST ensure DELETE operations mark rows as deleted rather than removing them from storage
+- **FR-006**: System MUST allow kalam-cli to function on localhost connections without requiring API key for local development
+- **FR-007**: System MUST implement soft delete for user table rows by marking them as deleted instead of physically removing them
+- **FR-008**: System MUST add a `deleted` boolean field (or deleted_at timestamp) to user tables to track deletion status
+- **FR-009**: System MUST exclude soft-deleted rows from SELECT query results by default
+- **FR-010**: System MUST update all existing tests to work with soft delete behavior
+- **FR-011**: System MUST ensure DELETE operations mark rows as deleted rather than removing them from storage
 
 #### Docker Container (Story 1)
 
-- **FR-011**: System MUST provide a Dockerfile that builds a working KalamDB server image
-- **FR-012**: System MUST include kalam-cli tool in the Docker image and make it accessible via container exec
-- **FR-013**: System MUST provide a docker-compose.yml file that defines KalamDB service with volume mounts for data persistence
-- **FR-014**: System MUST support overriding any config.toml setting via environment variables in docker-compose.yml, with documented default values used when variables are not provided
-- **FR-015**: Docker image MUST expose the KalamDB server port and allow external connections
-- **FR-016**: System MUST persist RocksDB data across container restarts via mounted volume
-- **FR-017**: Docker documentation MUST include examples of common configuration overrides (port, log level, data directory) and list all default values used when environment variables are not provided
+- **FR-012**: System MUST provide a Dockerfile that builds a working KalamDB server image
+- **FR-013**: System MUST include kalam-cli tool in the Docker image and make it accessible via container exec
+- **FR-014**: System MUST provide a docker-compose.yml file that defines KalamDB service with volume mounts for data persistence
+- **FR-015**: System MUST support overriding any config.toml setting via environment variables in docker-compose.yml, with documented default values used when variables are not provided
+- **FR-016**: Docker image MUST expose the KalamDB server port and allow external connections
+- **FR-017**: System MUST persist RocksDB data across container restarts via mounted volume
+- **FR-018**: Docker documentation MUST include examples of common configuration overrides (port, log level, data directory) and list all default values used when environment variables are not provided
 
 #### WASM Compilation (Story 2)
 
-- **FR-018**: System MUST compile kalam-link Rust crate to WebAssembly using wasm-pack or similar tool
-- **FR-019**: System MUST generate TypeScript type definitions for the WASM module
-- **FR-020**: WASM module MUST support connection to KalamDB server with API key authentication via X-API-KEY mechanism
-- **FR-021**: WASM module MUST support insert operations for table records
-- **FR-022**: WASM module MUST support delete operations for table records (soft delete)
-- **FR-023**: WASM module MUST support subscribing to table changes and receiving real-time updates with insert/update/delete change types
-- **FR-024**: WASM module MUST work in both Node.js and browser environments
-- **FR-025**: System MUST provide build instructions for compiling kalam-link to WASM
+- **FR-019**: System MUST compile kalam-link Rust crate to WebAssembly using wasm-pack or similar tool
+- **FR-020**: System MUST generate TypeScript type definitions for the WASM module
+- **FR-021**: WASM module MUST require KalamDB server URL as initialization parameter
+- **FR-022**: WASM module MUST require user's API key as initialization parameter
+- **FR-023**: WASM module MUST fail to initialize with clear error message if server URL or API key is missing
+- **FR-024**: WASM module MUST support insert operations for table records
+- **FR-025**: WASM module MUST support delete operations for table records (soft delete)
+- **FR-026**: WASM module MUST support subscribing to table changes and receiving real-time updates with insert/update/delete change types
+- **FR-027**: WASM module MUST work in both Node.js and browser environments
+- **FR-028**: System MUST provide build instructions for compiling kalam-link to WASM
 
 #### TypeScript TODO Example (Story 3)
 
-- **FR-026**: System MUST provide a complete React frontend application in `/examples/simple-typescript` directory
-- **FR-027**: Example MUST include setup.sh script that uses kalam-cli to create required tables
-- **FR-028**: Example MUST provide todo-app.sql file containing all SQL statements (CREATE TABLE IF NOT EXISTS, etc.) needed for the app to function
-- **FR-029**: Setup script MUST load SQL statements from todo-app.sql file via kalam-cli
-- **FR-030**: Setup script MUST validate that KalamDB server is accessible by running a simple query via kalam-cli before attempting table creation
-- **FR-031**: Example application MUST demonstrate inserting TODO items using WASM client with persistence to both KalamDB and localStorage
-- **FR-032**: Example application MUST demonstrate deleting TODO items using WASM client with updates to both KalamDB and localStorage (soft delete)
-- **FR-033**: Example MUST pass API key when connecting to KalamDB via WASM client
-- **FR-034**: Example MUST include README with setup instructions and prerequisites
-- **FR-035**: Example application MUST demonstrate subscribing to TODO changes and updating UI in real-time across multiple browser tabs/windows
-- **FR-036**: Example MUST include package.json with all required dependencies including React testing library
-- **FR-037**: Application MUST store TODOs in browser localStorage as read-only cache for fast initial display
-- **FR-038**: Application MUST track the highest TODO ID in localStorage for sync purposes
-- **FR-039**: Application MUST load TODOs from localStorage on startup before fetching from KalamDB
-- **FR-040**: Application MUST subscribe to changes starting from the last known ID to sync only new/updated data
-- **FR-041**: Application MUST handle reconnection by syncing missed updates since last known ID
-- **FR-042**: Application MUST disable add/delete TODO operations when WebSocket connection to KalamDB is not active
-- **FR-043**: Application MUST process subscription events (insert/update/delete) and update both UI and localStorage accordingly
-- **FR-044**: Application MUST display WebSocket connection status via a visible status badge showing "Connected" or "Disconnected" with color coding (e.g., green for connected, red for disconnected)
+- **FR-029**: System MUST provide a complete React frontend application in `/examples/simple-typescript` directory
+- **FR-030**: Example MUST include setup.sh script that uses kalam-cli to create required tables
+- **FR-031**: Example MUST provide todo-app.sql file containing all SQL statements (CREATE TABLE IF NOT EXISTS, etc.) needed for the app to function
+- **FR-032**: Setup script MUST load SQL statements from todo-app.sql file via kalam-cli
+- **FR-033**: Setup script MUST validate that KalamDB server is accessible by running a simple query via kalam-cli before attempting table creation
+- **FR-034**: Example application MUST initialize kalam-link WASM client with KalamDB server URL and API key
+- **FR-035**: Example application MUST demonstrate inserting TODO items using WASM client with persistence to both KalamDB and localStorage
+- **FR-036**: Example application MUST demonstrate deleting TODO items using WASM client with updates to both KalamDB and localStorage (soft delete)
+- **FR-037**: Example MUST include README with setup instructions including how to obtain/configure API key
+- **FR-038**: Example application MUST demonstrate subscribing to TODO changes and updating UI in real-time across multiple browser tabs/windows
+- **FR-039**: Example MUST include package.json with all required dependencies including React testing library
+- **FR-040**: Application MUST store TODOs in browser localStorage as read-only cache for fast initial display
+- **FR-041**: Application MUST track the highest TODO ID in localStorage for sync purposes
+- **FR-042**: Application MUST load TODOs from localStorage on startup before fetching from KalamDB
+- **FR-043**: Application MUST subscribe to changes starting from the last known ID to sync only new/updated data
+- **FR-044**: Application MUST handle reconnection by syncing missed updates since last known ID
+- **FR-045**: Application MUST disable add/delete TODO operations when WebSocket connection to KalamDB is not active
+- **FR-046**: Application MUST process subscription events (insert/update/delete) and update both UI and localStorage accordingly
+- **FR-047**: Application MUST display WebSocket connection status via a visible status badge showing "Connected" or "Disconnected" with color coding (e.g., green for connected, red for disconnected)
 
 ### Key Entities
 
@@ -176,7 +181,7 @@ Developers evaluating KalamDB need a complete, working example demonstrating rea
 - **Docker Container**: Encapsulates KalamDB server and CLI tool with configurable runtime environment
 - **Volume Mount**: Persistent storage area for RocksDB data that survives container lifecycle
 - **Environment Variables**: Key-value pairs in docker-compose.yml that override config.toml settings
-- **WASM Module**: Compiled WebAssembly binary of kalam-link with JavaScript/TypeScript bindings
+- **WASM Module**: Compiled WebAssembly binary of kalam-link with JavaScript/TypeScript bindings, requires KalamDB server URL and API key for initialization
 - **TODO Item**: Entity in the example app with fields: `id` (auto-increment integer primary key), `title` (text, required), `completed` (boolean, default false), `created_at` (timestamp, auto-generated)
 - **Subscription**: Active WebSocket connection listening for changes to TODO table with real-time notification capability. Returns insert/update/delete change types and can filter by ID range for syncing. Required for write operations.
 - **Setup Script**: Bash script using kalam-cli to execute SQL statements from todo-app.sql file, creates database schema with idempotent behavior
@@ -214,6 +219,8 @@ Developers evaluating KalamDB need a complete, working example demonstrating rea
 - API keys are generated and managed outside this feature scope (manual creation for now)
 - Soft delete is sufficient for user tables; hard delete/purge is out of scope for this feature
 - kalam-cli supports loading SQL statements from file
+- kalam-cli works on localhost without API key for development/setup purposes
+- WASM client will be used for remote/web access and requires API key authentication
 
 ## Dependencies
 
