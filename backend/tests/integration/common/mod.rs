@@ -801,7 +801,7 @@ pub async fn start_http_server_for_websocket_tests() -> (TestServer, String) {
     let rate_limiter = Arc::new(RateLimiter::new());
 
     // Bind to an ephemeral port to avoid collisions between tests
-    let mut http_server = HttpServer::new(move || {
+    let http_server = HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(session_factory.clone()))
             .app_data(web::Data::new(sql_executor.clone()))

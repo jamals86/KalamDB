@@ -657,7 +657,7 @@ async fn test_08_flush_table_returns_job_id() {
 
 #[actix_web::test]
 async fn test_09_flush_job_completes_asynchronously() {
-    use std::time::Duration;
+    
 
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "async_flush").await;
