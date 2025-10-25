@@ -25,12 +25,12 @@ This is a multi-component project:
 
 **Purpose**: Project initialization and verification of existing structure
 
-- [ ] T001 Verify Rust 1.75+ toolchain and wasm32-unknown-unknown target installed
-- [ ] T002 Verify Docker 20+ and Docker Compose 2.0+ are installed
-- [ ] T003 [P] Verify wasm-pack 0.12+ is installed
-- [ ] T004 [P] Verify Node.js 18+ and npm are installed
-- [ ] T005 [P] Create examples/simple-typescript directory structure
-- [ ] T006 [P] Create docker/backend directory structure (already exists from plan phase)
+- [x] T001 Verify Rust 1.75+ toolchain and wasm32-unknown-unknown target installed
+- [x] T002 Verify Docker 20+ and Docker Compose 2.0+ are installed
+- [x] T003 [P] Verify wasm-pack 0.12+ is installed
+- [x] T004 [P] Verify Node.js 18+ and npm are installed
+- [x] T005 [P] Create examples/simple-typescript directory structure
+- [x] T006 [P] Create docker/backend directory structure (already exists from plan phase)
 
 ---
 
@@ -40,11 +40,11 @@ This is a multi-component project:
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T007 Add uuid crate dependency to backend/crates/kalamdb-sql/Cargo.toml for API key generation
-- [ ] T008 Update User model in backend/crates/kalamdb-sql/src/models.rs to add apikey and role fields
-- [ ] T009 Create RocksDB secondary index for apikey in backend/crates/kalamdb-sql/src/adapter.rs
-- [ ] T010 Add UserTableRow deleted field to backend/crates/kalamdb-store/src/user_table_store.rs
-- [ ] T011 Implement soft delete query rewriting in backend/crates/kalamdb-core/src/tables/user_table_provider.rs
+- [x] T007 Add uuid crate dependency to backend/crates/kalamdb-sql/Cargo.toml for API key generation
+- [x] T008 Update User model in backend/crates/kalamdb-sql/src/models.rs to add apikey and role fields
+- [x] T009 Create RocksDB secondary index for apikey in backend/crates/kalamdb-sql/src/adapter.rs
+- [x] T010 Add UserTableRow deleted field to backend/crates/kalamdb-store/src/user_table_store.rs
+- [x] T011 Implement soft delete query rewriting in backend/crates/kalamdb-core/src/tables/user_table_provider.rs
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
@@ -58,21 +58,21 @@ This is a multi-component project:
 
 ### Implementation for User Story 0
 
-- [ ] T012 [P] [US0] Implement create-user command in backend/crates/kalamdb-server/src/commands/create_user.rs with auto-generated UUID API key
-- [ ] T013 [P] [US0] Add role validation function in backend/crates/kalamdb-core/src/auth/roles.rs (validate against: admin, user, readonly)
-- [ ] T014 [US0] Update insert_user in backend/crates/kalamdb-sql/src/adapter.rs to store apikey and role fields
-- [ ] T015 [US0] Implement get_user_by_apikey in backend/crates/kalamdb-sql/src/adapter.rs using apikey secondary index
-- [ ] T016 [P] [US0] Create ApiKeyAuth middleware in backend/crates/kalamdb-api/src/middleware/api_key_auth.rs to extract X-API-KEY header
-- [ ] T017 [US0] Implement localhost exception in ApiKeyAuth middleware (allow 127.0.0.1 without API key)
-- [ ] T018 [US0] Add ApiKeyAuth middleware to /sql route in backend/crates/kalamdb-api/src/routes/sql.rs
-- [ ] T019 [US0] Return 401 Unauthorized when X-API-KEY is invalid or missing in backend/crates/kalamdb-api/src/middleware/api_key_auth.rs
-- [ ] T020 [P] [US0] Implement soft delete in DELETE handler in backend/crates/kalamdb-core/src/handlers/delete_handler.rs (set deleted=true instead of physical removal)
-- [ ] T021 [P] [US0] Add deleted field filtering in SELECT query execution in backend/crates/kalamdb-core/src/tables/user_table_provider.rs (WHERE deleted = false)
-- [ ] T022 [US0] Update existing user table tests in backend/tests/test_stream_tables.rs to work with soft delete behavior
-- [ ] T023 [US0] Create integration test for API key auth in backend/tests/test_api_key_auth.rs (create user, test with/without key)
-- [ ] T024 [US0] Create integration test for soft delete in backend/tests/test_soft_delete.rs (delete row, verify hidden but exists)
-- [ ] T025 [US0] Add create-user command to main.rs in backend/crates/kalamdb-server/src/main.rs with CLI argument parsing
-- [ ] T026 [US0] Update kalam-cli to support user create command in cli/kalam-cli/src/commands/user.rs
+- [x] T012 [P] [US0] Implement create-user command in backend/crates/kalamdb-server/src/commands/create_user.rs with auto-generated UUID API key
+- [x] T013 [P] [US0] Add role validation function in backend/crates/kalamdb-core/src/auth/roles.rs (validate against: admin, user, readonly)
+- [x] T014 [US0] Update insert_user in backend/crates/kalamdb-sql/src/adapter.rs to store apikey and role fields
+- [x] T015 [US0] Implement get_user_by_apikey in backend/crates/kalamdb-sql/src/adapter.rs using apikey secondary index
+- [x] T016 [P] [US0] Create ApiKeyAuth middleware in backend/crates/kalamdb-api/src/middleware/api_key_auth.rs to extract X-API-KEY header
+- [x] T017 [US0] Implement localhost exception in ApiKeyAuth middleware (allow 127.0.0.1 without API key)
+- [x] T018 [US0] Add ApiKeyAuth middleware to /sql route in backend/crates/kalamdb-api/src/routes/sql.rs
+- [x] T019 [US0] Return 401 Unauthorized when X-API-KEY is invalid or missing in backend/crates/kalamdb-api/src/middleware/api_key_auth.rs
+- [x] T020 [P] [US0] Implement soft delete in DELETE handler in backend/crates/kalamdb-core/src/handlers/delete_handler.rs (set deleted=true instead of physical removal)
+- [x] T021 [P] [US0] Add deleted field filtering in SELECT query execution in backend/crates/kalamdb-core/src/tables/user_table_provider.rs (WHERE deleted = false)
+- [x] T022 [US0] Update existing user table tests in backend/tests/test_stream_tables.rs to work with soft delete behavior
+- [x] T023 [US0] Create integration test for API key auth in backend/tests/test_api_key_auth.rs (create user, test with/without key)
+- [x] T024 [US0] Create integration test for soft delete in backend/tests/test_soft_delete.rs (delete row, verify hidden but exists)
+- [x] T025 [US0] Add create-user command to main.rs in backend/crates/kalamdb-server/src/main.rs with CLI argument parsing
+- [x] T026 [US0] Update kalam-cli to support user create command in cli/kalam-cli/src/commands/user.rs
 
 **Checkpoint**: At this point, User Story 0 should be fully functional - API key auth works, soft delete works, tests pass
 
@@ -86,11 +86,13 @@ This is a multi-component project:
 
 ### Implementation for User Story 1
 
-- [ ] T027 [P] [US1] Verify Dockerfile exists in docker/backend/Dockerfile (already created in plan phase)
-- [ ] T028 [P] [US1] Verify docker-compose.yml exists in docker/backend/docker-compose.yml (already created in plan phase)
-- [ ] T029 [P] [US1] Verify build-backend.sh exists in docker/backend/build-backend.sh (already created in plan phase)
-- [ ] T030 [US1] Add environment variable parsing in backend/crates/kalamdb-server/src/config.rs (KALAMDB_SERVER_PORT, KALAMDB_LOG_LEVEL, etc.)
-- [ ] T031 [US1] Update config loading to prioritize env vars over config.toml in backend/crates/kalamdb-server/src/config.rs
+- [x] T027 [P] [US1] Verify Dockerfile exists in docker/backend/Dockerfile (already created in plan phase)
+- [x] T028 [P] [US1] Verify docker-compose.yml exists in docker/backend/docker-compose.yml (already created in plan phase)
+- [x] T029 [P] [US1] Verify build-backend.sh exists in docker/backend/build-backend.sh (already created in plan phase)
+- [x] T030 [US1] Add environment variable parsing in backend/crates/kalamdb-server/src/config.rs (KALAMDB_SERVER_PORT, KALAMDB_LOG_LEVEL, etc.)
+- [x] T031 [US1] Update config loading to prioritize env vars over config.toml in backend/crates/kalamdb-server/src/config.rs
+- [ ] T032 [US1] Build Docker image using docker/backend/build-backend.sh and verify kalamdb-server binary exists
+- [ ] T033 [US1] Run docker-compose up and verify container starts successfully with default env vars
 - [ ] T032 [US1] Test Docker build with ./build-backend.sh and verify both kalamdb-server and kalam-cli are included
 - [ ] T033 [US1] Test docker-compose up and verify server starts with default environment variables
 - [ ] T034 [US1] Test creating user inside container with docker exec -it kalamdb kalam-cli user create

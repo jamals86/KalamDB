@@ -56,6 +56,8 @@ impl UsersTableProvider {
             created_at: user.created_at,
             storage_mode: Some("table".to_string()), // T163c: Default to 'table' mode
             storage_id: None,                        // T163c: NULL by default
+            apikey: uuid::Uuid::new_v4().to_string(), // Feature 006: Auto-generate API key
+            role: "user".to_string(),                 // Feature 006: Default role
         };
 
         self.kalam_sql
@@ -78,6 +80,9 @@ impl UsersTableProvider {
             )));
         }
 
+        // Preserve existing apikey and role when updating
+        let existing_user = existing.unwrap();
+
         let kalamdb_user = User {
             user_id: user.user_id.clone(),
             username: user.username.clone(),
@@ -85,6 +90,8 @@ impl UsersTableProvider {
             created_at: user.created_at,
             storage_mode: Some("table".to_string()), // T163c: Default to 'table' mode
             storage_id: None,                        // T163c: NULL by default
+            apikey: existing_user.apikey,            // Feature 006: Preserve API key
+            role: existing_user.role,                // Feature 006: Preserve role
         };
 
         self.kalam_sql

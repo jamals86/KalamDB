@@ -24,6 +24,7 @@ use kalamdb_core::{
     jobs::{JobExecutor, StreamEvictionJob, StreamEvictionScheduler, TokioJobManager},
     scheduler::FlushScheduler,
 };
+use kalamdb_sql::adapter::RocksDbAdapter;
 use kalamdb_sql::KalamSql;
 use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
 use log::info;
@@ -40,6 +41,7 @@ pub struct ApplicationComponents {
     pub flush_scheduler: Arc<FlushScheduler>,
     pub live_query_manager: Arc<LiveQueryManager>,
     pub stream_eviction_scheduler: Arc<StreamEvictionScheduler>,
+    pub rocks_db_adapter: Arc<RocksDbAdapter>,
 }
 
 /// Initialize RocksDB, DataFusion, services, rate limiter, and flush scheduler.
@@ -55,6 +57,9 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     // Initialize KalamSQL for system table access
     let kalam_sql = Arc::new(KalamSql::new(db.clone())?);
     info!("KalamSQL initialized");
+
+    // Extract RocksDbAdapter for API key authentication
+    let rocks_db_adapter = Arc::new(kalam_sql.adapter().clone());
 
     // Seed default storage if necessary
     let storages = kalam_sql.scan_all_storages()?;
@@ -262,6 +267,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         flush_scheduler,
         live_query_manager,
         stream_eviction_scheduler,
+        rocks_db_adapter,
     })
 }
 
@@ -280,6 +286,7 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
     let jwt_auth = components.jwt_auth.clone();
     let rate_limiter = components.rate_limiter.clone();
     let live_query_manager = components.live_query_manager.clone();
+    let rocks_db_adapter = components.rocks_db_adapter.clone();
 
     let server = HttpServer::new(move || {
         App::new()
@@ -290,6 +297,7 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
             .app_data(web::Data::new(jwt_auth.clone()))
             .app_data(web::Data::new(rate_limiter.clone()))
             .app_data(web::Data::new(live_query_manager.clone()))
+            .app_data(web::Data::new(rocks_db_adapter.clone()))
             .configure(routes::configure)
     })
     .bind(&bind_addr)?

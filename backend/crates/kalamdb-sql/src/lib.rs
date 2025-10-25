@@ -84,6 +84,11 @@ impl KalamSql {
         })
     }
 
+    /// Get the underlying RocksDB adapter
+    pub fn adapter(&self) -> &RocksDbAdapter {
+        &self.adapter
+    }
+
     /// Execute a SQL statement against system tables
     ///
     /// Supports SELECT, INSERT, UPDATE, DELETE for all 7 system tables.

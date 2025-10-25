@@ -6,6 +6,7 @@ use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_commons::models::UserId;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::{ExecutionResult, SqlExecutor};
+use kalamdb_sql::RocksDbAdapter;
 use log::warn;
 use std::sync::Arc;
 use std::time::Instant;
@@ -60,6 +61,80 @@ pub async fn execute_sql_v1(
     rate_limiter: web::Data<Arc<RateLimiter>>,
 ) -> impl Responder {
     let start_time = Instant::now();
+
+    // API KEY AUTHENTICATION (Feature 006)
+    // Check if request is from localhost (bypass API key)
+    let conn_info = http_req.connection_info();
+    let remote_addr = conn_info.realip_remote_addr();
+    let is_localhost = remote_addr
+        .map(|addr| addr == "127.0.0.1" || addr.starts_with("127.0.0.1:") || addr == "localhost")
+        .unwrap_or(false);
+
+    if !is_localhost {
+        // Require X-API-KEY header for non-localhost requests
+        let api_key_header = http_req.headers().get("X-API-KEY");
+
+        if api_key_header.is_none() {
+            let took_ms = start_time.elapsed().as_millis() as u64;
+            return HttpResponse::Unauthorized().json(SqlResponse::error(
+                "MISSING_API_KEY",
+                "Missing X-API-KEY header",
+                took_ms,
+            ));
+        }
+
+        let api_key = match api_key_header.unwrap().to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                let took_ms = start_time.elapsed().as_millis() as u64;
+                return HttpResponse::Unauthorized().json(SqlResponse::error(
+                    "INVALID_API_KEY_FORMAT",
+                    "Invalid X-API-KEY header format",
+                    took_ms,
+                ));
+            }
+        };
+
+        // Validate API key against system_users table
+        let rocks_db_adapter: Option<&Arc<RocksDbAdapter>> = http_req
+            .app_data::<web::Data<Arc<RocksDbAdapter>>>()
+            .map(|data| data.as_ref());
+
+        if let Some(adapter) = rocks_db_adapter {
+            match adapter.get_user_by_apikey(api_key) {
+                Ok(Some(_user)) => {
+                    // API key is valid, continue with request
+                    // Note: user info could be stored in request extensions if needed
+                }
+                Ok(None) => {
+                    let took_ms = start_time.elapsed().as_millis() as u64;
+                    return HttpResponse::Unauthorized().json(SqlResponse::error(
+                        "INVALID_API_KEY",
+                        "Invalid API key",
+                        took_ms,
+                    ));
+                }
+                Err(e) => {
+                    let took_ms = start_time.elapsed().as_millis() as u64;
+                    warn!("Error validating API key: {}", e);
+                    return HttpResponse::InternalServerError().json(SqlResponse::error(
+                        "AUTH_ERROR",
+                        "Authentication error",
+                        took_ms,
+                    ));
+                }
+            }
+        } else {
+            // RocksDbAdapter not available - this should not happen in production
+            let took_ms = start_time.elapsed().as_millis() as u64;
+            warn!("RocksDbAdapter not available for API key validation");
+            return HttpResponse::InternalServerError().json(SqlResponse::error(
+                "AUTH_ERROR",
+                "Authentication service unavailable",
+                took_ms,
+            ));
+        }
+    }
 
     // Extract user_id from X-USER-ID header (optional)
     let user_id: Option<UserId> = http_req

@@ -389,34 +389,68 @@ impl ServerConfig {
 
     /// Apply environment variable overrides for sensitive configuration
     ///
-    /// Supported environment variables:
-    /// - KALAMDB_ROCKSDB_PATH: Override storage.rocksdb_path
-    /// - KALAMDB_LOG_FILE_PATH: Override logging.file_path
-    /// - KALAMDB_HOST: Override server.host
-    /// - KALAMDB_PORT: Override server.port
+    /// Supported environment variables (T030):
+    /// - KALAMDB_SERVER_HOST: Override server.host
+    /// - KALAMDB_SERVER_PORT: Override server.port
+    /// - KALAMDB_LOG_LEVEL: Override logging.level
+    /// - KALAMDB_LOG_FILE: Override logging.file_path
+    /// - KALAMDB_LOG_TO_CONSOLE: Override logging.log_to_console
+    /// - KALAMDB_DATA_DIR: Override storage.rocksdb_path
+    /// - KALAMDB_ROCKSDB_PATH: Override storage.rocksdb_path (legacy, prefer KALAMDB_DATA_DIR)
+    /// - KALAMDB_LOG_FILE_PATH: Override logging.file_path (legacy, prefer KALAMDB_LOG_FILE)
+    /// - KALAMDB_HOST: Override server.host (legacy, prefer KALAMDB_SERVER_HOST)
+    /// - KALAMDB_PORT: Override server.port (legacy, prefer KALAMDB_SERVER_PORT)
+    ///
+    /// Environment variables take precedence over config.toml values (T031)
     fn apply_env_overrides(&mut self) -> anyhow::Result<()> {
         use std::env;
 
-        // Database path (sensitive - may contain credentials in cloud storage URLs)
-        if let Ok(path) = env::var("KALAMDB_ROCKSDB_PATH") {
-            self.storage.rocksdb_path = path;
-        }
-
-        // Log file path
-        if let Ok(path) = env::var("KALAMDB_LOG_FILE_PATH") {
-            self.logging.file_path = path;
-        }
-
-        // Server host
-        if let Ok(host) = env::var("KALAMDB_HOST") {
+        // Server host (new naming convention)
+        if let Ok(host) = env::var("KALAMDB_SERVER_HOST") {
+            self.server.host = host;
+        } else if let Ok(host) = env::var("KALAMDB_HOST") {
+            // Legacy fallback
             self.server.host = host;
         }
 
-        // Server port
-        if let Ok(port_str) = env::var("KALAMDB_PORT") {
+        // Server port (new naming convention)
+        if let Ok(port_str) = env::var("KALAMDB_SERVER_PORT") {
+            self.server.port = port_str
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid KALAMDB_SERVER_PORT value: {}", port_str))?;
+        } else if let Ok(port_str) = env::var("KALAMDB_PORT") {
+            // Legacy fallback
             self.server.port = port_str
                 .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid KALAMDB_PORT value: {}", port_str))?;
+        }
+
+        // Log level
+        if let Ok(level) = env::var("KALAMDB_LOG_LEVEL") {
+            self.logging.level = level;
+        }
+
+        // Log file path (new naming convention)
+        if let Ok(path) = env::var("KALAMDB_LOG_FILE") {
+            self.logging.file_path = path;
+        } else if let Ok(path) = env::var("KALAMDB_LOG_FILE_PATH") {
+            // Legacy fallback
+            self.logging.file_path = path;
+        }
+
+        // Log to console
+        if let Ok(val) = env::var("KALAMDB_LOG_TO_CONSOLE") {
+            self.logging.log_to_console = val.to_lowercase() == "true" 
+                || val == "1" 
+                || val.to_lowercase() == "yes";
+        }
+
+        // Data directory (new naming convention)
+        if let Ok(path) = env::var("KALAMDB_DATA_DIR") {
+            self.storage.rocksdb_path = path;
+        } else if let Ok(path) = env::var("KALAMDB_ROCKSDB_PATH") {
+            // Legacy fallback
+            self.storage.rocksdb_path = path;
         }
 
         Ok(())
@@ -525,6 +559,7 @@ impl ServerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
 
     #[test]
     fn test_default_config_is_valid() {
@@ -551,5 +586,110 @@ mod tests {
         let mut config = ServerConfig::default();
         config.storage.compression = "invalid".to_string();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_env_override_server_host() {
+        env::set_var("KALAMDB_SERVER_HOST", "0.0.0.0");
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+        assert_eq!(config.server.host, "0.0.0.0");
+        env::remove_var("KALAMDB_SERVER_HOST");
+    }
+
+    #[test]
+    fn test_env_override_server_port() {
+        env::set_var("KALAMDB_SERVER_PORT", "9090");
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+        assert_eq!(config.server.port, 9090);
+        env::remove_var("KALAMDB_SERVER_PORT");
+    }
+
+    #[test]
+    fn test_env_override_log_level() {
+        env::set_var("KALAMDB_LOG_LEVEL", "debug");
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+        assert_eq!(config.logging.level, "debug");
+        env::remove_var("KALAMDB_LOG_LEVEL");
+    }
+
+    #[test]
+    fn test_env_override_log_to_console() {
+        env::set_var("KALAMDB_LOG_TO_CONSOLE", "false");
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+        assert_eq!(config.logging.log_to_console, false);
+        env::remove_var("KALAMDB_LOG_TO_CONSOLE");
+
+        // Test truthy values
+        env::set_var("KALAMDB_LOG_TO_CONSOLE", "true");
+        config.apply_env_overrides().unwrap();
+        assert_eq!(config.logging.log_to_console, true);
+        env::remove_var("KALAMDB_LOG_TO_CONSOLE");
+
+        env::set_var("KALAMDB_LOG_TO_CONSOLE", "1");
+        config.apply_env_overrides().unwrap();
+        assert_eq!(config.logging.log_to_console, true);
+        env::remove_var("KALAMDB_LOG_TO_CONSOLE");
+    }
+
+    #[test]
+    fn test_env_override_data_dir() {
+        env::set_var("KALAMDB_DATA_DIR", "/custom/data");
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+        assert_eq!(config.storage.rocksdb_path, "/custom/data");
+        env::remove_var("KALAMDB_DATA_DIR");
+    }
+
+    #[test]
+    fn test_legacy_env_vars() {
+        // Test legacy KALAMDB_HOST
+        env::set_var("KALAMDB_HOST", "192.168.1.1");
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+        assert_eq!(config.server.host, "192.168.1.1");
+        env::remove_var("KALAMDB_HOST");
+
+        // Test legacy KALAMDB_PORT
+        env::set_var("KALAMDB_PORT", "3000");
+        config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+        assert_eq!(config.server.port, 3000);
+        env::remove_var("KALAMDB_PORT");
+
+        // Test legacy KALAMDB_ROCKSDB_PATH
+        env::set_var("KALAMDB_ROCKSDB_PATH", "/old/path");
+        config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+        assert_eq!(config.storage.rocksdb_path, "/old/path");
+        env::remove_var("KALAMDB_ROCKSDB_PATH");
+    }
+
+    #[test]
+    fn test_new_env_vars_override_legacy() {
+        // Set both new and legacy vars - new should win
+        env::set_var("KALAMDB_SERVER_HOST", "new.host");
+        env::set_var("KALAMDB_HOST", "old.host");
+
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+        assert_eq!(config.server.host, "new.host");
+
+        env::remove_var("KALAMDB_SERVER_HOST");
+        env::remove_var("KALAMDB_HOST");
+
+        // Same for port
+        env::set_var("KALAMDB_SERVER_PORT", "8888");
+        env::set_var("KALAMDB_PORT", "9999");
+
+        config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+        assert_eq!(config.server.port, 8888);
+
+        env::remove_var("KALAMDB_SERVER_PORT");
+        env::remove_var("KALAMDB_PORT");
     }
 }

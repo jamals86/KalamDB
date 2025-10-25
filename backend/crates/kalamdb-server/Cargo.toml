@@ -39,6 +39,9 @@ fern = "0.7.1"
 # Time handling
 chrono.workspace = true
 
+# UUID generation
+uuid.workspace = true
+
 # Serialization
 serde.workspace = true
 
