@@ -17,8 +17,8 @@ pub enum QueryCacheKey {
     AllNamespaces,
     /// scan_all_live_queries() result
     AllLiveQueries,
-    /// scan_all_storage_locations() result
-    AllStorageLocations,
+    /// scan_all_storages() result
+    AllStorages,
     /// scan_all_jobs() result
     AllJobs,
     /// get_table(table_id) result
@@ -64,7 +64,7 @@ pub struct QueryCacheTtlConfig {
     pub tables: Duration,
     pub namespaces: Duration,
     pub live_queries: Duration,
-    pub storage_locations: Duration,
+    pub storages: Duration,
     pub jobs: Duration,
     pub single_entity: Duration,
 }
@@ -75,7 +75,7 @@ impl Default for QueryCacheTtlConfig {
             tables: Duration::from_secs(60),             // 60s for tables list
             namespaces: Duration::from_secs(60),         // 60s for namespaces list
             live_queries: Duration::from_secs(10),       // 10s for live queries (more dynamic)
-            storage_locations: Duration::from_secs(300), // 5min for storage locations (rarely change)
+            storages: Duration::from_secs(300), // 5min for storages (rarely change)
             jobs: Duration::from_secs(30),               // 30s for jobs list
             single_entity: Duration::from_secs(120),     // 2min for individual entities
         }
@@ -102,7 +102,7 @@ impl QueryCache {
             QueryCacheKey::AllTables => self.ttl_config.tables,
             QueryCacheKey::AllNamespaces => self.ttl_config.namespaces,
             QueryCacheKey::AllLiveQueries => self.ttl_config.live_queries,
-            QueryCacheKey::AllStorageLocations => self.ttl_config.storage_locations,
+            QueryCacheKey::AllStorages => self.ttl_config.storages,
             QueryCacheKey::AllJobs => self.ttl_config.jobs,
             QueryCacheKey::Table(_) | QueryCacheKey::Namespace(_) => self.ttl_config.single_entity,
         }
@@ -162,10 +162,10 @@ impl QueryCache {
         cache.remove(&QueryCacheKey::AllLiveQueries);
     }
 
-    /// Invalidate all storage locations-related queries
-    pub fn invalidate_storage_locations(&self) {
+    /// Invalidate all storages-related queries
+    pub fn invalidate_storages(&self) {
         let mut cache = self.cache.write().unwrap();
-        cache.remove(&QueryCacheKey::AllStorageLocations);
+        cache.remove(&QueryCacheKey::AllStorages);
     }
 
     /// Invalidate all jobs-related queries
@@ -195,7 +195,7 @@ impl QueryCache {
                 QueryCacheKey::AllTables => ttl_config.tables,
                 QueryCacheKey::AllNamespaces => ttl_config.namespaces,
                 QueryCacheKey::AllLiveQueries => ttl_config.live_queries,
-                QueryCacheKey::AllStorageLocations => ttl_config.storage_locations,
+                QueryCacheKey::AllStorages => ttl_config.storages,
                 QueryCacheKey::AllJobs => ttl_config.jobs,
                 QueryCacheKey::Table(_) | QueryCacheKey::Namespace(_) => ttl_config.single_entity,
             };
@@ -215,7 +215,7 @@ impl QueryCache {
                 QueryCacheKey::AllTables => ttl_config.tables,
                 QueryCacheKey::AllNamespaces => ttl_config.namespaces,
                 QueryCacheKey::AllLiveQueries => ttl_config.live_queries,
-                QueryCacheKey::AllStorageLocations => ttl_config.storage_locations,
+                QueryCacheKey::AllStorages => ttl_config.storages,
                 QueryCacheKey::AllJobs => ttl_config.jobs,
                 QueryCacheKey::Table(_) | QueryCacheKey::Namespace(_) => ttl_config.single_entity,
             };
@@ -358,7 +358,7 @@ mod tests {
             tables: Duration::from_millis(50),
             namespaces: Duration::from_secs(60),
             live_queries: Duration::from_secs(10),
-            storage_locations: Duration::from_secs(300),
+            storages: Duration::from_secs(300),
             jobs: Duration::from_secs(30),
             single_entity: Duration::from_secs(120),
         };
@@ -405,7 +405,7 @@ mod tests {
             tables: Duration::from_millis(50),
             namespaces: Duration::from_secs(60),
             live_queries: Duration::from_secs(10),
-            storage_locations: Duration::from_secs(300),
+            storages: Duration::from_secs(300),
             jobs: Duration::from_secs(30),
             single_entity: Duration::from_secs(120),
         };
@@ -434,7 +434,7 @@ mod tests {
             tables: Duration::from_secs(60),
             namespaces: Duration::from_secs(120),
             live_queries: Duration::from_secs(10),
-            storage_locations: Duration::from_secs(300),
+            storages: Duration::from_secs(300),
             jobs: Duration::from_secs(30),
             single_entity: Duration::from_secs(90),
         };
@@ -454,7 +454,7 @@ mod tests {
             Duration::from_secs(10)
         );
         assert_eq!(
-            cache.get_ttl(&QueryCacheKey::AllStorageLocations),
+            cache.get_ttl(&QueryCacheKey::AllStorages),
             Duration::from_secs(300)
         );
         assert_eq!(

@@ -101,12 +101,20 @@ name = "test_automatic_flushing"
 path = "../../tests/integration/flush/test_automatic_flushing.rs"
 
 [[test]]
+name = "test_automatic_flushing_comprehensive"
+path = "../../tests/integration/flush/test_automatic_flushing_comprehensive.rs"
+
+[[test]]
 name = "test_schema_integrity"
 path = "../../tests/integration/combined/test_schema_integrity.rs"
 
 [[test]]
 name = "test_stress_and_memory"
 path = "../../tests/integration/combined/test_stress_and_memory.rs"
+
+[[test]]
+name = "test_code_quality"
+path = "../../tests/test_code_quality.rs"
 
 [dev-dependencies]
 tempfile = "3"
@@ -115,3 +123,4 @@ actix-http = "3.4"
 tokio-tungstenite = "0.21"
 futures-util = "0.3"
 uuid.workspace = true
+rocksdb.workspace = true

@@ -137,7 +137,13 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
 
     // Live query manager (per-node)
     let node_id = NodeId::new(format!("{}:{}", config.server.host, config.server.port));
-    let live_query_manager = Arc::new(LiveQueryManager::new(kalam_sql.clone(), node_id));
+    let live_query_manager = Arc::new(LiveQueryManager::new(
+        kalam_sql.clone(),
+        node_id,
+        Some(user_table_store.clone()),
+        Some(shared_table_store.clone()),
+        Some(stream_table_store.clone()),
+    ));
     info!("LiveQueryManager initialized");
 
     let sql_executor = Arc::new(

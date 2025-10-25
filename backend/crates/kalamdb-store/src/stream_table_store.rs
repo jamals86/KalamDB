@@ -40,10 +40,6 @@ impl StreamTableStore {
     ///
     /// * `namespace_id` - Namespace identifier
     /// * `table_name` - Table name
-    ///
-    /// # Safety
-    ///
-    /// See SharedTableStore::create_column_family for safety documentation.
     pub fn create_column_family(&self, namespace_id: &str, table_name: &str) -> Result<()> {
         let cf_name = format!(
             "{}{}:{}",
@@ -51,22 +47,7 @@ impl StreamTableStore {
             namespace_id,
             table_name
         );
-
-        // Check if CF already exists
-        if self.db.cf_handle(&cf_name).is_some() {
-            return Ok(());
-        }
-
-        // Create new column family
-        let opts = rocksdb::Options::default();
-        unsafe {
-            let db_ptr = Arc::as_ptr(&self.db) as *mut DB;
-            (*db_ptr)
-                .create_cf(&cf_name, &opts)
-                .with_context(|| format!("Failed to create column family: {}", cf_name))?;
-        }
-
-        Ok(())
+        crate::common::create_column_family(&self.db, &cf_name).map_err(|e| anyhow::anyhow!(e))
     }
 
     /// Insert an event with automatic timestamp.
@@ -283,6 +264,7 @@ impl StreamTableStore {
         self.db.write(batch)?;
         Ok(())
     }
+
 }
 
 #[cfg(test)]

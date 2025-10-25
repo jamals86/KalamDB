@@ -8,7 +8,7 @@ use crate::tables::system::jobs::JobsTable;
 use crate::tables::system::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    ArrayRef, Float64Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+    ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
 };
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
@@ -28,13 +28,14 @@ pub struct JobRecord {
     pub job_type: String, // "flush", "compact", "cleanup", etc.
     pub table_name: Option<String>,
     pub status: String,             // "running", "completed", "failed"
-    pub start_time: i64,            // timestamp in milliseconds
-    pub end_time: Option<i64>,      // timestamp in milliseconds
     pub parameters: Option<String>, // JSON array of strings
-    pub result: Option<String>,     // JSON
+    pub result: Option<String>,
     pub trace: Option<String>,
-    pub memory_used_mb: Option<f64>,
-    pub cpu_used_percent: Option<f64>,
+    pub memory_used: Option<i64>,   // bytes
+    pub cpu_used: Option<i64>,      // microseconds
+    pub created_at: i64,
+    pub started_at: Option<i64>,
+    pub completed_at: Option<i64>,
     pub node_id: String,
     pub error_message: Option<String>,
 }
@@ -48,13 +49,14 @@ impl JobRecord {
             job_type,
             table_name: None,
             status: "running".to_string(),
-            start_time: now,
-            end_time: None,
             parameters: None,
             result: None,
             trace: None,
-            memory_used_mb: None,
-            cpu_used_percent: None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: now,
+            started_at: Some(now),
+            completed_at: None,
             node_id,
             error_message: None,
         }
@@ -64,7 +66,10 @@ impl JobRecord {
     pub fn complete(mut self, result: Option<String>) -> Self {
         let now = chrono::Utc::now().timestamp_millis();
         self.status = "completed".to_string();
-        self.end_time = Some(now);
+        self.completed_at = Some(now);
+        if self.started_at.is_none() {
+            self.started_at = Some(self.created_at);
+        }
         self.result = result;
         self
     }
@@ -73,7 +78,10 @@ impl JobRecord {
     pub fn fail(mut self, error_message: String) -> Self {
         let now = chrono::Utc::now().timestamp_millis();
         self.status = "failed".to_string();
-        self.end_time = Some(now);
+        self.completed_at = Some(now);
+        if self.started_at.is_none() {
+            self.started_at = Some(self.created_at);
+        }
         self.error_message = Some(error_message);
         self
     }
@@ -82,7 +90,7 @@ impl JobRecord {
     pub fn cancel(mut self) -> Self {
         let now = chrono::Utc::now().timestamp_millis();
         self.status = "cancelled".to_string();
-        self.end_time = Some(now);
+        self.completed_at = Some(now);
         self
     }
 
@@ -94,7 +102,13 @@ impl JobRecord {
 
     /// Set parameters
     pub fn with_parameters(mut self, parameters: Vec<String>) -> Self {
-        self.parameters = Some(serde_json::to_string(&parameters).unwrap_or_default());
+        if parameters.is_empty() {
+            self.parameters = None;
+        } else {
+            self.parameters = Some(
+                serde_json::to_string(&parameters).unwrap_or_else(|_| "[]".to_string()),
+            );
+        }
         self
     }
 
@@ -105,9 +119,9 @@ impl JobRecord {
     }
 
     /// Set resource usage metrics
-    pub fn with_metrics(mut self, memory_used_mb: f64, cpu_used_percent: f64) -> Self {
-        self.memory_used_mb = Some(memory_used_mb);
-        self.cpu_used_percent = Some(cpu_used_percent);
+    pub fn with_metrics(mut self, memory_used_bytes: i64, cpu_used_micros: i64) -> Self {
+        self.memory_used = Some(memory_used_bytes);
+        self.cpu_used = Some(cpu_used_micros);
         self
     }
 }
@@ -128,28 +142,44 @@ impl JobsTableProvider {
     }
 
     fn convert_sql_job(job: kalamdb_sql::Job) -> JobRecord {
+        let kalamdb_sql::Job {
+            job_id,
+            job_type,
+            status,
+            table_name,
+            parameters,
+            result,
+            trace,
+            memory_used,
+            cpu_used,
+            created_at,
+            start_time,
+            end_time,
+            node_id,
+            error_message,
+        } = job;
+
+        let parameters_json = if parameters.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&parameters).unwrap_or_else(|_| "[]".to_string()))
+        };
+
         JobRecord {
-            job_id: job.job_id,
-            job_type: job.job_type,
-            table_name: if job.table_name.is_empty() {
-                None
-            } else {
-                Some(job.table_name)
-            },
-            status: job.status,
-            start_time: job.start_time,
-            end_time: job.end_time,
-            parameters: if job.parameters.is_empty() {
-                None
-            } else {
-                Some(job.parameters.join(","))
-            },
-            result: job.result,
-            trace: job.trace,
-            memory_used_mb: job.memory_used_mb,
-            cpu_used_percent: job.cpu_used_percent,
-            node_id: job.node_id,
-            error_message: job.error_message,
+            job_id,
+            job_type,
+            table_name,
+            status,
+            parameters: parameters_json,
+            result,
+            trace,
+            memory_used,
+            cpu_used,
+            created_at: if created_at == 0 { start_time } else { created_at },
+            started_at: Some(start_time),
+            completed_at: end_time,
+            node_id,
+            error_message,
         }
     }
 
@@ -168,21 +198,44 @@ impl JobsTableProvider {
 
     /// Insert a new job record
     pub fn insert_job(&self, job: JobRecord) -> Result<(), KalamDbError> {
+        let JobRecord {
+            job_id,
+            job_type,
+            table_name,
+            status,
+            parameters,
+            result,
+            trace,
+            memory_used,
+            cpu_used,
+            created_at,
+            started_at,
+            completed_at,
+            node_id,
+            error_message,
+        } = job;
+
+        let parameters_vec = parameters
+            .as_ref()
+            .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
+            .unwrap_or_default();
+
         // Convert to kalamdb_sql model
         let sql_job = kalamdb_sql::Job {
-            job_id: job.job_id,
-            job_type: job.job_type,
-            table_name: job.table_name.unwrap_or_default(),
-            status: job.status,
-            start_time: job.start_time,
-            end_time: job.end_time,
-            parameters: job.parameters.map(|p| vec![p]).unwrap_or_default(),
-            result: job.result,
-            trace: job.trace,
-            memory_used_mb: job.memory_used_mb,
-            cpu_used_percent: job.cpu_used_percent,
-            node_id: job.node_id,
-            error_message: job.error_message,
+            job_id,
+            job_type,
+            status,
+            table_name,
+            parameters: parameters_vec,
+            result,
+            trace,
+            memory_used,
+            cpu_used,
+            created_at,
+            start_time: started_at.unwrap_or(created_at),
+            end_time: completed_at,
+            node_id,
+            error_message,
         };
 
         self.kalam_sql
@@ -206,18 +259,25 @@ impl JobsTableProvider {
         }
 
         // Convert to kalamdb_sql model
+        let parameters_vec = job
+            .parameters
+            .as_ref()
+            .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
+            .unwrap_or_default();
+
         let sql_job = kalamdb_sql::Job {
             job_id: job.job_id,
             job_type: job.job_type,
-            table_name: job.table_name.unwrap_or_default(),
             status: job.status,
-            start_time: job.start_time,
-            end_time: job.end_time,
-            parameters: job.parameters.map(|p| vec![p]).unwrap_or_default(),
+            table_name: job.table_name,
+            parameters: parameters_vec,
             result: job.result,
             trace: job.trace,
-            memory_used_mb: job.memory_used_mb,
-            cpu_used_percent: job.cpu_used_percent,
+            memory_used: job.memory_used,
+            cpu_used: job.cpu_used,
+            created_at: job.created_at,
+            start_time: job.started_at.unwrap_or(job.created_at),
+            end_time: job.completed_at,
             node_id: job.node_id,
             error_message: job.error_message,
         };
@@ -242,32 +302,7 @@ impl JobsTableProvider {
             .map_err(|e| KalamDbError::Other(format!("Failed to get job: {}", e)))?;
 
         match sql_job {
-            Some(j) => {
-                let job = JobRecord {
-                    job_id: j.job_id,
-                    job_type: j.job_type,
-                    table_name: if j.table_name.is_empty() {
-                        None
-                    } else {
-                        Some(j.table_name)
-                    },
-                    status: j.status,
-                    start_time: j.start_time,
-                    end_time: j.end_time,
-                    parameters: if j.parameters.is_empty() {
-                        None
-                    } else {
-                        Some(j.parameters.join(","))
-                    },
-                    result: j.result,
-                    trace: j.trace,
-                    memory_used_mb: j.memory_used_mb,
-                    cpu_used_percent: j.cpu_used_percent,
-                    node_id: j.node_id,
-                    error_message: j.error_message,
-                };
-                Ok(Some(job))
-            }
+            Some(j) => Ok(Some(Self::convert_sql_job(j))),
             None => Ok(None),
         }
     }
@@ -317,7 +352,10 @@ impl JobsTableProvider {
                 continue;
             }
 
-            let reference_time = job.end_time.unwrap_or(job.start_time);
+            let reference_time = job
+                .completed_at
+                .or(job.started_at)
+                .unwrap_or(job.created_at);
             if now - reference_time > retention_ms {
                 self.delete_job(&job.job_id)?;
                 deleted += 1;
@@ -338,46 +376,76 @@ impl JobsTableProvider {
         let mut job_types = StringBuilder::new();
         let mut table_names = StringBuilder::new();
         let mut statuses = StringBuilder::new();
-        let mut start_times = Vec::new();
-        let mut end_times = Vec::new();
         let mut parameters_vec = StringBuilder::new();
         let mut results = StringBuilder::new();
         let mut traces = StringBuilder::new();
-        let mut memory_used = Vec::new();
-        let mut cpu_used = Vec::new();
+        let mut memory_used: Vec<Option<i64>> = Vec::new();
+        let mut cpu_used: Vec<Option<i64>> = Vec::new();
+        let mut created_ats: Vec<Option<i64>> = Vec::new();
+        let mut started_ats: Vec<Option<i64>> = Vec::new();
+        let mut completed_ats: Vec<Option<i64>> = Vec::new();
         let mut node_ids = StringBuilder::new();
         let mut error_messages = StringBuilder::new();
 
         for job in jobs {
-            job_ids.append_value(&job.job_id);
-            job_types.append_value(&job.job_type);
-            if !job.table_name.is_empty() {
-                table_names.append_value(&job.table_name);
+            let kalamdb_sql::Job {
+                job_id,
+                job_type,
+                status,
+                table_name,
+                parameters,
+                result,
+                trace,
+                memory_used: mem_used,
+                cpu_used: cpu,
+                created_at,
+                start_time,
+                end_time,
+                node_id,
+                error_message,
+            } = job;
+
+            job_ids.append_value(&job_id);
+            job_types.append_value(&job_type);
+            if let Some(name) = table_name {
+                if name.is_empty() {
+                    table_names.append_null();
+                } else {
+                    table_names.append_value(&name);
+                }
             } else {
                 table_names.append_null();
             }
-            statuses.append_value(&job.status);
-            start_times.push(Some(job.start_time));
-            end_times.push(job.end_time);
-            if !job.parameters.is_empty() {
-                parameters_vec.append_value(job.parameters.join(","));
-            } else {
+            statuses.append_value(&status);
+
+            if parameters.is_empty() {
                 parameters_vec.append_null();
+            } else {
+                parameters_vec.append_value(
+                    serde_json::to_string(&parameters).unwrap_or_else(|_| "[]".to_string()),
+                );
             }
-            if let Some(res) = &job.result {
+
+            if let Some(res) = result {
                 results.append_value(res);
             } else {
                 results.append_null();
             }
-            if let Some(trace) = &job.trace {
+
+            if let Some(trace) = trace {
                 traces.append_value(trace);
             } else {
                 traces.append_null();
             }
-            memory_used.push(job.memory_used_mb);
-            cpu_used.push(job.cpu_used_percent);
-            node_ids.append_value(&job.node_id);
-            if let Some(err) = &job.error_message {
+
+            memory_used.push(mem_used);
+            cpu_used.push(cpu);
+            let created = if created_at == 0 { start_time } else { created_at };
+            created_ats.push(Some(created));
+            started_ats.push(Some(start_time));
+            completed_ats.push(end_time);
+            node_ids.append_value(&node_id);
+            if let Some(err) = error_message {
                 error_messages.append_value(err);
             } else {
                 error_messages.append_null();
@@ -391,13 +459,14 @@ impl JobsTableProvider {
                 Arc::new(job_types.finish()) as ArrayRef,
                 Arc::new(table_names.finish()) as ArrayRef,
                 Arc::new(statuses.finish()) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(start_times)) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(end_times)) as ArrayRef,
                 Arc::new(parameters_vec.finish()) as ArrayRef,
                 Arc::new(results.finish()) as ArrayRef,
                 Arc::new(traces.finish()) as ArrayRef,
-                Arc::new(Float64Array::from(memory_used)) as ArrayRef,
-                Arc::new(Float64Array::from(cpu_used)) as ArrayRef,
+                Arc::new(Int64Array::from(memory_used)) as ArrayRef,
+                Arc::new(Int64Array::from(cpu_used)) as ArrayRef,
+                Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
+                Arc::new(TimestampMillisecondArray::from(started_ats)) as ArrayRef,
+                Arc::new(TimestampMillisecondArray::from(completed_ats)) as ArrayRef,
                 Arc::new(node_ids.finish()) as ArrayRef,
                 Arc::new(error_messages.finish()) as ArrayRef,
             ],
@@ -564,13 +633,13 @@ mod tests {
             "flush".to_string(),
             "node-1".to_string(),
         )
-        .with_metrics(256.5, 45.2);
+        .with_metrics(268_435_456, 45_200);
 
         provider.insert_job(job).unwrap();
 
         let retrieved = provider.get_job("job-006").unwrap().unwrap();
-        assert_eq!(retrieved.memory_used_mb, Some(256.5));
-        assert_eq!(retrieved.cpu_used_percent, Some(45.2));
+        assert_eq!(retrieved.memory_used, Some(268_435_456));
+        assert_eq!(retrieved.cpu_used, Some(45_200));
     }
 
     #[test]
@@ -603,13 +672,14 @@ mod tests {
             job_type: "flush".to_string(),
             table_name: None,
             status: "completed".to_string(),
-            start_time: old_time,
-            end_time: Some(old_time + 1000),
             parameters: None,
             result: None,
             trace: None,
-            memory_used_mb: None,
-            cpu_used_percent: None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: old_time,
+            started_at: Some(old_time),
+            completed_at: Some(old_time + 1000),
             node_id: "node-1".to_string(),
             error_message: None,
         };
@@ -655,6 +725,6 @@ mod tests {
 
         let batch = provider.scan_all_jobs().unwrap();
         assert_eq!(batch.num_rows(), 2);
-        assert_eq!(batch.num_columns(), 13);
+        assert_eq!(batch.num_columns(), 14);
     }
 }

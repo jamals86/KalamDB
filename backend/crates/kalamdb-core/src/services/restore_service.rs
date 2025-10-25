@@ -545,18 +545,20 @@ impl RestoreService {
             chrono::Utc::now().timestamp_millis()
         );
 
+        let now_ms = chrono::Utc::now().timestamp_millis();
         let job = Job {
             job_id: job_id.clone(),
             job_type: "restore".to_string(),
-            table_name: namespace_id.as_str().to_string(), // Use namespace as table_name
             status: "running".to_string(),
-            start_time: chrono::Utc::now().timestamp(),
-            end_time: None,
+            table_name: Some(namespace_id.as_str().to_string()),
             parameters: vec![format!(r#"{{"namespace_id":"{}"}}"#, namespace_id.as_str())],
             result: None,
             trace: None,
-            memory_used_mb: None,
-            cpu_used_percent: None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: now_ms,
+            start_time: now_ms,
+            end_time: None,
             node_id: "local".to_string(),
             error_message: None,
         };
@@ -583,7 +585,7 @@ impl RestoreService {
             .ok_or_else(|| KalamDbError::NotFound(format!("Job '{}' not found", job_id)))?;
 
         job.status = "completed".to_string();
-        job.end_time = Some(chrono::Utc::now().timestamp());
+        job.end_time = Some(chrono::Utc::now().timestamp_millis());
         job.result = Some(format!(
             r#"{{"tables_restored":{},"files_restored":{},"total_bytes":{}}}"#,
             tables_restored, files_restored, total_bytes
@@ -605,7 +607,7 @@ impl RestoreService {
             .ok_or_else(|| KalamDbError::NotFound(format!("Job '{}' not found", job_id)))?;
 
         job.status = "failed".to_string();
-        job.end_time = Some(chrono::Utc::now().timestamp());
+        job.end_time = Some(chrono::Utc::now().timestamp_millis());
         job.error_message = Some(error.to_string());
 
         self.kalam_sql

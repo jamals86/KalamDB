@@ -16,6 +16,7 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_commons::{models::NamespaceId, TableName, UserId};
 use kalamdb_sql::KalamSql;
 use serde::{Deserialize, Serialize};
 use std::any::Any;
@@ -26,13 +27,14 @@ use std::sync::Arc;
 pub struct LiveQueryRecord {
     pub live_id: String, // Format: {user_id}-{unique_conn_id}-{table_name}-{query_id}
     pub connection_id: String, // Format: {user_id}-{unique_conn_id}
-    pub table_name: String, // Target table name from SQL SELECT
+    pub namespace_id: NamespaceId, // Namespace that owns the table
+    pub table_name: TableName, // Target table name from SQL SELECT
     pub query_id: String, // User-chosen query identifier
-    pub user_id: String, // Owner of the subscription
+    pub user_id: UserId, // Owner of the subscription
     pub query: String,   // SQL query text
     pub options: Option<String>, // JSON: {"last_rows": 50} for initial data fetch
     pub created_at: i64, // timestamp in milliseconds
-    pub updated_at: i64, // timestamp in milliseconds
+    pub last_update: i64, // timestamp in milliseconds
     pub changes: i64,    // Total notifications sent
     pub node: String,    // Which node owns the WebSocket
 }
@@ -58,13 +60,14 @@ impl LiveQueriesTableProvider {
         let sql_live_query = kalamdb_sql::LiveQuery {
             live_id: live_query.live_id,
             connection_id: live_query.connection_id,
-            table_name: live_query.table_name,
+            namespace_id: live_query.namespace_id.into_string(),
+            table_name: live_query.table_name.into_string(),
             query_id: live_query.query_id,
-            user_id: live_query.user_id,
+            user_id: live_query.user_id.into_string(),
             query: live_query.query,
             options: live_query.options.unwrap_or_default(),
             created_at: live_query.created_at,
-            updated_at: live_query.updated_at,
+            last_update: live_query.last_update,
             changes: live_query.changes,
             node: live_query.node,
         };
@@ -89,13 +92,14 @@ impl LiveQueriesTableProvider {
         let sql_live_query = kalamdb_sql::LiveQuery {
             live_id: live_query.live_id,
             connection_id: live_query.connection_id,
-            table_name: live_query.table_name,
+            namespace_id: live_query.namespace_id.into_string(),
+            table_name: live_query.table_name.into_string(),
             query_id: live_query.query_id,
-            user_id: live_query.user_id,
+            user_id: live_query.user_id.into_string(),
             query: live_query.query,
             options: live_query.options.unwrap_or_default(),
             created_at: live_query.created_at,
-            updated_at: live_query.updated_at,
+            last_update: live_query.last_update,
             changes: live_query.changes,
             node: live_query.node,
         };
@@ -124,9 +128,10 @@ impl LiveQueriesTableProvider {
                 let live_query = LiveQueryRecord {
                     live_id: lq.live_id,
                     connection_id: lq.connection_id,
-                    table_name: lq.table_name,
+                    namespace_id: NamespaceId::from(lq.namespace_id),
+                    table_name: TableName::from(lq.table_name),
                     query_id: lq.query_id,
-                    user_id: lq.user_id,
+                    user_id: UserId::from(lq.user_id),
                     query: lq.query,
                     options: if lq.options.is_empty() {
                         None
@@ -134,7 +139,7 @@ impl LiveQueriesTableProvider {
                         Some(lq.options)
                     },
                     created_at: lq.created_at,
-                    updated_at: lq.updated_at,
+                    last_update: lq.last_update,
                     changes: lq.changes,
                     node: lq.node,
                 };
@@ -181,9 +186,10 @@ impl LiveQueriesTableProvider {
             .map(|lq| LiveQueryRecord {
                 live_id: lq.live_id,
                 connection_id: lq.connection_id,
-                table_name: lq.table_name,
+                namespace_id: NamespaceId::from(lq.namespace_id),
+                table_name: TableName::from(lq.table_name),
                 query_id: lq.query_id,
-                user_id: lq.user_id,
+                user_id: UserId::from(lq.user_id),
                 query: lq.query,
                 options: if lq.options.is_empty() {
                     None
@@ -191,7 +197,7 @@ impl LiveQueriesTableProvider {
                     Some(lq.options)
                 },
                 created_at: lq.created_at,
-                updated_at: lq.updated_at,
+                last_update: lq.last_update,
                 changes: lq.changes,
                 node: lq.node,
             })
@@ -216,9 +222,10 @@ impl LiveQueriesTableProvider {
             .map(|lq| LiveQueryRecord {
                 live_id: lq.live_id,
                 connection_id: lq.connection_id,
-                table_name: lq.table_name,
+                namespace_id: NamespaceId::from(lq.namespace_id.clone()),
+                table_name: TableName::from(lq.table_name),
                 query_id: lq.query_id,
-                user_id: lq.user_id,
+                user_id: UserId::from(lq.user_id),
                 query: lq.query,
                 options: if lq.options.is_empty() {
                     None
@@ -226,7 +233,7 @@ impl LiveQueriesTableProvider {
                     Some(lq.options)
                 },
                 created_at: lq.created_at,
-                updated_at: lq.updated_at,
+                last_update: lq.last_update,
                 changes: lq.changes,
                 node: lq.node,
             })
@@ -244,19 +251,21 @@ impl LiveQueriesTableProvider {
 
         let mut live_ids = StringBuilder::new();
         let mut connection_ids = StringBuilder::new();
+        let mut namespaces = StringBuilder::new();
         let mut table_names = StringBuilder::new();
         let mut query_ids = StringBuilder::new();
         let mut user_ids = StringBuilder::new();
         let mut queries = StringBuilder::new();
         let mut options_list = StringBuilder::new();
         let mut created_ats = Vec::new();
-        let mut updated_ats = Vec::new();
+        let mut last_updates = Vec::new();
         let mut changes_list = Vec::new();
         let mut nodes = StringBuilder::new();
 
         for live_query in live_queries {
             live_ids.append_value(&live_query.live_id);
             connection_ids.append_value(&live_query.connection_id);
+            namespaces.append_value(&live_query.namespace_id);
             table_names.append_value(&live_query.table_name);
             query_ids.append_value(&live_query.query_id);
             user_ids.append_value(&live_query.user_id);
@@ -269,7 +278,7 @@ impl LiveQueriesTableProvider {
             }
 
             created_ats.push(Some(live_query.created_at));
-            updated_ats.push(Some(live_query.updated_at));
+            last_updates.push(Some(live_query.last_update));
             changes_list.push(Some(live_query.changes));
             nodes.append_value(&live_query.node);
         }
@@ -279,13 +288,14 @@ impl LiveQueriesTableProvider {
             vec![
                 Arc::new(live_ids.finish()) as ArrayRef,
                 Arc::new(connection_ids.finish()) as ArrayRef,
+                Arc::new(namespaces.finish()) as ArrayRef,
                 Arc::new(table_names.finish()) as ArrayRef,
                 Arc::new(query_ids.finish()) as ArrayRef,
                 Arc::new(user_ids.finish()) as ArrayRef,
                 Arc::new(queries.finish()) as ArrayRef,
                 Arc::new(options_list.finish()) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef,
+                Arc::new(TimestampMillisecondArray::from(last_updates)) as ArrayRef,
                 Arc::new(Int64Array::from(changes_list)) as ArrayRef,
                 Arc::new(nodes.finish()) as ArrayRef,
             ],
@@ -302,7 +312,7 @@ impl LiveQueriesTableProvider {
             .ok_or_else(|| KalamDbError::NotFound(format!("Live query not found: {}", live_id)))?;
 
         live_query.changes += 1;
-        live_query.updated_at = timestamp;
+        live_query.last_update = timestamp;
 
         self.update_live_query(live_query)
     }
@@ -369,13 +379,14 @@ mod tests {
         let live_query = LiveQueryRecord {
             live_id: "user1-conn1-messages-q1".to_string(),
             connection_id: "user1-conn1".to_string(),
-            table_name: "messages".to_string(),
+            namespace_id: NamespaceId::from("chat"),
+            table_name: TableName::from("messages"),
             query_id: "q1".to_string(),
-            user_id: "user1".to_string(),
+            user_id: UserId::from("user1"),
             query: "SELECT * FROM messages WHERE _updated > NOW() - INTERVAL '1 hour'".to_string(),
             options: Some(r#"{"last_rows": 50}"#.to_string()),
             created_at: 1000,
-            updated_at: 1000,
+            last_update: 1000,
             changes: 0,
             node: "node1".to_string(),
         };
@@ -387,7 +398,7 @@ mod tests {
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.live_id, "user1-conn1-messages-q1");
         assert_eq!(retrieved.connection_id, "user1-conn1");
-        assert_eq!(retrieved.table_name, "messages");
+        assert_eq!(retrieved.table_name.as_ref(), "messages");
         assert_eq!(retrieved.query_id, "q1");
     }
 
@@ -398,13 +409,14 @@ mod tests {
         let mut live_query = LiveQueryRecord {
             live_id: "user1-conn1-messages-q1".to_string(),
             connection_id: "user1-conn1".to_string(),
-            table_name: "messages".to_string(),
+            namespace_id: NamespaceId::from("chat"),
+            table_name: TableName::from("messages"),
             query_id: "q1".to_string(),
-            user_id: "user1".to_string(),
+            user_id: UserId::from("user1"),
             query: "SELECT * FROM messages".to_string(),
             options: None,
             created_at: 1000,
-            updated_at: 1000,
+            last_update: 1000,
             changes: 0,
             node: "node1".to_string(),
         };
@@ -412,7 +424,7 @@ mod tests {
         provider.insert_live_query(live_query.clone()).unwrap();
 
         live_query.changes = 5;
-        live_query.updated_at = 2000;
+        live_query.last_update = 2000;
         provider.update_live_query(live_query.clone()).unwrap();
 
         let retrieved = provider
@@ -420,7 +432,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(retrieved.changes, 5);
-        assert_eq!(retrieved.updated_at, 2000);
+        assert_eq!(retrieved.last_update, 2000);
     }
 
     #[test]
@@ -431,13 +443,14 @@ mod tests {
         let live_query = LiveQueryRecord {
             live_id: "user1-conn1-messages-q1".to_string(),
             connection_id: "user1-conn1".to_string(),
-            table_name: "messages".to_string(),
+            namespace_id: NamespaceId::from("chat"),
+            table_name: TableName::from("messages"),
             query_id: "q1".to_string(),
-            user_id: "user1".to_string(),
+            user_id: UserId::from("user1"),
             query: "SELECT * FROM messages".to_string(),
             options: None,
             created_at: 1000,
-            updated_at: 1000,
+            last_update: 1000,
             changes: 0,
             node: "node1".to_string(),
         };
@@ -459,13 +472,14 @@ mod tests {
         let live_query1 = LiveQueryRecord {
             live_id: "user1-conn1-messages-q1".to_string(),
             connection_id: "user1-conn1".to_string(),
-            table_name: "messages".to_string(),
+            namespace_id: NamespaceId::from("chat"),
+            table_name: TableName::from("messages"),
             query_id: "q1".to_string(),
-            user_id: "user1".to_string(),
+            user_id: UserId::from("user1"),
             query: "SELECT * FROM messages".to_string(),
             options: None,
             created_at: 1000,
-            updated_at: 1000,
+            last_update: 1000,
             changes: 0,
             node: "node1".to_string(),
         };
@@ -473,13 +487,14 @@ mod tests {
         let live_query2 = LiveQueryRecord {
             live_id: "user1-conn1-notifications-q2".to_string(),
             connection_id: "user1-conn1".to_string(),
-            table_name: "notifications".to_string(),
+            namespace_id: NamespaceId::from("chat"),
+            table_name: TableName::from("notifications"),
             query_id: "q2".to_string(),
-            user_id: "user1".to_string(),
+            user_id: UserId::from("user1"),
             query: "SELECT * FROM notifications".to_string(),
             options: None,
             created_at: 1000,
-            updated_at: 1000,
+            last_update: 1000,
             changes: 0,
             node: "node1".to_string(),
         };
@@ -505,13 +520,14 @@ mod tests {
         let live_query1 = LiveQueryRecord {
             live_id: "user1-conn1-messages-q1".to_string(),
             connection_id: "user1-conn1".to_string(),
-            table_name: "messages".to_string(),
+            namespace_id: NamespaceId::from("chat"),
+            table_name: TableName::from("messages"),
             query_id: "q1".to_string(),
-            user_id: "user1".to_string(),
+            user_id: UserId::from("user1"),
             query: "SELECT * FROM messages".to_string(),
             options: None,
             created_at: 1000,
-            updated_at: 1000,
+            last_update: 1000,
             changes: 0,
             node: "node1".to_string(),
         };
@@ -519,13 +535,14 @@ mod tests {
         let live_query2 = LiveQueryRecord {
             live_id: "user2-conn2-messages-q1".to_string(),
             connection_id: "user2-conn2".to_string(),
-            table_name: "messages".to_string(),
+            namespace_id: NamespaceId::from("chat"),
+            table_name: TableName::from("messages"),
             query_id: "q1".to_string(),
-            user_id: "user2".to_string(),
+            user_id: UserId::from("user2"),
             query: "SELECT * FROM messages".to_string(),
             options: None,
             created_at: 1000,
-            updated_at: 1000,
+            last_update: 1000,
             changes: 0,
             node: "node1".to_string(),
         };
@@ -535,7 +552,7 @@ mod tests {
 
         let user1_queries = provider.get_by_user_id("user1").unwrap();
         assert_eq!(user1_queries.len(), 1);
-        assert_eq!(user1_queries[0].user_id, "user1");
+        assert_eq!(user1_queries[0].user_id.as_ref(), "user1");
     }
 
     #[test]
@@ -545,13 +562,14 @@ mod tests {
         let live_query1 = LiveQueryRecord {
             live_id: "user1-conn1-messages-q1".to_string(),
             connection_id: "user1-conn1".to_string(),
-            table_name: "messages".to_string(),
+            namespace_id: NamespaceId::from("chat"),
+            table_name: TableName::from("messages"),
             query_id: "q1".to_string(),
-            user_id: "user1".to_string(),
+            user_id: UserId::from("user1"),
             query: "SELECT * FROM messages".to_string(),
             options: None,
             created_at: 1000,
-            updated_at: 1000,
+            last_update: 1000,
             changes: 0,
             node: "node1".to_string(),
         };
@@ -559,13 +577,14 @@ mod tests {
         let live_query2 = LiveQueryRecord {
             live_id: "user1-conn1-notifications-q2".to_string(),
             connection_id: "user1-conn1".to_string(),
-            table_name: "notifications".to_string(),
+            namespace_id: NamespaceId::from("chat"),
+            table_name: TableName::from("notifications"),
             query_id: "q2".to_string(),
-            user_id: "user1".to_string(),
+            user_id: UserId::from("user1"),
             query: "SELECT * FROM notifications".to_string(),
             options: None,
             created_at: 1000,
-            updated_at: 1000,
+            last_update: 1000,
             changes: 0,
             node: "node1".to_string(),
         };
@@ -575,7 +594,7 @@ mod tests {
 
         let messages_queries = provider.get_by_table_name("messages").unwrap();
         assert_eq!(messages_queries.len(), 1);
-        assert_eq!(messages_queries[0].table_name, "messages");
+        assert_eq!(messages_queries[0].table_name.as_ref(), "messages");
     }
 
     #[test]
@@ -585,13 +604,14 @@ mod tests {
         let live_query = LiveQueryRecord {
             live_id: "user1-conn1-messages-q1".to_string(),
             connection_id: "user1-conn1".to_string(),
-            table_name: "messages".to_string(),
+            namespace_id: NamespaceId::from("chat"),
+            table_name: TableName::from("messages"),
             query_id: "q1".to_string(),
-            user_id: "user1".to_string(),
+            user_id: UserId::from("user1"),
             query: "SELECT * FROM messages".to_string(),
             options: None,
             created_at: 1000,
-            updated_at: 1000,
+            last_update: 1000,
             changes: 0,
             node: "node1".to_string(),
         };
@@ -610,7 +630,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(retrieved.changes, 2);
-        assert_eq!(retrieved.updated_at, 3000);
+        assert_eq!(retrieved.last_update, 3000);
     }
 
     #[test]
@@ -620,13 +640,14 @@ mod tests {
         let live_query1 = LiveQueryRecord {
             live_id: "user1-conn1-messages-q1".to_string(),
             connection_id: "user1-conn1".to_string(),
-            table_name: "messages".to_string(),
+            namespace_id: NamespaceId::from("chat"),
+            table_name: TableName::from("messages"),
             query_id: "q1".to_string(),
-            user_id: "user1".to_string(),
+            user_id: UserId::from("user1"),
             query: "SELECT * FROM messages".to_string(),
             options: Some(r#"{"last_rows": 50}"#.to_string()),
             created_at: 1000,
-            updated_at: 1000,
+            last_update: 1000,
             changes: 0,
             node: "node1".to_string(),
         };
@@ -634,13 +655,14 @@ mod tests {
         let live_query2 = LiveQueryRecord {
             live_id: "user2-conn2-notifications-q2".to_string(),
             connection_id: "user2-conn2".to_string(),
-            table_name: "notifications".to_string(),
+            namespace_id: NamespaceId::from("chat"),
+            table_name: TableName::from("notifications"),
             query_id: "q2".to_string(),
-            user_id: "user2".to_string(),
+            user_id: UserId::from("user2"),
             query: "SELECT * FROM notifications".to_string(),
             options: None,
             created_at: 2000,
-            updated_at: 2000,
+            last_update: 2000,
             changes: 5,
             node: "node2".to_string(),
         };
@@ -650,6 +672,6 @@ mod tests {
 
         let batch = provider.scan_all_live_queries().unwrap();
         assert_eq!(batch.num_rows(), 2);
-        assert_eq!(batch.num_columns(), 11);
+        assert_eq!(batch.num_columns(), 12);
     }
 }

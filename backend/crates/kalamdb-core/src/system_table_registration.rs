@@ -10,6 +10,7 @@ use crate::tables::system::{
     // StorageLocationsTableProvider,
     SystemStoragesProvider,
     SystemTablesTableProvider,
+    TableSchemasProvider,
     UsersTableProvider,
 };
 use datafusion::catalog::schema::{MemorySchemaProvider, SchemaProvider};
@@ -54,6 +55,7 @@ pub fn register_system_tables(
     let storages_provider = Arc::new(SystemStoragesProvider::new(kalam_sql.clone()));
     let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone()));
     let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.clone()));
+    let table_schemas_provider = Arc::new(TableSchemasProvider::new(kalam_sql.clone()));
 
     // Register each system table using the SystemTable enum
     system_schema
@@ -103,6 +105,13 @@ pub fn register_system_tables(
         )
         .map_err(|e| format!("Failed to register system.jobs: {}", e))?;
 
+    system_schema
+        .register_table(
+            SystemTable::TableSchemas.table_name().to_string(),
+            table_schemas_provider,
+        )
+        .map_err(|e| format!("Failed to register system.table_schemas: {}", e))?;
+
     Ok(jobs_provider)
 }
 
@@ -119,6 +128,7 @@ mod tests {
             SystemTable::Users,
             SystemTable::Namespaces,
             SystemTable::Tables,
+            SystemTable::TableSchemas,
             SystemTable::StorageLocations,
             SystemTable::Storages,
             SystemTable::LiveQueries,
@@ -135,7 +145,7 @@ mod tests {
             );
         }
 
-        // Verify we have all 7 system tables (table_schemas is future work)
-        assert_eq!(names.len(), 7);
+        // Verify we have all system table registrations covered
+        assert_eq!(names.len(), 8);
     }
 }

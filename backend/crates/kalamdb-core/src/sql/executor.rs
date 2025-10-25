@@ -52,8 +52,8 @@ use datafusion::sql::sqlparser;
 use kalamdb_commons::models::{NamespaceId as CommonNamespaceId, StorageId};
 use kalamdb_sql::ddl::{
     parse_job_command, AlterNamespaceStatement, CreateNamespaceStatement, CreateTableStatement,
-    DescribeTableStatement, DropNamespaceStatement, DropTableStatement, ShowNamespacesStatement,
-    ShowTableStatsStatement, ShowTablesStatement,
+    DescribeTableStatement, DropNamespaceStatement, DropTableStatement, KillLiveQueryStatement,
+    ShowNamespacesStatement, ShowTableStatsStatement, ShowTablesStatement,
 };
 use kalamdb_sql::statement_classifier::SqlStatement;
 use kalamdb_sql::KalamSql;
@@ -99,6 +99,8 @@ pub struct SqlExecutor {
     storage_registry: Option<Arc<crate::storage::StorageRegistry>>,
     // Job manager for flush operations
     job_manager: Option<Arc<dyn crate::jobs::JobManager>>,
+    // Live query manager for subscription coordination
+    live_query_manager: Option<Arc<crate::live_query::LiveQueryManager>>,
 }
 
 /// UPDATE statement parsed info
@@ -144,6 +146,7 @@ impl SqlExecutor {
             jobs_table_provider: None,
             storage_registry: None,
             job_manager: None,
+            live_query_manager: None,
         }
     }
 
@@ -156,6 +159,15 @@ impl SqlExecutor {
     /// Set the job manager (optional, for FLUSH TABLE support)
     pub fn with_job_manager(mut self, job_manager: Arc<dyn crate::jobs::JobManager>) -> Self {
         self.job_manager = Some(job_manager);
+        self
+    }
+
+    /// Set the live query manager for subscription coordination (optional)
+    pub fn with_live_query_manager(
+        mut self,
+        manager: Arc<crate::live_query::LiveQueryManager>,
+    ) -> Self {
+        self.live_query_manager = Some(manager);
         self
     }
 
@@ -464,6 +476,7 @@ impl SqlExecutor {
             SqlStatement::FlushTable => self.execute_flush_table(sql).await,
             SqlStatement::FlushAllTables => self.execute_flush_all_tables(sql).await,
             SqlStatement::KillJob => self.execute_kill_job(sql).await,
+            SqlStatement::KillLiveQuery => self.execute_kill_live_query(sql).await,
             SqlStatement::BeginTransaction => self.execute_begin_transaction().await,
             SqlStatement::CommitTransaction => self.execute_commit_transaction().await,
             SqlStatement::RollbackTransaction => self.execute_rollback_transaction().await,
@@ -1612,11 +1625,14 @@ impl SqlExecutor {
 
         let table = tables
             .iter()
-            .find(|t| t.namespace == stmt.namespace.as_ref() && t.table_name == stmt.table_name.as_ref())
+            .find(|t| {
+                t.namespace == stmt.namespace.as_ref() && t.table_name == stmt.table_name.as_ref()
+            })
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table '{}.{}' does not exist",
-                    stmt.namespace.as_ref(), stmt.table_name.as_ref()
+                    stmt.namespace.as_ref(),
+                    stmt.table_name.as_ref()
                 ))
             })?;
 
@@ -1624,7 +1640,9 @@ impl SqlExecutor {
         if table.table_type != "user" {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Cannot flush {} table '{}.{}'. Only user tables can be flushed.",
-                table.table_type, stmt.namespace.as_ref(), stmt.table_name.as_ref()
+                table.table_type,
+                stmt.namespace.as_ref(),
+                stmt.table_name.as_ref()
             )));
         }
 
@@ -1669,7 +1687,8 @@ impl SqlExecutor {
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table definition not found for '{}.{}'",
-                    stmt.namespace.as_ref(), stmt.table_name.as_ref()
+                    stmt.namespace.as_ref(),
+                    stmt.table_name.as_ref()
                 ))
             })?;
 
@@ -1677,7 +1696,8 @@ impl SqlExecutor {
         if table_def.schema_history.is_empty() {
             return Err(KalamDbError::Other(format!(
                 "No schema history found for table '{}.{}'",
-                stmt.namespace.as_ref(), stmt.table_name.as_ref()
+                stmt.namespace.as_ref(),
+                stmt.table_name.as_ref()
             )));
         }
 
@@ -1991,6 +2011,31 @@ impl SqlExecutor {
         Ok(ExecutionResult::Success(format!(
             "Job '{}' cancelled successfully",
             job_id
+        )))
+    }
+
+    async fn execute_kill_live_query(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+        let manager = self.live_query_manager.as_ref().ok_or_else(|| {
+            KalamDbError::InvalidOperation("Live query manager not configured".to_string())
+        })?;
+
+        let stmt = KillLiveQueryStatement::parse(sql)
+            .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+
+        manager
+            .unregister_subscription(&stmt.live_id)
+            .await
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to unregister live query {}: {}",
+                    stmt.live_id.to_string(),
+                    e
+                ))
+            })?;
+
+        Ok(ExecutionResult::Success(format!(
+            "Live query {} terminated",
+            stmt.live_id.to_string()
         )))
     }
 
@@ -2416,6 +2461,20 @@ impl SqlExecutor {
         let default_namespace = kalamdb_commons::NamespaceId::new("default".to_string());
         let stmt = DropTableStatement::parse(sql, &default_namespace)
             .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+
+        if let Some(manager) = &self.live_query_manager {
+            let table_ref = format!(
+                "{}.{}",
+                stmt.namespace_id.as_str(),
+                stmt.table_name.as_str()
+            );
+            if manager.has_active_subscriptions_for(&table_ref).await {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Cannot drop table {} while active live queries exist",
+                    table_ref
+                )));
+            }
+        }
 
         // Convert TableKind to TableType
         let result = deletion_service.drop_table(

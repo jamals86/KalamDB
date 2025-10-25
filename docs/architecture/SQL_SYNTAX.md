@@ -1364,6 +1364,430 @@ See [DataFusion SQL Reference](https://arrow.apache.org/datafusion/user-guide/sq
 
 ---
 
+## KalamDB Custom Functions
+
+KalamDB provides custom SQL functions for ID generation and session context. These functions can be used in DEFAULT clauses, SELECT statements, and WHERE conditions.
+
+### ID Generation Functions
+
+#### SNOWFLAKE_ID()
+
+Generates a 64-bit distributed unique identifier with time-ordering properties.
+
+**Signature**: `SNOWFLAKE_ID() -> BIGINT`
+
+**Structure** (64 bits total):
+- **41 bits**: Timestamp in milliseconds since Unix epoch (supports ~69 years)
+- **10 bits**: Node ID (0-1023 for distributed deployments)
+- **12 bits**: Sequence number (4096 IDs per millisecond per node)
+
+**Properties**:
+- **Time-ordered**: IDs increase monotonically with time
+- **Distributed**: No coordination needed across nodes (configure `node_id` in config.toml)
+- **High throughput**: 4 million IDs per second per node
+- **Sortable**: Numeric sorting equals chronological sorting
+- **Compact**: 8 bytes storage
+
+**Configuration**:
+```toml
+# config.toml
+[flush]
+node_id = 0  # Range: 0-1023
+```
+
+**Examples**:
+
+```sql
+-- CREATE: Table with auto-generated primary key
+CREATE USER TABLE app.orders (
+  order_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+  customer_id TEXT NOT NULL,
+  total_amount DOUBLE,
+  created_at TIMESTAMP DEFAULT NOW()
+) FLUSH ROW_THRESHOLD 1000;
+
+-- INSERT: Omit order_id, it will be auto-generated
+INSERT INTO app.orders (customer_id, total_amount)
+VALUES ('customer_123', 99.99);
+
+-- INSERT: Multiple rows with auto-generated IDs
+INSERT INTO app.orders (customer_id, total_amount) VALUES
+  ('customer_456', 149.50),
+  ('customer_789', 75.25),
+  ('customer_101', 250.00);
+
+-- SELECT: Query with SNOWFLAKE_ID() in WHERE clause
+SELECT * FROM app.orders 
+WHERE order_id > SNOWFLAKE_ID()  -- Orders created after this moment
+ORDER BY order_id DESC;
+
+-- SELECT: Generate IDs in query result
+SELECT 
+  SNOWFLAKE_ID() as new_id,
+  customer_id,
+  total_amount
+FROM app.orders;
+
+-- UPDATE: Use SNOWFLAKE_ID() for versioning
+UPDATE app.orders 
+SET version_id = SNOWFLAKE_ID()
+WHERE order_id = 12345;
+```
+
+**Use Cases**:
+- Primary keys for high-volume tables
+- Event IDs in distributed systems
+- Correlation IDs for tracing
+- Timestamp-based sharding keys
+
+---
+
+#### UUID_V7()
+
+Generates RFC 9562 compliant UUIDv7 identifiers with time-ordering.
+
+**Signature**: `UUID_V7() -> TEXT`
+
+**Structure** (128 bits, 36 characters with hyphens):
+- **48 bits**: Unix timestamp in milliseconds
+- **12 bits**: Version (7) and variant bits
+- **62 bits**: Random data
+
+**Format**: `018b6e8a-07d1-7000-8000-0123456789ab` (8-4-4-4-12 pattern)
+
+**Properties**:
+- **RFC 9562 compliant**: Standard UUID format
+- **Time-ordered**: Lexicographically sortable by creation time
+- **Globally unique**: 128-bit randomness ensures no collisions
+- **Interoperable**: Works with UUID libraries in all languages
+- **URL-safe**: Can be used in URLs without encoding
+
+**Examples**:
+
+```sql
+-- CREATE: Table with UUID primary key
+CREATE USER TABLE app.sessions (
+  session_id TEXT PRIMARY KEY DEFAULT UUID_V7(),
+  user_id TEXT NOT NULL,
+  ip_address TEXT,
+  created_at TIMESTAMP DEFAULT NOW(),
+  expires_at TIMESTAMP
+) FLUSH ROW_THRESHOLD 500;
+
+-- INSERT: Auto-generate session IDs
+INSERT INTO app.sessions (user_id, ip_address, expires_at)
+VALUES ('user_alice', '192.168.1.100', NOW() + INTERVAL '1 hour');
+
+-- INSERT: Multiple sessions with UUIDs
+INSERT INTO app.sessions (user_id, ip_address, expires_at) VALUES
+  ('user_bob', '192.168.1.101', NOW() + INTERVAL '2 hours'),
+  ('user_charlie', '192.168.1.102', NOW() + INTERVAL '30 minutes');
+
+-- SELECT: Query sessions created in last hour
+SELECT session_id, user_id, created_at
+FROM app.sessions
+WHERE created_at > NOW() - INTERVAL '1 hour'
+ORDER BY session_id;  -- Time-ordered due to UUID_V7
+
+-- SELECT: Generate new UUIDs in query
+SELECT 
+  UUID_V7() as correlation_id,
+  session_id,
+  user_id
+FROM app.sessions
+WHERE expires_at > NOW();
+
+-- UPDATE: Add correlation ID
+UPDATE app.sessions
+SET correlation_id = UUID_V7()
+WHERE session_id = '018b6e8a-07d1-7000-8000-0123456789ab';
+```
+
+**Use Cases**:
+- Session identifiers
+- API request/response tracking
+- Distributed transaction IDs
+- External-facing identifiers (customer-visible)
+- Multi-system integration keys
+
+---
+
+#### ULID()
+
+Generates Universally Unique Lexicographically Sortable Identifiers.
+
+**Signature**: `ULID() -> TEXT`
+
+**Structure** (128 bits, 26 characters):
+- **48 bits**: Unix timestamp in milliseconds
+- **80 bits**: Random data
+- **Encoding**: Crockford Base32 (0-9, A-Z excluding I, L, O, U)
+
+**Format**: `01HGW4VJKQZ7Y8X9P6T5R4N3M2` (26 characters, no hyphens)
+
+**Properties**:
+- **Time-ordered**: Lexicographically sortable
+- **URL-safe**: No special characters or hyphens
+- **Case-insensitive**: Can be stored uppercase or lowercase
+- **Compact**: 26 characters vs 36 for UUID
+- **Copy-paste friendly**: No hyphens to break selection
+- **Collision-resistant**: 1.21e+24 possible values per millisecond
+
+**Examples**:
+
+```sql
+-- CREATE: Table with ULID primary key
+CREATE USER TABLE app.events (
+  event_id TEXT PRIMARY KEY DEFAULT ULID(),
+  event_type TEXT NOT NULL,
+  user_id TEXT,
+  payload TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+) FLUSH ROW_THRESHOLD 2000;
+
+-- INSERT: Auto-generate event IDs
+INSERT INTO app.events (event_type, user_id, payload)
+VALUES ('user_login', 'user_alice', '{"ip": "192.168.1.100"}');
+
+-- INSERT: Bulk events with ULIDs
+INSERT INTO app.events (event_type, user_id, payload) VALUES
+  ('page_view', 'user_bob', '{"page": "/dashboard"}'),
+  ('button_click', 'user_charlie', '{"button": "submit"}'),
+  ('api_call', 'user_alice', '{"endpoint": "/api/users"}');
+
+-- SELECT: Query recent events (time-ordered by ULID)
+SELECT event_id, event_type, user_id, created_at
+FROM app.events
+ORDER BY event_id DESC  -- Most recent first
+LIMIT 100;
+
+-- SELECT: Generate correlation ULIDs
+SELECT 
+  ULID() as trace_id,
+  event_id,
+  event_type,
+  user_id
+FROM app.events
+WHERE event_type = 'api_call';
+
+-- UPDATE: Add trace ID for distributed tracing
+UPDATE app.events
+SET trace_id = ULID()
+WHERE event_type IN ('api_call', 'database_query');
+```
+
+**Use Cases**:
+- Event tracking and logging
+- Distributed tracing IDs
+- Short URLs and slugs
+- Mobile app offline ID generation
+- QR code identifiers
+
+---
+
+#### CURRENT_USER()
+
+Returns the user ID from the current session context.
+
+**Signature**: `CURRENT_USER() -> TEXT`
+
+**Properties**:
+- **Session-scoped**: Returns authenticated user's ID
+- **Stable**: Constant within a transaction/request
+- **Automatic**: No configuration needed
+
+**Examples**:
+
+```sql
+-- CREATE: Table tracking who created records
+CREATE USER TABLE app.documents (
+  doc_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+  title TEXT NOT NULL,
+  content TEXT,
+  created_by TEXT DEFAULT CURRENT_USER(),
+  created_at TIMESTAMP DEFAULT NOW(),
+  modified_by TEXT,
+  modified_at TIMESTAMP
+) FLUSH ROW_THRESHOLD 1000;
+
+-- INSERT: created_by automatically set to current user
+INSERT INTO app.documents (title, content)
+VALUES ('Quarterly Report', 'Sales increased by 25%...');
+
+-- INSERT: Multiple documents
+INSERT INTO app.documents (title, content) VALUES
+  ('Meeting Notes', 'Attendees: Alice, Bob, Charlie...'),
+  ('Project Plan', 'Phase 1: Requirements gathering...');
+
+-- SELECT: Query documents created by current user
+SELECT doc_id, title, created_at
+FROM app.documents
+WHERE created_by = CURRENT_USER()
+ORDER BY created_at DESC;
+
+-- UPDATE: Track who modified the document
+UPDATE app.documents
+SET 
+  content = 'Updated content...',
+  modified_by = CURRENT_USER(),
+  modified_at = NOW()
+WHERE doc_id = 12345;
+
+-- SELECT: Audit trail
+SELECT 
+  doc_id,
+  title,
+  created_by,
+  created_at,
+  modified_by,
+  modified_at,
+  CURRENT_USER() as current_session_user
+FROM app.documents
+WHERE modified_by IS NOT NULL;
+```
+
+**Use Cases**:
+- Audit trails and tracking
+- Row-level security
+- User-specific data filtering
+- Change history logging
+
+---
+
+### ID Generation Function Comparison
+
+| Feature | SNOWFLAKE_ID() | UUID_V7() | ULID() |
+|---------|----------------|-----------|--------|
+| **Type** | BIGINT (64-bit) | TEXT (36 chars) | TEXT (26 chars) |
+| **Size** | 8 bytes | 36 bytes | 26 bytes |
+| **Format** | Numeric | 8-4-4-4-12 hyphenated | Crockford Base32 |
+| **Time-ordered** | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Distributed** | ✅ Yes (node_id) | ✅ Yes | ✅ Yes |
+| **Throughput** | 4M/sec/node | Unlimited | Unlimited |
+| **Collision Risk** | None (with node_id) | Negligible | Negligible |
+| **URL-safe** | ✅ Yes | ⚠️ Requires encoding | ✅ Yes |
+| **Human-readable** | ❌ No | ⚠️ Partially | ⚠️ Partially |
+| **Database Index** | ✅ Excellent | ✅ Good | ✅ Good |
+| **RFC Standard** | ❌ No | ✅ RFC 9562 | ❌ No (spec exists) |
+| **Best For** | High-volume tables | External APIs | Logs/events |
+
+**Choosing the Right Function**:
+
+- **Use SNOWFLAKE_ID()** when:
+  - You need maximum performance (numeric indexing)
+  - Working with high-volume tables (millions of rows)
+  - Building distributed systems with multiple nodes
+  - Storage efficiency is critical
+
+- **Use UUID_V7()** when:
+  - You need RFC-standard UUIDs
+  - Integrating with external systems
+  - Customer-facing identifiers
+  - Cross-platform compatibility required
+
+- **Use ULID()** when:
+  - You need URL-friendly IDs
+  - Building APIs with short, readable IDs
+  - Copy-paste friendliness matters
+  - You want compact text IDs
+
+---
+
+### Complete Example: E-commerce System
+
+```sql
+-- 1. Create namespace
+CREATE NAMESPACE shop;
+
+-- 2. Users table with SNOWFLAKE_ID
+CREATE USER TABLE shop.users (
+  user_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+  username TEXT NOT NULL,
+  email TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  created_by TEXT DEFAULT CURRENT_USER()
+) FLUSH ROW_THRESHOLD 1000;
+
+-- 3. Orders table with UUID_V7 (external-facing)
+CREATE USER TABLE shop.orders (
+  order_id TEXT PRIMARY KEY DEFAULT UUID_V7(),
+  user_id BIGINT NOT NULL,
+  total_amount DOUBLE NOT NULL,
+  status TEXT DEFAULT 'pending',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+) FLUSH ROW_THRESHOLD 500;
+
+-- 4. Events table with ULID (logging)
+CREATE SHARED TABLE shop.events (
+  event_id TEXT PRIMARY KEY DEFAULT ULID(),
+  event_type TEXT NOT NULL,
+  user_id BIGINT,
+  order_id TEXT,
+  payload TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+) FLUSH INTERVAL 60s ROW_THRESHOLD 5000;
+
+-- 5. Insert users (IDs auto-generated)
+INSERT INTO shop.users (username, email) VALUES
+  ('alice', 'alice@example.com'),
+  ('bob', 'bob@example.com'),
+  ('charlie', 'charlie@example.com');
+
+-- 6. Insert orders (IDs auto-generated)
+INSERT INTO shop.orders (user_id, total_amount) VALUES
+  (1, 99.99),
+  (2, 149.50),
+  (1, 75.25);
+
+-- 7. Log events (IDs auto-generated)
+INSERT INTO shop.events (event_type, user_id, order_id, payload) VALUES
+  ('order_created', 1, '018b6e8a-07d1-7000-8000-0123456789ab', '{"items": 3}'),
+  ('payment_processed', 1, '018b6e8a-07d1-7000-8000-0123456789ab', '{"method": "card"}'),
+  ('order_shipped', 1, '018b6e8a-07d1-7000-8000-0123456789ab', '{"carrier": "ups"}');
+
+-- 8. Query recent orders for current user
+SELECT 
+  order_id,
+  total_amount,
+  status,
+  created_at
+FROM shop.orders
+WHERE user_id IN (
+  SELECT user_id FROM shop.users WHERE created_by = CURRENT_USER()
+)
+ORDER BY created_at DESC
+LIMIT 10;
+
+-- 9. Query order timeline (events sorted by ULID)
+SELECT 
+  event_id,
+  event_type,
+  payload,
+  created_at
+FROM shop.events
+WHERE order_id = '018b6e8a-07d1-7000-8000-0123456789ab'
+ORDER BY event_id;  -- Time-ordered by ULID
+
+-- 10. Update order status with audit trail
+UPDATE shop.orders
+SET 
+  status = 'shipped',
+  updated_at = NOW()
+WHERE order_id = '018b6e8a-07d1-7000-8000-0123456789ab';
+
+-- Log the status change
+INSERT INTO shop.events (event_type, user_id, order_id, payload)
+VALUES (
+  'status_changed',
+  (SELECT user_id FROM shop.orders WHERE order_id = '018b6e8a-07d1-7000-8000-0123456789ab'),
+  '018b6e8a-07d1-7000-8000-0123456789ab',
+  '{"old": "pending", "new": "shipped", "by": "' || CURRENT_USER() || '"}'
+);
+```
+
+---
+
 ## PostgreSQL/MySQL Compatibility
 
 KalamDB aims for maximum compatibility with PostgreSQL and MySQL syntax to ease migration and provide familiar interfaces for developers.

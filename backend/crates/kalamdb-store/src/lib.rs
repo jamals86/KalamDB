@@ -20,6 +20,7 @@
 //! - **Shared Tables**: Global data with key format `{row_id}`
 //! - **Stream Tables**: Ephemeral events with key format `{timestamp_ms}:{row_id}`
 
+pub mod common;
 pub mod key_encoding;
 pub mod rocksdb_impl;
 // pub mod s3_storage; // T171: S3 storage backend (requires cmake build dependency)

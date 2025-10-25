@@ -27,7 +27,7 @@ mod common;
 use common::{setup_test_server, TestConfig};
 
 /// Test memory stability under sustained write load
-/// 
+///
 /// Spawns 10 concurrent writers, measures memory every 30s for 5 minutes,
 /// and verifies memory growth is less than 10%.
 #[tokio::test]
@@ -35,13 +35,13 @@ use common::{setup_test_server, TestConfig};
 async fn test_memory_stability_under_write_load() {
     let config = TestConfig::default();
     let server = setup_test_server(config).await;
-    
+
     // TODO: T220 - Implement memory stability test
     // 1. Get baseline memory
     // 2. Spawn 10 concurrent writer threads
     // 3. Measure memory every 30s for 5 minutes
     // 4. Verify memory growth < 10%
-    
+
     panic!("T220: Not yet implemented");
 }
 
@@ -54,13 +54,13 @@ async fn test_memory_stability_under_write_load() {
 async fn test_concurrent_writers_and_listeners() {
     let config = TestConfig::default();
     let server = setup_test_server(config).await;
-    
+
     // TODO: T221 - Implement concurrent stress test
     // 1. Spawn 10 writer threads
     // 2. Create 20 WebSocket subscriptions
     // 3. Run for 5 minutes
     // 4. Verify no disconnections
-    
+
     panic!("T221: Not yet implemented");
 }
 
@@ -72,12 +72,12 @@ async fn test_concurrent_writers_and_listeners() {
 async fn test_cpu_usage_under_load() {
     let config = TestConfig::default();
     let server = setup_test_server(config).await;
-    
+
     // TODO: T222 - Implement CPU usage test
     // 1. Spawn writers to achieve 1000 inserts/sec
     // 2. Monitor CPU usage
     // 3. Verify CPU < 80%
-    
+
     panic!("T222: Not yet implemented");
 }
 
@@ -89,12 +89,12 @@ async fn test_cpu_usage_under_load() {
 async fn test_websocket_connection_leak_detection() {
     let config = TestConfig::default();
     let server = setup_test_server(config).await;
-    
+
     // TODO: T223 - Implement WebSocket leak detection
     // 1. Create 50 WebSocket subscriptions
     // 2. Close 25 subscriptions
     // 3. Verify proper cleanup (connection count, memory)
-    
+
     panic!("T223: Not yet implemented");
 }
 
@@ -107,14 +107,14 @@ async fn test_websocket_connection_leak_detection() {
 async fn test_memory_release_after_stress() {
     let config = TestConfig::default();
     let server = setup_test_server(config).await;
-    
+
     // TODO: T224 - Implement memory release test
     // 1. Get baseline memory
     // 2. Run stress test (writers + listeners)
     // 3. Stop all operations
     // 4. Wait 60 seconds
     // 5. Verify memory returns to baseline (within 15%)
-    
+
     panic!("T224: Not yet implemented");
 }
 
@@ -126,13 +126,13 @@ async fn test_memory_release_after_stress() {
 async fn test_query_performance_under_stress() {
     let config = TestConfig::default();
     let server = setup_test_server(config).await;
-    
+
     // TODO: T225 - Implement query performance test
     // 1. Start background stress (writers)
     // 2. Execute SELECT queries periodically
     // 3. Measure latencies
     // 4. Verify p95 < 500ms
-    
+
     panic!("T225: Not yet implemented");
 }
 
@@ -144,13 +144,13 @@ async fn test_query_performance_under_stress() {
 async fn test_flush_operations_during_stress() {
     let config = TestConfig::default();
     let server = setup_test_server(config).await;
-    
+
     // TODO: T226 - Implement flush during stress test
     // 1. Start background stress (writers)
     // 2. Trigger periodic flushes
     // 3. Monitor memory usage
     // 4. Verify no accumulation
-    
+
     panic!("T226: Not yet implemented");
 }
 
@@ -162,13 +162,13 @@ async fn test_flush_operations_during_stress() {
 async fn test_actor_system_stability() {
     let config = TestConfig::default();
     let server = setup_test_server(config).await;
-    
+
     // TODO: T227 - Implement actor stability test
     // 1. Start background stress
     // 2. Monitor flush actor metrics
     // 3. Monitor live query actor metrics
     // 4. Verify no mailbox overflow
-    
+
     panic!("T227: Not yet implemented");
 }
 
@@ -181,12 +181,12 @@ async fn test_actor_system_stability() {
 async fn test_graceful_degradation() {
     let config = TestConfig::default();
     let server = setup_test_server(config).await;
-    
+
     // TODO: T228 - Implement graceful degradation test
     // 1. Start with moderate load
     // 2. Gradually increase load
     // 3. Monitor response times and error rates
     // 4. Verify graceful slowdown (increased latency) not crashes
-    
+
     panic!("T228: Not yet implemented");
 }

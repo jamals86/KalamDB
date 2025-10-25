@@ -39,13 +39,13 @@ pub mod stress_utils;
 use anyhow::Result;
 use datafusion::catalog::SchemaProvider;
 use kalamdb_api::models::{QueryResult, SqlResponse};
+use kalamdb_core::live_query::{LiveQueryManager, NodeId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
     UserTableService,
 };
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_core::live_query::{LiveQueryManager, NodeId};
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -78,7 +78,9 @@ impl HttpTestServer {
             App::new()
                 .app_data(actix_web::web::Data::new(self._env.session_factory.clone()))
                 .app_data(actix_web::web::Data::new(self._env.sql_executor.clone()))
-                .app_data(actix_web::web::Data::new(self._env.live_query_manager.clone()))
+                .app_data(actix_web::web::Data::new(
+                    self._env.live_query_manager.clone(),
+                ))
                 .app_data(actix_web::web::Data::new(jwt_auth))
                 .app_data(actix_web::web::Data::new(rate_limiter))
                 .configure(kalamdb_api::routes::configure_routes),
@@ -87,6 +89,31 @@ impl HttpTestServer {
 
         let req = req.to_request();
         test::call_service(&app, req).await
+    }
+
+    /// Convenience delegation to inner TestServer::execute_sql
+    pub async fn execute_sql(&self, sql: &str) -> SqlResponse {
+        self._env.execute_sql(sql).await
+    }
+
+    /// Execute SQL as a specific user via the global REST wiring.
+    pub async fn execute_sql_as_user(&self, sql: &str, user_id: &str) -> SqlResponse {
+        self._env.execute_sql_as_user(sql, user_id).await
+    }
+
+    /// Execute SQL with optional user context.
+    pub async fn execute_sql_with_user(&self, sql: &str, user_id: Option<&str>) -> SqlResponse {
+        self._env.execute_sql_with_user(sql, user_id).await
+    }
+
+    /// Check if a namespace exists in the underlying TestServer.
+    pub async fn namespace_exists(&self, namespace: &str) -> bool {
+        self._env.namespace_exists(namespace).await
+    }
+
+    /// Check if a table exists in the underlying TestServer.
+    pub async fn table_exists(&self, namespace: &str, table: &str) -> bool {
+        self._env.table_exists(namespace, table).await
     }
 }
 
@@ -132,7 +159,7 @@ impl Clone for TestServer {
             sql_executor: Arc::clone(&self.sql_executor),
             namespace_service: Arc::clone(&self.namespace_service),
             session_factory: Arc::clone(&self.session_factory),
-             live_query_manager: Arc::clone(&self.live_query_manager),
+            live_query_manager: Arc::clone(&self.live_query_manager),
         }
     }
 }
@@ -284,8 +311,13 @@ impl TestServer {
         let job_manager = Arc::new(kalamdb_core::jobs::TokioJobManager::new());
 
         // Initialize live query manager
-        let live_query_manager =
-            Arc::new(LiveQueryManager::new(kalam_sql.clone(), NodeId::new("test-node".to_string())));
+        let live_query_manager = Arc::new(LiveQueryManager::new(
+            kalam_sql.clone(),
+            NodeId::new("test-node".to_string()),
+            Some(user_table_store.clone()),
+            Some(shared_table_store.clone()),
+            Some(stream_table_store.clone()),
+        ));
 
         // Initialize SqlExecutor with builder pattern
         let sql_executor = Arc::new(
@@ -323,6 +355,21 @@ impl TestServer {
             session_factory,
             live_query_manager,
         }
+    }
+
+    /// Backwards-compatible helper returning a ready TestServer instance.
+    pub async fn start() -> Self {
+        Self::new().await
+    }
+
+    /// Alias maintained for older tests expecting TestServer::start_test_server().
+    pub async fn start_test_server() -> Self {
+        Self::start().await
+    }
+
+    /// Alias maintained for websocket integration tests.
+    pub async fn start_http_server_for_websocket_tests() -> (Self, String) {
+        start_http_server_for_websocket_tests().await
     }
 
     /// Execute SQL and return the response.
@@ -745,6 +792,7 @@ pub async fn start_http_server_for_websocket_tests() -> (TestServer, String) {
 
     let session_factory = server.session_factory.clone();
     let sql_executor = server.sql_executor.clone();
+    let live_query_manager = server.live_query_manager.clone();
 
     let jwt_auth = Arc::new(JwtAuth::new(
         "kalamdb-dev-secret-key-change-in-production".to_string(),
@@ -757,6 +805,7 @@ pub async fn start_http_server_for_websocket_tests() -> (TestServer, String) {
         App::new()
             .app_data(web::Data::new(session_factory.clone()))
             .app_data(web::Data::new(sql_executor.clone()))
+            .app_data(web::Data::new(live_query_manager.clone()))
             .app_data(web::Data::new(jwt_auth.clone()))
             .app_data(web::Data::new(rate_limiter.clone()))
             .configure(kalamdb_api::routes::configure_routes)

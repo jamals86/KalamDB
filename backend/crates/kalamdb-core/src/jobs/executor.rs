@@ -93,11 +93,12 @@ impl JobExecutor {
         // T103: Calculate resource usage
         let duration = start_time.elapsed();
         let final_memory = Self::get_memory_usage_mb();
-        let memory_used_mb = final_memory - initial_memory;
+        let memory_delta_mb = (final_memory - initial_memory).max(0.0);
+        let memory_used_bytes = (memory_delta_mb * 1024.0 * 1024.0) as i64;
 
         // Estimate CPU usage based on execution time (simplified)
         // In a real system, this would use OS-specific APIs
-        let cpu_used_percent = Self::estimate_cpu_usage(duration);
+        let cpu_used_micros = duration.as_micros() as i64;
 
         // T105: Build trace information
         let trace = format!(
@@ -109,11 +110,11 @@ impl JobExecutor {
         // T102: Update job with completion status and metrics
         let final_job = match &result {
             Ok(success_message) => job
-                .with_metrics(memory_used_mb, cpu_used_percent)
+                .with_metrics(memory_used_bytes, cpu_used_micros)
                 .with_trace(trace)
                 .complete(Some(success_message.clone())),
             Err(error_message) => job
-                .with_metrics(memory_used_mb, cpu_used_percent)
+                .with_metrics(memory_used_bytes, cpu_used_micros)
                 .with_trace(trace)
                 .fail(error_message.clone()),
         };
@@ -175,8 +176,9 @@ impl JobExecutor {
 
             let duration = start_time.elapsed();
             let final_memory = Self::get_memory_usage_mb();
-            let memory_used_mb = final_memory - initial_memory;
-            let cpu_used_percent = Self::estimate_cpu_usage(duration);
+            let memory_delta_mb = (final_memory - initial_memory).max(0.0);
+            let memory_used_bytes = (memory_delta_mb * 1024.0 * 1024.0) as i64;
+            let cpu_used_micros = duration.as_micros() as i64;
 
             let trace = format!(
                 "Async job executed in {:.2}s on node {}",
@@ -188,20 +190,20 @@ impl JobExecutor {
             if let Ok(Some(mut job)) = jobs_provider.get_job(&job_id) {
                 let final_job = match result {
                     Ok(success_message) => {
-                        job.memory_used_mb = Some(memory_used_mb);
-                        job.cpu_used_percent = Some(cpu_used_percent);
+                        job.memory_used = Some(memory_used_bytes);
+                        job.cpu_used = Some(cpu_used_micros);
                         job.trace = Some(trace);
                         job.status = "completed".to_string();
-                        job.end_time = Some(chrono::Utc::now().timestamp_millis());
+                        job.completed_at = Some(chrono::Utc::now().timestamp_millis());
                         job.result = Some(success_message);
                         job
                     }
                     Err(error_message) => {
-                        job.memory_used_mb = Some(memory_used_mb);
-                        job.cpu_used_percent = Some(cpu_used_percent);
+                        job.memory_used = Some(memory_used_bytes);
+                        job.cpu_used = Some(cpu_used_micros);
                         job.trace = Some(trace);
                         job.status = "failed".to_string();
-                        job.end_time = Some(chrono::Utc::now().timestamp_millis());
+                        job.completed_at = Some(chrono::Utc::now().timestamp_millis());
                         job.error_message = Some(error_message);
                         job
                     }
@@ -224,25 +226,6 @@ impl JobExecutor {
         // Placeholder: In real implementation, query OS for process memory
         // For now, return 0.0 to avoid platform-specific dependencies
         0.0
-    }
-
-    /// Estimate CPU usage percentage based on execution duration
-    ///
-    /// This is a simplified heuristic. In production, use:
-    /// - Linux: /proc/[pid]/stat
-    /// - macOS: thread_info
-    /// - Windows: GetProcessTimes
-    fn estimate_cpu_usage(duration: std::time::Duration) -> f64 {
-        // Simplified heuristic: assume CPU usage is proportional to execution time
-        // For jobs under 1 second, estimate 10-30%
-        // For longer jobs, estimate higher usage
-        if duration.as_secs() < 1 {
-            15.0
-        } else {
-            let base = 25.0;
-            let extra = (duration.as_secs() as f64).min(10.0) * 5.0;
-            (base + extra).min(95.0)
-        }
     }
 
     /// Get the node ID for this executor
@@ -398,8 +381,8 @@ mod tests {
             .get_job("test-job-5")
             .unwrap()
             .unwrap();
-        assert!(job.memory_used_mb.is_some());
-        assert!(job.cpu_used_percent.is_some());
+        assert!(job.memory_used.is_some());
+        assert!(job.cpu_used.is_some());
         assert!(job.trace.is_some());
     }
 

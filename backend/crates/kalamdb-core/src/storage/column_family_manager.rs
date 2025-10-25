@@ -24,8 +24,8 @@ pub struct ColumnFamilyManager {
 /// - The migration path: system_tables (Phase 2a) → information_schema_tables (Phase 2b)
 pub const SYSTEM_COLUMN_FAMILIES: &[&str] = &[
     "system_users",              // User management (user_id, username, email, created_at)
-    "system_live_queries", // Live query subscriptions (live_id, connection_id, table_name, query_id, user_id, query, options, created_at, updated_at, changes, node)
-    "system_jobs", // Background job tracking (job_id, job_type, table_name, status, start_time, end_time, parameters, result, trace, memory_used_mb, cpu_used_percent, node_id, error_message)
+    "system_live_queries", // Live query subscriptions (live_id, connection_id, namespace_id, table_name, query_id, user_id, query, options, created_at, last_update, changes, node)
+    "system_jobs", // Background job tracking (job_id, job_type, table_name, status, parameters, result, trace, memory_used, cpu_used, created_at, started_at, completed_at, node_id, error_message)
     "system_namespaces", // Namespace metadata (namespace_id, name, created_at, options, table_count)
     "system_tables",     // TEMPORARY: Basic table metadata (will be removed in Phase 2b)
     "system_storages", // Storage backend configurations (storage_id, storage_name, description, storage_type, base_directory, shared_tables_template, user_tables_template, created_at, updated_at)

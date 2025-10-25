@@ -13,6 +13,8 @@ pub mod storages;
 pub mod storages_provider;
 pub mod system_tables;
 pub mod system_tables_provider;
+pub mod table_schemas;
+pub mod table_schemas_provider;
 pub mod users;
 pub mod users_provider;
 
@@ -29,5 +31,7 @@ pub use storages::SystemStorages;
 pub use storages_provider::SystemStoragesProvider;
 pub use system_tables::SystemTables;
 pub use system_tables_provider::SystemTablesTableProvider;
+pub use table_schemas::TableSchemasTable;
+pub use table_schemas_provider::TableSchemasProvider;
 pub use users::UsersTable;
 pub use users_provider::{UserRecord, UsersTableProvider};

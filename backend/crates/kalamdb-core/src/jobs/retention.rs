@@ -140,21 +140,15 @@ mod tests {
 
         // Create an old completed job (60 days ago)
         let old_time = chrono::Utc::now().timestamp_millis() - (60 * 24 * 60 * 60 * 1000);
-        let old_job = JobRecord {
-            job_id: "old-completed".to_string(),
-            job_type: "flush".to_string(),
-            table_name: None,
-            status: "completed".to_string(),
-            start_time: old_time,
-            end_time: Some(old_time + 1000),
-            parameters: None,
-            result: Some("Success".to_string()),
-            trace: None,
-            memory_used_mb: None,
-            cpu_used_percent: None,
-            node_id: "node-1".to_string(),
-            error_message: None,
-        };
+        let mut old_job = JobRecord::new(
+            "old-completed".to_string(),
+            "flush".to_string(),
+            "node-1".to_string(),
+        )
+        .complete(Some("Success".to_string()));
+        old_job.created_at = old_time;
+        old_job.started_at = Some(old_time);
+        old_job.completed_at = Some(old_time + 1000);
 
         // Create a recent completed job
         let recent_job = JobRecord::new(
@@ -182,21 +176,15 @@ mod tests {
 
         // Create a failed job that's 60 days old (older than success retention, but within failure retention)
         let failed_time = chrono::Utc::now().timestamp_millis() - (60 * 24 * 60 * 60 * 1000);
-        let failed_job = JobRecord {
-            job_id: "old-failed".to_string(),
-            job_type: "backup".to_string(),
-            table_name: None,
-            status: "failed".to_string(),
-            start_time: failed_time,
-            end_time: Some(failed_time + 1000),
-            parameters: None,
-            result: None,
-            trace: None,
-            memory_used_mb: None,
-            cpu_used_percent: None,
-            node_id: "node-1".to_string(),
-            error_message: Some("Disk full".to_string()),
-        };
+        let mut failed_job = JobRecord::new(
+            "old-failed".to_string(),
+            "backup".to_string(),
+            "node-1".to_string(),
+        )
+        .fail("Disk full".to_string());
+        failed_job.created_at = failed_time;
+        failed_job.started_at = Some(failed_time);
+        failed_job.completed_at = Some(failed_time + 1000);
 
         provider.insert_job(failed_job).unwrap();
 
@@ -214,21 +202,15 @@ mod tests {
 
         // Create a failed job that's 120 days old (older than failure retention)
         let very_old_time = chrono::Utc::now().timestamp_millis() - (120 * 24 * 60 * 60 * 1000);
-        let very_old_failed = JobRecord {
-            job_id: "very-old-failed".to_string(),
-            job_type: "cleanup".to_string(),
-            table_name: None,
-            status: "failed".to_string(),
-            start_time: very_old_time,
-            end_time: Some(very_old_time + 1000),
-            parameters: None,
-            result: None,
-            trace: None,
-            memory_used_mb: None,
-            cpu_used_percent: None,
-            node_id: "node-1".to_string(),
-            error_message: Some("Error".to_string()),
-        };
+        let mut very_old_failed = JobRecord::new(
+            "very-old-failed".to_string(),
+            "cleanup".to_string(),
+            "node-1".to_string(),
+        )
+        .fail("Error".to_string());
+        very_old_failed.created_at = very_old_time;
+        very_old_failed.started_at = Some(very_old_time);
+        very_old_failed.completed_at = Some(very_old_time + 1000);
 
         provider.insert_job(very_old_failed).unwrap();
 
@@ -246,21 +228,14 @@ mod tests {
 
         // Create a running job that started 120 days ago
         let old_running_time = chrono::Utc::now().timestamp_millis() - (120 * 24 * 60 * 60 * 1000);
-        let old_running = JobRecord {
-            job_id: "old-running".to_string(),
-            job_type: "long-task".to_string(),
-            table_name: None,
-            status: "running".to_string(),
-            start_time: old_running_time,
-            end_time: None,
-            parameters: None,
-            result: None,
-            trace: None,
-            memory_used_mb: None,
-            cpu_used_percent: None,
-            node_id: "node-1".to_string(),
-            error_message: None,
-        };
+        let mut old_running = JobRecord::new(
+            "old-running".to_string(),
+            "long-task".to_string(),
+            "node-1".to_string(),
+        );
+        old_running.created_at = old_running_time;
+        old_running.started_at = Some(old_running_time);
+        old_running.completed_at = None;
 
         provider.insert_job(old_running).unwrap();
 

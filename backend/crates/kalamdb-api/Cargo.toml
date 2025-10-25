@@ -40,3 +40,4 @@ log.workspace = true
 [dev-dependencies]
 # Testing utilities
 actix-rt = { workspace = true }
+tempfile = "3"

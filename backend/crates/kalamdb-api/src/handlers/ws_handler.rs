@@ -13,6 +13,7 @@ use crate::actors::WebSocketSession;
 use crate::auth::{JwtAuth, JwtError};
 use crate::rate_limiter::RateLimiter;
 use kalamdb_commons::models::UserId;
+use kalamdb_core::live_query::LiveQueryManager;
 
 /// GET /v1/ws - Establish WebSocket connection
 ///
@@ -58,6 +59,7 @@ pub async fn websocket_handler_v1(
     stream: web::Payload,
     jwt_auth: web::Data<Arc<JwtAuth>>,
     rate_limiter: web::Data<Arc<RateLimiter>>,
+    live_query_manager: web::Data<Arc<LiveQueryManager>>,
 ) -> Result<HttpResponse, Error> {
     // Generate unique connection ID
     let connection_id = Uuid::new_v4().to_string();
@@ -139,8 +141,12 @@ pub async fn websocket_handler_v1(
     };
 
     // Create WebSocket session actor with authenticated user_id and rate limiter
-    let session =
-        WebSocketSession::new(connection_id, user_id, Some(rate_limiter.get_ref().clone()));
+    let session = WebSocketSession::new(
+        connection_id,
+        user_id,
+        Some(rate_limiter.get_ref().clone()),
+        live_query_manager.get_ref().clone(),
+    );
 
     // Start WebSocket handshake
     ws::start(session, &req, stream)
@@ -153,16 +159,34 @@ mod tests {
     use crate::rate_limiter::RateLimiter;
     use actix_web::{test, App};
     use jsonwebtoken::Algorithm;
+    use kalamdb_core::live_query::{LiveQueryManager, NodeId};
+    use kalamdb_core::storage::RocksDbInit;
+    use std::sync::Arc;
+    use tempfile::TempDir;
 
     #[actix_rt::test]
     async fn test_websocket_endpoint() {
         let jwt_auth = Arc::new(JwtAuth::new("test-secret".to_string(), Algorithm::HS256));
         let rate_limiter = Arc::new(RateLimiter::new());
 
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_path = temp_dir.path().to_str().unwrap().to_string();
+        let db_init = RocksDbInit::new(&db_path);
+        let db = db_init.open().expect("open RocksDB");
+        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(db).expect("kalam sql"));
+        let live_query_manager = Arc::new(LiveQueryManager::new(
+            kalam_sql,
+            NodeId::new("test-node".to_string()),
+            None,
+            None,
+            None,
+        ));
+
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(jwt_auth))
                 .app_data(web::Data::new(rate_limiter))
+                .app_data(web::Data::new(live_query_manager))
                 .service(websocket_handler_v1),
         )
         .await;

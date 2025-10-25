@@ -47,42 +47,18 @@ impl SharedTableStore {
     ///
     /// * `namespace_id` - Namespace identifier
     /// * `table_name` - Table name
-    ///
-    /// # Safety
-    ///
-    /// This method uses unsafe code to create a column family through an Arc<DB>.
-    /// This is safe because:
-    /// 1. RocksDB's DB type is internally synchronized (thread-safe)
-    /// 2. create_cf only requires &mut for API consistency, not actual exclusivity
-    /// 3. RocksDB handles concurrent access through internal locking
     pub fn create_column_family(&self, namespace_id: &str, table_name: &str) -> Result<()> {
         let cf_name = format!("shared_table:{}:{}", namespace_id, table_name);
-
-        // Check if CF already exists
+        // Column families should be created at DB initialization, not dynamically
+        // Check if it exists
         if self.db.cf_handle(&cf_name).is_some() {
-            // CF already exists, nothing to do
-            return Ok(());
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "Column family '{}' does not exist. It must be created at DB initialization.",
+                cf_name
+            ))
         }
-
-        // Create new column family with default options
-        let opts = rocksdb::Options::default();
-
-        // SAFETY: RocksDB's DB is internally synchronized. The create_cf method
-        // requires &mut self for API consistency, but RocksDB handles all
-        // synchronization internally via locks. This is safe in a multi-threaded
-        // context because:
-        // 1. RocksDB uses internal mutexes to protect all data structures
-        // 2. create_cf is an atomic operation from RocksDB's perspective
-        // 3. We're not violating any actual data races - the mut requirement
-        //    is a Rust API design choice, not a safety invariant
-        unsafe {
-            let db_ptr = Arc::as_ptr(&self.db) as *mut DB;
-            (*db_ptr)
-                .create_cf(&cf_name, &opts)
-                .with_context(|| format!("Failed to create column family: {}", cf_name))?;
-        }
-
-        Ok(())
     }
 
     /// Insert or update a row.

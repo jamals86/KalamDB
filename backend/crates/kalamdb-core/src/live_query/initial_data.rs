@@ -6,7 +6,11 @@
 
 use crate::catalog::TableType;
 use crate::error::KalamDbError;
+use crate::live_query::filter::FilterPredicate;
+use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
+use chrono::DateTime;
 use serde_json::Value as JsonValue;
+use std::sync::Arc;
 
 /// Options for fetching initial data when subscribing to a live query
 #[derive(Debug, Clone)]
@@ -85,13 +89,23 @@ pub struct InitialDataResult {
 
 /// Service for fetching initial data when subscribing to live queries
 pub struct InitialDataFetcher {
-    // TODO: Add DataFusion context for SQL queries in T173
+    user_table_store: Option<Arc<UserTableStore>>,
+    shared_table_store: Option<Arc<SharedTableStore>>,
+    stream_table_store: Option<Arc<StreamTableStore>>,
 }
 
 impl InitialDataFetcher {
     /// Create a new initial data fetcher
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(
+        user_table_store: Option<Arc<UserTableStore>>,
+        shared_table_store: Option<Arc<SharedTableStore>>,
+        stream_table_store: Option<Arc<StreamTableStore>>,
+    ) -> Self {
+        Self {
+            user_table_store,
+            shared_table_store,
+            stream_table_store,
+        }
     }
 
     /// Fetch initial data for a table
@@ -105,29 +119,133 @@ impl InitialDataFetcher {
     /// InitialDataResult with rows and metadata
     pub async fn fetch_initial_data(
         &self,
+        live_id: &crate::live_query::connection_registry::LiveId,
         table_name: &str,
         table_type: TableType,
         options: InitialDataOptions,
+        filter: Option<Arc<FilterPredicate>>,
     ) -> Result<InitialDataResult, KalamDbError> {
-        // TODO: Implement in T173
-        // This will use DataFusion to execute a SQL query like:
-        // SELECT * FROM {table_name}
-        // WHERE _updated >= {since_timestamp}
-        //   AND (_deleted = false OR {include_deleted})
-        // ORDER BY _updated DESC
-        // LIMIT {limit + 1}  -- +1 to detect has_more
+        let limit = options.limit;
+        if limit == 0 {
+            return Ok(InitialDataResult {
+                rows: Vec::new(),
+                latest_timestamp: None,
+                total_available: 0,
+                has_more: false,
+            });
+        }
 
-        log::warn!(
-            "Initial data fetch not yet implemented for table: {} (type: {:?})",
-            table_name,
-            table_type
-        );
+        let (namespace, table) = self.parse_table_name(table_name, table_type)?;
+        let since_timestamp = options.since_timestamp;
+        let include_deleted = options.include_deleted;
+
+        let mut rows_with_ts: Vec<(i64, JsonValue)> = match table_type {
+            TableType::User => {
+                let store = self
+                    .user_table_store
+                    .as_ref()
+                    .ok_or_else(|| {
+                        KalamDbError::InvalidOperation(
+                            "UserTableStore not configured for live query initial data".to_string(),
+                        )
+                    })?;
+
+                let user_id = live_id.connection_id().user_id();
+                let mut rows = Vec::new();
+                for (_row_id, row) in store
+                    .scan_user(&namespace, &table, user_id)
+                    .map_err(|e| {
+                        KalamDbError::Other(format!(
+                            "Failed to scan user table {}.{}: {}",
+                            namespace, table, e
+                        ))
+                    })?
+                {
+                    if !include_deleted && Self::is_deleted(&row) {
+                        continue;
+                    }
+
+                    let timestamp = Self::extract_updated_timestamp(&row);
+                    if let Some(since) = since_timestamp {
+                        if timestamp < since {
+                            continue;
+                        }
+                    }
+
+                    if let Some(predicate) = filter.as_ref() {
+                        if !predicate
+                            .matches(&row)
+                            .map_err(|e| KalamDbError::Other(e.to_string()))?
+                        {
+                            continue;
+                        }
+                    }
+
+                    rows.push((timestamp, row));
+                }
+                rows
+            }
+            TableType::Stream => {
+                let store = self
+                    .stream_table_store
+                    .as_ref()
+                    .ok_or_else(|| {
+                        KalamDbError::InvalidOperation(
+                            "StreamTableStore not configured for live query initial data"
+                                .to_string(),
+                        )
+                    })?;
+
+                let mut rows = Vec::new();
+                for (timestamp, _row_id, row) in store.scan(&namespace, &table).map_err(|e| {
+                    KalamDbError::Other(format!(
+                        "Failed to scan stream table {}.{}: {}",
+                        namespace, table, e
+                    ))
+                })? {
+                    if let Some(since) = since_timestamp {
+                        if timestamp < since {
+                            continue;
+                        }
+                    }
+
+                    if let Some(predicate) = filter.as_ref() {
+                        if !predicate
+                            .matches(&row)
+                            .map_err(|e| KalamDbError::Other(e.to_string()))?
+                        {
+                            continue;
+                        }
+                    }
+
+                    rows.push((timestamp, row));
+                }
+                rows
+            }
+            TableType::Shared | TableType::System => {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Initial data fetch is not supported for {:?} tables",
+                    table_type
+                )));
+            }
+        };
+
+        rows_with_ts.sort_by(|a, b| b.0.cmp(&a.0));
+
+        let total_available = rows_with_ts.len();
+        let has_more = total_available > limit;
+        if has_more {
+            rows_with_ts.truncate(limit);
+        }
+
+        let latest_timestamp = rows_with_ts.first().map(|(ts, _)| *ts);
+        let rows = rows_with_ts.into_iter().map(|(_, row)| row).collect();
 
         Ok(InitialDataResult {
-            rows: vec![],
-            latest_timestamp: None,
-            total_available: 0,
-            has_more: false,
+            rows,
+            latest_timestamp,
+            total_available,
+            has_more,
         })
     }
 
@@ -138,52 +256,53 @@ impl InitialDataFetcher {
     /// * `table_type` - User or Shared table
     ///
     /// # Returns
-    /// (user_id, namespace_id, table_name) for User tables
-    /// (namespace_id, table_name) for Shared tables
+    /// (namespace_id, table_name)
     fn parse_table_name(
         &self,
         table_name: &str,
         table_type: TableType,
-    ) -> Result<(Option<String>, String, String), KalamDbError> {
+    ) -> Result<(String, String), KalamDbError> {
         let parts: Vec<&str> = table_name.split('.').collect();
 
-        match table_type {
-            TableType::User => {
-                if parts.len() != 3 {
-                    return Err(KalamDbError::Other(format!(
-                        "Invalid user table name format: {} (expected user_id.namespace.table)",
-                        table_name
-                    )));
-                }
-                Ok((
-                    Some(parts[0].to_string()),
-                    parts[1].to_string(),
-                    parts[2].to_string(),
-                ))
-            }
-            TableType::Shared => {
-                if parts.len() != 2 {
-                    return Err(KalamDbError::Other(format!(
-                        "Invalid shared table name format: {} (expected namespace.table)",
-                        table_name
-                    )));
-                }
-                Ok((None, parts[0].to_string(), parts[1].to_string()))
-            }
-            TableType::System | TableType::Stream => {
-                // System and Stream tables don't support live queries
-                Err(KalamDbError::Other(format!(
-                    "Table type {:?} does not support live queries",
-                    table_type
-                )))
-            }
+        if parts.len() != 2 {
+            return Err(KalamDbError::Other(format!(
+                "Invalid table reference '{}', expected namespace.table",
+                table_name
+            )));
         }
+
+        match table_type {
+            TableType::User | TableType::Shared | TableType::Stream => {
+                Ok((parts[0].to_string(), parts[1].to_string()))
+            }
+            TableType::System => Err(KalamDbError::Other(
+                "System tables do not support live queries".to_string(),
+            )),
+        }
+    }
+
+    fn extract_updated_timestamp(row: &JsonValue) -> i64 {
+        row.get(kalamdb_commons::constants::SystemColumnNames::UPDATED)
+            .and_then(JsonValue::as_str)
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.timestamp_millis())
+            .unwrap_or(0)
+    }
+
+    fn is_deleted(row: &JsonValue) -> bool {
+        row.get(kalamdb_commons::constants::SystemColumnNames::DELETED)
+            .and_then(JsonValue::as_bool)
+            .unwrap_or(false)
     }
 }
 
 impl Default for InitialDataFetcher {
     fn default() -> Self {
-        Self::new()
+        Self {
+            user_table_store: None,
+            shared_table_store: None,
+            stream_table_store: None,
+        }
     }
 }
 
@@ -228,40 +347,38 @@ mod tests {
 
     #[test]
     fn test_parse_user_table_name() {
-        let fetcher = InitialDataFetcher::new();
-        let result = fetcher.parse_table_name("user123.messages.chat", TableType::User);
+        let fetcher = InitialDataFetcher::default();
+        let result = fetcher.parse_table_name("app.messages", TableType::User);
 
         assert!(result.is_ok());
-        let (user_id, namespace, table) = result.unwrap();
-        assert_eq!(user_id, Some("user123".to_string()));
-        assert_eq!(namespace, "messages");
-        assert_eq!(table, "chat");
+        let (namespace, table) = result.unwrap();
+        assert_eq!(namespace, "app");
+        assert_eq!(table, "messages");
     }
 
     #[test]
     fn test_parse_shared_table_name() {
-        let fetcher = InitialDataFetcher::new();
+        let fetcher = InitialDataFetcher::default();
         let result = fetcher.parse_table_name("public.announcements", TableType::Shared);
 
         assert!(result.is_ok());
-        let (user_id, namespace, table) = result.unwrap();
-        assert_eq!(user_id, None);
+        let (namespace, table) = result.unwrap();
         assert_eq!(namespace, "public");
         assert_eq!(table, "announcements");
     }
 
     #[test]
     fn test_parse_invalid_user_table_name() {
-        let fetcher = InitialDataFetcher::new();
-        let result = fetcher.parse_table_name("messages.chat", TableType::User);
+        let fetcher = InitialDataFetcher::default();
+        let result = fetcher.parse_table_name("invalid.format.table", TableType::User);
 
         assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_invalid_shared_table_name() {
-        let fetcher = InitialDataFetcher::new();
-        let result = fetcher.parse_table_name("user123.public.announcements", TableType::Shared);
+        let fetcher = InitialDataFetcher::default();
+        let result = fetcher.parse_table_name("announcements", TableType::Shared);
 
         assert!(result.is_err());
     }
