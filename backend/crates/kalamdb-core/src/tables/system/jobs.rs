@@ -16,21 +16,26 @@ impl JobsTable {
             Field::new("job_type", DataType::Utf8, false), // "flush", "compact", etc.
             Field::new("table_name", DataType::Utf8, true),
             Field::new("status", DataType::Utf8, false), // "running", "completed", "failed"
+            Field::new("parameters", DataType::Utf8, true), // JSON array as string
+            Field::new("result", DataType::Utf8, true),
+            Field::new("trace", DataType::Utf8, true),
+            Field::new("memory_used", DataType::Int64, true), // bytes
+            Field::new("cpu_used", DataType::Int64, true),     // microseconds
             Field::new(
-                "start_time",
+                "created_at",
                 DataType::Timestamp(TimeUnit::Millisecond, None),
                 false,
             ),
             Field::new(
-                "end_time",
+                "started_at",
                 DataType::Timestamp(TimeUnit::Millisecond, None),
                 true,
             ),
-            Field::new("parameters", DataType::Utf8, true), // JSON
-            Field::new("result", DataType::Utf8, true),     // JSON
-            Field::new("trace", DataType::Utf8, true),
-            Field::new("memory_used_mb", DataType::Float64, true),
-            Field::new("cpu_used_percent", DataType::Float64, true),
+            Field::new(
+                "completed_at",
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                true,
+            ),
             Field::new("node_id", DataType::Utf8, false),
             Field::new("error_message", DataType::Utf8, true),
         ]))
@@ -54,20 +59,21 @@ mod tests {
     #[test]
     fn test_jobs_table_schema() {
         let schema = JobsTable::schema();
-        assert_eq!(schema.fields().len(), 13);
+        assert_eq!(schema.fields().len(), 14);
         assert_eq!(schema.field(0).name(), "job_id");
         assert_eq!(schema.field(1).name(), "job_type");
         assert_eq!(schema.field(2).name(), "table_name");
         assert_eq!(schema.field(3).name(), "status");
-        assert_eq!(schema.field(4).name(), "start_time");
-        assert_eq!(schema.field(5).name(), "end_time");
-        assert_eq!(schema.field(6).name(), "parameters");
-        assert_eq!(schema.field(7).name(), "result");
-        assert_eq!(schema.field(8).name(), "trace");
-        assert_eq!(schema.field(9).name(), "memory_used_mb");
-        assert_eq!(schema.field(10).name(), "cpu_used_percent");
-        assert_eq!(schema.field(11).name(), "node_id");
-        assert_eq!(schema.field(12).name(), "error_message");
+        assert_eq!(schema.field(4).name(), "parameters");
+        assert_eq!(schema.field(5).name(), "result");
+        assert_eq!(schema.field(6).name(), "trace");
+        assert_eq!(schema.field(7).name(), "memory_used");
+        assert_eq!(schema.field(8).name(), "cpu_used");
+        assert_eq!(schema.field(9).name(), "created_at");
+        assert_eq!(schema.field(10).name(), "started_at");
+        assert_eq!(schema.field(11).name(), "completed_at");
+        assert_eq!(schema.field(12).name(), "node_id");
+        assert_eq!(schema.field(13).name(), "error_message");
     }
 
     #[test]

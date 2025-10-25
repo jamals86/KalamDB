@@ -3,10 +3,10 @@
 //! Parses SQL statements targeting system tables using sqlparser-rs.
 
 use anyhow::{anyhow, Result};
+pub use kalamdb_commons::SystemTable;
 use sqlparser::ast::Statement;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
-pub use kalamdb_commons::SystemTable;
 
 /// SQL statement types supported for system tables
 #[derive(Debug, Clone)]

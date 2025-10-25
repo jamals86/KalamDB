@@ -8,7 +8,7 @@ use crate::{
     error::{KalamLinkError, Result},
     models::QueryResponse,
     query::QueryExecutor,
-    subscription::SubscriptionManager,
+    subscription::{SubscriptionConfig, SubscriptionManager},
 };
 use std::time::Duration;
 
@@ -62,14 +62,31 @@ impl KalamLinkClient {
 
     /// Subscribe to real-time changes
     pub async fn subscribe(&self, query: &str) -> Result<SubscriptionManager> {
-        SubscriptionManager::new(&self.base_url, query, &self.auth).await
+        self.subscribe_with_config(SubscriptionConfig::new(query))
+            .await
+    }
+
+    /// Subscribe with advanced configuration (pre-generated ID, options, ws_url override)
+    pub async fn subscribe_with_config(
+        &self,
+        config: SubscriptionConfig,
+    ) -> Result<SubscriptionManager> {
+        SubscriptionManager::new(
+            &self.base_url,
+            config,
+            &self.auth,
+            self.query_executor.user_id(),
+        )
+        .await
     }
 
     /// Check server health and get server information
     pub async fn health_check(&self) -> Result<crate::models::HealthCheckResponse> {
         let url = format!("{}/v1/api/healthcheck", self.base_url);
         let response = self.http_client.get(&url).send().await?;
-        let health_response = response.json::<crate::models::HealthCheckResponse>().await?;
+        let health_response = response
+            .json::<crate::models::HealthCheckResponse>()
+            .await?;
         Ok(health_response)
     }
 }
@@ -141,8 +158,12 @@ impl KalamLinkClientBuilder {
             .build()
             .map_err(|e| KalamLinkError::ConfigurationError(e.to_string()))?;
 
-        let query_executor =
-            QueryExecutor::new(base_url.clone(), http_client.clone(), self.auth.clone(), self.user_id.clone());
+        let query_executor = QueryExecutor::new(
+            base_url.clone(),
+            http_client.clone(),
+            self.auth.clone(),
+            self.user_id.clone(),
+        );
 
         Ok(KalamLinkClient {
             base_url,

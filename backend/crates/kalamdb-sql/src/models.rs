@@ -22,17 +22,21 @@ pub struct User {
 pub struct LiveQuery {
     pub live_id: String, // PK: {user_id}-{unique_conn_id}-{table_name}-{query_id}
     pub connection_id: String,
+    #[serde(default)]
+    pub namespace_id: String,
     pub table_name: String,
     pub query_id: String,
     pub user_id: String,
     pub query: String,
     pub options: String, // JSON
     pub created_at: i64,
-    pub updated_at: i64,
+    #[serde(default)]
+    pub last_update: i64,
     pub changes: i64,
     pub node: String,
 }
 
+//TODO: Remove StorageLocation model in favor of using Storage directly
 /// Storage location in system_storage_locations table
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StorageLocation {
@@ -50,15 +54,21 @@ pub struct StorageLocation {
 pub struct Job {
     pub job_id: String, // PK
     pub job_type: String,
-    pub table_name: String,
     pub status: String, // "running", "completed", "failed"
-    pub start_time: i64,
-    pub end_time: Option<i64>,
+    #[serde(default)]
+    pub table_name: Option<String>,
+    #[serde(default)]
     pub parameters: Vec<String>, // JSON array
     pub result: Option<String>,
     pub trace: Option<String>,
-    pub memory_used_mb: Option<f64>,
-    pub cpu_used_percent: Option<f64>,
+    #[serde(default)]
+    pub memory_used: Option<i64>, // bytes
+    #[serde(default)]
+    pub cpu_used: Option<i64>, // microseconds
+    #[serde(default)]
+    pub created_at: i64,
+    pub start_time: i64,
+    pub end_time: Option<i64>,
     pub node_id: String,
     pub error_message: Option<String>,
 }
@@ -81,7 +91,7 @@ pub struct Table {
     pub namespace: String,
     pub table_type: String, // "user", "shared", "system", "stream"
     pub created_at: i64,
-    pub storage_location: String,
+    pub storage_location: String,   //TODO: Remove in favor of storage_id
     pub storage_id: Option<String>, // T167: FK to system.storages
     pub use_user_storage: bool,     // T168: Allow per-user storage override
     pub flush_policy: String,       // JSON

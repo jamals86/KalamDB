@@ -51,7 +51,7 @@ pub struct QueryResponse {
 
     /// Query execution time in milliseconds
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub execution_time_ms: Option<u64>,
+    pub took_ms: Option<u64>,
 
     /// Error details if status is "error"
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,84 +100,98 @@ pub struct ErrorDetail {
 /// use kalam_link::ChangeEvent;
 /// use serde_json::json;
 ///
-/// // INSERT event
-/// let event = ChangeEvent::Insert {
-///     table: "messages".to_string(),
-///     row: json!({
-///         "id": 1,
-///         "content": "Hello",
-///         "_updated": "2025-01-15T10:30:00Z"
-///     }),
+/// // Initial snapshot
+/// let snapshot = ChangeEvent::InitialData {
+///     subscription_id: "sub-1".to_string(),
+///     rows: vec![json!({"id": 1, "message": "Hello"})],
 /// };
 ///
-/// // UPDATE event with old and new values
-/// let event = ChangeEvent::Update {
-///     table: "messages".to_string(),
-///     old_row: json!({"id": 1, "content": "Hello"}),
-///     new_row: json!({"id": 1, "content": "Hello World"}),
+/// // INSERT notification
+/// let insert = ChangeEvent::Insert {
+///     subscription_id: "sub-1".to_string(),
+///     rows: vec![json!({"id": 2, "message": "New message"})],
 /// };
 ///
-/// // DELETE event
-/// let event = ChangeEvent::Delete {
-///     table: "messages".to_string(),
-///     row: json!({"id": 1, "_deleted": true}),
+/// // UPDATE notification
+/// let update = ChangeEvent::Update {
+///     subscription_id: "sub-1".to_string(),
+///     rows: vec![json!({"id": 1, "message": "Updated"})],
+///     old_rows: vec![json!({"id": 1, "message": "Hello"})],
+/// };
+///
+/// // DELETE notification
+/// let delete = ChangeEvent::Delete {
+///     subscription_id: "sub-1".to_string(),
+///     old_rows: vec![json!({"id": 2, "message": "New message"})],
 /// };
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "UPPERCASE")]
+/// Subscription options returned by the server for a live query.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SubscriptionOptions {
+    /// Number of most recent rows to include in the initial snapshot
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_rows: Option<usize>,
+}
+
+/// Change notification received via WebSocket subscription.
+#[derive(Debug, Clone)]
 pub enum ChangeEvent {
-    /// New row inserted
-    #[serde(rename = "INSERT")]
-    Insert {
-        /// Table name
-        table: String,
-        /// Inserted row data
-        row: JsonValue,
+    /// Acknowledgement of subscription registration
+    Ack {
+        /// Subscription ID if provided by the server
+        subscription_id: Option<String>,
+        /// Optional server message
+        message: Option<String>,
     },
 
-    /// Existing row updated
-    #[serde(rename = "UPDATE")]
-    Update {
-        /// Table name
-        table: String,
-        /// Previous row state
-        old_row: JsonValue,
-        /// New row state
-        new_row: JsonValue,
-    },
-
-    /// Row deleted (soft or hard delete)
-    #[serde(rename = "DELETE")]
-    Delete {
-        /// Table name
-        table: String,
-        /// Deleted row data (with _deleted flag if soft delete)
-        row: JsonValue,
-    },
-
-    /// Subscription initialization message with initial data
-    #[serde(rename = "SNAPSHOT")]
-    Snapshot {
-        /// Table name
-        table: String,
-        /// Initial rows matching subscription query
+    /// Initial snapshot of rows matching the subscription query
+    InitialData {
+        /// Subscription ID the snapshot belongs to
+        subscription_id: String,
+        /// Snapshot rows
         rows: Vec<JsonValue>,
     },
 
-    /// Subscription acknowledgment
-    #[serde(rename = "ACK")]
-    Ack {
-        /// Subscription ID assigned by server
+    /// Insert notification
+    Insert {
+        /// Subscription ID the change belongs to
         subscription_id: String,
-        /// Subscription query
-        query: String,
+        /// Inserted rows
+        rows: Vec<JsonValue>,
     },
 
-    /// Error from server
-    #[serde(rename = "ERROR")]
+    /// Update notification
+    Update {
+        /// Subscription ID the change belongs to
+        subscription_id: String,
+        /// Updated rows (current values)
+        rows: Vec<JsonValue>,
+        /// Previous row values
+        old_rows: Vec<JsonValue>,
+    },
+
+    /// Delete notification
+    Delete {
+        /// Subscription ID the change belongs to
+        subscription_id: String,
+        /// Deleted rows
+        old_rows: Vec<JsonValue>,
+    },
+
+    /// Error notification from the server
     Error {
-        /// Error message
+        /// Subscription ID related to the error
+        subscription_id: String,
+        /// Error code
+        code: String,
+        /// Human-readable error message
         message: String,
+    },
+
+    /// Unknown payload (kept for logging/diagnostics)
+    Unknown {
+        /// Raw JSON payload
+        raw: JsonValue,
     },
 }
 
@@ -187,14 +201,28 @@ impl ChangeEvent {
         matches!(self, Self::Error { .. })
     }
 
-    /// Returns the table name for data change events
-    pub fn table_name(&self) -> Option<&str> {
+    /// Returns the subscription ID for this event, if any
+    pub fn subscription_id(&self) -> Option<&str> {
         match self {
-            Self::Insert { table, .. }
-            | Self::Update { table, .. }
-            | Self::Delete { table, .. }
-            | Self::Snapshot { table, .. } => Some(table),
-            Self::Ack { .. } | Self::Error { .. } => None,
+            Self::Ack {
+                subscription_id, ..
+            } => subscription_id.as_deref(),
+            Self::InitialData {
+                subscription_id, ..
+            }
+            | Self::Insert {
+                subscription_id, ..
+            }
+            | Self::Update {
+                subscription_id, ..
+            }
+            | Self::Delete {
+                subscription_id, ..
+            }
+            | Self::Error {
+                subscription_id, ..
+            } => Some(subscription_id.as_str()),
+            Self::Unknown { .. } => None,
         }
     }
 }
@@ -230,29 +258,27 @@ mod tests {
     }
 
     #[test]
-    fn test_change_event_deserialization() {
-        let json = r#"{"type":"INSERT","table":"users","row":{"id":1,"name":"Alice"}}"#;
-        let event: ChangeEvent = serde_json::from_str(json).unwrap();
-
-        match event {
-            ChangeEvent::Insert { table, .. } => assert_eq!(table, "users"),
-            _ => panic!("Expected Insert event"),
-        }
-    }
-
-    #[test]
     fn test_change_event_helpers() {
         let insert = ChangeEvent::Insert {
-            table: "test".to_string(),
-            row: json!({}),
+            subscription_id: "sub-1".to_string(),
+            rows: vec![json!({"id": 1})],
         };
-        assert_eq!(insert.table_name(), Some("test"));
+        assert_eq!(insert.subscription_id(), Some("sub-1"));
         assert!(!insert.is_error());
 
         let error = ChangeEvent::Error {
+            subscription_id: "sub-2".to_string(),
+            code: "ERR".to_string(),
             message: "test error".to_string(),
         };
         assert!(error.is_error());
-        assert_eq!(error.table_name(), None);
+        assert_eq!(error.subscription_id(), Some("sub-2"));
+
+        let ack = ChangeEvent::Ack {
+            subscription_id: None,
+            message: Some("registered".to_string()),
+        };
+        assert_eq!(ack.subscription_id(), None);
+        assert!(!ack.is_error());
     }
 }

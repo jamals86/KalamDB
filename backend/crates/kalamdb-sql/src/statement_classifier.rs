@@ -51,6 +51,16 @@ pub enum SqlStatement {
     // ===== Job Management =====
     /// KILL JOB <job_id>
     KillJob,
+    /// KILL LIVE QUERY <live_id>
+    KillLiveQuery,
+
+    // ===== Transaction Control =====
+    /// BEGIN [TRANSACTION]
+    BeginTransaction,
+    /// COMMIT [WORK]
+    CommitTransaction,
+    /// ROLLBACK [WORK]
+    RollbackTransaction,
 
     // ===== Live Query Subscriptions =====
     /// SUBSCRIBE TO <namespace>.<table> [WHERE ...] [OPTIONS (...)]
@@ -140,6 +150,12 @@ impl SqlStatement {
 
             // Job management
             ["KILL", "JOB", ..] => SqlStatement::KillJob,
+            ["KILL", "LIVE", "QUERY", ..] => SqlStatement::KillLiveQuery,
+
+            // Transaction control
+            ["BEGIN", ..] | ["START", "TRANSACTION", ..] => SqlStatement::BeginTransaction,
+            ["COMMIT", ..] => SqlStatement::CommitTransaction,
+            ["ROLLBACK", ..] => SqlStatement::RollbackTransaction,
 
             // Live query subscriptions
             ["SUBSCRIBE", "TO", ..] => SqlStatement::Subscribe,
@@ -193,6 +209,10 @@ impl SqlStatement {
             SqlStatement::FlushTable => "FLUSH TABLE",
             SqlStatement::FlushAllTables => "FLUSH ALL TABLES",
             SqlStatement::KillJob => "KILL JOB",
+            SqlStatement::KillLiveQuery => "KILL LIVE QUERY",
+            SqlStatement::BeginTransaction => "BEGIN",
+            SqlStatement::CommitTransaction => "COMMIT",
+            SqlStatement::RollbackTransaction => "ROLLBACK",
             SqlStatement::Subscribe => "SUBSCRIBE TO",
             SqlStatement::Update => "UPDATE",
             SqlStatement::Delete => "DELETE",
@@ -244,6 +264,34 @@ mod tests {
         assert_eq!(
             SqlStatement::classify("SHOW STORAGES"),
             SqlStatement::ShowStorages
+        );
+    }
+
+    #[test]
+    fn test_classify_transactions() {
+        assert_eq!(
+            SqlStatement::classify("BEGIN"),
+            SqlStatement::BeginTransaction
+        );
+        assert_eq!(
+            SqlStatement::classify("BEGIN TRANSACTION"),
+            SqlStatement::BeginTransaction
+        );
+        assert_eq!(
+            SqlStatement::classify("COMMIT"),
+            SqlStatement::CommitTransaction
+        );
+        assert_eq!(
+            SqlStatement::classify("ROLLBACK"),
+            SqlStatement::RollbackTransaction
+        );
+    }
+
+    #[test]
+    fn test_classify_kill_live_query() {
+        assert_eq!(
+            SqlStatement::classify("KILL LIVE QUERY 'user123-conn_abc-messages-q1'"),
+            SqlStatement::KillLiveQuery
         );
     }
 

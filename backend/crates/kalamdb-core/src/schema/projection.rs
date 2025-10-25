@@ -12,7 +12,7 @@
 use crate::error::KalamDbError;
 use arrow::array::{ArrayRef, NullArray};
 use arrow::compute::cast;
-use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use arrow::datatypes::{DataType, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use std::sync::Arc;
 

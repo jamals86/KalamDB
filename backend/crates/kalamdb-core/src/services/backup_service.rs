@@ -217,18 +217,22 @@ impl BackupService {
             .filter(|t| t.namespace == namespace_id.as_str())
             .collect();
 
-        // Fetch schema versions for each table
-        let mut table_schemas = HashMap::new();
-        for table in &tables {
-            let schemas = self
-                .kalam_sql
-                .get_table_schemas_for_table(&table.table_id)
-                .map_err(|e| {
-                    KalamDbError::IoError(format!("Failed to get schemas for table: {}", e))
-                })?;
+        // TODO: Phase 2b - Fetch schema from information_schema.tables (TableDefinition.schema_history)
+        // For now, skip schema backup until information_schema is implemented
+        let table_schemas = HashMap::new();
 
-            table_schemas.insert(table.table_id.clone(), schemas);
-        }
+        // Fetch schema versions for each table
+        // let mut table_schemas = HashMap::new();
+        // for table in &tables {
+        //     let schemas = self
+        //         .kalam_sql
+        //         .get_table_schemas_for_table(&table.table_id)
+        //         .map_err(|e| {
+        //             KalamDbError::IoError(format!("Failed to get schemas for table: {}", e))
+        //         })?;
+
+        //     table_schemas.insert(table.table_id.clone(), schemas);
+        // }
 
         Ok((tables, table_schemas))
     }
@@ -445,18 +449,20 @@ impl BackupService {
             chrono::Utc::now().timestamp_millis()
         );
 
+        let now_ms = chrono::Utc::now().timestamp_millis();
         let job = Job {
             job_id: job_id.clone(),
             job_type: "backup".to_string(),
-            table_name: namespace_id.as_str().to_string(), // Use namespace as table_name
             status: "running".to_string(),
-            start_time: chrono::Utc::now().timestamp(),
-            end_time: None,
+            table_name: Some(namespace_id.as_str().to_string()),
             parameters: vec![format!(r#"{{"namespace_id":"{}"}}"#, namespace_id.as_str())],
             result: None,
             trace: None,
-            memory_used_mb: None,
-            cpu_used_percent: None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: now_ms,
+            start_time: now_ms,
+            end_time: None,
             node_id: "local".to_string(),
             error_message: None,
         };
@@ -482,7 +488,7 @@ impl BackupService {
             .ok_or_else(|| KalamDbError::NotFound(format!("Job '{}' not found", job_id)))?;
 
         job.status = "completed".to_string();
-        job.end_time = Some(chrono::Utc::now().timestamp());
+        job.end_time = Some(chrono::Utc::now().timestamp_millis());
         job.result = Some(format!(
             r#"{{"files_backed_up":{},"total_bytes":{}}}"#,
             files_backed_up, total_bytes
@@ -504,7 +510,7 @@ impl BackupService {
             .ok_or_else(|| KalamDbError::NotFound(format!("Job '{}' not found", job_id)))?;
 
         job.status = "failed".to_string();
-        job.end_time = Some(chrono::Utc::now().timestamp());
+        job.end_time = Some(chrono::Utc::now().timestamp_millis());
         job.error_message = Some(error.to_string());
 
         self.kalam_sql

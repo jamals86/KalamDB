@@ -12,6 +12,7 @@ use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 use datafusion::arrow::datatypes::Schema;
+use kalamdb_commons::models::StorageId;
 use kalamdb_sql::ddl::CreateTableStatement;
 use kalamdb_sql::models::TableSchema;
 use kalamdb_sql::KalamSql;
@@ -61,10 +62,7 @@ impl StreamTableService {
     ///
     /// # Returns
     /// Table metadata for the created stream table
-    pub fn create_table(
-        &self,
-        stmt: CreateTableStatement,
-    ) -> Result<TableMetadata, KalamDbError> {
+    pub fn create_table(&self, stmt: CreateTableStatement) -> Result<TableMetadata, KalamDbError> {
         // Validate table name
         TableMetadata::validate_table_name(stmt.table_name.as_str())
             .map_err(KalamDbError::InvalidOperation)?;
@@ -89,20 +87,13 @@ impl StreamTableService {
         // Stream tables use the schema as-is (no modifications)
         let schema = stmt.schema.clone();
 
+        // Save complete table definition to information_schema_tables (atomic write)
+        self.save_table_definition(&stmt, &schema)?;
+
         // Create column family for this stream table
         self.stream_table_store
             .create_column_family(stmt.namespace_id.as_str(), stmt.table_name.as_str())
             .map_err(|e| KalamDbError::Other(format!("Failed to create column family: {}", e)))?;
-
-        // Store schema in system_table_schemas via kalamdb-sql
-        self.create_schema_metadata(
-            &stmt.namespace_id,
-            &stmt.table_name,
-            &schema,
-            stmt.ttl_seconds.map(|s| s as u32),
-            false, // ephemeral - removed from unified parser
-            None,  // max_buffer - removed from unified parser
-        )?;
 
         // Create and return table metadata
         let metadata = TableMetadata {
@@ -119,7 +110,86 @@ impl StreamTableService {
         Ok(metadata)
     }
 
-    /// Create schema metadata in RocksDB via kalamdb-sql
+    /// Create and save table definition to information_schema_tables.
+    /// Replaces fragmented schema storage with single atomic write.
+    ///
+    /// # Arguments
+    /// * `stmt` - CREATE TABLE statement with all metadata
+    /// * `schema` - Final Arrow schema (stream tables use schema as-is)
+    ///
+    /// # Returns
+    /// Ok(()) on success, error on failure
+    fn save_table_definition(
+        &self,
+        stmt: &CreateTableStatement,
+        schema: &Arc<Schema>,
+    ) -> Result<(), KalamDbError> {
+        use kalamdb_commons::models::{SchemaVersion, TableDefinition};
+
+        // Extract columns from schema with ordinal positions
+        let columns = TableDefinition::extract_columns_from_schema(
+            schema.as_ref(),
+            &stmt.column_defaults,
+            stmt.primary_key_column.as_deref(),
+        );
+
+        // Serialize Arrow schema for history
+        let arrow_schema_json =
+            TableDefinition::serialize_arrow_schema(schema.as_ref()).map_err(|e| {
+                KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
+            })?;
+
+        // Build complete table definition
+        // Stream tables don't have flush policies (no Parquet persistence)
+        let now_millis = chrono::Utc::now().timestamp_millis();
+        let table_def = TableDefinition {
+            table_id: format!(
+                "{}:{}",
+                stmt.namespace_id.as_str(),
+                stmt.table_name.as_str()
+            ),
+            table_name: stmt.table_name.clone(),
+            namespace_id: stmt.namespace_id.clone(),
+            table_type: TableType::Stream,
+            created_at: now_millis,
+            updated_at: now_millis,
+            schema_version: 1,
+            storage_id: StorageId::from("local"), // Stream tables don't use external storage
+            use_user_storage: false,
+            flush_policy: None,            // Stream tables don't flush to Parquet
+            deleted_retention_hours: None, // Stream tables don't have soft deletes
+            ttl_seconds: stmt.ttl_seconds,
+            columns,
+            schema_history: vec![SchemaVersion {
+                version: 1,
+                created_at: now_millis,
+                changes: format!("Initial stream table schema. TTL: {:?}s", stmt.ttl_seconds),
+                arrow_schema_json,
+            }],
+        };
+
+        // Single atomic write to information_schema_tables
+        self.kalam_sql
+            .upsert_table_definition(&table_def)
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to save table definition to information_schema.tables: {}",
+                    e
+                ))
+            })?;
+
+        log::info!(
+            "Table definition for {}.{} saved to information_schema.tables (version 1)",
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str()
+        );
+
+        Ok(())
+    }
+
+    /// DEPRECATED: Create schema metadata in RocksDB via kalamdb-sql
+    ///
+    /// **REPLACED BY**: save_table_definition() which writes to information_schema_tables
     ///
     /// Stream tables store:
     /// - Schema in system_table_schemas (version 1)
@@ -154,12 +224,9 @@ impl StreamTableService {
             ),
         };
 
-        // Insert schema into system_table_schemas
-        self.kalam_sql
-            .insert_table_schema(&table_schema)
-            .map_err(|e| {
-                KalamDbError::SchemaError(format!("Failed to insert table schema: {}", e))
-            })?;
+        // TODO: Replace with information_schema_tables storage (Phase 2b)
+        // Schema will be stored in TableDefinition.schema_history array
+        // self.kalam_sql.insert_table_schema(&table_schema)?;
 
         // Create Table record in system_tables
         let table = kalamdb_sql::models::Table {
@@ -211,7 +278,7 @@ mod tests {
         let test_db = TestDb::new(&[
             "stream_table:app:events",
             "system_tables",
-            "system_table_schemas",
+            "information_schema_tables",
         ])
         .unwrap();
 
@@ -241,6 +308,8 @@ mod tests {
             namespace_id: NamespaceId::new("app"),
             table_type: TableType::Stream,
             schema,
+            column_defaults: std::collections::HashMap::new(),
+            primary_key_column: None,
             storage_id: None,
             use_user_storage: false,
             flush_policy: None,
@@ -275,6 +344,8 @@ mod tests {
             namespace_id: NamespaceId::new("app"),
             table_type: TableType::Stream,
             schema,
+            column_defaults: std::collections::HashMap::new(),
+            primary_key_column: None,
             storage_id: None,
             use_user_storage: false,
             flush_policy: None,
@@ -302,6 +373,8 @@ mod tests {
             namespace_id: NamespaceId::new("app"),
             table_type: TableType::Stream,
             schema: schema.clone(),
+            column_defaults: std::collections::HashMap::new(),
+            primary_key_column: None,
             storage_id: None,
             use_user_storage: false,
             flush_policy: None,
@@ -352,6 +425,8 @@ mod tests {
             namespace_id: NamespaceId::new("app"),
             table_type: TableType::Stream,
             schema,
+            column_defaults: std::collections::HashMap::new(),
+            primary_key_column: None,
             storage_id: None,
             use_user_storage: false,
             flush_policy: None,

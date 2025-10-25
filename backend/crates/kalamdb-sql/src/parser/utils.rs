@@ -125,10 +125,7 @@ pub fn extract_keyword_value(sql: &str, keyword: &str) -> Result<String, String>
 pub fn extract_identifier(sql: &str, skip_tokens: usize) -> Result<String, String> {
     let parts: Vec<&str> = sql.split_whitespace().collect();
     if parts.len() <= skip_tokens {
-        return Err(format!(
-            "Expected identifier after {} tokens",
-            skip_tokens
-        ));
+        return Err(format!("Expected identifier after {} tokens", skip_tokens));
     }
     Ok(parts[skip_tokens].to_string())
 }

@@ -452,7 +452,7 @@ impl FlushScheduler {
             // For now, mark as failed with recovery message
             let failed_job = crate::tables::system::JobRecord {
                 status: "failed".to_string(),
-                end_time: Some(chrono::Utc::now().timestamp_millis()),
+                completed_at: Some(chrono::Utc::now().timestamp_millis()),
                 error_message: Some("Job interrupted by server restart".to_string()),
                 ..job
             };

@@ -67,7 +67,7 @@ pub enum QueryParam {
 pub struct QueryResponse {
     pub columns: Vec<ColumnSchema>,
     pub rows: Vec<RecordBatch>,
-    pub execution_time_ms: Option<u64>,
+    pub took_ms: Option<u64>,
 }
 
 pub struct ColumnSchema {
@@ -854,49 +854,183 @@ CREATE TABLE system.storages (
 
 ---
 
-#### system.table_schemas (New)
+#### information_schema.tables (UNIFIED - SINGLE SOURCE OF TRUTH) ⭐
 
-**Purpose**: Store schema history for all tables to enable schema versioning and DESCRIBE TABLE history.
+**Purpose**: Store complete table definitions (metadata + schema + all columns) in a single atomic document. Replaces fragmented system_tables + system_table_schemas + system_columns approach.
 
-**Schema**:
-```sql
-CREATE TABLE system.table_schemas (
-    schema_id UUID PRIMARY KEY,
-    namespace_id TEXT NOT NULL,
-    table_name TEXT NOT NULL,
-    schema_version BIGINT NOT NULL,
-    schema_json JSONB NOT NULL,       -- Arrow schema as JSON
-    created_at TIMESTAMP DEFAULT now(),
-    INDEX (namespace_id, table_name, schema_version)
-);
-```
+**Architecture Decision**: Following MySQL/PostgreSQL `information_schema` pattern for:
+- ✅ **Atomic updates**: Single RocksDB write for CREATE/ALTER TABLE
+- ✅ **Consistency**: No partial state possible
+- ✅ **Simplicity**: One read to get complete table definition
+- ✅ **Standard compliance**: Compatible with information_schema queries
 
-**Fields**:
-- `schema_id`: Unique identifier for this schema version
-- `schema_version`: Monotonically increasing version number (starts at 1)
-- `schema_json`: Arrow schema serialized as JSON (columns, types, nullability)
+**RocksDB Storage**:
+- **Column Family**: `information_schema_tables`
+- **Key Format**: `{namespace_id}:{table_name}` (e.g., "chat:messages")
+- **Value Format**: Complete table definition as JSON
 
-**Example Row**:
-```json
-{
-  "schema_id": "770e8400-e29b-41d4-a716-446655440002",
-  "namespace_id": "chat",
-  "table_name": "messages",
-  "schema_version": 3,
-  "schema_json": {
-    "fields": [
-      {"name": "id", "data_type": "Utf8", "nullable": false},
-      {"name": "user_id", "data_type": "Utf8", "nullable": false},
-      {"name": "content", "data_type": "Utf8", "nullable": false},
-      {"name": "created_at", "data_type": "Timestamp", "nullable": false},
-      {"name": "metadata", "data_type": "Struct", "nullable": true}
-    ]
-  },
-  "created_at": "2025-10-21T12:00:00Z"
+**Complete Table Definition Structure**:
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableDefinition {
+    // Table metadata
+    pub table_id: String,              // Composite key: namespace:table_name
+    pub table_name: String,
+    pub namespace_id: String,
+    pub table_type: TableType,         // USER | SHARED | STREAM
+    pub created_at: i64,               // Unix timestamp (milliseconds)
+    pub updated_at: i64,
+    pub schema_version: u32,           // Incremented on ALTER TABLE
+    
+    // Storage configuration
+    pub storage_id: String,            // Foreign key reference to system.storages
+    pub use_user_storage: bool,        // True for USER tables
+    pub flush_policy: Option<FlushPolicyDef>,
+    pub deleted_retention_hours: Option<u32>,
+    pub ttl_seconds: Option<u64>,
+    
+    // Column definitions (ordered by ordinal_position)
+    pub columns: Vec<ColumnDefinition>,
+    
+    // Schema history
+    pub schema_history: Vec<SchemaVersion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnDefinition {
+    pub column_name: String,
+    pub ordinal_position: u32,         // 1-based, preserves creation order
+    pub data_type: String,             // Arrow DataType as string (e.g., "Int64", "Utf8", "Timestamp(Millisecond, None)")
+    pub is_nullable: bool,
+    pub column_default: Option<String>,// DEFAULT expression (e.g., "NOW()", "SNOWFLAKE_ID()", NULL)
+    pub is_primary_key: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaVersion {
+    pub version: u32,
+    pub created_at: i64,
+    pub changes: String,               // Human-readable description
+    pub arrow_schema_json: String,     // Arrow schema serialized as JSON
 }
 ```
 
-**Usage**: Referenced by `DESCRIBE TABLE` output to show schema history
+**Example JSON Document** (stored in RocksDB):
+```json
+{
+  "table_id": "chat:messages",
+  "table_name": "messages",
+  "namespace_id": "chat",
+  "table_type": "USER",
+  "created_at": 1729785600000,
+  "updated_at": 1729785600000,
+  "schema_version": 1,
+  "storage_id": "local",
+  "use_user_storage": true,
+  "flush_policy": {
+    "row_threshold": 10000,
+    "interval_seconds": 300
+  },
+  "deleted_retention_hours": 72,
+  "ttl_seconds": null,
+  "columns": [
+    {
+      "column_name": "id",
+      "ordinal_position": 1,
+      "data_type": "Int64",
+      "is_nullable": false,
+      "column_default": "SNOWFLAKE_ID()",
+      "is_primary_key": true
+    },
+    {
+      "column_name": "user_id",
+      "ordinal_position": 2,
+      "data_type": "Utf8",
+      "is_nullable": false,
+      "column_default": null,
+      "is_primary_key": false
+    },
+    {
+      "column_name": "content",
+      "ordinal_position": 3,
+      "data_type": "Utf8",
+      "is_nullable": false,
+      "column_default": null,
+      "is_primary_key": false
+    },
+    {
+      "column_name": "created_at",
+      "ordinal_position": 4,
+      "data_type": "Timestamp(Millisecond, None)",
+      "is_nullable": false,
+      "column_default": "NOW()",
+      "is_primary_key": false
+    }
+  ],
+  "schema_history": [
+    {
+      "version": 1,
+      "created_at": 1729785600000,
+      "changes": "Initial schema",
+      "arrow_schema_json": "{\"fields\":[{\"name\":\"id\",\"data_type\":\"Int64\",\"nullable\":false}...]}"
+    }
+  ]
+}
+```
+
+**Benefits Over Fragmented Approach**:
+
+| Operation | Old (3 CFs) | New (1 CF) |
+|-----------|-------------|------------|
+| CREATE TABLE | 3 writes (system_tables + system_table_schemas + system_columns) | 1 write (atomic) |
+| ALTER TABLE | 3 reads + 3 writes (risk of partial update) | 1 read + 1 write (atomic) |
+| DESCRIBE TABLE | 3 reads + joins | 1 read (complete) |
+| Get columns for auto-complete | 1 read from system_columns + parse | 1 read + parse JSON (same complexity, simpler code) |
+| Referential integrity | Complex (3-way consistency) | Simple (atomic document) |
+| Schema versioning | Separate tracking | Built-in history array |
+
+**SQL Views** (DataFusion providers expose these):
+
+```sql
+-- information_schema.tables view (table-level metadata)
+SELECT 
+  table_name,
+  table_type,
+  created_at,
+  schema_version,
+  storage_location
+FROM information_schema.tables
+WHERE namespace_id = 'chat';
+
+-- information_schema.columns view (flattened from JSON)
+SELECT 
+  column_name,
+  ordinal_position,
+  data_type,
+  is_nullable,
+  column_default,
+  is_primary_key
+FROM information_schema.columns
+WHERE namespace_id = 'chat' AND table_name = 'messages'
+ORDER BY ordinal_position;
+```
+
+**Validation Rules**:
+- Primary key: MUST exist on all tables, type MUST be Int64 or Utf8
+- ordinal_position: MUST be sequential starting at 1
+- column_default: MUST be valid SQL function or literal
+- schema_version: MUST increment on each ALTER TABLE
+- Atomic writes: Use RocksDB transactions or write batches
+
+**Migration Strategy**:
+1. **Phase 1**: Create `information_schema_tables` CF ✅ DONE (column_family_manager.rs updated)
+2. **Phase 2**: Implement TableDefinition model in kalamdb-commons
+3. **Phase 3**: Update kalamdb-sql adapter with upsert_table_definition() and get_table_definition()
+4. **Phase 4**: Refactor all CREATE TABLE services to write complete TableDefinition
+5. **Phase 5**: Implement information_schema providers for DataFusion
+6. **Phase 6**: Deprecate old system_tables/system_table_schemas/system_columns CFs
+
+**Related ADR**: See `CRITICAL_DESIGN_CHANGE_information_schema.md` for complete rationale
 
 ---
 

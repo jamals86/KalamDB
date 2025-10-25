@@ -23,7 +23,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct RestoreResult {
     /// Namespace ID that was restored
-    pub namespace_id: String,
+    pub namespace_id: NamespaceId,
 
     /// Number of tables restored
     pub tables_count: usize,
@@ -131,7 +131,7 @@ impl RestoreService {
         self.complete_restore_job(&job_id, manifest.tables.len(), files_count, total_bytes)?;
 
         Ok(Some(RestoreResult {
-            namespace_id: namespace_id.to_string(),
+            namespace_id: namespace_id.clone(),
             tables_count: manifest.tables.len(),
             files_count,
             total_bytes,
@@ -253,20 +253,22 @@ impl RestoreService {
             log::debug!("Restored table metadata: {}", table.table_name);
         }
 
+        // TODO: Replace with information_schema_tables storage (Phase 2b)
+        // Schema history will be stored in TableDefinition.schema_history array
         // Step 3: Create schema versions
-        for (table_id, schemas) in &manifest.table_schemas {
-            for schema in schemas {
-                self.kalam_sql.insert_table_schema(schema).map_err(|e| {
-                    KalamDbError::IoError(format!("Failed to insert schema: {}", e))
-                })?;
-
-                log::debug!(
-                    "Restored schema version {} for table '{}'",
-                    schema.version,
-                    table_id
-                );
-            }
-        }
+        // for (table_id, schemas) in &manifest.table_schemas {
+        //     for schema in schemas {
+        //         self.kalam_sql.insert_table_schema(schema).map_err(|e| {
+        //             KalamDbError::IoError(format!("Failed to insert schema: {}", e))
+        //         })?;
+        //
+        //         log::debug!(
+        //             "Restored schema version {} for table '{}'",
+        //             schema.version,
+        //             table_id
+        //         );
+        //     }
+        // }
 
         log::info!(
             "Restored metadata: {} tables, {} schemas",
@@ -497,12 +499,13 @@ impl RestoreService {
             manifest.namespace.namespace_id
         );
 
+        // TODO: Phase 2b - Schema history stored in TableDefinition.schema_history, no separate deletion needed
         // Delete table schemas
-        for table_id in manifest.table_schemas.keys() {
-            if let Err(e) = self.kalam_sql.delete_table_schemas_for_table(table_id) {
-                log::error!("Failed to delete schemas for table '{}': {}", table_id, e);
-            }
-        }
+        // for table_id in manifest.table_schemas.keys() {
+        //     if let Err(e) = self.kalam_sql.delete_table_schemas_for_table(table_id) {
+        //         log::error!("Failed to delete schemas for table '{}': {}", table_id, e);
+        //     }
+        // }
 
         // Delete tables
         for table in &manifest.tables {
@@ -542,18 +545,20 @@ impl RestoreService {
             chrono::Utc::now().timestamp_millis()
         );
 
+        let now_ms = chrono::Utc::now().timestamp_millis();
         let job = Job {
             job_id: job_id.clone(),
             job_type: "restore".to_string(),
-            table_name: namespace_id.as_str().to_string(), // Use namespace as table_name
             status: "running".to_string(),
-            start_time: chrono::Utc::now().timestamp(),
-            end_time: None,
+            table_name: Some(namespace_id.as_str().to_string()),
             parameters: vec![format!(r#"{{"namespace_id":"{}"}}"#, namespace_id.as_str())],
             result: None,
             trace: None,
-            memory_used_mb: None,
-            cpu_used_percent: None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: now_ms,
+            start_time: now_ms,
+            end_time: None,
             node_id: "local".to_string(),
             error_message: None,
         };
@@ -580,7 +585,7 @@ impl RestoreService {
             .ok_or_else(|| KalamDbError::NotFound(format!("Job '{}' not found", job_id)))?;
 
         job.status = "completed".to_string();
-        job.end_time = Some(chrono::Utc::now().timestamp());
+        job.end_time = Some(chrono::Utc::now().timestamp_millis());
         job.result = Some(format!(
             r#"{{"tables_restored":{},"files_restored":{},"total_bytes":{}}}"#,
             tables_restored, files_restored, total_bytes
@@ -602,7 +607,7 @@ impl RestoreService {
             .ok_or_else(|| KalamDbError::NotFound(format!("Job '{}' not found", job_id)))?;
 
         job.status = "failed".to_string();
-        job.end_time = Some(chrono::Utc::now().timestamp());
+        job.end_time = Some(chrono::Utc::now().timestamp_millis());
         job.error_message = Some(error.to_string());
 
         self.kalam_sql

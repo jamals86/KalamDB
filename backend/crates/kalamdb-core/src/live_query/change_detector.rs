@@ -36,7 +36,7 @@
 
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, ChangeType, LiveQueryManager};
-use kalamdb_store::{SharedTableStore, UserTableStore};
+use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -385,10 +385,15 @@ mod tests {
         let db = init.open().unwrap();
 
         let user_table_store = Arc::new(UserTableStore::new(Arc::clone(&db)).unwrap());
+        let shared_table_store = Arc::new(SharedTableStore::new(Arc::clone(&db)).unwrap());
+        let stream_table_store = Arc::new(StreamTableStore::new(Arc::clone(&db)).unwrap());
         let kalam_sql = Arc::new(KalamSql::new(Arc::clone(&db)).unwrap());
         let live_query_manager = Arc::new(LiveQueryManager::new(
             kalam_sql,
             NodeId::new("test".to_string()),
+            Some(user_table_store.clone()),
+            Some(shared_table_store.clone()),
+            Some(stream_table_store.clone()),
         ));
 
         let detector = UserTableChangeDetector::new(user_table_store, live_query_manager);

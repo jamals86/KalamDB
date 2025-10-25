@@ -226,7 +226,11 @@ impl UserTableFlushJob {
                     "{}.{}",
                     self.namespace_id.as_str(),
                     self.table_name.as_str()
-                ));
+                ))
+                .with_parameters(vec![
+                    format!("namespace={}", self.namespace_id.as_str()),
+                    format!("table={}", self.table_name.as_str()),
+                ]);
 
         // T158d: Persist job state to system.jobs BEFORE starting work
         if let Some(ref jobs_provider) = self.jobs_provider {
@@ -374,6 +378,7 @@ impl UserTableFlushJob {
         let mut total_rows_flushed = 0;
         let mut users_count = 0;
         let mut parquet_files = Vec::new();
+        let mut error_messages: Vec<String> = Vec::new(); // Track all errors during flush
 
         // T151c: Accumulate rows for current userId (streaming buffer)
         let mut current_user_id: Option<String> = None;
@@ -466,12 +471,14 @@ impl UserTableFlushJob {
                         Err(e) => {
                             // T151g: On Parquet write failure, keep buffered rows in RocksDB
                             // (no deletion occurs, rows remain in buffer for next flush attempt)
-                            log::error!(
-                                "Failed to flush {} rows for user {}: {}. Rows kept in buffer.",
+                            let error_msg = format!(
+                                "Failed to flush {} rows for user {}: {}",
                                 current_user_rows.len(),
                                 prev_user_id,
                                 e
                             );
+                            log::error!("{}. Rows kept in buffer.", error_msg);
+                            error_messages.push(error_msg);
 
                             // Continue with next user despite failure
                         }
@@ -512,12 +519,14 @@ impl UserTableFlushJob {
                         );
                     }
                     Err(e) => {
-                        log::error!(
-                            "Failed to flush {} rows for user {}: {}. Rows kept in buffer.",
+                        let error_msg = format!(
+                            "Failed to flush {} rows for user {}: {}",
                             current_user_rows.len(),
                             user_id,
                             e
                         );
+                        log::error!("{}. Rows kept in buffer.", error_msg);
+                        error_messages.push(error_msg);
                     }
                 }
             }
@@ -532,6 +541,35 @@ impl UserTableFlushJob {
             users_count,
             parquet_files.len()
         );
+
+        // Check if ALL users failed (complete failure)
+        if !error_messages.is_empty() && total_rows_flushed == 0 && rows_scanned > 0 {
+            let combined_errors = error_messages.join("; ");
+            log::error!(
+                "❌ Complete flush failure for table={}.{}: All {} user(s) failed to flush",
+                self.namespace_id.as_str(),
+                self.table_name.as_str(),
+                error_messages.len()
+            );
+            return Err(KalamDbError::Other(format!(
+                "Flush failed for all users: {}",
+                combined_errors
+            )));
+        }
+
+        // Check if SOME users failed (partial failure) - still return Ok but log warnings
+        if !error_messages.is_empty() {
+            log::warn!(
+                "⚠️  Partial flush failure for table={}.{}: {} user(s) failed, {} succeeded",
+                self.namespace_id.as_str(),
+                self.table_name.as_str(),
+                error_messages.len(),
+                users_count
+            );
+            for error_msg in &error_messages {
+                log::warn!("  - {}", error_msg);
+            }
+        }
 
         if total_rows_flushed == 0 {
             log::warn!(
@@ -604,15 +642,17 @@ impl UserTableFlushJob {
         );
 
         let writer = ParquetWriter::new(output_path.to_str().unwrap());
-        writer.write(self.schema.clone(), vec![batch]).map_err(|e| {
-            log::error!(
-                "❌ Failed to write Parquet file for user_id={}, path={}: {}",
-                user_id,
-                output_path.display(),
+        writer
+            .write(self.schema.clone(), vec![batch])
+            .map_err(|e| {
+                log::error!(
+                    "❌ Failed to write Parquet file for user_id={}, path={}: {}",
+                    user_id,
+                    output_path.display(),
+                    e
+                );
                 e
-            );
-            e
-        })?;
+            })?;
 
         parquet_files.push(output_path.to_string_lossy().to_string());
 

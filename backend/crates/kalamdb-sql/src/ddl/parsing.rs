@@ -13,7 +13,7 @@ pub fn normalize_and_upper(sql: &str) -> String {
     let trimmed = sql.trim().trim_end_matches(';');
     let mut result = String::with_capacity(trimmed.len());
     let mut prev_was_space = false;
-    
+
     for c in trimmed.chars() {
         if c.is_whitespace() {
             if !prev_was_space && !result.is_empty() {
@@ -25,12 +25,12 @@ pub fn normalize_and_upper(sql: &str) -> String {
             prev_was_space = false;
         }
     }
-    
+
     // Remove trailing space if any
     if result.ends_with(' ') {
         result.pop();
     }
-    
+
     result
 }
 
@@ -113,7 +113,7 @@ pub fn parse_create_drop_statement(
 ) -> DdlResult<(String, bool)> {
     let trimmed = sql.trim().trim_end_matches(';');
     let tokens: Vec<&str> = trimmed.split_whitespace().collect();
-    
+
     // Pre-compute counts to avoid multiple iterations
     let command_token_count = command.split_whitespace().count();
     let if_clause_tokens: Vec<&str> = if_clause.split_whitespace().collect();
@@ -123,7 +123,7 @@ pub fn parse_create_drop_statement(
     if tokens.len() < command_token_count {
         return Err(format!("Expected {} statement", command));
     }
-    
+
     let command_parts: Vec<&str> = command.split_whitespace().collect();
     for (i, expected) in command_parts.iter().enumerate() {
         if !tokens[i].eq_ignore_ascii_case(expected) {
@@ -142,7 +142,12 @@ pub fn parse_create_drop_statement(
     };
 
     // Extract entity name
-    let skip_tokens = command_token_count + if has_if_clause { if_clause_token_count } else { 0 };
+    let skip_tokens = command_token_count
+        + if has_if_clause {
+            if_clause_token_count
+        } else {
+            0
+        };
     let name = tokens
         .get(skip_tokens)
         .ok_or_else(|| format!("Entity name is required after {}", command))?
@@ -302,27 +307,42 @@ mod tests {
     #[test]
     fn test_parse_create_drop_statement() {
         // CREATE with IF NOT EXISTS
-        let (name, has_if) =
-            parse_create_drop_statement("CREATE NAMESPACE IF NOT EXISTS app", "CREATE NAMESPACE", "IF NOT EXISTS")
-                .unwrap();
+        let (name, has_if) = parse_create_drop_statement(
+            "CREATE NAMESPACE IF NOT EXISTS app",
+            "CREATE NAMESPACE",
+            "IF NOT EXISTS",
+        )
+        .unwrap();
         assert_eq!(name, "app");
         assert!(has_if);
 
         // CREATE without IF NOT EXISTS
-        let (name, has_if) =
-            parse_create_drop_statement("CREATE NAMESPACE app", "CREATE NAMESPACE", "IF NOT EXISTS").unwrap();
+        let (name, has_if) = parse_create_drop_statement(
+            "CREATE NAMESPACE app",
+            "CREATE NAMESPACE",
+            "IF NOT EXISTS",
+        )
+        .unwrap();
         assert_eq!(name, "app");
         assert!(!has_if);
 
         // DROP with IF EXISTS
-        let (name, has_if) =
-            parse_create_drop_statement("DROP NAMESPACE IF EXISTS app", "DROP NAMESPACE", "IF EXISTS").unwrap();
+        let (name, has_if) = parse_create_drop_statement(
+            "DROP NAMESPACE IF EXISTS app",
+            "DROP NAMESPACE",
+            "IF EXISTS",
+        )
+        .unwrap();
         assert_eq!(name, "app");
         assert!(has_if);
 
         // Preserve case
-        let (name, _) = parse_create_drop_statement("CREATE NAMESPACE MyApp", "CREATE NAMESPACE", "IF NOT EXISTS")
-            .unwrap();
+        let (name, _) = parse_create_drop_statement(
+            "CREATE NAMESPACE MyApp",
+            "CREATE NAMESPACE",
+            "IF NOT EXISTS",
+        )
+        .unwrap();
         assert_eq!(name, "MyApp");
     }
 
@@ -338,6 +358,8 @@ mod tests {
     #[test]
     fn test_validate_no_extra_tokens() {
         assert!(validate_no_extra_tokens("FLUSH TABLE prod.events", 3, "FLUSH TABLE").is_ok());
-        assert!(validate_no_extra_tokens("FLUSH TABLE prod.events extra", 3, "FLUSH TABLE").is_err());
+        assert!(
+            validate_no_extra_tokens("FLUSH TABLE prod.events extra", 3, "FLUSH TABLE").is_err()
+        );
     }
 }

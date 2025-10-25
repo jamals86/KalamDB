@@ -23,15 +23,68 @@ impl SqlHighlighter {
     fn is_keyword(word: &str) -> bool {
         matches!(
             word.to_uppercase().as_str(),
-            "SELECT" | "FROM" | "WHERE" | "INSERT" | "INTO" | "VALUES" | "UPDATE" | "SET"
-                | "DELETE" | "CREATE" | "DROP" | "ALTER" | "TABLE" | "INDEX" | "VIEW"
-                | "DATABASE" | "SCHEMA" | "AND" | "OR" | "NOT" | "IN" | "LIKE" | "BETWEEN"
-                | "IS" | "NULL" | "AS" | "ORDER" | "BY" | "GROUP" | "HAVING" | "LIMIT"
-                | "OFFSET" | "JOIN" | "LEFT" | "RIGHT" | "INNER" | "OUTER" | "ON"
-                | "DISTINCT" | "COUNT" | "SUM" | "AVG" | "MIN" | "MAX" | "CASE" | "WHEN"
-                | "THEN" | "ELSE" | "END" | "UNION" | "ALL" | "EXISTS" | "CAST" | "DEFAULT"
-                | "PRIMARY" | "KEY" | "FOREIGN" | "REFERENCES" | "UNIQUE" | "CHECK"
-                | "CONSTRAINT" | "AUTO_INCREMENT"
+            "SELECT"
+                | "FROM"
+                | "WHERE"
+                | "INSERT"
+                | "INTO"
+                | "VALUES"
+                | "UPDATE"
+                | "SET"
+                | "DELETE"
+                | "CREATE"
+                | "DROP"
+                | "ALTER"
+                | "TABLE"
+                | "INDEX"
+                | "VIEW"
+                | "DATABASE"
+                | "SCHEMA"
+                | "AND"
+                | "OR"
+                | "NOT"
+                | "IN"
+                | "LIKE"
+                | "BETWEEN"
+                | "IS"
+                | "NULL"
+                | "AS"
+                | "ORDER"
+                | "BY"
+                | "GROUP"
+                | "HAVING"
+                | "LIMIT"
+                | "OFFSET"
+                | "JOIN"
+                | "LEFT"
+                | "RIGHT"
+                | "INNER"
+                | "OUTER"
+                | "ON"
+                | "DISTINCT"
+                | "COUNT"
+                | "SUM"
+                | "AVG"
+                | "MIN"
+                | "MAX"
+                | "CASE"
+                | "WHEN"
+                | "THEN"
+                | "ELSE"
+                | "END"
+                | "UNION"
+                | "ALL"
+                | "EXISTS"
+                | "CAST"
+                | "DEFAULT"
+                | "PRIMARY"
+                | "KEY"
+                | "FOREIGN"
+                | "REFERENCES"
+                | "UNIQUE"
+                | "CHECK"
+                | "CONSTRAINT"
+                | "AUTO_INCREMENT"
         )
     }
 
@@ -39,9 +92,27 @@ impl SqlHighlighter {
     fn is_type(word: &str) -> bool {
         matches!(
             word.to_uppercase().as_str(),
-            "INTEGER" | "INT" | "BIGINT" | "SMALLINT" | "TINYINT" | "TEXT" | "VARCHAR"
-                | "CHAR" | "BOOLEAN" | "BOOL" | "TIMESTAMP" | "DATETIME" | "DATE" | "TIME"
-                | "FLOAT" | "DOUBLE" | "DECIMAL" | "NUMERIC" | "JSON" | "JSONB" | "BLOB"
+            "INTEGER"
+                | "INT"
+                | "BIGINT"
+                | "SMALLINT"
+                | "TINYINT"
+                | "TEXT"
+                | "VARCHAR"
+                | "CHAR"
+                | "BOOLEAN"
+                | "BOOL"
+                | "TIMESTAMP"
+                | "DATETIME"
+                | "DATE"
+                | "TIME"
+                | "FLOAT"
+                | "DOUBLE"
+                | "DECIMAL"
+                | "NUMERIC"
+                | "JSON"
+                | "JSONB"
+                | "BLOB"
                 | "BINARY"
         )
     }
@@ -82,7 +153,9 @@ impl SqlHighlighter {
             }
 
             // Handle numbers
-            if ch.is_ascii_digit() || (ch == '.' && chars.peek().map_or(false, |c| c.is_ascii_digit())) {
+            if ch.is_ascii_digit()
+                || (ch == '.' && chars.peek().map_or(false, |c| c.is_ascii_digit()))
+            {
                 if !in_number {
                     // Flush current word
                     if !current_word.is_empty() {
@@ -98,7 +171,23 @@ impl SqlHighlighter {
             }
 
             // Handle operators and punctuation
-            if matches!(ch, '(' | ')' | ',' | ';' | '=' | '<' | '>' | '+' | '-' | '*' | '/' | '%' | '!' | '&' | '|') {
+            if matches!(
+                ch,
+                '(' | ')'
+                    | ','
+                    | ';'
+                    | '='
+                    | '<'
+                    | '>'
+                    | '+'
+                    | '-'
+                    | '*'
+                    | '/'
+                    | '%'
+                    | '!'
+                    | '&'
+                    | '|'
+            ) {
                 // Flush current word
                 if !current_word.is_empty() {
                     result.push_str(&self.color_word(&current_word));

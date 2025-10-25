@@ -8,7 +8,8 @@ pub mod namespace_service;
 pub mod restore_service;
 pub mod schema_evolution_service;
 pub mod shared_table_service;
-pub mod storage_location_service;
+// TODO: Phase 2b - storage_location_service deprecated (replaced by system_storages)
+// pub mod storage_location_service;
 pub mod stream_table_service;
 pub mod table_deletion_service;
 pub mod user_table_service;
@@ -18,7 +19,8 @@ pub use namespace_service::NamespaceService;
 pub use restore_service::{RestoreResult, RestoreService};
 pub use schema_evolution_service::{SchemaEvolutionResult, SchemaEvolutionService};
 pub use shared_table_service::SharedTableService;
-pub use storage_location_service::StorageLocationService;
+// TODO: Phase 2b - StorageLocationService deprecated (replaced by system_storages)
+// pub use storage_location_service::StorageLocationService;
 pub use stream_table_service::StreamTableService;
 pub use table_deletion_service::{TableDeletionResult, TableDeletionService};
 pub use user_table_service::UserTableService;

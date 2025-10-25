@@ -54,39 +54,67 @@ path = "src/main.rs"
 
 [[test]]
 name = "test_shared_tables"
-path = "../../tests/integration/test_shared_tables.rs"
+path = "../../tests/integration/tables/shared/test_shared_tables.rs"
 
 [[test]]
 name = "test_user_tables"
-path = "../../tests/integration/test_user_tables.rs"
+path = "../../tests/integration/tables/user/test_user_tables.rs"
 
 [[test]]
 name = "test_stream_tables"
-path = "../../tests/integration/test_stream_tables.rs"
+path = "../../tests/integration/tables/stream/test_stream_tables.rs"
 
 [[test]]
 name = "test_quickstart"
-path = "../../tests/integration/test_quickstart.rs"
+path = "../../tests/integration/combined/test_quickstart.rs"
 
 [[test]]
 name = "test_system_tables"
-path = "../../tests/integration/test_system_tables.rs"
+path = "../../tests/integration/tables/system/test_system_tables.rs"
 
 [[test]]
 name = "test_flush_operations"
-path = "../../tests/integration/test_flush_operations.rs"
+path = "../../tests/integration/flush/test_flush_operations.rs"
 
 [[test]]
 name = "test_storage_management"
-path = "../../tests/integration/test_storage_management.rs"
+path = "../../tests/integration/storage_management/test_storage_management.rs"
 
 [[test]]
 name = "test_live_query_changes"
-path = "../../tests/integration/test_live_query_changes.rs"
+path = "../../tests/integration/combined/test_live_query_changes.rs"
 
 [[test]]
 name = "test_manual_flush_verification"
-path = "../../tests/integration/test_manual_flush_verification.rs"
+path = "../../tests/integration/flush/test_manual_flush_verification.rs"
+
+[[test]]
+name = "test_namespace_validation"
+path = "../../tests/integration/combined/test_namespace_validation.rs"
+
+[[test]]
+name = "test_enhanced_api_features"
+path = "../../tests/integration/api/test_enhanced_api_features.rs"
+
+[[test]]
+name = "test_automatic_flushing"
+path = "../../tests/integration/flush/test_automatic_flushing.rs"
+
+[[test]]
+name = "test_automatic_flushing_comprehensive"
+path = "../../tests/integration/flush/test_automatic_flushing_comprehensive.rs"
+
+[[test]]
+name = "test_schema_integrity"
+path = "../../tests/integration/combined/test_schema_integrity.rs"
+
+[[test]]
+name = "test_stress_and_memory"
+path = "../../tests/integration/combined/test_stress_and_memory.rs"
+
+[[test]]
+name = "test_code_quality"
+path = "../../tests/test_code_quality.rs"
 
 [dev-dependencies]
 tempfile = "3"
@@ -94,3 +122,5 @@ serde_json.workspace = true
 actix-http = "3.4"
 tokio-tungstenite = "0.21"
 futures-util = "0.3"
+uuid.workspace = true
+rocksdb.workspace = true

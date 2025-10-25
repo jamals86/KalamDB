@@ -82,6 +82,7 @@
 
 use super::parsing::parse_table_reference;
 use super::DdlResult;
+use kalamdb_commons::{NamespaceId, TableName};
 
 /// SUBSCRIBE TO statement for live query subscriptions.
 ///
@@ -89,9 +90,9 @@ use super::DdlResult;
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubscribeStatement {
     /// Namespace name (e.g., "app")
-    pub namespace: String,
+    pub namespace: NamespaceId,
     /// Table name (e.g., "messages")
-    pub table_name: String,
+    pub table_name: TableName,
     /// Optional WHERE clause filter (e.g., "user_id = CURRENT_USER()")
     pub where_clause: Option<String>,
     /// Optional subscription options (e.g., last_rows=10)
@@ -183,8 +184,8 @@ impl SubscribeStatement {
         };
 
         Ok(SubscribeStatement {
-            namespace,
-            table_name,
+            namespace: NamespaceId::from(namespace),
+            table_name: TableName::from(table_name),
             where_clause,
             options,
         })
@@ -223,7 +224,10 @@ fn parse_subscribe_options(options_str: &str) -> DdlResult<SubscribeOptions> {
 
     // Expect options wrapped in parentheses
     if !options_str.starts_with('(') || !options_str.ends_with(')') {
-        return Err("OPTIONS clause must be wrapped in parentheses, e.g., OPTIONS (last_rows=10)".to_string());
+        return Err(
+            "OPTIONS clause must be wrapped in parentheses, e.g., OPTIONS (last_rows=10)"
+                .to_string(),
+        );
     }
 
     let inner = &options_str[1..options_str.len() - 1].trim();
@@ -264,8 +268,8 @@ mod tests {
     #[test]
     fn test_parse_basic_subscribe() {
         let stmt = SubscribeStatement::parse("SUBSCRIBE TO app.messages").unwrap();
-        assert_eq!(stmt.namespace, "app");
-        assert_eq!(stmt.table_name, "messages");
+        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.table_name, TableName::from("messages"));
         assert!(stmt.where_clause.is_none());
         assert!(stmt.options.last_rows.is_none());
     }
@@ -273,37 +277,33 @@ mod tests {
     #[test]
     fn test_parse_subscribe_with_semicolon() {
         let stmt = SubscribeStatement::parse("SUBSCRIBE TO app.messages;").unwrap();
-        assert_eq!(stmt.namespace, "app");
-        assert_eq!(stmt.table_name, "messages");
+        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.table_name, TableName::from("messages"));
     }
 
     #[test]
     fn test_parse_subscribe_case_insensitive() {
         let stmt = SubscribeStatement::parse("subscribe to app.messages").unwrap();
-        assert_eq!(stmt.namespace, "app");
-        assert_eq!(stmt.table_name, "messages");
+        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.table_name, TableName::from("messages"));
     }
 
     #[test]
     fn test_parse_subscribe_with_where_clause() {
-        let stmt = SubscribeStatement::parse(
-            "SUBSCRIBE TO app.messages WHERE user_id = CURRENT_USER()",
-        )
-        .unwrap();
-        assert_eq!(stmt.namespace, "app");
-        assert_eq!(stmt.table_name, "messages");
-        assert_eq!(
-            stmt.where_clause.unwrap(),
-            "user_id = CURRENT_USER()"
-        );
+        let stmt =
+            SubscribeStatement::parse("SUBSCRIBE TO app.messages WHERE user_id = CURRENT_USER()")
+                .unwrap();
+        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.table_name, TableName::from("messages"));
+        assert_eq!(stmt.where_clause.unwrap(), "user_id = CURRENT_USER()");
     }
 
     #[test]
     fn test_parse_subscribe_with_options() {
-        let stmt = SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (last_rows=10)")
-            .unwrap();
-        assert_eq!(stmt.namespace, "app");
-        assert_eq!(stmt.table_name, "messages");
+        let stmt =
+            SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (last_rows=10)").unwrap();
+        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(stmt.options.last_rows, Some(10));
     }
 
@@ -313,8 +313,8 @@ mod tests {
             "SUBSCRIBE TO app.messages WHERE user_id = 'alice' OPTIONS (last_rows=20)",
         )
         .unwrap();
-        assert_eq!(stmt.namespace, "app");
-        assert_eq!(stmt.table_name, "messages");
+        assert_eq!(stmt.namespace, NamespaceId::from("app"));
+        assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(stmt.where_clause.unwrap(), "user_id = 'alice'");
         assert_eq!(stmt.options.last_rows, Some(20));
     }
@@ -358,8 +358,7 @@ mod tests {
     #[test]
     fn test_to_select_sql_with_where() {
         let stmt =
-            SubscribeStatement::parse("SUBSCRIBE TO app.messages WHERE user_id = 'alice'")
-                .unwrap();
+            SubscribeStatement::parse("SUBSCRIBE TO app.messages WHERE user_id = 'alice'").unwrap();
         assert_eq!(
             stmt.to_select_sql(),
             "SELECT * FROM app.messages WHERE user_id = 'alice'"

@@ -55,8 +55,7 @@ impl StorageRegistry {
     ) -> Result<Option<StorageConfig>, KalamDbError> {
         match self.get_storage(storage_id)? {
             Some(storage) => {
-                let storage_type = StorageType::try_from(storage.storage_type.as_str())
-                    .map_err(|e| KalamDbError::Other(e))?;
+                let storage_type = StorageType::from(storage.storage_type.as_str());
 
                 let config = StorageConfig::new(
                     storage.storage_id,

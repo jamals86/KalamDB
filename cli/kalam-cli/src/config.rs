@@ -6,7 +6,7 @@
 //!
 //! ```toml
 //! [server]
-//! url = "http://localhost:3000"
+//! url = "http://localhost:8080"  # KalamDB server URL
 //!
 //! [auth]
 //! jwt_token = "your-jwt-token"
@@ -98,7 +98,7 @@ impl Default for CLIConfiguration {
     fn default() -> Self {
         Self {
             server: Some(ServerConfig {
-                url: Some("http://localhost:3000".to_string()),
+                url: Some("http://localhost:8080".to_string()),
                 timeout: default_timeout(),
                 max_retries: default_retries(),
             }),
@@ -180,7 +180,7 @@ mod tests {
         assert!(config.server.is_some());
         assert_eq!(
             config.server.unwrap().url,
-            Some("http://localhost:3000".to_string())
+            Some("http://localhost:8080".to_string())
         );
     }
 

@@ -43,6 +43,9 @@ metrics = "0.22"
 # UUID generation
 uuid.workspace = true
 
+# ULID generation
+ulid.workspace = true
+
 # Single-assignment statics
 once_cell = "1.19"
 

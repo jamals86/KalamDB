@@ -2,15 +2,21 @@
 //!
 //! This module provides an Actix actor for managing WebSocket connections and live query subscriptions.
 
-use actix::{Actor, ActorContext, AsyncContext, Handler, Message, StreamHandler};
+use actix::{fut, Actor, ActorContext, ActorFutureExt, AsyncContext, Handler, Message, StreamHandler};
 use actix_web_actors::ws;
 use kalamdb_commons::models::UserId;
 use log::{debug, error, info, warn};
+use std::convert::TryFrom;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::models::{Notification, SubscriptionRequest};
 use crate::rate_limiter::RateLimiter;
+use kalamdb_core::live_query::{
+    ConnectionId as LiveConnectionId, InitialDataOptions, LiveQueryManager, LiveQueryOptions,
+    UserId as LiveUserId,
+};
+use serde_json::json;
 
 /// How often heartbeat pings are sent
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -38,6 +44,15 @@ pub struct WebSocketSession {
     /// Rate limiter for message and subscription limits
     pub rate_limiter: Option<Arc<RateLimiter>>,
 
+    /// Live query manager for subscription lifecycle
+    pub live_query_manager: Arc<LiveQueryManager>,
+
+    /// Registered live query connection ID
+    pub live_connection_id: Option<LiveConnectionId>,
+
+    /// Live query user identifier (for manager interactions)
+    pub live_user_id: Option<LiveUserId>,
+
     /// Client must send ping at least once per 10 seconds (CLIENT_TIMEOUT),
     /// otherwise we drop connection.
     pub hb: Instant,
@@ -57,11 +72,15 @@ impl WebSocketSession {
         connection_id: String,
         user_id: Option<UserId>,
         rate_limiter: Option<Arc<RateLimiter>>,
+        live_query_manager: Arc<LiveQueryManager>,
     ) -> Self {
         Self {
             connection_id,
             user_id,
             rate_limiter,
+            live_query_manager,
+            live_connection_id: None,
+            live_user_id: None,
             hb: Instant::now(),
             subscriptions: Vec::new(),
         }
@@ -95,6 +114,44 @@ impl Actor for WebSocketSession {
 
         // Start heartbeat process
         self.hb(ctx);
+
+        // Register connection with live query manager
+        if let Some(ref user_id) = self.user_id {
+            let manager = self.live_query_manager.clone();
+            let unique_conn_id = self.connection_id.clone();
+            let user_string = user_id.as_ref().to_string();
+
+            ctx.wait(
+                fut::wrap_future(async move {
+                    let live_user = LiveUserId::new(user_string);
+                    let conn_id = manager
+                        .register_connection(live_user.clone(), unique_conn_id)
+                        .await;
+                    (conn_id, live_user)
+                })
+                .map(|(result, live_user), act: &mut Self, ctx| match result {
+                    Ok(conn_id) => {
+                        act.live_connection_id = Some(conn_id);
+                        act.live_user_id = Some(live_user);
+                    }
+                    Err(err) => {
+                        error!(
+                            "Failed to register live query connection {}: {}",
+                            act.connection_id, err
+                        );
+                        ctx.close(None);
+                        ctx.stop();
+                    }
+                }),
+            );
+        } else {
+            error!(
+                "WebSocket connection {} missing authenticated user; closing",
+                self.connection_id
+            );
+            ctx.close(None);
+            ctx.stop();
+        }
     }
 
     /// Called when the actor stops
@@ -113,8 +170,18 @@ impl Actor for WebSocketSession {
             }
         }
 
-        // TODO: Cleanup subscriptions from live query manager
-        // This will be implemented in T085 (subscription cleanup)
+        if let (Some(ref live_user), Some(ref live_conn)) =
+            (&self.live_user_id, &self.live_connection_id)
+        {
+            let manager = self.live_query_manager.clone();
+            let live_user = live_user.clone();
+            let live_conn = live_conn.clone();
+            actix::spawn(async move {
+                if let Err(err) = manager.unregister_connection(&live_user, &live_conn).await {
+                    warn!("Failed to unregister live query connection: {}", err);
+                }
+            });
+        }
     }
 }
 
@@ -156,33 +223,55 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                     Ok(sub_req) => {
                         info!("Registering {} subscriptions", sub_req.subscriptions.len());
 
-                        // Register each subscription
-                        for subscription in sub_req.subscriptions {
-                            // Authorization: Verify user_id is available for subscription
-                            if self.user_id.is_none() {
+                        // Ensure connection registered with live query manager
+                        let live_connection_id = match self.live_connection_id.clone() {
+                            Some(conn_id) => conn_id,
+                            None => {
                                 error!(
-                                    "Subscription rejected: no authenticated user (subscription_id={})",
-                                    subscription.id
+                                    "Live query manager connection missing for {}",
+                                    self.connection_id
                                 );
                                 let error_msg = Notification::error(
-                                    subscription.id.clone(),
-                                    "UNAUTHORIZED".to_string(),
-                                    "User authentication required for subscriptions".to_string(),
+                                    "connection".to_string(),
+                                    "CONNECTION_NOT_READY".to_string(),
+                                    "Live query manager is not ready for subscriptions".to_string(),
                                 );
                                 if let Ok(json) = serde_json::to_string(&error_msg) {
                                     ctx.text(json);
                                 }
-                                continue;
+                                return;
                             }
+                        };
+
+                        // Register each subscription
+                        for subscription in sub_req.subscriptions {
+                            let user_id = match self.user_id.clone() {
+                                Some(uid) => uid,
+                                None => {
+                                    error!(
+                                        "Subscription rejected: unauthenticated (subscription_id={})",
+                                        subscription.id
+                                    );
+                                    let error_msg = Notification::error(
+                                        subscription.id.clone(),
+                                        "UNAUTHORIZED".to_string(),
+                                        "User authentication required for subscriptions"
+                                            .to_string(),
+                                    );
+                                    if let Ok(json) = serde_json::to_string(&error_msg) {
+                                        ctx.text(json);
+                                    }
+                                    continue;
+                                }
+                            };
 
                             // Rate limiting: Check subscription limit per user
-                            if let (Some(ref uid), Some(ref limiter)) =
-                                (&self.user_id, &self.rate_limiter)
-                            {
-                                if !limiter.check_subscription_limit(uid) {
+                            if let Some(ref limiter) = self.rate_limiter {
+                                if !limiter.check_subscription_limit(&user_id) {
                                     warn!(
                                         "Subscription limit exceeded: user_id={}, subscription_id={}",
-                                        uid.as_ref(), subscription.id
+                                        user_id.as_ref(),
+                                        subscription.id
                                     );
                                     let error_msg = Notification::error(
                                         subscription.id.clone(),
@@ -195,40 +284,106 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                                     }
                                     continue;
                                 }
-                                // Increment subscription count for rate limiting
-                                limiter.increment_subscription(uid);
                             }
 
-                            // Authorization: For user tables, enforce user_id filtering
-                            // This is enforced at the live query manager level (T174)
-                            // The manager will automatically inject WHERE user_id = {current_user_id}
+                            // Convert last_rows option and validate bounds
+                            let last_rows_u32 = match subscription.options.last_rows {
+                                Some(value) => match u32::try_from(value) {
+                                    Ok(v) => Some(v),
+                                    Err(_) => {
+                                        let error_msg = Notification::error(
+                                            subscription.id.clone(),
+                                            "INVALID_OPTION".to_string(),
+                                            "last_rows must be between 0 and 4,294,967,295"
+                                                .to_string(),
+                                        );
+                                        if let Ok(json) = serde_json::to_string(&error_msg) {
+                                            ctx.text(json);
+                                        }
+                                        continue;
+                                    }
+                                },
+                                None => None,
+                            };
 
-                            info!(
-                                "Subscription registered: id={}, sql={}, user_id={}",
-                                subscription.id,
-                                subscription.sql,
-                                self.user_id
-                                    .as_ref()
-                                    .map(|id| id.as_ref())
-                                    .unwrap_or("none")
+                            let initial_data_options = last_rows_u32
+                                .filter(|value| *value > 0)
+                                .map(|value| InitialDataOptions::last(value as usize));
+
+                            let manager = self.live_query_manager.clone();
+                            let rate_limiter = self.rate_limiter.clone();
+                            let subscription_id = subscription.id.clone();
+                            let sql = subscription.sql.clone();
+                            let live_conn_clone = live_connection_id.clone();
+                            let user_clone = user_id.clone();
+
+                            ctx.wait(
+                                fut::wrap_future(async move {
+                                    match manager
+                                        .register_subscription_with_initial_data(
+                                            live_conn_clone,
+                                            subscription_id.clone(),
+                                            sql.clone(),
+                                            LiveQueryOptions {
+                                                last_rows: last_rows_u32,
+                                            },
+                                            initial_data_options,
+                                        )
+                                        .await
+                                    {
+                                        Ok(result) => Ok((result, subscription_id.clone(), last_rows_u32)),
+                                        Err(err) => Err((err, subscription_id.clone())),
+                                    }
+                                })
+                                .map(move |outcome, act: &mut Self, ctx| {
+                                    match outcome {
+                                        Ok((sub_result, sub_id, last_rows_opt)) => {
+                                            info!(
+                                                "Subscription registered: id={}, user_id={}",
+                                                sub_id,
+                                                user_clone.as_ref()
+                                            );
+                                            act.subscriptions.push(sub_id.clone());
+
+                                            if let Some(ref limiter) = rate_limiter {
+                                                limiter.increment_subscription(&user_clone);
+                                            }
+
+                                            let ack = json!({
+                                                "type": "subscription_ack",
+                                                "subscription_id": sub_id,
+                                                "last_rows": last_rows_opt.unwrap_or(0),
+                                            });
+                                            ctx.text(ack.to_string());
+
+                                            if let Some(initial) = sub_result.initial_data {
+                                                let payload = json!({
+                                                    "type": "initial_data",
+                                                    "subscription_id": sub_id,
+                                                    "rows": initial.rows,
+                                                    "count": initial.rows.len(),
+                                                });
+                                                ctx.text(payload.to_string());
+                                            }
+                                        }
+                                        Err((err, sub_id)) => {
+                                            error!(
+                                                "Failed to register subscription {}: {}",
+                                                sub_id, err
+                                            );
+                                            let error_msg = Notification::error(
+                                                sub_id.clone(),
+                                                "SUBSCRIPTION_FAILED".to_string(),
+                                                err.to_string(),
+                                            );
+                                            if let Ok(json) = serde_json::to_string(&error_msg) {
+                                                ctx.text(json);
+                                            }
+                                        }
+                                    }
+                                }),
                             );
-                            self.subscriptions.push(subscription.id.clone());
-
-                            // TODO: Register in live query manager (T054)
-                            // The live query manager will:
-                            // 1. Parse the SQL to detect if it targets a user table
-                            // 2. Automatically inject user_id filter for user tables (T174)
-                            // 3. Reject subscriptions that try to access other users' data
-
-                            // TODO: Fetch initial data if last_rows is set (T052)
                         }
-
-                        // Send acknowledgment
-                        let ack = serde_json::json!({
-                            "type": "ack",
-                            "message": format!("{} subscriptions registered", self.subscriptions.len())
-                        });
-                        ctx.text(ack.to_string());
                     }
                     Err(e) => {
                         error!("Failed to parse subscription request: {}", e);
@@ -280,11 +435,31 @@ impl Handler<SendNotification> for WebSocketSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_core::live_query::{LiveQueryManager, NodeId};
+    use kalamdb_core::storage::RocksDbInit;
+    use tempfile::TempDir;
 
     #[test]
     fn test_websocket_session_creation() {
         let user_id = Some(UserId::from("user-123"));
-        let session = WebSocketSession::new("test-conn-123".to_string(), user_id.clone(), None);
+        let temp_dir = TempDir::new().unwrap();
+        let db_init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
+        let db = db_init.open().unwrap();
+        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(db).unwrap());
+        let manager = Arc::new(LiveQueryManager::new(
+            kalam_sql,
+            NodeId::new("test-node".to_string()),
+            None,
+            None,
+            None,
+        ));
+
+        let session = WebSocketSession::new(
+            "test-conn-123".to_string(),
+            user_id.clone(),
+            None,
+            manager,
+        );
         assert_eq!(session.connection_id, "test-conn-123");
         assert_eq!(session.user_id, user_id);
         assert_eq!(session.subscriptions.len(), 0);

@@ -367,10 +367,11 @@ impl TableDeletionService {
 
     /// Delete metadata (T171)
     fn cleanup_metadata(&self, table_id: &str) -> Result<(), KalamDbError> {
+        // TODO: Phase 2b - Schema history stored in TableDefinition.schema_history, no separate deletion needed
         // Delete table schemas
-        self.kalam_sql
-            .delete_table_schemas_for_table(table_id)
-            .map_err(|e| KalamDbError::IoError(format!("Failed to delete table schemas: {}", e)))?;
+        // self.kalam_sql
+        //     .delete_table_schemas_for_table(table_id)
+        //     .map_err(|e| KalamDbError::IoError(format!("Failed to delete table schemas: {}", e)))?;
 
         // Delete table metadata
         self.kalam_sql
@@ -382,26 +383,32 @@ impl TableDeletionService {
 
     /// Decrement storage location usage count (T172)
     fn decrement_storage_usage(&self, location_name: &str) -> Result<(), KalamDbError> {
+        // TODO: Phase 2b - system_storages no longer tracks usage_count, validation happens differently
+        // Storage location usage tracking will be reimplemented when needed
+        log::warn!(
+            "Storage usage tracking temporarily disabled during migration to information_schema"
+        );
+
         // Get current storage location
-        let mut location = self
-            .kalam_sql
-            .get_storage_location(location_name)
-            .map_err(|e| KalamDbError::IoError(format!("Failed to get storage location: {}", e)))?
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!("Storage location '{}' not found", location_name))
-            })?;
+        // let mut location = self
+        //     .kalam_sql
+        //     .get_storage_location(location_name)
+        //     .map_err(|e| KalamDbError::IoError(format!("Failed to get storage location: {}", e)))?
+        //     .ok_or_else(|| {
+        //         KalamDbError::NotFound(format!("Storage location '{}' not found", location_name))
+        //     })?;
 
         // Decrement usage count (don't go below 0)
-        if location.usage_count > 0 {
-            location.usage_count -= 1;
-        }
+        // if location.usage_count > 0 {
+        //     location.usage_count -= 1;
+        // }
 
         // Update storage location
-        self.kalam_sql
-            .update_storage_location(&location)
-            .map_err(|e| {
-                KalamDbError::IoError(format!("Failed to update storage location: {}", e))
-            })?;
+        // self.kalam_sql
+        //     .update_storage_location(&location)
+        //     .map_err(|e| {
+        //         KalamDbError::IoError(format!("Failed to update storage location: {}", e))
+        //     })?;
 
         Ok(())
     }
@@ -415,7 +422,7 @@ impl TableDeletionService {
         table_type: &TableType,
     ) -> Result<String, KalamDbError> {
         let job_id = format!("drop_table:{}", table_id);
-        let now = chrono::Utc::now().timestamp();
+        let now_ms = chrono::Utc::now().timestamp_millis();
 
         let parameters = vec![
             format!("namespace_id={}", namespace_id.as_str()),
@@ -426,15 +433,16 @@ impl TableDeletionService {
         let job: Job = Job {
             job_id: job_id.clone(),
             job_type: "table_deletion".to_string(),
-            table_name: table_name.as_str().to_string(),
             status: "running".to_string(),
-            start_time: now,
-            end_time: None,
+            table_name: Some(table_name.as_str().to_string()),
             parameters,
             result: None,
             trace: None,
-            memory_used_mb: None,
-            cpu_used_percent: None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: now_ms,
+            start_time: now_ms,
+            end_time: None,
             node_id: "localhost".to_string(), // TODO: Get actual node ID
             error_message: None,
         };
@@ -459,15 +467,16 @@ impl TableDeletionService {
             .map_err(|e| KalamDbError::IoError(format!("Failed to get job: {}", e)))?
             .ok_or_else(|| KalamDbError::NotFound(format!("Job '{}' not found", job_id)))?;
 
+        let now_ms = chrono::Utc::now().timestamp_millis();
         let result_json = serde_json::json!({
             "files_deleted": files_deleted,
             "bytes_freed": bytes_freed,
-            "duration_ms": (chrono::Utc::now().timestamp() - job.start_time) * 1000,
+            "duration_ms": now_ms.saturating_sub(job.start_time),
         });
 
         let updated_job = Job {
             status: "completed".to_string(),
-            end_time: Some(chrono::Utc::now().timestamp()),
+            end_time: Some(now_ms),
             result: Some(serde_json::to_string(&result_json).unwrap_or_default()),
             ..job
         };
@@ -489,7 +498,7 @@ impl TableDeletionService {
         if let Some(job) = job {
             let updated_job = Job {
                 status: "failed".to_string(),
-                end_time: Some(chrono::Utc::now().timestamp()),
+                end_time: Some(chrono::Utc::now().timestamp_millis()),
                 error_message: Some(error_message.to_string()),
                 ..job
             };

@@ -35,7 +35,7 @@ Flushed 1,523 records to ./data/storage/chat/users/jamal/messages/j/batch-2025-1
 **Response Fields**:
 - `records_flushed`: Number of rows written
 - `storage_location`: Path to Parquet file(s)
-- `execution_time_ms`: Time taken to complete flush
+- `took_ms`: Time taken to complete flush
 
 **Errors**:
 - Table does not exist

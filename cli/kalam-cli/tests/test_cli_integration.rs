@@ -60,7 +60,7 @@ async fn execute_sql(sql: &str) -> Result<(), Box<dyn std::error::Error>> {
         .json(&json!({ "sql": sql }))
         .send()
         .await?;
-    
+
     if !response.status().is_success() {
         return Err(format!("SQL failed: {}", response.text().await?).into());
     }
@@ -71,25 +71,25 @@ async fn execute_sql(sql: &str) -> Result<(), Box<dyn std::error::Error>> {
 async fn setup_test_data() -> Result<(), Box<dyn std::error::Error>> {
     // Try to drop table first if it exists
     let _ = execute_sql("DROP TABLE IF EXISTS test_cli.messages").await;
-    
+
     // Drop namespace if it exists (cleanup from previous runs)
     let _ = execute_sql("DROP NAMESPACE IF EXISTS test_cli CASCADE").await;
-    
+
     // Small delay to ensure cleanup completes
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-    
+
     // Create namespace
     match execute_sql("CREATE NAMESPACE test_cli").await {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) if e.to_string().contains("already exists") => {
             // Namespace exists, that's ok
-        },
+        }
         Err(e) => return Err(e),
     }
-    
+
     // Small delay after namespace creation
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    
+
     // Create test table using USER TABLE (column family bug is now fixed!)
     match execute_sql(
         r#"CREATE USER TABLE test_cli.messages (
@@ -98,17 +98,18 @@ async fn setup_test_data() -> Result<(), Box<dyn std::error::Error>> {
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) FLUSH ROWS 10"#,
     )
-    .await {
-        Ok(_) => {},
+    .await
+    {
+        Ok(_) => {}
         Err(e) if e.to_string().contains("already exists") => {
             // Table exists, that's ok
-        },
+        }
         Err(e) => return Err(e),
     }
-    
+
     // Small delay after table creation
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    
+
     Ok(())
 }
 
@@ -157,7 +158,7 @@ async fn test_cli_basic_query_execution() {
 
     // Setup
     setup_test_data().await.unwrap();
-    
+
     // Insert test data
     execute_sql("INSERT INTO test_cli.messages (content) VALUES ('Test Message')")
         .await
@@ -173,7 +174,7 @@ async fn test_cli_basic_query_execution() {
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
-    
+
     // Verify output contains the inserted data and row count
     assert!(
         stdout.contains("Test Message") && stdout.contains("row in set"),
@@ -196,11 +197,9 @@ async fn test_cli_table_output_formatting() {
     setup_test_data().await.unwrap();
 
     // Insert test data
-    execute_sql(
-        "INSERT INTO test_cli.messages (content) VALUES ('Hello World'), ('Test Message')",
-    )
-    .await
-    .unwrap();
+    execute_sql("INSERT INTO test_cli.messages (content) VALUES ('Hello World'), ('Test Message')")
+        .await
+        .unwrap();
 
     // Query with table format (default)
     let mut cmd = Command::cargo_bin("kalam").unwrap();
@@ -217,7 +216,9 @@ async fn test_cli_table_output_formatting() {
 
     // Verify table formatting (pipe separators) and row count
     assert!(
-        stdout.contains("Hello World") && stdout.contains("Test Message") && stdout.contains("rows in set"),
+        stdout.contains("Hello World")
+            && stdout.contains("Test Message")
+            && stdout.contains("rows in set"),
         "Output should contain both messages and row count: {}",
         stdout
     );
@@ -316,7 +317,7 @@ async fn test_cli_batch_file_execution() {
     // Create temporary SQL file
     let temp_dir = TempDir::new().unwrap();
     let sql_file = temp_dir.path().join("test.sql");
-    
+
     fs::write(
         &sql_file,
         r#"CREATE NAMESPACE batch_test;
@@ -374,8 +375,10 @@ async fn test_cli_syntax_error_handling() {
 
     // Should contain error message (now formatted as "ERROR")
     assert!(
-        stderr.contains("ERROR") || stdout.contains("ERROR") || 
-        stderr.contains("Error") || stdout.contains("Error"),
+        stderr.contains("ERROR")
+            || stdout.contains("ERROR")
+            || stderr.contains("Error")
+            || stdout.contains("Error"),
         "Should display error message. stderr: {}, stdout: {}",
         stderr,
         stdout
@@ -399,9 +402,11 @@ async fn test_cli_connection_failure_handling() {
 
     // Should show connection error
     assert!(
-        !output.status.success() ||
-        stderr.contains("Connection") || stderr.contains("error") ||
-        stdout.contains("Connection") || stdout.contains("error"),
+        !output.status.success()
+            || stderr.contains("Connection")
+            || stderr.contains("error")
+            || stdout.contains("Connection")
+            || stdout.contains("error"),
         "Should display connection error. stderr: {}, stdout: {}",
         stderr,
         stdout
@@ -485,8 +490,10 @@ async fn test_cli_list_tables() {
 
     // Should list tables with row count display
     assert!(
-        (stdout.contains("table") || stdout.contains("Table") || stdout.contains("messages")) &&
-        (stdout.contains("row in set") || stdout.contains("rows in set") || stdout.contains("Empty set")),
+        (stdout.contains("table") || stdout.contains("Table") || stdout.contains("messages"))
+            && (stdout.contains("row in set")
+                || stdout.contains("rows in set")
+                || stdout.contains("Empty set")),
         "Should list tables with row count: {}",
         stdout
     );
@@ -518,8 +525,10 @@ async fn test_cli_describe_table() {
 
     // Should describe table schema with row count
     assert!(
-        (stdout.contains("id") || stdout.contains("content") || stdout.contains("column")) &&
-        (stdout.contains("row in set") || stdout.contains("rows in set") || stdout.contains("Empty set")),
+        (stdout.contains("id") || stdout.contains("content") || stdout.contains("column"))
+            && (stdout.contains("row in set")
+                || stdout.contains("rows in set")
+                || stdout.contains("Empty set")),
         "Should describe table with row count: {}",
         stdout
     );
@@ -555,11 +564,15 @@ async fn test_cli_live_query_basic() {
     // Should attempt subscription (may timeout or be unsupported)
     // Accept "Unsupported SQL statement" as valid since SUBSCRIBE isn't implemented yet
     assert!(
-        stdout.contains("SUBSCRIBE") || stderr.contains("timeout") || 
-        stdout.contains("Listening") || stdout.contains("subscription") ||
-        stderr.contains("Unsupported SQL statement") || stderr.contains("SUBSCRIBE"),
+        stdout.contains("SUBSCRIBE")
+            || stderr.contains("timeout")
+            || stdout.contains("Listening")
+            || stdout.contains("subscription")
+            || stderr.contains("Unsupported SQL statement")
+            || stderr.contains("SUBSCRIBE"),
         "Should attempt subscription. stdout: {}, stderr: {}",
-        stdout, stderr
+        stdout,
+        stderr
     );
 
     cleanup_test_data().await.unwrap();
@@ -590,10 +603,13 @@ async fn test_cli_live_query_with_filter() {
 
     // Should accept filtered subscription (or report unsupported)
     assert!(
-        output.status.success() || stdout.contains("SUBSCRIBE") || stdout.contains("WHERE") ||
-        stderr.contains("Unsupported SQL statement"),
+        output.status.success()
+            || stdout.contains("SUBSCRIBE")
+            || stdout.contains("WHERE")
+            || stderr.contains("Unsupported SQL statement"),
         "Should handle filtered subscription: stdout: {}, stderr: {}",
-        stdout, stderr
+        stdout,
+        stderr
     );
 
     cleanup_test_data().await.unwrap();
@@ -644,15 +660,16 @@ async fn test_cli_unsubscribe() {
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    
+
     // Should accept unsubscribe command (even if no active subscription or unsupported)
     assert!(
-        output.status.success() || 
-        stderr.contains("subscription") ||
-        stdout.contains("UNSUBSCRIBE") ||
-        stderr.contains("Unsupported SQL statement"),
+        output.status.success()
+            || stderr.contains("subscription")
+            || stdout.contains("UNSUBSCRIBE")
+            || stderr.contains("Unsupported SQL statement"),
         "Should handle unsubscribe command. stdout: {}, stderr: {}",
-        stdout, stderr
+        stdout,
+        stderr
     );
 
     cleanup_test_data().await.unwrap();
@@ -684,9 +701,12 @@ color = true
     .unwrap();
 
     assert!(config_path.exists(), "Config file should be created");
-    
+
     let content = fs::read_to_string(&config_path).unwrap();
-    assert!(content.contains("localhost:8080"), "Config should contain URL");
+    assert!(
+        content.contains("localhost:8080"),
+        "Config should contain URL"
+    );
 }
 
 /// T048: Test loading config file
@@ -721,7 +741,7 @@ timeout = 30
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
-    
+
     // Should successfully execute using config
     assert!(
         output.status.success() || String::from_utf8_lossy(&output.stdout).contains("test"),
@@ -799,7 +819,7 @@ async fn test_cli_jwt_authentication() {
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
-    
+
     // Should work (localhost typically bypasses auth)
     assert!(
         output.status.success() || String::from_utf8_lossy(&output.stdout).contains("auth_test"),
@@ -827,13 +847,13 @@ async fn test_cli_invalid_token() {
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
-    
+
     // May succeed on localhost (auth bypass) or fail with auth error
     // Either outcome is acceptable
     assert!(
-        output.status.success() || 
-        String::from_utf8_lossy(&output.stderr).contains("auth") ||
-        String::from_utf8_lossy(&output.stderr).contains("token"),
+        output.status.success()
+            || String::from_utf8_lossy(&output.stderr).contains("auth")
+            || String::from_utf8_lossy(&output.stderr).contains("token"),
         "Should handle invalid token appropriately"
     );
 }
@@ -857,7 +877,7 @@ async fn test_cli_localhost_auth_bypass() {
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
-    
+
     // Should succeed without authentication
     assert!(
         output.status.success(),
@@ -886,8 +906,11 @@ async fn test_cli_health_check() {
         .await
         .unwrap();
 
-    assert!(response.status().is_success(), "Server should respond to SQL queries");
-    
+    assert!(
+        response.status().is_success(),
+        "Server should respond to SQL queries"
+    );
+
     let body = response.text().await.unwrap();
     assert!(
         body.contains("health_check") || body.contains("1"),
@@ -916,12 +939,12 @@ async fn test_cli_explicit_flush() {
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
-    
+
     // Should execute flush command
     assert!(
-        output.status.success() || 
-        String::from_utf8_lossy(&output.stdout).contains("FLUSH") ||
-        String::from_utf8_lossy(&output.stderr).contains("FLUSH"),
+        output.status.success()
+            || String::from_utf8_lossy(&output.stdout).contains("FLUSH")
+            || String::from_utf8_lossy(&output.stderr).contains("FLUSH"),
         "Should handle flush command"
     );
 
@@ -1020,7 +1043,7 @@ async fn test_cli_tab_completion() {
     cmd.arg("--help");
 
     let output = cmd.output().unwrap();
-    
+
     assert!(
         output.status.success(),
         "CLI should support interactive mode with completion"
@@ -1050,11 +1073,8 @@ async fn test_cli_multiline_query() {
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
-    
-    assert!(
-        output.status.success(),
-        "Should handle multi-line queries"
-    );
+
+    assert!(output.status.success(), "Should handle multi-line queries");
 
     cleanup_test_data().await.unwrap();
 }
@@ -1079,7 +1099,7 @@ async fn test_cli_query_with_comments() {
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
-    
+
     assert!(
         output.status.success() || String::from_utf8_lossy(&output.stdout).contains("test"),
         "Should handle queries with comments"
@@ -1104,7 +1124,7 @@ async fn test_cli_empty_query() {
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
-    
+
     // Should handle empty query gracefully (no crash)
     assert!(
         output.status.success() || !output.stderr.is_empty(),
@@ -1172,10 +1192,7 @@ async fn test_cli_verbose_output() {
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
-    
+
     // Verbose mode should provide additional output
-    assert!(
-        output.status.success(),
-        "Should handle verbose mode"
-    );
+    assert!(output.status.success(), "Should handle verbose mode");
 }

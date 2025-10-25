@@ -30,6 +30,11 @@ impl QueryExecutor {
         }
     }
 
+    /// Returns the user ID configured for this executor, if any
+    pub fn user_id(&self) -> Option<&str> {
+        self.user_id.as_deref()
+    }
+
     /// Execute a SQL query with optional parameters
     pub async fn execute(
         &self,
@@ -70,7 +75,9 @@ impl QueryExecutor {
                             .unwrap_or_else(|_| "Unknown error".to_string());
 
                         // Try to parse as QueryResponse to extract error message
-                        let error_message = if let Ok(json_response) = serde_json::from_str::<QueryResponse>(&error_text) {
+                        let error_message = if let Ok(json_response) =
+                            serde_json::from_str::<QueryResponse>(&error_text)
+                        {
                             if let Some(err) = json_response.error {
                                 err.message
                             } else {

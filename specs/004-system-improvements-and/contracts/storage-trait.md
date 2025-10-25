@@ -706,6 +706,128 @@ for result in iter {
 
 ---
 
+## Migration Guide (User Story 7)
+
+### Overview
+
+User Story 7 completes the migration to `StorageBackend` trait abstraction, removing direct RocksDB dependencies from business logic layers (`kalamdb-core` and `kalamdb-sql`).
+
+### Completed Changes
+
+#### 1. Storage Trait Implementation ✅
+- **Location**: `/backend/crates/kalamdb-store/src/storage_trait.rs`
+- **Status**: Complete
+- **Description**: Defines `StorageBackend` trait with partition-based operations
+
+#### 2. RocksDB Backend Implementation ✅
+- **Location**: `/backend/crates/kalamdb-store/src/rocksdb_impl.rs`
+- **Status**: Complete
+- **Description**: RocksDB implements `StorageBackend` using column families as partitions
+
+#### 3. System Table Rename ✅
+- **Old Name**: `system.storage_locations`
+- **New Name**: `system.storages`
+- **Status**: Complete with backward compatibility
+- **Migration**:
+  - `SystemTable::StorageLocations` enum variant marked as deprecated
+  - `SystemTable::Storages` is the new canonical variant
+  - Both names accepted in queries for backward compatibility
+  - Query cache updated to use `AllStorages` instead of `AllStorageLocations`
+
+#### 4. Query Cache Updates ✅
+- **File**: `/backend/crates/kalamdb-sql/src/query_cache.rs`
+- **Changes**:
+  - Renamed `QueryCacheKey::AllStorageLocations` → `QueryCacheKey::AllStorages`
+  - Renamed `QueryCacheTtlConfig::storage_locations` → `storages`
+  - Updated `invalidate_storage_locations()` → `invalidate_storages()`
+  - All TTL configurations updated
+
+### Direct RocksDB Usage Status
+
+#### kalamdb-store ✅ (Allowed)
+- **Purpose**: Storage backend implementations
+- **Status**: Direct RocksDB usage is expected and correct
+- **Files**:
+  - `storage_trait.rs` - Trait definition
+  - `rocksdb_impl.rs` - RocksDB implementation
+  - `common.rs` - Shared utilities
+
+#### kalamdb-core ⚠️ (Legacy code exists)
+- **Status**: Contains legacy RocksDB code, but storage operations go through `StorageBackend`
+- **Acceptable RocksDB Usage**:
+  - `storage/rocksdb_init.rs` - Database initialization
+  - `storage/column_family_manager.rs` - Low-level CF management
+- **Migration Note**: These modules are infrastructure code, not business logic
+
+#### kalamdb-sql ⚠️ (Legacy code exists)
+- **Status**: Contains `Arc<DB>` references for adapter pattern
+- **Files**:
+  - `adapter.rs` - RocksDB adapter (wraps DB operations)
+  - `lib.rs` - Maintains DB reference for adapter
+- **Migration Note**: Adapter pattern provides abstraction layer
+
+### Partition Abstraction
+
+The `Partition` struct provides a unified concept that maps to different backend implementations:
+
+- **RocksDB**: Partition = Column Family
+- **Sled**: Partition = Key Prefix
+- **Redis**: Partition = Key Namespace
+- **In-Memory**: Partition = HashMap Namespace
+
+#### Key Benefits
+
+1. **Backend Independence**: Business logic doesn't depend on RocksDB-specific concepts
+2. **Testability**: Easy to mock storage for unit tests
+3. **Flexibility**: Can swap backends without changing application code
+4. **Performance**: Each backend optimizes partitions natively
+
+#### Example: Column Family → Partition Migration
+
+**Before (Direct RocksDB)**:
+```rust
+let cf = db.cf_handle("system_users").unwrap();
+db.get_cf(cf, key)?;
+```
+
+**After (Partition Abstraction)**:
+```rust
+let partition = Partition::new("system_users")?;
+backend.get(&partition, key).await?;
+```
+
+### Testing
+
+#### Integration Tests
+- **File**: `/backend/tests/integration/test_storage_abstraction.rs`
+- **Coverage**:
+  - T420: Verify `StorageBackend` trait interface exists
+  - T421: Verify RocksDB implements trait correctly
+  - T422: Verify `system.storages` table rename (old name rejected)
+  - T423: Verify CRUD operations work through abstraction
+  - T424: Verify partition isolation (column family abstraction)
+  - T425: Verify error handling for storage failures
+
+### Remaining Work
+
+#### Documentation Tasks
+- [x] T384: Update contracts/storage-trait.md with migration guide
+- [ ] T385: Document Partition abstraction for non-RocksDB backends
+
+### Future Enhancements
+
+#### Alternative Backend Support
+- **Sled Backend**: Embedded pure-Rust database
+- **Redis Backend**: Distributed caching layer
+- **In-Memory Backend**: Testing and development
+
+#### Performance Optimization
+- Async trait methods (currently sync)
+- Batch operation improvements
+- Scan iterator optimization
+
+---
+
 ## Backward Compatibility
 
 **Migration Path**: Existing RocksDB code continues to work. New code uses `StorageBackend` trait. Gradual migration over multiple releases.
@@ -713,3 +835,10 @@ for result in iter {
 **Configuration**: No configuration changes required. Backend selection via compile-time feature flags or runtime configuration.
 
 **Data Migration**: Not required. Existing RocksDB data files work with `RocksDbBackend`.
+
+**API Compatibility**: 
+- `system.storage_locations` queries still work (deprecated)
+- `system.storages` is the canonical name going forward
+- Query cache updated to reflect new naming
+
+````

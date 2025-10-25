@@ -7,26 +7,26 @@
 //! Manages the connection to KalamDB server and execution state throughout
 //! the CLI session lifetime.
 
-use kalam_link::KalamLinkClient;
 use clap::ValueEnum;
-use rustyline::error::ReadlineError;
-use rustyline::{Editor, Helper, Config, CompletionType, EditMode};
-use rustyline::history::DefaultHistory;
+use colored::*;
+use indicatif::{ProgressBar, ProgressStyle};
+use kalam_link::{KalamLinkClient, SubscriptionConfig, SubscriptionOptions};
 use rustyline::completion::Completer;
+use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
+use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
-use indicatif::{ProgressBar, ProgressStyle};
-use std::time::{Duration, Instant};
+use rustyline::{CompletionType, Config, EditMode, Editor, Helper};
 use std::sync::{Arc, Mutex};
-use colored::*;
+use std::time::{Duration, Instant};
 
 use crate::{
-    error::Result,
+    completer::AutoCompleter,
+    error::{CLIError, Result},
     formatter::OutputFormatter,
     history::CommandHistory,
     parser::{Command, CommandParser},
-    completer::AutoCompleter,
 };
 
 /// Output format for query results
@@ -134,11 +134,11 @@ impl CLISession {
     /// **Enhanced**: Colored output and styled timing
     pub async fn execute(&mut self, sql: &str) -> Result<()> {
         let start = Instant::now();
-        
+
         // Create a loading indicator with proper cleanup
         let spinner = Arc::new(Mutex::new(None::<ProgressBar>));
         let spinner_clone = Arc::clone(&spinner);
-        
+
         let show_loading = tokio::spawn({
             let threshold = Duration::from_millis(self.loading_threshold_ms);
             async move {
@@ -150,20 +150,30 @@ impl CLISession {
 
         // Execute the query
         let result = self.client.execute_query(sql).await;
-        
+
         // Cancel the loading indicator and finish spinner if it was shown
         show_loading.abort();
         if let Some(pb) = spinner.lock().unwrap().take() {
             pb.finish_and_clear();
         }
-        
+
         let elapsed = start.elapsed();
-        
+
         match result {
             Ok(response) => {
+                if let Some((config, server_message)) =
+                    Self::extract_subscription_config(&response)?
+                {
+                    if let Some(msg) = server_message {
+                        println!("{}", msg);
+                    }
+                    self.run_subscription(config).await?;
+                    return Ok(());
+                }
+
                 let output = self.formatter.format_response(&response)?;
                 println!("{}", output);
-                
+
                 // Show timing if query took significant time
                 if elapsed.as_millis() >= self.loading_threshold_ms as u128 {
                     let timing = format!("⏱  Time: {:.3} ms", elapsed.as_secs_f64() * 1000.0);
@@ -173,7 +183,7 @@ impl CLISession {
                         println!("{}", timing);
                     }
                 }
-                
+
                 Ok(())
             }
             Err(e) => {
@@ -181,6 +191,79 @@ impl CLISession {
                 Err(e.into())
             }
         }
+    }
+
+    /// Extract subscription configuration from a SUBSCRIBE TO response
+    fn extract_subscription_config(
+        response: &kalam_link::QueryResponse,
+    ) -> Result<Option<(SubscriptionConfig, Option<String>)>> {
+        if response.results.is_empty() {
+            return Ok(None);
+        }
+
+        let result = &response.results[0];
+        let rows = match &result.rows {
+            Some(rows) if !rows.is_empty() => rows,
+            _ => return Ok(None),
+        };
+
+        let row = &rows[0];
+        let status = row.get("status").and_then(|v| v.as_str()).unwrap_or("");
+
+        if status != "subscription_required" {
+            return Ok(None);
+        }
+
+        let message = row
+            .get("message")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let ws_url = row
+            .get("ws_url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let subscription_value = row.get("subscription").ok_or_else(|| {
+            CLIError::ParseError("Missing subscription metadata in server response".into())
+        })?;
+
+        let subscription_obj = subscription_value.as_object().ok_or_else(|| {
+            CLIError::ParseError("Subscription metadata must be a JSON object".into())
+        })?;
+
+        let sql = subscription_obj
+            .get("sql")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                CLIError::ParseError("Subscription metadata does not include SQL query".into())
+            })?;
+
+        let mut config = SubscriptionConfig::new(sql);
+
+        if let Some(id) = subscription_obj.get("id").and_then(|v| v.as_str()) {
+            config.id = Some(id.to_string());
+        }
+
+        if let Some(url) = ws_url {
+            config.ws_url = Some(url);
+        }
+
+        if let Some(options_obj) = subscription_obj.get("options").and_then(|v| v.as_object()) {
+            let mut options = SubscriptionOptions::default();
+            let mut has_options = false;
+
+            if let Some(last_rows) = options_obj.get("last_rows").and_then(|v| v.as_u64()) {
+                options.last_rows = Some(last_rows as usize);
+                has_options = true;
+            }
+
+            if has_options {
+                config.options = Some(options);
+            }
+        }
+
+        Ok(Some((config, message)))
     }
 
     /// Create a spinner for long-running operations
@@ -221,7 +304,7 @@ impl CLISession {
         let mut completer = AutoCompleter::new();
         print!("{}", "Fetching tables... ".dimmed());
         std::io::Write::flush(&mut std::io::stdout()).ok();
-        
+
         if let Err(e) = self.refresh_tables(&mut completer).await {
             println!("{}", format!("⚠ {}", e).yellow());
         } else {
@@ -229,9 +312,7 @@ impl CLISession {
         }
 
         // Create rustyline helper with autocomplete only (no highlighting for performance)
-        let helper = CLIHelper { 
-            completer,
-        };
+        let helper = CLIHelper { completer };
 
         // Initialize readline with completer and proper configuration
         let config = Config::builder()
@@ -240,10 +321,10 @@ impl CLISession {
             .edit_mode(EditMode::Emacs) // Emacs keybindings (Tab for completion)
             .auto_add_history(true)
             .build();
-            
+
         let mut rl = Editor::<CLIHelper, DefaultHistory>::with_config(config)?;
         rl.set_helper(Some(helper));
-        
+
         let history = CommandHistory::new(1000);
 
         // Load history
@@ -277,8 +358,9 @@ impl CLISession {
                                 if let Some(helper) = rl.helper_mut() {
                                     print!("{}", "Fetching tables... ".dimmed());
                                     std::io::Write::flush(&mut std::io::stdout()).ok();
-                                    
-                                    if let Err(e) = self.refresh_tables(&mut helper.completer).await {
+
+                                    if let Err(e) = self.refresh_tables(&mut helper.completer).await
+                                    {
                                         println!("{}", format!("✗ {}", e).red());
                                     } else {
                                         println!("{}", "✓".green());
@@ -318,33 +400,80 @@ impl CLISession {
     fn print_banner(&self) {
         // Removed clear screen to avoid terminal refresh issues
         println!();
-        println!("{}", "╔═══════════════════════════════════════════════════════════╗".bright_blue().bold());
-        println!("{}", "║                                                           ║".bright_blue().bold());
-        println!("{}{}{}",
+        println!(
+            "{}",
+            "╔═══════════════════════════════════════════════════════════╗"
+                .bright_blue()
+                .bold()
+        );
+        println!(
+            "{}",
+            "║                                                           ║"
+                .bright_blue()
+                .bold()
+        );
+        println!(
+            "{}{}{}",
             "║        ".bright_blue().bold(),
-            "🗄️  Kalam CLI - Interactive Database Terminal".white().bold(),
+            "🗄️  Kalam CLI - Interactive Database Terminal"
+                .white()
+                .bold(),
             "      ║".bright_blue().bold()
         );
-        println!("{}", "║                                                           ║".bright_blue().bold());
-        println!("{}", "╚═══════════════════════════════════════════════════════════╝".bright_blue().bold());
+        println!(
+            "{}",
+            "║                                                           ║"
+                .bright_blue()
+                .bold()
+        );
+        println!(
+            "{}",
+            "╚═══════════════════════════════════════════════════════════╝"
+                .bright_blue()
+                .bold()
+        );
         println!();
-        println!("  {}  {}", "📡".dimmed(), format!("Connected to: {}", self.server_url).cyan());
-        println!("  {}  {}", "�".dimmed(), format!("User: {}", self.user_id).cyan());
-        
+        println!(
+            "  {}  {}",
+            "📡".dimmed(),
+            format!("Connected to: {}", self.server_url).cyan()
+        );
+        println!(
+            "  {}  {}",
+            "�".dimmed(),
+            format!("User: {}", self.user_id).cyan()
+        );
+
         if let Some(ref version) = self.server_version {
-            println!("  {}  {}", "🏷️ ".dimmed(), format!("Server version: {}", version).dimmed());
+            println!(
+                "  {}  {}",
+                "🏷️ ".dimmed(),
+                format!("Server version: {}", version).dimmed()
+            );
         }
-        
-        println!("  {}  {}", "�📚".dimmed(), format!("CLI version: {}", env!("CARGO_PKG_VERSION")).dimmed());
-        println!("  {}  Type {} for help, {} to exit", "💡".dimmed(), "\\help".cyan().bold(), "\\quit".cyan().bold());
+
+        println!(
+            "  {}  {}",
+            "�📚".dimmed(),
+            format!("CLI version: {}", env!("CARGO_PKG_VERSION")).dimmed()
+        );
+        println!(
+            "  {}  Type {} for help, {} to exit",
+            "💡".dimmed(),
+            "\\help".cyan().bold(),
+            "\\quit".cyan().bold()
+        );
         println!();
     }
 
     /// Fetch table names from server and update completer
     async fn refresh_tables(&mut self, completer: &mut AutoCompleter) -> Result<()> {
         // Query system.tables to get table names
-        let response = self.client.execute_query("SELECT table_name FROM system.tables").await?;
-        
+        let response = self
+            .client
+            .execute_query("SELECT table_name FROM system.tables")
+            .await?;
+
         // Extract table names from response
         let mut table_names = Vec::new();
         if !response.results.is_empty() {
@@ -358,7 +487,7 @@ impl CLISession {
                 }
             }
         }
-        
+
         completer.set_tables(table_names);
         Ok(())
     }
@@ -396,12 +525,10 @@ impl CLISession {
                     Err(e) => eprintln!("Flush failed: {}", e),
                 }
             }
-            Command::Health => {
-                match self.health_check().await {
-                    Ok(_) => {}
-                    Err(e) => eprintln!("Health check failed: {}", e),
-                }
-            }
+            Command::Health => match self.health_check().await {
+                Ok(_) => {}
+                Err(e) => eprintln!("Health check failed: {}", e),
+            },
             Command::Pause => {
                 println!("Pausing ingestion...");
                 match self.execute("PAUSE").await {
@@ -417,37 +544,40 @@ impl CLISession {
                 }
             }
             Command::ListTables => {
-                self.execute("SELECT table_name, table_type FROM system.tables").await?;
+                self.execute("SELECT table_name, table_type FROM system.tables")
+                    .await?;
             }
             Command::RefreshTables => {
                 // This is handled in run_interactive, shouldn't reach here
                 println!("Table names refreshed");
             }
             Command::Describe(table) => {
-                let query = format!("SELECT * FROM system.columns WHERE table_name = '{}'", table);
+                let query = format!(
+                    "SELECT * FROM system.columns WHERE table_name = '{}'",
+                    table
+                );
                 self.execute(&query).await?;
             }
-            Command::SetFormat(format) => {
-                match format.to_lowercase().as_str() {
-                    "table" => {
-                        self.set_format(OutputFormat::Table);
-                        println!("Output format set to: table");
-                    }
-                    "json" => {
-                        self.set_format(OutputFormat::Json);
-                        println!("Output format set to: json");
-                    }
-                    "csv" => {
-                        self.set_format(OutputFormat::Csv);
-                        println!("Output format set to: csv");
-                    }
-                    _ => {
-                        eprintln!("Unknown format: {}. Use: table, json, or csv", format);
-                    }
+            Command::SetFormat(format) => match format.to_lowercase().as_str() {
+                "table" => {
+                    self.set_format(OutputFormat::Table);
+                    println!("Output format set to: table");
                 }
-            }
+                "json" => {
+                    self.set_format(OutputFormat::Json);
+                    println!("Output format set to: json");
+                }
+                "csv" => {
+                    self.set_format(OutputFormat::Csv);
+                    println!("Output format set to: csv");
+                }
+                _ => {
+                    eprintln!("Unknown format: {}. Use: table, json, or csv", format);
+                }
+            },
             Command::Subscribe(query) => {
-                self.run_subscription(&query).await?;
+                let config = SubscriptionConfig::new(query);
+                self.run_subscription(config).await?;
             }
             Command::Unsubscribe => {
                 println!("No active subscription to cancel");
@@ -463,11 +593,26 @@ impl CLISession {
     ///
     /// **Implements T102**: WebSocket subscription display with timestamps and change indicators
     /// **Implements T103**: Ctrl+C handler for graceful subscription cancellation
-    async fn run_subscription(&mut self, query: &str) -> Result<()> {
-        println!("Starting subscription: {}", query);
+    async fn run_subscription(&mut self, config: SubscriptionConfig) -> Result<()> {
+        let sql_display = config.sql.clone();
+        let ws_url_display = config.ws_url.clone();
+        let requested_id = config.id.clone();
+
+        println!("Starting subscription for query: {}", sql_display);
+        if let Some(ref ws_url) = ws_url_display {
+            println!("WebSocket endpoint: {}", ws_url);
+        }
+        if let Some(ref id) = requested_id {
+            println!("Requested subscription ID: {}", id);
+        }
         println!("Press Ctrl+C to stop\n");
 
-        let mut subscription = self.client.subscribe(query).await?;
+        let mut subscription = self.client.subscribe_with_config(config).await?;
+
+        println!(
+            "Subscription established (ID: {})",
+            subscription.subscription_id()
+        );
 
         loop {
             // Check if paused (T104)
@@ -479,7 +624,7 @@ impl CLISession {
             // Get next event
             match subscription.next().await {
                 Some(Ok(event)) => {
-                    self.display_change_event(&event);
+                    self.display_change_event(&sql_display, &event);
                 }
                 Some(Err(e)) => {
                     eprintln!("Subscription error: {}", e);
@@ -498,84 +643,196 @@ impl CLISession {
     /// Display a change event with formatting
     ///
     /// **Implements T102**: Change indicators (INSERT/UPDATE/DELETE)
-    fn display_change_event(&self, event: &kalam_link::ChangeEvent) {
+    fn display_change_event(&self, subscription_sql: &str, event: &kalam_link::ChangeEvent) {
         use chrono::Local;
         let timestamp = Local::now().format("%H:%M:%S%.3f");
 
         match event {
-            kalam_link::ChangeEvent::Insert { table, row } => {
+            kalam_link::ChangeEvent::Ack {
+                subscription_id,
+                message,
+            } => {
+                let id_display = subscription_id.as_deref().unwrap_or("<pending-id>");
+                let msg = message.as_deref().unwrap_or_else(|| subscription_sql);
                 if self.color {
                     println!(
-                        "\x1b[32m[{}] INSERT\x1b[0m into {} → {}",
-                        timestamp,
-                        table,
-                        serde_json::to_string(row).unwrap_or_default()
+                        "\x1b[36m[{}] ACK\x1b[0m [{}] {}",
+                        timestamp, id_display, msg
+                    );
+                } else {
+                    println!("[{}] ACK [{}] {}", timestamp, id_display, msg);
+                }
+            }
+            kalam_link::ChangeEvent::InitialData {
+                subscription_id,
+                rows,
+            } => {
+                let count = rows.len();
+                if self.color {
+                    println!(
+                        "\x1b[34m[{}] SNAPSHOT\x1b[0m [{}] {} rows for {}",
+                        timestamp, subscription_id, count, subscription_sql
                     );
                 } else {
                     println!(
-                        "[{}] INSERT into {} → {}",
-                        timestamp,
-                        table,
-                        serde_json::to_string(row).unwrap_or_default()
+                        "[{}] SNAPSHOT [{}] {} rows for {}",
+                        timestamp, subscription_id, count, subscription_sql
                     );
+                }
+
+                let preview = rows.iter().take(5);
+                for row in preview {
+                    println!("    {}", Self::format_json(row));
+                }
+                if rows.len() > 5 {
+                    println!("    ... ({} more rows)", rows.len() - 5);
+                }
+            }
+            kalam_link::ChangeEvent::Insert {
+                subscription_id,
+                rows,
+            } => {
+                if rows.is_empty() {
+                    if self.color {
+                        println!(
+                            "\x1b[32m[{}] INSERT\x1b[0m [{}] (no row payload)",
+                            timestamp, subscription_id
+                        );
+                    } else {
+                        println!(
+                            "[{}] INSERT [{}] (no row payload)",
+                            timestamp, subscription_id
+                        );
+                    }
+                } else {
+                    for row in rows {
+                        let row_str = Self::format_json(row);
+                        if self.color {
+                            println!(
+                                "\x1b[32m[{}] INSERT\x1b[0m [{}] {}",
+                                timestamp, subscription_id, row_str
+                            );
+                        } else {
+                            println!("[{}] INSERT [{}] {}", timestamp, subscription_id, row_str);
+                        }
+                    }
                 }
             }
             kalam_link::ChangeEvent::Update {
-                table,
-                old_row,
-                new_row,
-            } => {
-                if self.color {
-                    println!(
-                        "\x1b[33m[{}] UPDATE\x1b[0m in {} → {} ⇒ {}",
-                        timestamp,
-                        table,
-                        serde_json::to_string(old_row).unwrap_or_default(),
-                        serde_json::to_string(new_row).unwrap_or_default()
-                    );
-                } else {
-                    println!(
-                        "[{}] UPDATE in {} → {} => {}",
-                        timestamp,
-                        table,
-                        serde_json::to_string(old_row).unwrap_or_default(),
-                        serde_json::to_string(new_row).unwrap_or_default()
-                    );
-                }
-            }
-            kalam_link::ChangeEvent::Delete { table, row } => {
-                if self.color {
-                    println!(
-                        "\x1b[31m[{}] DELETE\x1b[0m from {} → {}",
-                        timestamp,
-                        table,
-                        serde_json::to_string(row).unwrap_or_default()
-                    );
-                } else {
-                    println!(
-                        "[{}] DELETE from {} → {}",
-                        timestamp,
-                        table,
-                        serde_json::to_string(row).unwrap_or_default()
-                    );
-                }
-            }
-            kalam_link::ChangeEvent::Snapshot { table, rows } => {
-                println!("[{}] SNAPSHOT from {} ({} rows)", timestamp, table, rows.len());
-            }
-            kalam_link::ChangeEvent::Ack {
                 subscription_id,
-                query,
+                rows,
+                old_rows,
             } => {
-                println!("[{}] Subscribed (ID: {}): {}", timestamp, subscription_id, query);
-            }
-            kalam_link::ChangeEvent::Error { message } => {
-                if self.color {
-                    eprintln!("\x1b[31m[{}] ERROR:\x1b[0m {}", timestamp, message);
+                let max_len = rows.len().max(old_rows.len());
+                if max_len == 0 {
+                    if self.color {
+                        println!(
+                            "\x1b[33m[{}] UPDATE\x1b[0m [{}] (no row payload)",
+                            timestamp, subscription_id
+                        );
+                    } else {
+                        println!(
+                            "[{}] UPDATE [{}] (no row payload)",
+                            timestamp, subscription_id
+                        );
+                    }
                 } else {
-                    eprintln!("[{}] ERROR: {}", timestamp, message);
+                    for idx in 0..max_len {
+                        let new_str = rows
+                            .get(idx)
+                            .map(Self::format_json)
+                            .unwrap_or_else(|| "<missing>".to_string());
+                        let old_str = old_rows
+                            .get(idx)
+                            .map(Self::format_json)
+                            .unwrap_or_else(|| "<missing>".to_string());
+                        if self.color {
+                            println!(
+                                "\x1b[33m[{}] UPDATE\x1b[0m [{}] {} ⇒ {}",
+                                timestamp, subscription_id, old_str, new_str
+                            );
+                        } else {
+                            println!(
+                                "[{}] UPDATE [{}] {} => {}",
+                                timestamp, subscription_id, old_str, new_str
+                            );
+                        }
+                    }
                 }
             }
+            kalam_link::ChangeEvent::Delete {
+                subscription_id,
+                old_rows,
+            } => {
+                if old_rows.is_empty() {
+                    if self.color {
+                        println!(
+                            "\x1b[31m[{}] DELETE\x1b[0m [{}] (no row payload)",
+                            timestamp, subscription_id
+                        );
+                    } else {
+                        println!(
+                            "[{}] DELETE [{}] (no row payload)",
+                            timestamp, subscription_id
+                        );
+                    }
+                } else {
+                    for row in old_rows {
+                        let row_str = Self::format_json(row);
+                        if self.color {
+                            println!(
+                                "\x1b[31m[{}] DELETE\x1b[0m [{}] {}",
+                                timestamp, subscription_id, row_str
+                            );
+                        } else {
+                            println!("[{}] DELETE [{}] {}", timestamp, subscription_id, row_str);
+                        }
+                    }
+                }
+            }
+            kalam_link::ChangeEvent::Error {
+                subscription_id,
+                code,
+                message,
+            } => {
+                if self.color {
+                    eprintln!(
+                        "\x1b[31m[{}] ERROR\x1b[0m [{}] {}: {}",
+                        timestamp, subscription_id, code, message
+                    );
+                } else {
+                    eprintln!(
+                        "[{}] ERROR [{}] {}: {}",
+                        timestamp, subscription_id, code, message
+                    );
+                }
+            }
+            kalam_link::ChangeEvent::Unknown { raw } => {
+                if self.color {
+                    println!(
+                        "\x1b[35m[{}] UNKNOWN\x1b[0m payload: {}",
+                        timestamp,
+                        serde_json::to_string(raw).unwrap_or_default()
+                    );
+                } else {
+                    println!(
+                        "[{}] UNKNOWN payload: {}",
+                        timestamp,
+                        serde_json::to_string(raw).unwrap_or_default()
+                    );
+                }
+            }
+        }
+    }
+
+    /// Format a JSON value into a compact single-line string
+    fn format_json(value: &serde_json::Value) -> String {
+        match value {
+            serde_json::Value::String(s) => format!("\"{}\"", s),
+            serde_json::Value::Null => "null".to_string(),
+            serde_json::Value::Bool(b) => b.to_string(),
+            serde_json::Value::Number(n) => n.to_string(),
+            _ => serde_json::to_string(value).unwrap_or_else(|_| value.to_string()),
         }
     }
 

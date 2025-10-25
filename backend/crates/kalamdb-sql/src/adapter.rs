@@ -87,6 +87,11 @@ impl RocksDbAdapter {
         }
     }
 
+    /// Check whether a namespace exists without loading the full record.
+    pub fn namespace_exists(&self, namespace_id: &str) -> Result<bool> {
+        Ok(self.get_namespace(namespace_id)?.is_some())
+    }
+
     /// Insert a new namespace
     pub fn insert_namespace(&self, namespace: &Namespace) -> Result<()> {
         let cf = self
@@ -116,101 +121,116 @@ impl RocksDbAdapter {
 
     /// Get table schema by table_id and version
     ///
-    /// If version is None, returns the latest version (highest version number).
+    /// **DEPRECATED**: This method is maintained for backward compatibility.
+    /// New code should use `get_table_definition()` which provides complete table metadata.
+    ///
+    /// If version is None, returns the latest version from information_schema.tables.
+    /// If version is Some(v), returns the specific version from schema_history.
     pub fn get_table_schema(
         &self,
         table_id: &str,
         version: Option<i32>,
     ) -> Result<Option<TableSchema>> {
-        let cf = self
-            .db
-            .cf_handle("system_table_schemas")
-            .ok_or_else(|| anyhow!("system_table_schemas CF not found"))?;
+        // Parse table_id (format: "namespace:table_name")
+        let parts: Vec<&str> = table_id.split(':').collect();
+        if parts.len() != 2 {
+            return Err(anyhow!(
+                "Invalid table_id format. Expected 'namespace:table_name', got '{}'",
+                table_id
+            ));
+        }
+        let namespace_id = parts[0];
+        let table_name = parts[1];
 
-        match version {
-            Some(v) => {
-                // Get specific version
-                let key = format!("schema:{}:{}", table_id, v);
-                match self.db.get_cf(&cf, key.as_bytes())? {
-                    Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
-                    None => Ok(None),
-                }
-            }
-            None => {
-                // Get latest version by scanning all versions
-                let prefix = format!("schema:{}:", table_id);
-                let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+        // Get table definition from information_schema.tables
+        let table_def = self.get_table_definition(namespace_id, table_name)?;
 
-                let mut latest_schema: Option<TableSchema> = None;
-                for item in iter {
-                    let (key_bytes, value) = item?;
-                    let key = String::from_utf8(key_bytes.to_vec())?;
-                    if key.starts_with(&prefix) {
-                        let schema: TableSchema = serde_json::from_slice(&value)?;
-                        if latest_schema.as_ref().is_none_or(|s| schema.version > s.version) {
-                            latest_schema = Some(schema);
-                        }
+        match table_def {
+            None => Ok(None),
+            Some(def) => {
+                match version {
+                    None => {
+                        // Return latest schema from TableDefinition
+                        let latest_schema_ver = def
+                            .schema_history
+                            .last()
+                            .ok_or_else(|| anyhow!("No schema versions found for {}", table_id))?;
+
+                        Ok(Some(TableSchema {
+                            schema_id: format!("{}:{}", table_id, def.schema_version),
+                            table_id: table_id.to_string(),
+                            version: def.schema_version as i32,
+                            arrow_schema: latest_schema_ver.arrow_schema_json.clone(),
+                            created_at: def.created_at,
+                            changes: serde_json::to_string(&latest_schema_ver.changes)
+                                .unwrap_or_else(|_| "[]".to_string()),
+                        }))
+                    }
+                    Some(v) => {
+                        // Find specific version in schema_history
+                        let schema_ver = def
+                            .schema_history
+                            .iter()
+                            .find(|sv| sv.version == v as u32)
+                            .ok_or_else(|| {
+                                anyhow!("Schema version {} not found for {}", v, table_id)
+                            })?;
+
+                        Ok(Some(TableSchema {
+                            schema_id: format!("{}:{}", table_id, v),
+                            table_id: table_id.to_string(),
+                            version: v,
+                            arrow_schema: schema_ver.arrow_schema_json.clone(),
+                            created_at: schema_ver.created_at,
+                            changes: serde_json::to_string(&schema_ver.changes)
+                                .unwrap_or_else(|_| "[]".to_string()),
+                        }))
                     }
                 }
-                Ok(latest_schema)
             }
         }
     }
 
-    /// Insert a new table schema
-    pub fn insert_table_schema(&self, schema: &TableSchema) -> Result<()> {
+    /// Insert column metadata into system.columns
+    ///
+    /// Stores metadata about a single column including DEFAULT expression,
+    /// data type, nullability, and ordinal position.
+    ///
+    /// # Arguments
+    /// * `table_id` - Table identifier (format: "namespace:table_name")
+    /// * `column_name` - Name of the column
+    /// * `data_type` - Arrow DataType as string (e.g., "Int64", "Utf8")
+    /// * `is_nullable` - Whether column accepts NULL values
+    /// * `ordinal_position` - 1-indexed column position in table
+    /// * `default_expression` - Optional DEFAULT expression (e.g., "NOW()", "SNOWFLAKE_ID()")
+    pub fn insert_column_metadata(
+        &self,
+        table_id: &str,
+        column_name: &str,
+        data_type: &str,
+        is_nullable: bool,
+        ordinal_position: i32,
+        default_expression: Option<&str>,
+    ) -> Result<()> {
         let cf = self
             .db
-            .cf_handle("system_table_schemas")
-            .ok_or_else(|| anyhow!("system_table_schemas CF not found"))?;
+            .cf_handle("system_columns")
+            .ok_or_else(|| anyhow!("system_columns CF not found"))?;
 
-        let key = format!("schema:{}:{}", schema.table_id, schema.version);
-        let value = serde_json::to_vec(schema)?;
+        // Key format: {table_id}:{column_name}
+        let key = format!("{}:{}", table_id, column_name);
+
+        let column_meta = serde_json::json!({
+            "table_id": table_id,
+            "column_name": column_name,
+            "data_type": data_type,
+            "is_nullable": is_nullable,
+            "ordinal_position": ordinal_position,
+            "default_expression": default_expression,
+        });
+
+        let value = serde_json::to_vec(&column_meta)?;
         self.db.put_cf(&cf, key.as_bytes(), &value)?;
-        Ok(())
-    }
-
-    // Storage location operations
-
-    /// Get a storage location by name
-    pub fn get_storage_location(&self, location_name: &str) -> Result<Option<StorageLocation>> {
-        let cf = self
-            .db
-            .cf_handle("system_storage_locations")
-            .ok_or_else(|| anyhow!("system_storage_locations CF not found"))?;
-
-        let key = format!("loc:{}", location_name);
-        match self.db.get_cf(&cf, key.as_bytes())? {
-            Some(value) => {
-                let location: StorageLocation = serde_json::from_slice(&value)?;
-                Ok(Some(location))
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// Insert a new storage location
-    pub fn insert_storage_location(&self, location: &StorageLocation) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_storage_locations")
-            .ok_or_else(|| anyhow!("system_storage_locations CF not found"))?;
-
-        let key = format!("loc:{}", location.location_name);
-        let value = serde_json::to_vec(location)?;
-        self.db.put_cf(&cf, key.as_bytes(), &value)?;
-        Ok(())
-    }
-
-    /// Delete a storage location
-    pub fn delete_storage_location(&self, location_name: &str) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_storage_locations")
-            .ok_or_else(|| anyhow!("system_storage_locations CF not found"))?;
-
-        let key = format!("loc:{}", location_name);
-        self.db.delete_cf(&cf, key.as_bytes())?;
         Ok(())
     }
 
@@ -334,6 +354,123 @@ impl RocksDbAdapter {
         Ok(())
     }
 
+    // ===================================
+    // information_schema.tables Operations
+    // ===================================
+
+    /// Insert or update complete table definition in information_schema_tables.
+    /// Single atomic write for all table metadata (replaces fragmented writes).
+    ///
+    /// # Arguments
+    /// * `table_def` - Complete table definition with metadata, columns, and schema history
+    ///
+    /// # Returns
+    /// Ok(()) on success, error on failure
+    pub fn upsert_table_definition(
+        &self,
+        table_def: &kalamdb_commons::models::TableDefinition,
+    ) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle("information_schema_tables")
+            .ok_or_else(|| anyhow!("information_schema_tables CF not found"))?;
+
+        let key = format!("{}:{}", table_def.namespace_id, table_def.table_name);
+        let value = serde_json::to_vec(table_def)?;
+        self.db.put_cf(&cf, key.as_bytes(), &value)?;
+        Ok(())
+    }
+
+    /// Get complete table definition from information_schema_tables.
+    /// Single atomic read for all table metadata.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - Namespace identifier
+    /// * `table_name` - Table name
+    ///
+    /// # Returns
+    /// Some(TableDefinition) if found, None if not found
+    pub fn get_table_definition(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> Result<Option<kalamdb_commons::models::TableDefinition>> {
+        let cf = self
+            .db
+            .cf_handle("information_schema_tables")
+            .ok_or_else(|| anyhow!("information_schema_tables CF not found"))?;
+
+        let key = format!("{}:{}", namespace_id, table_name);
+        match self.db.get_cf(&cf, key.as_bytes())? {
+            Some(value) => {
+                let table_def: kalamdb_commons::models::TableDefinition =
+                    serde_json::from_slice(&value)?;
+                Ok(Some(table_def))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Scan all table definitions in a namespace from information_schema_tables.
+    /// Used for SHOW TABLES and metadata queries.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - Namespace identifier
+    ///
+    /// # Returns
+    /// Vector of all TableDefinition in the namespace
+    pub fn scan_table_definitions(
+        &self,
+        namespace_id: &str,
+    ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
+        let cf = self
+            .db
+            .cf_handle("information_schema_tables")
+            .ok_or_else(|| anyhow!("information_schema_tables CF not found"))?;
+
+        let prefix = format!("{}:", namespace_id);
+        let mut tables = Vec::new();
+
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+        for item in iter {
+            let (key, value) = item?;
+            let key_str = String::from_utf8_lossy(&key);
+
+            if key_str.starts_with(&prefix) {
+                let table_def: kalamdb_commons::models::TableDefinition =
+                    serde_json::from_slice(&value)?;
+                tables.push(table_def);
+            }
+        }
+
+        Ok(tables)
+    }
+
+    /// Scan ALL table definitions across ALL namespaces
+    ///
+    /// # Returns
+    /// Vector of all TableDefinition in the database
+    pub fn scan_all_table_definitions(
+        &self,
+    ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
+        let cf = self
+            .db
+            .cf_handle("information_schema_tables")
+            .ok_or_else(|| anyhow!("information_schema_tables CF not found"))?;
+
+        let mut tables = Vec::new();
+
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+        for item in iter {
+            let (_key, value) = item?;
+            let table_def: kalamdb_commons::models::TableDefinition =
+                serde_json::from_slice(&value)?;
+            tables.push(table_def);
+        }
+
+        Ok(tables)
+    }
+
     // Storage operations
 
     /// Get a storage by ID
@@ -418,25 +555,6 @@ impl RocksDbAdapter {
         Ok(namespaces)
     }
 
-    /// Scan all storage locations
-    pub fn scan_all_storage_locations(&self) -> Result<Vec<StorageLocation>> {
-        let cf = self
-            .db
-            .cf_handle("system_storage_locations")
-            .ok_or_else(|| anyhow!("system_storage_locations CF not found"))?;
-
-        let mut locations = Vec::new();
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-
-        for item in iter {
-            let (_, value) = item?;
-            let location: StorageLocation = serde_json::from_slice(&value)?;
-            locations.push(location);
-        }
-
-        Ok(locations)
-    }
-
     /// Scan all live queries
     pub fn scan_all_live_queries(&self) -> Result<Vec<LiveQuery>> {
         let cf = self
@@ -494,25 +612,6 @@ impl RocksDbAdapter {
         Ok(tables)
     }
 
-    /// Scan all table schemas
-    pub fn scan_all_table_schemas(&self) -> Result<Vec<TableSchema>> {
-        let cf = self
-            .db
-            .cf_handle("system_table_schemas")
-            .ok_or_else(|| anyhow!("system_table_schemas CF not found"))?;
-
-        let mut schemas = Vec::new();
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-
-        for item in iter {
-            let (_, value) = item?;
-            let schema: TableSchema = serde_json::from_slice(&value)?;
-            schemas.push(schema);
-        }
-
-        Ok(schemas)
-    }
-
     /// Scan all storages
     pub fn scan_all_storages(&self) -> Result<Vec<Storage>> {
         let cf = self
@@ -549,39 +648,6 @@ impl RocksDbAdapter {
         Ok(())
     }
 
-    /// Delete all table schemas for a given table_id
-    pub fn delete_table_schemas_for_table(&self, table_id: &str) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_table_schemas")
-            .ok_or_else(|| anyhow!("system_table_schemas CF not found"))?;
-
-        // Iterate and delete all schemas with prefix "schema:{table_id}:"
-        let prefix = format!("schema:{}:", table_id);
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-
-        let mut keys_to_delete = Vec::new();
-        for item in iter {
-            let (key_bytes, _) = item?;
-            let key = String::from_utf8(key_bytes.to_vec())?;
-            if key.starts_with(&prefix) {
-                keys_to_delete.push(key);
-            }
-        }
-
-        // Delete all matching keys
-        for key in keys_to_delete {
-            self.db.delete_cf(&cf, key.as_bytes())?;
-        }
-
-        Ok(())
-    }
-
-    /// Update a storage location
-    pub fn update_storage_location(&self, location: &StorageLocation) -> Result<()> {
-        self.insert_storage_location(location) // Same as insert (upsert)
-    }
-
     /// Update a job
     pub fn update_job(&self, job: &Job) -> Result<()> {
         self.insert_job(job) // Same as insert (upsert)
@@ -595,32 +661,6 @@ impl RocksDbAdapter {
     /// Update a storage
     pub fn update_storage(&self, storage: &Storage) -> Result<()> {
         self.insert_storage(storage) // Same as insert (upsert)
-    }
-
-    /// Get all table schemas for a given table_id
-    pub fn get_table_schemas_for_table(&self, table_id: &str) -> Result<Vec<TableSchema>> {
-        let cf = self
-            .db
-            .cf_handle("system_table_schemas")
-            .ok_or_else(|| anyhow!("system_table_schemas CF not found"))?;
-
-        let prefix = format!("schema:{}:", table_id);
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-
-        let mut schemas = Vec::new();
-        for item in iter {
-            let (key_bytes, value) = item?;
-            let key = String::from_utf8(key_bytes.to_vec())?;
-            if key.starts_with(&prefix) {
-                let schema: TableSchema = serde_json::from_slice(&value)?;
-                schemas.push(schema);
-            }
-        }
-
-        // Sort by version descending (newest first)
-        schemas.sort_by(|a, b| b.version.cmp(&a.version));
-
-        Ok(schemas)
     }
 }
 

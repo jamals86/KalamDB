@@ -373,14 +373,19 @@ SELECT * FROM system.storages WHERE base_path LIKE '/mnt/storage%';
 
 ---
 
-## system.table_schemas (New)
+## ~~system.table_schemas (DEPRECATED)~~
+
+> **⚠️ DEPRECATED**: This table has been replaced by `information_schema.tables` which stores schema history inline within the `TableDefinition` struct. This section is kept for historical reference only.
 
 ### Purpose
-Store schema history for all tables to enable schema versioning and DESCRIBE TABLE history.
+~~Store schema history for all tables to enable schema versioning and DESCRIBE TABLE history.~~
+
+**Replacement**: Schema versions are now stored in `information_schema.tables` as a `schema_history` array within each `TableDefinition` document.
 
 ### Schema
 
 ```sql
+-- DEPRECATED - Do not use
 CREATE TABLE system.table_schemas (
     schema_id UUID PRIMARY KEY,
     namespace_id TEXT NOT NULL,

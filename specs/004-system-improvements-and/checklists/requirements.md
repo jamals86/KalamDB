@@ -22,6 +22,9 @@
 - [x] Edge cases are identified
 - [x] Scope is clearly bounded
 - [x] Dependencies and assumptions identified
+- [x] For writing models always separate the models in its own file for example NamespaceId will be namespace_id.rs file
+- [x] Always when you have a type or an action use ENUM's for that instead of String's
+
 
 ## Feature Readiness
 

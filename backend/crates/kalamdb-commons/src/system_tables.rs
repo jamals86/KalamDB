@@ -59,7 +59,7 @@ impl SystemTable {
     pub fn from_name(name: &str) -> Result<Self, String> {
         // Remove "system." prefix if present
         let name = name.strip_prefix("system.").unwrap_or(name);
-        
+
         match name {
             "users" | "system_users" => Ok(SystemTable::Users),
             "namespaces" | "system_namespaces" => Ok(SystemTable::Namespaces),
@@ -113,16 +113,28 @@ mod tests {
     #[test]
     fn test_column_family_name() {
         assert_eq!(SystemTable::Users.column_family_name(), "system_users");
-        assert_eq!(SystemTable::Namespaces.column_family_name(), "system_namespaces");
+        assert_eq!(
+            SystemTable::Namespaces.column_family_name(),
+            "system_namespaces"
+        );
         assert_eq!(SystemTable::Jobs.column_family_name(), "system_jobs");
     }
 
     #[test]
     fn test_from_name() {
         assert_eq!(SystemTable::from_name("users").unwrap(), SystemTable::Users);
-        assert_eq!(SystemTable::from_name("system.users").unwrap(), SystemTable::Users);
-        assert_eq!(SystemTable::from_name("system_users").unwrap(), SystemTable::Users);
-        assert_eq!(SystemTable::from_name("storages").unwrap(), SystemTable::Storages);
+        assert_eq!(
+            SystemTable::from_name("system.users").unwrap(),
+            SystemTable::Users
+        );
+        assert_eq!(
+            SystemTable::from_name("system_users").unwrap(),
+            SystemTable::Users
+        );
+        assert_eq!(
+            SystemTable::from_name("storages").unwrap(),
+            SystemTable::Storages
+        );
         assert!(SystemTable::from_name("invalid_table").is_err());
     }
 

@@ -14,6 +14,7 @@ impl LiveQueriesTable {
         Arc::new(Schema::new(vec![
             Field::new("live_id", DataType::Utf8, false), // Format: {user_id}-{unique_conn_id}-{table_name}-{query_id}
             Field::new("connection_id", DataType::Utf8, false),
+             Field::new("namespace_id", DataType::Utf8, false),
             Field::new("table_name", DataType::Utf8, false),
             Field::new("query_id", DataType::Utf8, false),
             Field::new("user_id", DataType::Utf8, false),
@@ -25,7 +26,7 @@ impl LiveQueriesTable {
                 false,
             ),
             Field::new(
-                "updated_at",
+                "last_update",
                 DataType::Timestamp(TimeUnit::Millisecond, None),
                 false,
             ),
@@ -52,18 +53,19 @@ mod tests {
     #[test]
     fn test_live_queries_table_schema() {
         let schema = LiveQueriesTable::schema();
-        assert_eq!(schema.fields().len(), 11);
+        assert_eq!(schema.fields().len(), 12);
         assert_eq!(schema.field(0).name(), "live_id");
         assert_eq!(schema.field(1).name(), "connection_id");
-        assert_eq!(schema.field(2).name(), "table_name");
-        assert_eq!(schema.field(3).name(), "query_id");
-        assert_eq!(schema.field(4).name(), "user_id");
-        assert_eq!(schema.field(5).name(), "query");
-        assert_eq!(schema.field(6).name(), "options");
-        assert_eq!(schema.field(7).name(), "created_at");
-        assert_eq!(schema.field(8).name(), "updated_at");
-        assert_eq!(schema.field(9).name(), "changes");
-        assert_eq!(schema.field(10).name(), "node");
+        assert_eq!(schema.field(2).name(), "namespace_id");
+        assert_eq!(schema.field(3).name(), "table_name");
+        assert_eq!(schema.field(4).name(), "query_id");
+        assert_eq!(schema.field(5).name(), "user_id");
+        assert_eq!(schema.field(6).name(), "query");
+        assert_eq!(schema.field(7).name(), "options");
+        assert_eq!(schema.field(8).name(), "created_at");
+        assert_eq!(schema.field(9).name(), "last_update");
+        assert_eq!(schema.field(10).name(), "changes");
+        assert_eq!(schema.field(11).name(), "node");
     }
 
     #[test]

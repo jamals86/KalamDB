@@ -10,7 +10,9 @@ use crate::live_query::connection_registry::{
 use crate::live_query::filter::FilterCache;
 use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::tables::system::live_queries_provider::{LiveQueriesTableProvider, LiveQueryRecord};
+use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use kalamdb_sql::KalamSql;
+use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -20,24 +22,36 @@ pub struct LiveQueryManager {
     live_queries_provider: Arc<LiveQueriesTableProvider>,
     filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
     initial_data_fetcher: Arc<InitialDataFetcher>,
+    kalam_sql: Arc<KalamSql>,
     node_id: NodeId,
 }
 
 impl LiveQueryManager {
     /// Create a new live query manager
-    pub fn new(kalam_sql: Arc<KalamSql>, node_id: NodeId) -> Self {
+    pub fn new(
+        kalam_sql: Arc<KalamSql>,
+        node_id: NodeId,
+        user_table_store: Option<Arc<UserTableStore>>,
+        shared_table_store: Option<Arc<SharedTableStore>>,
+        stream_table_store: Option<Arc<StreamTableStore>>,
+    ) -> Self {
         let registry = Arc::new(tokio::sync::RwLock::new(LiveQueryRegistry::new(
             node_id.clone(),
         )));
-        let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql));
+        let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone()));
         let filter_cache = Arc::new(tokio::sync::RwLock::new(FilterCache::new()));
-        let initial_data_fetcher = Arc::new(InitialDataFetcher::new());
+        let initial_data_fetcher = Arc::new(InitialDataFetcher::new(
+            user_table_store.clone(),
+            shared_table_store.clone(),
+            stream_table_store.clone(),
+        ));
 
         Self {
             registry,
             live_queries_provider,
             filter_cache,
             initial_data_fetcher,
+            kalam_sql,
             node_id,
         }
     }
@@ -87,21 +101,45 @@ impl LiveQueryManager {
         query: String,
         options: LiveQueryOptions,
     ) -> Result<LiveId, KalamDbError> {
-        // Parse SQL to extract table_name and WHERE clause
-        let table_name = self.extract_table_name_from_query(&query)?;
+        // Parse SQL to extract table reference and WHERE clause
+        let raw_table = self.extract_table_name_from_query(&query)?;
+        let (namespace, table) = raw_table.split_once('.').ok_or_else(|| {
+            KalamDbError::InvalidSql(format!(
+                "Query must reference table as namespace.table: {}",
+                raw_table
+            ))
+        })?;
+
+        let table_def = self
+            .kalam_sql
+            .get_table_definition(namespace, table)
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to load table definition for {}.{}: {}",
+                    namespace, table, e
+                ))
+            })?
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!(
+                    "Table {}.{} not found for subscription",
+                    namespace, table
+                ))
+            })?;
+
+        if table_def.table_type == TableType::Shared {
+            return Err(KalamDbError::InvalidOperation(
+                "Shared table subscriptions are not supported".to_string(),
+            ));
+        }
+
+        let canonical_table = format!("{}.{}", namespace, table);
         let mut where_clause = self.extract_where_clause(&query);
 
         // Generate LiveId
-        let live_id = LiveId::new(connection_id.clone(), table_name.clone(), query_id);
+        let live_id = LiveId::new(connection_id.clone(), canonical_table.clone(), query_id);
 
-        // T174: Auto-inject user_id filter for user tables (row-level security)
-        // User tables: user_id.namespace.table (3 parts = 2 dots)
-        // Shared tables: namespace.table (2 parts = 1 dot)
-        // Simple names: table (1 part = 0 dots) - skip injection
-        let dot_count = table_name.matches('.').count();
-        let is_user_table = dot_count == 2;
-
-        if is_user_table {
+        // Auto-inject user_id filter for user tables (row-level security)
+        if table_def.table_type == TableType::User {
             let user_id = connection_id.user_id();
             let user_filter = format!("user_id = '{}'", user_id);
 
@@ -134,13 +172,14 @@ impl LiveQueryManager {
         let live_query_record = LiveQueryRecord {
             live_id: live_id.to_string(),
             connection_id: connection_id.to_string(),
-            table_name: live_id.table_name().to_string(),
+            namespace_id: NamespaceId::from(namespace),
+            table_name: TableName::from(canonical_table.clone()),
             query_id: live_id.query_id().to_string(),
-            user_id: connection_id.user_id().to_string(),
+            user_id: kalamdb_commons::models::UserId::from(connection_id.user_id()),
             query: query.clone(),
             options: Some(options_json),
             created_at: timestamp,
-            updated_at: timestamp,
+            last_update: timestamp,
             changes: 0,
             node: self.node_id.as_str().to_string(),
         };
@@ -201,24 +240,50 @@ impl LiveQueryManager {
 
         // Fetch initial data if requested
         let initial_data = if let Some(fetch_options) = initial_data_options {
-            let table_name = live_id.table_name();
+            // Extract table info for initial data fetch
+            let raw_table = self.extract_table_name_from_query(&query)?;
+            let (namespace, table) = raw_table.split_once('.').ok_or_else(|| {
+                KalamDbError::InvalidSql(format!(
+                    "Query must reference table as namespace.table: {}",
+                    raw_table
+                ))
+            })?;
 
-            // TODO: Determine table_type from table_name
-            // For now, we'll need to parse it or get it from context
-            // User tables: user_id.namespace.table
-            // Shared tables: namespace.table
-            let table_type = if table_name.matches('.').count() == 2 {
-                crate::catalog::TableType::User
-            } else {
-                crate::catalog::TableType::Shared
+            let table_def = self
+                .kalam_sql
+                .get_table_definition(namespace, table)
+                .map_err(|e| {
+                    KalamDbError::Other(format!(
+                        "Failed to load table definition for {}.{}: {}",
+                        namespace, table, e
+                    ))
+                })?
+                .ok_or_else(|| {
+                    KalamDbError::NotFound(format!(
+                        "Table {}.{} not found for subscription",
+                        namespace, table
+                    ))
+                })?;
+
+            let canonical_table = format!("{}.{}", namespace, table);
+            
+            let live_id_string = live_id.to_string();
+            let filter_predicate = {
+                let cache = self.filter_cache.read().await;
+                cache.get(&live_id_string)
             };
 
-            let result = self
-                .initial_data_fetcher
-                .fetch_initial_data(table_name, table_type, fetch_options)
-                .await?;
-
-            Some(result)
+            Some(
+                self.initial_data_fetcher
+                    .fetch_initial_data(
+                        &live_id,
+                        &canonical_table,
+                        table_def.table_type,
+                        fetch_options,
+                        filter_predicate,
+                    )
+                    .await?,
+            )
         } else {
             None
         };
@@ -226,6 +291,19 @@ impl LiveQueryManager {
         Ok(SubscriptionResult {
             live_id,
             initial_data,
+        })
+    }
+
+    /// Determine whether any active subscriptions reference the specified table.
+    pub async fn has_active_subscriptions_for(&self, table_ref: &str) -> bool {
+        let registry = self.registry.read().await;
+        registry.users.values().any(|connections| {
+            connections.sockets.values().any(|socket| {
+                socket
+                    .live_queries
+                    .values()
+                    .any(|live_query| live_query.live_id.table_name() == table_ref)
+            })
         })
     }
 
@@ -632,15 +710,98 @@ pub struct RegistryStats {
 mod tests {
     use super::*;
     use crate::storage::RocksDbInit;
+    use kalamdb_commons::models::{TableDefinition, ColumnDefinition};
+    use kalamdb_commons::{TableName, NamespaceId, TableType, StorageId};
     use tempfile::TempDir;
 
     async fn create_test_manager() -> (LiveQueryManager, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
-        let db = init.open().unwrap();
-        let kalam_sql = Arc::new(KalamSql::new(db).unwrap());
+        let db = Arc::new(init.open().unwrap());
+        let kalam_sql = Arc::new(KalamSql::new(Arc::clone(&db)).unwrap());
+        let user_table_store = Arc::new(UserTableStore::new(Arc::clone(&db)).unwrap());
+        let shared_table_store = Arc::new(SharedTableStore::new(Arc::clone(&db)).unwrap());
+        let stream_table_store = Arc::new(StreamTableStore::new(Arc::clone(&db)).unwrap());
+        
+        // Create test tables in information_schema_tables
+        let messages_table = TableDefinition {
+            table_id: "user1:messages".to_string(),
+            table_name: TableName::new("messages"),
+            namespace_id: NamespaceId::new("user1"),
+            table_type: TableType::User,
+            created_at: 0,
+            updated_at: 0,
+            schema_version: 1,
+            storage_id: StorageId::new("local"),
+            use_user_storage: false,
+            flush_policy: None,
+            deleted_retention_hours: None,
+            ttl_seconds: None,
+            columns: vec![
+                ColumnDefinition {
+                    column_name: "id".to_string(),
+                    data_type: "INTEGER".to_string(),
+                    is_nullable: false,
+                    column_default: None,
+                    ordinal_position: 0,
+                    is_primary_key: true,
+                },
+                ColumnDefinition {
+                    column_name: "user_id".to_string(),
+                    data_type: "TEXT".to_string(),
+                    is_nullable: true,
+                    column_default: None,
+                    ordinal_position: 1,
+                    is_primary_key: false,
+                },
+            ],
+            schema_history: vec![],
+        };
+        kalam_sql.upsert_table_definition(&messages_table).unwrap();
+        
+        let notifications_table = TableDefinition {
+            table_id: "user1:notifications".to_string(),
+            table_name: TableName::new("notifications"),
+            namespace_id: NamespaceId::new("user1"),
+            table_type: TableType::User,
+            created_at: 0,
+            updated_at: 0,
+            schema_version: 1,
+            storage_id: StorageId::new("local"),
+            use_user_storage: false,
+            flush_policy: None,
+            deleted_retention_hours: None,
+            ttl_seconds: None,
+            columns: vec![
+                ColumnDefinition {
+                    column_name: "id".to_string(),
+                    data_type: "INTEGER".to_string(),
+                    is_nullable: false,
+                    column_default: None,
+                    ordinal_position: 0,
+                    is_primary_key: true,
+                },
+                ColumnDefinition {
+                    column_name: "user_id".to_string(),
+                    data_type: "TEXT".to_string(),
+                    is_nullable: true,
+                    column_default: None,
+                    ordinal_position: 1,
+                    is_primary_key: false,
+                },
+            ],
+            schema_history: vec![],
+        };
+        kalam_sql.upsert_table_definition(&notifications_table).unwrap();
+        
         let node_id = NodeId::new("test_node".to_string());
-        let manager = LiveQueryManager::new(kalam_sql, node_id);
+        let manager = LiveQueryManager::new(
+            kalam_sql,
+            node_id,
+            Some(user_table_store),
+            Some(shared_table_store),
+            Some(stream_table_store),
+        );
         (manager, temp_dir)
     }
 
@@ -676,7 +837,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q1".to_string(),
-                "SELECT * FROM messages WHERE id > 0".to_string(),
+                "SELECT * FROM user1.messages WHERE id > 0".to_string(),
                 LiveQueryOptions {
                     last_rows: Some(50),
                 },
@@ -685,7 +846,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(live_id.connection_id(), &connection_id);
-        assert_eq!(live_id.table_name(), "messages");
+        assert_eq!(live_id.table_name(), "user1.messages");
         assert_eq!(live_id.query_id(), "q1");
 
         let stats = manager.get_stats().await;
@@ -697,19 +858,19 @@ mod tests {
         let (manager, _temp_dir) = create_test_manager().await;
 
         let table_name = manager
-            .extract_table_name_from_query("SELECT * FROM messages WHERE id > 0")
+            .extract_table_name_from_query("SELECT * FROM user1.messages WHERE id > 0")
             .unwrap();
-        assert_eq!(table_name, "messages");
+        assert_eq!(table_name, "user1.messages");
 
         let table_name = manager
-            .extract_table_name_from_query("select id from users")
+            .extract_table_name_from_query("select id from test.users")
             .unwrap();
-        assert_eq!(table_name, "users");
+        assert_eq!(table_name, "test.users");
 
         let table_name = manager
-            .extract_table_name_from_query("SELECT * FROM \"my_table\" WHERE x = 1")
+            .extract_table_name_from_query("SELECT * FROM \"ns.my_table\" WHERE x = 1")
             .unwrap();
-        assert_eq!(table_name, "my_table");
+        assert_eq!(table_name, "ns.my_table");
     }
 
     #[tokio::test]
@@ -726,7 +887,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q1".to_string(),
-                "SELECT * FROM messages".to_string(),
+                "SELECT * FROM user1.messages".to_string(),
                 LiveQueryOptions::default(),
             )
             .await
@@ -736,23 +897,23 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q2".to_string(),
-                "SELECT * FROM notifications".to_string(),
+                "SELECT * FROM user1.notifications".to_string(),
                 LiveQueryOptions::default(),
             )
             .await
             .unwrap();
 
         let messages_subs = manager
-            .get_subscriptions_for_table(&user_id, "messages")
+            .get_subscriptions_for_table(&user_id, "user1.messages")
             .await;
         assert_eq!(messages_subs.len(), 1);
-        assert_eq!(messages_subs[0].table_name(), "messages");
+        assert_eq!(messages_subs[0].table_name(), "user1.messages");
 
         let notif_subs = manager
-            .get_subscriptions_for_table(&user_id, "notifications")
+            .get_subscriptions_for_table(&user_id, "user1.notifications")
             .await;
         assert_eq!(notif_subs.len(), 1);
-        assert_eq!(notif_subs[0].table_name(), "notifications");
+        assert_eq!(notif_subs[0].table_name(), "user1.notifications");
     }
 
     #[tokio::test]
@@ -769,7 +930,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q1".to_string(),
-                "SELECT * FROM messages".to_string(),
+                "SELECT * FROM user1.messages".to_string(),
                 LiveQueryOptions::default(),
             )
             .await
@@ -779,7 +940,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q2".to_string(),
-                "SELECT * FROM notifications".to_string(),
+                "SELECT * FROM user1.notifications".to_string(),
                 LiveQueryOptions::default(),
             )
             .await
@@ -810,7 +971,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q1".to_string(),
-                "SELECT * FROM messages".to_string(),
+                "SELECT * FROM user1.messages".to_string(),
                 LiveQueryOptions::default(),
             )
             .await
@@ -836,7 +997,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q1".to_string(),
-                "SELECT * FROM messages".to_string(),
+                "SELECT * FROM user1.messages".to_string(),
                 LiveQueryOptions::default(),
             )
             .await
@@ -868,7 +1029,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "messages_query".to_string(),
-                "SELECT * FROM messages WHERE conversation_id = 'conv1'".to_string(),
+                "SELECT * FROM user1.messages WHERE conversation_id = 'conv1'".to_string(),
                 LiveQueryOptions {
                     last_rows: Some(50),
                 },
@@ -880,7 +1041,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "notifications_query".to_string(),
-                "SELECT * FROM notifications WHERE user_id = CURRENT_USER()".to_string(),
+                "SELECT * FROM user1.notifications WHERE user_id = CURRENT_USER()".to_string(),
                 LiveQueryOptions {
                     last_rows: Some(10),
                 },
@@ -892,7 +1053,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "messages_query2".to_string(),
-                "SELECT * FROM messages WHERE conversation_id = 'conv2'".to_string(),
+                "SELECT * FROM user1.messages WHERE conversation_id = 'conv2'".to_string(),
                 LiveQueryOptions {
                     last_rows: Some(20),
                 },
@@ -906,12 +1067,12 @@ mod tests {
 
         // Verify all subscriptions are tracked
         let messages_subs = manager
-            .get_subscriptions_for_table(&user_id, "messages")
+            .get_subscriptions_for_table(&user_id, "user1.messages")
             .await;
         assert_eq!(messages_subs.len(), 2); // messages_query and messages_query2
 
         let notif_subs = manager
-            .get_subscriptions_for_table(&user_id, "notifications")
+            .get_subscriptions_for_table(&user_id, "user1.notifications")
             .await;
         assert_eq!(notif_subs.len(), 1);
 
@@ -936,7 +1097,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "filtered_messages".to_string(),
-                "SELECT * FROM messages WHERE user_id = 'user1' AND read = false".to_string(),
+                "SELECT * FROM user1.messages WHERE user_id = 'user1' AND read = false".to_string(),
                 LiveQueryOptions::default(),
             )
             .await
@@ -947,9 +1108,9 @@ mod tests {
         let filter = filter_cache.get(&live_id.to_string());
         assert!(filter.is_some());
 
-        // Verify filter SQL is correct
+        // Verify filter SQL is correct (includes auto-injected user_id filter for USER tables)
         let filter = filter.unwrap();
-        assert_eq!(filter.sql(), "user_id = 'user1' AND read = false");
+        assert_eq!(filter.sql(), "user_id = 'user1' AND user_id = 'user1' AND read = false");
     }
 
     #[tokio::test]
@@ -967,7 +1128,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q1".to_string(),
-                "SELECT * FROM messages WHERE user_id = 'user1'".to_string(),
+                "SELECT * FROM user1.messages WHERE user_id = 'user1'".to_string(),
                 LiveQueryOptions::default(),
             )
             .await
@@ -975,24 +1136,24 @@ mod tests {
 
         // Matching notification
         let matching_change = ChangeNotification::insert(
-            "messages".to_string(),
+            "user1.messages".to_string(),
             serde_json::json!({"user_id": "user1", "text": "Hello"}),
         );
 
         let notified = manager
-            .notify_table_change("messages", matching_change)
+            .notify_table_change("user1.messages", matching_change)
             .await
             .unwrap();
         assert_eq!(notified, 1); // Should notify
 
         // Non-matching notification
         let non_matching_change = ChangeNotification::insert(
-            "messages".to_string(),
+            "user1.messages".to_string(),
             serde_json::json!({"user_id": "user2", "text": "Hello"}),
         );
 
         let notified = manager
-            .notify_table_change("messages", non_matching_change)
+            .notify_table_change("user1.messages", non_matching_change)
             .await
             .unwrap();
         assert_eq!(notified, 0); // Should NOT notify (filter didn't match)
@@ -1012,7 +1173,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q1".to_string(),
-                "SELECT * FROM messages WHERE user_id = 'user1'".to_string(),
+                "SELECT * FROM user1.messages WHERE user_id = 'user1'".to_string(),
                 LiveQueryOptions::default(),
             )
             .await

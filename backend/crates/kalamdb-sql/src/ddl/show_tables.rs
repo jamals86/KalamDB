@@ -22,7 +22,7 @@ impl ShowTablesStatement {
     /// - SHOW TABLES IN namespace
     pub fn parse(sql: &str) -> DdlResult<Self> {
         let namespace = parsing::parse_optional_in_clause(sql, "SHOW TABLES")?;
-        
+
         Ok(Self {
             namespace_id: namespace.map(NamespaceId::new),
         })

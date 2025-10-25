@@ -76,26 +76,26 @@ impl ConcurrentWriters {
     /// Rate is distributed evenly across all writers.
     pub async fn start(&mut self) {
         self.running.store(true, Ordering::SeqCst);
-        
+
         let inserts_per_writer = self.config.target_rate / self.config.writer_count;
         let interval = Duration::from_millis(1000 / inserts_per_writer as u64);
-        
+
         for i in 0..self.config.writer_count {
             let running = Arc::clone(&self.running);
             let insert_count = Arc::clone(&self.insert_count);
             let namespace = self.config.namespace.clone();
             let table_name = self.config.table_name.clone();
-            
+
             let handle = tokio::spawn(async move {
                 while running.load(Ordering::SeqCst) {
                     // TODO: T230 - Implement actual insert logic
                     // For now, just simulate inserts
-                    
+
                     insert_count.fetch_add(1, Ordering::SeqCst);
                     tokio::time::sleep(interval).await;
                 }
             });
-            
+
             self.handles.push(handle);
         }
     }
@@ -103,12 +103,12 @@ impl ConcurrentWriters {
     /// Stop all writers
     pub async fn stop(&mut self) -> WriterStats {
         self.running.store(false, Ordering::SeqCst);
-        
+
         // Wait for all handles to complete
         for handle in self.handles.drain(..) {
             let _ = handle.await;
         }
-        
+
         WriterStats {
             total_inserts: self.insert_count.load(Ordering::SeqCst),
         }
@@ -169,21 +169,21 @@ impl WebSocketSubscribers {
     /// Start WebSocket subscribers
     pub async fn start(&mut self) {
         self.running.store(true, Ordering::SeqCst);
-        
+
         for i in 0..self.config.subscriber_count {
             let running = Arc::clone(&self.running);
             let notification_count = Arc::clone(&self.notification_count);
             let disconnect_count = Arc::clone(&self.disconnect_count);
-            
+
             let handle = tokio::spawn(async move {
                 // TODO: T231 - Implement actual WebSocket subscription logic
                 // For now, just simulate
-                
+
                 while running.load(Ordering::SeqCst) {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             });
-            
+
             self.handles.push(handle);
         }
     }
@@ -191,12 +191,12 @@ impl WebSocketSubscribers {
     /// Stop all subscribers
     pub async fn stop(&mut self) -> SubscriberStats {
         self.running.store(false, Ordering::SeqCst);
-        
+
         // Wait for all handles to complete
         for handle in self.handles.drain(..) {
             let _ = handle.await;
         }
-        
+
         SubscriberStats {
             total_notifications: self.notification_count.load(Ordering::SeqCst),
             total_disconnects: self.disconnect_count.load(Ordering::SeqCst),
@@ -239,11 +239,11 @@ impl MemoryMonitor {
     /// Start monitoring memory
     pub fn start(&mut self) {
         self.running.store(true, Ordering::SeqCst);
-        
+
         let running = Arc::clone(&self.running);
         let measurements = Arc::clone(&self.measurements);
         let interval = self.interval;
-        
+
         let handle = tokio::spawn(async move {
             while running.load(Ordering::SeqCst) {
                 // TODO: T232 - Implement actual memory measurement
@@ -252,23 +252,23 @@ impl MemoryMonitor {
                     timestamp: Instant::now(),
                     rss_bytes: get_process_memory(),
                 };
-                
+
                 measurements.lock().await.push(measurement);
                 tokio::time::sleep(interval).await;
             }
         });
-        
+
         self.handle = Some(handle);
     }
 
     /// Stop monitoring and return all measurements
     pub async fn stop(&mut self) -> Vec<MemoryMeasurement> {
         self.running.store(false, Ordering::SeqCst);
-        
+
         if let Some(handle) = self.handle.take() {
             let _ = handle.await;
         }
-        
+
         let measurements = self.measurements.lock().await;
         measurements.clone()
     }
@@ -276,14 +276,14 @@ impl MemoryMonitor {
     /// Get memory growth percentage from first to last measurement
     pub async fn memory_growth_percentage(&self) -> Option<f64> {
         let measurements = self.measurements.lock().await;
-        
+
         if measurements.len() < 2 {
             return None;
         }
-        
+
         let first = measurements.first().unwrap().rss_bytes as f64;
         let last = measurements.last().unwrap().rss_bytes as f64;
-        
+
         Some(((last - first) / first) * 100.0)
     }
 }
@@ -300,7 +300,7 @@ fn get_process_memory() -> usize {
         // Windows implementation using GetProcessMemoryInfo
         use std::mem;
         use std::ptr;
-        
+
         // Define necessary Windows API structures and functions
         #[repr(C)]
         struct PROCESS_MEMORY_COUNTERS {
@@ -315,7 +315,7 @@ fn get_process_memory() -> usize {
             pagefile_usage: usize,
             peak_pagefile_usage: usize,
         }
-        
+
         extern "system" {
             fn GetCurrentProcess() -> *mut std::ffi::c_void;
             fn GetProcessMemoryInfo(
@@ -324,17 +324,13 @@ fn get_process_memory() -> usize {
                 cb: u32,
             ) -> i32;
         }
-        
+
         unsafe {
             let mut pmc: PROCESS_MEMORY_COUNTERS = mem::zeroed();
             pmc.cb = mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
-            
-            let result = GetProcessMemoryInfo(
-                GetCurrentProcess(),
-                &mut pmc,
-                pmc.cb,
-            );
-            
+
+            let result = GetProcessMemoryInfo(GetCurrentProcess(), &mut pmc, pmc.cb);
+
             if result != 0 {
                 pmc.working_set_size
             } else {
@@ -342,12 +338,12 @@ fn get_process_memory() -> usize {
             }
         }
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         // Linux implementation reading /proc/self/status
         use std::fs;
-        
+
         if let Ok(status) = fs::read_to_string("/proc/self/status") {
             for line in status.lines() {
                 if line.starts_with("VmRSS:") {
@@ -362,12 +358,12 @@ fn get_process_memory() -> usize {
         }
         0
     }
-    
+
     #[cfg(target_os = "macos")]
     {
         // macOS implementation using task_info
         use std::mem;
-        
+
         #[repr(C)]
         struct mach_task_basic_info {
             virtual_size: u64,
@@ -378,7 +374,7 @@ fn get_process_memory() -> usize {
             policy: i32,
             suspend_count: i32,
         }
-        
+
         extern "C" {
             fn mach_task_self() -> u32;
             fn task_info(
@@ -388,20 +384,20 @@ fn get_process_memory() -> usize {
                 task_info_count: *mut u32,
             ) -> i32;
         }
-        
+
         const MACH_TASK_BASIC_INFO: i32 = 20;
-        
+
         unsafe {
             let mut info: mach_task_basic_info = mem::zeroed();
             let mut count = (mem::size_of::<mach_task_basic_info>() / mem::size_of::<u32>()) as u32;
-            
+
             let result = task_info(
                 mach_task_self(),
                 MACH_TASK_BASIC_INFO,
                 &mut info,
                 &mut count,
             );
-            
+
             if result == 0 {
                 info.resident_size as usize
             } else {
@@ -409,7 +405,7 @@ fn get_process_memory() -> usize {
             }
         }
     }
-    
+
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         // Fallback for other platforms
@@ -456,59 +452,59 @@ impl CpuMonitor {
     /// Start monitoring CPU
     pub fn start(&mut self) {
         self.running.store(true, Ordering::SeqCst);
-        
+
         let running = Arc::clone(&self.running);
         let measurements = Arc::clone(&self.measurements);
         let last_cpu_time = Arc::clone(&self.last_cpu_time);
         let interval = self.interval;
-        
+
         let handle = tokio::spawn(async move {
             // Initialize with first measurement
             if let Some(times) = get_process_cpu_times() {
                 *last_cpu_time.lock().await = Some(times);
             }
-            
+
             tokio::time::sleep(interval).await;
-            
+
             while running.load(Ordering::SeqCst) {
                 let cpu_percent = {
                     let mut last = last_cpu_time.lock().await;
-                    
+
                     if let Some(current_times) = get_process_cpu_times() {
                         let cpu = if let Some(prev_times) = *last {
                             calculate_cpu_percent(prev_times, current_times)
                         } else {
                             0.0
                         };
-                        
+
                         *last = Some(current_times);
                         cpu
                     } else {
                         0.0
                     }
                 };
-                
+
                 let measurement = CpuMeasurement {
                     timestamp: Instant::now(),
                     cpu_percent,
                 };
-                
+
                 measurements.lock().await.push(measurement);
                 tokio::time::sleep(interval).await;
             }
         });
-        
+
         self.handle = Some(handle);
     }
 
     /// Stop monitoring and return all measurements
     pub async fn stop(&mut self) -> Vec<CpuMeasurement> {
         self.running.store(false, Ordering::SeqCst);
-        
+
         if let Some(handle) = self.handle.take() {
             let _ = handle.await;
         }
-        
+
         let measurements = self.measurements.lock().await;
         measurements.clone()
     }
@@ -516,8 +512,9 @@ impl CpuMonitor {
     /// Get maximum CPU usage from all measurements
     pub async fn max_cpu_percent(&self) -> Option<f64> {
         let measurements = self.measurements.lock().await;
-        
-        measurements.iter()
+
+        measurements
+            .iter()
             .map(|m| m.cpu_percent)
             .max_by(|a, b| a.partial_cmp(b).unwrap())
     }
@@ -533,13 +530,13 @@ fn get_process_cpu_times() -> Option<CpuTimes> {
     #[cfg(target_os = "windows")]
     {
         use std::mem;
-        
+
         #[repr(C)]
         struct FILETIME {
             dw_low_date_time: u32,
             dw_high_date_time: u32,
         }
-        
+
         extern "system" {
             fn GetCurrentProcess() -> *mut std::ffi::c_void;
             fn GetProcessTimes(
@@ -550,13 +547,13 @@ fn get_process_cpu_times() -> Option<CpuTimes> {
                 user_time: *mut FILETIME,
             ) -> i32;
         }
-        
+
         unsafe {
             let mut creation: FILETIME = mem::zeroed();
             let mut exit: FILETIME = mem::zeroed();
             let mut kernel: FILETIME = mem::zeroed();
             let mut user: FILETIME = mem::zeroed();
-            
+
             let result = GetProcessTimes(
                 GetCurrentProcess(),
                 &mut creation,
@@ -564,12 +561,14 @@ fn get_process_cpu_times() -> Option<CpuTimes> {
                 &mut kernel,
                 &mut user,
             );
-            
+
             if result != 0 {
                 // Convert FILETIME to u64 (100-nanosecond intervals)
-                let user_time = ((user.dw_high_date_time as u64) << 32) | (user.dw_low_date_time as u64);
-                let system_time = ((kernel.dw_high_date_time as u64) << 32) | (kernel.dw_low_date_time as u64);
-                
+                let user_time =
+                    ((user.dw_high_date_time as u64) << 32) | (user.dw_low_date_time as u64);
+                let system_time =
+                    ((kernel.dw_high_date_time as u64) << 32) | (kernel.dw_low_date_time as u64);
+
                 Some(CpuTimes {
                     user_time,
                     system_time,
@@ -580,28 +579,27 @@ fn get_process_cpu_times() -> Option<CpuTimes> {
             }
         }
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         use std::fs;
-        
+
         // Read /proc/self/stat
         // Format: pid (comm) state ppid ... utime stime ...
         if let Ok(stat) = fs::read_to_string("/proc/self/stat") {
             let fields: Vec<&str> = stat.split_whitespace().collect();
-            
+
             // utime is field 13 (index 13), stime is field 14 (index 14)
             // Values are in clock ticks
             if fields.len() > 14 {
-                if let (Ok(utime), Ok(stime)) = (
-                    fields[13].parse::<u64>(),
-                    fields[14].parse::<u64>(),
-                ) {
+                if let (Ok(utime), Ok(stime)) =
+                    (fields[13].parse::<u64>(), fields[14].parse::<u64>())
+                {
                     // Convert clock ticks to milliseconds
                     // Linux uses 100 Hz clock (USER_HZ), so 1 tick = 10ms
                     let user_time = utime * 10_000; // Convert to microseconds
                     let system_time = stime * 10_000;
-                    
+
                     return Some(CpuTimes {
                         user_time,
                         system_time,
@@ -612,11 +610,11 @@ fn get_process_cpu_times() -> Option<CpuTimes> {
         }
         None
     }
-    
+
     #[cfg(target_os = "macos")]
     {
         use std::mem;
-        
+
         #[repr(C)]
         struct task_basic_info {
             suspend_count: i32,
@@ -626,7 +624,7 @@ fn get_process_cpu_times() -> Option<CpuTimes> {
             system_time: [u32; 2], // seconds, microseconds
             policy: i32,
         }
-        
+
         extern "C" {
             fn mach_task_self() -> u32;
             fn task_info(
@@ -636,25 +634,21 @@ fn get_process_cpu_times() -> Option<CpuTimes> {
                 task_info_count: *mut u32,
             ) -> i32;
         }
-        
+
         const TASK_BASIC_INFO: i32 = 5;
-        
+
         unsafe {
             let mut info: task_basic_info = mem::zeroed();
             let mut count = (mem::size_of::<task_basic_info>() / mem::size_of::<u32>()) as u32;
-            
-            let result = task_info(
-                mach_task_self(),
-                TASK_BASIC_INFO,
-                &mut info,
-                &mut count,
-            );
-            
+
+            let result = task_info(mach_task_self(), TASK_BASIC_INFO, &mut info, &mut count);
+
             if result == 0 {
                 // Convert to microseconds
                 let user_time = (info.user_time[0] as u64 * 1_000_000) + info.user_time[1] as u64;
-                let system_time = (info.system_time[0] as u64 * 1_000_000) + info.system_time[1] as u64;
-                
+                let system_time =
+                    (info.system_time[0] as u64 * 1_000_000) + info.system_time[1] as u64;
+
                 Some(CpuTimes {
                     user_time,
                     system_time,
@@ -665,7 +659,7 @@ fn get_process_cpu_times() -> Option<CpuTimes> {
             }
         }
     }
-    
+
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         None
@@ -676,26 +670,26 @@ fn get_process_cpu_times() -> Option<CpuTimes> {
 fn calculate_cpu_percent(prev: CpuTimes, current: CpuTimes) -> f64 {
     let elapsed = current.timestamp.duration_since(prev.timestamp);
     let elapsed_micros = elapsed.as_micros() as u64;
-    
+
     if elapsed_micros == 0 {
         return 0.0;
     }
-    
+
     // Calculate total CPU time used (in microseconds or 100-nanosecond units)
-    let cpu_time_used = (current.user_time + current.system_time)
-        .saturating_sub(prev.user_time + prev.system_time);
-    
+    let cpu_time_used =
+        (current.user_time + current.system_time).saturating_sub(prev.user_time + prev.system_time);
+
     // On Windows, times are in 100-nanosecond units, convert to microseconds
     #[cfg(target_os = "windows")]
     let cpu_time_micros = cpu_time_used / 10;
-    
+
     // On Linux and macOS, already in microseconds
     #[cfg(not(target_os = "windows"))]
     let cpu_time_micros = cpu_time_used;
-    
+
     // Calculate percentage
     let cpu_percent = (cpu_time_micros as f64 / elapsed_micros as f64) * 100.0;
-    
+
     // Cap at reasonable values (multi-core can exceed 100%)
     cpu_percent.min(800.0) // Max 800% for 8 cores
 }
@@ -711,14 +705,14 @@ mod tests {
             target_rate: 10,
             ..Default::default()
         };
-        
+
         let mut writers = ConcurrentWriters::new(config);
         writers.start().await;
-        
+
         tokio::time::sleep(Duration::from_secs(1)).await;
-        
+
         let stats = writers.stop().await;
-        
+
         // Should have approximately 10 inserts (may vary due to timing)
         assert!(stats.total_inserts >= 5 && stats.total_inserts <= 15);
     }
@@ -727,14 +721,14 @@ mod tests {
     async fn test_memory_monitor_basic() {
         let mut monitor = MemoryMonitor::new(Duration::from_millis(100));
         monitor.start();
-        
+
         tokio::time::sleep(Duration::from_millis(350)).await;
-        
+
         let measurements = monitor.stop().await;
-        
+
         // Should have 3-4 measurements
         assert!(measurements.len() >= 3);
-        
+
         // All measurements should have non-zero memory
         for m in &measurements {
             assert!(m.rss_bytes > 0, "Memory measurement should be non-zero");
@@ -745,17 +739,17 @@ mod tests {
     async fn test_cpu_monitor_basic() {
         let mut monitor = CpuMonitor::new(Duration::from_millis(200));
         monitor.start();
-        
+
         // Do some work to generate CPU usage
         let _work: Vec<_> = (0..1000).map(|i| i * i).collect();
-        
+
         tokio::time::sleep(Duration::from_millis(600)).await;
-        
+
         let measurements = monitor.stop().await;
-        
+
         // Should have 2-3 measurements
         assert!(measurements.len() >= 2);
-        
+
         // CPU percentage should be reasonable (0-800% for up to 8 cores)
         for m in &measurements {
             assert!(
@@ -770,15 +764,14 @@ mod tests {
     async fn test_memory_growth_calculation() {
         let mut monitor = MemoryMonitor::new(Duration::from_millis(100));
         monitor.start();
-        
+
         tokio::time::sleep(Duration::from_millis(300)).await;
-        
+
         let growth = monitor.memory_growth_percentage().await;
-        
+
         // Should have growth percentage (may be positive or negative)
         assert!(growth.is_some());
-        
+
         let _measurements = monitor.stop().await;
     }
 }
-

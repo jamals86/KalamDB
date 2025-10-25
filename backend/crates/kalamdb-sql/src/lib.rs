@@ -1,13 +1,13 @@
 //! KalamSQL - Unified SQL interface for KalamDB system tables
 //!
-//! This crate provides a SQL-based interface for managing KalamDB's 7 system tables:
+//! This crate provides a SQL-based interface for managing KalamDB's system tables:
 //! - system_users: User management
 //! - system_live_queries: Live query subscriptions  
-//! - system_storage_locations: Storage location definitions
 //! - system_jobs: Background job tracking
 //! - system_namespaces: Namespace metadata
 //! - system_tables: Table metadata
-//! - system_table_schemas: Table schema versions
+//! - system_storages: Storage backend configurations
+//! - information_schema_tables: Unified table metadata (replaces system_table_schemas + system_columns)
 //!
 //! All system metadata is stored in RocksDB column families, eliminating JSON config files.
 //!
@@ -32,6 +32,7 @@
 //! ```
 
 pub mod adapter;
+pub mod batch_execution;
 pub mod compatibility;
 pub mod ddl;
 pub mod executor;
@@ -41,6 +42,7 @@ pub mod query_cache;
 pub mod statement_classifier;
 
 pub use adapter::RocksDbAdapter;
+pub use batch_execution::split_statements;
 pub use compatibility::{
     format_mysql_column_not_found, format_mysql_error, format_mysql_syntax_error,
     format_mysql_table_not_found, format_postgres_column_not_found, format_postgres_error,
@@ -48,15 +50,14 @@ pub use compatibility::{
     ErrorStyle,
 };
 pub use ddl::{
-    AlterStorageStatement, CreateStorageStatement, DropStorageStatement, ShowStoragesStatement,
-    FlushAllTablesStatement, FlushTableStatement, parse_job_command, JobCommand,
-    SubscribeStatement, SubscribeOptions,
+    parse_job_command, AlterStorageStatement, CreateStorageStatement, DropStorageStatement,
+    FlushAllTablesStatement, FlushTableStatement, JobCommand, ShowStoragesStatement,
+    SubscribeOptions, SubscribeStatement,
 };
 pub use executor::SqlExecutor;
 pub use models::*;
 pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
-
 
 use anyhow::Result;
 use rocksdb::DB;
@@ -118,6 +119,11 @@ impl KalamSql {
         self.adapter.get_namespace(namespace_id)
     }
 
+    /// Check if a namespace exists.
+    pub fn namespace_exists(&self, namespace_id: &str) -> Result<bool> {
+        self.adapter.namespace_exists(namespace_id)
+    }
+
     /// Insert a new namespace
     pub fn insert_namespace(&self, namespace_id: &str, options: &str) -> Result<()> {
         let namespace = Namespace {
@@ -149,24 +155,27 @@ impl KalamSql {
         self.adapter.get_table_schema(table_id, version)
     }
 
-    /// Insert a table schema
-    pub fn insert_table_schema(&self, schema: &TableSchema) -> Result<()> {
-        self.adapter.insert_table_schema(schema)
-    }
-
-    /// Get a storage location by name
-    pub fn get_storage_location(&self, location_name: &str) -> Result<Option<StorageLocation>> {
-        self.adapter.get_storage_location(location_name)
-    }
-
-    /// Insert a storage location
-    pub fn insert_storage_location(&self, location: &StorageLocation) -> Result<()> {
-        self.adapter.insert_storage_location(location)
-    }
-
-    /// Delete a storage location by name
-    pub fn delete_storage_location(&self, location_name: &str) -> Result<()> {
-        self.adapter.delete_storage_location(location_name)
+    /// Insert column metadata
+    ///
+    /// Stores metadata for a single column including DEFAULT expression,
+    /// data type, nullability, and ordinal position.
+    pub fn insert_column_metadata(
+        &self,
+        table_id: &str,
+        column_name: &str,
+        data_type: &str,
+        is_nullable: bool,
+        ordinal_position: i32,
+        default_expression: Option<&str>,
+    ) -> Result<()> {
+        self.adapter.insert_column_metadata(
+            table_id,
+            column_name,
+            data_type,
+            is_nullable,
+            ordinal_position,
+            default_expression,
+        )
     }
 
     /// Get a live query by ID
@@ -215,13 +224,6 @@ impl KalamSql {
         self.adapter.scan_all_namespaces()
     }
 
-    /// Scan all storage locations
-    ///
-    /// Returns a vector of all storage locations in the system.
-    pub fn scan_all_storage_locations(&self) -> Result<Vec<StorageLocation>> {
-        self.adapter.scan_all_storage_locations()
-    }
-
     /// Scan all live queries
     ///
     /// Returns a vector of all active live queries in the system.
@@ -248,13 +250,6 @@ impl KalamSql {
     /// Inserts table metadata into system_tables.
     pub fn insert_table(&self, table: &Table) -> Result<()> {
         self.adapter.insert_table(table)
-    }
-
-    /// Scan all table schemas
-    ///
-    /// Returns a vector of all table schemas in the system.
-    pub fn scan_all_table_schemas(&self) -> Result<Vec<TableSchema>> {
-        self.adapter.scan_all_table_schemas()
     }
 
     /// Scan all storages
@@ -288,20 +283,6 @@ impl KalamSql {
         self.adapter.delete_table(table_id)
     }
 
-    /// Delete all table schemas for a given table_id
-    ///
-    /// Removes all schema versions for the specified table from system_table_schemas.
-    pub fn delete_table_schemas_for_table(&self, table_id: &str) -> Result<()> {
-        self.adapter.delete_table_schemas_for_table(table_id)
-    }
-
-    /// Update a storage location
-    ///
-    /// Updates an existing storage location (upsert).
-    pub fn update_storage_location(&self, location: &StorageLocation) -> Result<()> {
-        self.adapter.update_storage_location(location)
-    }
-
     /// Update a job
     ///
     /// Updates an existing job (upsert), typically for status changes.
@@ -316,18 +297,72 @@ impl KalamSql {
         self.adapter.update_table(table)
     }
 
-    /// Get all table schemas for a given table_id
-    ///
-    /// Returns all schema versions for the specified table, sorted by version descending.
-    pub fn get_table_schemas_for_table(&self, table_id: &str) -> Result<Vec<TableSchema>> {
-        self.adapter.get_table_schemas_for_table(table_id)
-    }
-
     /// Get a table by table_id
     ///
     /// Fetches table metadata from system_tables.
     pub fn get_table(&self, table_id: &str) -> Result<Option<Table>> {
         self.adapter.get_table(table_id)
+    }
+
+    // ===================================
+    // information_schema.tables Operations
+    // ===================================
+
+    /// Insert or update complete table definition in information_schema_tables.
+    /// Single atomic write for all table metadata (replaces fragmented writes).
+    ///
+    /// # Arguments
+    /// * `table_def` - Complete table definition with metadata, columns, and schema history
+    ///
+    /// # Returns
+    /// Ok(()) on success, error on failure
+    pub fn upsert_table_definition(
+        &self,
+        table_def: &kalamdb_commons::models::TableDefinition,
+    ) -> Result<()> {
+        self.adapter.upsert_table_definition(table_def)
+    }
+
+    /// Get complete table definition from information_schema_tables.
+    /// Single atomic read for all table metadata.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - Namespace identifier
+    /// * `table_name` - Table name
+    ///
+    /// # Returns
+    /// Some(TableDefinition) if found, None if not found
+    pub fn get_table_definition(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> Result<Option<kalamdb_commons::models::TableDefinition>> {
+        self.adapter.get_table_definition(namespace_id, table_name)
+    }
+
+    /// Scan all table definitions in a namespace from information_schema_tables.
+    /// Used for SHOW TABLES and metadata queries.
+    ///
+    /// # Arguments
+    /// * `namespace_id` - Namespace identifier
+    ///
+    /// # Returns
+    /// Vector of all TableDefinition in the namespace
+    pub fn scan_table_definitions(
+        &self,
+        namespace_id: &str,
+    ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
+        self.adapter.scan_table_definitions(namespace_id)
+    }
+
+    /// Scan ALL table definitions across ALL namespaces
+    ///
+    /// # Returns
+    /// Vector of all TableDefinition in the database
+    pub fn scan_all_table_definitions(
+        &self,
+    ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
+        self.adapter.scan_all_table_definitions()
     }
 }
 

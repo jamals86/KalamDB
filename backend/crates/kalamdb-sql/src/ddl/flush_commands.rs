@@ -72,15 +72,19 @@
 //! # }
 //! ```
 
+//! Parsers for FLUSH TABLE and FLUSH ALL TABLES commands (US4).
+
+use kalamdb_commons::{NamespaceId, TableName};
+
 /// FLUSH TABLE statement
 ///
 /// Triggers asynchronous flush for a single table, returning job_id immediately.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlushTableStatement {
     /// Namespace containing the table
-    pub namespace: String,
+    pub namespace: NamespaceId,
     /// Table name to flush
-    pub table_name: String,
+    pub table_name: TableName,
 }
 
 impl FlushTableStatement {
@@ -126,8 +130,8 @@ impl FlushTableStatement {
         parsing::validate_no_extra_tokens(&normalized, 3, "FLUSH TABLE")?;
 
         Ok(Self {
-            namespace,
-            table_name,
+            namespace: NamespaceId::from(namespace),
+            table_name: TableName::from(table_name),
         })
     }
 }
@@ -139,7 +143,7 @@ impl FlushTableStatement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlushAllTablesStatement {
     /// Namespace to flush all tables from
-    pub namespace: String,
+    pub namespace: NamespaceId,
 }
 
 impl FlushAllTablesStatement {
@@ -179,7 +183,9 @@ impl FlushAllTablesStatement {
         // Check for extra tokens
         parsing::validate_no_extra_tokens(&normalized, 5, "FLUSH ALL TABLES IN")?;
 
-        Ok(Self { namespace })
+        Ok(Self {
+            namespace: NamespaceId::from(namespace),
+        })
     }
 }
 
@@ -190,15 +196,15 @@ mod tests {
     #[test]
     fn test_parse_flush_table_basic() {
         let stmt = FlushTableStatement::parse("FLUSH TABLE prod.events").unwrap();
-        assert_eq!(stmt.namespace, "prod");
-        assert_eq!(stmt.table_name, "events");
+        assert_eq!(stmt.namespace, NamespaceId::from("prod"));
+        assert_eq!(stmt.table_name, TableName::from("events"));
     }
 
     #[test]
     fn test_parse_flush_table_with_semicolon() {
         let stmt = FlushTableStatement::parse("FLUSH TABLE prod.events;").unwrap();
-        assert_eq!(stmt.namespace, "prod");
-        assert_eq!(stmt.table_name, "events");
+        assert_eq!(stmt.namespace, NamespaceId::from("prod"));
+        assert_eq!(stmt.table_name, TableName::from("events"));
     }
 
     #[test]
@@ -224,13 +230,13 @@ mod tests {
     #[test]
     fn test_parse_flush_all_tables_basic() {
         let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod").unwrap();
-        assert_eq!(stmt.namespace, "prod");
+        assert_eq!(stmt.namespace, NamespaceId::from("prod"));
     }
 
     #[test]
     fn test_parse_flush_all_tables_with_semicolon() {
         let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod;").unwrap();
-        assert_eq!(stmt.namespace, "prod");
+        assert_eq!(stmt.namespace, NamespaceId::from("prod"));
     }
 
     #[test]

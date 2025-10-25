@@ -3,8 +3,14 @@
 //! Provides centralized registration of all system tables to avoid code duplication.
 
 use crate::tables::system::{
-    JobsTableProvider, LiveQueriesTableProvider, NamespacesTableProvider,
-    StorageLocationsTableProvider, SystemStoragesProvider, SystemTablesTableProvider,
+    JobsTableProvider,
+    LiveQueriesTableProvider,
+    NamespacesTableProvider,
+    // TODO: Phase 2b - StorageLocationsTableProvider deprecated (replaced by system_storages)
+    // StorageLocationsTableProvider,
+    SystemStoragesProvider,
+    SystemTablesTableProvider,
+    TableSchemasProvider,
     UsersTableProvider,
 };
 use datafusion::catalog::schema::{MemorySchemaProvider, SchemaProvider};
@@ -44,18 +50,16 @@ pub fn register_system_tables(
     let users_provider = Arc::new(UsersTableProvider::new(kalam_sql.clone()));
     let namespaces_provider = Arc::new(NamespacesTableProvider::new(kalam_sql.clone()));
     let tables_provider = Arc::new(SystemTablesTableProvider::new(kalam_sql.clone()));
-    let storage_locations_provider =
-        Arc::new(StorageLocationsTableProvider::new(kalam_sql.clone()));
+    // TODO: Phase 2b - storage_locations deprecated (replaced by system_storages)
+    // let storage_locations_provider = Arc::new(StorageLocationsTableProvider::new(kalam_sql.clone()));
     let storages_provider = Arc::new(SystemStoragesProvider::new(kalam_sql.clone()));
     let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone()));
     let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.clone()));
+    let table_schemas_provider = Arc::new(TableSchemasProvider::new(kalam_sql.clone()));
 
     // Register each system table using the SystemTable enum
     system_schema
-        .register_table(
-            SystemTable::Users.table_name().to_string(),
-            users_provider,
-        )
+        .register_table(SystemTable::Users.table_name().to_string(), users_provider)
         .map_err(|e| format!("Failed to register system.users: {}", e))?;
 
     system_schema
@@ -72,12 +76,13 @@ pub fn register_system_tables(
         )
         .map_err(|e| format!("Failed to register system.tables: {}", e))?;
 
-    system_schema
-        .register_table(
-            SystemTable::StorageLocations.table_name().to_string(),
-            storage_locations_provider,
-        )
-        .map_err(|e| format!("Failed to register system.storage_locations: {}", e))?;
+    // TODO: Phase 2b - system.storage_locations deprecated (replaced by system.storages)
+    // system_schema
+    //     .register_table(
+    //         SystemTable::StorageLocations.table_name().to_string(),
+    //         storage_locations_provider,
+    //     )
+    //     .map_err(|e| format!("Failed to register system.storage_locations: {}", e))?;
 
     system_schema
         .register_table(
@@ -100,6 +105,13 @@ pub fn register_system_tables(
         )
         .map_err(|e| format!("Failed to register system.jobs: {}", e))?;
 
+    system_schema
+        .register_table(
+            SystemTable::TableSchemas.table_name().to_string(),
+            table_schemas_provider,
+        )
+        .map_err(|e| format!("Failed to register system.table_schemas: {}", e))?;
+
     Ok(jobs_provider)
 }
 
@@ -116,6 +128,7 @@ mod tests {
             SystemTable::Users,
             SystemTable::Namespaces,
             SystemTable::Tables,
+            SystemTable::TableSchemas,
             SystemTable::StorageLocations,
             SystemTable::Storages,
             SystemTable::LiveQueries,
@@ -132,7 +145,7 @@ mod tests {
             );
         }
 
-        // Verify we have all 7 system tables (table_schemas is future work)
-        assert_eq!(names.len(), 7);
+        // Verify we have all system table registrations covered
+        assert_eq!(names.len(), 8);
     }
 }

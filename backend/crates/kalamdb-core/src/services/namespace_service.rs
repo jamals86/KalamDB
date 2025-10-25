@@ -89,6 +89,13 @@ impl NamespaceService {
         Ok(true)
     }
 
+    /// Check whether a namespace already exists.
+    pub fn namespace_exists(&self, name: &str) -> Result<bool, KalamDbError> {
+        self.kalam_sql.namespace_exists(name).map_err(|e| {
+            KalamDbError::IoError(format!("Failed to check namespace existence: {}", e))
+        })
+    }
+
     /// List all namespaces
     pub fn list(&self) -> Result<Vec<Namespace>, KalamDbError> {
         let namespaces = self

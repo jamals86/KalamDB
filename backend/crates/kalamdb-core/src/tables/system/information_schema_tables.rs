@@ -1,13 +1,17 @@
 //! information_schema.tables virtual table provider
 //!
 //! This module provides a DataFusion TableProvider for the information_schema.tables
-//! virtual table, which exposes all table metadata from system.tables.
+//! virtual table, which exposes all table metadata from information_schema_tables CF.
+//!
+//! **Updated**: Now uses unified TableDefinition from information_schema_tables instead
+//! of fragmented system.tables storage.
 
 use crate::error::KalamDbError;
 use crate::tables::system::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+    ArrayRef, BooleanArray, Int32Array, Int64Array, RecordBatch, StringBuilder,
+    TimestampMillisecondArray, UInt32Array, UInt64Array,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::{TableProvider, TableType};
@@ -19,7 +23,7 @@ use kalamdb_sql::KalamSql;
 use std::any::Any;
 use std::sync::Arc;
 
-/// InformationSchemaTablesProvider exposes all table metadata
+/// InformationSchemaTablesProvider exposes all table metadata from information_schema_tables CF
 pub struct InformationSchemaTablesProvider {
     kalam_sql: Arc<KalamSql>,
     schema: SchemaRef,
@@ -27,74 +31,85 @@ pub struct InformationSchemaTablesProvider {
 
 impl InformationSchemaTablesProvider {
     /// Create a new information_schema.tables provider
+    ///
+    /// # Arguments
+    /// * `kalam_sql` - KalamSQL instance for accessing information_schema_tables CF
     pub fn new(kalam_sql: Arc<KalamSql>) -> Self {
         let schema = Arc::new(Schema::new(vec![
+            // SQL standard information_schema.tables columns
             Field::new("table_catalog", DataType::Utf8, false),
-            Field::new("table_schema", DataType::Utf8, false),
+            Field::new("table_schema", DataType::Utf8, false), // namespace_id
             Field::new("table_name", DataType::Utf8, false),
-            Field::new("table_type", DataType::Utf8, false),
+            Field::new("table_type", DataType::Utf8, false), // USER/SHARED/STREAM/SYSTEM
+            // KalamDB-specific metadata columns
             Field::new("table_id", DataType::Utf8, false),
-            Field::new("namespace", DataType::Utf8, false),
             Field::new(
                 "created_at",
                 DataType::Timestamp(TimeUnit::Millisecond, None),
                 false,
             ),
-            Field::new("storage_location", DataType::Utf8, false),
-            Field::new("flush_policy", DataType::Utf8, false),
-            Field::new("schema_version", DataType::Int32, false),
-            Field::new("deleted_retention_hours", DataType::Int32, false),
+            Field::new(
+                "updated_at",
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                false,
+            ),
+            Field::new("schema_version", DataType::UInt32, false),
+            Field::new("storage_id", DataType::Utf8, false),
+            Field::new("use_user_storage", DataType::Boolean, false),
+            Field::new("deleted_retention_hours", DataType::UInt32, true), // nullable
+            Field::new("ttl_seconds", DataType::UInt64, true),             // nullable
         ]));
 
         Self { kalam_sql, schema }
     }
 
-    /// Scan all tables and return as RecordBatch
+    /// Scan all tables across all namespaces and return as RecordBatch
     pub fn scan_all_tables(&self) -> Result<RecordBatch, KalamDbError> {
-        let tables = self
+        let table_defs = self
             .kalam_sql
-            .scan_all_tables()
-            .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
+            .scan_all_table_definitions()
+            .map_err(|e| KalamDbError::Other(format!("Failed to scan table definitions: {}", e)))?;
 
         let mut table_catalogs = StringBuilder::new();
         let mut table_schemas = StringBuilder::new();
         let mut table_names = StringBuilder::new();
         let mut table_types = StringBuilder::new();
         let mut table_ids = StringBuilder::new();
-        let mut namespaces = StringBuilder::new();
         let mut created_ats = Vec::new();
-        let mut storage_locations = StringBuilder::new();
-        let mut flush_policies = StringBuilder::new();
+        let mut updated_ats = Vec::new();
         let mut schema_versions = Vec::new();
-        let mut deleted_retention_hours_vec = Vec::new();
+        let mut storage_ids = StringBuilder::new();
+        let mut use_user_storages = Vec::new();
+        let mut deleted_retention_hours_vec: Vec<Option<u32>> = Vec::new();
+        let mut ttl_seconds_vec: Vec<Option<u64>> = Vec::new();
 
-        for table in tables {
+        for table_def in table_defs {
             // SQL standard information_schema uses "def" as default catalog
             table_catalogs.append_value("def");
 
             // table_schema is the namespace/database name
-            table_schemas.append_value(&table.namespace);
+            table_schemas.append_value(&table_def.namespace_id);
 
             // table_name
-            table_names.append_value(&table.table_name);
+            table_names.append_value(&table_def.table_name);
 
             // table_type: Convert KalamDB type to SQL standard
-            let standard_type = match table.table_type.as_str() {
-                "user" | "shared" => "BASE TABLE",
-                "system" => "SYSTEM VIEW",
-                "stream" => "STREAM TABLE",
-                _ => "BASE TABLE",
+            let standard_type = match table_def.table_type {
+                crate::catalog::TableType::User | crate::catalog::TableType::Shared => "BASE TABLE",
+                crate::catalog::TableType::System => "SYSTEM VIEW",
+                crate::catalog::TableType::Stream => "STREAM TABLE",
             };
             table_types.append_value(standard_type);
 
             // KalamDB-specific columns
-            table_ids.append_value(&table.table_id);
-            namespaces.append_value(&table.namespace);
-            created_ats.push(table.created_at);
-            storage_locations.append_value(&table.storage_location);
-            flush_policies.append_value(&table.flush_policy);
-            schema_versions.push(table.schema_version);
-            deleted_retention_hours_vec.push(table.deleted_retention_hours);
+            table_ids.append_value(&table_def.table_id);
+            created_ats.push(table_def.created_at);
+            updated_ats.push(table_def.updated_at);
+            schema_versions.push(table_def.schema_version);
+            storage_ids.append_value(&table_def.storage_id);
+            use_user_storages.push(table_def.use_user_storage);
+            deleted_retention_hours_vec.push(table_def.deleted_retention_hours);
+            ttl_seconds_vec.push(table_def.ttl_seconds);
         }
 
         let batch = RecordBatch::try_new(
@@ -105,12 +120,13 @@ impl InformationSchemaTablesProvider {
                 Arc::new(table_names.finish()) as ArrayRef,
                 Arc::new(table_types.finish()) as ArrayRef,
                 Arc::new(table_ids.finish()) as ArrayRef,
-                Arc::new(namespaces.finish()) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
-                Arc::new(storage_locations.finish()) as ArrayRef,
-                Arc::new(flush_policies.finish()) as ArrayRef,
-                Arc::new(Int32Array::from(schema_versions)) as ArrayRef,
-                Arc::new(Int32Array::from(deleted_retention_hours_vec)) as ArrayRef,
+                Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef,
+                Arc::new(UInt32Array::from(schema_versions)) as ArrayRef,
+                Arc::new(storage_ids.finish()) as ArrayRef,
+                Arc::new(BooleanArray::from(use_user_storages)) as ArrayRef,
+                Arc::new(UInt32Array::from(deleted_retention_hours_vec)) as ArrayRef,
+                Arc::new(UInt64Array::from(ttl_seconds_vec)) as ArrayRef,
             ],
         )
         .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))?;

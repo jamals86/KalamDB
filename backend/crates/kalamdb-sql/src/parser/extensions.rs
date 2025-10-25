@@ -29,7 +29,7 @@ pub use crate::ddl::flush_commands::{FlushAllTablesStatement, FlushTableStatemen
 pub use crate::ddl::job_commands::{parse_job_command, JobCommand};
 
 // Subscribe commands (SUBSCRIBE TO)
-pub use crate::ddl::subscribe_commands::{SubscribeStatement, SubscribeOptions};
+pub use crate::ddl::subscribe_commands::{SubscribeOptions, SubscribeStatement};
 
 /// Extension statement types that don't fit into standard SQL.
 ///
@@ -147,7 +147,10 @@ mod tests {
             eprintln!("Parse error: {}", e);
         }
         assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), ExtensionStatement::CreateStorage(_)));
+        assert!(matches!(
+            result.unwrap(),
+            ExtensionStatement::CreateStorage(_)
+        ));
     }
 
     #[test]
@@ -187,6 +190,8 @@ mod tests {
         let sql = "CREATE FOOBAR something";
         let result = ExtensionStatement::parse(sql);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unknown KalamDB extension command"));
+        assert!(result
+            .unwrap_err()
+            .contains("Unknown KalamDB extension command"));
     }
 }

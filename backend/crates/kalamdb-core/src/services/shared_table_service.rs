@@ -134,7 +134,11 @@ impl SharedTableService {
         let schema = stmt.schema.clone();
 
         // Resolve storage location from storage_id (defaulting to 'local')
-        let storage_id = stmt.storage_id.as_ref().cloned().unwrap_or_else(|| StorageId::local());
+        let storage_id = stmt
+            .storage_id
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| StorageId::local());
         let storage_location = format!("/data/shared"); // TODO: Get from storage configuration
 
         // Validate no ${user_id} templating in shared table storage location
@@ -148,15 +152,8 @@ impl SharedTableService {
         // Parse flush policy
         let flush_policy = self.parse_flush_policy(stmt.flush_policy.as_ref())?;
 
-        // Store schema in system_table_schemas via kalamdb-sql
-        self.create_schema_metadata(
-            &stmt.namespace_id,
-            &stmt.table_name,
-            &schema,
-            &storage_location,
-            &flush_policy,
-            stmt.deleted_retention_hours.map(|h| h as u64 * 3600),
-        )?;
+        // Save complete table definition to information_schema_tables (atomic write)
+        self.save_table_definition(&stmt, &schema, &storage_location)?;
 
         // Create RocksDB column family for this table
         // This ensures the table is ready for data operations immediately after creation
@@ -263,22 +260,21 @@ impl SharedTableService {
         flush_policy: Option<&DdlFlushPolicy>,
     ) -> Result<FlushPolicy, KalamDbError> {
         match flush_policy {
-            Some(DdlFlushPolicy::RowLimit { row_limit }) => {
-                Ok(FlushPolicy::RowLimit {
-                    row_limit: *row_limit,
-                })
-            }
+            Some(DdlFlushPolicy::RowLimit { row_limit }) => Ok(FlushPolicy::RowLimit {
+                row_limit: *row_limit,
+            }),
             Some(DdlFlushPolicy::TimeInterval { interval_seconds }) => {
                 Ok(FlushPolicy::TimeInterval {
                     interval_seconds: *interval_seconds,
                 })
             }
-            Some(DdlFlushPolicy::Combined { row_limit, interval_seconds }) => {
-                Ok(FlushPolicy::Combined {
-                    row_limit: *row_limit,
-                    interval_seconds: *interval_seconds,
-                })
-            }
+            Some(DdlFlushPolicy::Combined {
+                row_limit,
+                interval_seconds,
+            }) => Ok(FlushPolicy::Combined {
+                row_limit: *row_limit,
+                interval_seconds: *interval_seconds,
+            }),
             None => {
                 // Default flush policy: 1000 rows
                 Ok(FlushPolicy::RowLimit { row_limit: 1000 })
@@ -293,6 +289,111 @@ impl SharedTableService {
     /// - System columns (_updated, _deleted) are added dynamically by SharedTableProvider
     /// - Table metadata in system_tables
     /// - Flush policy configuration
+    /// Create and save table definition to information_schema_tables.
+    /// Replaces fragmented schema storage with single atomic write.
+    ///
+    /// # Arguments
+    /// * `stmt` - CREATE TABLE statement with all metadata
+    /// * `schema` - Final Arrow schema (after system column injection if applicable)
+    ///
+    /// # Returns
+    /// Ok(()) on success, error on failure
+    fn save_table_definition(
+        &self,
+        stmt: &CreateTableStatement,
+        schema: &Arc<Schema>,
+        storage_location: &str,
+    ) -> Result<(), KalamDbError> {
+        use kalamdb_commons::models::{FlushPolicyDef, SchemaVersion, TableDefinition};
+
+        // Extract columns from schema with ordinal positions
+        let columns = TableDefinition::extract_columns_from_schema(
+            schema.as_ref(),
+            &stmt.column_defaults,
+            stmt.primary_key_column.as_deref(),
+        );
+
+        // Serialize Arrow schema for history
+        let arrow_schema_json =
+            TableDefinition::serialize_arrow_schema(schema.as_ref()).map_err(|e| {
+                KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
+            })?;
+
+        // Build flush policy definition
+        let flush_policy_def = stmt.flush_policy.as_ref().map(|policy| match policy {
+            DdlFlushPolicy::RowLimit { row_limit } => FlushPolicyDef {
+                row_threshold: Some(*row_limit as u64),
+                interval_seconds: None,
+            },
+            DdlFlushPolicy::TimeInterval { interval_seconds } => FlushPolicyDef {
+                row_threshold: None,
+                interval_seconds: Some(*interval_seconds as u64),
+            },
+            DdlFlushPolicy::Combined {
+                row_limit,
+                interval_seconds,
+            } => FlushPolicyDef {
+                row_threshold: Some(*row_limit as u64),
+                interval_seconds: Some(*interval_seconds as u64),
+            },
+        });
+
+        // Build complete table definition
+        let now_millis = chrono::Utc::now().timestamp_millis();
+        let table_def = TableDefinition {
+            table_id: format!(
+                "{}:{}",
+                stmt.namespace_id.as_str(),
+                stmt.table_name.as_str()
+            ),
+            table_name: stmt.table_name.clone(),
+            namespace_id: stmt.namespace_id.clone(),
+            table_type: TableType::Shared,
+            created_at: now_millis,
+            updated_at: now_millis,
+            schema_version: 1,
+            storage_id: stmt
+                .storage_id
+                .clone()
+                .unwrap_or_else(|| StorageId::from("local")),
+            use_user_storage: stmt.use_user_storage,
+            flush_policy: flush_policy_def,
+            deleted_retention_hours: stmt.deleted_retention_hours,
+            ttl_seconds: stmt.ttl_seconds,
+            columns,
+            schema_history: vec![SchemaVersion {
+                version: 1,
+                created_at: now_millis,
+                changes: format!(
+                    "Initial shared table schema. Deleted retention: {:?}h",
+                    stmt.deleted_retention_hours
+                ),
+                arrow_schema_json,
+            }],
+        };
+
+        // Single atomic write to information_schema_tables
+        self.kalam_sql
+            .upsert_table_definition(&table_def)
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to save table definition to information_schema.tables: {}",
+                    e
+                ))
+            })?;
+
+        log::info!(
+            "Table definition for {}.{} saved to information_schema.tables (version 1)",
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str()
+        );
+
+        Ok(())
+    }
+
+    /// DEPRECATED: Create schema metadata in system_table_schemas
+    ///
+    /// **REPLACED BY**: save_table_definition() which writes to information_schema_tables
     fn create_schema_metadata(
         &self,
         namespace_id: &NamespaceId,
@@ -323,15 +424,9 @@ impl SharedTableService {
             ),
         };
 
-        // Insert schema into system_table_schemas via KalamSQL so DataFusion can load it
-        self.kalam_sql
-            .insert_table_schema(&table_schema)
-            .map_err(|e| {
-                KalamDbError::SchemaError(format!(
-                    "Failed to insert schema for {}: {}",
-                    table_id, e
-                ))
-            })?;
+        // TODO: Replace with information_schema_tables storage (Phase 2b)
+        // Schema will be stored in TableDefinition.schema_history array
+        // self.kalam_sql.insert_table_schema(&table_schema)?;
 
         // Create Table record in system_tables
         let flush_policy_str = match flush_policy {
@@ -392,7 +487,7 @@ mod tests {
         let test_db = TestDb::new(&[
             "shared_table:app:config",
             "system_tables",
-            "system_table_schemas",
+            "information_schema_tables",
         ])
         .unwrap();
 
@@ -417,6 +512,8 @@ mod tests {
             namespace_id: NamespaceId::new("app"),
             table_type: kalamdb_commons::models::TableType::Shared,
             schema,
+            column_defaults: std::collections::HashMap::new(),
+            primary_key_column: None,
             storage_id: None, // Will default to 'local'
             use_user_storage: false,
             flush_policy: None,
@@ -474,6 +571,8 @@ mod tests {
             namespace_id: NamespaceId::new("app"),
             table_type: kalamdb_commons::models::TableType::Shared,
             schema,
+            column_defaults: std::collections::HashMap::new(),
+            primary_key_column: None,
             storage_id: None, // Will default to 'local'
             use_user_storage: false,
             flush_policy: None,
@@ -500,6 +599,8 @@ mod tests {
             namespace_id: NamespaceId::new("app"),
             table_type: kalamdb_commons::models::TableType::Shared,
             schema,
+            column_defaults: std::collections::HashMap::new(),
+            primary_key_column: None,
             storage_id: None, // Will default to 'local'
             use_user_storage: false,
             flush_policy: None,
@@ -512,7 +613,7 @@ mod tests {
         // This test should pass since the default location doesn't contain ${user_id}
         let result = service.create_table(stmt);
         assert!(result.is_ok());
-        
+
         // TODO: When storage locations become configurable, add a test that actually
         // tries to create a shared table with a location containing ${user_id}
     }
@@ -527,7 +628,9 @@ mod tests {
         assert!(matches!(result, FlushPolicy::RowLimit { row_limit: 500 }));
 
         // Time-based policy
-        let policy = DdlFlushPolicy::TimeInterval { interval_seconds: 60 };
+        let policy = DdlFlushPolicy::TimeInterval {
+            interval_seconds: 60,
+        };
         let result = service.parse_flush_policy(Some(&policy)).unwrap();
         assert!(matches!(
             result,
@@ -595,6 +698,8 @@ mod tests {
             namespace_id: NamespaceId::new("app"),
             table_type: TableType::Shared,
             schema: schema.clone(),
+            column_defaults: std::collections::HashMap::new(),
+            primary_key_column: None,
             storage_id: None, // Will default to 'local'
             use_user_storage: false,
             flush_policy: None,
@@ -612,7 +717,7 @@ mod tests {
         //     table_name: TableName::new("config"),
         //     namespace_id: NamespaceId::new("app"),
         //     schema: schema.clone(),
-        //     
+        //
         //     flush_policy: None,
         //     deleted_retention: None,
         //     if_not_exists: false,
@@ -624,7 +729,7 @@ mod tests {
         //     table_name: TableName::new("config"),
         //     namespace_id: NamespaceId::new("app"),
         //     schema,
-        //     
+        //
         //     flush_policy: None,
         //     deleted_retention: None,
         //     if_not_exists: true,

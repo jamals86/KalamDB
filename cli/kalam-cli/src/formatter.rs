@@ -4,7 +4,7 @@
 //!
 //! Provides consistent, colorized output formatting for query results.
 
-use kalam_link::{QueryResponse, ErrorDetail};
+use kalam_link::{ErrorDetail, QueryResponse};
 use serde_json::Value as JsonValue;
 
 use crate::{error::Result, session::OutputFormat};
@@ -37,18 +37,24 @@ impl OutputFormatter {
     /// Format as table
     fn format_table(&self, response: &QueryResponse) -> Result<String> {
         if response.results.is_empty() {
-            let exec_time_ms = response.execution_time_ms.unwrap_or(0) as f64;
-            return Ok(format!("Query OK, 0 rows affected\n\nTime: {:.3} ms", exec_time_ms));
+            let exec_time_ms = response.took_ms.unwrap_or(0) as f64;
+            return Ok(format!(
+                "Query OK, 0 rows affected\n\nTook: {:.3} ms",
+                exec_time_ms
+            ));
         }
 
         let result = &response.results[0];
-        let exec_time_ms = response.execution_time_ms.unwrap_or(0) as f64;
-        
+        let exec_time_ms = response.took_ms.unwrap_or(0) as f64;
+
         // Check if this is a message-only result (DDL statements)
         if let Some(ref message) = result.message {
             // Format DDL message similar to MySQL/PostgreSQL
             let row_count = result.row_count;
-            return Ok(format!("{}\nQuery OK, {} rows affected\n\nTime: {:.3} ms", message, row_count, exec_time_ms));
+            return Ok(format!(
+                "{}\nQuery OK, {} rows affected\n\nTook: {:.3} ms",
+                message, row_count, exec_time_ms
+            ));
         }
 
         // Handle data results
@@ -76,7 +82,11 @@ impl OutputFormatter {
             output.push('┌');
             for (idx, width) in col_widths.iter().enumerate() {
                 output.push_str(&"─".repeat(width + 2));
-                output.push(if idx == col_widths.len() - 1 { '┐' } else { '┬' });
+                output.push(if idx == col_widths.len() - 1 {
+                    '┐'
+                } else {
+                    '┬'
+                });
             }
             output.push('\n');
 
@@ -94,7 +104,11 @@ impl OutputFormatter {
             output.push('├');
             for (idx, width) in col_widths.iter().enumerate() {
                 output.push_str(&"─".repeat(width + 2));
-                output.push(if idx == col_widths.len() - 1 { '┤' } else { '┼' });
+                output.push(if idx == col_widths.len() - 1 {
+                    '┤'
+                } else {
+                    '┼'
+                });
             }
             output.push('\n');
 
@@ -118,7 +132,11 @@ impl OutputFormatter {
             output.push('└');
             for (idx, width) in col_widths.iter().enumerate() {
                 output.push_str(&"─".repeat(width + 2));
-                output.push(if idx == col_widths.len() - 1 { '┘' } else { '┴' });
+                output.push(if idx == col_widths.len() - 1 {
+                    '┘'
+                } else {
+                    '┴'
+                });
             }
             output.push('\n');
 
@@ -128,15 +146,18 @@ impl OutputFormatter {
             // Add blank line for psql-style formatting
             output.push('\n');
             // Display timing in milliseconds like psql
-            let exec_time_ms = response.execution_time_ms.unwrap_or(0) as f64;
-            output.push_str(&format!("Time: {:.3} ms", exec_time_ms));
+            let exec_time_ms = response.took_ms.unwrap_or(0) as f64;
+            output.push_str(&format!("Took: {:.3} ms", exec_time_ms));
 
             Ok(output)
         } else {
             // Non-query statement (INSERT, UPDATE, DELETE)
             let row_count = result.row_count;
-            let exec_time_ms = response.execution_time_ms.unwrap_or(0) as f64;
-            Ok(format!("Query OK, {} rows affected\n\nTime: {:.3} ms", row_count, exec_time_ms))
+            let exec_time_ms = response.took_ms.unwrap_or(0) as f64;
+            Ok(format!(
+                "Query OK, {} rows affected\n\nTook: {:.3} ms",
+                row_count, exec_time_ms
+            ))
         }
     }
 
@@ -154,7 +175,7 @@ impl OutputFormatter {
         }
 
         let result = &response.results[0];
-        
+
         // Handle message-only results
         if result.rows.is_none() {
             return Ok("".to_string());
@@ -201,17 +222,20 @@ impl OutputFormatter {
     /// Format error detail (with code and details) - MySQL/PostgreSQL style
     fn format_error_detail(&self, error: &ErrorDetail) -> String {
         let mut output = String::new();
-        
+
         if self.color {
-            output.push_str(&format!("\x1b[31mERROR {}\x1b[0m: {}\n", error.code, error.message));
+            output.push_str(&format!(
+                "\x1b[31mERROR {}\x1b[0m: {}\n",
+                error.code, error.message
+            ));
         } else {
             output.push_str(&format!("ERROR {}: {}\n", error.code, error.message));
         }
-        
+
         if let Some(ref details) = error.details {
             output.push_str(&format!("Details: {}", details));
         }
-        
+
         output
     }
 
