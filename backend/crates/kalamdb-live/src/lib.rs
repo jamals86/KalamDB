@@ -84,6 +84,5 @@ pub mod notifier {
 }
 
 // Re-export main types for convenience
-pub use subscription::LiveQuerySubscription;
 pub use expression_cache::CachedExpression;
-
+pub use subscription::LiveQuerySubscription;

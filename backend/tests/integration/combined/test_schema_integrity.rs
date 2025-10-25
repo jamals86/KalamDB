@@ -8,6 +8,7 @@
 // - SELECT * column order preservation
 // - information_schema.tables and information_schema.columns queries
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use crate::common::TestServer;

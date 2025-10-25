@@ -20,6 +20,7 @@
 //! - T143: Duplicate flush prevention
 //! - T144: Job cancellation via KILL JOB
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::{fixtures, TestServer};

@@ -23,7 +23,7 @@ use std::collections::HashMap;
 ///       "columns": ["id", "name"]
 ///     }
 ///   ],
-///   "execution_time_ms": 15,
+///   "took_ms": 15,
 ///   "error": null
 /// }
 /// ```
@@ -33,7 +33,7 @@ use std::collections::HashMap;
 /// {
 ///   "status": "error",
 ///   "results": [],
-///   "execution_time_ms": 5,
+///   "took_ms": 5,
 ///   "error": {
 ///     "code": "INVALID_SQL",
 ///     "message": "Syntax error near 'SELCT'"
@@ -49,7 +49,7 @@ pub struct SqlResponse {
     pub results: Vec<QueryResult>,
 
     /// Total execution time in milliseconds
-    pub execution_time_ms: u64,
+    pub took_ms: u64,
 
     /// Error details if status is "error", otherwise null
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -92,21 +92,21 @@ pub struct ErrorDetail {
 
 impl SqlResponse {
     /// Create a successful response with results
-    pub fn success(results: Vec<QueryResult>, execution_time_ms: u64) -> Self {
+    pub fn success(results: Vec<QueryResult>, took_ms: u64) -> Self {
         Self {
             status: "success".to_string(),
             results,
-            execution_time_ms,
+            took_ms,
             error: None,
         }
     }
 
     /// Create an error response
-    pub fn error(code: &str, message: &str, execution_time_ms: u64) -> Self {
+    pub fn error(code: &str, message: &str, took_ms: u64) -> Self {
         Self {
             status: "error".to_string(),
             results: Vec::new(),
-            execution_time_ms,
+            took_ms,
             error: Some(ErrorDetail {
                 code: code.to_string(),
                 message: message.to_string(),
@@ -116,16 +116,11 @@ impl SqlResponse {
     }
 
     /// Create an error response with additional details
-    pub fn error_with_details(
-        code: &str,
-        message: &str,
-        details: &str,
-        execution_time_ms: u64,
-    ) -> Self {
+    pub fn error_with_details(code: &str, message: &str, details: &str, took_ms: u64) -> Self {
         Self {
             status: "error".to_string(),
             results: Vec::new(),
-            execution_time_ms,
+            took_ms,
             error: Some(ErrorDetail {
                 code: code.to_string(),
                 message: message.to_string(),

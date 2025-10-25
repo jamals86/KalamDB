@@ -36,7 +36,7 @@ use crate::rate_limiter::RateLimiter;
 ///       "columns": ["id", "name"]
 ///     }
 ///   ],
-///   "execution_time_ms": 15
+///   "took_ms": 15
 /// }
 /// ```
 ///
@@ -45,7 +45,7 @@ use crate::rate_limiter::RateLimiter;
 /// {
 ///   "status": "error",
 ///   "results": [],
-///   "execution_time_ms": 5,
+///   "took_ms": 5,
 ///   "error": {
 ///     "code": "INVALID_SQL",
 ///     "message": "Syntax error near 'SELCT'"
@@ -71,7 +71,7 @@ pub async fn execute_sql_v1(
     // Rate limiting: Check if user can execute query
     if let Some(ref uid) = user_id {
         if !rate_limiter.check_query_rate(uid) {
-            let execution_time_ms = start_time.elapsed().as_millis() as u64;
+            let took_ms = start_time.elapsed().as_millis() as u64;
             warn!(
                 "Rate limit exceeded for user: {} (queries per second)",
                 uid.as_ref()
@@ -79,25 +79,29 @@ pub async fn execute_sql_v1(
             return HttpResponse::TooManyRequests().json(SqlResponse::error(
                 "RATE_LIMIT_EXCEEDED",
                 "Too many queries per second. Please slow down.",
-                execution_time_ms,
+                took_ms,
             ));
         }
     }
 
-    // Split SQL by semicolons to handle multiple statements
-    let statements: Vec<&str> = req
-        .sql
-        .split(';')
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let statements = match kalamdb_sql::split_statements(&req.sql) {
+        Ok(stmts) => stmts,
+        Err(err) => {
+            let took_ms = start_time.elapsed().as_millis() as u64;
+            return HttpResponse::BadRequest().json(SqlResponse::error(
+                "BATCH_PARSE_ERROR",
+                &format!("Failed to parse SQL batch: {}", err),
+                took_ms,
+            ));
+        }
+    };
 
     if statements.is_empty() {
-        let execution_time_ms = start_time.elapsed().as_millis() as u64;
+        let took_ms = start_time.elapsed().as_millis() as u64;
         return HttpResponse::BadRequest().json(SqlResponse::error(
             "EMPTY_SQL",
             "No SQL statements provided",
-            execution_time_ms,
+            took_ms,
         ));
     }
 
@@ -118,19 +122,19 @@ pub async fn execute_sql_v1(
         {
             Ok(result) => results.push(result),
             Err(err) => {
-                let execution_time_ms = start_time.elapsed().as_millis() as u64;
+                let took_ms = start_time.elapsed().as_millis() as u64;
                 return HttpResponse::BadRequest().json(SqlResponse::error_with_details(
                     "SQL_EXECUTION_ERROR",
-                    &format!("ERROR: statement {}: {}", idx + 1, err),
+                    &format!("Statement {} failed: {}", idx + 1, err),
                     sql,
-                    execution_time_ms,
+                    took_ms,
                 ));
             }
         }
     }
 
-    let execution_time_ms = start_time.elapsed().as_millis() as u64;
-    HttpResponse::Ok().json(SqlResponse::success(results, execution_time_ms))
+    let took_ms = start_time.elapsed().as_millis() as u64;
+    HttpResponse::Ok().json(SqlResponse::success(results, took_ms))
 }
 
 /// Execute a single SQL statement

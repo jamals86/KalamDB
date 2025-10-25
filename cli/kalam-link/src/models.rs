@@ -51,7 +51,7 @@ pub struct QueryResponse {
 
     /// Query execution time in milliseconds
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub execution_time_ms: Option<u64>,
+    pub took_ms: Option<u64>,
 
     /// Error details if status is "error"
     #[serde(skip_serializing_if = "Option::is_none")]

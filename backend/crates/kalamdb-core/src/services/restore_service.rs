@@ -23,7 +23,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct RestoreResult {
     /// Namespace ID that was restored
-    pub namespace_id: String,
+    pub namespace_id: NamespaceId,
 
     /// Number of tables restored
     pub tables_count: usize,
@@ -131,7 +131,7 @@ impl RestoreService {
         self.complete_restore_job(&job_id, manifest.tables.len(), files_count, total_bytes)?;
 
         Ok(Some(RestoreResult {
-            namespace_id: namespace_id.to_string(),
+            namespace_id: namespace_id.clone(),
             tables_count: manifest.tables.len(),
             files_count,
             total_bytes,

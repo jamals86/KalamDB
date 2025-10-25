@@ -23,6 +23,7 @@
 //! on each change notification (~50% performance improvement).
 
 use datafusion::logical_expr::Expr;
+use kalamdb_commons::{NamespaceId, TableName, UserId};
 use std::sync::Arc;
 
 /// Represents an active live query subscription
@@ -42,13 +43,14 @@ use std::sync::Arc;
 ///
 /// ```rust,ignore
 /// use kalamdb_live::subscription::LiveQuerySubscription;
+/// use kalamdb_commons::{UserId, NamespaceId, TableName};
 /// use datafusion::logical_expr::Expr;
 ///
 /// let subscription = LiveQuerySubscription::new(
 ///     "live_123".to_string(),
-///     "user_456".to_string(),
-///     "app".to_string(),
-///     "messages".to_string(),
+///     UserId::from("user_456"),
+///     NamespaceId::from("app"),
+///     TableName::from("messages"),
 ///     Some("status = 'unread'".to_string()),
 ///     Some(compiled_expr),
 /// );
@@ -57,25 +59,25 @@ use std::sync::Arc;
 pub struct LiveQuerySubscription {
     /// Unique subscription identifier (UUID v4)
     pub live_id: String,
-    
+
     /// User ID who owns this subscription
-    pub user_id: String,
-    
+    pub user_id: UserId,
+
     /// Namespace containing the table
-    pub namespace_id: String,
-    
+    pub namespace_id: NamespaceId,
+
     /// Table name being monitored
-    pub table_name: String,
-    
+    pub table_name: TableName,
+
     /// Optional SQL WHERE clause for filtering changes
     pub filter_sql: Option<String>,
-    
+
     /// Compiled DataFusion expression (cached for performance)
     pub cached_expr: Option<Arc<Expr>>,
-    
+
     /// Number of notifications delivered to client
     pub changes: i64,
-    
+
     /// Timestamp when subscription was created (Unix epoch milliseconds)
     pub created_at: i64,
 }
@@ -97,9 +99,9 @@ impl LiveQuerySubscription {
     /// A new `LiveQuerySubscription` instance with changes counter initialized to 0
     pub fn new(
         live_id: String,
-        user_id: String,
-        namespace_id: String,
-        table_name: String,
+        user_id: UserId,
+        namespace_id: NamespaceId,
+        table_name: TableName,
         filter_sql: Option<String>,
         cached_expr: Option<Arc<Expr>>,
     ) -> Self {
@@ -159,17 +161,17 @@ mod tests {
     fn test_subscription_creation() {
         let sub = LiveQuerySubscription::new(
             "live_123".to_string(),
-            "user_456".to_string(),
-            "app".to_string(),
-            "messages".to_string(),
+            UserId::from("user_456"),
+            NamespaceId::from("app"),
+            TableName::from("messages"),
             Some("status = 'unread'".to_string()),
             None,
         );
 
         assert_eq!(sub.live_id, "live_123");
-        assert_eq!(sub.user_id, "user_456");
-        assert_eq!(sub.namespace_id, "app");
-        assert_eq!(sub.table_name, "messages");
+        assert_eq!(sub.user_id, UserId::from("user_456"));
+        assert_eq!(sub.namespace_id, NamespaceId::from("app"));
+        assert_eq!(sub.table_name, TableName::from("messages"));
         assert_eq!(sub.changes, 0);
         assert!(sub.created_at > 0);
     }
@@ -178,18 +180,18 @@ mod tests {
     fn test_increment_changes() {
         let mut sub = LiveQuerySubscription::new(
             "live_123".to_string(),
-            "user_456".to_string(),
-            "app".to_string(),
-            "messages".to_string(),
+            UserId::from("user_456"),
+            NamespaceId::from("app"),
+            TableName::from("messages"),
             None,
             None,
         );
 
         assert_eq!(sub.get_changes(), 0);
-        
+
         sub.increment_changes();
         assert_eq!(sub.get_changes(), 1);
-        
+
         sub.increment_changes();
         sub.increment_changes();
         assert_eq!(sub.get_changes(), 3);
@@ -199,9 +201,9 @@ mod tests {
     fn test_has_filter() {
         let sub_without_filter = LiveQuerySubscription::new(
             "live_123".to_string(),
-            "user_456".to_string(),
-            "app".to_string(),
-            "messages".to_string(),
+            UserId::from("user_456"),
+            NamespaceId::from("app"),
+            TableName::from("messages"),
             None,
             None,
         );
@@ -209,9 +211,9 @@ mod tests {
 
         let sub_with_sql_only = LiveQuerySubscription::new(
             "live_123".to_string(),
-            "user_456".to_string(),
-            "app".to_string(),
-            "messages".to_string(),
+            UserId::from("user_456"),
+            NamespaceId::from("app"),
+            TableName::from("messages"),
             Some("status = 'active'".to_string()),
             None,
         );
@@ -222,9 +224,9 @@ mod tests {
     fn test_table_identifier() {
         let sub = LiveQuerySubscription::new(
             "live_123".to_string(),
-            "user_456".to_string(),
-            "app".to_string(),
-            "messages".to_string(),
+            UserId::from("user_456"),
+            NamespaceId::from("app"),
+            TableName::from("messages"),
             None,
             None,
         );

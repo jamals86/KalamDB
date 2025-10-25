@@ -58,7 +58,7 @@ async fn main() -> Result<(), KalamLinkError> {
     let response = client.execute_query("SELECT * FROM example.users").await?;
 
     println!("   Status: {}", response.status);
-    if let Some(exec_time) = response.execution_time_ms {
+    if let Some(exec_time) = response.took_ms {
         println!("   Execution time: {} ms", exec_time);
     }
 

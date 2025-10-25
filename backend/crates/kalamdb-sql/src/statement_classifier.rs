@@ -52,6 +52,14 @@ pub enum SqlStatement {
     /// KILL JOB <job_id>
     KillJob,
 
+    // ===== Transaction Control =====
+    /// BEGIN [TRANSACTION]
+    BeginTransaction,
+    /// COMMIT [WORK]
+    CommitTransaction,
+    /// ROLLBACK [WORK]
+    RollbackTransaction,
+
     // ===== Live Query Subscriptions =====
     /// SUBSCRIBE TO <namespace>.<table> [WHERE ...] [OPTIONS (...)]
     Subscribe,
@@ -141,6 +149,11 @@ impl SqlStatement {
             // Job management
             ["KILL", "JOB", ..] => SqlStatement::KillJob,
 
+            // Transaction control
+            ["BEGIN", ..] | ["START", "TRANSACTION", ..] => SqlStatement::BeginTransaction,
+            ["COMMIT", ..] => SqlStatement::CommitTransaction,
+            ["ROLLBACK", ..] => SqlStatement::RollbackTransaction,
+
             // Live query subscriptions
             ["SUBSCRIBE", "TO", ..] => SqlStatement::Subscribe,
 
@@ -193,6 +206,9 @@ impl SqlStatement {
             SqlStatement::FlushTable => "FLUSH TABLE",
             SqlStatement::FlushAllTables => "FLUSH ALL TABLES",
             SqlStatement::KillJob => "KILL JOB",
+            SqlStatement::BeginTransaction => "BEGIN",
+            SqlStatement::CommitTransaction => "COMMIT",
+            SqlStatement::RollbackTransaction => "ROLLBACK",
             SqlStatement::Subscribe => "SUBSCRIBE TO",
             SqlStatement::Update => "UPDATE",
             SqlStatement::Delete => "DELETE",
@@ -244,6 +260,26 @@ mod tests {
         assert_eq!(
             SqlStatement::classify("SHOW STORAGES"),
             SqlStatement::ShowStorages
+        );
+    }
+
+    #[test]
+    fn test_classify_transactions() {
+        assert_eq!(
+            SqlStatement::classify("BEGIN"),
+            SqlStatement::BeginTransaction
+        );
+        assert_eq!(
+            SqlStatement::classify("BEGIN TRANSACTION"),
+            SqlStatement::BeginTransaction
+        );
+        assert_eq!(
+            SqlStatement::classify("COMMIT"),
+            SqlStatement::CommitTransaction
+        );
+        assert_eq!(
+            SqlStatement::classify("ROLLBACK"),
+            SqlStatement::RollbackTransaction
         );
     }
 

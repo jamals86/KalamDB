@@ -43,10 +43,10 @@ use std::sync::Arc;
 pub struct CachedExpression {
     /// The original SQL WHERE clause
     pub filter_sql: String,
-    
+
     /// Compiled DataFusion logical expression
     pub expr: Arc<Expr>,
-    
+
     /// Schema hash for cache invalidation (simple implementation)
     pub schema_hash: u64,
 }
@@ -79,15 +79,15 @@ impl CachedExpression {
     pub fn compile(filter_sql: &str, schema: &SchemaRef) -> Result<Self, String> {
         // Create a DataFusion context
         let ctx = SessionContext::new();
-        
+
         // Parse the SQL expression
         // Note: This is a simplified implementation
         // In production, you'd use DataFusion's SQL parser with the schema
         let expr = Self::parse_sql_to_expr(filter_sql, schema)?;
-        
+
         // Compute a simple schema hash for cache invalidation
         let schema_hash = Self::compute_schema_hash(schema);
-        
+
         Ok(Self {
             filter_sql: filter_sql.to_string(),
             expr: Arc::new(expr),
@@ -118,7 +118,7 @@ impl CachedExpression {
         // 1. Create a physical expression from the logical expr
         // 2. Evaluate it against the record batch
         // 3. Return true if any rows match
-        
+
         // For now, return true (pass-through)
         // The actual implementation exists in kalamdb-core/src/live_query/
         Ok(true)
@@ -148,9 +148,11 @@ impl CachedExpression {
         // let df_schema = DFSchema::try_from(schema.as_ref().clone())?;
         // let sql_parser = SqlToRel::new(&df_schema);
         // sql_parser.parse_sql_into_expr(filter_sql)?
-        
+
         // Return a placeholder expression
-        Ok(Expr::Literal(datafusion::scalar::ScalarValue::Boolean(Some(true))))
+        Ok(Expr::Literal(datafusion::scalar::ScalarValue::Boolean(
+            Some(true),
+        )))
     }
 
     /// Compute a simple hash of the schema for cache invalidation
@@ -160,15 +162,15 @@ impl CachedExpression {
     fn compute_schema_hash(schema: &SchemaRef) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
-        
+
         // Hash field names and types
         for field in schema.fields() {
             field.name().hash(&mut hasher);
             format!("{:?}", field.data_type()).hash(&mut hasher);
         }
-        
+
         hasher.finish()
     }
 }
@@ -185,10 +187,7 @@ mod tests {
             Field::new("priority", DataType::Int64, false),
         ]));
 
-        let cached = CachedExpression::compile(
-            "status = 'active'",
-            &schema,
-        );
+        let cached = CachedExpression::compile("status = 'active'", &schema);
 
         assert!(cached.is_ok());
         let cached = cached.unwrap();
@@ -215,25 +214,24 @@ mod tests {
 
     #[test]
     fn test_schema_hash_different() {
-        let schema1 = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-        ]));
+        let schema1 = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
         let schema2 = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int32, false),  // Different type
+            Field::new("id", DataType::Int32, false), // Different type
         ]));
 
         let hash1 = CachedExpression::compute_schema_hash(&schema1);
         let hash2 = CachedExpression::compute_schema_hash(&schema2);
 
-        assert_ne!(hash1, hash2, "Different schemas should have different hashes");
+        assert_ne!(
+            hash1, hash2,
+            "Different schemas should have different hashes"
+        );
     }
 
     #[test]
     fn test_is_stale() {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-        ]));
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
         let cached = CachedExpression::compile("id > 0", &schema).unwrap();
 

@@ -152,7 +152,7 @@ kalam-cli --json
       "created_at": "2025-10-24T10:30:00Z"
     }
   ],
-  "execution_time_ms": 5.234
+  "took_ms": 5.234
 }
 ```
 

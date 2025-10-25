@@ -10,6 +10,7 @@ repository.workspace = true
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons" }
 kalamdb-core = { path = "../kalamdb-core" }
+kalamdb-sql = { path = "../kalamdb-sql" }
 
 # Apache Arrow
 arrow.workspace = true

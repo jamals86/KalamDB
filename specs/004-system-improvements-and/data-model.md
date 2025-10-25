@@ -67,7 +67,7 @@ pub enum QueryParam {
 pub struct QueryResponse {
     pub columns: Vec<ColumnSchema>,
     pub rows: Vec<RecordBatch>,
-    pub execution_time_ms: Option<u64>,
+    pub took_ms: Option<u64>,
 }
 
 pub struct ColumnSchema {

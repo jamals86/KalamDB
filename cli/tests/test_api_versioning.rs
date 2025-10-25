@@ -11,6 +11,7 @@
 //! - sqlparser-rs integration for standard SQL
 //! - PostgreSQL/MySQL syntax compatibility
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use actix_web::test;
@@ -400,7 +401,7 @@ async fn test_cli_output_psql_style() {
     let response = QueryResponse {
         status: "success".to_string(),
         results: vec![result],
-        execution_time_ms: Some(12),
+        took_ms: Some(12),
         error: None,
     };
 

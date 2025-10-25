@@ -79,7 +79,7 @@ Execute a SQL command and receive results.
       "_deleted": false
     }
   ],
-  "execution_time_ms": 42,
+  "took_ms": 42,
   "rows_affected": 1
 }
 ```
@@ -89,7 +89,7 @@ Execute a SQL command and receive results.
 {
   "status": "success",
   "message": "Table created successfully",
-  "execution_time_ms": 15
+  "took_ms": 15
 }
 ```
 
@@ -99,7 +99,7 @@ Execute a SQL command and receive results.
   "status": "error",
   "error": "Table not found: app.nonexistent",
   "error_type": "TableNotFound",
-  "execution_time_ms": 5
+  "took_ms": 5
 }
 ```
 
@@ -109,7 +109,7 @@ Execute a SQL command and receive results.
   "status": "error",
   "error": "Internal server error: RocksDB write failed",
   "error_type": "Storage",
-  "execution_time_ms": 10
+  "took_ms": 10
 }
 ```
 
@@ -286,7 +286,7 @@ INSERT INTO app.messages (id, content) VALUES
 {
   "status": "success",
   "rows_affected": 1,
-  "execution_time_ms": 3
+  "took_ms": 3
 }
 ```
 
@@ -303,7 +303,7 @@ WHERE id = 1;
 {
   "status": "success",
   "rows_affected": 1,
-  "execution_time_ms": 5
+  "took_ms": 5
 }
 ```
 
@@ -321,7 +321,7 @@ DELETE FROM app.messages WHERE id = 1;
 {
   "status": "success",
   "rows_affected": 1,
-  "execution_time_ms": 4
+  "took_ms": 4
 }
 ```
 
@@ -353,7 +353,7 @@ GROUP BY author;
   "results": [
     {"id": 1, "content": "Hello", "author": "alice", "timestamp": "2025-10-20T10:00:00Z"}
   ],
-  "execution_time_ms": 12,
+  "took_ms": 12,
   "rows_returned": 1
 }
 ```
@@ -380,7 +380,7 @@ ALTER TABLE app.messages RENAME COLUMN content TO message_text;
 {
   "status": "success",
   "message": "Schema updated successfully. Version incremented to 2.",
-  "execution_time_ms": 8
+  "took_ms": 8
 }
 ```
 
@@ -607,7 +607,7 @@ BACKUP DATABASE app TO '/backups/app-20251020';
   "backup_path": "/backups/app-20251020",
   "files_backed_up": 127,
   "total_bytes": 104857600,
-  "execution_time_ms": 5432
+  "took_ms": 5432
 }
 ```
 
@@ -631,7 +631,7 @@ RESTORE DATABASE app FROM '/backups/app-20251020';
   "message": "Restore completed successfully",
   "files_restored": 127,
   "total_bytes": 104857600,
-  "execution_time_ms": 6234
+  "took_ms": 6234
 }
 ```
 

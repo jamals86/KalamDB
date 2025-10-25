@@ -36,5 +36,5 @@ pub mod system_tables;
 // Re-export commonly used types at crate root
 pub use constants::{COLUMN_FAMILIES, SYSTEM_TABLES};
 pub use errors::{CommonError, Result};
-pub use models::{NamespaceId, StorageId, TableName, TableType, UserId};
+pub use models::{JobStatus, JobType, NamespaceId, StorageId, TableName, TableType, UserId};
 pub use system_tables::SystemTable;

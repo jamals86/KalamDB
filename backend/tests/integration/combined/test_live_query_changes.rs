@@ -9,6 +9,7 @@
 //!
 //! Uses WebSocket test utilities to validate end-to-end live query behavior.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::{

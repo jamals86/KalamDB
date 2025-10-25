@@ -12,6 +12,7 @@ use anyhow::Result;
 use datafusion::catalog::schema::MemorySchemaProvider;
 use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
+use kalamdb_core::live_query::{LiveQueryManager, NodeId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
     UserTableService,
@@ -33,6 +34,7 @@ pub struct ApplicationComponents {
     pub jwt_auth: Arc<JwtAuth>,
     pub rate_limiter: Arc<RateLimiter>,
     pub flush_scheduler: Arc<FlushScheduler>,
+    pub live_query_manager: Arc<LiveQueryManager>,
 }
 
 /// Initialize RocksDB, DataFusion, services, rate limiter, and flush scheduler.
@@ -133,6 +135,11 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     // Create job manager first
     let job_manager = Arc::new(TokioJobManager::new());
 
+    // Live query manager (per-node)
+    let node_id = NodeId::new(format!("{}:{}", config.server.host, config.server.port));
+    let live_query_manager = Arc::new(LiveQueryManager::new(kalam_sql.clone(), node_id));
+    info!("LiveQueryManager initialized");
+
     let sql_executor = Arc::new(
         SqlExecutor::new(
             namespace_service.clone(),
@@ -144,6 +151,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         .with_table_deletion_service(table_deletion_service)
         .with_storage_registry(storage_registry)
         .with_job_manager(job_manager.clone())
+        .with_live_query_manager(live_query_manager.clone())
         .with_stores(
             user_table_store,
             shared_table_store,
@@ -210,6 +218,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         jwt_auth,
         rate_limiter,
         flush_scheduler,
+        live_query_manager,
     })
 }
 
@@ -226,6 +235,7 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
     let sql_executor = components.sql_executor.clone();
     let jwt_auth = components.jwt_auth.clone();
     let rate_limiter = components.rate_limiter.clone();
+    let live_query_manager = components.live_query_manager.clone();
 
     let server = HttpServer::new(move || {
         App::new()
@@ -235,6 +245,7 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
             .app_data(web::Data::new(sql_executor.clone()))
             .app_data(web::Data::new(jwt_auth.clone()))
             .app_data(web::Data::new(rate_limiter.clone()))
+            .app_data(web::Data::new(live_query_manager.clone()))
             .configure(routes::configure)
     })
     .bind(&bind_addr)?

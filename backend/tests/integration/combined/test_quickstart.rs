@@ -10,6 +10,7 @@
 //!
 //! Based on: specs/002-simple-kalamdb/quickstart.md
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::{fixtures, TestServer};

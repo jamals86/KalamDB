@@ -24,6 +24,7 @@
 //! - created_at (TIMESTAMP) - when message was created
 //! - is_ai (BOOLEAN) - whether message is from AI
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::{fixtures, TestServer};

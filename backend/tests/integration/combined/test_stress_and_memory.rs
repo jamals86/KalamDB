@@ -22,6 +22,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
+#[path = "../common/mod.rs"]
 mod common;
 use common::{setup_test_server, TestConfig};
 

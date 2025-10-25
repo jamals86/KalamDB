@@ -3,6 +3,7 @@
 //! Verifies that CREATE TABLE commands fail when the target namespace does not
 //! exist and provide actionable guidance so operators can recover quickly.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use std::time::Duration;
@@ -22,7 +23,10 @@ async fn test_create_table_nonexistent_namespace_error() {
         )
         .await;
 
-    assert_eq!(response.status, "error", "Expected namespace validation failure");
+    assert_eq!(
+        response.status, "error",
+        "Expected namespace validation failure"
+    );
     let error = response.error.expect("Expected an error payload");
     assert!(
         error.message.contains("missing_ns"),
@@ -48,11 +52,17 @@ async fn test_create_table_after_namespace_creation() {
 
     // First attempt should fail because namespace is missing.
     let initial = server.execute_sql(create_sql).await;
-    assert_eq!(initial.status, "error", "Expected failure when namespace missing");
+    assert_eq!(
+        initial.status, "error",
+        "Expected failure when namespace missing"
+    );
 
     // Create the namespace and retry.
     let ns_response = fixtures::create_namespace(&server, "audit").await;
-    assert_eq!(ns_response.status, "success", "Namespace creation should succeed");
+    assert_eq!(
+        ns_response.status, "success",
+        "Namespace creation should succeed"
+    );
 
     let retry = server.execute_sql(create_sql).await;
     assert_eq!(
@@ -75,7 +85,10 @@ async fn test_user_table_namespace_validation() {
     )"#;
 
     let response = server.execute_sql_as_user(sql, "user123").await;
-    assert_eq!(response.status, "error", "User table creation should fail without namespace");
+    assert_eq!(
+        response.status, "error",
+        "User table creation should fail without namespace"
+    );
 
     fixtures::create_namespace(&server, "workspace").await;
     let retry = server.execute_sql_as_user(sql, "user123").await;
@@ -98,7 +111,10 @@ async fn test_shared_table_namespace_validation() {
             )"#,
         )
         .await;
-    assert_eq!(response.status, "error", "Shared table creation should fail without namespace");
+    assert_eq!(
+        response.status, "error",
+        "Shared table creation should fail without namespace"
+    );
 
     fixtures::create_namespace(&server, "ops").await;
     let retry = server
@@ -128,7 +144,10 @@ async fn test_stream_table_namespace_validation() {
             ) TTL 60"#,
         )
         .await;
-    assert_eq!(response.status, "error", "Stream table creation should fail without namespace");
+    assert_eq!(
+        response.status, "error",
+        "Stream table creation should fail without namespace"
+    );
 
     fixtures::create_namespace(&server, "telemetry").await;
     let retry = server
@@ -157,7 +176,8 @@ async fn test_namespace_validation_race_condition() {
     let create_table_server = server.clone();
     let namespace_server = server.clone();
 
-    let create_table = tokio::spawn(async move { create_table_server.execute_sql(table_sql).await });
+    let create_table =
+        tokio::spawn(async move { create_table_server.execute_sql(table_sql).await });
 
     let create_namespace = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(10)).await;

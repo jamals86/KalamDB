@@ -32,6 +32,7 @@
 //! ```
 
 pub mod adapter;
+pub mod batch_execution;
 pub mod compatibility;
 pub mod ddl;
 pub mod executor;
@@ -41,6 +42,7 @@ pub mod query_cache;
 pub mod statement_classifier;
 
 pub use adapter::RocksDbAdapter;
+pub use batch_execution::split_statements;
 pub use compatibility::{
     format_mysql_column_not_found, format_mysql_error, format_mysql_syntax_error,
     format_mysql_table_not_found, format_postgres_column_not_found, format_postgres_error,

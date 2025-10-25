@@ -6,6 +6,7 @@
 //! - Ephemeral mode support
 //! - Real-time notifications
 
+#[path = "../../common/mod.rs"]
 mod common;
 
 use common::fixtures;

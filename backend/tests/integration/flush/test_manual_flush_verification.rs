@@ -10,6 +10,7 @@
 //! These tests directly instantiate and execute flush jobs to verify
 //! the core flush functionality works independently of the scheduler.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::{fixtures, TestServer};

@@ -45,6 +45,7 @@ use kalamdb_core::services::{
 };
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
+use kalamdb_core::live_query::{LiveQueryManager, NodeId};
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -77,6 +78,7 @@ impl HttpTestServer {
             App::new()
                 .app_data(actix_web::web::Data::new(self._env.session_factory.clone()))
                 .app_data(actix_web::web::Data::new(self._env.sql_executor.clone()))
+                .app_data(actix_web::web::Data::new(self._env.live_query_manager.clone()))
                 .app_data(actix_web::web::Data::new(jwt_auth))
                 .app_data(actix_web::web::Data::new(rate_limiter))
                 .configure(kalamdb_api::routes::configure_routes),
@@ -118,6 +120,8 @@ pub struct TestServer {
     pub namespace_service: Arc<NamespaceService>,
     /// DataFusion session factory (needed for fallback SQL execution)
     pub session_factory: Arc<DataFusionSessionFactory>,
+    /// Live query manager for WebSocket coordination
+    pub live_query_manager: Arc<LiveQueryManager>,
 }
 
 impl Clone for TestServer {
@@ -128,6 +132,7 @@ impl Clone for TestServer {
             sql_executor: Arc::clone(&self.sql_executor),
             namespace_service: Arc::clone(&self.namespace_service),
             session_factory: Arc::clone(&self.session_factory),
+             live_query_manager: Arc::clone(&self.live_query_manager),
         }
     }
 }
@@ -278,6 +283,10 @@ impl TestServer {
         // Initialize JobManager for FLUSH TABLE support
         let job_manager = Arc::new(kalamdb_core::jobs::TokioJobManager::new());
 
+        // Initialize live query manager
+        let live_query_manager =
+            Arc::new(LiveQueryManager::new(kalam_sql.clone(), NodeId::new("test-node".to_string())));
+
         // Initialize SqlExecutor with builder pattern
         let sql_executor = Arc::new(
             SqlExecutor::new(
@@ -290,6 +299,7 @@ impl TestServer {
             .with_table_deletion_service(table_deletion_service)
             .with_storage_registry(storage_registry)
             .with_job_manager(job_manager)
+            .with_live_query_manager(live_query_manager.clone())
             .with_stores(
                 user_table_store.clone(),
                 shared_table_store.clone(),
@@ -311,6 +321,7 @@ impl TestServer {
             sql_executor,
             namespace_service,
             session_factory,
+            live_query_manager,
         }
     }
 
@@ -394,7 +405,7 @@ impl TestServer {
                             columns: vec![],
                             message: Some(msg),
                         }],
-                        execution_time_ms: 0,
+                        took_ms: 0,
                         error: None,
                     },
                     ExecutionResult::RecordBatch(batch) => {
@@ -403,7 +414,7 @@ impl TestServer {
                         SqlResponse {
                             status: "success".to_string(),
                             results: vec![query_result],
-                            execution_time_ms: 0,
+                            took_ms: 0,
                             error: None,
                         }
                     }
@@ -416,7 +427,7 @@ impl TestServer {
                         SqlResponse {
                             status: "success".to_string(),
                             results,
-                            execution_time_ms: 0,
+                            took_ms: 0,
                             error: None,
                         }
                     }
@@ -442,7 +453,7 @@ impl TestServer {
                         SqlResponse {
                             status: "success".to_string(),
                             results: vec![query_result],
-                            execution_time_ms: 0,
+                            took_ms: 0,
                             error: None,
                         }
                     }
@@ -458,7 +469,7 @@ impl TestServer {
                                 SqlResponse {
                                     status: "success".to_string(),
                                     results: vec![],
-                                    execution_time_ms: 0,
+                                    took_ms: 0,
                                     error: None,
                                 }
                             } else {
@@ -471,7 +482,7 @@ impl TestServer {
                                 SqlResponse {
                                     status: "success".to_string(),
                                     results,
-                                    execution_time_ms: 0,
+                                    took_ms: 0,
                                     error: None,
                                 }
                             }
@@ -479,7 +490,7 @@ impl TestServer {
                         Err(e) => SqlResponse {
                             status: "error".to_string(),
                             results: vec![],
-                            execution_time_ms: 0,
+                            took_ms: 0,
                             error: Some(kalamdb_api::models::ErrorDetail {
                                 code: "SQL_EXECUTION_ERROR".to_string(),
                                 message: format!("Error executing query: {}", e),
@@ -490,7 +501,7 @@ impl TestServer {
                     Err(e) => SqlResponse {
                         status: "error".to_string(),
                         results: vec![],
-                        execution_time_ms: 0,
+                        took_ms: 0,
                         error: Some(kalamdb_api::models::ErrorDetail {
                             code: "SQL_PARSE_ERROR".to_string(),
                             message: format!("Error parsing SQL: {}", e),
@@ -502,7 +513,7 @@ impl TestServer {
             Err(e) => SqlResponse {
                 status: "error".to_string(),
                 results: vec![],
-                execution_time_ms: 0,
+                took_ms: 0,
                 error: Some(kalamdb_api::models::ErrorDetail {
                     code: "EXECUTION_ERROR".to_string(),
                     message: format!("{:?}", e),
@@ -741,8 +752,8 @@ pub async fn start_http_server_for_websocket_tests() -> (TestServer, String) {
     ));
     let rate_limiter = Arc::new(RateLimiter::new());
 
-    // Start server on port 8080
-    let http_server = HttpServer::new(move || {
+    // Bind to an ephemeral port to avoid collisions between tests
+    let mut http_server = HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(session_factory.clone()))
             .app_data(web::Data::new(sql_executor.clone()))
@@ -750,17 +761,24 @@ pub async fn start_http_server_for_websocket_tests() -> (TestServer, String) {
             .app_data(web::Data::new(rate_limiter.clone()))
             .configure(kalamdb_api::routes::configure_routes)
     })
-    .bind(("127.0.0.1", 8080))
-    .expect("Failed to bind to port 8080")
-    .run();
+    .bind(("127.0.0.1", 0))
+    .expect("Failed to bind to ephemeral port");
+
+    let bound_addrs = http_server.addrs().to_vec();
+    let server_future = http_server.run();
 
     // Spawn server in background
-    tokio::spawn(http_server);
+    tokio::spawn(server_future);
 
     // Give server time to start
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    (server, "http://127.0.0.1:8080".to_string())
+    let addr = bound_addrs
+        .get(0)
+        .expect("Expected at least one listening address");
+    let base_url = format!("http://{}:{}", addr.ip(), addr.port());
+
+    (server, base_url)
 }
 
 /// Create a test JWT token for WebSocket authentication

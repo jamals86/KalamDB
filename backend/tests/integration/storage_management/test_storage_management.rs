@@ -12,6 +12,7 @@
 //!
 //! Uses the REST API `/v1/api/sql` endpoint to test end-to-end functionality.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::{fixtures, TestServer};

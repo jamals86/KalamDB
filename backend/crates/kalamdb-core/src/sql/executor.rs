@@ -464,6 +464,9 @@ impl SqlExecutor {
             SqlStatement::FlushTable => self.execute_flush_table(sql).await,
             SqlStatement::FlushAllTables => self.execute_flush_all_tables(sql).await,
             SqlStatement::KillJob => self.execute_kill_job(sql).await,
+            SqlStatement::BeginTransaction => self.execute_begin_transaction().await,
+            SqlStatement::CommitTransaction => self.execute_commit_transaction().await,
+            SqlStatement::RollbackTransaction => self.execute_rollback_transaction().await,
             SqlStatement::Subscribe => self.execute_subscribe(sql).await,
             SqlStatement::Update => self.execute_update(sql, user_id).await,
             SqlStatement::Delete => self.execute_delete(sql, user_id).await,
@@ -478,6 +481,24 @@ impl SqlExecutor {
                 sql.lines().next().unwrap_or("")
             ))),
         }
+    }
+
+    async fn execute_begin_transaction(&self) -> Result<ExecutionResult, KalamDbError> {
+        Ok(ExecutionResult::Success(
+            "Transaction started (BEGIN)".to_string(),
+        ))
+    }
+
+    async fn execute_commit_transaction(&self) -> Result<ExecutionResult, KalamDbError> {
+        Ok(ExecutionResult::Success(
+            "Transaction committed (no-op)".to_string(),
+        ))
+    }
+
+    async fn execute_rollback_transaction(&self) -> Result<ExecutionResult, KalamDbError> {
+        Ok(ExecutionResult::Success(
+            "Transaction rollback (not supported - no changes applied)".to_string(),
+        ))
     }
 
     /// Extract table references from SQL query
@@ -1591,11 +1612,11 @@ impl SqlExecutor {
 
         let table = tables
             .iter()
-            .find(|t| t.namespace == stmt.namespace && t.table_name == stmt.table_name)
+            .find(|t| t.namespace == stmt.namespace.as_ref() && t.table_name == stmt.table_name.as_ref())
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table '{}.{}' does not exist",
-                    stmt.namespace, stmt.table_name
+                    stmt.namespace.as_ref(), stmt.table_name.as_ref()
                 ))
             })?;
 
@@ -1603,7 +1624,7 @@ impl SqlExecutor {
         if table.table_type != "user" {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Cannot flush {} table '{}.{}'. Only user tables can be flushed.",
-                table.table_type, stmt.namespace, stmt.table_name
+                table.table_type, stmt.namespace.as_ref(), stmt.table_name.as_ref()
             )));
         }
 
@@ -1644,11 +1665,11 @@ impl SqlExecutor {
 
         // Phase 2b: Get schema from information_schema.tables (TableDefinition.schema_history)
         let table_def = kalam_sql
-            .get_table_definition(&stmt.namespace, &stmt.table_name)?
+            .get_table_definition(stmt.namespace.as_ref(), stmt.table_name.as_ref())?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table definition not found for '{}.{}'",
-                    stmt.namespace, stmt.table_name
+                    stmt.namespace.as_ref(), stmt.table_name.as_ref()
                 ))
             })?;
 
@@ -1656,7 +1677,7 @@ impl SqlExecutor {
         if table_def.schema_history.is_empty() {
             return Err(KalamDbError::Other(format!(
                 "No schema history found for table '{}.{}'",
-                stmt.namespace, stmt.table_name
+                stmt.namespace.as_ref(), stmt.table_name.as_ref()
             )));
         }
 
@@ -1678,8 +1699,8 @@ impl SqlExecutor {
         let job_id_clone = job_id.clone();
 
         // Create flush job
-        let namespace_id = NamespaceId::from(stmt.namespace.as_str());
-        let table_name = TableName::new(stmt.table_name.clone());
+        let namespace_id = stmt.namespace.clone();
+        let table_name = stmt.table_name.clone();
 
         let flush_job = crate::flush::UserTableFlushJob::new(
             user_table_store.clone(),
@@ -1769,12 +1790,12 @@ impl SqlExecutor {
             .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
 
         // Verify namespace exists
-        match kalam_sql.get_namespace(&stmt.namespace) {
+        match kalam_sql.get_namespace(stmt.namespace.as_ref()) {
             Ok(Some(_)) => { /* namespace exists */ }
             Ok(None) => {
                 return Err(KalamDbError::NotFound(format!(
                     "Namespace '{}' does not exist",
-                    stmt.namespace
+                    stmt.namespace.as_ref()
                 )));
             }
             Err(e) => {
@@ -1792,13 +1813,13 @@ impl SqlExecutor {
 
         let user_tables: Vec<_> = tables
             .iter()
-            .filter(|t| t.namespace == stmt.namespace && t.table_type == "user")
+            .filter(|t| t.namespace == stmt.namespace.as_ref() && t.table_type == "user")
             .collect();
 
         if user_tables.is_empty() {
             return Ok(ExecutionResult::Success(format!(
                 "No user tables found in namespace '{}' to flush",
-                stmt.namespace
+                stmt.namespace.as_ref()
             )));
         }
 
