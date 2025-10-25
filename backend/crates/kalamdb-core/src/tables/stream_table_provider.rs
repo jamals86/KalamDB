@@ -219,11 +219,17 @@ impl StreamTableProvider {
 
             // Deliver notification asynchronously (spawn task to avoid blocking)
             let manager = Arc::clone(live_query_manager);
-            let table_name = self.table_name().as_str().to_string();
+            // Use fully qualified table name (namespace.table)
+            let table_name = format!("{}.{}", 
+                self.namespace_id().as_str(),
+                self.table_name().as_str()
+            );
+            log::info!("📤 StreamTable INSERT: Notifying subscribers for table '{}'", table_name);
             tokio::spawn(async move {
                 if let Err(e) = manager.notify_table_change(&table_name, notification).await {
-                    #[cfg(debug_assertions)]
-                    eprintln!("Failed to notify subscribers: {}", e);
+                    log::error!("Failed to notify subscribers for table '{}': {}", table_name, e);
+                } else {
+                    log::info!("📤 Successfully notified subscribers for table '{}'", table_name);
                 }
             });
         }
@@ -335,15 +341,63 @@ impl TableProvider for StreamTableProvider {
     async fn scan(
         &self,
         _state: &SessionState,
-        _projection: Option<&Vec<usize>>,
+        projection: Option<&Vec<usize>>,
         _filters: &[Expr],
-        _limit: Option<usize>,
+        limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // TODO: Implement actual scan execution plan
-        // For now, return error indicating not yet implemented
-        Err(DataFusionError::NotImplemented(
-            "Stream table scan not yet implemented".to_string(),
-        ))
+        use datafusion::arrow::array::{ArrayRef, RecordBatch};
+        use datafusion::physical_plan::memory::MemoryExec;
+
+        // Scan all events from the store
+        let events = self
+            .store
+            .scan(
+                self.table_metadata.namespace.as_str(),
+                self.table_metadata.table_name.as_str(),
+            )
+            .map_err(|e| {
+                DataFusionError::Execution(format!("Failed to scan stream table: {}", e))
+            })?;
+
+        // Apply limit if specified
+        let events_to_process = if let Some(limit_val) = limit {
+            events.into_iter().take(limit_val).collect()
+        } else {
+            events
+        };
+
+        // Convert events to Arrow RecordBatch
+        let batch = json_events_to_arrow_batch(&events_to_process, &self.schema).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to convert events to Arrow: {}", e))
+        })?;
+
+        // Apply projection if specified
+        let (final_batch, final_schema) = if let Some(proj_indices) = projection {
+            let projected_columns: Vec<ArrayRef> = proj_indices
+                .iter()
+                .map(|&i| batch.column(i).clone())
+                .collect();
+
+            let projected_schema = Arc::new(self.schema.project(proj_indices).map_err(|e| {
+                DataFusionError::Execution(format!("Failed to project schema: {}", e))
+            })?);
+
+            let projected_batch = RecordBatch::try_new(projected_schema.clone(), projected_columns).map_err(|e| {
+                DataFusionError::Execution(format!("Failed to create projected batch: {}", e))
+            })?;
+            
+            (projected_batch, projected_schema)
+        } else {
+            (batch, self.schema.clone())
+        };
+
+        // Create MemoryExec with the batch
+        let partitions = vec![vec![final_batch]];
+        let exec = MemoryExec::try_new(&partitions, final_schema, None).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to create MemoryExec: {}", e))
+        })?;
+
+        Ok(Arc::new(exec))
     }
 
     /// Insert data into the stream table
@@ -616,6 +670,150 @@ fn arrow_batch_to_json(
     }
 
     Ok(rows)
+}
+
+/// Helper function to convert JSON events to Arrow RecordBatch
+///
+/// Converts a vector of (timestamp_ms, row_id, json_data) tuples to an Arrow RecordBatch.
+/// This is the reverse operation of arrow_batch_to_json.
+fn json_events_to_arrow_batch(
+    events: &[(i64, String, JsonValue)],
+    schema: &SchemaRef,
+) -> Result<datafusion::arrow::record_batch::RecordBatch, KalamDbError> {
+    use datafusion::arrow::array::*;
+    use datafusion::arrow::datatypes::DataType;
+    use datafusion::arrow::record_batch::RecordBatch;
+
+    // Build arrays for each column
+    let mut arrays: Vec<ArrayRef> = Vec::new();
+
+    for field in schema.fields() {
+        let col_name = field.name();
+        let data_type = field.data_type();
+
+        match data_type {
+            DataType::Utf8 => {
+                let mut builder = StringBuilder::new();
+                for (_timestamp, _row_id, json_data) in events {
+                    if let Some(val) = json_data.get(col_name) {
+                        if val.is_null() {
+                            builder.append_null();
+                        } else if let Some(s) = val.as_str() {
+                            builder.append_value(s);
+                        } else {
+                            // Convert non-string to string
+                            builder.append_value(val.to_string());
+                        }
+                    } else {
+                        builder.append_null();
+                    }
+                }
+                arrays.push(Arc::new(builder.finish()) as ArrayRef);
+            }
+            DataType::Int32 => {
+                let mut builder = Int32Builder::new();
+                for (_timestamp, _row_id, json_data) in events {
+                    if let Some(val) = json_data.get(col_name) {
+                        if val.is_null() {
+                            builder.append_null();
+                        } else if let Some(i) = val.as_i64() {
+                            builder.append_value(i as i32);
+                        } else {
+                            builder.append_null();
+                        }
+                    } else {
+                        builder.append_null();
+                    }
+                }
+                arrays.push(Arc::new(builder.finish()) as ArrayRef);
+            }
+            DataType::Int64 => {
+                let mut builder = Int64Builder::new();
+                for (_timestamp, _row_id, json_data) in events {
+                    if let Some(val) = json_data.get(col_name) {
+                        if val.is_null() {
+                            builder.append_null();
+                        } else if let Some(i) = val.as_i64() {
+                            builder.append_value(i);
+                        } else {
+                            builder.append_null();
+                        }
+                    } else {
+                        builder.append_null();
+                    }
+                }
+                arrays.push(Arc::new(builder.finish()) as ArrayRef);
+            }
+            DataType::Float64 => {
+                let mut builder = Float64Builder::new();
+                for (_timestamp, _row_id, json_data) in events {
+                    if let Some(val) = json_data.get(col_name) {
+                        if val.is_null() {
+                            builder.append_null();
+                        } else if let Some(f) = val.as_f64() {
+                            builder.append_value(f);
+                        } else {
+                            builder.append_null();
+                        }
+                    } else {
+                        builder.append_null();
+                    }
+                }
+                arrays.push(Arc::new(builder.finish()) as ArrayRef);
+            }
+            DataType::Boolean => {
+                let mut builder = BooleanBuilder::new();
+                for (_timestamp, _row_id, json_data) in events {
+                    if let Some(val) = json_data.get(col_name) {
+                        if val.is_null() {
+                            builder.append_null();
+                        } else if let Some(b) = val.as_bool() {
+                            builder.append_value(b);
+                        } else {
+                            builder.append_null();
+                        }
+                    } else {
+                        builder.append_null();
+                    }
+                }
+                arrays.push(Arc::new(builder.finish()) as ArrayRef);
+            }
+            DataType::Timestamp(_, _) => {
+                let mut builder = TimestampMillisecondBuilder::new();
+                for (_timestamp, _row_id, json_data) in events {
+                    if let Some(val) = json_data.get(col_name) {
+                        if val.is_null() {
+                            builder.append_null();
+                        } else if let Some(i) = val.as_i64() {
+                            builder.append_value(i);
+                        } else if let Some(s) = val.as_str() {
+                            // Parse ISO 8601 timestamp
+                            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+                                builder.append_value(dt.timestamp_millis());
+                            } else {
+                                builder.append_null();
+                            }
+                        } else {
+                            builder.append_null();
+                        }
+                    } else {
+                        builder.append_null();
+                    }
+                }
+                arrays.push(Arc::new(builder.finish()) as ArrayRef);
+            }
+            _ => {
+                return Err(KalamDbError::Other(format!(
+                    "Unsupported data type {:?} for column {}",
+                    data_type, col_name
+                )));
+            }
+        }
+    }
+
+    RecordBatch::try_new(schema.clone(), arrays).map_err(|e| {
+        KalamDbError::Other(format!("Failed to create RecordBatch: {}", e))
+    })
 }
 
 #[cfg(test)]

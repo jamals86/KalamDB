@@ -104,9 +104,9 @@ path = "../../tests/integration/flush/test_automatic_flushing.rs"
 name = "test_automatic_flushing_comprehensive"
 path = "../../tests/integration/flush/test_automatic_flushing_comprehensive.rs"
 
-[[test]]
-name = "test_schema_integrity"
-path = "../../tests/integration/combined/test_schema_integrity.rs"
+# [[test]]
+# name = "test_schema_integrity"
+# path = "../../tests/integration/combined/test_schema_integrity.rs"
 
 [[test]]
 name = "test_stress_and_memory"

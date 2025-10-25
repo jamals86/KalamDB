@@ -62,12 +62,12 @@
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Parse FLUSH TABLE
 //! let stmt = FlushTableStatement::parse("FLUSH TABLE prod.events")?;
-//! assert_eq!(stmt.namespace, "prod");
-//! assert_eq!(stmt.table_name, "events");
+//! assert_eq!(stmt.namespace, "prod".into());
+//! assert_eq!(stmt.table_name, "events".into());
 //!
 //! // Parse FLUSH ALL TABLES
 //! let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod")?;
-//! assert_eq!(stmt.namespace, "prod");
+//! assert_eq!(stmt.namespace, "prod".into());
 //! # Ok(())
 //! # }
 //! ```
@@ -101,8 +101,8 @@ impl FlushTableStatement {
     /// ```
     /// # use kalamdb_sql::ddl::flush_commands::FlushTableStatement;
     /// let stmt = FlushTableStatement::parse("FLUSH TABLE prod.events").unwrap();
-    /// assert_eq!(stmt.namespace, "prod");
-    /// assert_eq!(stmt.table_name, "events");
+    /// assert_eq!(stmt.namespace, "prod".into());
+    /// assert_eq!(stmt.table_name, "events".into());
     /// ```
     ///
     /// # Errors
@@ -160,7 +160,7 @@ impl FlushAllTablesStatement {
     /// ```
     /// # use kalamdb_sql::ddl::flush_commands::FlushAllTablesStatement;
     /// let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod").unwrap();
-    /// assert_eq!(stmt.namespace, "prod");
+    /// assert_eq!(stmt.namespace, "prod".into());
     /// ```
     ///
     /// # Errors

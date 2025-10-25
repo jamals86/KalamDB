@@ -5,6 +5,73 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
+
+/// WebSocket message types sent from server to client
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ServerMessage {
+    /// Acknowledgement of successful subscription registration
+    SubscriptionAck {
+        /// The subscription ID that was registered
+        subscription_id: String,
+        /// Number of rows in the initial data snapshot
+        last_rows: u32,
+    },
+
+    /// Initial data snapshot sent after subscription
+    InitialData {
+        /// The subscription ID this data is for
+        subscription_id: String,
+        /// The initial rows matching the query
+        rows: Vec<HashMap<String, JsonValue>>,
+        /// Number of rows in the snapshot
+        count: usize,
+    },
+
+    /// Change notification for INSERT/UPDATE/DELETE operations
+    Change {
+        /// The subscription ID this notification is for
+        subscription_id: String,
+
+        /// Type of change: "insert", "update", or "delete"
+        change_type: ChangeTypeRaw,
+
+        /// New/current row values (for INSERT and UPDATE)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        rows: Option<Vec<HashMap<String, JsonValue>>>,
+
+        /// Previous row values (for UPDATE and DELETE)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        old_values: Option<Vec<HashMap<String, JsonValue>>>,
+    },
+
+    /// Error notification
+    Error {
+        /// The subscription ID this error is for
+        subscription_id: String,
+
+        /// Error code
+        code: String,
+
+        /// Error message
+        message: String,
+    },
+}
+
+/// Type of change that occurred in the database
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ChangeTypeRaw {
+    /// New row(s) inserted
+    Insert,
+
+    /// Existing row(s) updated
+    Update,
+
+    /// Row(s) deleted
+    Delete,
+}
 
 /// Request payload for SQL query execution.
 ///

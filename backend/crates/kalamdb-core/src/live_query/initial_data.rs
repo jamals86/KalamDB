@@ -125,8 +125,17 @@ impl InitialDataFetcher {
         options: InitialDataOptions,
         filter: Option<Arc<FilterPredicate>>,
     ) -> Result<InitialDataResult, KalamDbError> {
+        log::info!(
+            "fetch_initial_data called: table={}, type={:?}, limit={}, since={:?}",
+            table_name,
+            table_type,
+            options.limit,
+            options.since_timestamp
+        );
+        
         let limit = options.limit;
         if limit == 0 {
+            log::debug!("Limit is 0, returning empty result");
             return Ok(InitialDataResult {
                 rows: Vec::new(),
                 latest_timestamp: None,
@@ -240,6 +249,14 @@ impl InitialDataFetcher {
 
         let latest_timestamp = rows_with_ts.first().map(|(ts, _)| *ts);
         let rows = rows_with_ts.into_iter().map(|(_, row)| row).collect();
+
+        log::info!(
+            "fetch_initial_data complete: table={}, returned {} rows (total available: {}, has_more: {})",
+            table_name,
+            total_available.min(limit),
+            total_available,
+            has_more
+        );
 
         Ok(InitialDataResult {
             rows,

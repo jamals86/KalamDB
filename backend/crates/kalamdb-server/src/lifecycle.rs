@@ -20,11 +20,15 @@ use kalamdb_core::services::{
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::storage::{RocksDbInit, StorageRegistry};
-use kalamdb_core::{jobs::TokioJobManager, scheduler::FlushScheduler};
+use kalamdb_core::{
+    jobs::{JobExecutor, StreamEvictionJob, StreamEvictionScheduler, TokioJobManager},
+    scheduler::FlushScheduler,
+};
 use kalamdb_sql::KalamSql;
 use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
 use log::info;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Aggregated application components that need to be shared across the
 /// HTTP server and shutdown handling.
@@ -35,6 +39,7 @@ pub struct ApplicationComponents {
     pub rate_limiter: Arc<RateLimiter>,
     pub flush_scheduler: Arc<FlushScheduler>,
     pub live_query_manager: Arc<LiveQueryManager>,
+    pub stream_eviction_scheduler: Arc<StreamEvictionScheduler>,
 }
 
 /// Initialize RocksDB, DataFusion, services, rate limiter, and flush scheduler.
@@ -159,9 +164,9 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         .with_job_manager(job_manager.clone())
         .with_live_query_manager(live_query_manager.clone())
         .with_stores(
-            user_table_store,
-            shared_table_store,
-            stream_table_store,
+            user_table_store.clone(),
+            shared_table_store.clone(),
+            stream_table_store.clone(),
             kalam_sql.clone(),
         ),
     );
@@ -201,6 +206,29 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
             .with_jobs_provider(jobs_provider.clone()),
     );
 
+    // Job executor for stream eviction
+    let job_executor = Arc::new(JobExecutor::new(
+        jobs_provider.clone(),
+        format!("{}:{}", config.server.host, config.server.port),
+    ));
+
+    // Stream eviction job and scheduler
+    let stream_eviction_job = Arc::new(StreamEvictionJob::with_defaults(
+        stream_table_store.clone(),
+        kalam_sql.clone(),
+        job_executor,
+    ));
+
+    let eviction_interval = Duration::from_secs(config.stream.eviction_interval_seconds);
+    let stream_eviction_scheduler = Arc::new(StreamEvictionScheduler::new(
+        stream_eviction_job,
+        eviction_interval,
+    ));
+    info!(
+        "Stream eviction scheduler initialized (interval: {} seconds)",
+        config.stream.eviction_interval_seconds
+    );
+
     // Resume crash recovery jobs
     match flush_scheduler.resume_incomplete_jobs().await {
         Ok(count) if count > 0 => {
@@ -218,6 +246,14 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     flush_scheduler.start().await?;
     info!("FlushScheduler started (checking triggers every 5 seconds)");
 
+    // Start stream eviction scheduler
+    stream_eviction_scheduler.start().await?;
+    info!(
+        "Stream eviction scheduler started (running every {} seconds)",
+        config.stream.eviction_interval_seconds
+    );
+
+
     Ok(ApplicationComponents {
         session_factory,
         sql_executor,
@@ -225,6 +261,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         rate_limiter,
         flush_scheduler,
         live_query_manager,
+        stream_eviction_scheduler,
     })
 }
 
@@ -235,6 +272,7 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
     info!("Endpoints: POST /v1/api/sql, GET /v1/ws");
 
     let flush_scheduler_shutdown = components.flush_scheduler.clone();
+    let stream_eviction_scheduler_shutdown = components.stream_eviction_scheduler.clone();
     let shutdown_timeout_secs = config.server.flush_job_shutdown_timeout_seconds;
 
     let session_factory = components.session_factory.clone();
@@ -289,6 +327,10 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
 
             if let Err(e) = flush_scheduler_shutdown.stop().await {
                 log::error!("Error stopping flush scheduler: {}", e);
+            }
+
+            if let Err(e) = stream_eviction_scheduler_shutdown.stop().await {
+                log::error!("Error stopping stream eviction scheduler: {}", e);
             }
         }
     }

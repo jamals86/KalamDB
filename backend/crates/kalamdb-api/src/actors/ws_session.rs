@@ -5,6 +5,7 @@
 use actix::{fut, Actor, ActorContext, ActorFutureExt, AsyncContext, Handler, Message, StreamHandler};
 use actix_web_actors::ws;
 use kalamdb_commons::models::UserId;
+use kalamdb_commons::WebSocketMessage;
 use log::{debug, error, info, warn};
 use std::convert::TryFrom;
 use std::sync::Arc;
@@ -16,7 +17,6 @@ use kalamdb_core::live_query::{
     ConnectionId as LiveConnectionId, InitialDataOptions, LiveQueryManager, LiveQueryOptions,
     UserId as LiveUserId,
 };
-use serde_json::json;
 
 /// How often heartbeat pings are sent
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -115,6 +115,18 @@ impl Actor for WebSocketSession {
         // Start heartbeat process
         self.hb(ctx);
 
+        // Create notification channel for live query updates
+        let (notification_tx, mut notification_rx) = tokio::sync::mpsc::unbounded_channel();
+        
+        // Spawn task to listen for notifications and send to WebSocket
+        let addr = ctx.address();
+        actix::spawn(async move {
+            while let Some((_live_id, notification)) = notification_rx.recv().await {
+                // Send typed notification to WebSocket client
+                addr.do_send(SendNotification(notification));
+            }
+        });
+
         // Register connection with live query manager
         if let Some(ref user_id) = self.user_id {
             let manager = self.live_query_manager.clone();
@@ -125,7 +137,7 @@ impl Actor for WebSocketSession {
                 fut::wrap_future(async move {
                     let live_user = LiveUserId::new(user_string);
                     let conn_id = manager
-                        .register_connection(live_user.clone(), unique_conn_id)
+                        .register_connection(live_user.clone(), unique_conn_id, Some(notification_tx))
                         .await;
                     (conn_id, live_user)
                 })
@@ -306,9 +318,21 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                                 None => None,
                             };
 
+                            debug!(
+                                "Subscription options: last_rows_u32={:?}, raw last_rows={:?}",
+                                last_rows_u32,
+                                subscription.options.last_rows
+                            );
+
                             let initial_data_options = last_rows_u32
                                 .filter(|value| *value > 0)
                                 .map(|value| InitialDataOptions::last(value as usize));
+
+                            debug!(
+                                "Initial data options: {:?} (will fetch: {})",
+                                initial_data_options,
+                                initial_data_options.is_some()
+                            );
 
                             let manager = self.live_query_manager.clone();
                             let rate_limiter = self.rate_limiter.clone();
@@ -349,21 +373,49 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                                                 limiter.increment_subscription(&user_clone);
                                             }
 
-                                            let ack = json!({
-                                                "type": "subscription_ack",
-                                                "subscription_id": sub_id,
-                                                "last_rows": last_rows_opt.unwrap_or(0),
-                                            });
-                                            ctx.text(ack.to_string());
+                                            // Send subscription acknowledgement using typed model
+                                            let ack = WebSocketMessage::subscription_ack(
+                                                sub_id.clone(),
+                                                last_rows_opt.unwrap_or(0),
+                                            );
+                                            if let Ok(json) = serde_json::to_string(&ack) {
+                                                ctx.text(json);
+                                            }
 
+                                            // Send initial data if available using typed model
                                             if let Some(initial) = sub_result.initial_data {
-                                                let payload = json!({
-                                                    "type": "initial_data",
-                                                    "subscription_id": sub_id,
-                                                    "rows": initial.rows,
-                                                    "count": initial.rows.len(),
-                                                });
-                                                ctx.text(payload.to_string());
+                                                info!(
+                                                    "Sending initial data for subscription {}: {} rows",
+                                                    sub_id,
+                                                    initial.rows.len()
+                                                );
+                                                
+                                                // Convert Vec<JsonValue> to Vec<HashMap<String, JsonValue>>
+                                                let rows: Vec<std::collections::HashMap<String, serde_json::Value>> = initial.rows
+                                                    .into_iter()
+                                                    .filter_map(|v| {
+                                                        if let serde_json::Value::Object(map) = v {
+                                                            Some(map.into_iter().collect())
+                                                        } else {
+                                                            None
+                                                        }
+                                                    })
+                                                    .collect();
+
+                                                debug!("Converted {} JSON values to HashMap rows", rows.len());
+
+                                                let initial_data = WebSocketMessage::initial_data(
+                                                    sub_id.clone(),
+                                                    rows,
+                                                );
+                                                if let Ok(json) = serde_json::to_string(&initial_data) {
+                                                    debug!("Sending initial_data message: {} bytes", json.len());
+                                                    ctx.text(json);
+                                                } else {
+                                                    error!("Failed to serialize initial data for subscription {}", sub_id);
+                                                }
+                                            } else {
+                                                debug!("No initial data for subscription {}", sub_id);
                                             }
                                         }
                                         Err((err, sub_id)) => {
@@ -379,6 +431,17 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                                             if let Ok(json) = serde_json::to_string(&error_msg) {
                                                 ctx.text(json);
                                             }
+                                            
+                                            // Close WebSocket connection after sending error
+                                            warn!(
+                                                "Closing WebSocket connection {} due to subscription failure",
+                                                act.connection_id
+                                            );
+                                            ctx.close(Some(ws::CloseReason {
+                                                code: ws::CloseCode::Normal,
+                                                description: Some(format!("Subscription failed: {}", err)),
+                                            }));
+                                            ctx.stop();
                                         }
                                     }
                                 }),
@@ -420,7 +483,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
 /// Message for sending notifications to the client
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct SendNotification(pub Notification);
+pub struct SendNotification(pub kalamdb_commons::Notification);
 
 impl Handler<SendNotification> for WebSocketSession {
     type Result = ();

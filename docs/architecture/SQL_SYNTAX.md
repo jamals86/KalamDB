@@ -394,48 +394,52 @@ Stream tables are ephemeral with TTL-based eviction. Data is memory-only (no Par
 CREATE STREAM TABLE [<namespace>.]<table_name> (
   <column_name> <data_type> [NOT NULL],
   ...
-) RETENTION <seconds> [EPHEMERAL] [MAX_BUFFER <n>];
+) TTL <seconds>;
 ```
 
 **Options**:
-- `RETENTION <seconds>`: TTL in seconds (rows expire after this duration)
-- `EPHEMERAL`: Only buffer rows when subscribers exist (no buffering without subscribers)
-- `MAX_BUFFER <n>`: Maximum buffer size in rows (oldest rows evicted when exceeded)
+- `TTL <seconds>`: **Required** - Time-to-live in seconds (rows expire after this duration)
+
+**Note**: `EPHEMERAL` and `MAX_BUFFER` options shown in examples are **not yet implemented**. Currently only `TTL` is supported.
 
 **Examples**:
 ```sql
--- Live events with 10-second retention
+-- Live events with 10-second TTL
 CREATE STREAM TABLE app.live_events (
   event_id TEXT NOT NULL,
   event_type TEXT,
   payload TEXT,
   timestamp TIMESTAMP
-) RETENTION 10 EPHEMERAL MAX_BUFFER 10000;
+) TTL 10;
 
--- Sensor data with 60-second retention
+-- Sensor data with 60-second TTL
 CREATE STREAM TABLE app.sensor_data (
   sensor_id TEXT NOT NULL,
   temperature DOUBLE,
   humidity DOUBLE,
   timestamp TIMESTAMP
-) RETENTION 60 MAX_BUFFER 50000;
+) TTL 60;
 
--- Ephemeral-only (no buffering without subscribers)
+-- Notifications with 5-second TTL
 CREATE STREAM TABLE app.notifications (
   user_id TEXT NOT NULL,
   message TEXT,
   timestamp TIMESTAMP
-) RETENTION 5 EPHEMERAL MAX_BUFFER 1000;
+) TTL 5;
 ```
 
 **Important**:
 - **No system columns**: Stream tables do NOT have `_updated` or `_deleted` columns
-- **Memory-only**: Data never written to Parquet files
-- **Auto-eviction**: Old rows deleted when TTL expires or MAX_BUFFER exceeded
+- **Memory-only**: Data stored ONLY in memory (no RocksDB, no Parquet files)
+- **Data lost on restart**: All stream table data is cleared when server restarts (ephemeral by design)
+- **TTL-based eviction**: Old rows automatically deleted when TTL expires
+- **Future features**: `EPHEMERAL` mode and `MAX_BUFFER` limits are planned but not yet implemented
 
 **Storage**:
-- Hot tier only: `RocksDB column family: stream_table:{table_name}`
-- No cold tier (ephemeral data)
+- **In-memory only**: Stored in `DashMap<table_key, BTreeMap<event_key, event_data>>`
+- **No persistence**: No RocksDB column families, no Parquet files
+- **No cold tier**: All data is ephemeral and memory-resident
+- **Server restart**: All stream table data is lost (expected behavior)
 
 ---
 
@@ -2044,7 +2048,7 @@ CREATE USER TABLE app.messages (
   content TEXT,
   author TEXT,
   created_at TIMESTAMP DEFAULT NOW()
-) STORAGE local FLUSH INTERVAL 300s ROW_THRESHOLD 1000;
+) STORAGE local FLUSH INTERVAL 300s ROW_THRESHOLD 10;
 
 -- 4. Create shared table
 CREATE SHARED TABLE app.config (
@@ -2059,10 +2063,10 @@ CREATE STREAM TABLE app.events (
   event_type TEXT,
   payload TEXT,
   timestamp TIMESTAMP DEFAULT NOW()
-) RETENTION 10 EPHEMERAL MAX_BUFFER 5000;
+) TTL 10;
 
 -- 6. Insert data (using DEFAULT functions)
-INSERT INTO app.messages2 (content, author) VALUES ('Hello World', 'alice');
+INSERT INTO app.messages (content, author) VALUES ('Hello World', 'alice');
 
 INSERT INTO app.config (config_key, config_value)
 VALUES ('app_name', 'KalamDB');

@@ -6,7 +6,7 @@
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
-    models::{ChangeEvent, SubscriptionOptions},
+    models::{ChangeEvent, ServerMessage, SubscriptionOptions},
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -165,6 +165,82 @@ async fn send_subscription_request(
 }
 
 fn parse_message(text: &str, fallback_subscription_id: &str) -> Result<Option<ChangeEvent>> {
+    // First try to parse as ServerMessage (typed)
+    match serde_json::from_str::<ServerMessage>(text) {
+        Ok(msg) => {
+            let event = match msg {
+                ServerMessage::SubscriptionAck {
+                    subscription_id,
+                    last_rows: _,
+                } => ChangeEvent::Ack {
+                    subscription_id: Some(subscription_id),
+                    message: Some("Subscription registered".to_string()),
+                },
+                ServerMessage::InitialData {
+                    subscription_id,
+                    rows,
+                    count: _,
+                } => ChangeEvent::InitialData {
+                    subscription_id,
+                    rows: rows.into_iter().map(|row| serde_json::to_value(row).unwrap_or(Value::Null)).collect(),
+                },
+                ServerMessage::Change {
+                    subscription_id,
+                    change_type,
+                    rows,
+                    old_values,
+                } => {
+                    use crate::models::ChangeTypeRaw;
+                    match change_type {
+                        ChangeTypeRaw::Insert => ChangeEvent::Insert {
+                            subscription_id,
+                            rows: rows
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|row| serde_json::to_value(row).unwrap_or(Value::Null))
+                                .collect(),
+                        },
+                        ChangeTypeRaw::Update => ChangeEvent::Update {
+                            subscription_id,
+                            rows: rows
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|row| serde_json::to_value(row).unwrap_or(Value::Null))
+                                .collect(),
+                            old_rows: old_values
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|row| serde_json::to_value(row).unwrap_or(Value::Null))
+                                .collect(),
+                        },
+                        ChangeTypeRaw::Delete => ChangeEvent::Delete {
+                            subscription_id,
+                            old_rows: old_values
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|row| serde_json::to_value(row).unwrap_or(Value::Null))
+                                .collect(),
+                        },
+                    }
+                }
+                ServerMessage::Error {
+                    subscription_id,
+                    code,
+                    message,
+                } => ChangeEvent::Error {
+                    subscription_id,
+                    code,
+                    message,
+                },
+            };
+            return Ok(Some(event));
+        }
+        Err(_) => {
+            // Fall back to manual parsing for backwards compatibility
+        }
+    }
+
+    // Fallback: Parse as generic JSON (for legacy messages or unknown formats)
     let value: Value = serde_json::from_str(text).map_err(|e| {
         KalamLinkError::SerializationError(format!("Failed to parse message: {}", e))
     })?;
@@ -180,34 +256,26 @@ fn parse_message(text: &str, fallback_subscription_id: &str) -> Result<Option<Ch
         .unwrap_or("")
         .to_lowercase();
 
+    // Ignore ping/pong
     if matches!(msg_type.as_str(), "ping" | "pong") {
         return Ok(None);
     }
 
+    // Legacy message handling for backwards compatibility
     if msg_type == "ack" || msg_type == "subscribed" {
-        let subscription_id = object
-            .get("subscription_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| {
-                object
-                    .get("query_id")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            })
-            .or_else(|| Some(fallback_subscription_id.to_string()));
+        let subscription_id = extract_subscription_id(object, fallback_subscription_id);
         let message = object
             .get("message")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
         return Ok(Some(ChangeEvent::Ack {
-            subscription_id,
+            subscription_id: Some(subscription_id),
             message,
         }));
     }
 
-    if msg_type == "initial_data" || msg_type == "snapshot" {
+    if msg_type == "snapshot" {
         let subscription_id = extract_subscription_id(object, fallback_subscription_id);
         let rows = object
             .get("rows")
@@ -221,7 +289,7 @@ fn parse_message(text: &str, fallback_subscription_id: &str) -> Result<Option<Ch
         }));
     }
 
-    if msg_type == "change" || msg_type == "notification" {
+    if msg_type == "notification" {
         let subscription_id = extract_subscription_id(object, fallback_subscription_id);
         let change_type = object
             .get("change_type")
@@ -259,27 +327,7 @@ fn parse_message(text: &str, fallback_subscription_id: &str) -> Result<Option<Ch
         }));
     }
 
-    if msg_type == "error" {
-        let subscription_id = extract_subscription_id(object, fallback_subscription_id);
-        let code = object
-            .get("code")
-            .and_then(|v| v.as_str())
-            .unwrap_or("ERROR")
-            .to_string();
-        let message = object
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Subscription error")
-            .to_string();
-
-        return Ok(Some(ChangeEvent::Error {
-            subscription_id,
-            code,
-            message,
-        }));
-    }
-
-    // Backwards compatibility for legacy payloads
+    // More legacy backwards compatibility
     let legacy_type = object
         .get("type")
         .and_then(|v| v.as_str())
@@ -373,13 +421,35 @@ fn extract_subscription_id(object: &serde_json::Map<String, Value>, fallback: &s
 
 impl SubscriptionConfig {
     /// Create a new configuration with required SQL.
+    /// 
+    /// By default, fetches the last 100 rows as initial data.
     pub fn new(sql: impl Into<String>) -> Self {
+        Self {
+            id: None,
+            sql: sql.into(),
+            options: Some(SubscriptionOptions {
+                last_rows: Some(100), // Default: fetch last 100 rows
+            }),
+            ws_url: None,
+        }
+    }
+
+    /// Create a configuration without any initial data fetch
+    pub fn without_initial_data(sql: impl Into<String>) -> Self {
         Self {
             id: None,
             sql: sql.into(),
             options: None,
             ws_url: None,
         }
+    }
+
+    /// Set the number of initial rows to fetch
+    pub fn with_last_rows(mut self, count: usize) -> Self {
+        self.options = Some(SubscriptionOptions {
+            last_rows: Some(count),
+        });
+        self
     }
 }
 

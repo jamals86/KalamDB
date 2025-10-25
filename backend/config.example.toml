@@ -108,6 +108,10 @@ default_ttl_seconds = 10
 # Oldest rows are evicted when buffer exceeds this limit
 default_max_buffer = 10000
 
+# Stream eviction interval in seconds (default: 60 seconds = 1 minute)
+# How often the background task checks and evicts expired events
+eviction_interval_seconds = 60
+
 [limits]
 # Maximum message size for REST API requests in bytes (default: 1MB)
 max_message_size = 1048576
