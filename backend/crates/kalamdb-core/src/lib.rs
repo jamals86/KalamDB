@@ -4,6 +4,7 @@
 // including namespace/table management, Arrow schema handling, RocksDB storage,
 // and live query subscriptions.
 
+pub mod auth;
 pub mod catalog;
 pub mod config;
 pub mod error;

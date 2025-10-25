@@ -15,6 +15,10 @@ pub struct User {
     pub storage_mode: Option<String>, // T163c: ENUM ('table', 'region'), NULL defaults to 'table'
     /// Storage ID for user-level storage (used when storage_mode='region')
     pub storage_id: Option<String>, // T163c: FK to system.storages
+    /// API key for authentication (auto-generated UUID v4)
+    pub apikey: String, // Feature 006: X-API-KEY authentication
+    /// User role for authorization (admin, user, readonly)
+    pub role: String, // Feature 006: Role-based access control
 }
 
 /// Live query subscription in system_live_queries table
@@ -139,6 +143,8 @@ mod tests {
             created_at: 1697500000,
             storage_mode: Some("table".to_string()),
             storage_id: None,
+            apikey: "550e8400-e29b-41d4-a716-446655440000".to_string(),
+            role: "user".to_string(),
         };
 
         let json = serde_json::to_string(&user).unwrap();

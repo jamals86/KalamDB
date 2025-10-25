@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  kalamdb:
+    image: kalamdb:latest
+    container_name: kalamdb
+    build:
+      context: ../../
+      dockerfile: docker/backend/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      # Override config.toml values with environment variables
+      # All variables are optional - server uses config.toml defaults if not set
+      
+      # Server configuration
+      KALAMDB_SERVER_PORT: "${KALAMDB_SERVER_PORT:-8080}"
+      KALAMDB_SERVER_HOST: "${KALAMDB_SERVER_HOST:-0.0.0.0}"
+      
+      # Data directory
+      KALAMDB_DATA_DIR: "${KALAMDB_DATA_DIR:-/data}"
+      
+      # Logging
+      KALAMDB_LOG_LEVEL: "${KALAMDB_LOG_LEVEL:-info}"
+      KALAMDB_LOG_FILE: "${KALAMDB_LOG_FILE:-/data/logs/kalamdb.log}"
+      KALAMDB_LOG_TO_CONSOLE: "${KALAMDB_LOG_TO_CONSOLE:-true}"
+      
+      # Connection limits
+      KALAMDB_MAX_CONNECTIONS: "${KALAMDB_MAX_CONNECTIONS:-100}"
+      
+    volumes:
+      # Persistent data storage
+      - kalamdb_data:/data
+      
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/kalam-cli", "exec", "SELECT 1"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  kalamdb_data:
+    driver: local
+    # Optional: specify mount point on host
+    # driver_opts:
+    #   type: none
+    #   o: bind
+    #   device: /path/to/host/data

@@ -3,6 +3,11 @@
 **/target/
 Cargo.lock
 
+# WASM build outputs
+**/pkg/
+**/*.wasm
+cli/kalam-link/pkg/
+
 # RocksDB data files
 *.db/
 /data/
@@ -27,6 +32,15 @@ config.toml
 # Environment
 .env
 .env.local
+.env*.local
+
+# Node.js (for examples)
+**/node_modules/
+**/dist/
+**/build/
+**/.next/
+**/.nuxt/
+**/out/
 
 # Temporary files
 *.tmp

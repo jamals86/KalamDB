@@ -30,6 +30,9 @@ anyhow = { workspace = true }
 # Time handling
 chrono = { workspace = true }
 
+# UUID generation for API keys
+uuid = { version = "1.10", features = ["v4", "serde"] }
+
 [dev-dependencies]
 # Testing
 tempfile = "3.23"

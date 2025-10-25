@@ -1,430 +1,151 @@
-# CLI Integration Tests
+# KalamDB CLI Integration Tests
 
-This directory contains comprehensive integration tests for the KalamDB CLI tools.
+This directory contains integration tests for the `kalam-cli` terminal client against a running KalamDB server.
 
-## Overview
+## Test Architecture
 
-The test suite covers:
-- **CLI functionality** (kalam-cli)
-- **WebSocket subscriptions** (real-time updates)
-- **kalam-link library** (client SDK)
-- **SQL statement coverage** (DDL, DML, queries)
-- **Error handling** and edge cases
+The tests use a **two-process model**:
 
-## Prerequisites
+1. **Server Process**: KalamDB server running on `localhost:8080`
+2. **CLI Process**: `kalam-cli` binary executed via `assert_cmd`
 
-⚠️ **All integration tests require a running KalamDB server**
-
-The tests will:
-- Check if server is running at `http://localhost:8080`
-- Skip tests gracefully if server is not available
-- Fail fast for kalam-link tests (which require server)
+Tests are **gracefully skipped** if the server is not running, allowing for quick unit test runs without server dependencies.
 
 ## Running Tests
 
-⚠️ **CRITICAL**: All integration tests **MUST** run serially with `--test-threads=1` to avoid race conditions on shared database state (namespace `test_cli`, `ws_test`, `link_test`).
-
-### Start the Server
+### Option 1: With Server Running (Full Integration Tests)
 
 ```bash
-# Terminal 1: Start KalamDB server
+# Terminal 1: Start the server
 cd backend
-cargo run --bin kalamdb-server
-```
+cargo run --release --bin kalamdb-server
 
-### Run All Tests
-
-```bash
-# Terminal 2: Run all CLI tests
+# Terminal 2: Run the tests (use --test-threads=1 to avoid conflicts)
 cd cli
-
-# Use the test runner script (recommended - runs tests serially)
-./run_integration_tests.sh
-
-# Or run tests directly with serial execution (REQUIRED)
-cargo test -- --test-threads=1 --nocapture
+cargo test -p kalam-cli --test test_cli_integration -- --test-threads=1 --nocapture
 ```
 
-### Run Specific Test Suites
+**Note:** Tests share the same `test_cli` namespace, so running with `--test-threads=1` prevents race conditions between parallel tests.
+
+### Option 2: Without Server (Quick Validation)
 
 ```bash
-# CLI integration tests only
-./run_integration_tests.sh cli
-# Or: cargo test --test test_cli_integration -- --test-threads=1
+cd cli
+cargo test -p kalam-cli --test test_cli_integration
 
-# WebSocket integration tests only
-./run_integration_tests.sh ws
-# Or: cargo test --test test_websocket_integration -- --test-threads=1
-
-# kalam-link library tests only
-./run_integration_tests.sh link
-# Or: cd kalam-link && cargo test --test integration_tests -- --test-threads=1
+# Output will show:
+# ⚠️  Server not running. Skipping test.
+# This is expected behavior.
 ```
-
-### Run Individual Tests
-
-```bash
-# Run specific test by name
-cargo test test_websocket_subscription_creation
-
-# Run tests matching pattern
-cargo test websocket -- --nocapture
-```
-
-## Test Organization
-
-### test_cli_integration.rs
-
-Tests the `kalam` CLI binary functionality:
-
-- **Connection & Authentication** (T036-T043, T052-T054)
-  - Connection handling
-  - JWT authentication
-  - User ID headers
-  - Localhost bypass
-
-- **Output Formatting** (T038-T040)
-  - Table format (default)
-  - JSON format
-  - CSV format
-
-- **Query Execution** (T037, T050-T051)
-  - Basic queries
-  - Multi-line queries
-  - Comments handling
-  - Error messages
-
-- **Batch Operations** (T055)
-  - File execution
-  - Multiple statements
-
-- **Error Handling** (T056-T057)
-  - Syntax errors
-  - Connection failures
-  - Table not found
-
-- **Meta Commands** (T041-T042)
-  - `\dt` - List tables
-  - `\d table` - Describe table
-
-- **Live Queries** (T043-T046)
-  - Subscribe command
-  - Filtered subscriptions
-  - Pause/resume (Ctrl+S/Ctrl+Q)
-  - Unsubscribe command
-
-- **Configuration** (T047-T049)
-  - Config file creation
-  - Loading config
-  - CLI args precedence
-
-- **Advanced Features** (T058-T068)
-  - Health check
-  - Explicit flush
-  - Color output
-  - Session timeout
-  - Command history
-  - Tab completion
-  - Pagination
-  - Verbose mode
-
-### test_websocket_integration.rs
-
-Tests WebSocket real-time functionality:
-
-- **Client Creation**
-  - Builder pattern
-  - Configuration options
-  - Health checks
-
-- **WebSocket Subscriptions**
-  - Subscription creation
-  - Custom configuration
-  - Initial data snapshot
-  - INSERT notifications
-  - UPDATE notifications
-  - DELETE notifications
-  - Filtered subscriptions
-
-- **SQL Coverage**
-  - CREATE NAMESPACE
-  - CREATE USER TABLE
-  - INSERT
-  - SELECT
-  - UPDATE
-  - DELETE
-  - DROP TABLE
-  - FLUSH TABLE
-  - System tables
-
-- **WHERE Clause Operators**
-  - Equality (=)
-  - LIKE
-  - IN
-
-- **Advanced SQL**
-  - LIMIT
-  - OFFSET
-  - ORDER BY
-
-- **Error Handling**
-  - Invalid SQL
-  - Table not found
-  - Connection refused
-
-### integration_tests.rs (kalam-link)
-
-Tests the kalam-link client library:
-
-- **Client Builder**
-  - Basic configuration
-  - Timeout settings
-  - JWT authentication
-  - API key authentication
-  - Missing URL validation
-
-- **Query Execution**
-  - Simple queries
-  - Queries with results
-  - Error handling
-  - Health checks
-
-- **Auth Provider**
-  - None (no auth)
-  - JWT tokens
-  - API keys
-
-- **WebSocket Subscriptions**
-  - Config creation
-  - Basic subscriptions
-  - Custom configurations
-
-- **Change Events**
-  - Error detection
-  - Subscription ID extraction
-
-- **CRUD Operations**
-  - CREATE NAMESPACE
-  - CREATE/DROP TABLE
-  - INSERT/SELECT
-  - UPDATE
-  - DELETE
-
-- **System Tables**
-  - system.users
-  - system.namespaces
-  - system.tables
-
-- **Advanced SQL**
-  - WHERE operators
-  - LIMIT
-  - ORDER BY
-
-- **Concurrent Operations**
-  - Multiple queries
-  - Timeout handling
-  - Invalid servers
 
 ## Test Coverage
 
-### SQL Statements Covered
+### ✅ Implemented Tests (11 tests)
 
-✅ **DDL (Data Definition Language)**
-- CREATE NAMESPACE
-- DROP NAMESPACE
-- CREATE USER TABLE
-- DROP TABLE
-- FLUSH TABLE
+#### Basic Functionality
+- **T036**: `test_cli_connection_and_prompt` - Verify CLI help output
+- **T037**: `test_cli_basic_query_execution` - Execute SELECT queries
+- **T050**: `test_cli_help_command` - Help flag validation
+- **T051**: `test_cli_version` - Version output
 
-✅ **DML (Data Manipulation Language)**
-- INSERT
-- UPDATE
-- DELETE
+#### Output Formatting
+- **T038**: `test_cli_table_output_formatting` - ASCII table format
+- **T039**: `test_cli_json_output_format` - JSON output (`--json`)
+- **T040**: `test_cli_csv_output_format` - CSV output (`--csv`)
 
-✅ **DQL (Data Query Language)**
-- SELECT
-- WHERE (=, LIKE, IN)
-- ORDER BY
-- LIMIT
-- OFFSET
+#### Batch Operations
+- **T055**: `test_cli_batch_file_execution` - SQL file execution (`--file`)
 
-✅ **System Queries**
-- system.users
-- system.namespaces
-- system.tables
+#### Error Handling
+- **T056**: `test_cli_syntax_error_handling` - Invalid SQL error messages
+- **T057**: `test_cli_connection_failure_handling` - Connection error handling
 
-### WebSocket Protocol Covered
+#### Server Health
+- `test_server_health_check` - Verify server is accessible
 
-✅ **Connection**
-- WS/WSS URL conversion
-- Authentication (JWT, API Key, Headers)
-- Upgrade handshake
+### 🚧 Not Yet Implemented (23 tests)
 
-✅ **Subscription Management**
-- Subscribe messages
-- Subscription ID tracking
-- Unsubscribe messages
+These require additional test infrastructure:
+- T041-T043: Table operations and WebSocket subscriptions
+- T044-T049: Advanced subscription features
+- T052-T054: Authentication testing
+- T058-T068: Advanced CLI features (health, flush, autocomplete, etc.)
 
-✅ **Change Events**
-- ACK (subscription confirmed)
-- InitialData (snapshot)
-- Insert notifications
-- Update notifications (with old_rows)
-- Delete notifications
-- Error events
+## Test Helper Functions
 
-## Test Patterns
+### `is_server_running()`
+Checks if the server is accessible at `http://localhost:8080/api/health`.
 
-### Server Check Pattern
+### `execute_sql(sql: &str)`
+Helper to execute SQL via HTTP POST for test data setup.
 
-All tests follow this pattern:
+### `setup_test_data()`
+Creates the `test_cli` namespace and `messages` table.
 
-```rust
-#[tokio::test]
-async fn test_example() {
-    if !is_server_running().await {
-        eprintln!("⚠️  Server not running. Skipping test.");
-        return;
-    }
-    
-    // Test implementation...
-}
+### `cleanup_test_data()`
+Drops the `test_cli` namespace and all tables.
+
+## Example Test Output
+
+```
+running 11 tests
+⚠️  Server not running. Skipping test.
+test test_cli_batch_file_execution ... ok
+test test_cli_basic_query_execution ... ok
+test test_cli_csv_output_format ... ok
+test test_cli_help_command ... ok
+test test_cli_json_output_format ... ok
+test test_cli_syntax_error_handling ... ok
+test test_cli_table_output_formatting ... ok
+test test_cli_version ... ok
+test test_cli_connection_and_prompt ... ok
+test test_cli_connection_failure_handling ... ok
+test test_server_health_check ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 ```
 
-### Setup/Cleanup Pattern
+## Output Format Changes
 
-Tests that modify data use setup/cleanup:
+The CLI now displays results in a MySQL/PostgreSQL-compatible format:
 
-```rust
-#[tokio::test]
-async fn test_example() {
-    if !is_server_running().await {
-        return;
-    }
-    
-    setup_test_data().await.expect("Setup failed");
-    
-    // Test implementation...
-    
-    cleanup_test_data().await.ok();
-}
+### Query Results
+```
+id | content | created_at
+--------------------------------------------------
+1 | Hello World | 2025-10-22 10:30:00
+2 | Test Message | 2025-10-22 10:30:01
+2 rows in set (0.01 sec)
 ```
 
-### Fail-Fast Pattern (kalam-link)
-
-Library tests fail immediately if server not available:
-
-```rust
-#[tokio::test]
-async fn test_example() {
-    ensure_server_running().await; // Panics if server not running
-    
-    // Test implementation...
-}
+### Empty Results
+```
+id | content | created_at
+--------------------------------------------------
+Empty set (0.00 sec)
 ```
 
-## Troubleshooting
-
-### Tests Are Skipped
-
-**Problem**: All tests show as skipped or passing without running
-
-**Solution**: Start the KalamDB server first:
-```bash
-cd backend && cargo run --bin kalamdb-server
+### DDL Statements
+```
+CREATE NAMESPACE batch_test;
+Query OK, 0 rows affected (0.02 sec)
 ```
 
-### Connection Refused
-
-**Problem**: Tests fail with "connection refused"
-
-**Solutions**:
-1. Check server is running: `curl http://localhost:8080/v1/api/healthcheck`
-2. Verify port 8080 is not blocked
-3. Check server logs for startup errors
-
-### WebSocket Tests Timeout
-
-**Problem**: WebSocket tests hang or timeout
-
-**Solutions**:
-1. Verify WebSocket endpoint: `ws://localhost:8080/v1/ws`
-2. Check server WebSocket implementation is enabled
-3. Look for WebSocket errors in server logs
-4. Increase test timeout if needed
-
-### Table Already Exists
-
-**Problem**: Tests fail with "table already exists"
-
-**Solution**: Cleanup from previous run:
-```sql
--- Connect to server and run:
-DROP NAMESPACE ws_test CASCADE;
-DROP NAMESPACE link_test CASCADE;
-DROP NAMESPACE test_cli CASCADE;
+### Error Messages
+```
+ERROR SQL_EXECUTION_ERROR: Error executing statement 1: Error planning query: Error during planning: table 'kalam.namespace.table' not found
+Details: SELECT * FROM namespace.table
 ```
 
-### Tests Fail Intermittently (Race Conditions)
+## Adding New Tests
 
-**Problem**: Tests pass individually but fail when run together
+1. Add test function with `#[tokio::test]` attribute
+2. Check server availability with `is_server_running()`
+3. Return early with skip message if server not available
+4. Use `assert_cmd::Command::cargo_bin("kalam")` to execute CLI
+5. Clean up test data in test body or use cleanup helpers
 
-**Root Cause**: Tests running in parallel share database state (namespace/tables)
-
-**Solution**: Always use serial execution:
-```bash
-# Use the test runner script
-./run_integration_tests.sh
-
-# Or add --test-threads=1 flag
-cargo test -- --test-threads=1 --nocapture
-```
-
-**Why**: Multiple tests creating/dropping the same `test_cli` namespace simultaneously causes:
-- RocksDB write conflicts
-- Table creation/deletion race conditions
-- Inconsistent test data state
-
-### Permission Denied
-
-**Problem**: Tests fail with permission errors
-
-**Solution**: 
-1. Check RocksDB data directory permissions
-2. Clear test data: `rm -rf backend/data/rocksdb/*`
-3. Restart server with clean state
-
-## CI/CD Integration
-
-To run tests in CI:
-
-```yaml
-# .github/workflows/test.yml
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      
-      # Start server in background
-      - name: Start KalamDB Server
-        run: |
-          cd backend
-          cargo run --bin kalamdb-server &
-          sleep 5
-      
-      # Run tests serially to avoid race conditions
-      - name: Run CLI Tests
-        run: |
-          cd cli
-          ./run_integration_tests.sh
-```
-
-**Note**: Tests must run serially (`--test-threads=1`) to prevent race conditions on shared database state.
-
-## Writing New Tests
-
-### Template for New Test
+Example:
 
 ```rust
 #[tokio::test]
@@ -434,49 +155,64 @@ async fn test_new_feature() {
         return;
     }
 
-    setup_test_data().await.expect("Setup failed");
+    setup_test_data().await.unwrap();
 
-    let client = create_test_client().expect("Failed to create client");
-    
-    // Test your feature
-    let result = client.execute_query("YOUR SQL").await;
-    assert!(result.is_ok(), "Feature should work");
-    
-    cleanup_test_data().await.ok();
+    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    cmd.arg("-u")
+        .arg(SERVER_URL)
+        .arg("--command")
+        .arg("SELECT * FROM test_cli.messages");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("expected output"));
+
+    cleanup_test_data().await.unwrap();
 }
 ```
 
-### Best Practices
+## Dependencies
 
-1. **Always check server is running** at test start
-2. **Use unique namespaces** to avoid conflicts
-3. **Clean up after yourself** with DROP CASCADE
-4. **Add delays** after CREATE/DROP (100-200ms)
-5. **Handle both success and "already exists"** errors
-6. **Use descriptive assertions** with custom messages
-7. **Test error cases** as well as success cases
+- `assert_cmd` - Process spawning and output validation
+- `predicates` - Flexible assertions for CLI output
+- `reqwest` - HTTP client for server communication
+- `tempfile` - Temporary file management for batch tests
 
-## Test Metrics
+## CI/CD Integration
 
-Current coverage:
-- **34 CLI integration tests**
-- **40+ WebSocket integration tests**
-- **35+ kalam-link library tests**
-- **Total: 109+ integration tests**
+For continuous integration:
 
-Coverage areas:
-- ✅ HTTP API endpoints
-- ✅ WebSocket subscriptions
-- ✅ SQL statement execution
-- ✅ Authentication methods
-- ✅ Error handling
-- ✅ Output formatting
-- ✅ Configuration management
-- ✅ Concurrent operations
+```bash
+# Start server in background
+cargo run --release --bin kalamdb-server &
+SERVER_PID=$!
 
-## References
+# Wait for server to be ready
+sleep 5
 
-- [API Reference](../../docs/architecture/API_REFERENCE.md)
-- [WebSocket Protocol](../../docs/architecture/WEBSOCKET_PROTOCOL.md)
-- [Testing Strategy](../../docs/architecture/testing-strategy.md)
-- [Quick Test Guide](../../docs/quickstart/QUICK_TEST_GUIDE.md)
+# Run tests
+cargo test -p kalam-cli --test test_cli_integration
+
+# Cleanup
+kill $SERVER_PID
+```
+
+## Troubleshooting
+
+### "Server not running" warnings
+**Solution**: Start the server in a separate terminal before running tests.
+
+### Connection refused errors
+**Solution**: Ensure the server is listening on port 8080:
+```bash
+lsof -i :8080  # Check if port is in use
+```
+
+### Test timeouts
+**Solution**: Increase `TEST_TIMEOUT` constant in test file.
+
+### Binary not found
+**Solution**: Build the CLI first:
+```bash
+cargo build -p kalam-cli
+```

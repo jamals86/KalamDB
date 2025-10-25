@@ -316,6 +316,8 @@ fn test_system_catalog_consistency() {
         created_at: 1000,
         storage_mode: Some("table".to_string()),
         storage_id: None,
+        apikey: "test-api-key-12345".to_string(),
+        role: "user".to_string(),
     };
     kalam_sql.insert_user(&user).unwrap();
 
