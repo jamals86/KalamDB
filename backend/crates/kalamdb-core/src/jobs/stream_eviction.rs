@@ -82,16 +82,66 @@ impl StreamEvictionJob {
     /// # Returns
     /// Total number of events evicted across all tables
     pub fn run_eviction(&self) -> Result<usize, KalamDbError> {
-        // TODO: Get list of all stream tables from kalam_sql
-        // For now, we need a method like: kalam_sql.get_stream_tables()
-        // This is a placeholder implementation
-        let total_evicted = 0;
+        let mut total_evicted = 0;
 
-        // Example: If we had stream tables, we'd iterate:
-        // for (namespace_id, table_name, retention_period_ms) in stream_tables {
-        //     let evicted = self.evict_for_table(namespace_id, table_name, retention_period_ms)?;
-        //     total_evicted += evicted;
-        // }
+        // Get all tables from system.tables
+        let all_tables = self.kalam_sql.scan_all_tables().map_err(|e| {
+            KalamDbError::Other(format!("Failed to scan tables: {}", e))
+        })?;
+
+        // Filter for stream tables only
+        let stream_tables: Vec<_> = all_tables
+            .into_iter()
+            .filter(|t| t.table_type == "stream")
+            .collect();
+
+        // Get table definitions to access TTL settings
+        for table_meta in stream_tables {
+            // Get full table definition to access ttl_seconds
+            let table_def = self.kalam_sql
+                .get_table_definition(&table_meta.namespace, &table_meta.table_name)
+                .map_err(|e| {
+                    KalamDbError::Other(format!(
+                        "Failed to get table definition for {}.{}: {}",
+                        table_meta.namespace, table_meta.table_name, e
+                    ))
+                })?;
+
+            // Skip tables without TTL configured
+            let ttl_seconds = match table_def.and_then(|def| def.ttl_seconds) {
+                Some(ttl) => ttl,
+                None => {
+                    log::trace!(
+                        "Stream table {}.{} has no TTL configured, skipping eviction",
+                        table_meta.namespace,
+                        table_meta.table_name
+                    );
+                    continue;
+                }
+            };
+
+            // Convert TTL to milliseconds
+            let retention_period_ms = (ttl_seconds as i64) * 1000;
+
+            // Run eviction for this table
+            let evicted = self.evict_for_table(
+                NamespaceId::new(&table_meta.namespace),
+                TableName::new(&table_meta.table_name),
+                retention_period_ms,
+            )?;
+
+            total_evicted += evicted;
+
+            if evicted > 0 {
+                log::info!(
+                    "Evicted {} events from stream table {}.{} (TTL: {}s)",
+                    evicted,
+                    table_meta.namespace,
+                    table_meta.table_name,
+                    ttl_seconds
+                );
+            }
+        }
 
         Ok(total_evicted)
     }

@@ -168,6 +168,11 @@ pub struct StreamSettings {
     /// Default maximum buffer size for stream tables (default: 10000 rows)
     #[serde(default = "default_stream_max_buffer")]
     pub default_max_buffer: usize,
+
+    /// Stream eviction interval in seconds (default: 60 seconds = 1 minute)
+    /// How often to check and evict expired events from stream tables
+    #[serde(default = "default_stream_eviction_interval")]
+    pub eviction_interval_seconds: u64,
 }
 
 /// Rate limiter settings
@@ -219,6 +224,7 @@ impl Default for StreamSettings {
         Self {
             default_ttl_seconds: default_stream_ttl(),
             default_max_buffer: default_stream_max_buffer(),
+            eviction_interval_seconds: default_stream_eviction_interval(),
         }
     }
 }
@@ -328,6 +334,10 @@ fn default_stream_ttl() -> u64 {
 
 fn default_stream_max_buffer() -> usize {
     10000
+}
+
+fn default_stream_eviction_interval() -> u64 {
+    60 // 60 seconds = 1 minute
 }
 
 // Rate limiter defaults
