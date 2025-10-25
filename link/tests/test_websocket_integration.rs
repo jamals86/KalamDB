@@ -649,13 +649,13 @@ async fn test_sql_insert_select() {
 
     // INSERT
     let insert = client
-        .execute_query("INSERT INTO ws_test.events (event_type, data) VALUES ('test', 'data')")
+        .execute_query(&format!("INSERT INTO {} (event_type, data) VALUES ('test', 'data')", table))
         .await;
     assert!(insert.is_ok(), "INSERT should succeed");
 
     // SELECT
     let select = client
-        .execute_query("SELECT * FROM ws_test.events WHERE event_type = 'test'")
+        .execute_query(&format!("SELECT * FROM {} WHERE event_type = 'test'", table))
         .await;
     assert!(select.is_ok(), "SELECT should succeed");
 
@@ -847,8 +847,8 @@ async fn test_sql_limit_offset() {
     for i in 1..=10 {
         client
             .execute_query(&format!(
-                "INSERT INTO ws_test.events (event_type, data) VALUES ('limit_test', '{}')",
-                i
+                "INSERT INTO {} (event_type, data) VALUES ('limit_test', '{}')",
+                table, i
             ))
             .await
             .ok();
@@ -856,7 +856,7 @@ async fn test_sql_limit_offset() {
 
     // Test LIMIT
     let limit = client
-        .execute_query("SELECT * FROM ws_test.events WHERE event_type = 'limit_test' LIMIT 5")
+        .execute_query(&format!("SELECT * FROM {} WHERE event_type = 'limit_test' LIMIT 5", table))
         .await;
     assert!(limit.is_ok(), "LIMIT should work");
     let response = limit.unwrap();
