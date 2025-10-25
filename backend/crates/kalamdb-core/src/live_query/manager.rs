@@ -710,6 +710,8 @@ pub struct RegistryStats {
 mod tests {
     use super::*;
     use crate::storage::RocksDbInit;
+    use kalamdb_commons::models::{TableDefinition, ColumnDefinition};
+    use kalamdb_commons::{TableName, NamespaceId, TableType, StorageId};
     use tempfile::TempDir;
 
     async fn create_test_manager() -> (LiveQueryManager, TempDir) {
@@ -721,26 +723,76 @@ mod tests {
         let shared_table_store = Arc::new(SharedTableStore::new(Arc::clone(&db)).unwrap());
         let stream_table_store = Arc::new(StreamTableStore::new(Arc::clone(&db)).unwrap());
         
-        // Create test tables that the tests expect
-        let create_messages_sql = r#"
-            CREATE TABLE user1.messages (
-                id INTEGER PRIMARY KEY AUTO_INCREMENT,
-                user_id TEXT,
-                conversation_id TEXT,
-                text TEXT,
-                read BOOLEAN DEFAULT false
-            ) WITH (table_type = 'user')
-        "#;
-        kalam_sql.execute_update(create_messages_sql, "user1").unwrap();
+        // Create test tables in information_schema_tables
+        let messages_table = TableDefinition {
+            table_id: "user1:messages".to_string(),
+            table_name: TableName::new("messages"),
+            namespace_id: NamespaceId::new("user1"),
+            table_type: TableType::User,
+            created_at: 0,
+            updated_at: 0,
+            schema_version: 1,
+            storage_id: StorageId::new("local"),
+            use_user_storage: false,
+            flush_policy: None,
+            deleted_retention_hours: None,
+            ttl_seconds: None,
+            columns: vec![
+                ColumnDefinition {
+                    column_name: "id".to_string(),
+                    data_type: "INTEGER".to_string(),
+                    is_nullable: false,
+                    column_default: None,
+                    ordinal_position: 0,
+                    is_primary_key: true,
+                },
+                ColumnDefinition {
+                    column_name: "user_id".to_string(),
+                    data_type: "TEXT".to_string(),
+                    is_nullable: true,
+                    column_default: None,
+                    ordinal_position: 1,
+                    is_primary_key: false,
+                },
+            ],
+            schema_history: vec![],
+        };
+        kalam_sql.upsert_table_definition(&messages_table).unwrap();
         
-        let create_notifications_sql = r#"
-            CREATE TABLE user1.notifications (
-                id INTEGER PRIMARY KEY AUTO_INCREMENT,
-                user_id TEXT,
-                message TEXT
-            ) WITH (table_type = 'user')
-        "#;
-        kalam_sql.execute_update(create_notifications_sql, "user1").unwrap();
+        let notifications_table = TableDefinition {
+            table_id: "user1:notifications".to_string(),
+            table_name: TableName::new("notifications"),
+            namespace_id: NamespaceId::new("user1"),
+            table_type: TableType::User,
+            created_at: 0,
+            updated_at: 0,
+            schema_version: 1,
+            storage_id: StorageId::new("local"),
+            use_user_storage: false,
+            flush_policy: None,
+            deleted_retention_hours: None,
+            ttl_seconds: None,
+            columns: vec![
+                ColumnDefinition {
+                    column_name: "id".to_string(),
+                    data_type: "INTEGER".to_string(),
+                    is_nullable: false,
+                    column_default: None,
+                    ordinal_position: 0,
+                    is_primary_key: true,
+                },
+                ColumnDefinition {
+                    column_name: "user_id".to_string(),
+                    data_type: "TEXT".to_string(),
+                    is_nullable: true,
+                    column_default: None,
+                    ordinal_position: 1,
+                    is_primary_key: false,
+                },
+            ],
+            schema_history: vec![],
+        };
+        kalam_sql.upsert_table_definition(&notifications_table).unwrap();
         
         let node_id = NodeId::new("test_node".to_string());
         let manager = LiveQueryManager::new(
@@ -794,7 +846,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(live_id.connection_id(), &connection_id);
-        assert_eq!(live_id.table_name(), "messages");
+        assert_eq!(live_id.table_name(), "user1.messages");
         assert_eq!(live_id.query_id(), "q1");
 
         let stats = manager.get_stats().await;
@@ -808,17 +860,17 @@ mod tests {
         let table_name = manager
             .extract_table_name_from_query("SELECT * FROM user1.messages WHERE id > 0")
             .unwrap();
-        assert_eq!(table_name, "messages");
+        assert_eq!(table_name, "user1.messages");
 
         let table_name = manager
-            .extract_table_name_from_query("select id from users")
+            .extract_table_name_from_query("select id from test.users")
             .unwrap();
-        assert_eq!(table_name, "users");
+        assert_eq!(table_name, "test.users");
 
         let table_name = manager
-            .extract_table_name_from_query("SELECT * FROM \"my_table\" WHERE x = 1")
+            .extract_table_name_from_query("SELECT * FROM \"ns.my_table\" WHERE x = 1")
             .unwrap();
-        assert_eq!(table_name, "my_table");
+        assert_eq!(table_name, "ns.my_table");
     }
 
     #[tokio::test]
@@ -852,16 +904,16 @@ mod tests {
             .unwrap();
 
         let messages_subs = manager
-            .get_subscriptions_for_table(&user_id, "messages")
+            .get_subscriptions_for_table(&user_id, "user1.messages")
             .await;
         assert_eq!(messages_subs.len(), 1);
-        assert_eq!(messages_subs[0].table_name(), "messages");
+        assert_eq!(messages_subs[0].table_name(), "user1.messages");
 
         let notif_subs = manager
-            .get_subscriptions_for_table(&user_id, "notifications")
+            .get_subscriptions_for_table(&user_id, "user1.notifications")
             .await;
         assert_eq!(notif_subs.len(), 1);
-        assert_eq!(notif_subs[0].table_name(), "notifications");
+        assert_eq!(notif_subs[0].table_name(), "user1.notifications");
     }
 
     #[tokio::test]
@@ -1015,12 +1067,12 @@ mod tests {
 
         // Verify all subscriptions are tracked
         let messages_subs = manager
-            .get_subscriptions_for_table(&user_id, "messages")
+            .get_subscriptions_for_table(&user_id, "user1.messages")
             .await;
         assert_eq!(messages_subs.len(), 2); // messages_query and messages_query2
 
         let notif_subs = manager
-            .get_subscriptions_for_table(&user_id, "notifications")
+            .get_subscriptions_for_table(&user_id, "user1.notifications")
             .await;
         assert_eq!(notif_subs.len(), 1);
 
@@ -1056,9 +1108,9 @@ mod tests {
         let filter = filter_cache.get(&live_id.to_string());
         assert!(filter.is_some());
 
-        // Verify filter SQL is correct
+        // Verify filter SQL is correct (includes auto-injected user_id filter for USER tables)
         let filter = filter.unwrap();
-        assert_eq!(filter.sql(), "user_id = 'user1' AND read = false");
+        assert_eq!(filter.sql(), "user_id = 'user1' AND user_id = 'user1' AND read = false");
     }
 
     #[tokio::test]
@@ -1084,24 +1136,24 @@ mod tests {
 
         // Matching notification
         let matching_change = ChangeNotification::insert(
-            "messages".to_string(),
+            "user1.messages".to_string(),
             serde_json::json!({"user_id": "user1", "text": "Hello"}),
         );
 
         let notified = manager
-            .notify_table_change("messages", matching_change)
+            .notify_table_change("user1.messages", matching_change)
             .await
             .unwrap();
         assert_eq!(notified, 1); // Should notify
 
         // Non-matching notification
         let non_matching_change = ChangeNotification::insert(
-            "messages".to_string(),
+            "user1.messages".to_string(),
             serde_json::json!({"user_id": "user2", "text": "Hello"}),
         );
 
         let notified = manager
-            .notify_table_change("messages", non_matching_change)
+            .notify_table_change("user1.messages", non_matching_change)
             .await
             .unwrap();
         assert_eq!(notified, 0); // Should NOT notify (filter didn't match)

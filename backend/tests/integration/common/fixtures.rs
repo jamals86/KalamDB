@@ -32,6 +32,27 @@ use anyhow::Result;
 use kalamdb_api::models::SqlResponse;
 use serde_json::json;
 
+/// Execute SQL with a specific user context.
+///
+/// # Arguments
+///
+/// * `server` - Test server instance
+/// * `sql` - SQL query to execute
+/// * `user_id` - User ID for execution context
+///
+/// # Returns
+///
+/// * `Result<SqlResponse>` - Response from the SQL execution
+///
+/// # Example
+///
+/// ```no_run
+/// fixtures::execute_sql(&server, "CREATE TABLE test.messages (...)", "user1").await.unwrap();
+/// ```
+pub async fn execute_sql(server: &TestServer, sql: &str, user_id: &str) -> Result<SqlResponse> {
+    Ok(server.execute_sql_as_user(sql, user_id).await)
+}
+
 /// Create a namespace with default options.
 ///
 /// # Arguments

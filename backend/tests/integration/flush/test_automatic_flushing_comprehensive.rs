@@ -73,7 +73,7 @@ async fn test_01_time_based_flush_multiple_intervals() {
     // Test different time intervals
     let intervals = vec![("fast", "3s"), ("medium", "5s"), ("slow", "10s")];
 
-    for (table_suffix, interval) in intervals {
+    for (table_suffix, interval) in &intervals {
         let table_name = format!("messages_{}", table_suffix);
         let create_sql = format!(
             "CREATE TABLE {}.{} (
@@ -109,7 +109,7 @@ async fn test_01_time_based_flush_multiple_intervals() {
     sleep(Duration::from_secs(12)).await;
 
     // Verify all tables still queryable
-    for (table_suffix, _) in intervals {
+    for (table_suffix, _) in &intervals {
         let table_name = format!("messages_{}", table_suffix);
         let query_sql = format!("SELECT COUNT(*) as count FROM {}.{}", namespace, table_name);
         let result = fixtures::execute_sql(&server, &query_sql, "user1").await;
@@ -135,7 +135,7 @@ async fn test_02_row_count_flush_various_thresholds() {
     // Test different row thresholds
     let thresholds = vec![("small", 10), ("medium", 50), ("large", 100)];
 
-    for (table_suffix, threshold) in thresholds {
+    for (table_suffix, threshold) in &thresholds {
         let table_name = format!("events_{}", table_suffix);
         let create_sql = format!(
             "CREATE TABLE {}.{} (
@@ -151,7 +151,7 @@ async fn test_02_row_count_flush_various_thresholds() {
             .unwrap();
 
         // Insert exactly threshold number of rows
-        for i in 1..=threshold {
+        for i in 1..=*threshold {
             let insert_sql = format!(
                 "INSERT INTO {}.{} VALUES ({}, 'event', 'data_{}')",
                 namespace, table_name, i, i
@@ -171,7 +171,7 @@ async fn test_02_row_count_flush_various_thresholds() {
     sleep(Duration::from_secs(8)).await;
 
     // Verify all tables still queryable
-    for (table_suffix, expected_count) in thresholds {
+    for (table_suffix, expected_count) in &thresholds {
         let table_name = format!("events_{}", table_suffix);
         let query_sql = format!("SELECT COUNT(*) as count FROM {}.{}", namespace, table_name);
         let result = fixtures::execute_sql(&server, &query_sql, "user1").await;

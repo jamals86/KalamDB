@@ -24,7 +24,7 @@ use tokio::time::sleep;
 
 #[path = "../common/mod.rs"]
 mod common;
-use common::{setup_test_server, TestConfig};
+use common::TestServer;
 
 /// Test memory stability under sustained write load
 ///
@@ -33,8 +33,8 @@ use common::{setup_test_server, TestConfig};
 #[tokio::test]
 #[ignore] // Long-running test, run with: cargo test --ignored test_memory_stability_under_write_load
 async fn test_memory_stability_under_write_load() {
-    let config = TestConfig::default();
-    let server = setup_test_server(config).await;
+    #[allow(unused_variables)]
+    let _server = TestServer::new().await;
 
     // TODO: T220 - Implement memory stability test
     // 1. Get baseline memory
@@ -52,8 +52,8 @@ async fn test_memory_stability_under_write_load() {
 #[tokio::test]
 #[ignore] // Long-running test
 async fn test_concurrent_writers_and_listeners() {
-    let config = TestConfig::default();
-    let server = setup_test_server(config).await;
+    #[allow(unused_variables)]
+    let _server = TestServer::new().await;
 
     // TODO: T221 - Implement concurrent stress test
     // 1. Spawn 10 writer threads
@@ -70,8 +70,8 @@ async fn test_concurrent_writers_and_listeners() {
 #[tokio::test]
 #[ignore] // Long-running test
 async fn test_cpu_usage_under_load() {
-    let config = TestConfig::default();
-    let server = setup_test_server(config).await;
+    #[allow(unused_variables)]
+    let _server = TestServer::new().await;
 
     // TODO: T222 - Implement CPU usage test
     // 1. Spawn writers to achieve 1000 inserts/sec
@@ -87,8 +87,8 @@ async fn test_cpu_usage_under_load() {
 #[tokio::test]
 #[ignore] // Requires WebSocket implementation
 async fn test_websocket_connection_leak_detection() {
-    let config = TestConfig::default();
-    let server = setup_test_server(config).await;
+    #[allow(unused_variables)]
+    let _server = TestServer::new().await;
 
     // TODO: T223 - Implement WebSocket leak detection
     // 1. Create 50 WebSocket subscriptions
@@ -105,8 +105,8 @@ async fn test_websocket_connection_leak_detection() {
 #[tokio::test]
 #[ignore] // Long-running test
 async fn test_memory_release_after_stress() {
-    let config = TestConfig::default();
-    let server = setup_test_server(config).await;
+    #[allow(unused_variables)]
+    let _server = TestServer::new().await;
 
     // TODO: T224 - Implement memory release test
     // 1. Get baseline memory
@@ -124,8 +124,8 @@ async fn test_memory_release_after_stress() {
 #[tokio::test]
 #[ignore] // Long-running test
 async fn test_query_performance_under_stress() {
-    let config = TestConfig::default();
-    let server = setup_test_server(config).await;
+    #[allow(unused_variables)]
+    let _server = TestServer::new().await;
 
     // TODO: T225 - Implement query performance test
     // 1. Start background stress (writers)
@@ -142,8 +142,8 @@ async fn test_query_performance_under_stress() {
 #[tokio::test]
 #[ignore] // Long-running test
 async fn test_flush_operations_during_stress() {
-    let config = TestConfig::default();
-    let server = setup_test_server(config).await;
+    #[allow(unused_variables)]
+    let _server = TestServer::new().await;
 
     // TODO: T226 - Implement flush during stress test
     // 1. Start background stress (writers)
@@ -160,8 +160,8 @@ async fn test_flush_operations_during_stress() {
 #[tokio::test]
 #[ignore] // Long-running test, requires actor metrics
 async fn test_actor_system_stability() {
-    let config = TestConfig::default();
-    let server = setup_test_server(config).await;
+    #[allow(unused_variables)]
+    let _server = TestServer::new().await;
 
     // TODO: T227 - Implement actor stability test
     // 1. Start background stress
@@ -179,8 +179,8 @@ async fn test_actor_system_stability() {
 #[tokio::test]
 #[ignore] // Long-running test, resource intensive
 async fn test_graceful_degradation() {
-    let config = TestConfig::default();
-    let server = setup_test_server(config).await;
+    #[allow(unused_variables)]
+    let _server = TestServer::new().await;
 
     // TODO: T228 - Implement graceful degradation test
     // 1. Start with moderate load
