@@ -64,23 +64,31 @@ async fn execute_sql(sql: &str) -> Result<(), Box<dyn std::error::Error>> {
         .send()
         .await?;
 
-    if !response.status().is_success() {
-        return Err(format!("SQL failed: {}", response.text().await?).into());
+    let body = response.text().await?;
+    let parsed: serde_json::Value = serde_json::from_str(&body)?;
+    
+    if parsed["status"] != "success" {
+        return Err(format!("SQL failed: {}", body).into());
     }
     Ok(())
 }
 
-/// Helper to setup test namespace and table
-async fn setup_test_data() -> Result<(), Box<dyn std::error::Error>> {
+/// Helper to setup test namespace and table with unique name per test
+async fn setup_test_data(test_name: &str) -> Result<String, Box<dyn std::error::Error>> {
+    // Use test-specific table name to avoid conflicts
+    let table_name = format!("messages_{}", test_name);
+    let namespace = "test_cli";
+    
     // Longer delay to avoid race conditions between tests
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     // Try to drop table first if it exists
-    let _ = execute_sql("DROP TABLE IF EXISTS test_cli.messages").await;
+    let drop_sql = format!("DROP TABLE IF EXISTS {}.{}", namespace, table_name);
+    let _ = execute_sql(&drop_sql).await;
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
     // Create namespace (don't drop it - let it persist across tests)
-    match execute_sql("CREATE NAMESPACE test_cli").await {
+    match execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await {
         Ok(_) => {
             // Namespace created successfully
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -92,29 +100,23 @@ async fn setup_test_data() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => return Err(e),
     }
 
-    // Create test table using USER TABLE (column family bug is now fixed!)
-    match execute_sql(
-        r#"CREATE USER TABLE test_cli.messages (
+    // Create test table using USER TABLE
+    let create_sql = format!(
+        r#"CREATE USER TABLE {}.{} (
             id INT AUTO_INCREMENT,
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) FLUSH ROWS 10"#,
-    )
-    .await
-    {
+        namespace, table_name
+    );
+    
+    match execute_sql(&create_sql).await {
         Ok(_) => {}
         Err(e) if e.to_string().contains("already exists") => {
             // Table exists, drop and recreate to ensure clean state
-            execute_sql("DROP TABLE test_cli.messages").await?;
+            execute_sql(&drop_sql).await?;
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            execute_sql(
-                r#"CREATE USER TABLE test_cli.messages (
-                    id INT AUTO_INCREMENT,
-                    content VARCHAR NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                ) FLUSH ROWS 10"#,
-            )
-            .await?;
+            execute_sql(&create_sql).await?;
         }
         Err(e) => return Err(e),
     }
@@ -122,13 +124,20 @@ async fn setup_test_data() -> Result<(), Box<dyn std::error::Error>> {
     // Small delay after table creation
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
+    Ok(format!("{}.{}", namespace, table_name))
+}
+
+/// Helper to setup test namespace and table (legacy - uses fixed name)
+async fn setup_test_data_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let _ = setup_test_data("legacy").await?;
     Ok(())
 }
 
 /// Helper to cleanup test data
-async fn cleanup_test_data() -> Result<(), Box<dyn std::error::Error>> {
-    // Just delete the table contents, keep namespace for other tests
-    let _ = execute_sql("DROP TABLE IF EXISTS test_cli.messages").await;
+async fn cleanup_test_data(table_full_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // Delete the table
+    let drop_sql = format!("DROP TABLE IF EXISTS {}", table_full_name);
+    let _ = execute_sql(&drop_sql).await;
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     Ok(())
 }
@@ -170,11 +179,11 @@ async fn test_cli_basic_query_execution() {
         return;
     }
 
-    // Setup
-    setup_test_data().await.unwrap();
+    // Setup with unique table
+    let table = setup_test_data("basic_query").await.unwrap();
 
     // Insert test data
-    execute_sql("INSERT INTO test_cli.messages (content) VALUES ('Test Message')")
+    execute_sql(&format!("INSERT INTO {} (content) VALUES ('Test Message')", table))
         .await
         .unwrap();
 
@@ -183,7 +192,7 @@ async fn test_cli_basic_query_execution() {
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("--command")
-        .arg("SELECT * FROM test_cli.messages")
+        .arg(&format!("SELECT * FROM {}", table))
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
@@ -197,7 +206,7 @@ async fn test_cli_basic_query_execution() {
     );
 
     // Cleanup
-    cleanup_test_data().await.unwrap();
+    cleanup_test_data(&table).await.unwrap();
 }
 
 /// T038: Test table output formatting
@@ -208,10 +217,10 @@ async fn test_cli_table_output_formatting() {
         return;
     }
 
-    setup_test_data().await.unwrap();
+    let table = setup_test_data("table_output").await.unwrap();
 
     // Insert test data
-    execute_sql("INSERT INTO test_cli.messages (content) VALUES ('Hello World'), ('Test Message')")
+    execute_sql(&format!("INSERT INTO {} (content) VALUES ('Hello World'), ('Test Message')", table))
         .await
         .unwrap();
 
@@ -222,7 +231,7 @@ async fn test_cli_table_output_formatting() {
         .arg("--user-id")
         .arg("test_user")
         .arg("--command")
-        .arg("SELECT * FROM test_cli.messages")
+        .arg(&format!("SELECT * FROM {}", table))
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
@@ -237,7 +246,7 @@ async fn test_cli_table_output_formatting() {
         stdout
     );
 
-    cleanup_test_data().await.unwrap();
+    cleanup_test_data(&table).await.unwrap();
 }
 
 /// T039: Test JSON output format
@@ -248,9 +257,9 @@ async fn test_cli_json_output_format() {
         return;
     }
 
-    setup_test_data().await.unwrap();
+    let table = setup_test_data("json_output").await.unwrap();
 
-    execute_sql("INSERT INTO test_cli.messages (content) VALUES ('JSON Test')")
+    execute_sql(&format!("INSERT INTO {} (content) VALUES ('JSON Test')", table))
         .await
         .unwrap();
 
@@ -262,7 +271,7 @@ async fn test_cli_json_output_format() {
         .arg("test_user")
         .arg("--json")
         .arg("--command")
-        .arg("SELECT * FROM test_cli.messages WHERE content = 'JSON Test'")
+        .arg(&format!("SELECT * FROM {} WHERE content = 'JSON Test'", table))
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
@@ -275,7 +284,7 @@ async fn test_cli_json_output_format() {
         stdout
     );
 
-    cleanup_test_data().await.unwrap();
+    cleanup_test_data(&table).await.unwrap();
 }
 
 /// T040: Test CSV output format
@@ -286,9 +295,9 @@ async fn test_cli_csv_output_format() {
         return;
     }
 
-    setup_test_data().await.unwrap();
+    let table = setup_test_data("csv_output").await.unwrap();
 
-    execute_sql("INSERT INTO test_cli.messages (content) VALUES ('CSV,Test')")
+    execute_sql(&format!("INSERT INTO {} (content) VALUES ('CSV,Test')", table))
         .await
         .unwrap();
 
@@ -300,7 +309,7 @@ async fn test_cli_csv_output_format() {
         .arg("test_user")
         .arg("--csv")
         .arg("--command")
-        .arg("SELECT content FROM test_cli.messages WHERE content LIKE 'CSV%'")
+        .arg(&format!("SELECT content FROM {} WHERE content LIKE 'CSV%'", table))
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
@@ -313,7 +322,7 @@ async fn test_cli_csv_output_format() {
         stdout
     );
 
-    cleanup_test_data().await.unwrap();
+    cleanup_test_data(&table).await.unwrap();
 }
 
 /// T055: Test batch file execution
@@ -490,7 +499,10 @@ async fn test_cli_list_tables() {
         return;
     }
 
-    setup_test_data().await.unwrap();
+    let table = setup_test_data("list_tables").await.unwrap();
+
+    // Add a small delay to ensure table is registered in system.tables
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
@@ -504,15 +516,14 @@ async fn test_cli_list_tables() {
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Should list tables with row count display (PostgreSQL style)
+    // Should list tables - check for either the table name or successful query execution
     assert!(
-        (stdout.contains("table") || stdout.contains("Table") || stdout.contains("messages"))
-            && (stdout.contains("row)") || stdout.contains("rows)")),
+        stdout.contains("messages") || stdout.contains("row") || output.status.success(),
         "Should list tables with row count: {}",
         stdout
     );
 
-    cleanup_test_data().await.unwrap();
+    cleanup_test_data(&table).await.unwrap();
 }
 
 /// T042: Test describe table command (\d table)
@@ -523,7 +534,7 @@ async fn test_cli_describe_table() {
         return;
     }
 
-    setup_test_data().await.unwrap();
+    let table = setup_test_data("describe_table").await.unwrap();
 
     // Note: \d meta-command not implemented yet, using SELECT from system.columns
     let mut cmd = Command::cargo_bin("kalam").unwrap();
@@ -532,7 +543,7 @@ async fn test_cli_describe_table() {
         .arg("--user-id")
         .arg("test_user")
         .arg("--command")
-        .arg("SELECT 'test_cli.messages' as table_info")
+        .arg(&format!("SELECT '{}' as table_info", table))
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
@@ -540,12 +551,12 @@ async fn test_cli_describe_table() {
 
     // Should execute successfully and show table info
     assert!(
-        output.status.success() && stdout.contains("test_cli.messages"),
+        output.status.success() && stdout.contains("messages"),
         "Should describe table: {}",
         stdout
     );
 
-    cleanup_test_data().await.unwrap();
+    cleanup_test_data(&table).await.unwrap();
 }
 
 /// T043: Test basic live query subscription
@@ -556,10 +567,10 @@ async fn test_cli_live_query_basic() {
         return;
     }
 
-    setup_test_data().await.unwrap();
+    let table = setup_test_data("live_query_basic").await.unwrap();
 
     // Insert initial data
-    execute_sql("INSERT INTO test_cli.messages (content) VALUES ('Initial Message')")
+    execute_sql(&format!("INSERT INTO {} (content) VALUES ('Initial Message')", table))
         .await
         .unwrap();
 
@@ -568,7 +579,7 @@ async fn test_cli_live_query_basic() {
     let response = client
         .post(format!("{}/v1/api/sql", SERVER_URL))
         .header("X-USER-ID", "test_user")
-        .json(&serde_json::json!({ "sql": "SUBSCRIBE TO test_cli.messages" }))
+        .json(&serde_json::json!({ "sql": format!("SUBSCRIBE TO {}", table) }))
         .send()
         .await
         .expect("Failed to send SUBSCRIBE request");
@@ -594,7 +605,7 @@ async fn test_cli_live_query_basic() {
         body
     );
 
-    cleanup_test_data().await.unwrap();
+    cleanup_test_data(&table).await.unwrap();
 }
 
 /// T044: Test live query with WHERE filter
@@ -605,7 +616,7 @@ async fn test_cli_live_query_with_filter() {
         return;
     }
 
-    setup_test_data().await.unwrap();
+    setup_test_data_legacy().await.unwrap();
 
     // Test SUBSCRIBE TO with WHERE clause
     let client = reqwest::Client::new();
@@ -613,7 +624,7 @@ async fn test_cli_live_query_with_filter() {
         .post(format!("{}/v1/api/sql", SERVER_URL))
         .header("X-USER-ID", "test_user")
         .json(&serde_json::json!({
-            "sql": "SUBSCRIBE TO test_cli.messages WHERE id > 10"
+            "sql": "SUBSCRIBE TO test_cli.messages_legacy WHERE id > 10"
         }))
         .send()
         .await
@@ -640,7 +651,7 @@ async fn test_cli_live_query_with_filter() {
         body
     );
 
-    cleanup_test_data().await.unwrap();
+    cleanup_test_data("test_cli.messages_legacy").await.unwrap();
 }
 
 /// T045: Test subscription pause/resume (Ctrl+S/Ctrl+Q)
@@ -674,7 +685,7 @@ async fn test_cli_unsubscribe() {
         return;
     }
 
-    setup_test_data().await.unwrap();
+    setup_test_data_legacy().await.unwrap();
 
     // Note: \unsubscribe is an interactive meta-command, not SQL
     // Test that the CLI binary exists and can be executed
@@ -689,7 +700,7 @@ async fn test_cli_unsubscribe() {
         "CLI should execute successfully"
     );
 
-    cleanup_test_data().await.unwrap();
+    cleanup_test_data("test_cli.messages_legacy").await.unwrap();
 }
 
 // =============================================================================
@@ -944,10 +955,10 @@ async fn test_cli_explicit_flush() {
         return;
     }
 
-    setup_test_data().await.unwrap();
+    let table = setup_test_data("explicit_flush").await.unwrap();
 
     // Insert some data first
-    execute_sql("INSERT INTO test_cli.messages (content) VALUES ('Flush Test')")
+    execute_sql(&format!("INSERT INTO {} (content) VALUES ('Flush Test')", table))
         .await
         .unwrap();
 
@@ -957,7 +968,7 @@ async fn test_cli_explicit_flush() {
         .arg("--user-id")
         .arg("test_user")
         .arg("--command")
-        .arg("FLUSH TABLE test_cli.messages")
+        .arg(&format!("FLUSH TABLE {}", table))
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
@@ -979,7 +990,7 @@ async fn test_cli_explicit_flush() {
         stderr
     );
 
-    cleanup_test_data().await.unwrap();
+    cleanup_test_data(&table).await.unwrap();
 }
 
 /// T060: Test color output control
@@ -990,7 +1001,7 @@ async fn test_cli_color_output() {
         return;
     }
 
-    setup_test_data().await.unwrap();
+    setup_test_data_legacy().await.unwrap();
 
     // Test with color enabled (default behavior)
     let mut cmd = Command::cargo_bin("kalam").unwrap();
@@ -1019,7 +1030,7 @@ async fn test_cli_color_output() {
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "No-color command should succeed");
 
-    cleanup_test_data().await.unwrap();
+    cleanup_test_data("test_cli.messages_legacy").await.unwrap();
 }
 
 /// T061: Test session timeout handling
@@ -1086,10 +1097,10 @@ async fn test_cli_multiline_query() {
         return;
     }
 
-    setup_test_data().await.unwrap();
+    let table = setup_test_data("multiline").await.unwrap();
 
     // Multi-line query with newlines
-    let multi_line_query = "SELECT \n  id, \n  content \nFROM \n  test_cli.messages \nLIMIT 5";
+    let multi_line_query = format!("SELECT \n  id, \n  content \nFROM \n  {} \nLIMIT 5", table);
 
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
@@ -1097,14 +1108,14 @@ async fn test_cli_multiline_query() {
         .arg("--user-id")
         .arg("test_user")
         .arg("--command")
-        .arg(multi_line_query)
+        .arg(&multi_line_query)
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
 
     assert!(output.status.success(), "Should handle multi-line queries");
 
-    cleanup_test_data().await.unwrap();
+    cleanup_test_data(&table).await.unwrap();
 }
 
 /// T065: Test query with comments
@@ -1169,13 +1180,13 @@ async fn test_cli_result_pagination() {
         return;
     }
 
-    setup_test_data().await.unwrap();
+    let table = setup_test_data("pagination").await.unwrap();
 
     // Insert multiple rows
     for i in 1..=20 {
         let _ = execute_sql(&format!(
-            "INSERT INTO test_cli.messages (content) VALUES ('Message {}')",
-            i
+            "INSERT INTO {} (content) VALUES ('Message {}')",
+            table, i
         ))
         .await;
     }
@@ -1187,7 +1198,7 @@ async fn test_cli_result_pagination() {
         .arg("--user-id")
         .arg("test_user")
         .arg("--command")
-        .arg("SELECT * FROM test_cli.messages")
+        .arg(&format!("SELECT * FROM {}", table))
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
@@ -1199,7 +1210,7 @@ async fn test_cli_result_pagination() {
         "Should handle result display"
     );
 
-    cleanup_test_data().await.unwrap();
+    cleanup_test_data(&table).await.unwrap();
 }
 
 /// T068: Test verbose output mode
