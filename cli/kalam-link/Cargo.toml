@@ -11,21 +11,24 @@ keywords = ["kalamdb", "database", "client", "websocket", "wasm"]
 categories = ["database", "web-programming::websocket", "wasm"]
 
 [dependencies]
-# Async runtime
+# Async runtime (native only)
 tokio = { workspace = true, optional = true }
 
-# HTTP client
-reqwest = { workspace = true }
+# HTTP client (native only)
+reqwest = { workspace = true, optional = true }
 
-# WebSocket
-tokio-tungstenite = { workspace = true }
+# WebSocket (native only)
+tokio-tungstenite = { workspace = true, optional = true }
 
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
 
 # UUID generation
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["js"] }
+
+# Random number generation for WASM
+getrandom = { version = "0.2", features = ["js"], optional = true }
 
 # Futures utilities
 futures-util = { version = "0.3", default-features = false }
@@ -34,10 +37,16 @@ futures-util = { version = "0.3", default-features = false }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 
+# WASM bindings (T039, T040)
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", features = ["console"], optional = true }
+
 [features]
 default = ["tokio-runtime"]
-tokio-runtime = ["tokio"]
-wasm = []
+tokio-runtime = ["tokio", "reqwest", "tokio-tungstenite"]
+wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys", "getrandom"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }

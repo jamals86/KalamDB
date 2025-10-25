@@ -113,21 +113,21 @@ This is a multi-component project:
 
 ### Implementation for User Story 2
 
-- [ ] T039 [P] [US2] Add wasm-bindgen dependencies to cli/kalam-link/Cargo.toml
-- [ ] T040 [P] [US2] Add wasm-bindgen-futures dependency to cli/kalam-link/Cargo.toml for async support
-- [ ] T041 [P] [US2] Create WASM bindings module in cli/kalam-link/src/wasm.rs
-- [ ] T042 [US2] Implement KalamClient struct in cli/kalam-link/src/wasm.rs with url and apikey fields (both required)
-- [ ] T043 [US2] Add #[wasm_bindgen] constructor for KalamClient::new(url: String, api_key: String) in cli/kalam-link/src/wasm.rs
-- [ ] T044 [US2] Implement validation for required url and apikey parameters with clear error messages in cli/kalam-link/src/wasm.rs
-- [ ] T045 [P] [US2] Implement connect() method in cli/kalam-link/src/wasm.rs for WebSocket connection
-- [ ] T046 [P] [US2] Implement disconnect() method in cli/kalam-link/src/wasm.rs
-- [ ] T047 [P] [US2] Implement isConnected() method in cli/kalam-link/src/wasm.rs
-- [ ] T048 [US2] Implement insert() method in cli/kalam-link/src/wasm.rs accepting table name and JSON data
-- [ ] T049 [US2] Implement delete() method in cli/kalam-link/src/wasm.rs accepting table name and row ID
-- [ ] T050 [US2] Implement query() method in cli/kalam-link/src/wasm.rs accepting SQL string and returning QueryResult
-- [ ] T051 [US2] Implement subscribe() method in cli/kalam-link/src/wasm.rs accepting table name and callback
-- [ ] T052 [US2] Implement unsubscribe() method in cli/kalam-link/src/wasm.rs accepting subscription ID
-- [ ] T053 [US2] Add X-API-KEY header to all WebSocket and HTTP requests in cli/kalam-link/src/wasm.rs
+- [x] T039 [P] [US2] Add wasm-bindgen dependencies to cli/kalam-link/Cargo.toml
+- [x] T040 [P] [US2] Add wasm-bindgen-futures dependency to cli/kalam-link/Cargo.toml for async support
+- [x] T041 [P] [US2] Create WASM bindings module in cli/kalam-link/src/wasm.rs
+- [x] T042 [US2] Implement KalamClient struct in cli/kalam-link/src/wasm.rs with url and apikey fields (both required)
+- [x] T043 [US2] Add #[wasm_bindgen] constructor for KalamClient::new(url: String, api_key: String) in cli/kalam-link/src/wasm.rs
+- [x] T044 [US2] Implement validation for required url and apikey parameters with clear error messages in cli/kalam-link/src/wasm.rs
+- [x] T045 [P] [US2] Implement connect() method in cli/kalam-link/src/wasm.rs for WebSocket connection
+- [x] T046 [P] [US2] Implement disconnect() method in cli/kalam-link/src/wasm.rs
+- [x] T047 [P] [US2] Implement isConnected() method in cli/kalam-link/src/wasm.rs
+- [x] T048 [US2] Implement insert() method in cli/kalam-link/src/wasm.rs accepting table name and JSON data
+- [x] T049 [US2] Implement delete() method in cli/kalam-link/src/wasm.rs accepting table name and row ID
+- [x] T050 [US2] Implement query() method in cli/kalam-link/src/wasm.rs accepting SQL string and returning QueryResult
+- [x] T051 [US2] Implement subscribe() method in cli/kalam-link/src/wasm.rs accepting table name and callback
+- [x] T052 [US2] Implement unsubscribe() method in cli/kalam-link/src/wasm.rs accepting subscription ID
+- [x] T053 [US2] Add X-API-KEY header to all WebSocket and HTTP requests in cli/kalam-link/src/wasm.rs
 - [ ] T054 [US2] Build WASM module with wasm-pack build --target web --out-dir pkg from cli/kalam-link/
 - [ ] T055 [US2] Verify WASM output includes .wasm file, .js bindings, .d.ts types, and package.json in cli/kalam-link/pkg/
 - [ ] T056 [US2] Create Node.js test script in cli/kalam-link/test-wasm.mjs to verify WASM module loads and works

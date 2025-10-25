@@ -60,21 +60,37 @@
 //! # }
 //! ```
 
-pub mod auth;
-pub mod client;
 pub mod error;
 pub mod models;
+
+// Native-only modules (use tokio, reqwest, tokio-tungstenite)
+#[cfg(feature = "tokio-runtime")]
+pub mod auth;
+#[cfg(feature = "tokio-runtime")]
+pub mod client;
+#[cfg(feature = "tokio-runtime")]
 pub mod query;
+#[cfg(feature = "tokio-runtime")]
 pub mod subscription;
 
+// WASM bindings module (T041)
+#[cfg(feature = "wasm")]
+pub mod wasm;
+
 // Re-export main types for convenience
+#[cfg(feature = "tokio-runtime")]
 pub use auth::AuthProvider;
+#[cfg(feature = "tokio-runtime")]
 pub use client::KalamLinkClient;
+
 pub use error::{KalamLinkError, Result};
 pub use models::{
     ChangeEvent, ErrorDetail, HealthCheckResponse, QueryRequest, QueryResponse, SubscriptionOptions,
 };
+
+#[cfg(feature = "tokio-runtime")]
 pub use query::QueryExecutor;
+#[cfg(feature = "tokio-runtime")]
 pub use subscription::{SubscriptionConfig, SubscriptionManager};
 
 /// Library version

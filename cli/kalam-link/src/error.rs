@@ -90,7 +90,8 @@ impl fmt::Display for KalamLinkError {
 
 impl std::error::Error for KalamLinkError {}
 
-// Conversions from external error types
+// Conversions from external error types (only for native builds with tokio-runtime)
+#[cfg(feature = "tokio-runtime")]
 impl From<reqwest::Error> for KalamLinkError {
     fn from(err: reqwest::Error) -> Self {
         if err.is_timeout() {
@@ -118,6 +119,7 @@ impl From<serde_json::Error> for KalamLinkError {
     }
 }
 
+#[cfg(feature = "tokio-runtime")]
 impl From<tokio_tungstenite::tungstenite::Error> for KalamLinkError {
     fn from(err: tokio_tungstenite::tungstenite::Error) -> Self {
         Self::WebSocketError(err.to_string())
