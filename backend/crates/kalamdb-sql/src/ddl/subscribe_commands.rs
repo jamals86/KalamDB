@@ -130,8 +130,8 @@ impl SubscribeStatement {
     /// use kalamdb_sql::ddl::subscribe_commands::SubscribeStatement;
     ///
     /// let stmt = SubscribeStatement::parse("SUBSCRIBE TO app.messages").unwrap();
-    /// assert_eq!(stmt.namespace, "app");
-    /// assert_eq!(stmt.table_name, "messages");
+    /// assert_eq!(stmt.namespace, "app".into());
+    /// assert_eq!(stmt.table_name, "messages".into());
     /// ```
     pub fn parse(sql: &str) -> DdlResult<Self> {
         let sql = sql.trim().trim_end_matches(';').trim();

@@ -22,6 +22,8 @@ The tests will:
 
 ## Running Tests
 
+⚠️ **CRITICAL**: All integration tests **MUST** run serially with `--test-threads=1` to avoid race conditions on shared database state (namespace `test_cli`, `ws_test`, `link_test`).
+
 ### Start the Server
 
 ```bash
@@ -39,11 +41,9 @@ cd cli
 # Use the test runner script (recommended - runs tests serially)
 ./run_integration_tests.sh
 
-# Or run tests directly with serial execution
+# Or run tests directly with serial execution (REQUIRED)
 cargo test -- --test-threads=1 --nocapture
 ```
-
-⚠️ **Important**: Tests must run serially (`--test-threads=1`) to avoid race conditions on shared database state.
 
 ### Run Specific Test Suites
 

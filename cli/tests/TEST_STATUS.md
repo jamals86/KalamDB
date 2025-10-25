@@ -2,6 +2,16 @@
 
 **Last Updated**: 2025-10-25
 
+⚠️ **CRITICAL**: All integration tests **MUST** run with `--test-threads=1` (sequentially) to avoid race conditions on shared database state.
+
+```bash
+# ✅ CORRECT
+cargo test -- --test-threads=1
+
+# ❌ WRONG (will cause random failures)
+cargo test
+```
+
 ## Test Summary
 
 | Category | Count | Status |

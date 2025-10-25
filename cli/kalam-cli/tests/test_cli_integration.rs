@@ -21,9 +21,12 @@
 //! # Start server in one terminal
 //! cargo run --release --bin kalamdb-server
 //!
-//! # Run tests in another terminal
-//! cargo test --test test_cli_integration
+//! # Run tests in another terminal (sequentially to avoid race conditions)
+//! cargo test --test test_cli_integration -- --test-threads=1
 //! ```
+//!
+//! **Note**: Tests must run sequentially (`--test-threads=1`) because they share
+//! the same namespace (`test_cli`) and may conflict when run in parallel.
 
 use assert_cmd::Command;
 use predicates::prelude::*;
