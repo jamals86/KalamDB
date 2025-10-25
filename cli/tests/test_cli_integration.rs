@@ -127,12 +127,6 @@ async fn setup_test_data(test_name: &str) -> Result<String, Box<dyn std::error::
     Ok(format!("{}.{}", namespace, table_name))
 }
 
-/// Helper to setup test namespace and table (legacy - uses fixed name)
-async fn setup_test_data_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let _ = setup_test_data("legacy").await?;
-    Ok(())
-}
-
 /// Helper to cleanup test data
 async fn cleanup_test_data(table_full_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Delete the table
@@ -616,7 +610,7 @@ async fn test_cli_live_query_with_filter() {
         return;
     }
 
-    setup_test_data_legacy().await.unwrap();
+    let table = setup_test_data("live_query_filter").await.unwrap();
 
     // Test SUBSCRIBE TO with WHERE clause
     let client = reqwest::Client::new();
@@ -624,7 +618,7 @@ async fn test_cli_live_query_with_filter() {
         .post(format!("{}/v1/api/sql", SERVER_URL))
         .header("X-USER-ID", "test_user")
         .json(&serde_json::json!({
-            "sql": "SUBSCRIBE TO test_cli.messages_legacy WHERE id > 10"
+            "sql": format!("SUBSCRIBE TO {} WHERE id > 10", table)
         }))
         .send()
         .await
@@ -651,7 +645,7 @@ async fn test_cli_live_query_with_filter() {
         body
     );
 
-    cleanup_test_data("test_cli.messages_legacy").await.unwrap();
+    cleanup_test_data(&table).await.unwrap();
 }
 
 /// T045: Test subscription pause/resume (Ctrl+S/Ctrl+Q)
@@ -685,7 +679,7 @@ async fn test_cli_unsubscribe() {
         return;
     }
 
-    setup_test_data_legacy().await.unwrap();
+    let table = setup_test_data("unsubscribe").await.unwrap();
 
     // Note: \unsubscribe is an interactive meta-command, not SQL
     // Test that the CLI binary exists and can be executed
@@ -700,7 +694,7 @@ async fn test_cli_unsubscribe() {
         "CLI should execute successfully"
     );
 
-    cleanup_test_data("test_cli.messages_legacy").await.unwrap();
+    cleanup_test_data(&table).await.unwrap();
 }
 
 // =============================================================================
@@ -1001,7 +995,7 @@ async fn test_cli_color_output() {
         return;
     }
 
-    setup_test_data_legacy().await.unwrap();
+    let table = setup_test_data("color_output").await.unwrap();
 
     // Test with color enabled (default behavior)
     let mut cmd = Command::cargo_bin("kalam").unwrap();
@@ -1030,7 +1024,7 @@ async fn test_cli_color_output() {
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "No-color command should succeed");
 
-    cleanup_test_data("test_cli.messages_legacy").await.unwrap();
+    cleanup_test_data(&table).await.unwrap();
 }
 
 /// T061: Test session timeout handling

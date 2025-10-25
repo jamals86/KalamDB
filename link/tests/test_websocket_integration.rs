@@ -59,43 +59,40 @@ async fn execute_sql(sql: &str) -> Result<QueryResponse, Box<dyn std::error::Err
 }
 
 /// Helper to setup test namespace and table
-async fn setup_test_data() -> Result<(), Box<dyn std::error::Error>> {
-    // Cleanup from previous runs
-    let _ = execute_sql("DROP TABLE IF EXISTS ws_test.events").await;
-    let _ = execute_sql("DROP NAMESPACE IF EXISTS ws_test CASCADE").await;
+async fn setup_test_data() -> Result<String, Box<dyn std::error::Error>> {
+    // Use a unique suffix based on the caller to avoid conflicts
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let table_name = format!("events_{}", timestamp);
+    let full_table = format!("ws_test.{}", table_name);
+    
+    // Create namespace if needed
+    execute_sql("CREATE NAMESPACE IF NOT EXISTS ws_test").await.ok();
     sleep(Duration::from_millis(200)).await;
 
-    // Create namespace
-    match execute_sql("CREATE NAMESPACE ws_test").await {
-        Ok(_) => {}
-        Err(e) if e.to_string().contains("already exists") => {}
-        Err(e) => return Err(e),
-    }
-    sleep(Duration::from_millis(100)).await;
-
     // Create test table (using STREAM TABLE for WebSocket tests)
-    match execute_sql(
-        r#"CREATE STREAM TABLE ws_test.events (
-            id INT AUTO_INCREMENT,
-            event_type VARCHAR NOT NULL,
-            data VARCHAR,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) TTL 60"#,
+    execute_sql(
+        &format!(
+            r#"CREATE STREAM TABLE {} (
+                id INT AUTO_INCREMENT,
+                event_type VARCHAR NOT NULL,
+                data VARCHAR,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) TTL 60"#,
+            full_table
+        )
     )
-    .await
-    {
-        Ok(_) => {}
-        Err(e) if e.to_string().contains("already exists") => {}
-        Err(e) => return Err(e),
-    }
-    sleep(Duration::from_millis(100)).await;
+    .await?;
+    sleep(Duration::from_millis(200)).await;
 
-    Ok(())
+    Ok(full_table)
 }
 
 /// Helper to cleanup test data
-async fn cleanup_test_data() -> Result<(), Box<dyn std::error::Error>> {
-    let _ = execute_sql("DROP NAMESPACE ws_test CASCADE").await;
+async fn cleanup_test_data(table_full_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let _ = execute_sql(&format!("DROP TABLE IF EXISTS {}", table_full_name)).await;
     Ok(())
 }
 
@@ -152,7 +149,7 @@ async fn test_kalam_link_parametrized_query() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup test data");
+    let table = setup_test_data().await.expect("Failed to setup test data");
 
     let client = create_test_client().expect("Failed to create client");
 
@@ -172,7 +169,7 @@ async fn test_kalam_link_parametrized_query() {
     let response = query_result.unwrap();
     assert_eq!(response.status, "success");
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 // =============================================================================
@@ -186,14 +183,14 @@ async fn test_websocket_subscription_creation() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup test data");
+    let table = setup_test_data().await.expect("Failed to setup test data");
 
     let client = create_test_client().expect("Failed to create client");
 
     // Create subscription
     let subscription_result = timeout(
         TEST_TIMEOUT,
-        client.subscribe("SELECT * FROM ws_test.events"),
+        client.subscribe(&format!("SELECT * FROM {}", table)),
     )
     .await;
 
@@ -210,7 +207,7 @@ async fn test_websocket_subscription_creation() {
         }
     }
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 #[tokio::test]
@@ -220,12 +217,12 @@ async fn test_websocket_subscription_with_config() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup test data");
+    let table = setup_test_data().await.expect("Failed to setup test data");
 
     let client = create_test_client().expect("Failed to create client");
 
     // Create subscription with custom config
-    let config = SubscriptionConfig::new("SELECT * FROM ws_test.events");
+    let config = SubscriptionConfig::new(&format!("SELECT * FROM {}", table));
     
     let subscription_result = timeout(TEST_TIMEOUT, client.subscribe_with_config(config)).await;
 
@@ -241,7 +238,7 @@ async fn test_websocket_subscription_with_config() {
         }
     }
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 #[tokio::test]
@@ -251,7 +248,7 @@ async fn test_websocket_initial_data_snapshot() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup test data");
+    let table = setup_test_data().await.expect("Failed to setup test data");
 
     // Insert some initial data
     execute_sql("INSERT INTO ws_test.events (event_type, data) VALUES ('initial', 'data1')")
@@ -310,7 +307,7 @@ async fn test_websocket_initial_data_snapshot() {
         }
     }
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 #[tokio::test]
@@ -320,13 +317,13 @@ async fn test_websocket_insert_notification() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup test data");
+    let table = setup_test_data().await.expect("Failed to setup test data");
 
     let client = create_test_client().expect("Failed to create client");
 
     let subscription_result = timeout(
         TEST_TIMEOUT,
-        client.subscribe("SELECT * FROM ws_test.events"),
+        client.subscribe(&format!("SELECT * FROM {}", table)),
     )
     .await;
 
@@ -338,7 +335,7 @@ async fn test_websocket_insert_notification() {
             }
 
             // Insert new data that should trigger notification
-            execute_sql("INSERT INTO ws_test.events (event_type, data) VALUES ('realtime', 'insert_test')")
+            execute_sql(&format!("INSERT INTO {} (event_type, data) VALUES ('realtime', 'insert_test')", table))
                 .await
                 .ok();
 
@@ -375,7 +372,7 @@ async fn test_websocket_insert_notification() {
         }
     }
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 #[tokio::test]
@@ -385,7 +382,7 @@ async fn test_websocket_filtered_subscription() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup test data");
+    let table = setup_test_data().await.expect("Failed to setup test data");
 
     let client = create_test_client().expect("Failed to create client");
 
@@ -438,7 +435,7 @@ async fn test_websocket_filtered_subscription() {
         }
     }
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 #[tokio::test]
@@ -449,7 +446,7 @@ async fn test_websocket_update_notification() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup test data");
+    let table = setup_test_data().await.expect("Failed to setup test data");
 
     // Insert initial row
     execute_sql("INSERT INTO ws_test.events (event_type, data) VALUES ('update_test', 'original')")
@@ -511,7 +508,7 @@ async fn test_websocket_update_notification() {
         }
     }
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 #[tokio::test]
@@ -522,7 +519,7 @@ async fn test_websocket_delete_notification() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup test data");
+    let table = setup_test_data().await.expect("Failed to setup test data");
 
     // Insert initial row
     execute_sql("INSERT INTO ws_test.events (event_type, data) VALUES ('delete_test', 'to_delete')")
@@ -583,7 +580,7 @@ async fn test_websocket_delete_notification() {
         }
     }
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 // =============================================================================
@@ -617,7 +614,7 @@ async fn test_sql_create_user_table() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup");
+    let table = setup_test_data().await.expect("Failed to setup");
 
     let client = create_test_client().expect("Failed to create client");
 
@@ -636,7 +633,7 @@ async fn test_sql_create_user_table() {
         "CREATE USER TABLE should succeed"
     );
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 #[tokio::test]
@@ -646,7 +643,7 @@ async fn test_sql_insert_select() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup");
+    let table = setup_test_data().await.expect("Failed to setup");
 
     let client = create_test_client().expect("Failed to create client");
 
@@ -666,7 +663,7 @@ async fn test_sql_insert_select() {
     assert_eq!(response.status, "success");
     assert!(!response.results.is_empty());
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 #[tokio::test]
@@ -677,7 +674,7 @@ async fn test_sql_update() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup");
+    let table = setup_test_data().await.expect("Failed to setup");
 
     let client = create_test_client().expect("Failed to create client");
 
@@ -693,7 +690,7 @@ async fn test_sql_update() {
         .await;
     assert!(result.is_ok(), "UPDATE should succeed");
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 #[tokio::test]
@@ -704,7 +701,7 @@ async fn test_sql_delete() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup");
+    let table = setup_test_data().await.expect("Failed to setup");
 
     let client = create_test_client().expect("Failed to create client");
 
@@ -720,7 +717,7 @@ async fn test_sql_delete() {
         .await;
     assert!(result.is_ok(), "DELETE should succeed");
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 #[tokio::test]
@@ -730,7 +727,7 @@ async fn test_sql_drop_table() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup");
+    let table = setup_test_data().await.expect("Failed to setup");
 
     let client = create_test_client().expect("Failed to create client");
 
@@ -748,7 +745,7 @@ async fn test_sql_drop_table() {
         .await;
     assert!(result.is_ok(), "DROP TABLE should succeed");
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 #[tokio::test]
@@ -759,7 +756,7 @@ async fn test_sql_flush_table() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup");
+    let table = setup_test_data().await.expect("Failed to setup");
 
     let client = create_test_client().expect("Failed to create client");
 
@@ -773,7 +770,7 @@ async fn test_sql_flush_table() {
         "FLUSH TABLE should succeed or return unsupported"
     );
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 #[tokio::test]
@@ -805,7 +802,7 @@ async fn test_sql_where_clause_operators() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup");
+    let table = setup_test_data().await.expect("Failed to setup");
 
     let client = create_test_client().expect("Failed to create client");
 
@@ -832,7 +829,7 @@ async fn test_sql_where_clause_operators() {
         .await;
     assert!(in_op.is_ok(), "IN operator should work");
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 #[tokio::test]
@@ -842,7 +839,7 @@ async fn test_sql_limit_offset() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup");
+    let table = setup_test_data().await.expect("Failed to setup");
 
     let client = create_test_client().expect("Failed to create client");
 
@@ -867,7 +864,7 @@ async fn test_sql_limit_offset() {
         assert!(rows.len() <= 5, "Should return at most 5 rows");
     }
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 #[tokio::test]
@@ -877,7 +874,7 @@ async fn test_sql_order_by() {
         return;
     }
 
-    setup_test_data().await.expect("Failed to setup");
+    let table = setup_test_data().await.expect("Failed to setup");
 
     let client = create_test_client().expect("Failed to create client");
 
@@ -897,7 +894,7 @@ async fn test_sql_order_by() {
         .await;
     assert!(ordered.is_ok(), "ORDER BY should work");
 
-    cleanup_test_data().await.ok();
+    cleanup_test_data(&table).await.ok();
 }
 
 // =============================================================================

@@ -347,6 +347,8 @@ mod tests {
 
         let req = test::TestRequest::post()
             .uri("/sql")
+            .insert_header(("X-USER-ID", "test_user"))
+            .peer_addr("127.0.0.1:8080".parse().unwrap())
             .set_json(&req_body)
             .to_request();
 
@@ -379,6 +381,8 @@ mod tests {
 
         let req = test::TestRequest::post()
             .uri("/sql")
+            .insert_header(("X-USER-ID", "test_user"))
+            .peer_addr("127.0.0.1:8080".parse().unwrap())
             .set_json(&req_body)
             .to_request();
 
@@ -405,6 +409,8 @@ mod tests {
 
         let req = test::TestRequest::post()
             .uri("/sql")
+            .insert_header(("X-USER-ID", "test_user"))
+            .peer_addr("127.0.0.1:8080".parse().unwrap())
             .set_json(&req_body)
             .to_request();
 
