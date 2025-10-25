@@ -365,14 +365,21 @@ impl SqlExecutor {
                     KalamDbError::InvalidOperation("StreamTableStore not configured".to_string())
                 })?;
 
-                let provider = Arc::new(StreamTableProvider::new(
+                let mut provider = StreamTableProvider::new(
                     table_metadata,
                     schema,
                     store.clone(),
                     None,  // retention_seconds - TODO: get from table metadata
                     false, // ephemeral - TODO: get from table metadata
                     None,  // max_buffer - TODO: get from table metadata
-                ));
+                );
+
+                // Wire through LiveQueryManager for WebSocket notifications (T154)
+                if let Some(manager) = &self.live_query_manager {
+                    provider = provider.with_live_query_manager(Arc::clone(manager));
+                }
+
+                let provider = Arc::new(provider);
 
                 // Check if table already exists
                 let table_exists = df_schema.table_exist(table_name.as_str());
@@ -1145,14 +1152,21 @@ impl SqlExecutor {
             })?;
 
             // Create provider
-            let provider = Arc::new(StreamTableProvider::new(
+            let mut provider = StreamTableProvider::new(
                 metadata,
                 schema,
                 store.clone(),
                 None,  // retention_seconds - TODO: get from table metadata
                 false, // ephemeral - TODO: get from table metadata
                 None,  // max_buffer - TODO: get from table metadata
-            ));
+            );
+
+            // Wire through LiveQueryManager for WebSocket notifications (T154)
+            if let Some(manager) = &self.live_query_manager {
+                provider = provider.with_live_query_manager(Arc::clone(manager));
+            }
+
+            let provider = Arc::new(provider);
 
             // Register with fully qualified name
             let qualified_name = format!("{}.{}", namespace_id.as_str(), table_name.as_str());

@@ -219,11 +219,17 @@ impl StreamTableProvider {
 
             // Deliver notification asynchronously (spawn task to avoid blocking)
             let manager = Arc::clone(live_query_manager);
-            let table_name = self.table_name().as_str().to_string();
+            // Use fully qualified table name (namespace.table)
+            let table_name = format!("{}.{}", 
+                self.namespace_id().as_str(),
+                self.table_name().as_str()
+            );
+            log::info!("📤 StreamTable INSERT: Notifying subscribers for table '{}'", table_name);
             tokio::spawn(async move {
                 if let Err(e) = manager.notify_table_change(&table_name, notification).await {
-                    #[cfg(debug_assertions)]
-                    eprintln!("Failed to notify subscribers: {}", e);
+                    log::error!("Failed to notify subscribers for table '{}': {}", table_name, e);
+                } else {
+                    log::info!("📤 Successfully notified subscribers for table '{}'", table_name);
                 }
             });
         }

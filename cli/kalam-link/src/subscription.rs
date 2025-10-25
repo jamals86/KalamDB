@@ -421,13 +421,35 @@ fn extract_subscription_id(object: &serde_json::Map<String, Value>, fallback: &s
 
 impl SubscriptionConfig {
     /// Create a new configuration with required SQL.
+    /// 
+    /// By default, fetches the last 100 rows as initial data.
     pub fn new(sql: impl Into<String>) -> Self {
+        Self {
+            id: None,
+            sql: sql.into(),
+            options: Some(SubscriptionOptions {
+                last_rows: Some(100), // Default: fetch last 100 rows
+            }),
+            ws_url: None,
+        }
+    }
+
+    /// Create a configuration without any initial data fetch
+    pub fn without_initial_data(sql: impl Into<String>) -> Self {
         Self {
             id: None,
             sql: sql.into(),
             options: None,
             ws_url: None,
         }
+    }
+
+    /// Set the number of initial rows to fetch
+    pub fn with_last_rows(mut self, count: usize) -> Self {
+        self.options = Some(SubscriptionOptions {
+            last_rows: Some(count),
+        });
+        self
     }
 }
 

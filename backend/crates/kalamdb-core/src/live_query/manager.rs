@@ -531,24 +531,29 @@ impl LiveQueryManager {
         table_name: &str,
         change_notification: ChangeNotification,
     ) -> Result<usize, KalamDbError> {
+        log::info!("📢 notify_table_change called for table: '{}', change_type: {:?}", table_name, change_notification.change_type);
+        
         // Get filter cache for matching
         let filter_cache = self.filter_cache.read().await;
 
         // Collect live_ids that need to be notified
         let live_ids_to_notify: Vec<LiveId> = {
             let registry = self.registry.read().await;
+            log::info!("📢 Registry has {} users", registry.users.len());
             let mut ids = Vec::new();
 
             // Iterate through all users
             for (user_id, user_connections) in registry.users.iter() {
-                log::trace!("📢 User {} has {} connections", user_id.as_str(), user_connections.sockets.len());
+                log::info!("📢 User {} has {} connections", user_id.as_str(), user_connections.sockets.len());
                 // Iterate through all connections for this user
                 for (conn_id, socket) in user_connections.sockets.iter() {
-                    log::trace!("📢 Connection {} has {} live queries", conn_id, socket.live_queries.len());
+                    log::info!("📢 Connection {} has {} live queries", conn_id, socket.live_queries.len());
                     // Iterate through all live queries on this connection
                     for (live_id, _live_query) in socket.live_queries.iter() {
+                        log::info!("📢 Checking live_id.table_name='{}' against target table='{}'", live_id.table_name(), table_name);
                         // Check if this subscription is for the changed table
                         if live_id.table_name() == table_name {
+                            log::info!("📢 ✓ Table name MATCHED for live_id={}", live_id.to_string());
                             // Check filter if one exists
                             if let Some(filter) = filter_cache.get(&live_id.to_string()) {
                                 // Apply filter to row data
@@ -568,10 +573,11 @@ impl LiveQueryManager {
                                 }
                             } else {
                                 // No filter, notify all subscribers
+                                log::info!("📢 No filter - adding subscriber live_id={}", live_id.to_string());
                                 ids.push(live_id.clone());
                             }
                         } else {
-                            log::debug!("Table name mismatch: '{}' != '{}'", live_id.table_name(), table_name);
+                            log::info!("📢 ✗ Table name MISMATCH: live_id.table='{}' != target='{}'", live_id.table_name(), table_name);
                         }
                     }
                 }

@@ -319,7 +319,7 @@ impl CLISession {
             .completion_type(CompletionType::List) // Show list of completions
             .completion_prompt_limit(100) // Show up to 100 completions
             .edit_mode(EditMode::Emacs) // Emacs keybindings (Tab for completion)
-            .auto_add_history(true)
+            .auto_add_history(false) // Manually manage history for multi-line support
             .build();
 
         let mut rl = Editor::<CLIHelper, DefaultHistory>::with_config(config)?;
@@ -335,23 +335,54 @@ impl CLISession {
         }
 
         // Main REPL loop
+        let mut accumulated_command = String::new();
         loop {
-            // Simple prompt without ANSI codes to avoid cursor position issues
-            let prompt = "kalam> ";
+            // Use continuation prompt if we're accumulating a multi-line command
+            let prompt = if accumulated_command.is_empty() {
+                "kalam> "
+            } else {
+                "    -> "
+            };
 
             match rl.readline(&prompt) {
                 Ok(line) => {
                     let line = line.trim();
-                    if line.is_empty() {
+                    
+                    // Skip empty lines unless we're accumulating
+                    if line.is_empty() && accumulated_command.is_empty() {
                         continue;
                     }
 
-                    // Add to history
-                    let _ = rl.add_history_entry(line);
-                    let _ = history.append(line);
+                    // Add line to accumulated command
+                    if !accumulated_command.is_empty() {
+                        accumulated_command.push('\n');
+                    }
+                    accumulated_command.push_str(line);
+
+                    // Check if command is complete (ends with semicolon or is a backslash command)
+                    let is_complete = line.ends_with(';') 
+                        || accumulated_command.trim_start().starts_with('\\')
+                        || (line.is_empty() && !accumulated_command.is_empty());
+
+                    if !is_complete {
+                        // Need more input, continue reading
+                        continue;
+                    }
+
+                    // We have a complete command - add to history as single entry
+                    let final_command = accumulated_command.trim().to_string();
+                    accumulated_command.clear();
+
+                    if final_command.is_empty() {
+                        continue;
+                    }
+
+                    // Add complete command to history (preserving newlines)
+                    let _ = rl.add_history_entry(&final_command);
+                    let _ = history.append(&final_command);
 
                     // Parse and execute command
-                    match self.parser.parse(line) {
+                    match self.parser.parse(&final_command) {
                         Ok(command) => {
                             // Handle refresh-tables command specially to update completer
                             if matches!(command, Command::RefreshTables) {
@@ -379,7 +410,13 @@ impl CLISession {
                     }
                 }
                 Err(ReadlineError::Interrupted) => {
-                    println!("{}", "Use \\quit or \\q to exit".dimmed());
+                    // Clear any accumulated command on Ctrl+C
+                    if !accumulated_command.is_empty() {
+                        println!("\n{}", "Command cancelled".yellow());
+                        accumulated_command.clear();
+                    } else {
+                        println!("{}", "Use \\quit or \\q to exit".dimmed());
+                    }
                     continue;
                 }
                 Err(ReadlineError::Eof) => {
@@ -650,6 +687,12 @@ impl CLISession {
                 event_result = subscription.next() => {
                     match event_result {
                         Some(Ok(event)) => {
+                            // Check if it's an error event - if so, display and exit
+                            if matches!(event, kalam_link::ChangeEvent::Error { .. }) {
+                                self.display_change_event(&sql_display, &event);
+                                println!("\nSubscription failed - returning to CLI prompt");
+                                break;
+                            }
                             self.display_change_event(&sql_display, &event);
                         }
                         Some(Err(e)) => {
