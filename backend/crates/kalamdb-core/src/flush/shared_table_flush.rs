@@ -109,7 +109,11 @@ impl SharedTableFlushJob {
                     "{}.{}",
                     self.namespace_id.as_str(),
                     self.table_name.as_str()
-                ));
+                ))
+                .with_parameters(vec![
+                    format!("namespace={}", self.namespace_id.as_str()),
+                    format!("table={}", self.table_name.as_str()),
+                ]);
 
         log::info!(
             "🚀 Shared table flush job started: job_id={}, table={}.{}, timestamp={}",

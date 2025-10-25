@@ -449,6 +449,9 @@ mod tests {
         let manager = Arc::new(LiveQueryManager::new(
             kalam_sql,
             NodeId::new("test-node".to_string()),
+            None,
+            None,
+            None,
         ));
 
         let session = WebSocketSession::new(

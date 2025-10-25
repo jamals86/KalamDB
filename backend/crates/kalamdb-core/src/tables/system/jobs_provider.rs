@@ -564,7 +564,7 @@ mod tests {
 
         let retrieved = provider.get_job("job-002").unwrap().unwrap();
         assert_eq!(retrieved.status, "completed");
-        assert!(retrieved.end_time.is_some());
+        assert!(retrieved.completed_at.is_some());
         assert_eq!(retrieved.result, Some("Success".to_string()));
     }
 
@@ -583,7 +583,7 @@ mod tests {
 
         let retrieved = provider.get_job("job-003").unwrap().unwrap();
         assert_eq!(retrieved.status, "failed");
-        assert!(retrieved.end_time.is_some());
+        assert!(retrieved.completed_at.is_some());
         assert_eq!(retrieved.error_message, Some("Disk full".to_string()));
     }
 

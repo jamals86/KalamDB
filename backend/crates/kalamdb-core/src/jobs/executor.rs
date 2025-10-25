@@ -277,7 +277,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(job.status, "completed");
-        assert!(job.end_time.is_some());
+        assert!(job.completed_at.is_some());
         assert_eq!(job.result, Some("Job completed successfully".to_string()));
     }
 
@@ -306,7 +306,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(job.status, "failed");
-        assert!(job.end_time.is_some());
+        assert!(job.completed_at.is_some());
         assert_eq!(job.error_message, Some("Job failed with error".to_string()));
     }
 

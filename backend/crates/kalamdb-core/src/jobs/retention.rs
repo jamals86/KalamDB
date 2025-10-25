@@ -79,7 +79,7 @@ impl RetentionPolicy {
                 continue;
             }
 
-            let reference_time = job.end_time.unwrap_or(job.start_time);
+            let reference_time = job.completed_at.unwrap_or_else(|| job.started_at.unwrap_or(job.created_at));
             let age_ms = now - reference_time;
 
             let threshold = if job.status == "failed" {

@@ -720,6 +720,28 @@ mod tests {
         let user_table_store = Arc::new(UserTableStore::new(Arc::clone(&db)).unwrap());
         let shared_table_store = Arc::new(SharedTableStore::new(Arc::clone(&db)).unwrap());
         let stream_table_store = Arc::new(StreamTableStore::new(Arc::clone(&db)).unwrap());
+        
+        // Create test tables that the tests expect
+        let create_messages_sql = r#"
+            CREATE TABLE user1.messages (
+                id INTEGER PRIMARY KEY AUTO_INCREMENT,
+                user_id TEXT,
+                conversation_id TEXT,
+                text TEXT,
+                read BOOLEAN DEFAULT false
+            ) WITH (table_type = 'user')
+        "#;
+        kalam_sql.execute_update(create_messages_sql, "user1").unwrap();
+        
+        let create_notifications_sql = r#"
+            CREATE TABLE user1.notifications (
+                id INTEGER PRIMARY KEY AUTO_INCREMENT,
+                user_id TEXT,
+                message TEXT
+            ) WITH (table_type = 'user')
+        "#;
+        kalam_sql.execute_update(create_notifications_sql, "user1").unwrap();
+        
         let node_id = NodeId::new("test_node".to_string());
         let manager = LiveQueryManager::new(
             kalam_sql,
@@ -763,7 +785,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q1".to_string(),
-                "SELECT * FROM messages WHERE id > 0".to_string(),
+                "SELECT * FROM user1.messages WHERE id > 0".to_string(),
                 LiveQueryOptions {
                     last_rows: Some(50),
                 },
@@ -784,7 +806,7 @@ mod tests {
         let (manager, _temp_dir) = create_test_manager().await;
 
         let table_name = manager
-            .extract_table_name_from_query("SELECT * FROM messages WHERE id > 0")
+            .extract_table_name_from_query("SELECT * FROM user1.messages WHERE id > 0")
             .unwrap();
         assert_eq!(table_name, "messages");
 
@@ -813,7 +835,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q1".to_string(),
-                "SELECT * FROM messages".to_string(),
+                "SELECT * FROM user1.messages".to_string(),
                 LiveQueryOptions::default(),
             )
             .await
@@ -823,7 +845,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q2".to_string(),
-                "SELECT * FROM notifications".to_string(),
+                "SELECT * FROM user1.notifications".to_string(),
                 LiveQueryOptions::default(),
             )
             .await
@@ -856,7 +878,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q1".to_string(),
-                "SELECT * FROM messages".to_string(),
+                "SELECT * FROM user1.messages".to_string(),
                 LiveQueryOptions::default(),
             )
             .await
@@ -866,7 +888,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q2".to_string(),
-                "SELECT * FROM notifications".to_string(),
+                "SELECT * FROM user1.notifications".to_string(),
                 LiveQueryOptions::default(),
             )
             .await
@@ -897,7 +919,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q1".to_string(),
-                "SELECT * FROM messages".to_string(),
+                "SELECT * FROM user1.messages".to_string(),
                 LiveQueryOptions::default(),
             )
             .await
@@ -923,7 +945,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q1".to_string(),
-                "SELECT * FROM messages".to_string(),
+                "SELECT * FROM user1.messages".to_string(),
                 LiveQueryOptions::default(),
             )
             .await
@@ -955,7 +977,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "messages_query".to_string(),
-                "SELECT * FROM messages WHERE conversation_id = 'conv1'".to_string(),
+                "SELECT * FROM user1.messages WHERE conversation_id = 'conv1'".to_string(),
                 LiveQueryOptions {
                     last_rows: Some(50),
                 },
@@ -967,7 +989,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "notifications_query".to_string(),
-                "SELECT * FROM notifications WHERE user_id = CURRENT_USER()".to_string(),
+                "SELECT * FROM user1.notifications WHERE user_id = CURRENT_USER()".to_string(),
                 LiveQueryOptions {
                     last_rows: Some(10),
                 },
@@ -979,7 +1001,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "messages_query2".to_string(),
-                "SELECT * FROM messages WHERE conversation_id = 'conv2'".to_string(),
+                "SELECT * FROM user1.messages WHERE conversation_id = 'conv2'".to_string(),
                 LiveQueryOptions {
                     last_rows: Some(20),
                 },
@@ -1023,7 +1045,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "filtered_messages".to_string(),
-                "SELECT * FROM messages WHERE user_id = 'user1' AND read = false".to_string(),
+                "SELECT * FROM user1.messages WHERE user_id = 'user1' AND read = false".to_string(),
                 LiveQueryOptions::default(),
             )
             .await
@@ -1054,7 +1076,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q1".to_string(),
-                "SELECT * FROM messages WHERE user_id = 'user1'".to_string(),
+                "SELECT * FROM user1.messages WHERE user_id = 'user1'".to_string(),
                 LiveQueryOptions::default(),
             )
             .await
@@ -1099,7 +1121,7 @@ mod tests {
             .register_subscription(
                 connection_id.clone(),
                 "q1".to_string(),
-                "SELECT * FROM messages WHERE user_id = 'user1'".to_string(),
+                "SELECT * FROM user1.messages WHERE user_id = 'user1'".to_string(),
                 LiveQueryOptions::default(),
             )
             .await

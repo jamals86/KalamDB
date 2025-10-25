@@ -226,7 +226,11 @@ impl UserTableFlushJob {
                     "{}.{}",
                     self.namespace_id.as_str(),
                     self.table_name.as_str()
-                ));
+                ))
+                .with_parameters(vec![
+                    format!("namespace={}", self.namespace_id.as_str()),
+                    format!("table={}", self.table_name.as_str()),
+                ]);
 
         // T158d: Persist job state to system.jobs BEFORE starting work
         if let Some(ref jobs_provider) = self.jobs_provider {

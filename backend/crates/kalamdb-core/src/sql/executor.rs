@@ -1954,7 +1954,7 @@ impl SqlExecutor {
 
         // For now, return basic statistics
         // In Phase 16, this would query actual row counts from hot/cold storage
-        let batch = Self::table_stats_to_record_batch(&table)?;
+        let batch = self.table_stats_to_record_batch(&table)?;
 
         Ok(ExecutionResult::RecordBatch(batch))
     }
@@ -3044,6 +3044,11 @@ impl SqlExecutor {
         // Check if this is a stream table to show stream-specific metadata
         let is_stream_table = table.table_type.eq_ignore_ascii_case("stream");
 
+        let schema_history_hint = format!(
+            "system.table_schemas WHERE table_id = '{}'",
+            table.table_id
+        );
+
         let (properties, values): (Vec<&str>, Vec<String>) = if is_stream_table {
             // Stream table properties (NO system columns, show stream-specific config)
             (
@@ -3052,8 +3057,9 @@ impl SqlExecutor {
                     "table_name",
                     "namespace",
                     "table_type",
-                    "schema_version",
+                    "current_schema_version",
                     "created_at",
+                    "schema_history_reference",
                     "note",
                 ],
                 vec![
@@ -3063,6 +3069,7 @@ impl SqlExecutor {
                     table.table_type.to_string(),
                     schema_version_str,
                     created_at_str,
+                    schema_history_hint,
                     "Stream tables: NO _updated/_deleted columns, NO Parquet storage (ephemeral)"
                         .to_string(),
                 ],
@@ -3077,9 +3084,10 @@ impl SqlExecutor {
                     "table_type",
                     "storage_location",
                     "flush_policy",
-                    "schema_version",
+                    "current_schema_version",
                     "deleted_retention_hours",
                     "created_at",
+                    "schema_history_reference",
                 ],
                 vec![
                     table.table_id.to_string(),
@@ -3091,6 +3099,7 @@ impl SqlExecutor {
                     schema_version_str,
                     retention_hours_str,
                     created_at_str,
+                    schema_history_hint,
                 ],
             )
         };
@@ -3104,6 +3113,7 @@ impl SqlExecutor {
 
     /// Convert table statistics to RecordBatch for SHOW STATS
     fn table_stats_to_record_batch(
+        &self,
         table: &kalamdb_sql::Table,
     ) -> Result<RecordBatch, KalamDbError> {
         let schema = Arc::new(Schema::new(vec![
@@ -3111,39 +3121,163 @@ impl SqlExecutor {
             Field::new("value", DataType::Utf8, false),
         ]));
 
-        // For Phase 16, we return metadata-based statistics
-        // Future phases can query actual row counts from hot/cold storage
-        let statistics = vec![
-            "table_name",
-            "namespace",
-            "table_type",
-            "storage_location",
-            "schema_version",
-            "created_at",
-            "status",
-        ];
+        let buffered_rows = self.count_buffered_rows(table)?;
+
+        let full_table_name = format!("{}.{}", table.namespace, table.table_name);
+        let (last_flush_rows, last_flush_ts, storage_bytes) =
+            self.fetch_flush_metrics(&full_table_name)?;
 
         let created_at_str = chrono::DateTime::from_timestamp_millis(table.created_at)
             .map(|dt| dt.to_rfc3339())
             .unwrap_or_else(|| "unknown".to_string());
 
-        let schema_version_str = table.schema_version.to_string();
-
-        let values = vec![
-            table.table_name.as_str(),
-            table.namespace.as_str(),
-            table.table_type.as_str(),
-            table.storage_location.as_str(),
-            &schema_version_str,
-            &created_at_str,
-            "active", // Placeholder - could query actual status
+        let metrics = vec![
+            ("table_name", table.table_name.clone()),
+            ("namespace", table.namespace.clone()),
+            ("table_type", table.table_type.clone()),
+            (
+                "schema_version",
+                table.schema_version.to_string(),
+            ),
+            ("storage_location", table.storage_location.clone()),
+            ("created_at", created_at_str),
+            ("buffered_rows", buffered_rows.to_string()),
+            ("last_flush_rows", last_flush_rows.to_string()),
+            (
+                "storage_bytes",
+                storage_bytes.to_string(),
+            ),
+            ("last_flush_timestamp", last_flush_ts),
         ];
 
-        let statistic_array: ArrayRef = Arc::new(StringArray::from(statistics));
-        let value_array: ArrayRef = Arc::new(StringArray::from(values));
+        let (stat_names, stat_values): (Vec<&str>, Vec<String>) = metrics
+            .into_iter()
+            .map(|(name, value)| (name, value))
+            .unzip();
+
+        let statistic_array: ArrayRef = Arc::new(StringArray::from(stat_names));
+        let value_array: ArrayRef = Arc::new(StringArray::from(stat_values));
 
         RecordBatch::try_new(schema, vec![statistic_array, value_array])
             .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
+    }
+
+    fn count_buffered_rows(&self, table: &kalamdb_sql::Table) -> Result<usize, KalamDbError> {
+        match table.table_type.to_ascii_uppercase().as_str() {
+            "USER" => {
+                let store = self.user_table_store.as_ref().ok_or_else(|| {
+                    KalamDbError::InvalidOperation(
+                        "User table store not configured for SHOW TABLE STATS".to_string(),
+                    )
+                })?;
+                let rows = store
+                    .scan_all(&table.namespace, &table.table_name)
+                    .map_err(|e| {
+                        KalamDbError::Other(format!(
+                            "Failed to scan user table {}.{}: {}",
+                            table.namespace, table.table_name, e
+                        ))
+                    })?;
+                Ok(rows.len())
+            }
+            "SHARED" => {
+                let store = self.shared_table_store.as_ref().ok_or_else(|| {
+                    KalamDbError::InvalidOperation(
+                        "Shared table store not configured for SHOW TABLE STATS".to_string(),
+                    )
+                })?;
+                let rows = store
+                    .scan(&table.namespace, &table.table_name)
+                    .map_err(|e| {
+                        KalamDbError::Other(format!(
+                            "Failed to scan shared table {}.{}: {}",
+                            table.namespace, table.table_name, e
+                        ))
+                    })?;
+                Ok(rows.len())
+            }
+            "STREAM" => {
+                let store = self.stream_table_store.as_ref().ok_or_else(|| {
+                    KalamDbError::InvalidOperation(
+                        "Stream table store not configured for SHOW TABLE STATS".to_string(),
+                    )
+                })?;
+                let rows = store
+                    .scan(&table.namespace, &table.table_name)
+                    .map_err(|e| {
+                        KalamDbError::Other(format!(
+                            "Failed to scan stream table {}.{}: {}",
+                            table.namespace, table.table_name, e
+                        ))
+                    })?;
+                Ok(rows.len())
+            }
+            _ => Ok(0),
+        }
+    }
+
+    fn fetch_flush_metrics(
+        &self,
+        full_table_name: &str,
+    ) -> Result<(usize, String, u64), KalamDbError> {
+        let provider = match &self.jobs_table_provider {
+            Some(provider) => provider,
+            None => return Ok((0, "never".to_string(), 0)),
+        };
+
+        let jobs = provider.list_jobs().map_err(|e| {
+            KalamDbError::Other(format!("Failed to list jobs for SHOW TABLE STATS: {}", e))
+        })?;
+
+        let mut latest: Option<crate::tables::system::JobRecord> = None;
+        for job in jobs {
+            if job.job_type == "flush"
+                && job.table_name.as_deref() == Some(full_table_name)
+                && job.completed_at.is_some()
+            {
+                let candidate_ts = job.completed_at.unwrap_or_default();
+                let replace = latest
+                    .as_ref()
+                    .map(|existing| existing.completed_at.unwrap_or_default() < candidate_ts)
+                    .unwrap_or(true);
+
+                if replace {
+                    latest = Some(job);
+                }
+            }
+        }
+
+        if let Some(job) = latest {
+            let completed_at = job.completed_at.unwrap_or_default();
+            let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(completed_at)
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_else(|| completed_at.to_string());
+
+            let mut rows_flushed = 0usize;
+            let mut storage_bytes = 0u64;
+
+            if let Some(result_str) = job.result.as_ref() {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(result_str) {
+                    if let Some(rows) = json.get("rows_flushed").and_then(|v| v.as_u64()) {
+                        rows_flushed = rows as usize;
+                    }
+
+                    if let Some(files) = json.get("parquet_files").and_then(|v| v.as_array()) {
+                        for file in files.iter().filter_map(|v| v.as_str()) {
+                            if let Ok(meta) = std::fs::metadata(file) {
+                                if meta.is_file() {
+                                    storage_bytes = storage_bytes.saturating_add(meta.len());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok((rows_flushed, timestamp, storage_bytes))
+        } else {
+            Ok((0, "never".to_string(), 0))
+        }
     }
 }
 

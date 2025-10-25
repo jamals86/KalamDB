@@ -701,13 +701,14 @@ mod tests {
         let live_query = LiveQuery {
             live_id: "lq123".to_string(),
             connection_id: "conn1".to_string(),
+            namespace_id: "test_ns".to_string(),
             user_id: "user1".to_string(),
             table_name: "test_table".to_string(),
             query_id: "query1".to_string(),
             query: "SELECT name, age FROM test_table WHERE age > 18".to_string(),
             options: "{}".to_string(),
             created_at: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
+            last_update: chrono::Utc::now().timestamp(),
             changes: 0,
             node: "node1".to_string(),
         };

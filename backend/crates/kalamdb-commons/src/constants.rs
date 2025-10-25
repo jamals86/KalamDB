@@ -30,6 +30,9 @@ impl SystemTableNames {
     /// System tables catalog: `system.tables`
     pub const TABLES: &'static str = "system.tables";
 
+    /// Table schema history: `system.table_schemas`
+    pub const TABLE_SCHEMAS: &'static str = "system.table_schemas";
+
     /// Storage locations configuration: `system.storages`
     pub const STORAGES: &'static str = "system.storages";
 
@@ -61,6 +64,9 @@ impl ColumnFamilyNames {
 
     /// System tables column family
     pub const SYSTEM_TABLES: &'static str = "system_tables";
+
+    /// System table schemas column family
+    pub const SYSTEM_TABLE_SCHEMAS: &'static str = "system_table_schemas";
 
     /// System storages column family
     pub const SYSTEM_STORAGES: &'static str = "system_storages";
