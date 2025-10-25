@@ -72,11 +72,12 @@ impl LiveQueryManager {
         &self,
         user_id: UserId,
         unique_conn_id: String,
+        notification_tx: Option<crate::live_query::connection_registry::NotificationSender>,
     ) -> Result<ConnectionId, KalamDbError> {
         let connection_id = ConnectionId::new(user_id.as_str().to_string(), unique_conn_id);
 
         let mut registry = self.registry.write().await;
-        registry.register_connection(user_id, connection_id.clone());
+        registry.register_connection(user_id, connection_id.clone(), notification_tx);
 
         Ok(connection_id)
     }
@@ -539,9 +540,11 @@ impl LiveQueryManager {
             let mut ids = Vec::new();
 
             // Iterate through all users
-            for (_user_id, user_connections) in registry.users.iter() {
+            for (user_id, user_connections) in registry.users.iter() {
+                log::trace!("📢 User {} has {} connections", user_id.as_str(), user_connections.sockets.len());
                 // Iterate through all connections for this user
-                for (_conn_id, socket) in user_connections.sockets.iter() {
+                for (conn_id, socket) in user_connections.sockets.iter() {
+                    log::trace!("📢 Connection {} has {} live queries", conn_id, socket.live_queries.len());
                     // Iterate through all live queries on this connection
                     for (live_id, _live_query) in socket.live_queries.iter() {
                         // Check if this subscription is for the changed table
@@ -556,25 +559,19 @@ impl LiveQueryManager {
                                     }
                                     Ok(false) => {
                                         // Filter didn't match, skip this subscriber
-                                        #[cfg(debug_assertions)]
-                                        eprintln!(
-                                            "Filter didn't match for live_id={}, skipping notification",
-                                            live_id.to_string()
-                                        );
+                                        log::trace!("Filter didn't match for live_id={}, skipping notification", live_id.to_string());
                                     }
                                     Err(e) => {
                                         // Filter evaluation error, log and skip
-                                        eprintln!(
-                                            "Filter evaluation error for live_id={}: {}",
-                                            live_id.to_string(),
-                                            e
-                                        );
+                                        log::error!("Filter evaluation error for live_id={}: {}", live_id.to_string(), e);
                                     }
                                 }
                             } else {
                                 // No filter, notify all subscribers
                                 ids.push(live_id.clone());
                             }
+                        } else {
+                            log::debug!("Table name mismatch: '{}' != '{}'", live_id.table_name(), table_name);
                         }
                     }
                 }
@@ -583,12 +580,76 @@ impl LiveQueryManager {
             ids
         }; // registry read lock is dropped here
 
+        log::debug!("📢 Found {} subscribers to notify", live_ids_to_notify.len());
+        
         // Drop filter cache read lock before acquiring write locks
         drop(filter_cache);
 
-        // Now increment changes for each live_id (needs write lock)
+        // Now send notifications and increment changes for each live_id
         let notification_count = live_ids_to_notify.len();
         for live_id in live_ids_to_notify.iter() {
+            // Send notification to WebSocket client
+            if let Some(tx) = self.get_notification_sender(live_id).await {
+                // Convert row data from serde_json::Value to HashMap
+                let row_map = if let Some(obj) = change_notification.row_data.as_object() {
+                    obj.iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect()
+                } else {
+                    std::collections::HashMap::new()
+                };
+
+                // Build the typed notification
+                let notification = match change_notification.change_type {
+                    ChangeType::Insert => {
+                        kalamdb_commons::Notification::insert(
+                            live_id.to_string(),
+                            vec![row_map],
+                        )
+                    }
+                    ChangeType::Update => {
+                        let old_map = if let Some(old_data) = &change_notification.old_data {
+                            if let Some(obj) = old_data.as_object() {
+                                obj.iter()
+                                    .map(|(k, v)| (k.clone(), v.clone()))
+                                    .collect()
+                            } else {
+                                std::collections::HashMap::new()
+                            }
+                        } else {
+                            std::collections::HashMap::new()
+                        };
+                        kalamdb_commons::Notification::update(
+                            live_id.to_string(),
+                            vec![row_map],
+                            vec![old_map],
+                        )
+                    }
+                    ChangeType::Delete => {
+                        kalamdb_commons::Notification::delete(
+                            live_id.to_string(),
+                            vec![row_map],
+                        )
+                    }
+                    ChangeType::Flush => {
+                        // For flush, we use insert type with flush metadata
+                        kalamdb_commons::Notification::insert(
+                            live_id.to_string(),
+                            vec![row_map],
+                        )
+                    }
+                };
+
+                // Send notification through channel (non-blocking)
+                if let Err(e) = tx.send((live_id.clone(), notification)) {
+                    log::error!("Failed to send notification to WebSocket client for live_id={}: {}", live_id.to_string(), e);
+                } else {
+                    log::debug!("Notification sent to WebSocket client for live_id={}", live_id.to_string());
+                }
+            } else {
+                log::warn!("No notification sender found for live_id={}", live_id.to_string());
+            }
+            
             self.increment_changes(live_id).await?;
 
             // Log notification (in production, use proper logging)
@@ -601,6 +662,20 @@ impl LiveQueryManager {
         }
 
         Ok(notification_count)
+    }
+
+    /// Get the notification sender for a specific live query
+    async fn get_notification_sender(&self, live_id: &LiveId) -> Option<crate::live_query::connection_registry::NotificationSender> {
+        let registry = self.registry.read().await;
+        let user_id = UserId::new(live_id.user_id().to_string());
+        
+        if let Some(user_connections) = registry.users.get(&user_id) {
+            if let Some(socket) = user_connections.get_socket(&live_id.connection_id) {
+                return socket.notification_tx.clone();
+            }
+        }
+        
+        None
     }
 }
 
@@ -811,7 +886,7 @@ mod tests {
         let user_id = UserId::new("user1".to_string());
 
         let connection_id = manager
-            .register_connection(user_id, "conn1".to_string())
+            .register_connection(user_id, "conn1".to_string(), None)
             .await
             .unwrap();
 
@@ -829,7 +904,7 @@ mod tests {
         let user_id = UserId::new("user1".to_string());
 
         let connection_id = manager
-            .register_connection(user_id.clone(), "conn1".to_string())
+            .register_connection(user_id.clone(), "conn1".to_string(), None)
             .await
             .unwrap();
 
@@ -879,7 +954,7 @@ mod tests {
         let user_id = UserId::new("user1".to_string());
 
         let connection_id = manager
-            .register_connection(user_id.clone(), "conn1".to_string())
+            .register_connection(user_id.clone(), "conn1".to_string(), None)
             .await
             .unwrap();
 
@@ -922,7 +997,7 @@ mod tests {
         let user_id = UserId::new("user1".to_string());
 
         let connection_id = manager
-            .register_connection(user_id.clone(), "conn1".to_string())
+            .register_connection(user_id.clone(), "conn1".to_string(), None)
             .await
             .unwrap();
 
@@ -963,7 +1038,7 @@ mod tests {
         let user_id = UserId::new("user1".to_string());
 
         let connection_id = manager
-            .register_connection(user_id.clone(), "conn1".to_string())
+            .register_connection(user_id.clone(), "conn1".to_string(), None)
             .await
             .unwrap();
 
@@ -989,7 +1064,7 @@ mod tests {
         let user_id = UserId::new("user1".to_string());
 
         let connection_id = manager
-            .register_connection(user_id.clone(), "conn1".to_string())
+            .register_connection(user_id.clone(), "conn1".to_string(), None)
             .await
             .unwrap();
 
@@ -1020,7 +1095,7 @@ mod tests {
         let user_id = UserId::new("user1".to_string());
 
         let connection_id = manager
-            .register_connection(user_id.clone(), "conn1".to_string())
+            .register_connection(user_id.clone(), "conn1".to_string(), None)
             .await
             .unwrap();
 
@@ -1088,7 +1163,7 @@ mod tests {
         let user_id = UserId::new("user1".to_string());
 
         let connection_id = manager
-            .register_connection(user_id.clone(), "conn1".to_string())
+            .register_connection(user_id.clone(), "conn1".to_string(), None)
             .await
             .unwrap();
 
@@ -1119,7 +1194,7 @@ mod tests {
         let user_id = UserId::new("user1".to_string());
 
         let connection_id = manager
-            .register_connection(user_id.clone(), "conn1".to_string())
+            .register_connection(user_id.clone(), "conn1".to_string(), None)
             .await
             .unwrap();
 
@@ -1165,7 +1240,7 @@ mod tests {
         let user_id = UserId::new("user1".to_string());
 
         let connection_id = manager
-            .register_connection(user_id.clone(), "conn1".to_string())
+            .register_connection(user_id.clone(), "conn1".to_string(), None)
             .await
             .unwrap();
 

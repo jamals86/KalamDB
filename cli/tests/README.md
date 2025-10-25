@@ -35,24 +35,30 @@ cargo run --bin kalamdb-server
 ```bash
 # Terminal 2: Run all CLI tests
 cd cli
-cargo test
 
-# Or with output visible
-cargo test -- --nocapture
+# Use the test runner script (recommended - runs tests serially)
+./run_integration_tests.sh
+
+# Or run tests directly with serial execution
+cargo test -- --test-threads=1 --nocapture
 ```
+
+⚠️ **Important**: Tests must run serially (`--test-threads=1`) to avoid race conditions on shared database state.
 
 ### Run Specific Test Suites
 
 ```bash
 # CLI integration tests only
-cargo test --test test_cli_integration
+./run_integration_tests.sh cli
+# Or: cargo test --test test_cli_integration -- --test-threads=1
 
 # WebSocket integration tests only
-cargo test --test test_websocket_integration
+./run_integration_tests.sh ws
+# Or: cargo test --test test_websocket_integration -- --test-threads=1
 
 # kalam-link library tests only
-cd kalam-link
-cargo test --test integration_tests
+./run_integration_tests.sh link
+# Or: cd kalam-link && cargo test --test integration_tests -- --test-threads=1
 ```
 
 ### Run Individual Tests
@@ -359,6 +365,26 @@ DROP NAMESPACE link_test CASCADE;
 DROP NAMESPACE test_cli CASCADE;
 ```
 
+### Tests Fail Intermittently (Race Conditions)
+
+**Problem**: Tests pass individually but fail when run together
+
+**Root Cause**: Tests running in parallel share database state (namespace/tables)
+
+**Solution**: Always use serial execution:
+```bash
+# Use the test runner script
+./run_integration_tests.sh
+
+# Or add --test-threads=1 flag
+cargo test -- --test-threads=1 --nocapture
+```
+
+**Why**: Multiple tests creating/dropping the same `test_cli` namespace simultaneously causes:
+- RocksDB write conflicts
+- Table creation/deletion race conditions
+- Inconsistent test data state
+
 ### Permission Denied
 
 **Problem**: Tests fail with permission errors
@@ -387,12 +413,14 @@ jobs:
           cargo run --bin kalamdb-server &
           sleep 5
       
-      # Run tests
+      # Run tests serially to avoid race conditions
       - name: Run CLI Tests
         run: |
           cd cli
-          cargo test -- --nocapture
+          ./run_integration_tests.sh
 ```
+
+**Note**: Tests must run serially (`--test-threads=1`) to prevent race conditions on shared database state.
 
 ## Writing New Tests
 

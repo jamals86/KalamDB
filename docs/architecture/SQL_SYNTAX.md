@@ -2044,7 +2044,7 @@ CREATE USER TABLE app.messages (
   content TEXT,
   author TEXT,
   created_at TIMESTAMP DEFAULT NOW()
-) STORAGE local FLUSH INTERVAL 300s ROW_THRESHOLD 1000;
+) STORAGE local FLUSH INTERVAL 300s ROW_THRESHOLD 10;
 
 -- 4. Create shared table
 CREATE SHARED TABLE app.config (
@@ -2062,7 +2062,7 @@ CREATE STREAM TABLE app.events (
 ) RETENTION 10 EPHEMERAL MAX_BUFFER 5000;
 
 -- 6. Insert data (using DEFAULT functions)
-INSERT INTO app.messages2 (content, author) VALUES ('Hello World', 'alice');
+INSERT INTO app.messages (content, author) VALUES ('Hello World', 'alice');
 
 INSERT INTO app.config (config_key, config_value)
 VALUES ('app_name', 'KalamDB');

@@ -1037,13 +1037,20 @@ impl SqlExecutor {
             })?;
 
             // Create provider with the CURRENT user_id (critical for data isolation)
-            let provider = Arc::new(UserTableProvider::new(
+            let mut provider = UserTableProvider::new(
                 metadata,
                 schema,
                 store.clone(),
                 user_id.clone(),
                 vec![], // parquet_paths - empty for now
-            ));
+            );
+
+            // Wire through LiveQueryManager for WebSocket notifications
+            if let Some(manager) = &self.live_query_manager {
+                provider = provider.with_live_query_manager(Arc::clone(manager));
+            }
+
+            let provider = Arc::new(provider);
 
             // Register with fully qualified name
             let qualified_name = format!("{}.{}", namespace_id.as_str(), table_name.as_str());

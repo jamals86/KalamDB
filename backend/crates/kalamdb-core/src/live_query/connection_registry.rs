@@ -11,6 +11,13 @@ use std::fmt;
 // Re-export from kalamdb-commons
 pub use kalamdb_commons::models::{ConnectionId, LiveId};
 
+/// Type alias for sending live query notifications to WebSocket clients
+/// 
+/// The tuple contains:
+/// - LiveId: The subscription identifier
+/// - Notification: The typed notification message (from kalamdb-commons)
+pub type NotificationSender = tokio::sync::mpsc::UnboundedSender<(LiveId, kalamdb_commons::Notification)>;
+
 // Extension traits to add KalamDbError-based parsing to commons types
 pub trait ConnectionIdExt {
     fn from_string_kalam(s: &str) -> Result<ConnectionId, KalamDbError>;
@@ -104,7 +111,8 @@ pub struct LiveQuery {
 /// Note: Actix actor address will be added when integrating with WebSocket layer
 pub struct UserConnectionSocket {
     pub connection_id: ConnectionId,
-    // TODO: Add actor: Addr<WebSocketSession> when integrating with actix-web-actors
+    /// Channel for sending notifications to the WebSocket client
+    pub notification_tx: Option<NotificationSender>,
     pub live_queries: HashMap<LiveId, LiveQuery>,
 }
 
@@ -113,6 +121,16 @@ impl UserConnectionSocket {
     pub fn new(connection_id: ConnectionId) -> Self {
         Self {
             connection_id,
+            notification_tx: None,
+            live_queries: HashMap::new(),
+        }
+    }
+
+    /// Create a new user connection socket with notification sender
+    pub fn with_notification_sender(connection_id: ConnectionId, notification_tx: NotificationSender) -> Self {
+        Self {
+            connection_id,
+            notification_tx: Some(notification_tx),
             live_queries: HashMap::new(),
         }
     }
@@ -206,8 +224,12 @@ impl LiveQueryRegistry {
     }
 
     /// Register a new WebSocket connection
-    pub fn register_connection(&mut self, user_id: UserId, connection_id: ConnectionId) {
-        let socket = UserConnectionSocket::new(connection_id);
+    pub fn register_connection(&mut self, user_id: UserId, connection_id: ConnectionId, notification_tx: Option<NotificationSender>) {
+        let socket = if let Some(tx) = notification_tx {
+            UserConnectionSocket::with_notification_sender(connection_id, tx)
+        } else {
+            UserConnectionSocket::new(connection_id)
+        };
         self.users.entry(user_id).or_default().add_socket(socket);
     }
 
@@ -340,7 +362,7 @@ mod tests {
         let user_id = UserId::new("user1".to_string());
         let conn_id = ConnectionId::new("user1".to_string(), "conn1".to_string());
 
-        registry.register_connection(user_id.clone(), conn_id.clone());
+        registry.register_connection(user_id.clone(), conn_id.clone(), None);
 
         assert_eq!(registry.total_connections(), 1);
         assert_eq!(registry.total_subscriptions(), 0);
@@ -352,7 +374,7 @@ mod tests {
         let user_id = UserId::new("user1".to_string());
         let conn_id = ConnectionId::new("user1".to_string(), "conn1".to_string());
 
-        registry.register_connection(user_id.clone(), conn_id.clone());
+        registry.register_connection(user_id.clone(), conn_id.clone(), None);
 
         let live_id = LiveId::new(conn_id.clone(), "messages".to_string(), "q1".to_string());
         let live_query = LiveQuery {
@@ -375,7 +397,7 @@ mod tests {
         let user_id = UserId::new("user1".to_string());
         let conn_id = ConnectionId::new("user1".to_string(), "conn1".to_string());
 
-        registry.register_connection(user_id.clone(), conn_id.clone());
+        registry.register_connection(user_id.clone(), conn_id.clone(), None);
 
         let live_id1 = LiveId::new(conn_id.clone(), "messages".to_string(), "q1".to_string());
         let live_query1 = LiveQuery {
@@ -415,7 +437,7 @@ mod tests {
         let user_id = UserId::new("user1".to_string());
         let conn_id = ConnectionId::new("user1".to_string(), "conn1".to_string());
 
-        registry.register_connection(user_id.clone(), conn_id.clone());
+        registry.register_connection(user_id.clone(), conn_id.clone(), None);
 
         let live_id1 = LiveId::new(conn_id.clone(), "messages".to_string(), "q1".to_string());
         let live_query1 = LiveQuery {
@@ -456,7 +478,7 @@ mod tests {
         let user_id = UserId::new("user1".to_string());
         let conn_id = ConnectionId::new("user1".to_string(), "conn1".to_string());
 
-        registry.register_connection(user_id.clone(), conn_id.clone());
+        registry.register_connection(user_id.clone(), conn_id.clone(), None);
 
         let live_id = LiveId::new(conn_id.clone(), "messages".to_string(), "q1".to_string());
         let live_query = LiveQuery {

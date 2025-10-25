@@ -10,6 +10,7 @@
 use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
 use crate::error::KalamDbError;
 use crate::ids::SnowflakeGenerator;
+use crate::live_query::manager::LiveQueryManager;
 use crate::tables::user_table_delete::UserTableDeleteHandler;
 use crate::tables::user_table_insert::UserTableInsertHandler;
 use crate::tables::user_table_update::UserTableUpdateHandler;
@@ -61,6 +62,9 @@ pub struct UserTableProvider {
 
     /// Parquet file paths for cold data (optional)
     parquet_paths: Vec<String>,
+
+    /// LiveQueryManager for WebSocket notifications
+    live_query_manager: Option<Arc<LiveQueryManager>>,
 }
 
 impl UserTableProvider {
@@ -92,7 +96,31 @@ impl UserTableProvider {
             update_handler,
             delete_handler,
             parquet_paths,
+            live_query_manager: None,
         }
+    }
+
+    /// Configure LiveQueryManager for WebSocket notifications
+    ///
+    /// # Arguments
+    /// * `manager` - LiveQueryManager instance for notifications
+    pub fn with_live_query_manager(mut self, manager: Arc<LiveQueryManager>) -> Self {
+        // Wire through to all handlers
+        self.insert_handler = Arc::new(
+            UserTableInsertHandler::new(self.store.clone())
+                .with_live_query_manager(Arc::clone(&manager))
+        );
+        self.update_handler = Arc::new(
+            UserTableUpdateHandler::new(self.store.clone())
+                .with_live_query_manager(Arc::clone(&manager))
+        );
+        self.delete_handler = Arc::new(
+            UserTableDeleteHandler::new(self.store.clone())
+                .with_live_query_manager(Arc::clone(&manager))
+        );
+        
+        self.live_query_manager = Some(manager);
+        self
     }
 
     /// Get the column family name for this table

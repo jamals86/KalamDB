@@ -8,6 +8,7 @@
 
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
+use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use kalamdb_store::UserTableStore;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
@@ -20,6 +21,7 @@ use std::sync::Arc;
 /// - kalamdb-store for RocksDB operations
 pub struct UserTableUpdateHandler {
     store: Arc<UserTableStore>,
+    live_query_manager: Option<Arc<LiveQueryManager>>,
 }
 
 impl UserTableUpdateHandler {
@@ -28,7 +30,19 @@ impl UserTableUpdateHandler {
     /// # Arguments
     /// * `store` - UserTableStore instance for RocksDB operations
     pub fn new(store: Arc<UserTableStore>) -> Self {
-        Self { store }
+        Self { 
+            store,
+            live_query_manager: None,
+        }
+    }
+
+    /// Configure LiveQueryManager for WebSocket notifications
+    ///
+    /// # Arguments
+    /// * `manager` - LiveQueryManager instance for notifications
+    pub fn with_live_query_manager(mut self, manager: Arc<LiveQueryManager>) -> Self {
+        self.live_query_manager = Some(manager);
+        self
     }
 
     /// Update a single row in a user table
@@ -63,7 +77,7 @@ impl UserTableUpdateHandler {
         }
 
         // Read existing row from store
-        let mut existing_row = self
+        let existing_row = self
             .store
             .get(
                 namespace_id.as_str(),
@@ -81,8 +95,12 @@ impl UserTableUpdateHandler {
                 ))
             })?;
 
+        // Clone for old_data before merging
+        let old_data = existing_row.clone();
+        let mut updated_row = existing_row;
+
         // Merge updates into existing row
-        if let Some(existing_obj) = existing_row.as_object_mut() {
+        if let Some(updated_obj) = updated_row.as_object_mut() {
             if let Some(updates_obj) = updates.as_object() {
                 for (key, value) in updates_obj {
                     // Prevent updates to system columns
@@ -90,7 +108,7 @@ impl UserTableUpdateHandler {
                         log::warn!("Attempted to update system column '{}', ignored", key);
                         continue;
                     }
-                    existing_obj.insert(key.clone(), value.clone());
+                    updated_obj.insert(key.clone(), value.clone());
                 }
             }
         }
@@ -102,7 +120,7 @@ impl UserTableUpdateHandler {
                 table_name.as_str(),
                 user_id.as_str(),
                 row_id,
-                existing_row,
+                updated_row.clone(),
             )
             .map_err(|e| KalamDbError::Other(format!("Failed to write updated row: {}", e)))?;
 
@@ -113,6 +131,33 @@ impl UserTableUpdateHandler {
             table_name.as_str(),
             user_id.as_str()
         );
+
+        // ✅ REQUIREMENT 2: Notification AFTER storage success
+        // ✅ REQUIREMENT 1 & 3: Async fire-and-forget pattern
+        if let Some(manager) = &self.live_query_manager {
+            // CRITICAL: Use fully qualified table name (namespace.table_name) for notification matching
+            let qualified_table_name = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
+            
+            // Add user_id to notification data for filter matching
+            let mut notification_data = updated_row;
+            if let Some(obj) = notification_data.as_object_mut() {
+                obj.insert("user_id".to_string(), serde_json::json!(user_id.as_str()));
+            }
+            
+            let notification = ChangeNotification::update(
+                qualified_table_name.clone(),
+                old_data,
+                notification_data,
+            );
+            
+            let mgr = Arc::clone(manager);
+            tokio::spawn(async move {
+                // ✅ REQUIREMENT 2: Log errors, don't propagate
+                if let Err(e) = mgr.notify_table_change(&qualified_table_name, notification).await {
+                    log::warn!("Failed to notify subscribers for UPDATE: {}", e);
+                }
+            });
+        }
 
         Ok(row_id.to_string())
     }

@@ -9,6 +9,7 @@
 
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
+use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use kalamdb_store::UserTableStore;
 use std::sync::Arc;
 
@@ -21,6 +22,7 @@ use std::sync::Arc;
 /// - Filtered queries (WHERE _deleted = false)
 pub struct UserTableDeleteHandler {
     store: Arc<UserTableStore>,
+    live_query_manager: Option<Arc<LiveQueryManager>>,
 }
 
 impl UserTableDeleteHandler {
@@ -29,7 +31,19 @@ impl UserTableDeleteHandler {
     /// # Arguments
     /// * `store` - UserTableStore instance
     pub fn new(store: Arc<UserTableStore>) -> Self {
-        Self { store }
+        Self { 
+            store,
+            live_query_manager: None,
+        }
+    }
+
+    /// Configure LiveQueryManager for WebSocket notifications
+    ///
+    /// # Arguments
+    /// * `manager` - LiveQueryManager instance for notifications
+    pub fn with_live_query_manager(mut self, manager: Arc<LiveQueryManager>) -> Self {
+        self.live_query_manager = Some(manager);
+        self
     }
 
     /// Soft delete a single row in a user table
@@ -57,6 +71,20 @@ impl UserTableDeleteHandler {
         user_id: &UserId,
         row_id: &str,
     ) -> Result<String, KalamDbError> {
+        // Fetch row data BEFORE deleting (for notification)
+        let row_data = if self.live_query_manager.is_some() {
+            self.store
+                .get(
+                    namespace_id.as_str(),
+                    table_name.as_str(),
+                    user_id.as_str(),
+                    row_id,
+                )
+                .map_err(|e| KalamDbError::Other(format!("Failed to read row: {}", e)))?
+        } else {
+            None
+        };
+
         // Soft delete via store (automatically updates _deleted and _updated)
         self.store
             .delete(
@@ -86,6 +114,33 @@ impl UserTableDeleteHandler {
             table_name.as_str(),
             user_id.as_str()
         );
+
+        // ✅ REQUIREMENT 2: Notification AFTER storage success
+        // ✅ REQUIREMENT 1 & 3: Async fire-and-forget pattern
+        if let Some(manager) = &self.live_query_manager {
+            if let Some(mut data) = row_data {
+                // CRITICAL: Use fully qualified table name (namespace.table_name) for notification matching
+                let qualified_table_name = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
+                
+                // Add user_id to notification data for filter matching
+                if let Some(obj) = data.as_object_mut() {
+                    obj.insert("user_id".to_string(), serde_json::json!(user_id.as_str()));
+                }
+                
+                let notification = ChangeNotification::delete_soft(
+                    qualified_table_name.clone(),
+                    data,
+                );
+                
+                let mgr = Arc::clone(manager);
+                tokio::spawn(async move {
+                    // ✅ REQUIREMENT 2: Log errors, don't propagate
+                    if let Err(e) = mgr.notify_table_change(&qualified_table_name, notification).await {
+                        log::warn!("Failed to notify subscribers for DELETE: {}", e);
+                    }
+                });
+            }
+        }
 
         Ok(row_id.to_string())
     }

@@ -605,7 +605,7 @@ impl CLISession {
         if let Some(ref id) = requested_id {
             println!("Requested subscription ID: {}", id);
         }
-        println!("Press Ctrl+C to stop\n");
+        println!("Press Ctrl+C to unsubscribe and return to CLI\n");
 
         let mut subscription = self.client.subscribe_with_config(config).await?;
 
@@ -614,6 +614,10 @@ impl CLISession {
             subscription.subscription_id()
         );
 
+        // Set up Ctrl+C handler for graceful unsubscribe
+        let ctrl_c = tokio::signal::ctrl_c();
+        tokio::pin!(ctrl_c);
+
         loop {
             // Check if paused (T104)
             if self.subscription_paused {
@@ -621,18 +625,42 @@ impl CLISession {
                 continue;
             }
 
-            // Get next event
-            match subscription.next().await {
-                Some(Ok(event)) => {
-                    self.display_change_event(&sql_display, &event);
-                }
-                Some(Err(e)) => {
-                    eprintln!("Subscription error: {}", e);
+            // Wait for either a subscription event or Ctrl+C
+            tokio::select! {
+                // Handle Ctrl+C
+                _ = &mut ctrl_c => {
+                    if self.color {
+                        println!("\n\x1b[33m⚠ Unsubscribing...\x1b[0m");
+                    } else {
+                        println!("\n⚠ Unsubscribing...");
+                    }
+                    // Close subscription gracefully
+                    if let Err(e) = subscription.close().await {
+                        eprintln!("Warning: Failed to close subscription cleanly: {}", e);
+                    }
+                    if self.color {
+                        println!("\x1b[32m✓ Unsubscribed\x1b[0m Back to CLI prompt");
+                    } else {
+                        println!("✓ Unsubscribed - Back to CLI prompt");
+                    }
                     break;
                 }
-                None => {
-                    println!("Subscription ended");
-                    break;
+
+                // Handle subscription events
+                event_result = subscription.next() => {
+                    match event_result {
+                        Some(Ok(event)) => {
+                            self.display_change_event(&sql_display, &event);
+                        }
+                        Some(Err(e)) => {
+                            eprintln!("Subscription error: {}", e);
+                            break;
+                        }
+                        None => {
+                            println!("Subscription ended by server");
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -650,17 +678,19 @@ impl CLISession {
         match event {
             kalam_link::ChangeEvent::Ack {
                 subscription_id,
-                message,
+                message: _,
             } => {
                 let id_display = subscription_id.as_deref().unwrap_or("<pending-id>");
-                let msg = message.as_deref().unwrap_or_else(|| subscription_sql);
                 if self.color {
                     println!(
-                        "\x1b[36m[{}] ACK\x1b[0m [{}] {}",
-                        timestamp, id_display, msg
+                        "\x1b[36m[{}] ✓ SUBSCRIBED\x1b[0m [{}] Listening for changes...",
+                        timestamp, id_display
                     );
                 } else {
-                    println!("[{}] ACK [{}] {}", timestamp, id_display, msg);
+                    println!(
+                        "[{}] ✓ SUBSCRIBED [{}] Listening for changes...",
+                        timestamp, id_display
+                    );
                 }
             }
             kalam_link::ChangeEvent::InitialData {
@@ -808,19 +838,19 @@ impl CLISession {
                 }
             }
             kalam_link::ChangeEvent::Unknown { raw } => {
+                // Log unknown payloads at debug level only - these are typically
+                // system messages that don't need user attention
                 if self.color {
-                    println!(
-                        "\x1b[35m[{}] UNKNOWN\x1b[0m payload: {}",
-                        timestamp,
-                        serde_json::to_string(raw).unwrap_or_default()
+                    eprintln!(
+                        "\x1b[90m[{}] DEBUG: Unrecognized message type\x1b[0m",
+                        timestamp
                     );
                 } else {
-                    println!(
-                        "[{}] UNKNOWN payload: {}",
-                        timestamp,
-                        serde_json::to_string(raw).unwrap_or_default()
-                    );
+                    eprintln!("[{}] DEBUG: Unrecognized message type", timestamp);
                 }
+                // Only show details in verbose mode
+                #[cfg(debug_assertions)]
+                eprintln!("  Payload: {}", serde_json::to_string(raw).unwrap_or_default());
             }
         }
     }

@@ -272,28 +272,41 @@ async fn test_websocket_initial_data_snapshot() {
 
     match subscription_result {
         Ok(Ok(mut subscription)) => {
-            // Try to receive initial snapshot
-            if let Ok(Some(event_result)) = timeout(Duration::from_secs(3), subscription.next()).await {
-                if let Ok(event) = event_result {
-                    match event {
-                        ChangeEvent::InitialData { rows, .. } => {
-                            assert!(!rows.is_empty(), "Initial snapshot should contain data");
-                        }
-                        ChangeEvent::Ack { .. } => {
-                            // Received ACK, might need to wait for InitialData
-                        }
-                        _ => {
-                            eprintln!("Received unexpected event type");
+            // Try to receive ACK first
+            let mut received_initial_data = false;
+            
+            // Try to get ACK and InitialData
+            for _ in 0..3 {
+                if let Ok(Some(event_result)) = timeout(Duration::from_secs(2), subscription.next()).await {
+                    if let Ok(event) = event_result {
+                        match event {
+                            ChangeEvent::InitialData { rows, .. } => {
+                                assert!(!rows.is_empty(), "Initial snapshot should contain data");
+                                received_initial_data = true;
+                                break;
+                            }
+                            ChangeEvent::Ack { .. } => {
+                                // Received ACK, continue waiting for InitialData
+                                continue;
+                            }
+                            other => {
+                                panic!("Received unexpected event type during initial snapshot: {:?}", other);
+                            }
                         }
                     }
                 }
             }
+            
+            assert!(
+                received_initial_data,
+                "FAILED: Should receive InitialData event with snapshot of existing rows"
+            );
         }
         Ok(Err(e)) => {
-            eprintln!("⚠️  Subscription failed: {}", e);
+            panic!("Subscription failed: {}", e);
         }
         Err(_) => {
-            eprintln!("⚠️  Subscription creation timed out");
+            panic!("Subscription creation timed out");
         }
     }
 
@@ -330,26 +343,35 @@ async fn test_websocket_insert_notification() {
                 .ok();
 
             // Wait for insert notification
-            if let Ok(Some(event_result)) = timeout(Duration::from_secs(3), subscription.next()).await {
-                if let Ok(event) = event_result {
+            let event_received = timeout(Duration::from_secs(3), subscription.next()).await;
+            
+            match event_received {
+                Ok(Some(Ok(event))) => {
                     match event {
                         ChangeEvent::Insert { rows, .. } => {
                             assert!(!rows.is_empty(), "Insert notification should contain rows");
                         }
                         _ => {
-                            eprintln!("Expected Insert event, got: {:?}", event);
+                            panic!("Expected Insert event, got unexpected event type: {:?}", event);
                         }
                     }
                 }
-            } else {
-                eprintln!("⚠️  No insert notification received");
+                Ok(Some(Err(e))) => {
+                    panic!("Insert notification failed with error: {}", e);
+                }
+                Ok(None) => {
+                    panic!("Subscription ended before receiving insert notification");
+                }
+                Err(_) => {
+                    panic!("FAILED: No insert notification received within timeout - WebSocket notifications not working!");
+                }
             }
         }
         Ok(Err(e)) => {
-            eprintln!("⚠️  Subscription failed: {}", e);
+            panic!("Subscription failed: {}", e);
         }
         Err(_) => {
-            eprintln!("⚠️  Subscription timed out");
+            panic!("Subscription creation timed out");
         }
     }
 
@@ -455,27 +477,36 @@ async fn test_websocket_update_notification() {
                 .ok();
 
             // Wait for update notification
-            if let Ok(Some(event_result)) = timeout(Duration::from_secs(3), subscription.next()).await {
-                if let Ok(event) = event_result {
+            let event_received = timeout(Duration::from_secs(3), subscription.next()).await;
+            
+            match event_received {
+                Ok(Some(Ok(event))) => {
                     match event {
                         ChangeEvent::Update { rows, old_rows, .. } => {
                             assert!(!rows.is_empty(), "Update should contain new rows");
                             assert!(!old_rows.is_empty(), "Update should contain old rows");
                         }
                         _ => {
-                            eprintln!("Expected Update event, got: {:?}", event);
+                            panic!("Expected Update event, got unexpected event type: {:?}", event);
                         }
                     }
                 }
-            } else {
-                eprintln!("⚠️  No update notification received");
+                Ok(Some(Err(e))) => {
+                    panic!("Update notification failed with error: {}", e);
+                }
+                Ok(None) => {
+                    panic!("Subscription ended before receiving update notification");
+                }
+                Err(_) => {
+                    panic!("FAILED: No update notification received within timeout - WebSocket notifications not working!");
+                }
             }
         }
         Ok(Err(e)) => {
-            eprintln!("⚠️  Subscription failed: {}", e);
+            panic!("Subscription failed: {}", e);
         }
         Err(_) => {
-            eprintln!("⚠️  Subscription timed out");
+            panic!("Subscription creation timed out");
         }
     }
 
@@ -518,26 +549,35 @@ async fn test_websocket_delete_notification() {
                 .ok();
 
             // Wait for delete notification
-            if let Ok(Some(event_result)) = timeout(Duration::from_secs(3), subscription.next()).await {
-                if let Ok(event) = event_result {
+            let event_received = timeout(Duration::from_secs(3), subscription.next()).await;
+            
+            match event_received {
+                Ok(Some(Ok(event))) => {
                     match event {
                         ChangeEvent::Delete { old_rows, .. } => {
                             assert!(!old_rows.is_empty(), "Delete should contain deleted rows");
                         }
                         _ => {
-                            eprintln!("Expected Delete event, got: {:?}", event);
+                            panic!("Expected Delete event, got unexpected event type: {:?}", event);
                         }
                     }
                 }
-            } else {
-                eprintln!("⚠️  No delete notification received");
+                Ok(Some(Err(e))) => {
+                    panic!("Delete notification failed with error: {}", e);
+                }
+                Ok(None) => {
+                    panic!("Subscription ended before receiving delete notification");
+                }
+                Err(_) => {
+                    panic!("FAILED: No delete notification received within timeout - WebSocket notifications not working!");
+                }
             }
         }
         Ok(Err(e)) => {
-            eprintln!("⚠️  Subscription failed: {}", e);
+            panic!("Subscription failed: {}", e);
         }
         Err(_) => {
-            eprintln!("⚠️  Subscription timed out");
+            panic!("Subscription creation timed out");
         }
     }
 
