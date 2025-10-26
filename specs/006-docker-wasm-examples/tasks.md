@@ -222,6 +222,95 @@ This matches industry patterns (e.g., cargo binary + cargo-* libraries) and make
 
 ---
 
+## Phase 5.5: Implement Full WASM SDK with WebSocket Support (CRITICAL)
+
+**Goal**: Replace stub implementations in link/src/wasm.rs with fully functional WebSocket client that works in browsers
+
+**Current State**: The WASM SDK has stub implementations that cause memory errors when used. We need to implement proper WebSocket connectivity, HTTP requests, and callback handling.
+
+**Independent Test**: Rust integration tests for WASM module, then TypeScript SDK tests validating all operations work correctly
+
+### Rust WASM Implementation (link/src/wasm.rs)
+
+- [X] T063A [US2] Research WASM-compatible WebSocket libraries (web-sys, gloo-net, or reqwasm)
+- [X] T063B [US2] Add dependencies to link/Cargo.toml: web-sys (WebSocket, fetch), wasm-bindgen-futures, js-sys
+- [X] T063C [US2] Implement proper WebSocket connection in KalamClient::connect() using web-sys::WebSocket
+- [X] T063D [US2] Store WebSocket instance in KalamClient struct (use Arc<Mutex<>> or RefCell for interior mutability)
+- [X] T063E [US2] Implement KalamClient::disconnect() to properly close WebSocket and cleanup resources
+- [X] T063F [US2] Implement KalamClient::query() using web-sys fetch API with X-API-KEY header to POST /v1/api/sql
+- [X] T063G [US2] Implement KalamClient::insert() using fetch API to execute INSERT statement via /v1/api/sql
+- [X] T063H [US2] Implement KalamClient::delete() using fetch API to execute DELETE statement via /v1/api/sql
+- [X] T063I [US2] Implement KalamClient::subscribe() with proper WebSocket message handling and callback invocation
+- [X] T063J [US2] Store subscription callbacks in HashMap<String, js_sys::Function> for proper lifetime management
+- [X] T063K [US2] Implement WebSocket onmessage handler to parse events and invoke registered callbacks
+- [X] T063L [US2] Implement WebSocket onerror and onclose handlers with proper error reporting
+- [X] T063M [US2] Implement KalamClient::unsubscribe() to remove callback from HashMap and send unsubscribe message
+- [X] T063N [US2] Add proper error handling with JsValue conversion for all methods
+- [X] T063O [US2] Add console.log debugging for connection state changes (connect, disconnect, error)
+
+### Rust Integration Tests for WASM SDK
+
+- [X] T063P [US2] Create link/tests/wasm_integration.rs for WASM-specific tests (using wasm-bindgen-test)
+- [X] T063Q [US2] Add wasm-bindgen-test dependency to link/Cargo.toml dev-dependencies
+- [X] T063R [US2] Test WASM client creation with valid and invalid parameters
+- [X] T063S [US2] Test connect() establishes WebSocket connection (mock or test server)
+- [X] T063T [US2] Test disconnect() properly closes WebSocket
+- [X] T063U [US2] Test query() sends HTTP POST with correct headers and body
+- [X] T063V [US2] Test insert() executes INSERT and returns result
+- [X] T063W [US2] Test delete() executes DELETE statement
+- [X] T063X [US2] Test subscribe() registers callback and receives messages
+- [X] T063Y [US2] Test unsubscribe() removes callback and stops receiving messages
+- [X] T063Z [US2] Test memory safety: verify callbacks don't cause memory access violations
+- [X] T063AA [US2] Run tests with: wasm-pack test --headless --firefox (or --chrome)
+
+### TypeScript SDK Integration Tests
+
+- [ ] T063AB [US2] Update link/sdks/typescript/tests/basic.test.mjs to test real WebSocket connections
+- [ ] T063AC [US2] Add test for KalamClient initialization and WASM module loading
+- [ ] T063AD [US2] Add test for connect() - verify WebSocket connection established
+- [ ] T063AE [US2] Add test for isConnected() - verify state tracking works
+- [ ] T063AF [US2] Add test for query() - execute SELECT and verify results
+- [ ] T063AG [US2] Add test for insert() - insert row and verify response
+- [ ] T063AH [US2] Add test for delete() - delete row and verify response
+- [ ] T063AI [US2] Add test for subscribe() - register callback and receive WebSocket messages
+- [ ] T063AJ [US2] Add test for unsubscribe() - verify callback no longer invoked
+- [ ] T063AK [US2] Add test for disconnect() - verify WebSocket closed properly
+- [ ] T063AL [US2] Add test for error handling - invalid API key, network errors, etc.
+- [ ] T063AM [US2] Add test for concurrent operations - multiple queries, subscriptions
+- [ ] T063AN [US2] Create link/sdks/typescript/tests/websocket.test.mjs for real-time subscription tests
+- [ ] T063AO [US2] Create link/sdks/typescript/tests/integration.test.mjs for end-to-end scenarios
+- [ ] T063AP [US2] Update package.json test scripts to run all test suites
+- [ ] T063AQ [US2] Document test requirements (running KalamDB server) in link/sdks/typescript/README.md
+
+### TypeScript SDK Wrapper Improvements
+
+- [ ] T063AR [US2] Create link/sdks/typescript/src/client-wrapper.ts for ergonomic TypeScript API
+- [ ] T063AS [US2] Add helper methods: insertTodo(), deleteTodo(), queryTable() with type safety
+- [ ] T063AT [US2] Add TypeScript types for all request/response objects (InsertRequest, QueryResult, etc.)
+- [ ] T063AU [US2] Add proper error types (NetworkError, AuthError, ValidationError)
+- [ ] T063AV [US2] Export both raw WASM client and TypeScript wrapper from package entry point
+- [ ] T063AW [US2] Update link/sdks/typescript/README.md with examples for both APIs
+
+**Checkpoint**: WASM SDK is fully functional with real WebSocket support, all tests passing (Rust + TypeScript), ready for production use
+
+**✅ BLOCKER RESOLVED**: WebSocket endpoint now supports API key authentication via query parameter.
+
+**AUTHENTICATION FIX COMPLETE**:
+- [X] T063AAA [US2] Update WebSocket handler to accept API key as query parameter (`/v1/ws?api_key=xxx`)
+- [X] T063AAB [US2] Update WASM client to pass API key in WebSocket URL
+- [X] T063AAC [US2] Test WebSocket connection with API key authentication
+
+**⚠️ NEW BLOCKER**: WebSocket connection rejected - invalid API key. Need system user for testing.
+
+**SYSTEM USER FOR TESTING**:
+- [X] T063AAD [US2] Add `test_api_key` field to config.toml for development/testing
+- [X] T063AAE [US2] Create system user on server startup if `test_api_key` is configured
+- [X] T063AAF [US2] Use configured API key to create/update system user (username: "system", role: "admin")
+- [X] T063AAG [US2] Update React example to use the test API key from environment variable
+- [X] T063AAH [US2] Test WebSocket connection with system user API key
+
+---
+
 ## Phase 6: User Story 3 - TypeScript TODO App Example (Priority: P3)
 
 **Goal**: Provide a complete React example demonstrating real-time subscriptions with localStorage caching and offline-first capabilities
@@ -435,7 +524,7 @@ With multiple developers:
 
 ## Task Count Summary
 
-- **Total Tasks**: 117 tasks (added 3 for SDK integration)
+- **Total Tasks**: 171 tasks (added 49 for WASM implementation + 3 for WebSocket auth + 5 for system user)
 - **Setup (Phase 1)**: 6 tasks (T001-T006) ✅ Complete
 - **Foundational (Phase 2)**: 5 tasks (T007-T011) ✅ Complete - BLOCKING prerequisite
 - **Core Bug Fixes & Refactoring (Phase 2.5)**: 18 tasks (T011A-T011R) ✅ Complete - PostgreSQL compatibility + structure cleanup
@@ -443,14 +532,23 @@ With multiple developers:
   - Project structure refactoring: 10 tasks (T011I-T011R) ✅
 - **User Story 0 (Phase 3)**: 15 tasks (T012-T026) ✅ Complete - API Key + Soft Delete
 - **User Story 1 (Phase 4)**: 12 tasks (T027-T038) ✅ Complete - Docker deployment
-- **User Story 2 (Phase 5)**: 11 tasks (T053-T063) ✅ Complete - WASM SDK with multi-language architecture
-- **User Story 3 (Phase 6)**: 44 tasks (T064-T104, including T064A, T064B, T072A, T072B) ⚠️ Mostly Complete - SDK integration pending
-  - **NEW T064A-T064B**: Add SDK as local dependency in package.json
-  - **NEW T072A**: Remove mock kalamClient.ts
-  - **NEW T072B**: Extend SDK if missing functionality
+- **User Story 2 (Phase 5)**: 11 tasks (T053-T063) ✅ Complete - WASM SDK structure (stubs)
+- **WASM SDK Implementation (Phase 5.5)**: 57 tasks (T063A-T063AH) ⚠️ **35 COMPLETE** - Full WebSocket implementation + System User
+  - Rust WASM implementation: 15 tasks (T063A-T063O) ✅ **COMPLETE**
+  - Rust integration tests: 12 tasks (T063P-T063AA) ✅ **COMPLETE**
+  - WebSocket auth fix: 3 tasks (T063AAA-T063AAC) ✅ **COMPLETE**
+  - System user for testing: 5 tasks (T063AAD-T063AAH) ✅ **COMPLETE**
+  - TypeScript SDK tests: 16 tasks (T063AB-T063AQ) ⏳ **PENDING**
+  - TypeScript wrapper improvements: 6 tasks (T063AR-T063AW) ⏳ **PENDING**
+- **User Story 3 (Phase 6)**: 44 tasks (T064-T104, including T064A, T064B, T072A, T072B) ✅ Ready to test
 - **Polish (Phase 7)**: 10 tasks (T105-T114) ⏳ Pending - Documentation and validation
 
-**Parallel Opportunities**: 48 tasks marked [P] can run in parallel within their phase (increased from 45)
+**Critical Path Update**:
+```
+Phase 5 ✅ → Phase 5.5 Rust ✅ → WebSocket Auth ✅ → System User Setup ✅ → TypeScript Tests ⏳ → Phase 6 ✅ → Phase 7
+```
+
+**Next Priority**: TypeScript SDK tests (T063AB-T063AQ) OR Phase 6 React example testing
 
 **Critical SDK Integration Tasks (MUST complete before Phase 7)**:
 - ⚠️ T064A: Add "@kalamdb/client": "file:../../link/sdks/typescript" to examples/simple-typescript/package.json

@@ -103,7 +103,25 @@ export class KalamDBClient {
     const resultJson = await this.client.query(sql);
     const result = JSON.parse(resultJson);
     
-    // Handle different result formats
+    // Check for error response
+    if (result.status === 'error') {
+      throw new Error(result.error?.message || 'Query failed');
+    }
+    
+    // Handle KalamDB response format: {status: "success", results: [...]}
+    if (result.status === 'success' && result.results && Array.isArray(result.results)) {
+      // results is an array of result sets, get the first one
+      if (result.results.length > 0) {
+        const firstResult = result.results[0];
+        // Check if it has rows (SELECT query)
+        if (firstResult.rows && Array.isArray(firstResult.rows)) {
+          return firstResult.rows;
+        }
+      }
+      return [];
+    }
+    
+    // Fallback for other formats
     if (Array.isArray(result)) {
       return result;
     }
@@ -123,22 +141,19 @@ export class KalamDBClient {
    * @returns The inserted TODO (with generated ID)
    */
   async insertTodo(todo: CreateTodoInput): Promise<Todo> {
-    const dataJson = JSON.stringify({
-      title: todo.title,
-      completed: todo.completed ?? false
-    });
-
-    const resultJson = await this.client.insert('todos', dataJson);
+    // Use SQL INSERT syntax, not JSON
+    const sql = `INSERT INTO app.todos (title, completed) VALUES ('${todo.title.replace(/'/g, "''")}', ${todo.completed ?? false})`;
+    
+    const resultJson = await this.client.query(sql);
     const result = JSON.parse(resultJson);
     
-    // Return the inserted TODO
-    // The result might be the full row or just confirmation
-    if (result.id) {
-      return result as Todo;
+    // Check for error
+    if (result.status === 'error') {
+      throw new Error(result.error?.message || 'Insert failed');
     }
     
-    // If insert doesn't return the row, query for it
-    const rows = await this.query<Todo>('SELECT * FROM todos ORDER BY id DESC LIMIT 1');
+    // After insert, query for the last inserted row
+    const rows = await this.query<Todo>('SELECT * FROM app.todos ORDER BY id DESC LIMIT 1');
     if (rows.length === 0) {
       throw new Error('Failed to retrieve inserted TODO');
     }
@@ -151,7 +166,7 @@ export class KalamDBClient {
    * @param id - TODO ID to delete
    */
   async deleteTodo(id: number): Promise<void> {
-    await this.client.delete('todos', String(id));
+    await this.client.delete('app.todos', String(id));
   }
 }
 

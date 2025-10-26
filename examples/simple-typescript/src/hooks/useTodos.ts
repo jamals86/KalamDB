@@ -155,11 +155,11 @@ export function useTodos(): UseTodosResult {
         const lastId = getLastSyncId();
         console.log(`Subscribing to todos from ID ${lastId}`);
         
-        await client.subscribe('todos', lastId, handleSubscriptionEvent);
+        await client.subscribe('app.todos', lastId, handleSubscriptionEvent);
 
         // 5. If no cache, fetch all TODOs
         if (cached.length === 0) {
-          const allTodos = await client.query<Todo>('SELECT * FROM todos ORDER BY id');
+          const allTodos = await client.query<Todo>('SELECT * FROM app.todos ORDER BY id');
           if (!isCancelled) {
             setTodos(allTodos);
             saveTodosToCache(allTodos);

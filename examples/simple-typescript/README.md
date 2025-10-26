@@ -51,7 +51,22 @@ The setup script will:
 - ✅ Create the `todos` table if it doesn't exist
 - ✅ Verify setup was successful
 
-### 2. Create User and Get API Key
+### 2. Get API Key
+
+**For Local Development/Testing:**
+
+The KalamDB server automatically creates a system user with a test API key on startup when configured in `backend/config.toml`:
+
+```toml
+[server]
+test_api_key = "test-api-key-12345"
+```
+
+This test API key is **only for development** and should never be used in production.
+
+**For Production:**
+
+Create a dedicated user with the CLI:
 
 ```bash
 # Using kalam CLI

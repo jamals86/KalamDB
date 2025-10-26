@@ -258,6 +258,10 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         config.stream.eviction_interval_seconds
     );
 
+    // Create system user if test_api_key is configured (T063AAE-T063AAF)
+    if let Some(test_api_key) = &config.server.test_api_key {
+        create_system_user(rocks_db_adapter.clone(), test_api_key).await?;
+    }
 
     Ok(ApplicationComponents {
         session_factory,
@@ -344,5 +348,64 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
     }
 
     info!("Server shutdown complete");
+    Ok(())
+}
+
+/// Create or update a system user with a test API key (T063AAE-T063AAF)
+///
+/// Creates a system user with username "system", role "admin", and the provided API key.
+/// If the user already exists, updates their API key.
+///
+/// # Arguments
+/// * `sql_adapter` - SQL adapter for system tables
+/// * `test_api_key` - The API key to use for the system user
+///
+/// # Returns
+/// Result indicating success or failure
+async fn create_system_user(
+    sql_adapter: Arc<RocksDbAdapter>,
+    test_api_key: &str,
+) -> Result<()> {
+    use kalamdb_sql::models::User;
+
+    let user_id = "system".to_string();
+    let username = "system".to_string();
+    let email = "system@kalamdb.dev".to_string();
+    let role = "admin".to_string();
+    let created_at = chrono::Utc::now().timestamp_millis();
+
+    // Check if system user already exists
+    let existing_user = sql_adapter.get_user(&user_id);
+
+    let user = User {
+        user_id: user_id.clone(),
+        username,
+        email,
+        created_at,
+        storage_mode: Some("table".to_string()),
+        storage_id: None,
+        apikey: test_api_key.to_string(),
+        role,
+    };
+
+    match existing_user {
+        Ok(_) => {
+            // User exists, update the API key
+            sql_adapter.insert_user(&user)?; // insert_user acts as upsert in RocksDB
+            info!(
+                "System user updated with test API key: {}",
+                test_api_key
+            );
+        }
+        Err(_) => {
+            // User doesn't exist, create new
+            sql_adapter.insert_user(&user)?;
+            info!(
+                "System user created with test API key: {}",
+                test_api_key
+            );
+        }
+    }
+
     Ok(())
 }

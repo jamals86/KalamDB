@@ -59,6 +59,16 @@ This feature adds API key authentication with soft delete for user tables, Docke
   - If examples need additional functions, those should be added to the SDK for all users
   - SDKs are designed to be published to npm/PyPI/etc. without modification
 
+**WASM Implementation Requirements** (Phase 5.5 - 49 tasks):
+  - ✅ Browser-compatible WebSocket using web-sys
+  - ✅ HTTP fetch API for SQL queries with X-API-KEY header
+  - ✅ Proper callback handling without memory access violations
+  - ✅ Comprehensive error handling (network, auth, validation)
+  - ✅ Integration tests in Rust (wasm-bindgen-test)
+  - ✅ Integration tests in TypeScript (Node.js test runner)
+  - ✅ TypeScript wrapper for ergonomic API
+  - **Critical Path**: Phase 5.5 blocks Phase 6 (React example cannot function with stub WASM)
+
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*

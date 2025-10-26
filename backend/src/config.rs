@@ -36,6 +36,10 @@ pub struct ServerSettings {
     /// Timeout in seconds to wait for flush jobs to complete during graceful shutdown (T158j)
     #[serde(default = "default_flush_job_shutdown_timeout")]
     pub flush_job_shutdown_timeout_seconds: u32,
+    /// Test API key for development/testing (T063AAD)
+    /// If set, creates a system user with this API key on startup
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub test_api_key: Option<String>,
 }
 
 /// Storage settings
@@ -523,6 +527,7 @@ impl ServerConfig {
                 workers: 0,
                 api_version: default_api_version(),
                 flush_job_shutdown_timeout_seconds: default_flush_job_shutdown_timeout(),
+                test_api_key: None,
             },
             storage: StorageSettings {
                 rocksdb_path: "./data/rocksdb".to_string(),
