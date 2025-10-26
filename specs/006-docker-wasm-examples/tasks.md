@@ -15,9 +15,11 @@
 
 This is a multi-component project:
 - `backend/crates/` - Rust backend crates
-- `link/kalam-link/` - WASM-compiled client library (dual-purpose: CLI dependency + standalone WASM)
-- `cli/kalam-cli/` - CLI tool (links to kalam-link)
-- `examples/simple-typescript/` - React example app
+- `link/` - WASM-compiled client library (Rust source)
+- `link/sdks/typescript/` - TypeScript SDK (compiled WASM + JS bindings + TypeScript definitions)
+- `link/sdks/typescript/tests/` - TypeScript SDK test suite
+- `cli/kalam-cli/` - CLI tool (depends on kalam-link crate)
+- `examples/simple-typescript/` - React example app (uses link/sdks/typescript/)
 - `docker/backend/` - Docker deployment files
 
 ---
@@ -193,37 +195,30 @@ This matches industry patterns (e.g., cargo binary + cargo-* libraries) and make
 
 ---
 
-## Phase 5: User Story 2 - WASM Compilation for Browser/Node.js Use (Priority: P2)
+## Phase 5: User Story 2 - WASM Client Compilation (Priority: P2)
 
-**Goal**: Compile kalam-link to WebAssembly for JavaScript/TypeScript usage with proper type definitions
+**Goal**: Provide TypeScript/JavaScript developers with a compiled WASM client library organized as a proper multi-language SDK structure
 
-**Independent Test**: Run wasm-pack build, import WASM module in Node.js test script, initialize with URL and API key, execute basic query
+**Independent Test**: Run link/sdks/typescript/build.sh to compile Rust→WASM, verify WASM module loads in Node.js, test basic operations (init, connect, query) through TypeScript bindings
 
-### Implementation for User Story 2
+### Build Infrastructure for User Story 2
 
-- [x] T039 [P] [US2] Add wasm-bindgen dependencies to cli/kalam-link/Cargo.toml
-- [x] T040 [P] [US2] Add wasm-bindgen-futures dependency to cli/kalam-link/Cargo.toml for async support
-- [x] T041 [P] [US2] Create WASM bindings module in cli/kalam-link/src/wasm.rs
-- [x] T042 [US2] Implement KalamClient struct in cli/kalam-link/src/wasm.rs with url and apikey fields (both required)
-- [x] T043 [US2] Add #[wasm_bindgen] constructor for KalamClient::new(url: String, api_key: String) in cli/kalam-link/src/wasm.rs
-- [x] T044 [US2] Implement validation for required url and apikey parameters with clear error messages in cli/kalam-link/src/wasm.rs
-- [x] T045 [P] [US2] Implement connect() method in cli/kalam-link/src/wasm.rs for WebSocket connection
-- [x] T046 [P] [US2] Implement disconnect() method in cli/kalam-link/src/wasm.rs
-- [x] T047 [P] [US2] Implement isConnected() method in cli/kalam-link/src/wasm.rs
-- [x] T048 [US2] Implement insert() method in cli/kalam-link/src/wasm.rs accepting table name and JSON data
-- [x] T049 [US2] Implement delete() method in cli/kalam-link/src/wasm.rs accepting table name and row ID
-- [x] T050 [US2] Implement query() method in cli/kalam-link/src/wasm.rs accepting SQL string and returning QueryResult
-- [x] T051 [US2] Implement subscribe() method in cli/kalam-link/src/wasm.rs accepting table name and callback
-- [x] T052 [US2] Implement unsubscribe() method in cli/kalam-link/src/wasm.rs accepting subscription ID
-- [x] T053 [US2] Add X-API-KEY header to all WebSocket and HTTP requests in cli/kalam-link/src/wasm.rs
-- [X] T054 [US2] Build WASM module with wasm-pack build --target web --out-dir pkg from link/ (created build.sh script)
-- [X] T055 [US2] Verify WASM output includes .wasm file, .js bindings, .d.ts types, and package.json in link/pkg/
-- [X] T056 [US2] Create TypeScript SDK structure in link/sdks/typescript with package.json, README.md, and test files
-- [X] T057 [US2] Create comprehensive test suite: basic.test.mjs, connection.test.mjs, query.test.mjs, subscription.test.mjs
-- [X] T058 [US2] Build script automatically copies WASM artifacts to TypeScript SDK directory
-- [X] T059 [US2] Create detailed README.md for TypeScript SDK with API reference, examples, and troubleshooting
+- [X] T053 [P] [US2] Create link/sdks/typescript/build.sh script to compile Rust→WASM using wasm-pack with proper feature flags
+- [X] T054 [US2] Verify build.sh compiles kalam-link from ../../ (link root) to link/sdks/typescript/ output directory
+- [X] T055 [US2] Verify WASM output includes kalam_link_bg.wasm, kalam_link.js, kalam_link.d.ts, and package.json in link/sdks/typescript/
+- [X] T056 [US2] Create TypeScript SDK structure in link/sdks/typescript/ with src/, tests/, build.sh, package.json, README.md, .gitignore
+- [X] T057 [US2] Create comprehensive test suite in link/sdks/typescript/tests/basic.test.mjs validating all SDK functionality
+- [X] T058 [US2] Build script compiles Rust → WASM and outputs directly to TypeScript SDK directory (no copying needed)
+- [X] T059 [US2] Create detailed README.md for TypeScript SDK with complete API reference, build instructions, and examples
 
-**Checkpoint**: All user stories 0, 1, and 2 should now be independently functional - WASM client is ready for JavaScript use
+### Multi-Language SDK Architecture for User Story 2
+
+- [X] T060 [P] [US2] Structure link/sdks/ as parent directory for all language-specific SDKs (typescript/, python/, rust/, etc.)
+- [X] T061 [P] [US2] Each SDK in link/sdks/{language}/ is complete and self-contained with its own build system, tests, and docs
+- [X] T062 [US2] TypeScript SDK at link/sdks/typescript/ includes: build.sh, package.json, README.md, tests/, .gitignore, and compiled WASM artifacts
+- [X] T063 [US2] Update link/README.md to document multi-language SDK architecture and link/sdks/ structure
+
+**Checkpoint**: All user stories 0, 1, and 2 should now be independently functional - WASM TypeScript SDK is ready for JavaScript developers to use
 
 ---
 
@@ -233,49 +228,55 @@ This matches industry patterns (e.g., cargo binary + cargo-* libraries) and make
 
 **Independent Test**: Run setup.sh to create tables, start React app, add/delete TODOs through UI, verify real-time sync across tabs, test localStorage persistence and reconnection sync
 
-### Implementation for User Story 3
+### SDK Integration for User Story 3
 
-- [ ] T060 [P] [US3] Create package.json in examples/simple-typescript/ with React, TypeScript, Vite dependencies
-- [ ] T061 [P] [US3] Create tsconfig.json in examples/simple-typescript/ with ES2020+ target
-- [ ] T062 [P] [US3] Create vite.config.ts in examples/simple-typescript/ for build configuration
-- [ ] T063 [P] [US3] Create todo-app.sql in examples/simple-typescript/ with CREATE TABLE IF NOT EXISTS for todos table
-- [ ] T064 [US3] Create setup.sh in examples/simple-typescript/ that validates KalamDB accessibility and loads todo-app.sql via kalam-cli
-- [ ] T065 [US3] Make setup.sh executable with proper error handling and idempotent behavior
-- [ ] T066 [P] [US3] Create .env.example in examples/simple-typescript/ with VITE_KALAMDB_URL and VITE_KALAMDB_API_KEY
-- [ ] T067 [P] [US3] Create src/types/todo.ts with TODO type definition (id, title, completed, created_at)
-- [ ] T068 [P] [US3] Create src/services/kalamClient.ts wrapping WASM client with initialization
-- [ ] T069 [US3] Initialize KalamClient in src/services/kalamClient.ts with URL and API key from .env
-- [ ] T070 [P] [US3] Create src/services/localStorage.ts for reading/writing TODOs and last sync ID
-- [ ] T071 [P] [US3] Implement loadTodosFromCache() in src/services/localStorage.ts
-- [ ] T072 [P] [US3] Implement saveTodosToCache() in src/services/localStorage.ts
-- [ ] T073 [P] [US3] Implement getLastSyncId() and setLastSyncId() in src/services/localStorage.ts
-- [ ] T074 [US3] Create src/hooks/useTodos.ts custom hook managing TODO state with useState
-- [ ] T075 [US3] Implement initial load from localStorage in src/hooks/useTodos.ts
-- [ ] T076 [US3] Implement subscription to TODO changes in src/hooks/useTodos.ts (subscribe from last sync ID)
-- [ ] T077 [US3] Implement connection status tracking in src/hooks/useTodos.ts with useState
-- [ ] T078 [US3] Handle insert events from subscription and update both state and localStorage in src/hooks/useTodos.ts
-- [ ] T079 [US3] Handle delete events from subscription and update both state and localStorage in src/hooks/useTodos.ts
-- [ ] T080 [US3] Implement addTodo() function using WASM client insert in src/hooks/useTodos.ts
-- [ ] T081 [US3] Implement deleteTodo() function using WASM client delete in src/hooks/useTodos.ts
-- [ ] T082 [P] [US3] Create src/components/ConnectionStatus.tsx showing "Connected"/"Disconnected" badge with color
-- [ ] T083 [P] [US3] Create src/components/TodoList.tsx displaying todos from state
-- [ ] T084 [P] [US3] Create src/components/TodoItem.tsx with delete button
-- [ ] T085 [P] [US3] Create src/components/AddTodoForm.tsx with input and add button (disabled when disconnected)
-- [ ] T086 [US3] Create src/App.tsx composing all components and using useTodos hook
-- [ ] T087 [US3] Create src/main.tsx as React entry point with StrictMode
-- [ ] T088 [P] [US3] Create index.html in examples/simple-typescript/
-- [ ] T089 [P] [US3] Create src/styles/App.css with basic styling
-- [ ] T090 [US3] Test setup.sh creates todos table successfully
-- [ ] T091 [US3] Test React app starts with npm run dev
-- [ ] T092 [US3] Test adding TODO through UI persists to KalamDB and localStorage
-- [ ] T093 [US3] Test deleting TODO through UI removes from KalamDB and localStorage
-- [ ] T094 [US3] Test real-time sync by opening two browser tabs and verifying changes propagate
-- [ ] T095 [US3] Test localStorage persistence by closing app and reopening (TODOs load instantly)
-- [ ] T096 [US3] Test reconnection sync by disconnecting, adding TODO elsewhere, reconnecting (app syncs missed changes)
-- [ ] T097 [US3] Test connection status badge shows correct state (Connected/Disconnected)
-- [ ] T098 [US3] Test add button is disabled when WebSocket is disconnected
-- [ ] T099 [P] [US3] Create README.md in examples/simple-typescript/ with setup and usage instructions
-- [ ] T100 [P] [US3] Add package.json scripts for dev, build, and test in examples/simple-typescript/
+**CRITICAL**: Example MUST use link/sdks/typescript/ as a local npm dependency, NOT implement its own client
+
+- [ ] T064 [P] [US3] Create package.json in examples/simple-typescript/ with React, TypeScript, Vite dependencies AND local SDK dependency
+- [ ] T064A [US3] Add "@kalamdb/client": "file:../../link/sdks/typescript" to package.json dependencies
+- [ ] T064B [US3] Verify npm install correctly links local SDK package
+- [ ] T065 [P] [US3] Create tsconfig.json in examples/simple-typescript/ with ES2020+ target
+- [ ] T066 [P] [US3] Create vite.config.ts in examples/simple-typescript/ for build configuration
+- [ ] T067 [P] [US3] Create todo-app.sql in examples/simple-typescript/ with CREATE TABLE IF NOT EXISTS for todos table
+- [ ] T068 [US3] Create setup.sh in examples/simple-typescript/ that validates KalamDB accessibility and loads todo-app.sql via kalam-cli
+- [ ] T069 [US3] Make setup.sh executable with proper error handling and idempotent behavior
+- [ ] T070 [P] [US3] Create .env.example in examples/simple-typescript/ with VITE_KALAMDB_URL and VITE_KALAMDB_API_KEY
+- [ ] T071 [P] [US3] Create src/types/todo.ts with TODO type definition (id, title, completed, created_at)
+- [ ] T072 [US3] Import KalamClient directly from '@kalamdb/client' (link/sdks/typescript/) - NO local wrapper
+- [ ] T072A [US3] Remove mock kalamClient.ts if it exists - use SDK instead
+- [ ] T072B [P] [US3] If SDK is missing insertTodo/deleteTodo helpers, add them to link/sdks/typescript/src/ (NOT to example)
+- [ ] T073 [US3] Initialize KalamClient from SDK with URL and API key from .env in App.tsx or main.tsx
+- [ ] T074 [P] [US3] Create src/services/localStorage.ts for reading/writing TODOs and last sync ID
+- [ ] T075 [P] [US3] Implement loadTodosFromCache() in src/services/localStorage.ts
+- [ ] T076 [P] [US3] Implement saveTodosToCache() in src/services/localStorage.ts
+- [ ] T077 [P] [US3] Implement getLastSyncId() and setLastSyncId() in src/services/localStorage.ts
+- [ ] T078 [US3] Create src/hooks/useTodos.ts custom hook managing TODO state with useState
+- [ ] T079 [US3] Implement initial load from localStorage in src/hooks/useTodos.ts
+- [ ] T080 [US3] Implement subscription to TODO changes in src/hooks/useTodos.ts (subscribe from last sync ID)
+- [ ] T081 [US3] Implement connection status tracking in src/hooks/useTodos.ts with useState
+- [ ] T082 [US3] Handle insert events from subscription and update both state and localStorage in src/hooks/useTodos.ts
+- [ ] T083 [US3] Handle delete events from subscription and update both state and localStorage in src/hooks/useTodos.ts
+- [ ] T084 [US3] Implement addTodo() function using WASM client insert in src/hooks/useTodos.ts
+- [ ] T085 [US3] Implement deleteTodo() function using WASM client delete in src/hooks/useTodos.ts
+- [ ] T086 [P] [US3] Create src/components/ConnectionStatus.tsx showing "Connected"/"Disconnected" badge with color
+- [ ] T087 [P] [US3] Create src/components/TodoList.tsx displaying todos from state
+- [ ] T088 [P] [US3] Create src/components/TodoItem.tsx with delete button
+- [ ] T089 [P] [US3] Create src/components/AddTodoForm.tsx with input and add button (disabled when disconnected)
+- [ ] T090 [US3] Create src/App.tsx composing all components and using useTodos hook
+- [ ] T091 [US3] Create src/main.tsx as React entry point with StrictMode
+- [ ] T092 [P] [US3] Create index.html in examples/simple-typescript/
+- [ ] T093 [P] [US3] Create src/styles/App.css with basic styling
+- [ ] T094 [US3] Test setup.sh creates todos table successfully
+- [ ] T095 [US3] Test React app starts with npm run dev
+- [ ] T096 [US3] Test adding TODO through UI persists to KalamDB and localStorage
+- [ ] T097 [US3] Test deleting TODO through UI removes from KalamDB and localStorage
+- [ ] T098 [US3] Test real-time sync by opening two browser tabs and verifying changes propagate
+- [ ] T099 [US3] Test localStorage persistence by closing app and reopening (TODOs load instantly)
+- [ ] T100 [US3] Test reconnection sync by disconnecting, adding TODO elsewhere, reconnecting (app syncs missed changes)
+- [ ] T101 [US3] Test connection status badge shows correct state (Connected/Disconnected)
+- [ ] T102 [US3] Test add button is disabled when WebSocket is disconnected
+- [ ] T103 [P] [US3] Create README.md in examples/simple-typescript/ with setup and usage instructions
+- [ ] T104 [P] [US3] Add package.json scripts for dev, build, and test in examples/simple-typescript/
 
 **Checkpoint**: All user stories should now be independently functional - Complete TODO app example is ready for developers
 
@@ -285,16 +286,16 @@ This matches industry patterns (e.g., cargo binary + cargo-* libraries) and make
 
 **Purpose**: Improvements that affect multiple user stories and final validation
 
-- [ ] T101 [P] Update main project README.md in repository root with links to new Docker and WASM features
-- [ ] T102 [P] Update backend/README.md with create-user command documentation
-- [ ] T103 [P] Update cli/kalam-link/README.md with WASM compilation instructions
-- [ ] T104 Verify all quickstart.md examples work end-to-end from specs/006-docker-wasm-examples/quickstart.md
-- [ ] T105 Run full test suite (cargo test) and verify all tests pass including new API key and soft delete tests
-- [ ] T106 [P] Add logging for API key authentication events in backend/crates/kalamdb-api/src/middleware/api_key_auth.rs
-- [ ] T107 [P] Add error handling documentation for common WASM client errors in examples/simple-typescript/README.md
-- [ ] T108 Code review and cleanup across all modified files
-- [ ] T109 Performance validation: API key auth overhead <10ms, soft delete queries same as hard delete
-- [ ] T110 Security review: Verify API keys are logged safely, localhost exception is secure
+- [ ] T105 [P] Update main project README.md in repository root with links to new Docker and WASM features
+- [ ] T106 [P] Update backend/README.md with create-user command documentation
+- [ ] T107 [P] Update link/README.md with WASM compilation instructions and SDK architecture documentation
+- [ ] T108 Verify all quickstart.md examples work end-to-end from specs/006-docker-wasm-examples/quickstart.md
+- [ ] T109 Run full test suite (cargo test) and verify all tests pass including new API key and soft delete tests
+- [ ] T110 [P] Add logging for API key authentication events in backend/crates/kalamdb-api/src/middleware/api_key_auth.rs
+- [ ] T111 [P] Add error handling documentation for common WASM client errors in link/sdks/typescript/README.md
+- [ ] T112 Code review and cleanup across all modified files
+- [ ] T113 Performance validation: API key auth overhead <10ms, soft delete queries same as hard delete
+- [ ] T114 Security review: Verify API keys are logged safely, localhost exception is secure
 
 ---
 
@@ -360,10 +361,12 @@ Setup → Foundational → Phase 2.5 (Bug Fixes + Refactor) → US0 (API Key + S
 - T045, T046, T047 can run in parallel (connection methods)
 
 **Within User Story 3**:
-- T060, T061, T062, T063, T066, T067 can all run in parallel (config and type files)
-- T070, T071, T072, T073 can run in parallel (localStorage utilities)
-- T082, T083, T084, T085 can run in parallel (React components)
-- T088, T089, T099, T100 can run in parallel (static files and docs)
+- T064, T065, T066, T067 can all run in parallel (config and type files)
+- T064A, T064B should run sequentially after T064 (package.json dependency addition)
+- T070, T071, T074, T075, T076, T077 can run in parallel (types and localStorage utilities)
+- T072A, T072B, T073 should run sequentially (client integration)
+- T086, T087, T088, T089 can run in parallel (React components)
+- T092, T093, T103, T104 can run in parallel (static files and docs)
 
 **Cross-Story Parallelism**:
 - Once US0 is complete, US1 and US2 can proceed in parallel
@@ -432,25 +435,44 @@ With multiple developers:
 
 ## Task Count Summary
 
-- **Total Tasks**: 128 (18 new tasks added)
-- **Setup (Phase 1)**: 6 tasks
-- **Foundational (Phase 2)**: 5 tasks (BLOCKING)
-- **Core Bug Fixes & Refactoring (Phase 2.5)**: 18 tasks (CRITICAL - PostgreSQL compatibility + structure cleanup)
-  - PostgreSQL-compatible row counts: 8 tasks (T011A-T011H)
-  - Project structure refactoring: 10 tasks (T011I-T011R)
-- **User Story 0 (Phase 3)**: 15 tasks (API Key + Soft Delete)
-- **User Story 1 (Phase 4)**: 12 tasks (Docker)
-- **User Story 2 (Phase 5)**: 21 tasks (WASM)
-- **User Story 3 (Phase 6)**: 41 tasks (React Example)
-- **Polish (Phase 7)**: 10 tasks
+- **Total Tasks**: 117 tasks (added 3 for SDK integration)
+- **Setup (Phase 1)**: 6 tasks (T001-T006) ✅ Complete
+- **Foundational (Phase 2)**: 5 tasks (T007-T011) ✅ Complete - BLOCKING prerequisite
+- **Core Bug Fixes & Refactoring (Phase 2.5)**: 18 tasks (T011A-T011R) ✅ Complete - PostgreSQL compatibility + structure cleanup
+  - PostgreSQL-compatible row counts: 8 tasks (T011A-T011H) ✅
+  - Project structure refactoring: 10 tasks (T011I-T011R) ✅
+- **User Story 0 (Phase 3)**: 15 tasks (T012-T026) ✅ Complete - API Key + Soft Delete
+- **User Story 1 (Phase 4)**: 12 tasks (T027-T038) ✅ Complete - Docker deployment
+- **User Story 2 (Phase 5)**: 11 tasks (T053-T063) ✅ Complete - WASM SDK with multi-language architecture
+- **User Story 3 (Phase 6)**: 44 tasks (T064-T104, including T064A, T064B, T072A, T072B) ⚠️ Mostly Complete - SDK integration pending
+  - **NEW T064A-T064B**: Add SDK as local dependency in package.json
+  - **NEW T072A**: Remove mock kalamClient.ts
+  - **NEW T072B**: Extend SDK if missing functionality
+- **Polish (Phase 7)**: 10 tasks (T105-T114) ⏳ Pending - Documentation and validation
 
-**Parallel Opportunities**: 45 tasks marked [P] can run in parallel within their phase
+**Parallel Opportunities**: 48 tasks marked [P] can run in parallel within their phase (increased from 45)
+
+**Critical SDK Integration Tasks (MUST complete before Phase 7)**:
+- ⚠️ T064A: Add "@kalamdb/client": "file:../../link/sdks/typescript" to examples/simple-typescript/package.json
+- ⚠️ T064B: Run npm install to verify local SDK linking works
+- ⚠️ T072A: Delete examples/simple-typescript/src/services/kalamClient.ts (mock implementation)
+- ⚠️ T072B: Check SDK for insertTodo/deleteTodo methods, add to SDK if missing (NOT to example)
+- ⚠️ Update all imports in example to use: `import { KalamClient } from '@kalamdb/client'`
+
+**Phase 5 Status - WASM SDK Complete**:
+- ✅ T053-T059: TypeScript SDK build infrastructure
+- ✅ T060-T063: Multi-language SDK architecture established
+- ✅ SDK Location: `link/sdks/typescript/` (complete, self-contained, publishable)
+- ✅ Build System: `build.sh` compiles Rust→WASM directly to SDK directory
+- ✅ Tests: 14/14 passing in `link/sdks/typescript/tests/basic.test.mjs`
+- ✅ Documentation: Complete API reference in `link/sdks/typescript/README.md`
+- ✅ Output: ~40KB WASM module + TypeScript bindings + package.json
 
 **Independent Test Criteria**:
-- **US0**: Create user → Get API key → Make authenticated SQL request → Soft delete row → Verify hidden
-- **US1**: Build Docker image → Start container → Create user inside → Verify data persists → Test env var override
-- **US2**: Compile WASM → Import in Node.js → Initialize with URL+API key → Execute query
-- **US3**: Run setup.sh → Start React app → Add TODO → Delete TODO → Verify multi-tab sync → Test offline/reconnect
+- **US0**: ✅ Create user → Get API key → Make authenticated SQL request → Soft delete row → Verify hidden
+- **US1**: ✅ Build Docker image → Start container → Create user inside → Verify data persists → Test env var override
+- **US2**: ✅ Compile WASM → Import in Node.js → Initialize with URL+API key → Execute query
+- **US3**: ✅ Run setup.sh → Start React app → Add TODO → Delete TODO → Verify multi-tab sync → Test offline/reconnect
 
 **Suggested MVP Scope**: User Story 0 + User Story 1 (API key authentication + Docker deployment)
 

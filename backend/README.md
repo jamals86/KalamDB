@@ -44,6 +44,102 @@ cargo run
 
 The server will start on `http://127.0.0.1:8080` by default.
 
+## New Features (Phase 006)
+
+### API Key Authentication
+
+Create users with auto-generated API keys for secure access:
+
+```bash
+# Create a user with API key
+cargo run --bin kalamdb-server -- create-user --name "demo-user" --role "user"
+
+# Output:
+# ✅ User created successfully!
+# API Key: 550e8400-e29b-41d4-a716-446655440000
+```
+
+Use the API key with the `X-API-KEY` header:
+
+```bash
+curl -X POST http://localhost:8080/sql \
+  -H "Content-Type: application/json" \
+  -H "X-API-KEY: 550e8400-e29b-41d4-a716-446655440000" \
+  -d '{"query": "SELECT * FROM todos"}'
+```
+
+**Note**: Localhost (127.0.0.1) connections bypass API key requirement for development convenience.
+
+### Soft Delete
+
+User table rows are now soft-deleted (marked as deleted) instead of being physically removed:
+
+```sql
+-- Delete row (soft delete)
+DELETE FROM my_table WHERE id = 5;
+
+-- Row is hidden from SELECT queries
+SELECT * FROM my_table;  -- Won't show id=5
+
+-- Admin can view deleted rows (future feature)
+SELECT * FROM my_table INCLUDE DELETED;
+```
+
+Benefits:
+- Data recovery capability
+- Audit trail preservation
+- Safer than hard delete
+
+### Docker Deployment
+
+Deploy KalamDB in a production-ready Docker container:
+
+```bash
+cd docker/backend
+./build-backend.sh
+docker-compose up -d
+```
+
+See [docker/README.md](../docker/README.md) for complete deployment guide.
+
+### Environment Variable Configuration
+
+Override any config.toml setting with environment variables:
+
+```bash
+KALAMDB_SERVER_PORT=9000 \
+KALAMDB_LOG_LEVEL=debug \
+cargo run
+```
+
+**Format**: `KALAMDB_` + uppercase path with `_` separator
+- `KALAMDB_SERVER_PORT` → `[server].port`
+- `KALAMDB_LOG_LEVEL` → `[logging].level`
+- `KALAMDB_DATA_DIR` → `[storage].data_dir`
+
+### Client SDKs
+
+KalamDB provides official SDKs for multiple languages in `link/sdks/`:
+
+**TypeScript/JavaScript SDK** (`link/sdks/typescript/`):
+- 📦 Published as `@kalamdb/client` on npm
+- 🔧 37 KB WASM module with full TypeScript types
+- ✅ 14 passing tests, comprehensive API documentation
+- 🌐 Works in browsers and Node.js
+
+**Usage in Examples**:
+```json
+{
+  "dependencies": {
+    "@kalamdb/client": "file:../../link/sdks/typescript"
+  }
+}
+```
+
+**Important**: Examples MUST use SDKs as dependencies, not create mock implementations. See [SDK Integration Guide](../specs/006-docker-wasm-examples/SDK_INTEGRATION.md) for architecture details.
+
+See [link/README.md](../link/README.md) for complete SDK documentation.
+
 ## Development
 
 ### Project Structure

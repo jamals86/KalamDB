@@ -60,12 +60,16 @@ async fn execute_sql(sql: &str) -> Result<QueryResponse, Box<dyn std::error::Err
 
 /// Helper to setup test namespace and table
 async fn setup_test_data() -> Result<String, Box<dyn std::error::Error>> {
-    // Use a unique suffix based on the caller to avoid conflicts
+    // Use a unique suffix based on timestamp + random number to avoid conflicts
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_millis();
-    let table_name = format!("events_{}", timestamp);
+        .as_nanos();
+    let random_suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos();
+    let table_name = format!("events_{}_{}", timestamp, random_suffix);
     let full_table = format!("ws_test.{}", table_name);
     
     // Create namespace if needed
@@ -155,14 +159,14 @@ async fn test_kalam_link_parametrized_query() {
 
     // Insert with parameters (if supported)
     let insert_result = client
-        .execute_query("INSERT INTO ws_test.events (event_type, data) VALUES ('test', 'param_test')")
+        .execute_query(&format!("INSERT INTO {} (event_type, data) VALUES ('test', 'param_test')", table))
         .await;
 
     assert!(insert_result.is_ok(), "Insert should succeed");
 
     // Query to verify
     let query_result = client
-        .execute_query("SELECT * FROM ws_test.events WHERE event_type = 'test'")
+        .execute_query(&format!("SELECT * FROM {} WHERE event_type = 'test'", table))
         .await;
 
     assert!(query_result.is_ok(), "Query should succeed");
@@ -251,10 +255,10 @@ async fn test_websocket_initial_data_snapshot() {
     let table = setup_test_data().await.expect("Failed to setup test data");
 
     // Insert some initial data
-    execute_sql("INSERT INTO ws_test.events (event_type, data) VALUES ('initial', 'data1')")
+    execute_sql(&format!("INSERT INTO {} (event_type, data) VALUES ('initial', 'data1')", table))
         .await
         .ok();
-    execute_sql("INSERT INTO ws_test.events (event_type, data) VALUES ('initial', 'data2')")
+    execute_sql(&format!("INSERT INTO {} (event_type, data) VALUES ('initial', 'data2')", table))
         .await
         .ok();
     sleep(Duration::from_millis(200)).await;
@@ -263,7 +267,7 @@ async fn test_websocket_initial_data_snapshot() {
 
     let subscription_result = timeout(
         TEST_TIMEOUT,
-        client.subscribe("SELECT * FROM ws_test.events"),
+        client.subscribe(&format!("SELECT * FROM {}", table)),
     )
     .await;
 
@@ -810,8 +814,8 @@ async fn test_sql_where_clause_operators() {
     for i in 1..=5 {
         client
             .execute_query(&format!(
-                "INSERT INTO ws_test.events (event_type, data) VALUES ('op_test', '{}')",
-                i
+                "INSERT INTO {} (event_type, data) VALUES ('op_test', '{}')",
+                table, i
             ))
             .await
             .ok();
@@ -819,13 +823,13 @@ async fn test_sql_where_clause_operators() {
 
     // Test LIKE
     let like = client
-        .execute_query("SELECT * FROM ws_test.events WHERE data LIKE '%3%'")
+        .execute_query(&format!("SELECT * FROM {} WHERE data LIKE '%3%'", table))
         .await;
     assert!(like.is_ok(), "LIKE operator should work");
 
     // Test IN
     let in_op = client
-        .execute_query("SELECT * FROM ws_test.events WHERE data IN ('1', '2', '3')")
+        .execute_query(&format!("SELECT * FROM {} WHERE data IN ('1', '2', '3')", table))
         .await;
     assert!(in_op.is_ok(), "IN operator should work");
 
@@ -880,17 +884,17 @@ async fn test_sql_order_by() {
 
     // Insert data
     client
-        .execute_query("INSERT INTO ws_test.events (event_type, data) VALUES ('sort', 'z')")
+        .execute_query(&format!("INSERT INTO {} (event_type, data) VALUES ('sort', 'z')", table))
         .await
         .ok();
     client
-        .execute_query("INSERT INTO ws_test.events (event_type, data) VALUES ('sort', 'a')")
+        .execute_query(&format!("INSERT INTO {} (event_type, data) VALUES ('sort', 'a')", table))
         .await
         .ok();
 
     // Test ORDER BY
     let ordered = client
-        .execute_query("SELECT * FROM ws_test.events WHERE event_type = 'sort' ORDER BY data ASC")
+        .execute_query(&format!("SELECT * FROM {} WHERE event_type = 'sort' ORDER BY data ASC", table))
         .await;
     assert!(ordered.is_ok(), "ORDER BY should work");
 

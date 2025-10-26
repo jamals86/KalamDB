@@ -476,9 +476,104 @@ From [`constitution.md`](.specify/memory/constitution.md):
 
 ---
 
+## 🐳 Deployment Options
+
+### Docker Deployment (Production-Ready)
+
+Run KalamDB in a Docker container with persistent storage and environment variable configuration:
+
+```bash
+# Build the Docker image
+cd docker/backend
+./build-backend.sh
+
+# Start with docker-compose
+docker-compose up -d
+
+# Create a user with API key
+docker exec -it kalamdb kalam user create --name "myuser" --role "user"
+```
+
+Features:
+- ✅ Multi-stage build for minimal image size
+- ✅ Non-root user for security
+- ✅ Persistent data volumes
+- ✅ Environment variable override for all config
+- ✅ Health check included
+- ✅ Both `kalamdb-server` and `kalam` CLI in container
+
+**Documentation**: See [docker/README.md](docker/README.md) for complete deployment guide.
+
+### WASM Client for Browser/Node.js
+
+Use KalamDB from TypeScript/JavaScript applications via the official SDK:
+
+```typescript
+// Install SDK as dependency
+// package.json: "@kalamdb/client": "file:../../link/sdks/typescript"
+
+import init, { KalamClient } from '@kalamdb/client';
+
+// Initialize WASM module
+await init();
+
+// Create client
+const client = new KalamClient(
+  'http://localhost:8080',
+  'your-api-key-here'
+);
+
+// Connect and query
+await client.connect();
+const results = await client.query('SELECT * FROM todos');
+
+// Subscribe to real-time changes
+await client.subscribe('todos', (eventJson) => {
+  const event = JSON.parse(eventJson);
+  console.log('Change detected:', event);
+});
+```
+
+**SDK Architecture**:
+- 📦 **Location**: `link/sdks/typescript/` - Complete, publishable npm package
+- 🔗 **Usage**: Examples import SDK as local dependency via `file:` protocol
+- ✅ **No Mocks**: Examples MUST use real SDK, not custom implementations
+- 🛠️ **Extension**: If examples need helpers, add to SDK for all users
+
+Features:
+- ✅ TypeScript SDK with full type definitions (14 passing tests)
+- ✅ Real-time WebSocket subscriptions
+- ✅ Compiled Rust → WASM (37 KB module)
+- ✅ Works in browsers and Node.js
+- ✅ Complete test suite and API documentation
+
+**Documentation**: See [link/sdks/typescript/README.md](link/sdks/typescript/README.md) and [SDK Integration Guide](specs/006-docker-wasm-examples/SDK_INTEGRATION.md).
+
+### Example Application: React TODO App
+
+See a complete real-world example of KalamDB in action:
+
+```bash
+cd examples/simple-typescript
+./setup.sh           # Create database tables
+npm install          # Install dependencies
+npm run dev          # Start development server
+```
+
+Features:
+- ✅ Real-time sync across browser tabs
+- ✅ Offline-first with localStorage caching
+- ✅ Professional UI with dark mode support
+- ✅ < 500 lines of code
+- ✅ Complete with tests and documentation
+
+**Live Demo**: See [examples/simple-typescript/README.md](examples/simple-typescript/README.md) for complete walkthrough.
+
+---
+
 ## 🎯 Roadmap
 
-### ✅ Completed (Phase 1-16)
+### ✅ Completed (Phase 1-16 + 006)
 - [x] Complete specification design (002-simple-kalamdb)
 - [x] Three-layer architecture (kalamdb-core → kalamdb-sql + kalamdb-store → RocksDB)
 - [x] RocksDB storage implementation with column family architecture
@@ -492,6 +587,11 @@ From [`constitution.md`](.specify/memory/constitution.md):
 - [x] Backup and restore (namespace-level with Parquet file copy)
 - [x] Catalog browsing (SHOW TABLES, DESCRIBE TABLE, SHOW STATS)
 - [x] Integration tests and quickstart script (32 automated tests)
+- [x] **API key authentication via X-API-KEY header** (Phase 006)
+- [x] **Soft delete for user tables** (Phase 006)
+- [x] **Docker deployment with environment variable config** (Phase 006)
+- [x] **WASM client compilation for TypeScript/JavaScript** (Phase 006)
+- [x] **React TODO example app with real-time sync** (Phase 006)
 
 ### 🚧 In Progress (Phase 17 - Polish)
 - [ ] Enhanced error handling (✅ error types added, integration pending)

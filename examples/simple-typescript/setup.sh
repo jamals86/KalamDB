@@ -1,91 +1,195 @@
-#!/bin/bash
-# Setup script for KalamDB TODO example
-# This script validates KalamDB accessibility and creates the todos table
+#!/usr/bin/env bash
+# Setup script for KalamDB TODO example application
+# Feature: 006-docker-wasm-examples
+#
+# This script:
+# 1. Validates KalamDB server is accessible
+# 2. Creates the todos table from todo-app.sql
+# 3. Verifies setup was successful
+#
+# Usage:
+#   ./setup.sh [options]
+#
+# Options:
+#   --server URL    KalamDB server URL (default: http://localhost:8080)
+#   --help          Show this help message
 
-set -e  # Exit on error
+set -euo pipefail
 
-# Color output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# ============================================================================
+# Configuration
+# ============================================================================
 
-echo "🚀 Setting up KalamDB TODO example..."
-echo
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KALAMDB_URL="${KALAMDB_URL:-http://localhost:8080}"
+SQL_FILE="$SCRIPT_DIR/todo-app.sql"
 
-# Check if .env file exists
-if [ ! -f .env ]; then
-    echo -e "${YELLOW}⚠️  No .env file found${NC}"
-    echo "   Creating .env from .env.example..."
-    cp .env.example .env
-    echo -e "${YELLOW}   Please edit .env and add your API key before continuing${NC}"
-    echo
+# ============================================================================
+# Functions
+# ============================================================================
+
+show_help() {
+    cat << EOF
+Setup KalamDB TODO Example Application
+
+Usage: $0 [options]
+
+Options:
+    --server URL    KalamDB server URL (default: http://localhost:8080)
+    --help          Show this help message
+
+Environment Variables:
+    KALAMDB_URL     Override default server URL
+
+Examples:
+    # Setup with default localhost server
+    ./setup.sh
+
+    # Setup with custom server
+    ./setup.sh --server http://192.168.1.100:8080
+
+    # Or use environment variable
+    KALAMDB_URL=http://192.168.1.100:8080 ./setup.sh
+
+EOF
+}
+
+log_info() {
+    echo "ℹ️  $*"
+}
+
+log_success() {
+    echo "✅ $*"
+}
+
+log_error() {
+    echo "❌ $*" >&2
+}
+
+# ============================================================================
+# Parse Arguments
+# ============================================================================
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --server)
+            KALAMDB_URL="$2"
+            shift 2
+            ;;
+        --help)
+            show_help
+            exit 0
+            ;;
+        *)
+            log_error "Unknown option: $1"
+            show_help
+            exit 1
+            ;;
+    esac
+done
+
+# ============================================================================
+# Pre-flight Checks
+# ============================================================================
+
+log_info "Pre-flight checks..."
+
+# Check kalam-cli is available
+if ! command -v kalam &> /dev/null && ! command -v kalam-cli &> /dev/null; then
+    log_error "kalam-cli not found in PATH"
+    log_info "Please install kalam-cli or add it to your PATH"
+    log_info "From repository root: cargo build --release --bin kalam"
     exit 1
 fi
 
-# Load environment variables
-source .env
+# Determine which command to use
+KALAM_CMD="kalam"
+if ! command -v kalam &> /dev/null; then
+    KALAM_CMD="kalam-cli"
+fi
 
-# Validate required environment variables
-if [ -z "$VITE_KALAMDB_URL" ]; then
-    echo -e "${RED}❌ VITE_KALAMDB_URL is not set in .env${NC}"
+# Check SQL file exists
+if [[ ! -f "$SQL_FILE" ]]; then
+    log_error "SQL file not found: $SQL_FILE"
     exit 1
 fi
 
-if [ -z "$VITE_KALAMDB_API_KEY" ] || [ "$VITE_KALAMDB_API_KEY" = "your-api-key-here" ]; then
-    echo -e "${RED}❌ VITE_KALAMDB_API_KEY is not set or using placeholder value${NC}"
-    echo "   Run the following to create a user and get an API key:"
-    echo "   cargo run --bin kalamdb-server -- create-user --username todo-app --email todo@example.com --role user"
+log_success "Pre-flight checks passed"
+
+# ============================================================================
+# Test Connection
+# ============================================================================
+
+log_info "Testing connection to KalamDB..."
+log_info "  Server: $KALAMDB_URL"
+
+# Try to execute a simple query
+if ! $KALAM_CMD exec "SELECT 1" --url "$KALAMDB_URL" &> /dev/null; then
+    log_error "Cannot connect to KalamDB server at $KALAMDB_URL"
+    log_info "Please ensure:"
+    log_info "  1. KalamDB server is running"
+    log_info "  2. Server URL is correct: $KALAMDB_URL"
+    log_info "  3. Network connectivity is working"
     exit 1
 fi
 
-echo "📡 Checking KalamDB server accessibility..."
+log_success "Connection successful"
 
-# Check if server is running (try health endpoint)
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${VITE_KALAMDB_URL}/health" || echo "000")
+# ============================================================================
+# Load Schema
+# ============================================================================
 
-if [ "$HTTP_CODE" != "200" ]; then
-    echo -e "${RED}❌ Cannot reach KalamDB server at ${VITE_KALAMDB_URL}${NC}"
-    echo "   HTTP status: $HTTP_CODE"
-    echo "   Make sure the server is running with: cargo run --bin kalamdb-server"
-    exit 1
-fi
+log_info "Creating todos table..."
 
-echo -e "${GREEN}✅ KalamDB server is accessible${NC}"
-echo
-
-# Find kalam-cli binary
-KALAM_CLI=""
-if [ -f "../../target/release/kalam-cli" ]; then
-    KALAM_CLI="../../target/release/kalam-cli"
-elif [ -f "../../target/debug/kalam-cli" ]; then
-    KALAM_CLI="../../target/debug/kalam-cli"
-elif command -v kalam-cli &> /dev/null; then
-    KALAM_CLI="kalam-cli"
+# Load SQL file (idempotent with CREATE TABLE IF NOT EXISTS)
+if $KALAM_CMD load "$SQL_FILE" --url "$KALAMDB_URL"; then
+    log_success "Table created successfully"
 else
-    echo -e "${RED}❌ kalam-cli binary not found${NC}"
-    echo "   Please build it first with: cd ../../cli && cargo build --release"
+    log_error "Failed to create table"
     exit 1
 fi
 
-echo "📋 Creating database schema..."
+# ============================================================================
+# Verify Setup
+# ============================================================================
 
-# Execute SQL file using kalam-cli
-export KALAMDB_URL="$VITE_KALAMDB_URL"
-export KALAMDB_API_KEY="$VITE_KALAMDB_API_KEY"
+log_info "Verifying setup..."
 
-if $KALAM_CLI execute-file todo-app.sql; then
-    echo -e "${GREEN}✅ Database schema created successfully${NC}"
+# Check table exists by querying it
+if $KALAM_CMD exec "SELECT COUNT(*) FROM todos" --url "$KALAMDB_URL" &> /dev/null; then
+    log_success "Table verified"
 else
-    echo -e "${RED}❌ Failed to create database schema${NC}"
+    log_error "Table verification failed"
     exit 1
 fi
 
-echo
-echo -e "${GREEN}🎉 Setup complete!${NC}"
-echo
-echo "Next steps:"
-echo "  1. Install dependencies: npm install"
-echo "  2. Start the dev server: npm run dev"
-echo "  3. Open http://localhost:3000 in your browser"
-echo
+# ============================================================================
+# Summary
+# ============================================================================
+
+cat << EOF
+
+🎉 Setup complete!
+
+Database: $KALAMDB_URL
+Table:    todos
+
+Next steps:
+  1. Install dependencies:
+     npm install
+
+  2. Create .env file:
+     cp .env.example .env
+     # Edit .env to add your API key
+
+  3. Start development server:
+     npm run dev
+
+  4. Open browser:
+     http://localhost:5173
+
+Documentation:
+  - Quick Start: $SCRIPT_DIR/../../specs/006-docker-wasm-examples/quickstart.md
+  - README: $SCRIPT_DIR/README.md
+
+EOF

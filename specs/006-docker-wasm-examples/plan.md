@@ -45,8 +45,19 @@ This feature adds API key authentication with soft delete for user tables, Docke
   - 4 independent user stories
   - Backend: 2 new fields (apikey, deleted), 1 new middleware
   - Docker: 1 Dockerfile, 1 docker-compose.yml
-  - WASM: 1 compiled module + TypeScript bindings
+  - WASM: Multi-language SDK architecture in link/sdks/
+  - TypeScript SDK: Complete package with build system, tests, docs
   - Frontend: 1 example app (~500 LOC), 1 setup script
+
+**SDK Architecture Philosophy**:
+  - Each language SDK in `link/sdks/{language}/` is a complete, self-contained, npm-publishable package
+  - Every SDK includes: build system, package config, tests, documentation, .gitignore
+  - TypeScript SDK compiles from `link/` (Rust source) to `link/sdks/typescript/` (output)
+  - Future SDKs (Python, Go, etc.) follow same pattern for consistency
+  - **Examples MUST use SDKs as local dependencies** (e.g., `"@kalamdb/client": "file:../../link/sdks/typescript"`)
+  - **Examples MUST NOT implement their own clients** - all functionality comes from SDK
+  - If examples need additional functions, those should be added to the SDK for all users
+  - SDKs are designed to be published to npm/PyPI/etc. without modification
 
 ## Constitution Check
 
@@ -99,33 +110,45 @@ backend/
     ├── test_api_key_auth.rs     # NEW: API key authentication tests
     └── test_soft_delete.rs      # NEW: Soft delete behavior tests
 
-cli/
-└── kalam-link/                  # TO BE MOVED to /link/kalam-link/ (Phase 2.5)
-    ├── src/
-    │   ├── wasm.rs              # NEW: WASM-specific bindings
-    │   └── client.rs            # MODIFIED: Add API key + URL params
-    ├── Cargo.toml               # MODIFIED: Add wasm-bindgen deps
-    └── pkg/                     # NEW: wasm-pack output directory
+link/                            # Rust library for KalamDB client
+├── src/
+│   ├── wasm.rs                  # NEW: WASM-specific bindings
+│   ├── client.rs                # MODIFIED: Add API key + URL params
+│   └── lib.rs                   # Core library interface
+├── Cargo.toml                   # Dependencies for both CLI and WASM
+├── sdks/                        # NEW: Multi-language SDK directory
+│   └── typescript/              # TypeScript/JavaScript SDK
+│       ├── build.sh             # Build script (Rust → WASM)
+│       ├── package.json         # npm package config
+│       ├── README.md            # API documentation
+│       ├── .gitignore           # Excludes generated WASM files
+│       ├── src/                 # TypeScript wrapper code (if needed)
+│       ├── tests/               # SDK test suite (Node.js)
+│       │   └── basic.test.mjs   # Core functionality tests
+│       └── [generated files]    # kalam_link_bg.wasm, kalam_link.js, kalam_link.d.ts
+└── tests/                       # Rust unit tests
 
-link/                            # NEW: Dual-purpose library (CLI + WASM)
-└── kalam-link/                  # MOVED from cli/kalam-link/ (Phase 2.5)
+cli/
+└── kalam-cli/                   # CLI tool (depends on link/ crate)
     ├── src/
-    │   ├── wasm.rs              # WASM-specific bindings
-    │   └── client.rs            # Core client (used by CLI and WASM)
-    ├── Cargo.toml               # Dependencies for both CLI and WASM
-    └── pkg/                     # wasm-pack output for TypeScript usage
+    │   └── main.rs              # Uses kalam-link as dependency
+    └── Cargo.toml               # Depends on link crate
 
 examples/
 └── simple-typescript/
     ├── src/
     │   ├── components/          # NEW: React components
-    │   ├── services/            # NEW: WASM client wrapper
+    │   ├── services/            # NEW: localStorage utilities (NOT client wrapper)
+    │   ├── hooks/               # NEW: React hooks (useTodos)
     │   └── index.tsx            # NEW: App entry point
     ├── setup.sh                 # NEW: Table setup script
     ├── todo-app.sql             # NEW: SQL schema definitions
-    ├── package.json             # NEW: Dependencies + scripts
+    ├── package.json             # NEW: Dependencies + local SDK reference
     ├── tsconfig.json            # NEW: TypeScript config
     └── README.md                # NEW: Setup instructions
+    
+    **NOTE**: This example imports KalamDB client from ../../link/sdks/typescript/
+              It does NOT implement its own client wrapper.
 
 docker/
 ├── backend/
@@ -139,7 +162,44 @@ docker/
 
 ---
 
-## Known Issues & Planned Fixes
+### SDK Integration Principles
+
+**Philosophy**: SDKs are first-class publishable packages, examples are SDK consumers
+
+**Architecture**:
+1. **SDK Location**: `link/sdks/{language}/` (e.g., `link/sdks/typescript/`)
+2. **SDK Structure**: Complete, self-contained package ready for npm/PyPI/etc.
+   - package.json / setup.py / Cargo.toml (depending on language)
+   - Build scripts (e.g., build.sh for WASM compilation)
+   - Tests (e.g., tests/basic.test.mjs)
+   - Documentation (README.md with API reference)
+   - .gitignore (excludes build artifacts if needed)
+3. **Example Structure**: `examples/{example-name}/`
+4. **Example Dependencies**: Import SDK as local dependency
+   - TypeScript: `"@kalamdb/client": "file:../../link/sdks/typescript"`
+   - Python: `pip install -e ../../link/sdks/python`
+5. **No Duplication**: Examples MUST NOT implement their own clients
+6. **SDK Extension**: If examples need functionality, add it to the SDK for all users
+
+**Benefits**:
+- ✅ SDKs are production-ready, tested, and documented
+- ✅ Examples validate SDK usability
+- ✅ No code duplication between examples
+- ✅ SDK improvements benefit all examples immediately
+- ✅ Easy to publish SDKs to package registries
+
+**Example Workflow**:
+```typescript
+// ❌ WRONG: examples/simple-typescript/src/services/kalamClient.ts
+export class KalamClient { ... } // Don't implement your own!
+
+// ✅ CORRECT: examples/simple-typescript/src/App.tsx
+import { KalamClient } from '@kalamdb/client'; // Use SDK
+
+const client = new KalamClient(config);
+```
+
+---
 
 ### Issue 1: UPDATE/DELETE Row Count Incorrect (Critical)
 
