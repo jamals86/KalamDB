@@ -28,7 +28,7 @@ serde_json = { workspace = true }
 uuid = { workspace = true, features = ["js"] }
 
 # Random number generation for WASM
-getrandom = { version = "0.2", features = ["js"], optional = true }
+getrandom = { version = "0.2", features = ["js"] }
 
 # Futures utilities
 futures-util = { version = "0.3", default-features = false }
@@ -46,7 +46,7 @@ web-sys = { version = "0.3", features = ["console"], optional = true }
 [features]
 default = ["tokio-runtime"]
 tokio-runtime = ["tokio", "reqwest", "tokio-tungstenite"]
-wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys", "getrandom"]
+wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }

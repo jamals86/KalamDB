@@ -5,7 +5,7 @@
 # ============================================================================
 # Stage 1: Builder
 # ============================================================================
-FROM rust:1.90-slim AS builder
+FROM rust:1.90-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && \
@@ -21,21 +21,24 @@ RUN apt-get update && \
 # Set working directory
 WORKDIR /build
 
-# Copy workspace Cargo files
-COPY backend/Cargo.toml backend/Cargo.lock ./backend/
-COPY cli/Cargo.toml ./cli/
+# Copy workspace Cargo files (root level)
+COPY Cargo.toml Cargo.lock ./
 
-# Copy source code
+# Copy backend Cargo file and source
+COPY backend/Cargo.toml ./backend/
+COPY backend/src ./backend/src
 COPY backend/crates ./backend/crates
-COPY cli/kalam-cli ./cli/kalam-cli
-COPY cli/kalam-link ./cli/kalam-link
+
+# Copy CLI Cargo file and source
+COPY cli/Cargo.toml ./cli/
+COPY cli/src ./cli/src
+
+# Copy link (dependency for CLI)
+COPY link/Cargo.toml ./link/
+COPY link/src ./link/src
 
 # Build release binaries
-WORKDIR /build/backend
-RUN cargo build --release --bin kalamdb-server
-
-WORKDIR /build/cli
-RUN cargo build --release --bin kalam
+RUN cargo build --release --bin kalamdb-server --bin kalam
 
 # ============================================================================
 # Stage 2: Runtime
@@ -55,8 +58,8 @@ RUN useradd -m -u 1000 kalamdb && \
     chown -R kalamdb:kalamdb /data
 
 # Copy binaries from builder
-COPY --from=builder /build/backend/target/release/kalamdb-server /usr/local/bin/kalamdb-server
-COPY --from=builder /build/cli/target/release/kalam /usr/local/bin/kalam-cli
+COPY --from=builder /build/target/release/kalamdb-server /usr/local/bin/kalamdb-server
+COPY --from=builder /build/target/release/kalam /usr/local/bin/kalam-cli
 
 # Make binaries executable
 RUN chmod +x /usr/local/bin/kalamdb-server /usr/local/bin/kalam-cli
