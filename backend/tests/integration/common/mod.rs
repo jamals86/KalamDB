@@ -35,6 +35,7 @@
 //! ```
 
 pub mod stress_utils;
+pub mod flush_helpers;
 
 use anyhow::Result;
 use datafusion::catalog::SchemaProvider;
@@ -138,7 +139,9 @@ pub mod websocket;
 /// The server is automatically cleaned up when dropped.
 pub struct TestServer {
     /// Temporary directory for database files (shared via Arc to allow cloning)
-    temp_dir: Arc<TempDir>,
+    pub temp_dir: Arc<TempDir>,
+    /// RocksDB instance (needed for direct store access in tests)
+    pub db: Arc<rocksdb::DB>,
     /// KalamSQL instance for direct database access
     pub kalam_sql: Arc<kalamdb_sql::KalamSql>,
     /// SQL executor for query execution
@@ -155,6 +158,7 @@ impl Clone for TestServer {
     fn clone(&self) -> Self {
         Self {
             temp_dir: Arc::clone(&self.temp_dir),
+            db: Arc::clone(&self.db),
             kalam_sql: Arc::clone(&self.kalam_sql),
             sql_executor: Arc::clone(&self.sql_executor),
             namespace_service: Arc::clone(&self.namespace_service),
@@ -349,6 +353,7 @@ impl TestServer {
 
         Self {
             temp_dir: Arc::new(temp_dir),
+            db,
             kalam_sql,
             sql_executor,
             namespace_service,

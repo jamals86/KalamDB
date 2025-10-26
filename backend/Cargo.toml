@@ -120,10 +120,6 @@ name = "test_stress_and_memory"
 path = "tests/integration/combined/test_stress_and_memory.rs"
 
 [[test]]
-name = "test_code_quality"
-path = "tests/test_code_quality.rs"
-
-[[test]]
 name = "test_row_count_behavior"
 path = "tests/test_row_count_behavior.rs"
 

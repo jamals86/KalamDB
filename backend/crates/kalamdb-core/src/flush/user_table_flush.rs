@@ -751,6 +751,42 @@ impl UserTableFlushJob {
                         .collect();
                     Arc::new(BooleanArray::from(values))
                 }
+                DataType::Timestamp(unit, timezone) => {
+                    // System columns like _updated are stored as RFC3339 strings or millisecond timestamps
+                    let values: Vec<Option<i64>> = rows
+                        .iter()
+                        .map(|(_, row)| {
+                            row.get(field_name).and_then(|v| {
+                                // Try to parse as i64 (milliseconds since epoch)
+                                if let Some(ts_ms) = v.as_i64() {
+                                    return Some(ts_ms);
+                                }
+                                
+                                // Try to parse as RFC3339 string
+                                if let Some(ts_str) = v.as_str() {
+                                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts_str) {
+                                        return Some(dt.timestamp_millis());
+                                    }
+                                }
+                                
+                                None
+                            })
+                        })
+                        .collect();
+                    
+                    use datafusion::arrow::array::TimestampMillisecondArray;
+                    match (unit, timezone) {
+                        (datafusion::arrow::datatypes::TimeUnit::Millisecond, None) => {
+                            Arc::new(TimestampMillisecondArray::from(values))
+                        }
+                        _ => {
+                            return Err(KalamDbError::Other(format!(
+                                "Unsupported timestamp configuration: unit={:?}, timezone={:?}",
+                                unit, timezone
+                            )))
+                        }
+                    }
+                }
                 _ => {
                     return Err(KalamDbError::Other(format!(
                         "Unsupported data type for flush: {:?}",

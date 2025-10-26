@@ -13,7 +13,6 @@ pub mod ids;
 pub mod jobs;
 pub mod live_query;
 pub mod metrics;
-pub mod models;
 pub mod scheduler;
 pub mod schema;
 pub mod services;
