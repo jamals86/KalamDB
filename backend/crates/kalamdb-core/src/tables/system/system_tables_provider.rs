@@ -54,7 +54,7 @@ impl SystemTablesTableProvider {
             table_ids.append_value(&table.table_id);
             table_names.append_value(&table.table_name);
             namespaces.append_value(&table.namespace);
-            table_types.append_value(&table.table_type);
+            table_types.append_value(table.table_type.as_str());
             created_ats.push(Some(table.created_at));
             storage_locations.append_value(&table.storage_location);
             if let Some(ref storage_id) = table.storage_id {

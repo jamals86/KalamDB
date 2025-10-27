@@ -88,6 +88,7 @@ impl JobsTableProvider {
             .map_err(|e| KalamDbError::Other(format!("Failed to get job: {}", e)))?;
 
         Ok(job)
+    }
 
     /// Cancel a job by marking it as cancelled
     ///

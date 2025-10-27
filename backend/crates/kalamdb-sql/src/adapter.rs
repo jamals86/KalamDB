@@ -2,7 +2,12 @@
 //!
 //! Provides low-level read/write operations for system tables in RocksDB.
 
-use crate::models::*;
+// Import all system models from the crate root (which re-exports from commons)
+use crate::{
+    InformationSchemaTable, Job, LiveQuery, Namespace, Storage, Table, TableSchema, User,
+    UserTableCounter,
+};
+use kalamdb_commons::models::TableDefinition;
 use anyhow::{anyhow, Result};
 use rocksdb::{IteratorMode, DB};
 use std::sync::Arc;

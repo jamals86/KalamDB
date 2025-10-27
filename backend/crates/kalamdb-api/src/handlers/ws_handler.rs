@@ -82,9 +82,9 @@ pub async fn websocket_handler_v1(
             Ok(Some(user)) => {
                 info!(
                     "WebSocket connection authenticated via API key: connection_id={}, user_id={}",
-                    connection_id, user.user_id
+                    connection_id, user.id
                 );
-                Some(UserId::from(user.user_id.as_str()))
+                Some(user.id)
             }
             Ok(None) => {
                 warn!(

@@ -18,6 +18,8 @@ use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::schema::ArrowSchemaWithOptions;
 use arrow::datatypes::{DataType, Field, Schema};
+use kalamdb_commons::models::UserId;
+use kalamdb_commons::system::Namespace;
 use kalamdb_sql::ddl::ColumnOperation;
 use kalamdb_sql::{KalamSql, Table, TableSchema};
 use std::sync::Arc;
@@ -84,9 +86,7 @@ impl SchemaEvolutionService {
             })?;
 
         // Prevent altering stream tables (T180)
-        let table_type = TableType::from_str(&table.table_type).ok_or_else(|| {
-            KalamDbError::InvalidSql(format!("Unknown table type: {}", table.table_type))
-        })?;
+        let table_type = table.table_type;
         if table_type == TableType::Stream {
             return Err(KalamDbError::invalid_schema_evolution(
                 "Stream tables have immutable schemas and cannot be altered",
@@ -251,7 +251,7 @@ impl SchemaEvolutionService {
             .iter()
             .filter(|lq| {
                 // Check if query references this table
-                lq.table_name == table_name.as_str()
+                lq.table_name == table_name.as_str().into()
             })
             .collect();
 
@@ -515,10 +515,11 @@ mod tests {
 
         // Create namespace
         let namespace = Namespace {
-            namespace_id: "test_ns".to_string(),
+            namespace_id: NamespaceId::new("test_ns"),
             name: "test_ns".to_string(),
-            created_at: chrono::Utc::now().timestamp(),
-            options: "{}".to_string(),
+            owner_id: UserId::new("system"),
+            created_at: chrono::Utc::now().timestamp_millis(),
+            options: Some("{}".to_string()),
             table_count: 1,
         };
         kalam_sql.insert_namespace_struct(&namespace).unwrap();

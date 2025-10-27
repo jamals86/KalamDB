@@ -36,10 +36,15 @@ pub mod batch_execution;
 pub mod compatibility;
 pub mod ddl;
 pub mod executor;
-pub mod models;
 pub mod parser;
 pub mod query_cache;
 pub mod statement_classifier;
+
+// Re-export system models from kalamdb-commons (single source of truth)
+pub use kalamdb_commons::system::{
+    InformationSchemaTable, Job, LiveQuery, Namespace, Storage, SystemTable as Table,
+    TableSchema, User, UserTableCounter,
+};
 
 pub use adapter::RocksDbAdapter;
 pub use batch_execution::split_statements;
@@ -55,7 +60,6 @@ pub use ddl::{
     SubscribeOptions, SubscribeStatement,
 };
 pub use executor::SqlExecutor;
-pub use models::*;
 pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
 

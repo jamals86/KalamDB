@@ -15,6 +15,7 @@
 
 use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
+use kalamdb_commons::models::{JobStatus, JobType};
 use kalamdb_sql::{Job, KalamSql};
 use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::fs;
@@ -174,7 +175,7 @@ impl TableDeletionService {
 
         let active_subscriptions: Vec<_> = live_queries
             .iter()
-            .filter(|lq| lq.table_name == table_name.as_str())
+            .filter(|lq| lq.table_name == table_name.as_str().into())
             .collect();
 
         if !active_subscriptions.is_empty() {
@@ -269,7 +270,7 @@ impl TableDeletionService {
             TableType::Shared => {
                 // Shared tables: delete files in shared/${table_name}/ directory
                 // Pattern: ${storage_path}/shared/${table_name}/batch-*.parquet
-                let table_path = storage_path.join("shared").join(&table.table_name);
+                let table_path = storage_path.join("shared").join(table.table_name.as_str());
                 self.cleanup_directory_parquet_files(
                     &table_path,
                     &mut files_deleted,
@@ -432,17 +433,23 @@ impl TableDeletionService {
 
         let job: Job = Job {
             job_id: job_id.clone(),
-            job_type: "table_deletion".to_string(),
-            status: "running".to_string(),
-            table_name: Some(table_name.as_str().to_string()),
-            parameters,
+            job_type: JobType::Cleanup,
+            status: JobStatus::Running,
+            namespace_id: namespace_id.clone(),
+            table_name: Some(table_name.clone()),
+            parameters: Some(format!(
+                r#"[{{"namespace_id":"{}"}},{{"table_name":"{}"}},{{"table_type":"{:?}"}}]"#,
+                namespace_id.as_str(),
+                table_name.as_str(),
+                table_type
+            )),
             result: None,
             trace: None,
             memory_used: None,
             cpu_used: None,
             created_at: now_ms,
-            start_time: now_ms,
-            end_time: None,
+            started_at: Some(now_ms),
+            completed_at: None,
             node_id: "localhost".to_string(), // TODO: Get actual node ID
             error_message: None,
         };
@@ -471,12 +478,12 @@ impl TableDeletionService {
         let result_json = serde_json::json!({
             "files_deleted": files_deleted,
             "bytes_freed": bytes_freed,
-            "duration_ms": now_ms.saturating_sub(job.start_time),
+            "duration_ms": now_ms.saturating_sub(job.started_at.unwrap_or(job.created_at)),
         });
 
         let updated_job = Job {
-            status: "completed".to_string(),
-            end_time: Some(now_ms),
+            status: JobStatus::Completed,
+            completed_at: Some(now_ms),
             result: Some(serde_json::to_string(&result_json).unwrap_or_default()),
             ..job
         };
@@ -497,8 +504,8 @@ impl TableDeletionService {
 
         if let Some(job) = job {
             let updated_job = Job {
-                status: "failed".to_string(),
-                end_time: Some(chrono::Utc::now().timestamp_millis()),
+                status: JobStatus::Failed,
+                completed_at: Some(chrono::Utc::now().timestamp_millis()),
                 error_message: Some(error_message.to_string()),
                 ..job
             };

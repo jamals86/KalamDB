@@ -13,6 +13,7 @@
 
 use crate::catalog::{NamespaceId, TableType};
 use crate::error::KalamDbError;
+use kalamdb_commons::models::{JobStatus, JobType};
 use kalamdb_sql::{Job, KalamSql, Namespace, Table, TableSchema};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -214,7 +215,7 @@ impl BackupService {
 
         let tables: Vec<Table> = all_tables
             .into_iter()
-            .filter(|t| t.namespace == namespace_id.as_str())
+            .filter(|t| t.namespace.as_str() == namespace_id.as_str())
             .collect();
 
         // TODO: Phase 2b - Fetch schema from information_schema.tables (TableDefinition.schema_history)
@@ -252,9 +253,7 @@ impl BackupService {
         let mut stream_tables_count = 0;
 
         for table in tables {
-            let table_type = TableType::from_str(&table.table_type).ok_or_else(|| {
-                KalamDbError::InvalidSql(format!("Invalid table type: {}", table.table_type))
-            })?;
+            let table_type = table.table_type;
 
             match table_type {
                 TableType::User => {
@@ -321,7 +320,7 @@ impl BackupService {
         };
 
         // Create backup destination for this user table
-        let table_backup_dir = backup_dir.join("user_tables").join(&table.table_name);
+        let table_backup_dir = backup_dir.join("user_tables").join(table.table_name.as_str());
 
         // Find all user directories (pattern: ${base_path}/*/batch-*.parquet)
         let base_dir = Path::new(base_path);
@@ -380,7 +379,7 @@ impl BackupService {
         };
 
         // Shared table path format: ${storage_path}/shared/{table_name}/batch-*.parquet
-        let shared_dir = Path::new(base_path).join("shared").join(&table.table_name);
+        let shared_dir = Path::new(base_path).join("shared").join(table.table_name.as_str());
 
         if !shared_dir.exists() {
             // No data files yet
@@ -388,7 +387,7 @@ impl BackupService {
         }
 
         // Create backup destination
-        let table_backup_dir = backup_dir.join("shared_tables").join(&table.table_name);
+        let table_backup_dir = backup_dir.join("shared_tables").join(table.table_name.as_str());
 
         // Copy all Parquet files
         self.copy_parquet_files(&shared_dir, &table_backup_dir)
@@ -452,17 +451,18 @@ impl BackupService {
         let now_ms = chrono::Utc::now().timestamp_millis();
         let job = Job {
             job_id: job_id.clone(),
-            job_type: "backup".to_string(),
-            status: "running".to_string(),
-            table_name: Some(namespace_id.as_str().to_string()),
-            parameters: vec![format!(r#"{{"namespace_id":"{}"}}"#, namespace_id.as_str())],
+            job_type: JobType::Backup,
+            status: JobStatus::Running,
+            namespace_id: namespace_id.clone(),
+            table_name: None,
+            parameters: Some(format!(r#"{{"namespace_id":"{}"}}"#, namespace_id.as_str())),
             result: None,
             trace: None,
             memory_used: None,
             cpu_used: None,
             created_at: now_ms,
-            start_time: now_ms,
-            end_time: None,
+            started_at: Some(now_ms),
+            completed_at: None,
             node_id: "local".to_string(),
             error_message: None,
         };
@@ -487,8 +487,8 @@ impl BackupService {
             .map_err(|e| KalamDbError::IoError(format!("Failed to get job: {}", e)))?
             .ok_or_else(|| KalamDbError::NotFound(format!("Job '{}' not found", job_id)))?;
 
-        job.status = "completed".to_string();
-        job.end_time = Some(chrono::Utc::now().timestamp_millis());
+        job.status = JobStatus::Completed;
+        job.completed_at = Some(chrono::Utc::now().timestamp_millis());
         job.result = Some(format!(
             r#"{{"files_backed_up":{},"total_bytes":{}}}"#,
             files_backed_up, total_bytes
@@ -509,8 +509,8 @@ impl BackupService {
             .map_err(|e| KalamDbError::IoError(format!("Failed to get job: {}", e)))?
             .ok_or_else(|| KalamDbError::NotFound(format!("Job '{}' not found", job_id)))?;
 
-        job.status = "failed".to_string();
-        job.end_time = Some(chrono::Utc::now().timestamp_millis());
+        job.status = JobStatus::Failed;
+        job.completed_at = Some(chrono::Utc::now().timestamp_millis());
         job.error_message = Some(error.to_string());
 
         self.kalam_sql

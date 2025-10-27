@@ -5,7 +5,8 @@
 use anyhow::{Context, Result};
 use kalamdb_core::auth::roles::validate_role;
 use kalamdb_sql::RocksDbAdapter;
-use kalamdb_sql::models::User;
+use kalamdb_sql::User;
+use kalamdb_commons::{AuthType, Role, StorageMode, UserId};
 use log::info;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -30,7 +31,7 @@ pub async fn create_user(
     validate_role(role).context("Role validation failed")?;
 
     // Generate unique user_id (using username for simplicity)
-    let user_id = format!("user_{}", username);
+    let user_id = UserId::new(format!("user_{}", username));
 
     // Auto-generate API key (UUID v4)
     let apikey = Uuid::new_v4().to_string();
@@ -38,16 +39,30 @@ pub async fn create_user(
     // Get current timestamp
     let created_at = chrono::Utc::now().timestamp_millis();
 
+    // Parse role
+    let user_role = match role {
+        "admin" => Role::Dba,
+        "user" => Role::User,
+        "readonly" => Role::User, // For now, map readonly to User
+        _ => return Err(anyhow::anyhow!("Invalid role: {}", role)),
+    };
+
     // Create user struct
     let user = User {
-        user_id: user_id.clone(),
+        id: user_id,
         username: username.to_string(),
-        email: email.to_string(),
-        created_at,
-        storage_mode: Some("table".to_string()), // Default to table storage
+        password_hash: "".to_string(), // Empty for API key auth
+        role: user_role,
+        email: Some(email.to_string()),
+        auth_type: AuthType::ApiKey,
+        auth_data: None,
+        api_key: Some(apikey.clone()),
+        storage_mode: StorageMode::Table, // Default to table storage
         storage_id: None,
-        apikey: apikey.clone(),
-        role: role.to_string(),
+        created_at,
+        updated_at: created_at,
+        last_seen: None,
+        deleted_at: None,
     };
 
     // Insert user into system_users table

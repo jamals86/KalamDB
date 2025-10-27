@@ -12,8 +12,9 @@
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
-**Total Tasks**: 322 tasks across 15 phases
-- **Phase 0.5**: Storage Backend Abstraction & Store Consolidation (106 tasks) - CRITICAL, DO FIRST
+**Total Tasks**: 341 tasks across 16 phases
+- **Phase 0**: System Model Consolidation (19 tasks) - CRITICAL PREREQUISITE, DO FIRST
+- **Phase 0.5**: Storage Backend Abstraction & Store Consolidation (106 tasks) - CRITICAL, DO SECOND
 - **Phase 1**: Setup (10 tasks)
 - **Phase 2**: Foundational (32 tasks) - BLOCKING all user stories, follow existing patterns
 - **Phase 3-10**: User Stories (98 tasks) - 8 independent stories
@@ -41,20 +42,83 @@
 
 ---
 
+## Phase 0: System Model Consolidation (User Story 9 - Priority: P0 - CRITICAL PREREQUISITE) ⚠️ DO FIRST
+
+**Purpose**: Consolidate ALL duplicate system table models into single source of truth in `kalamdb-commons/src/models/system.rs` before any authentication work begins
+
+**Goal**: Eliminate duplicate model definitions across crates, establish `kalamdb-commons` as canonical source for: `User`, `Job`, `LiveQuery`, `Namespace`, `SystemTable`, `Storage`, `TableSchema`, `InformationSchemaTable`, `UserTableCounter`
+
+**Why Critical**: Authentication depends on `User` model - must use canonical version. Serialization must work consistently. Doing this after auth implementation would require rewriting all auth code.
+
+**Independent Test**: 
+1. Verify `kalamdb-commons/src/models/system.rs` contains all canonical models
+2. Confirm NO duplicates exist in `kalamdb-sql/src/models.rs` (file should be deleted or only re-export)
+3. All imports use `kalamdb_commons::system::*`
+4. `cargo build` succeeds
+5. `cargo test` passes (serialization compatibility)
+
+### Verification Tasks
+
+- [x] T001 [P] [US9] Verify `kalamdb-commons/src/models/system.rs` contains all canonical models: User, Job, LiveQuery, Namespace, SystemTable, Storage, TableSchema, InformationSchemaTable, UserTableCounter
+- [x] T002 [P] [US9] Verify `kalamdb-sql/src/models.rs` is deleted and `kalamdb-sql/src/lib.rs` re-exports from commons
+- [x] T003 [P] [US9] Verify catalog models (catalog::Namespace, catalog::TableMetadata) are confirmed as DIFFERENT from system models (document in CATALOG_VS_SYSTEM_MODELS.md if not already done)
+
+### Cleanup & Migration Tasks
+
+- [x] T004 [US9] Fix `users_provider.rs` field mismatches in backend/crates/kalamdb-core/src/tables/system/users_provider.rs (remove storage_mode/storage_id field access, convert role strings to Role enum) - **COMPLETED**: Updated User struct initialization, fixed RecordBatch construction, aligned with commons User model
+- [x] T005 [US9] Update all Role assignments in backend/crates/kalamdb-core/src/tables/system/users_provider.rs (change "user" → Role::User, "service" → Role::Service, "dba" → Role::Dba, "system" → Role::System) - **COMPLETED**: Converted all string literals to Role enum
+- [ ] T006 [P] [US9] Migrate `live_queries_provider.rs` in backend/crates/kalamdb-core/src/tables/system/live_queries_provider.rs (remove LiveQueryRecord struct definition, add use kalamdb_commons::system::LiveQuery)
+- [ ] T007 [P] [US9] Replace all LiveQueryRecord → LiveQuery in backend/crates/kalamdb-core/src/tables/system/live_queries_provider.rs (~25 occurrences)
+- [ ] T008 [P] [US9] Update method signatures in backend/crates/kalamdb-core/src/tables/system/live_queries_provider.rs (insert_live_query, update_live_query, get_live_query, get_by_user_id)
+- [ ] T009 [US9] Update exports in backend/crates/kalamdb-core/src/tables/system/mod.rs (use kalamdb_commons::system::{Job, LiveQuery}, export providers only)
+
+### Import Cleanup Tasks
+
+- [x] T010 [P] [US9] Search for remaining `use kalamdb_sql::models::` imports across backend/crates/ and replace with kalamdb_commons::system::* - **COMPLETED**: Replaced all kalamdb_sql::models::* with kalamdb_sql::* (which re-exports from commons)
+- [ ] T011 [P] [US9] Verify NO files in backend/crates/kalamdb-core/ directly instantiate User/Job/LiveQuery with old field structures - **BLOCKED**: Job struct field name changes discovered (start_time→started_at, end_time→completed_at, job_type string→JobType enum, status string→JobStatus enum) - needs T020-T023
+- [ ] T012 [P] [US9] Verify NO files in backend/crates/kalamdb-sql/ define local User/Job/LiveQuery structs - **PARTIAL**: kalamdb-sql clean, but downstream usage in kalamdb-core has field mismatches
+
+### Additional Tasks (Discovered during T004-T010)
+
+- [x] T020 [US9] Fix Job struct usage across kalamdb-core: Replace all `start_time` with `started_at` (~8 occurrences in services/restore_service.rs, services/backup_service.rs, services/table_deletion_service.rs) - **COMPLETED**: All start_time → started_at conversions done
+- [x] T021 [US9] Fix Job struct usage: Replace all `end_time` with `completed_at` (~8 occurrences) - **COMPLETED**: All end_time → completed_at conversions done
+- [x] T022 [US9] Convert Job `job_type` string literals to JobType enum (Flush, Backup, Restore, etc.) - **COMPLETED**: Converted to JobType::Backup, JobType::Restore, JobType::Cleanup
+- [x] T023 [US9] Convert Job `status` string literals to JobStatus enum (Running, Completed, Failed, etc.) - **COMPLETED**: Converted to JobStatus::Running, JobStatus::Completed, JobStatus::Failed
+- [ ] T024 [US9] Fix Namespace struct instantiation: Add missing `owner_id` field (~3 occurrences in sql/executor.rs)
+- [ ] T025 [US9] Fix TableName/NamespaceId/StorageId type conversions: Use .to_string() / ::new() methods properly (~100 type mismatch errors)
+- [x] T026 [US9] Update users.rs schema to match canonical User model (add password_hash, role, auth_type, auth_data, api_key, last_seen, deleted_at fields) - **COMPLETED** in T004-T005
+
+### Build & Test Validation
+
+- [ ] T013 [US9] Run `cargo build` in backend/ directory and fix any remaining compilation errors
+- [ ] T014 [US9] Run `cargo test` in backend/ directory and fix any test failures due to model changes
+- [ ] T015 [P] [US9] Run integration test backend/tests/test_api_key_auth.rs and verify no regressions
+- [ ] T016 [P] [US9] Run integration test backend/tests/test_combined_data_integrity.rs and verify serialization compatibility
+- [ ] T017 [P] [US9] Run table provider tests (jobs_provider.rs::tests, live_queries_provider.rs::tests) and fix any failures
+
+### Documentation Updates
+
+- [ ] T018 [P] [US9] Update .github/copilot-instructions.md to document system models single source of truth in kalamdb-commons
+- [ ] T019 [P] [US9] Mark consolidation as complete in docs/architecture/SYSTEM_MODEL_CONSOLIDATION.md
+
+**Checkpoint**: System model consolidation complete - all crates use kalamdb_commons::system::* models, no duplicates exist, all tests pass
+
+---
+
 ## Phase 1: Setup (Shared Infrastructure)
 
 **Purpose**: Project initialization and basic structure for authentication system
 
-- [ ] T001 Create kalamdb-auth crate directory at backend/crates/kalamdb-auth/ with Cargo.toml
-- [ ] T002 Add kalamdb-auth to workspace members in root Cargo.toml
-- [ ] T003 [P] Add dependencies to backend/crates/kalamdb-auth/Cargo.toml (bcrypt 0.15, base64 0.21, jsonwebtoken 9.2, kalamdb-commons, kalamdb-store, serde, thiserror, log, tokio)
-- [ ] T004 [P] Add UserRole enum to backend/crates/kalamdb-commons/src/models.rs (user, service, dba, system)
-- [ ] T005 [P] Add TableAccess enum to backend/crates/kalamdb-commons/src/models.rs (public, private, restricted)
-- [ ] T006 [P] Export UserRole and TableAccess from backend/crates/kalamdb-commons/src/lib.rs
-- [ ] T007 Create kalamdb-auth crate structure: backend/crates/kalamdb-auth/src/lib.rs
-- [ ] T008 [P] Create common passwords list file at backend/crates/kalamdb-auth/data/common-passwords.txt (top 10,000)
-- [ ] T009 [P] Create authentication log directory at backend/logs/auth.log (with .gitkeep)
-- [ ] T010 [P] Add configuration section for authentication in backend/config.example.toml (bcrypt_cost, min_password_length, max_password_length, jwt_issuers, allow_remote_access)
+- [ ] T020 Create kalamdb-auth crate directory at backend/crates/kalamdb-auth/ with Cargo.toml
+- [ ] T021 Add kalamdb-auth to workspace members in root Cargo.toml
+- [ ] T022 [P] Add dependencies to backend/crates/kalamdb-auth/Cargo.toml (bcrypt 0.15, base64 0.21, jsonwebtoken 9.2, kalamdb-commons, kalamdb-store, serde, thiserror, log, tokio)
+- [ ] T023 [P] Add UserRole enum to backend/crates/kalamdb-commons/src/models.rs (user, service, dba, system)
+- [ ] T024 [P] Add TableAccess enum to backend/crates/kalamdb-commons/src/models.rs (public, private, restricted)
+- [ ] T025 [P] Export UserRole and TableAccess from backend/crates/kalamdb-commons/src/lib.rs
+- [ ] T026 Create kalamdb-auth crate structure: backend/crates/kalamdb-auth/src/lib.rs
+- [ ] T027 [P] Create common passwords list file at backend/crates/kalamdb-auth/data/common-passwords.txt (top 10,000)
+- [ ] T028 [P] Create authentication log directory at backend/logs/auth.log (with .gitkeep)
+- [ ] T029 [P] Add configuration section for authentication in backend/config.example.toml (bcrypt_cost, min_password_length, max_password_length, jwt_issuers, allow_remote_access)
 
 ---
 
@@ -66,53 +130,53 @@
 
 ### Core Authentication Modules
 
-- [ ] T011 [P] Implement password hashing module in backend/crates/kalamdb-auth/src/password.rs (hash_password, verify_password with bcrypt cost 12, async spawn_blocking)
-- [ ] T012 [P] Implement common password validation in backend/crates/kalamdb-auth/src/password.rs (load_common_passwords, is_common_password)
-- [ ] T013 [P] Implement HTTP Basic Auth parser in backend/crates/kalamdb-auth/src/basic_auth.rs (parse_basic_auth_header, extract_credentials)
-- [ ] T014 [P] Implement JWT validation in backend/crates/kalamdb-auth/src/jwt_auth.rs (validate_jwt_token, extract_claims, verify_issuer)
-- [ ] T015 [P] Implement connection info detection in backend/crates/kalamdb-auth/src/connection.rs (ConnectionInfo struct, is_localhost method)
-- [ ] T016 [P] Implement AuthenticatedUser context struct in backend/crates/kalamdb-auth/src/context.rs (user_id, username, role, email, connection_info)
-- [ ] T017 [P] Implement AuthError types in backend/crates/kalamdb-auth/src/error.rs (MissingAuthorization, InvalidCredentials, MalformedAuthorization, TokenExpired, InvalidSignature, UntrustedIssuer, MissingClaim, WeakPassword)
-- [ ] T018 Implement AuthService orchestrator in backend/crates/kalamdb-auth/src/service.rs (authenticate method, supports Basic Auth and JWT)
-- [ ] T019 Export all public APIs from backend/crates/kalamdb-auth/src/lib.rs
+- [ ] T030 [P] Implement password hashing module in backend/crates/kalamdb-auth/src/password.rs (hash_password, verify_password with bcrypt cost 12, async spawn_blocking)
+- [ ] T031 [P] Implement common password validation in backend/crates/kalamdb-auth/src/password.rs (load_common_passwords, is_common_password)
+- [ ] T032 [P] Implement HTTP Basic Auth parser in backend/crates/kalamdb-auth/src/basic_auth.rs (parse_basic_auth_header, extract_credentials)
+- [ ] T033 [P] Implement JWT validation in backend/crates/kalamdb-auth/src/jwt_auth.rs (validate_jwt_token, extract_claims, verify_issuer)
+- [ ] T034 [P] Implement connection info detection in backend/crates/kalamdb-auth/src/connection.rs (ConnectionInfo struct, is_localhost method)
+- [ ] T035 [P] Implement AuthenticatedUser context struct in backend/crates/kalamdb-auth/src/context.rs (user_id, username, role, email, connection_info)
+- [ ] T036 [P] Implement AuthError types in backend/crates/kalamdb-auth/src/error.rs (MissingAuthorization, InvalidCredentials, MalformedAuthorization, TokenExpired, InvalidSignature, UntrustedIssuer, MissingClaim, WeakPassword)
+- [ ] T037 Implement AuthService orchestrator in backend/crates/kalamdb-auth/src/service.rs (authenticate method, supports Basic Auth and JWT)
+- [ ] T038 Export all public APIs from backend/crates/kalamdb-auth/src/lib.rs
 
 ### Storage Layer
 
-- [ ] T020 Create system_users column family initialization in backend/crates/kalamdb-store/src/lib.rs (add to ColumnFamilyNames constants, follow pattern for system_tables, system_storages)
-- [ ] T021 Create UsersStore struct in backend/crates/kalamdb-store/src/users.rs (follow UserTableStore pattern with db: Arc<DB>, ensure_cf() method)
-- [ ] T022 Implement User struct with serde in backend/crates/kalamdb-store/src/users.rs (user_id, username, email, auth_type, auth_data, role, storage_mode, storage_id, metadata, created_at, updated_at, last_seen, deleted_at)
-- [ ] T023 [P] Implement create_user function in backend/crates/kalamdb-store/src/users.rs (follow create_column_family pattern, return Result<(), anyhow::Error>)
-- [ ] T024 [P] Implement get_user_by_id function in backend/crates/kalamdb-store/src/users.rs (use ensure_cf(), db.get_cf() pattern)
-- [ ] T025 [P] Implement get_user_by_username function in backend/crates/kalamdb-store/src/users.rs (create username_index secondary index, follow existing index patterns)
-- [ ] T026 [P] Implement update_user function in backend/crates/kalamdb-store/src/users.rs (use db.put_cf() pattern)
-- [ ] T027 [P] Implement soft_delete_user function in backend/crates/kalamdb-store/src/users.rs (set deleted_at timestamp, follow soft delete pattern)
-- [ ] T028 [P] Implement list_users function in backend/crates/kalamdb-store/src/users.rs (with role filter, deleted filter, use IteratorMode pattern)
-- [ ] T029 [P] Implement update_last_seen function in backend/crates/kalamdb-store/src/users.rs (daily granularity, async update)
-- [ ] T030 Create username_index column family for fast username lookups in backend/crates/kalamdb-store/src/users.rs (follow secondary index pattern)
-- [ ] T031 Export UsersStore from backend/crates/kalamdb-store/src/lib.rs (follow module export pattern)
+- [ ] T039 Create system_users column family initialization in backend/crates/kalamdb-store/src/lib.rs (add to ColumnFamilyNames constants, follow pattern for system_tables, system_storages)
+- [ ] T040 Create UsersStore struct in backend/crates/kalamdb-store/src/users.rs (follow UserTableStore pattern with db: Arc<DB>, ensure_cf() method)
+- [ ] T041 Implement User struct with serde in backend/crates/kalamdb-store/src/users.rs (user_id, username, email, auth_type, auth_data, role, storage_mode, storage_id, metadata, created_at, updated_at, last_seen, deleted_at)
+- [ ] T042 [P] Implement create_user function in backend/crates/kalamdb-store/src/users.rs (follow create_column_family pattern, return Result<(), anyhow::Error>)
+- [ ] T043 [P] Implement get_user_by_id function in backend/crates/kalamdb-store/src/users.rs (use ensure_cf(), db.get_cf() pattern)
+- [ ] T044 [P] Implement get_user_by_username function in backend/crates/kalamdb-store/src/users.rs (create username_index secondary index, follow existing index patterns)
+- [ ] T065 [P] Implement update_user function in backend/crates/kalamdb-store/src/users.rs (use db.put_cf() pattern)
+- [ ] T066 [P] Implement soft_delete_user function in backend/crates/kalamdb-store/src/users.rs (set deleted_at timestamp, follow soft delete pattern)
+- [ ] T067 [P] Implement list_users function in backend/crates/kalamdb-store/src/users.rs (with role filter, deleted filter, use IteratorMode pattern)
+- [ ] T068 [P] Implement update_last_seen function in backend/crates/kalamdb-store/src/users.rs (daily granularity, async update)
+- [ ] T069 Create username_index column family for fast username lookups in backend/crates/kalamdb-store/src/users.rs (follow secondary index pattern)
+- [ ] T070 Export UsersStore from backend/crates/kalamdb-store/src/lib.rs (follow module export pattern)
 
 ### Authorization Layer
 
-- [ ] T031 [P] Implement RBAC permission checking in backend/crates/kalamdb-core/src/auth/roles.rs (can_access_table, can_create_table, can_manage_users)
-- [ ] T032 [P] Implement table access control logic in backend/crates/kalamdb-core/src/auth/access.rs (check_shared_table_access, evaluate_access_level)
-- [ ] T033 Add access_level column to system.tables in backend/crates/kalamdb-store/src/tables.rs
-- [ ] T034 Export authorization functions from backend/crates/kalamdb-core/src/auth/mod.rs
+- [ ] T071 [P] Implement RBAC permission checking in backend/crates/kalamdb-core/src/auth/roles.rs (can_access_table, can_create_table, can_manage_users)
+- [ ] T072 [P] Implement table access control logic in backend/crates/kalamdb-core/src/auth/access.rs (check_shared_table_access, evaluate_access_level)
+- [ ] T073 Add access_level column to system.tables in backend/crates/kalamdb-store/src/tables.rs
+- [ ] T074 Export authorization functions from backend/crates/kalamdb-core/src/auth/mod.rs
 
 ### Authentication Logging
 
-- [ ] T035 Implement dedicated auth logger in backend/src/logging.rs (create auth_file_appender for logs/auth.log)
-- [ ] T036 [P] Add log_auth_failure function in backend/src/logging.rs (timestamp, username, source_ip, failure_reason, request_id)
-- [ ] T037 [P] Add log_role_change function in backend/src/logging.rs (timestamp, target_user_id, old_role, new_role, admin_user_id)
-- [ ] T038 [P] Add log_admin_operation function in backend/src/logging.rs (timestamp, admin_user_id, operation, target_user_id, result)
-- [ ] T039 Implement log rotation for auth.log in backend/src/logging.rs (size-based or time-based)
+- [ ] T075 Implement dedicated auth logger in backend/src/logging.rs (create auth_file_appender for logs/auth.log)
+- [ ] T076 [P] Add log_auth_failure function in backend/src/logging.rs (timestamp, username, source_ip, failure_reason, request_id)
+- [ ] T077 [P] Add log_role_change function in backend/src/logging.rs (timestamp, target_user_id, old_role, new_role, admin_user_id)
+- [ ] T078 [P] Add log_admin_operation function in backend/src/logging.rs (timestamp, admin_user_id, operation, target_user_id, result)
+- [ ] T059 Implement log rotation for auth.log in backend/src/logging.rs (size-based or time-based)
 
 ### Rate Limiting
 
-- [ ] T040 [P] Implement per-username rate limiter in backend/crates/kalamdb-auth/src/rate_limit.rs (5 failures per 5 minutes)
-- [ ] T041 [P] Implement per-IP rate limiter in backend/crates/kalamdb-auth/src/rate_limit.rs (20 failures per 5 minutes)
-- [ ] T042 Implement lockout logic with exponential backoff in backend/crates/kalamdb-auth/src/rate_limit.rs
-- [ ] T043 Add localhost/system user exemption to rate limiting in backend/crates/kalamdb-auth/src/rate_limit.rs
-- [ ] T044 Implement reset_on_success for rate limit counters in backend/crates/kalamdb-auth/src/rate_limit.rs
+- [ ] T060 [P] Implement per-username rate limiter in backend/crates/kalamdb-auth/src/rate_limit.rs (5 failures per 5 minutes)
+- [ ] T061 [P] Implement per-IP rate limiter in backend/crates/kalamdb-auth/src/rate_limit.rs (20 failures per 5 minutes)
+- [ ] T062 Implement lockout logic with exponential backoff in backend/crates/kalamdb-auth/src/rate_limit.rs
+- [ ] T063 Add localhost/system user exemption to rate limiting in backend/crates/kalamdb-auth/src/rate_limit.rs
+- [ ] T064 Implement reset_on_success for rate limit counters in backend/crates/kalamdb-auth/src/rate_limit.rs
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
@@ -128,23 +192,23 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T045 [P] [US1] Create test helper module in backend/tests/common/auth_helper.rs (create_test_user, authenticate_basic)
-- [ ] T046 [P] [US1] Integration test for successful Basic Auth in backend/tests/test_basic_auth.rs (test_basic_auth_success)
-- [ ] T047 [P] [US1] Integration test for invalid credentials in backend/tests/test_basic_auth.rs (test_basic_auth_invalid_credentials)
-- [ ] T048 [P] [US1] Integration test for missing authorization header in backend/tests/test_basic_auth.rs (test_basic_auth_missing_header)
-- [ ] T049 [P] [US1] Integration test for malformed authorization header in backend/tests/test_basic_auth.rs (test_basic_auth_malformed_header)
-- [ ] T050 [P] [US1] Unit test for password hashing in backend/crates/kalamdb-auth/tests/password_tests.rs (test_hash_password, test_verify_password)
-- [ ] T051 [P] [US1] Unit test for common password blocking in backend/crates/kalamdb-auth/tests/password_tests.rs (test_common_password_rejected)
+- [ ] T065 [P] [US1] Create test helper module in backend/tests/common/auth_helper.rs (create_test_user, authenticate_basic)
+- [ ] T066 [P] [US1] Integration test for successful Basic Auth in backend/tests/test_basic_auth.rs (test_basic_auth_success)
+- [ ] T067 [P] [US1] Integration test for invalid credentials in backend/tests/test_basic_auth.rs (test_basic_auth_invalid_credentials)
+- [ ] T068 [P] [US1] Integration test for missing authorization header in backend/tests/test_basic_auth.rs (test_basic_auth_missing_header)
+- [ ] T069 [P] [US1] Integration test for malformed authorization header in backend/tests/test_basic_auth.rs (test_basic_auth_malformed_header)
+- [ ] T070 [P] [US1] Unit test for password hashing in backend/crates/kalamdb-auth/tests/password_tests.rs (test_hash_password, test_verify_password)
+- [ ] T071 [P] [US1] Unit test for common password blocking in backend/crates/kalamdb-auth/tests/password_tests.rs (test_common_password_rejected)
 
 ### Implementation for User Story 1
 
-- [ ] T052 [US1] Implement authentication middleware in backend/src/middleware.rs (extract Authorization header, call AuthService, attach AuthenticatedUser to request)
-- [ ] T053 [US1] Update main.rs to register authentication middleware in backend/src/main.rs
-- [ ] T054 [US1] Add authentication requirement to SQL handler in backend/crates/kalamdb-api/src/handlers/sql_handler.rs (extract AuthenticatedUser from request)
-- [ ] T055 [US1] Implement user creation endpoint POST /v1/users in backend/crates/kalamdb-api/src/handlers/user_handler.rs (requires dba/system role)
-- [ ] T056 [US1] Add user management routes to backend/crates/kalamdb-api/src/routes.rs
-- [ ] T057 [US1] Update ExecutionContext with user_role in backend/crates/kalamdb-sql/src/models.rs
-- [ ] T058 [US1] Add authorization check before query execution in backend/crates/kalamdb-core/src/sql/executor.rs (verify user can access tables)
+- [ ] T072 [US1] Implement authentication middleware in backend/src/middleware.rs (extract Authorization header, call AuthService, attach AuthenticatedUser to request)
+- [ ] T073 [US1] Update main.rs to register authentication middleware in backend/src/main.rs
+- [ ] T074 [US1] Add authentication requirement to SQL handler in backend/crates/kalamdb-api/src/handlers/sql_handler.rs (extract AuthenticatedUser from request)
+- [ ] T075 [US1] Implement user creation endpoint POST /v1/users in backend/crates/kalamdb-api/src/handlers/user_handler.rs (requires dba/system role)
+- [ ] T076 [US1] Add user management routes to backend/crates/kalamdb-api/src/routes.rs
+- [ ] T077 [US1] Update ExecutionContext with user_role in backend/crates/kalamdb-sql/src/models.rs
+- [ ] T078 [US1] Add authorization check before query execution in backend/crates/kalamdb-core/src/sql/executor.rs (verify user can access tables)
 
 **Checkpoint**: User Story 1 complete - users can authenticate with HTTP Basic Auth and execute queries on their own tables
 
@@ -898,7 +962,7 @@ git checkout -b feat/auth-logging-ratelimit
 ```bash
 # Developer 1: Basic Auth (US1)
 git checkout -b feat/us1-basic-auth
-# Work on T045-T058 (tests + implementation for HTTP Basic Auth)
+# Work on T065-T078 (tests + implementation for HTTP Basic Auth)
 
 # Developer 2: JWT (US2)
 git checkout -b feat/us2-jwt

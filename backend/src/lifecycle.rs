@@ -12,6 +12,7 @@ use anyhow::Result;
 use datafusion::catalog::schema::MemorySchemaProvider;
 use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
+use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
 use kalamdb_core::live_query::{LiveQueryManager, NodeId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
@@ -67,7 +68,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         info!("No storages found, creating default 'local' storage");
         let now = chrono::Utc::now().timestamp_millis();
         let default_storage = kalamdb_sql::Storage {
-            storage_id: "local".to_string(),
+            storage_id: StorageId::from("local"),
             storage_name: "Local Filesystem".to_string(),
             description: Some("Default local filesystem storage".to_string()),
             storage_type: "filesystem".to_string(),
@@ -366,26 +367,32 @@ async fn create_system_user(
     sql_adapter: Arc<RocksDbAdapter>,
     test_api_key: &str,
 ) -> Result<()> {
-    use kalamdb_sql::models::User;
+    use kalamdb_sql::User;
 
-    let user_id = "system".to_string();
+    let user_id = UserId::from("system");
     let username = "system".to_string();
     let email = "system@kalamdb.dev".to_string();
-    let role = "admin".to_string();
+    let role = Role::Dba; // admin role
     let created_at = chrono::Utc::now().timestamp_millis();
 
     // Check if system user already exists
-    let existing_user = sql_adapter.get_user(&user_id);
+    let existing_user = sql_adapter.get_user("system");
 
     let user = User {
-        user_id: user_id.clone(),
+        id: user_id,
         username,
-        email,
-        created_at,
-        storage_mode: Some("table".to_string()),
-        storage_id: None,
-        apikey: test_api_key.to_string(),
+        password_hash: "".to_string(), // Empty for API key auth
         role,
+        email: Some(email),
+        auth_type: AuthType::ApiKey,
+        auth_data: None,
+        api_key: Some(test_api_key.to_string()),
+        storage_mode: StorageMode::Table,
+        storage_id: None,
+        created_at,
+        updated_at: created_at,
+        last_seen: None,
+        deleted_at: None,
     };
 
     match existing_user {

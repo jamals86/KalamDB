@@ -316,9 +316,93 @@ Service accounts and automated systems should be able to authenticate using OAut
 
 ---
 
-### User Story 9 - Storage Backend Abstraction & Store Consolidation (Priority: P0 - CRITICAL)
+### User Story 9 - System Model Consolidation (Priority: P0 - CRITICAL PREREQUISITE)
 
-**CRITICAL ARCHITECTURAL REFACTORING**: This is the foundational change that MUST be completed FIRST before implementing authentication. All existing storage code must be refactored to use a two-layer abstraction pattern, and all stores must be consolidated into `kalamdb-core/src/stores/` with strongly-typed entity models.
+**CRITICAL ARCHITECTURAL CONSOLIDATION**: Before implementing any authentication logic, we MUST consolidate all duplicate system table models into a single source of truth in `kalamdb-commons`. This is a prerequisite for all other work.
+
+**Problem**: We currently have MULTIPLE definitions of the same system table models scattered across different crates:
+- `User` model exists in 2+ places
+- `Job` model exists in 3 places (kalamdb-core, kalamdb-sql, jobs_provider)
+- `LiveQuery` model exists in 3 places
+- `Namespace` model exists in 3 places
+- This creates maintenance nightmares, serialization issues, and type conversion overhead
+
+**Solution**: All system models MUST be defined ONCE in `kalamdb-commons/src/models/system.rs` and imported everywhere else.
+
+**Why this priority**: This is P0 (CRITICAL PREREQUISITE) because:
+1. User authentication depends on `User` model - must use canonical version
+2. Every crate importing duplicate models needs to be updated
+3. Serialization/deserialization must work consistently across all layers
+4. Doing this AFTER implementing auth would require rewriting all auth code
+5. This fixes architectural debt that blocks clean development
+
+**Independent Test**: Can be fully tested by:
+1. Verifying `kalamdb-commons/src/models/system.rs` contains all models
+2. Confirming NO duplicate model definitions exist in `kalamdb-sql/src/models.rs`
+3. Ensuring all imports use `kalamdb_commons::system::*`
+4. Running existing tests to verify serialization compatibility
+5. Checking `cargo build` succeeds after cleanup
+
+**Acceptance Scenarios**:
+
+1. **Given** the file `backend/crates/kalamdb-sql/src/models.rs` exists, **When** it is examined, **Then** it contains NO duplicate definitions of `User`, `Job`, `LiveQuery`, `Namespace`, or `SystemTable` (these must be deleted and replaced with re-exports from kalamdb-commons).
+
+2. **Given** the file `kalamdb-commons/src/models/system.rs` exists, **When** it is examined, **Then** it contains canonical definitions for: `User`, `Job`, `LiveQuery`, `Namespace`, `SystemTable`, `Storage`, `TableSchema`, `InformationSchemaTable`, and `UserTableCounter`.
+
+3. **Given** the file `kalamdb-core/src/tables/system/jobs_provider.rs` exists, **When** it is examined, **Then** it uses `use kalamdb_commons::system::Job;` and does NOT define `JobRecord` locally.
+
+4. **Given** the file `kalamdb-core/src/tables/system/live_queries_provider.rs` exists, **When** it is examined, **Then** it uses `use kalamdb_commons::system::LiveQuery;` and does NOT define `LiveQueryRecord` locally.
+
+5. **Given** any file in `backend/crates/` needs to work with system tables, **When** it imports models, **Then** it uses `use kalamdb_commons::system::{User, Job, ...};` (not from kalamdb-sql or local definitions).
+
+6. **Given** the authentication code needs to store user credentials, **When** it creates a `User` entity, **Then** it uses `kalamdb_commons::system::User` with strongly-typed fields (`UserId`, `Role`, `AuthType` enums).
+
+7. **Given** existing tests rely on system models, **When** they run after consolidation, **Then** all tests pass without serialization/deserialization errors.
+
+8. **Given** the file `kalamdb-sql/src/models.rs` exists, **When** examined, **Then** it ONLY contains models NOT in commons: currently it should either be deleted entirely OR only re-export from commons.
+
+9. **Given** the codebase is searched for model definitions, **When** looking for `pub struct User`, **Then** it appears ONLY in `kalamdb-commons/src/models/system.rs` (nowhere else).
+
+10. **Given** the two services using `TableSchema` exist (`stream_table_service.rs`, `shared_table_service.rs`), **When** examined, **Then** they import `TableSchema` from `kalamdb_commons::system::TableSchema` (not from kalamdb-sql).
+
+11. **Given** the catalog models exist in `kalamdb-core/src/catalog/` (Namespace, TableMetadata), **When** examined, **Then** they are confirmed to be DIFFERENT from system table models - catalog models are runtime entities with domain logic, system models are simple DTOs for persistence.
+
+12. **Given** the `Storage` system table model is needed, **When** code references it, **Then** it imports from `kalamdb_commons::system::Storage` (already available in commons).
+
+**Current State (as of 2025-10-27)**:
+- ✅ `kalamdb-commons/src/models/system.rs` created with all canonical models (User, Job, LiveQuery, Namespace, SystemTable, Storage, TableSchema, InformationSchemaTable, UserTableCounter)
+- ✅ `kalamdb-core/src/models/system.rs` deleted
+- ✅ `kalamdb-core/src/models/mod.rs` updated to re-export from commons
+- ✅ `kalamdb-sql/src/models.rs` DELETED - lib.rs now re-exports from commons
+- ✅ `kalamdb-sql/src/adapter.rs` updated to import from commons
+- ✅ `stream_table_service.rs` updated to import `TableSchema` from commons
+- ✅ `shared_table_service.rs` updated to import `TableSchema` from commons
+- ✅ `jobs_provider.rs` syntax error fixed (missing closing brace)
+- ✅ Catalog models (Namespace, TableMetadata) confirmed as separate from system models
+- ❌ `users_provider.rs` has field mismatches (storage_mode, storage_id don't exist; role strings should be Role enum)
+- ❌ `live_queries_provider.rs` still has `LiveQueryRecord` (needs migration)
+
+**Migration Checklist**:
+- [x] Verify `kalamdb-sql/src/models.rs` is completely removed
+- [x] Update `kalamdb-sql/src/lib.rs` to re-export from commons
+- [x] Update `kalamdb-sql/src/adapter.rs` imports
+- [x] Update `stream_table_service.rs` to import from commons
+- [x] Update `shared_table_service.rs` to import from commons
+- [x] Fix `jobs_provider.rs` syntax error
+- [ ] Fix `users_provider.rs` field mismatches and Role enum usage
+- [ ] Complete `live_queries_provider.rs` migration (remove `LiveQueryRecord`, use `LiveQuery`)
+- [ ] Update `stream_table_service.rs` to import `TableSchema` from commons
+- [ ] Update `shared_table_service.rs` to import `TableSchema` from commons
+- [ ] Search for any remaining `use kalamdb_sql::models::` imports and replace
+- [ ] Run `cargo build` in backend/
+- [ ] Run `cargo test` to verify no regressions
+- [ ] Update `.github/copilot-instructions.md` to document single source of truth
+
+---
+
+### User Story 10 - Storage Backend Abstraction & Store Consolidation (Priority: P0 - CRITICAL)
+
+**CRITICAL ARCHITECTURAL REFACTORING**: This is the second foundational change that MUST be completed BEFORE implementing authentication. All existing storage code must be refactored to use a two-layer abstraction pattern, and all stores must be consolidated into `kalamdb-core/src/stores/` with strongly-typed entity models.
 
 The authentication system must store user credentials and metadata in a way that doesn't tightly couple to RocksDB. All database interactions should go through the `kalamdb-store` crate abstraction layer, enabling future migration to other storage backends (Sled, TiKV, FoundationDB, etc.) without rewriting authentication logic.
 

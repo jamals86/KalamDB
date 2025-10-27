@@ -26,7 +26,7 @@
 //!
 //! ```rust
 //! use kalamdb_commons::system::{User, Job, LiveQuery};
-//! use kalamdb_commons::{UserId, Role, AuthType, JobType, JobStatus};
+//! use kalamdb_commons::{UserId, Role, AuthType, StorageMode, StorageId, JobType, JobStatus, NamespaceId, TableName};
 //!
 //! let user = User {
 //!     id: UserId::new("u_123"),
@@ -37,6 +37,8 @@
 //!     auth_type: AuthType::Password,
 //!     auth_data: None,
 //!     api_key: None,
+//!     storage_mode: StorageMode::Table,
+//!     storage_id: Some(StorageId::new("storage_1")),
 //!     created_at: 1730000000000,
 //!     updated_at: 1730000000000,
 //!     last_seen: None,
@@ -44,7 +46,7 @@
 //! };
 //! ```
 
-use crate::{AuthType, JobStatus, JobType, NamespaceId, Role, StorageId, TableName, TableType, UserId, models::LiveId};
+use crate::{AuthType, JobStatus, JobType, NamespaceId, Role, StorageId, StorageMode, TableName, TableType, UserId};
 use serde::{Deserialize, Serialize};
 
 /// User entity for system.users table.
@@ -60,6 +62,8 @@ use serde::{Deserialize, Serialize};
 /// - `auth_type`: Authentication method (Password, ApiKey, OAuth, Internal)
 /// - `auth_data`: JSON blob for auth-specific data (e.g., OAuth provider/subject)
 /// - `api_key`: Optional API key for authentication
+/// - `storage_mode`: Preferred storage partitioning mode (Table, Region)
+/// - `storage_id`: Optional preferred storage configuration ID
 /// - `created_at`: Unix timestamp in milliseconds when user was created
 /// - `updated_at`: Unix timestamp in milliseconds when user was last modified
 /// - `last_seen`: Optional Unix timestamp in milliseconds of last activity
@@ -73,7 +77,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// ```rust
 /// use kalamdb_commons::system::User;
-/// use kalamdb_commons::{UserId, Role, AuthType};
+/// use kalamdb_commons::{UserId, Role, AuthType, StorageMode, StorageId};
 ///
 /// let user = User {
 ///     id: UserId::new("u_123456"),
@@ -84,6 +88,8 @@ use serde::{Deserialize, Serialize};
 ///     auth_type: AuthType::Password,
 ///     auth_data: None,
 ///     api_key: None,
+///     storage_mode: StorageMode::Table,
+///     storage_id: Some(StorageId::new("storage_1")),
 ///     created_at: 1730000000000,
 ///     updated_at: 1730000000000,
 ///     last_seen: None,
@@ -100,6 +106,8 @@ pub struct User {
     pub auth_type: AuthType,
     pub auth_data: Option<String>, // JSON blob for OAuth provider/subject
     pub api_key: Option<String>,   // API key for authentication
+    pub storage_mode: StorageMode, // Preferred storage partitioning mode
+    pub storage_id: Option<StorageId>, // Optional preferred storage configuration
     pub created_at: i64,            // Unix timestamp in milliseconds
     pub updated_at: i64,            // Unix timestamp in milliseconds
     pub last_seen: Option<i64>,     // Unix timestamp in milliseconds (daily granularity)
@@ -296,6 +304,87 @@ pub struct Namespace {
     pub table_count: i32,
 }
 
+impl Namespace {
+    /// Create a new namespace with default values
+    ///
+    /// # Arguments
+    /// * `name` - Namespace identifier
+    /// * `owner_id` - User ID of the namespace owner
+    ///
+    /// # Example
+    /// ```
+    /// use kalamdb_commons::{system::Namespace, NamespaceId, UserId};
+    ///
+    /// let namespace = Namespace::new("app", UserId::new("u_admin"));
+    /// assert_eq!(namespace.name, "app");
+    /// assert_eq!(namespace.table_count, 0);
+    /// ```
+    pub fn new(name: impl Into<String>, owner_id: UserId) -> Self {
+        let name_str = name.into();
+        Self {
+            namespace_id: NamespaceId::new(&name_str),
+            name: name_str,
+            owner_id,
+            created_at: chrono::Utc::now().timestamp_millis(),
+            options: Some("{}".to_string()),
+            table_count: 0,
+        }
+    }
+
+    /// Validate namespace name format
+    ///
+    /// Name must match regex: ^[a-z][a-z0-9_]*$ (lowercase, start with letter)
+    /// Name cannot be "system" (reserved)
+    ///
+    /// # Example
+    /// ```
+    /// use kalamdb_commons::system::Namespace;
+    ///
+    /// assert!(Namespace::validate_name("app").is_ok());
+    /// assert!(Namespace::validate_name("analytics_db").is_ok());
+    /// assert!(Namespace::validate_name("system").is_err());
+    /// assert!(Namespace::validate_name("Invalid").is_err());
+    /// ```
+    pub fn validate_name(name: &str) -> Result<(), String> {
+        if name == "system" {
+            return Err("Namespace name 'system' is reserved".to_string());
+        }
+
+        if !name.chars().next().is_some_and(|c| c.is_ascii_lowercase()) {
+            return Err("Namespace name must start with a lowercase letter".to_string());
+        }
+
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
+            return Err(
+                "Namespace name can only contain lowercase letters, digits, and underscores"
+                    .to_string(),
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Check if this namespace can be deleted (has no tables)
+    pub fn can_delete(&self) -> bool {
+        self.table_count == 0
+    }
+
+    /// Increment the table count
+    pub fn increment_table_count(&mut self) {
+        self.table_count += 1;
+    }
+
+    /// Decrement the table count
+    pub fn decrement_table_count(&mut self) {
+        if self.table_count > 0 {
+            self.table_count -= 1;
+        }
+    }
+}
+
 /// Table metadata entity for system.tables.
 ///
 /// Represents metadata for user, shared, stream, and system tables.
@@ -355,7 +444,7 @@ pub struct SystemTable {
 /// Storage configuration in system_storages table
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Storage {
-    pub storage_id: String, // PK
+    pub storage_id: StorageId, // PK
     pub storage_name: String,
     pub description: Option<String>,
     pub storage_type: String, // "filesystem" or "s3"
@@ -551,6 +640,8 @@ mod tests {
             auth_type: AuthType::Password,
             auth_data: None,
             api_key: None,
+            storage_mode: StorageMode::Table,
+            storage_id: Some(StorageId::new("storage_1")),
             created_at: 1730000000000,
             updated_at: 1730000000000,
             last_seen: None,

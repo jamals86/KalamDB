@@ -346,7 +346,7 @@ impl UserTableService {
 
         // Create TableSchema record
         let table_id = format!("{}:{}", namespace.as_str(), table_name.as_str());
-        let table_schema = kalamdb_sql::models::TableSchema {
+        let table_schema = kalamdb_sql::TableSchema {
             schema_id: format!("{}_v1", table_id),
             table_id: table_id.clone(),
             version: 1,

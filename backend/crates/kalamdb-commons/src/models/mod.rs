@@ -418,6 +418,60 @@ impl From<String> for AuthType {
     }
 }
 
+/// Enum representing storage mode preferences for users.
+///
+/// - **Table**: User prefers table-based storage partitioning
+/// - **Region**: User prefers region-based storage partitioning
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum StorageMode {
+    /// Table-based storage partitioning
+    Table,
+    /// Region-based storage partitioning
+    Region,
+}
+
+impl StorageMode {
+    /// Returns the storage mode as a lowercase string.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StorageMode::Table => "table",
+            StorageMode::Region => "region",
+        }
+    }
+
+    /// Parse a storage mode from a string (case-insensitive).
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "table" => Some(StorageMode::Table),
+            "region" => Some(StorageMode::Region),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for StorageMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl From<&str> for StorageMode {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "table" => StorageMode::Table,
+            "region" => StorageMode::Region,
+            _ => StorageMode::Table, // Default to table for safety
+        }
+    }
+}
+
+impl From<String> for StorageMode {
+    fn from(s: String) -> Self {
+        StorageMode::from(s.as_str())
+    }
+}
+
 /// Storage configuration for a KalamDB storage backend.
 ///
 /// Defines the connection details and path templates for storing table data.

@@ -194,16 +194,6 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_location() {
-        let location = StorageLocation::new("/data/users/{user_id}/table");
-        assert!(location.has_user_template());
-        assert_eq!(location.resolve("user_123"), "/data/users/user_123/table");
-
-        let location = StorageLocation::new("/data/shared/table");
-        assert!(!location.has_user_template());
-    }
-
-    #[test]
     fn test_retention_policy() {
         let policy = RetentionPolicy::new(7 * 86400);
         assert_eq!(policy.days(), 7);

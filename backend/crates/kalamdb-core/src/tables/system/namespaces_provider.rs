@@ -45,9 +45,13 @@ impl NamespacesTableProvider {
         let mut created_ats = Vec::with_capacity(namespaces.len());
 
         for ns in namespaces {
-            namespace_ids.append_value(&ns.namespace_id);
+            namespace_ids.append_value(ns.namespace_id.as_str());
             names.append_value(&ns.name);
-            options.append_value(&ns.options);
+            if let Some(ref opts) = ns.options {
+                options.append_value(opts);
+            } else {
+                options.append_null();
+            }
             table_counts.push(Some(ns.table_count));
             // Stored as seconds; convert to milliseconds for TimestampMillisecond
             created_ats.push(Some(ns.created_at * 1000));

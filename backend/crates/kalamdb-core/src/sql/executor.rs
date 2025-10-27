@@ -27,7 +27,6 @@
 //! This architecture makes traditional SQL injection (e.g., `'; DROP TABLE users; --`)
 //! impossible because malicious input is treated as literal data values, not executable SQL.
 
-use crate::catalog::Namespace;
 use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
 use crate::error::KalamDbError;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
@@ -49,6 +48,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::{JobStatus, JobType};
+use kalamdb_commons::system::Namespace;
 use datafusion::sql::sqlparser;
 use kalamdb_commons::models::{NamespaceId as CommonNamespaceId, StorageId};
 use kalamdb_sql::ddl::{
@@ -212,7 +212,7 @@ impl SqlExecutor {
         for table in tables {
             // Phase 2b: Get schema from information_schema.tables (TableDefinition.schema_history)
             let table_def =
-                match kalam_sql.get_table_definition(&table.namespace, &table.table_name) {
+                match kalam_sql.get_table_definition(table.namespace.as_str(), table.table_name.as_str()) {
                     Ok(Some(def)) => def,
                     Ok(None) => {
                         // No TableDefinition found - skip this table (might be legacy)
@@ -857,8 +857,8 @@ impl SqlExecutor {
                     // Build fully qualified name: namespace.table_name
                     let qualified = format!("{}.{}", t.namespace, t.table_name);
                     filter.contains(&qualified)
-                        || filter.contains(&t.table_name)  // Also match unqualified
-                        || filter.contains(&format!("system.{}", t.table_name)) // System table reference
+                        || filter.contains(t.table_name.as_str())  // Also match unqualified
+                        || filter.contains(&format!("system.{}", t.table_name.as_str())) // System table reference
                 })
                 .collect()
         } else {
@@ -886,9 +886,9 @@ impl SqlExecutor {
         }
 
         // Register shared tables (no user isolation needed)
-        for table in tables_to_load.iter().filter(|t| t.table_type == "shared") {
-            let table_name = TableName::new(&table.table_name);
-            let namespace_id = NamespaceId::new(&table.namespace);
+        for table in tables_to_load.iter().filter(|t| t.table_type == TableType::Shared) {
+            let table_name = table.table_name.clone();
+            let namespace_id = table.namespace.clone();
             let table_id = format!("{}:{}", table.namespace, table.table_name);
 
             // Get schema
@@ -980,9 +980,9 @@ impl SqlExecutor {
         }
 
         // Register user tables with the current user_id (ensures data isolation)
-        for table in tables_to_load.iter().filter(|t| t.table_type == "user") {
-            let table_name = TableName::new(&table.table_name);
-            let namespace_id = NamespaceId::new(&table.namespace);
+        for table in tables_to_load.iter().filter(|t| t.table_type == TableType::User) {
+            let table_name = table.table_name.clone();
+            let namespace_id = table.namespace.clone();
             let table_id = format!("{}:{}", table.namespace, table.table_name);
 
             // Get schema
@@ -1088,9 +1088,9 @@ impl SqlExecutor {
 
         // Register stream tables
         // Stream tables are NOT user-specific - they are append-only event streams shared across users
-        for table in tables_to_load.iter().filter(|t| t.table_type == "stream") {
-            let table_name = TableName::new(&table.table_name);
-            let namespace_id = NamespaceId::new(&table.namespace);
+        for table in tables_to_load.iter().filter(|t| t.table_type == TableType::Stream) {
+            let table_name = table.table_name.clone();
+            let namespace_id = table.namespace.clone();
             let table_id = format!("{}:{}", table.namespace, table.table_name);
 
             // Get schema
@@ -1335,7 +1335,7 @@ impl SqlExecutor {
         let filtered_tables: Vec<_> = if let Some(namespace_id) = &stmt.namespace_id {
             tables
                 .into_iter()
-                .filter(|t| t.namespace == namespace_id.as_str())
+                .filter(|t| &t.namespace == namespace_id)
                 .collect()
         } else {
             tables
@@ -1370,12 +1370,12 @@ impl SqlExecutor {
         // Sort: 'local' first, then alphabetically
         let mut sorted_storages = storages;
         sorted_storages.sort_by(|a, b| {
-            if a.storage_id == "local" {
+            if a.storage_id.as_ref() == "local" {
                 std::cmp::Ordering::Less
-            } else if b.storage_id == "local" {
+            } else if b.storage_id.as_ref() == "local" {
                 std::cmp::Ordering::Greater
             } else {
-                a.storage_id.cmp(&b.storage_id)
+                a.storage_id.as_ref().cmp(b.storage_id.as_ref())
             }
         });
 
@@ -1444,7 +1444,7 @@ impl SqlExecutor {
 
         // Create storage record
         let storage = kalamdb_sql::Storage {
-            storage_id: stmt.storage_id.clone(),
+            storage_id: StorageId::from(stmt.storage_id.clone()),
             storage_name: stmt.storage_name,
             description: stmt.description,
             storage_type: stmt.storage_type,
@@ -1565,7 +1565,7 @@ impl SqlExecutor {
             .filter(|t| {
                 t.storage_id
                     .as_ref()
-                    .map(|id| id == &stmt.storage_id)
+                    .map(|id| id.as_str() == stmt.storage_id.as_str())
                     .unwrap_or(false)
             })
             .collect();
@@ -1632,7 +1632,7 @@ impl SqlExecutor {
         let table = tables
             .iter()
             .find(|t| {
-                t.namespace == stmt.namespace.as_ref() && t.table_name == stmt.table_name.as_ref()
+                &t.namespace == &stmt.namespace && &t.table_name == &stmt.table_name
             })
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
@@ -1643,7 +1643,7 @@ impl SqlExecutor {
             })?;
 
         // Only user tables can be flushed (shared/stream tables not supported yet)
-        if table.table_type != "user" {
+        if table.table_type != TableType::User {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Cannot flush {} table '{}.{}'. Only user tables can be flushed.",
                 table.table_type,
@@ -1839,7 +1839,7 @@ impl SqlExecutor {
 
         let user_tables: Vec<_> = tables
             .iter()
-            .filter(|t| t.namespace == stmt.namespace.as_ref() && t.table_type == "user")
+            .filter(|t| &t.namespace == &stmt.namespace && t.table_type == TableType::User)
             .collect();
 
         if user_tables.is_empty() {
@@ -1864,10 +1864,10 @@ impl SqlExecutor {
             let job_record = kalamdb_commons::system::Job::new(
                 job_id.clone(),
                 JobType::Flush,
-                NamespaceId::new(table.namespace.clone()),
+                table.namespace.clone(),
                 format!("node-{}", std::process::id()),
             )
-            .with_table_name(TableName::new(format!("{}.{}", table.namespace, table.table_name)));
+            .with_table_name(TableName::new(format!("{}.{}", table.namespace.as_str(), table.table_name.as_str())));
 
             // Persist job to system.jobs
             if let Some(ref jobs_table_provider) = self.jobs_table_provider {
@@ -1912,11 +1912,11 @@ impl SqlExecutor {
         let table = tables
             .into_iter()
             .find(|t| {
-                let name_matches = t.table_name == stmt.table_name.as_str();
+                let name_matches = t.table_name.as_str() == stmt.table_name.as_str();
                 let namespace_matches = stmt
                     .namespace_id
                     .as_ref()
-                    .map(|ns| t.namespace == ns.as_str())
+                    .map(|ns| t.namespace.as_str() == ns.as_str())
                     .unwrap_or(true);
                 name_matches && namespace_matches
             })
@@ -1948,11 +1948,11 @@ impl SqlExecutor {
         let table = tables
             .into_iter()
             .find(|t| {
-                let name_matches = t.table_name == stmt.table_name.as_str();
+                let name_matches = t.table_name.as_str() == stmt.table_name.as_str();
                 let namespace_matches = stmt
                     .namespace_id
                     .as_ref()
-                    .map(|ns| t.namespace == ns.as_str())
+                    .map(|ns| t.namespace.as_str() == ns.as_str())
                     .unwrap_or(true);
                 name_matches && namespace_matches
             })
@@ -2190,14 +2190,14 @@ impl SqlExecutor {
             // Insert into system.tables via KalamSQL
             if let Some(kalam_sql) = &self.kalam_sql {
                 let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
-                let table = kalamdb_sql::models::Table {
+                let table = kalamdb_sql::Table {
                     table_id,
-                    table_name: table_name.as_str().to_string(),
-                    namespace: namespace_id.as_str().to_string(),
-                    table_type: "user".to_string(),
+                    table_name: table_name.clone(),
+                    namespace: namespace_id.clone(),
+                    table_type: TableType::User,
                     created_at: chrono::Utc::now().timestamp_millis(),
                     storage_location: metadata.storage_location.clone(),
-                    storage_id: Some(storage_id.as_str().to_string()),
+                    storage_id: Some(storage_id.clone()),
                     use_user_storage: stmt_use_user_storage,
                     flush_policy: serde_json::to_string(&flush_policy.clone().unwrap_or_default())
                         .unwrap_or_else(|_| "{}".to_string()),
@@ -2254,14 +2254,14 @@ impl SqlExecutor {
             // Insert into system.tables via KalamSQL
             if let Some(kalam_sql) = &self.kalam_sql {
                 let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
-                let table = kalamdb_sql::models::Table {
+                let table = kalamdb_sql::Table {
                     table_id,
-                    table_name: table_name.as_str().to_string(),
-                    namespace: namespace_id.as_str().to_string(),
-                    table_type: "stream".to_string(),
+                    table_name: table_name.clone(),
+                    namespace: namespace_id.clone(),
+                    table_type: TableType::Stream,
                     created_at: chrono::Utc::now().timestamp_millis(),
                     storage_location: metadata.storage_location.clone(),
-                    storage_id: Some("local".to_string()), // Stream tables always use local storage
+                    storage_id: Some(StorageId::from("local")), // Stream tables always use local storage
                     use_user_storage: false, // Stream tables don't support user storage
                     flush_policy: serde_json::to_string(&metadata.flush_policy)
                         .unwrap_or_else(|_| "{}".to_string()),
@@ -2332,14 +2332,14 @@ impl SqlExecutor {
                         serde_json::to_string(&flush_policy.unwrap_or_default())
                             .unwrap_or_else(|_| "{}".to_string());
 
-                    let table = kalamdb_sql::models::Table {
+                    let table = kalamdb_sql::Table {
                         table_id,
-                        table_name: table_name.as_str().to_string(),
-                        namespace: namespace_id.as_str().to_string(),
-                        table_type: "shared".to_string(),
+                        table_name: table_name.clone(),
+                        namespace: namespace_id.clone(),
+                        table_type: TableType::Shared,
                         created_at: chrono::Utc::now().timestamp_millis(),
                         storage_location: metadata.storage_location.clone(),
-                        storage_id: Some(storage_id.as_str().to_string()),
+                        storage_id: Some(storage_id.clone()),
                         use_user_storage: false, // Shared tables don't support user storage
                         flush_policy: flush_policy_json,
                         schema_version: 1,
@@ -2410,14 +2410,14 @@ impl SqlExecutor {
                         serde_json::to_string(&flush_policy.unwrap_or_default())
                             .unwrap_or_else(|_| "{}".to_string());
 
-                    let table = kalamdb_sql::models::Table {
+                    let table = kalamdb_sql::Table {
                         table_id,
-                        table_name: table_name.as_str().to_string(),
-                        namespace: namespace_id.as_str().to_string(),
-                        table_type: "shared".to_string(),
+                        table_name: table_name.clone(),
+                        namespace: namespace_id.clone(),
+                        table_type: TableType::Shared,
                         created_at: chrono::Utc::now().timestamp_millis(),
                         storage_location: metadata.storage_location.clone(),
-                        storage_id: Some(storage_id.as_str().to_string()),
+                        storage_id: Some(storage_id.clone()),
                         use_user_storage: false,
                         flush_policy: flush_policy_json,
                         schema_version: 1,
@@ -2880,7 +2880,7 @@ impl SqlExecutor {
     fn namespaces_to_record_batch(namespaces: Vec<Namespace>) -> Result<RecordBatch, KalamDbError> {
         let schema = Arc::new(Schema::new(vec![
             Field::new("name", DataType::Utf8, false),
-            Field::new("table_count", DataType::UInt32, false),
+            Field::new("table_count", DataType::Int32, false),
             Field::new("created_at", DataType::Utf8, false),
         ]));
 
@@ -2891,17 +2891,23 @@ impl SqlExecutor {
                 .collect::<Vec<_>>(),
         ));
 
-        let table_counts: ArrayRef = Arc::new(UInt32Array::from(
-            namespaces
-                .iter()
-                .map(|ns| ns.table_count)
-                .collect::<Vec<_>>(),
-        ));
+        let table_counts: ArrayRef = Arc::new(
+            datafusion::arrow::array::Int32Array::from(
+                namespaces
+                    .iter()
+                    .map(|ns| ns.table_count)
+                    .collect::<Vec<_>>(),
+            )
+        );
 
         let created_at: ArrayRef = Arc::new(StringArray::from(
             namespaces
                 .iter()
-                .map(|ns| ns.created_at.to_rfc3339())
+                .map(|ns| {
+                    chrono::DateTime::from_timestamp_millis(ns.created_at)
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_else(|| "Invalid timestamp".to_string())
+                })
                 .collect::<Vec<_>>(),
         ));
 
@@ -3050,7 +3056,7 @@ impl SqlExecutor {
         let retention_hours_str = table.deleted_retention_hours.to_string();
 
         // Check if this is a stream table to show stream-specific metadata
-        let is_stream_table = table.table_type.eq_ignore_ascii_case("stream");
+        let is_stream_table = table.table_type == TableType::Stream;
 
         let schema_history_hint = format!(
             "system.table_schemas WHERE table_id = '{}'",
@@ -3140,9 +3146,9 @@ impl SqlExecutor {
             .unwrap_or_else(|| "unknown".to_string());
 
         let metrics = vec![
-            ("table_name", table.table_name.clone()),
-            ("namespace", table.namespace.clone()),
-            ("table_type", table.table_type.clone()),
+            ("table_name", table.table_name.as_str().to_string()),
+            ("namespace", table.namespace.as_str().to_string()),
+            ("table_type", format!("{:?}", table.table_type)),
             (
                 "schema_version",
                 table.schema_version.to_string(),
@@ -3171,56 +3177,56 @@ impl SqlExecutor {
     }
 
     fn count_buffered_rows(&self, table: &kalamdb_sql::Table) -> Result<usize, KalamDbError> {
-        match table.table_type.to_ascii_uppercase().as_str() {
-            "USER" => {
+        match table.table_type {
+            TableType::User => {
                 let store = self.user_table_store.as_ref().ok_or_else(|| {
                     KalamDbError::InvalidOperation(
                         "User table store not configured for SHOW TABLE STATS".to_string(),
                     )
                 })?;
                 let rows = store
-                    .scan_all(&table.namespace, &table.table_name)
+                    .scan_all(table.namespace.as_str(), table.table_name.as_str())
                     .map_err(|e| {
                         KalamDbError::Other(format!(
                             "Failed to scan user table {}.{}: {}",
-                            table.namespace, table.table_name, e
+                            table.namespace.as_str(), table.table_name.as_str(), e
                         ))
                     })?;
                 Ok(rows.len())
             }
-            "SHARED" => {
+            TableType::Shared => {
                 let store = self.shared_table_store.as_ref().ok_or_else(|| {
                     KalamDbError::InvalidOperation(
                         "Shared table store not configured for SHOW TABLE STATS".to_string(),
                     )
                 })?;
                 let rows = store
-                    .scan(&table.namespace, &table.table_name)
+                    .scan(table.namespace.as_str(), table.table_name.as_str())
                     .map_err(|e| {
                         KalamDbError::Other(format!(
                             "Failed to scan shared table {}.{}: {}",
-                            table.namespace, table.table_name, e
+                            table.namespace.as_str(), table.table_name.as_str(), e
                         ))
                     })?;
                 Ok(rows.len())
             }
-            "STREAM" => {
+            TableType::Stream => {
                 let store = self.stream_table_store.as_ref().ok_or_else(|| {
                     KalamDbError::InvalidOperation(
                         "Stream table store not configured for SHOW TABLE STATS".to_string(),
                     )
                 })?;
                 let rows = store
-                    .scan(&table.namespace, &table.table_name)
+                    .scan(table.namespace.as_str(), table.table_name.as_str())
                     .map_err(|e| {
                         KalamDbError::Other(format!(
                             "Failed to scan stream table {}.{}: {}",
-                            table.namespace, table.table_name, e
+                            table.namespace.as_str(), table.table_name.as_str(), e
                         ))
                     })?;
                 Ok(rows.len())
             }
-            _ => Ok(0),
+            TableType::System => Ok(0),
         }
     }
 
@@ -3437,7 +3443,7 @@ mod tests {
         );
 
         // Create a test stream table entry in system_tables
-        let table = kalamdb_sql::models::Table {
+        let table = kalamdb_sql::Table {
             table_id: "app:events".to_string(),
             table_name: "events".to_string(),
             namespace: "app".to_string(),

@@ -22,28 +22,6 @@ use kalamdb_sql::KalamSql;
 use std::any::Any;
 use std::sync::Arc;
 
-/// Helper function to convert kalamdb_sql::LiveQuery to kalamdb_commons::system::LiveQuery
-fn convert_sql_live_query(sql_lq: kalamdb_sql::LiveQuery) -> LiveQuery {
-    LiveQuery {
-        live_id: sql_lq.live_id,
-        connection_id: sql_lq.connection_id,
-        namespace_id: NamespaceId::new(sql_lq.namespace_id),
-        table_name: TableName::new(sql_lq.table_name),
-        query_id: sql_lq.query_id,
-        user_id: UserId::new(sql_lq.user_id),
-        query: sql_lq.query,
-        options: if sql_lq.options.is_empty() {
-            None
-        } else {
-            Some(sql_lq.options)
-        },
-        created_at: sql_lq.created_at,
-        last_update: sql_lq.last_update,
-        changes: sql_lq.changes,
-        node: sql_lq.node,
-    }
-}
-
 /// System.live_queries table provider backed by RocksDB
 pub struct LiveQueriesTableProvider {
     kalam_sql: Arc<KalamSql>,
@@ -61,24 +39,9 @@ impl LiveQueriesTableProvider {
 
     /// Insert a new live query subscription
     pub fn insert_live_query(&self, live_query: LiveQuery) -> Result<(), KalamDbError> {
-        // Convert to kalamdb_sql model
-        let sql_live_query = kalamdb_sql::LiveQuery {
-            live_id: live_query.live_id,
-            connection_id: live_query.connection_id,
-            namespace_id: live_query.namespace_id.into_string(),
-            table_name: live_query.table_name.into_string(),
-            query_id: live_query.query_id,
-            user_id: live_query.user_id.into_string(),
-            query: live_query.query,
-            options: live_query.options.unwrap_or_default(),
-            created_at: live_query.created_at,
-            last_update: live_query.last_update,
-            changes: live_query.changes,
-            node: live_query.node,
-        };
-
+        // kalamdb_sql::LiveQuery is now the same as kalamdb_commons::system::LiveQuery
         self.kalam_sql
-            .insert_live_query(&sql_live_query)
+            .insert_live_query(&live_query)
             .map_err(|e| KalamDbError::Other(format!("Failed to insert live query: {}", e)))
     }
 
@@ -93,24 +56,9 @@ impl LiveQueriesTableProvider {
             )));
         }
 
-        // Convert to kalamdb_sql model with updated timestamp
-        let sql_live_query = kalamdb_sql::LiveQuery {
-            live_id: live_query.live_id,
-            connection_id: live_query.connection_id,
-            namespace_id: live_query.namespace_id.into_string(),
-            table_name: live_query.table_name.into_string(),
-            query_id: live_query.query_id,
-            user_id: live_query.user_id.into_string(),
-            query: live_query.query,
-            options: live_query.options.unwrap_or_default(),
-            created_at: live_query.created_at,
-            last_update: live_query.last_update,
-            changes: live_query.changes,
-            node: live_query.node,
-        };
-
+        // kalamdb_sql::LiveQuery is now the same as kalamdb_commons::system::LiveQuery
         self.kalam_sql
-            .insert_live_query(&sql_live_query) // kalamdb-sql uses insert for both insert and update
+            .insert_live_query(&live_query) // kalamdb-sql uses insert for both insert and update
             .map_err(|e| KalamDbError::Other(format!("Failed to update live query: {}", e)))
     }
 
@@ -123,12 +71,10 @@ impl LiveQueriesTableProvider {
 
     /// Get a live query by ID
     pub fn get_live_query(&self, live_id: &str) -> Result<Option<LiveQuery>, KalamDbError> {
-        let sql_live_query = self
+        self
             .kalam_sql
             .get_live_query(live_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to get live query: {}", e)))?;
-
-        Ok(sql_live_query.map(convert_sql_live_query))
+            .map_err(|e| KalamDbError::Other(format!("Failed to get live query: {}", e)))
     }
 
     /// Delete all live queries for a connection_id
@@ -164,8 +110,7 @@ impl LiveQueriesTableProvider {
 
         let filtered: Vec<LiveQuery> = live_queries
             .into_iter()
-            .filter(|lq| lq.user_id == user_id)
-            .map(convert_sql_live_query)
+            .filter(|lq| lq.user_id.as_str() == user_id)
             .collect();
 
         Ok(filtered)
@@ -183,8 +128,7 @@ impl LiveQueriesTableProvider {
 
         let filtered: Vec<LiveQuery> = live_queries
             .into_iter()
-            .filter(|lq| lq.table_name == table_name)
-            .map(convert_sql_live_query)
+            .filter(|lq| lq.table_name.as_str() == table_name)
             .collect();
 
         Ok(filtered)
@@ -213,14 +157,14 @@ impl LiveQueriesTableProvider {
         for live_query in live_queries {
             live_ids.append_value(&live_query.live_id);
             connection_ids.append_value(&live_query.connection_id);
-            namespaces.append_value(&live_query.namespace_id);
-            table_names.append_value(&live_query.table_name);
+            namespaces.append_value(live_query.namespace_id.as_str());
+            table_names.append_value(live_query.table_name.as_str());
             query_ids.append_value(&live_query.query_id);
-            user_ids.append_value(&live_query.user_id);
+            user_ids.append_value(live_query.user_id.as_str());
             queries.append_value(&live_query.query);
 
-            if !live_query.options.is_empty() {
-                options_list.append_value(&live_query.options);
+            if let Some(ref options) = live_query.options {
+                options_list.append_value(options);
             } else {
                 options_list.append_null();
             }
