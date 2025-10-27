@@ -9,8 +9,9 @@ use crate::live_query::connection_registry::{
 };
 use crate::live_query::filter::FilterCache;
 use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
-use crate::tables::system::live_queries_provider::{LiveQueriesTableProvider, LiveQueryRecord};
+use crate::tables::system::live_queries_provider::LiveQueriesTableProvider;
 use kalamdb_commons::models::{NamespaceId, TableName, TableType};
+use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_sql::KalamSql;
 use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::sync::Arc;
@@ -170,13 +171,13 @@ impl LiveQueryManager {
         })?;
 
         // Create record for system.live_queries
-        let live_query_record = LiveQueryRecord {
+        let live_query_record = SystemLiveQuery {
             live_id: live_id.to_string(),
             connection_id: connection_id.to_string(),
-            namespace_id: NamespaceId::from(namespace),
-            table_name: TableName::from(canonical_table.clone()),
+            namespace_id: NamespaceId::new(namespace.to_string()),
+            table_name: TableName::new(canonical_table.clone()),
             query_id: live_id.query_id().to_string(),
-            user_id: kalamdb_commons::models::UserId::from(connection_id.user_id()),
+            user_id: kalamdb_commons::UserId::new(connection_id.user_id().to_string()),
             query: query.clone(),
             options: Some(options_json),
             created_at: timestamp,
@@ -465,7 +466,7 @@ impl LiveQueryManager {
     pub async fn get_user_subscriptions(
         &self,
         user_id: &str,
-    ) -> Result<Vec<LiveQueryRecord>, KalamDbError> {
+    ) -> Result<Vec<SystemLiveQuery>, KalamDbError> {
         self.live_queries_provider.get_by_user_id(user_id)
     }
 
@@ -473,7 +474,7 @@ impl LiveQueryManager {
     pub async fn get_table_subscriptions(
         &self,
         table_name: &str,
-    ) -> Result<Vec<LiveQueryRecord>, KalamDbError> {
+    ) -> Result<Vec<SystemLiveQuery>, KalamDbError> {
         self.live_queries_provider.get_by_table_name(table_name)
     }
 
@@ -481,7 +482,7 @@ impl LiveQueryManager {
     pub async fn get_live_query(
         &self,
         live_id: &str,
-    ) -> Result<Option<LiveQueryRecord>, KalamDbError> {
+    ) -> Result<Option<SystemLiveQuery>, KalamDbError> {
         self.live_queries_provider.get_live_query(live_id)
     }
 

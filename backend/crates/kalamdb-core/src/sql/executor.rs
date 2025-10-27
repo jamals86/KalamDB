@@ -48,6 +48,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::prelude::SessionContext;
+use kalamdb_commons::{JobStatus, JobType};
 use datafusion::sql::sqlparser;
 use kalamdb_commons::models::{NamespaceId as CommonNamespaceId, StorageId};
 use kalamdb_sql::ddl::{
@@ -746,8 +747,6 @@ impl SqlExecutor {
         use crate::tables::system::{
             JobsTableProvider,
             LiveQueriesTableProvider,
-            // TODO: Phase 2b - StorageLocationsTableProvider deprecated (replaced by system_storages)
-            // StorageLocationsTableProvider,
             SystemStoragesProvider,
         };
 
@@ -759,20 +758,6 @@ impl SqlExecutor {
             .map_err(|e| {
                 KalamDbError::Other(format!("Failed to register system.storages: {}", e))
             })?;
-
-        // TODO: Phase 2b - system.storage_locations deprecated (replaced by system.storages)
-        // system_schema
-        //     .register_table(
-        //         "storage_locations".to_string(),
-        //         Arc::new(StorageLocationsTableProvider::new(kalam_sql.clone())),
-        //     )
-        //     .map_err(|e| {
-        //         KalamDbError::Other(format!(
-        //             "Failed to register system.storage_locations: {}",
-        //             e
-        //         ))
-        //     })?;
-
         system_schema
             .register_table(
                 "live_queries".to_string(),
@@ -1690,9 +1675,9 @@ impl SqlExecutor {
         if let Some(ref provider) = jobs_provider {
             let all_jobs = provider.list_jobs()?;
             for job in all_jobs {
-                if job.status == "running"
-                    && job.job_type == "flush"
-                    && job.table_name.as_deref() == Some(&table_full_name)
+                if job.status == JobStatus::Running
+                    && job.job_type == JobType::Flush
+                    && job.table_name.as_ref().map(|tn| format!("{}.{}", job.namespace_id.as_str(), tn.as_str())) == Some(table_full_name.clone())
                 {
                     return Err(KalamDbError::InvalidOperation(format!(
                         "Flush job already running for table '{}' (job_id: {}). Please wait for it to complete.",
@@ -1875,12 +1860,14 @@ impl SqlExecutor {
             );
 
             // Create job record
-            let job_record = crate::tables::system::jobs_provider::JobRecord::new(
+            use kalamdb_commons::{JobType, NamespaceId, TableName};
+            let job_record = kalamdb_commons::system::Job::new(
                 job_id.clone(),
-                "flush".to_string(),
+                JobType::Flush,
+                NamespaceId::new(table.namespace.clone()),
                 format!("node-{}", std::process::id()),
             )
-            .with_table_name(format!("{}.{}", table.namespace, table.table_name));
+            .with_table_name(TableName::new(format!("{}.{}", table.namespace, table.table_name)));
 
             // Persist job to system.jobs
             if let Some(ref jobs_table_provider) = self.jobs_table_provider {
@@ -3250,10 +3237,11 @@ impl SqlExecutor {
             KalamDbError::Other(format!("Failed to list jobs for SHOW TABLE STATS: {}", e))
         })?;
 
-        let mut latest: Option<crate::tables::system::JobRecord> = None;
+        let mut latest: Option<kalamdb_commons::system::Job> = None;
         for job in jobs {
-            if job.job_type == "flush"
-                && job.table_name.as_deref() == Some(full_table_name)
+            use kalamdb_commons::JobType;
+            if job.job_type == JobType::Flush
+                && job.table_name.as_ref().map(|tn| tn.as_str()) == Some(full_table_name)
                 && job.completed_at.is_some()
             {
                 let candidate_ts = job.completed_at.unwrap_or_default();

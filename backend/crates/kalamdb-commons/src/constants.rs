@@ -65,9 +65,6 @@ impl ColumnFamilyNames {
     /// System tables column family
     pub const SYSTEM_TABLES: &'static str = "system_tables";
 
-    /// System table schemas column family
-    pub const SYSTEM_TABLE_SCHEMAS: &'static str = "system_table_schemas";
-
     /// System storages column family
     pub const SYSTEM_STORAGES: &'static str = "system_storages";
 

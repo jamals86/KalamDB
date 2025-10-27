@@ -16,8 +16,6 @@ pub enum SystemTable {
     Tables,
     /// system.table_schemas - Table schema versions
     TableSchemas,
-    /// system.storage_locations - Storage location configurations (deprecated, use Storages)
-    StorageLocations,
     /// system.storages - Storage configurations
     Storages,
     /// system.live_queries - Active live query subscriptions
@@ -34,7 +32,6 @@ impl SystemTable {
             SystemTable::Namespaces => "namespaces",
             SystemTable::Tables => "tables",
             SystemTable::TableSchemas => "table_schemas",
-            SystemTable::StorageLocations => "storage_locations",
             SystemTable::Storages => "storages",
             SystemTable::LiveQueries => "live_queries",
             SystemTable::Jobs => "jobs",
@@ -48,7 +45,6 @@ impl SystemTable {
             SystemTable::Namespaces => "system_namespaces",
             SystemTable::Tables => "system_tables",
             SystemTable::TableSchemas => "system_table_schemas",
-            SystemTable::StorageLocations => "system_storage_locations",
             SystemTable::Storages => "system_storages",
             SystemTable::LiveQueries => "system_live_queries",
             SystemTable::Jobs => "system_jobs",
@@ -65,7 +61,6 @@ impl SystemTable {
             "namespaces" | "system_namespaces" => Ok(SystemTable::Namespaces),
             "tables" | "system_tables" => Ok(SystemTable::Tables),
             "table_schemas" | "system_table_schemas" => Ok(SystemTable::TableSchemas),
-            "storage_locations" | "system_storage_locations" => Ok(SystemTable::StorageLocations),
             "storages" | "system_storages" => Ok(SystemTable::Storages),
             "live_queries" | "system_live_queries" => Ok(SystemTable::LiveQueries),
             "jobs" | "system_jobs" => Ok(SystemTable::Jobs),
@@ -80,7 +75,6 @@ impl SystemTable {
             SystemTable::Namespaces,
             SystemTable::Tables,
             SystemTable::TableSchemas,
-            SystemTable::StorageLocations,
             SystemTable::Storages,
             SystemTable::LiveQueries,
             SystemTable::Jobs,

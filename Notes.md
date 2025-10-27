@@ -22,6 +22,16 @@ Future:
 23) Add https://docs.rs/object_store/latest/object_store/ to support any object storage out there easily
 24) Check if we cna replace rocksdb with this one: https://github.com/foyer-rs/foyer, it already support objectstore so we can also store the non-flushed tables into s3 directly, and not forcing flushing when server goes down, even whenever we use the filesystem we can rely on the same logic inside foyer as well
 
+25) In Progress - We have a critical archeticture design problem here:
+Now we are create: backend\crates\kalamdb-core\src\models\system.rs
+Which has models for each system table, and at the same time we have: backend\crates\kalamdb-sql\src\models.rs
+And also another one in: backend\crates\kalamdb-core\src\tables\system\jobs_provider.rs called: JobRecord
+The same is for LiveQueryRecord
+i WANT TO HAVE ONLY ONE MODEL IN kalamdb-commons and all of them using them!! this is critical change, search all codebase and have one model per system table ONLY! for each system table scan the whole codebase and check if we have duplicates
+The main one should be the recently create system.rs file in: backend\crates\kalamdb-core\src\models\system.rs
+AND THEN USE IT EVERY WHERE
+
+26) Low Priority - Maybe instead of _updated we can use _seq which is a snowflake id for better syncing ability accross distributed nodes
 
 
 

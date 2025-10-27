@@ -40,19 +40,6 @@ pub struct LiveQuery {
     pub node: String,
 }
 
-//TODO: Remove StorageLocation model in favor of using Storage directly
-/// Storage location in system_storage_locations table
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct StorageLocation {
-    pub location_name: String, // PK
-    pub location_type: String, // "filesystem" or "s3"
-    pub path: String,
-    pub credentials_ref: Option<String>,
-    pub usage_count: i32,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
-
 /// Background job in system_jobs table
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Job {

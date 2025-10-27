@@ -1,6 +1,20 @@
 # KalamDB Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2025-10-15
+Auto-generated from all feature plans. Last updated: 2025-10-27
+
+## ⚠️ CRITICAL: System Table Models Architecture
+
+**SINGLE SOURCE OF TRUTH**: All system table models are defined in `kalamdb-commons/src/models/system.rs`
+
+**DO NOT create duplicate model definitions**. Always import from:
+```rust
+use kalamdb_commons::system::{User, Job, LiveQuery, Namespace, SystemTable, InformationSchemaTable, UserTableCounter};
+```
+
+**Consolidation Status** (as of 2025-10-27):
+- ✅ Models moved to `kalamdb-commons/src/models/system.rs`
+- 🚧 IN PROGRESS: Removing duplicates from `jobs_provider.rs`, `live_queries_provider.rs`, `kalamdb-sql/src/models.rs`
+- See `docs/architecture/SYSTEM_MODEL_CONSOLIDATION.md` for full migration plan
 
 ## Active Technologies
 - (001-build-a-rust)

@@ -36,17 +36,12 @@ impl QueryType {
     }
 }
 
-/// Column family types for storage metrics
+/// Column family types for metrics labeling
 #[derive(Debug, Clone, Copy)]
 pub enum ColumnFamilyType {
     UserTable,
     SharedTable,
-    StreamTable,
-    SystemTables,
-    SystemNamespaces,
-    SystemLiveQueries,
-    SystemStorageLocations,
-    SystemFlushJobs,
+    SystemTable,
 }
 
 impl ColumnFamilyType {
@@ -54,15 +49,11 @@ impl ColumnFamilyType {
         match self {
             ColumnFamilyType::UserTable => "user_table",
             ColumnFamilyType::SharedTable => "shared_table",
-            ColumnFamilyType::StreamTable => "stream_table",
-            ColumnFamilyType::SystemTables => "system_tables",
-            ColumnFamilyType::SystemNamespaces => "system_namespaces",
-            ColumnFamilyType::SystemLiveQueries => "system_live_queries",
-            ColumnFamilyType::SystemStorageLocations => "system_storage_locations",
-            ColumnFamilyType::SystemFlushJobs => "system_flush_jobs",
+            ColumnFamilyType::SystemTable => "system_table",
         }
     }
 }
+
 
 /// Record query latency
 ///
@@ -166,10 +157,6 @@ mod tests {
             "system_live_queries"
         );
         assert_eq!(
-            ColumnFamilyType::SystemStorageLocations.as_str(),
-            "system_storage_locations"
-        );
-        assert_eq!(
             ColumnFamilyType::SystemFlushJobs.as_str(),
             "system_flush_jobs"
         );
@@ -221,22 +208,6 @@ mod tests {
         increment_websocket_messages("conn_1");
 
         // Should track per connection
-    }
-
-    #[test]
-    fn test_column_family_sizes_for_all_types() {
-        update_column_family_size(ColumnFamilyType::UserTable, "users", 1000);
-        update_column_family_size(ColumnFamilyType::SharedTable, "shared", 2000);
-        update_column_family_size(ColumnFamilyType::StreamTable, "stream", 3000);
-        update_column_family_size(ColumnFamilyType::SystemTables, "tables", 4000);
-        update_column_family_size(ColumnFamilyType::SystemNamespaces, "namespaces", 5000);
-        update_column_family_size(ColumnFamilyType::SystemLiveQueries, "live_queries", 6000);
-        update_column_family_size(
-            ColumnFamilyType::SystemStorageLocations,
-            "storage_locations",
-            7000,
-        );
-        update_column_family_size(ColumnFamilyType::SystemFlushJobs, "flush_jobs", 8000);
     }
 
     #[test]

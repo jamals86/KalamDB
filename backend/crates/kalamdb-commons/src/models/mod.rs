@@ -4,10 +4,16 @@
 //! at compile time, preventing accidental mixing of user IDs, namespace IDs,
 //! and table names.
 //!
+//! ## System Table Models
+//!
+//! The `system` submodule contains the SINGLE SOURCE OF TRUTH for all system table models.
+//! Import from `kalamdb_commons::system::*` to use these models.
+//!
 //! ## Examples
 //!
 //! ```rust
 //! use kalamdb_commons::models::{UserId, NamespaceId, TableName};
+//! use kalamdb_commons::system::{User, Job, LiveQuery};
 //!
 //! let user_id = UserId::new("user_123");
 //! let namespace_id = NamespaceId::new("default");
@@ -23,6 +29,7 @@
 
 mod namespace_id;
 mod storage_id;
+pub mod system;
 mod table_name;
 mod user_id;
 
@@ -276,6 +283,138 @@ impl From<&str> for JobType {
 impl From<String> for JobType {
     fn from(s: String) -> Self {
         JobType::from(s.as_str())
+    }
+}
+
+/// Enum representing user roles in KalamDB.
+///
+/// - **User**: Regular user with standard permissions
+/// - **Service**: Service account for automated tasks
+/// - **Dba**: Database administrator with elevated privileges
+/// - **System**: Internal system user (highest privileges)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum Role {
+    /// Regular user with standard permissions
+    User,
+    /// Service account for automated tasks
+    Service,
+    /// Database administrator with elevated privileges
+    Dba,
+    /// Internal system user (highest privileges)
+    System,
+}
+
+impl Role {
+    /// Returns the role as a lowercase string.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Role::User => "user",
+            Role::Service => "service",
+            Role::Dba => "dba",
+            Role::System => "system",
+        }
+    }
+
+    /// Parse a role from a string (case-insensitive).
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "user" => Some(Role::User),
+            "service" => Some(Role::Service),
+            "dba" => Some(Role::Dba),
+            "system" => Some(Role::System),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for Role {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl From<&str> for Role {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "user" => Role::User,
+            "service" => Role::Service,
+            "dba" => Role::Dba,
+            "system" => Role::System,
+            _ => Role::User, // Default to user for safety
+        }
+    }
+}
+
+impl From<String> for Role {
+    fn from(s: String) -> Self {
+        Role::from(s.as_str())
+    }
+}
+
+/// Enum representing authentication types in KalamDB.
+///
+/// - **Password**: Traditional username/password authentication
+/// - **ApiKey**: API key authentication
+/// - **OAuth**: OAuth 2.0 authentication
+/// - **Internal**: Internal system authentication
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum AuthType {
+    /// Traditional username/password authentication
+    Password,
+    /// API key authentication
+    ApiKey,
+    /// OAuth 2.0 authentication
+    OAuth,
+    /// Internal system authentication
+    Internal,
+}
+
+impl AuthType {
+    /// Returns the auth type as a lowercase string.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AuthType::Password => "password",
+            AuthType::ApiKey => "apikey",
+            AuthType::OAuth => "oauth",
+            AuthType::Internal => "internal",
+        }
+    }
+
+    /// Parse an auth type from a string (case-insensitive).
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "password" => Some(AuthType::Password),
+            "apikey" => Some(AuthType::ApiKey),
+            "oauth" => Some(AuthType::OAuth),
+            "internal" => Some(AuthType::Internal),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for AuthType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl From<&str> for AuthType {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "password" => AuthType::Password,
+            "apikey" => AuthType::ApiKey,
+            "oauth" => AuthType::OAuth,
+            "internal" => AuthType::Internal,
+            _ => AuthType::Password, // Default to password for safety
+        }
+    }
+}
+
+impl From<String> for AuthType {
+    fn from(s: String) -> Self {
+        AuthType::from(s.as_str())
     }
 }
 

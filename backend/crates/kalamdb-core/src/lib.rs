@@ -13,6 +13,7 @@ pub mod ids;
 pub mod jobs;
 pub mod live_query;
 pub mod metrics;
+pub mod models; // Domain models for system tables and table rows
 pub mod scheduler;
 pub mod schema;
 pub mod services;

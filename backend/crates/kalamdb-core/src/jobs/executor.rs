@@ -8,7 +8,9 @@
 //! - Node identification for distributed systems
 
 use crate::error::KalamDbError;
-use crate::tables::system::{JobRecord, JobsTableProvider};
+use crate::tables::system::JobsTableProvider;
+use kalamdb_commons::system::Job;
+use kalamdb_commons::{JobStatus, JobType, NamespaceId, TableName};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -68,16 +70,31 @@ impl JobExecutor {
     where
         F: FnOnce() -> Result<String, String>,
     {
+        // Parse job_type string to enum
+        let job_type_enum = match job_type.as_str() {
+            "flush" => JobType::Flush,
+            "compact" => JobType::Compact,
+            "cleanup" => JobType::Cleanup,
+            "backup" => JobType::Backup,
+            "restore" => JobType::Restore,
+            _ => {
+                return Err(KalamDbError::InvalidOperation(format!("Unknown job type: {}", job_type)));
+            }
+        };
+
         // T101: Register job with status='running'
-        let mut job = JobRecord::new(job_id.clone(), job_type, self.node_id.clone());
+        let namespace_id = NamespaceId::new("default".to_string()); // TODO: Get from context
+        let mut job = Job::new(job_id.clone(), job_type_enum, namespace_id, self.node_id.clone());
 
         if let Some(tn) = table_name {
-            job = job.with_table_name(tn);
+            job = job.with_table_name(TableName::new(tn));
         }
 
         // T104: Store parameters as JSON array
         if !parameters.is_empty() {
-            job = job.with_parameters(parameters);
+            let params_json = serde_json::to_string(&parameters)
+                .unwrap_or_else(|_| "[]".to_string());
+            job = job.with_parameters(params_json);
         }
 
         // Insert initial job record
@@ -110,11 +127,11 @@ impl JobExecutor {
         // T102: Update job with completion status and metrics
         let final_job = match &result {
             Ok(success_message) => job
-                .with_metrics(memory_used_bytes, cpu_used_micros)
+                .with_metrics(Some(memory_used_bytes), Some(cpu_used_micros))
                 .with_trace(trace)
                 .complete(Some(success_message.clone())),
             Err(error_message) => job
-                .with_metrics(memory_used_bytes, cpu_used_micros)
+                .with_metrics(Some(memory_used_bytes), Some(cpu_used_micros))
                 .with_trace(trace)
                 .fail(error_message.clone()),
         };
@@ -151,15 +168,30 @@ impl JobExecutor {
     where
         F: FnOnce() -> Result<String, String> + Send + 'static,
     {
+        // Parse job_type string to enum
+        let job_type_enum = match job_type.as_str() {
+            "flush" => JobType::Flush,
+            "compact" => JobType::Compact,
+            "cleanup" => JobType::Cleanup,
+            "backup" => JobType::Backup,
+            "restore" => JobType::Restore,
+            _ => {
+                return Err(KalamDbError::InvalidOperation(format!("Unknown job type: {}", job_type)));
+            }
+        };
+
         // Register job immediately
-        let mut job = JobRecord::new(job_id.clone(), job_type, self.node_id.clone());
+        let namespace_id = NamespaceId::new("default".to_string()); // TODO: Get from context
+        let mut job = Job::new(job_id.clone(), job_type_enum, namespace_id, self.node_id.clone());
 
         if let Some(tn) = table_name {
-            job = job.with_table_name(tn);
+            job = job.with_table_name(TableName::new(tn));
         }
 
         if !parameters.is_empty() {
-            job = job.with_parameters(parameters);
+            let params_json = serde_json::to_string(&parameters)
+                .unwrap_or_else(|_| "[]".to_string());
+            job = job.with_parameters(params_json);
         }
 
         self.jobs_provider.insert_job(job)?;
@@ -193,7 +225,7 @@ impl JobExecutor {
                         job.memory_used = Some(memory_used_bytes);
                         job.cpu_used = Some(cpu_used_micros);
                         job.trace = Some(trace);
-                        job.status = "completed".to_string();
+                        job.status = JobStatus::Completed;
                         job.completed_at = Some(chrono::Utc::now().timestamp_millis());
                         job.result = Some(success_message);
                         job
@@ -202,7 +234,7 @@ impl JobExecutor {
                         job.memory_used = Some(memory_used_bytes);
                         job.cpu_used = Some(cpu_used_micros);
                         job.trace = Some(trace);
-                        job.status = "failed".to_string();
+                        job.status = JobStatus::Failed;
                         job.completed_at = Some(chrono::Utc::now().timestamp_millis());
                         job.error_message = Some(error_message);
                         job

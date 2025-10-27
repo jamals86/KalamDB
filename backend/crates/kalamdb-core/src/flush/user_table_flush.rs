@@ -7,7 +7,8 @@ use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::storage::{ParquetWriter, StorageRegistry};
-use crate::tables::system::jobs_provider::JobRecord;
+use kalamdb_commons::system::Job;
+use kalamdb_commons::JobType;
 use chrono::Utc;
 use datafusion::arrow::array::{ArrayRef, BooleanArray, Int64Array, StringArray};
 use datafusion::arrow::datatypes::{DataType, SchemaRef};
@@ -55,7 +56,7 @@ pub struct UserTableFlushJob {
 #[derive(Debug, Clone)]
 pub struct FlushJobResult {
     /// Job record for system.jobs table
-    pub job_record: JobRecord,
+    pub job_record: Job,
 
     /// Total rows flushed
     pub rows_flushed: usize,
@@ -220,17 +221,17 @@ impl UserTableFlushJob {
         );
 
         // Create job record
+        let params = vec![
+            format!("namespace={}", self.namespace_id.as_str()),
+            format!("table={}", self.table_name.as_str()),
+        ];
+        let params_json = serde_json::to_string(&params)
+            .unwrap_or_else(|_| "[]".to_string());
+        
         let mut job_record =
-            JobRecord::new(job_id.clone(), "flush".to_string(), self.node_id.clone())
-                .with_table_name(format!(
-                    "{}.{}",
-                    self.namespace_id.as_str(),
-                    self.table_name.as_str()
-                ))
-                .with_parameters(vec![
-                    format!("namespace={}", self.namespace_id.as_str()),
-                    format!("table={}", self.table_name.as_str()),
-                ]);
+            Job::new(job_id.clone(), JobType::Flush, self.namespace_id.clone(), self.node_id.clone())
+                .with_table_name(self.table_name.clone())
+                .with_parameters(params_json);
 
         // T158d: Persist job state to system.jobs BEFORE starting work
         if let Some(ref jobs_provider) = self.jobs_provider {

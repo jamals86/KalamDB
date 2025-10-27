@@ -418,13 +418,13 @@
 
 **Purpose**: Create two-layer abstraction foundation
 
-- [ ] T001A [P] [US9] Create backend/crates/kalamdb-store/src/backend.rs with StorageBackend trait (put, get, delete, scan_prefix, scan_range, delete_batch methods)
-- [ ] T001B [P] [US9] Implement RocksDbBackend struct in backend/crates/kalamdb-store/src/backend.rs (wraps Arc<rocksdb::DB>, implements StorageBackend)
-- [ ] T001C [P] [US9] Create backend/crates/kalamdb-store/src/traits.rs with EntityStore<T> trait (backend(), partition(), serialize(), deserialize(), put(), get(), delete(), scan_prefix())
-- [ ] T001D [P] [US9] Add default JSON serialization/deserialization to EntityStore<T> trait in backend/crates/kalamdb-store/src/traits.rs
-- [ ] T001E [P] [US9] Create backend/crates/kalamdb-store/src/mock_backend.rs with MockStorageBackend (HashMap-based implementation for testing)
-- [ ] T001F [US9] Update backend/crates/kalamdb-store/src/lib.rs to export StorageBackend, EntityStore traits, RocksDbBackend, MockStorageBackend
-- [ ] T001G [P] [US9] Add integration test for MockStorageBackend in backend/crates/kalamdb-store/src/tests/mock_backend_tests.rs (verify all trait methods work)
+- [X] T001A [P] [US9] Create backend/crates/kalamdb-store/src/backend.rs with StorageBackend trait (put, get, delete, scan_prefix, scan_range, delete_batch methods)
+- [X] T001B [P] [US9] Implement RocksDbBackend struct in backend/crates/kalamdb-store/src/backend.rs (wraps Arc<rocksdb::DB>, implements StorageBackend)
+- [X] T001C [P] [US9] Create backend/crates/kalamdb-store/src/traits.rs with EntityStore<T> trait (backend(), partition(), serialize(), deserialize(), put(), get(), delete(), scan_prefix())
+- [X] T001D [P] [US9] Add default JSON serialization/deserialization to EntityStore<T> trait in backend/crates/kalamdb-store/src/traits.rs
+- [X] T001E [P] [US9] Create backend/crates/kalamdb-store/src/mock_backend.rs with MockStorageBackend (HashMap-based implementation for testing)
+- [X] T001F [US9] Update backend/crates/kalamdb-store/src/lib.rs to export StorageBackend, EntityStore traits, RocksDbBackend, MockStorageBackend
+- [X] T001G [P] [US9] Add integration test for MockStorageBackend in backend/crates/kalamdb-store/src/tests/mock_backend_tests.rs (verify all trait methods work)
 
 ### Sub-Phase 0.5.2: Domain Models (kalamdb-core)
 
