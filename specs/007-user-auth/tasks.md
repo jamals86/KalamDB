@@ -1,12 +1,33 @@
 # Tasks: User Authentication
 
 **Feature Branch**: `007-user-auth`  
-**Input**: Design documents from `/specs/007-user-auth/`  
+**Input**: Design documents from `/specs/007-user-auth/` + User-Management.md  
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md
+
+**⚠️ ARCHITECTURAL COMPLIANCE**: All tasks MUST follow existing KalamDB patterns:
+- SQL parsers follow `ExtensionStatement` pattern (see `parser/extensions.rs`)
+- Storage follows `UserTableStore` pattern with column families (see `kalamdb-store/src/user_table_store.rs`)
+- Jobs follow `JobManager` + `RetentionPolicy` pattern (see `kalamdb-core/src/jobs/`)
+- All code must match style and organization of existing similar components
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
-**Tests**: Integration tests are included per FR-TEST-001 through FR-TEST-010 requirements.
+**Total Tasks**: 213 tasks across 13 phases
+- **Phase 1**: Setup (10 tasks)
+- **Phase 2**: Foundational (32 tasks) - BLOCKING all user stories, follow existing patterns
+- **Phase 3-10**: User Stories (98 tasks) - 8 independent stories
+- **Phase 5.5**: SQL Parser Extensions (18 tasks) - BLOCKING US4-US8, follow ExtensionStatement pattern
+- **Phase 11**: Testing & Migration (17 tasks)
+- **Phase 12**: Polish (12 tasks)
+- **Phase 13**: Additional Features from User-Management.md (26 tasks) - follow job/index patterns
+
+**Tests Coverage**: 
+- **Integration Tests**: 45+ tests covering all user stories and SQL commands
+- **Unit Tests**: 16+ tests for parser, password hashing, JWT validation
+- **Edge Cases**: 7+ tests for malformed input, concurrent access, deleted users
+- **End-to-End**: Full authentication flow test
+
+**SQL Commands**: CREATE USER, ALTER USER, DROP USER with password/OAuth/internal auth modes
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -53,17 +74,18 @@
 
 ### Storage Layer
 
-- [ ] T020 Create system_users column family initialization in backend/crates/kalamdb-store/src/lib.rs
-- [ ] T021 Implement User struct with serde in backend/crates/kalamdb-store/src/users.rs (user_id, username, email, auth_type, auth_data, role, storage_mode, storage_id, metadata, created_at, updated_at, last_seen, deleted_at)
-- [ ] T022 [P] Implement create_user function in backend/crates/kalamdb-store/src/users.rs (with UserId auto-generation)
-- [ ] T023 [P] Implement get_user_by_id function in backend/crates/kalamdb-store/src/users.rs
-- [ ] T024 [P] Implement get_user_by_username function in backend/crates/kalamdb-store/src/users.rs
-- [ ] T025 [P] Implement update_user function in backend/crates/kalamdb-store/src/users.rs
-- [ ] T026 [P] Implement soft_delete_user function in backend/crates/kalamdb-store/src/users.rs
-- [ ] T027 [P] Implement list_users function in backend/crates/kalamdb-store/src/users.rs (with role filter, deleted filter)
-- [ ] T028 [P] Implement update_last_seen function in backend/crates/kalamdb-store/src/users.rs (daily granularity)
-- [ ] T029 Create username_index for fast username lookups in backend/crates/kalamdb-store/src/users.rs
-- [ ] T030 Export user storage functions from backend/crates/kalamdb-store/src/lib.rs
+- [ ] T020 Create system_users column family initialization in backend/crates/kalamdb-store/src/lib.rs (add to ColumnFamilyNames constants, follow pattern for system_tables, system_storages)
+- [ ] T021 Create UsersStore struct in backend/crates/kalamdb-store/src/users.rs (follow UserTableStore pattern with db: Arc<DB>, ensure_cf() method)
+- [ ] T022 Implement User struct with serde in backend/crates/kalamdb-store/src/users.rs (user_id, username, email, auth_type, auth_data, role, storage_mode, storage_id, metadata, created_at, updated_at, last_seen, deleted_at)
+- [ ] T023 [P] Implement create_user function in backend/crates/kalamdb-store/src/users.rs (follow create_column_family pattern, return Result<(), anyhow::Error>)
+- [ ] T024 [P] Implement get_user_by_id function in backend/crates/kalamdb-store/src/users.rs (use ensure_cf(), db.get_cf() pattern)
+- [ ] T025 [P] Implement get_user_by_username function in backend/crates/kalamdb-store/src/users.rs (create username_index secondary index, follow existing index patterns)
+- [ ] T026 [P] Implement update_user function in backend/crates/kalamdb-store/src/users.rs (use db.put_cf() pattern)
+- [ ] T027 [P] Implement soft_delete_user function in backend/crates/kalamdb-store/src/users.rs (set deleted_at timestamp, follow soft delete pattern)
+- [ ] T028 [P] Implement list_users function in backend/crates/kalamdb-store/src/users.rs (with role filter, deleted filter, use IteratorMode pattern)
+- [ ] T029 [P] Implement update_last_seen function in backend/crates/kalamdb-store/src/users.rs (daily granularity, async update)
+- [ ] T030 Create username_index column family for fast username lookups in backend/crates/kalamdb-store/src/users.rs (follow secondary index pattern)
+- [ ] T031 Export UsersStore from backend/crates/kalamdb-store/src/lib.rs (follow module export pattern)
 
 ### Authorization Layer
 
@@ -182,6 +204,44 @@
 
 ---
 
+## Phase 5.5: SQL Parser Extensions (Foundational for User Stories 4-8)
+
+**Purpose**: Add SQL command parsing for user management (CREATE USER, ALTER USER, DROP USER)
+
+**⚠️ BLOCKING**: Required before User Stories 4-8 implementation
+
+**⚠️ ARCHITECTURAL COMPLIANCE**: MUST follow existing parser patterns from `backend/crates/kalamdb-sql/src/parser/extensions.rs`
+
+### SQL Parser Implementation (Following ExtensionStatement Pattern)
+
+- [ ] T084A [P] Add CreateUserStatement struct in backend/crates/kalamdb-sql/src/ddl/user_commands.rs (follow CreateStorageStatement pattern with parse() method)
+- [ ] T084B [P] Add AlterUserStatement struct in backend/crates/kalamdb-sql/src/ddl/user_commands.rs (follow AlterStorageStatement pattern)
+- [ ] T084C [P] Add DropUserStatement struct in backend/crates/kalamdb-sql/src/ddl/user_commands.rs (follow DropStorageStatement pattern)
+- [ ] T084D Add CreateUser, AlterUser, DropUser variants to ExtensionStatement enum in backend/crates/kalamdb-sql/src/parser/extensions.rs (same pattern as CreateStorage, FlushTable)
+- [ ] T084E Update ExtensionStatement::parse() to handle CREATE USER, ALTER USER, DROP USER in backend/crates/kalamdb-sql/src/parser/extensions.rs (follow if-statement pattern)
+- [ ] T084F Export user_commands module from backend/crates/kalamdb-sql/src/ddl/mod.rs
+
+### SQL Executor Implementation (Following Existing Executor Pattern)
+
+- [ ] T084G Create user_executor.rs in backend/crates/kalamdb-core/src/sql/ (follow table_executor.rs pattern)
+- [ ] T084H [P] Implement execute_create_user() in backend/crates/kalamdb-core/src/sql/user_executor.rs (call kalamdb-store create_user, return ExecutionResult)
+- [ ] T084I [P] Implement execute_alter_user() in backend/crates/kalamdb-core/src/sql/user_executor.rs (call kalamdb-store update_user)
+- [ ] T084J [P] Implement execute_drop_user() in backend/crates/kalamdb-core/src/sql/user_executor.rs (soft delete via kalamdb-store)
+- [ ] T084K Add authorization checks to user management executors (only dba/system can execute, follow pattern from CREATE TABLE authorization)
+
+### Unit Tests for SQL Parser (Following Existing Test Patterns)
+
+- [ ] T084L [P] Unit test for parse CREATE USER WITH PASSWORD in backend/crates/kalamdb-sql/tests/parser/user_commands_tests.rs
+- [ ] T084M [P] Unit test for parse CREATE USER WITH OAUTH in backend/crates/kalamdb-sql/tests/parser/user_commands_tests.rs
+- [ ] T084N [P] Unit test for parse CREATE USER WITH INTERNAL in backend/crates/kalamdb-sql/tests/parser/user_commands_tests.rs
+- [ ] T084O [P] Unit test for parse ALTER USER SET PASSWORD in backend/crates/kalamdb-sql/tests/parser/user_commands_tests.rs
+- [ ] T084P [P] Unit test for parse ALTER USER SET ROLE in backend/crates/kalamdb-sql/tests/parser/user_commands_tests.rs
+- [ ] T084Q [P] Unit test for parse DROP USER in backend/crates/kalamdb-sql/tests/parser/user_commands_tests.rs
+
+**Checkpoint**: SQL parser ready - user management commands follow same architecture as storage/flush commands
+
+---
+
 ## Phase 6: User Story 4 - Shared Table Access Control (Priority: P2)
 
 **Goal**: Enable controlled data sharing via shared tables with configurable access levels (public, private, restricted)
@@ -244,9 +304,11 @@
 
 **Independent Test**: Run database initialization, verify system user created, confirm CLI can authenticate and execute commands
 
+**⚠️ ARCHITECTURAL COMPLIANCE**: Authentication logic MUST be in `kalamdb-link` crate for sharing across CLI, WASM, and other clients
+
 ### Tests for User Story 6
 
-- [ ] T109 [P] [US6] Integration test for database initialization creating system user in cli/tests/test_cli_auth.rs (test_init_creates_system_user)
+- [ ] T109 [P] [US6] Integration test for database initialization creating system user in backend/tests/test_cli_auth.rs (test_init_creates_system_user)
 - [ ] T110 [P] [US6] Integration test for CLI automatic authentication in cli/tests/test_cli_auth.rs (test_cli_auto_auth)
 - [ ] T111 [P] [US6] Integration test for CLI credential storage in cli/tests/test_cli_auth.rs (test_cli_credentials_stored_securely)
 - [ ] T112 [P] [US6] Integration test for multiple database instances in cli/tests/test_cli_auth.rs (test_cli_multiple_instances)
@@ -254,15 +316,30 @@
 
 ### Implementation for User Story 6
 
-- [ ] T114 [US6] Add system user creation to database initialization in backend/src/lifecycle.rs (create default system user on first startup)
-- [ ] T115 [US6] Implement credentials.toml storage in cli/src/config.rs (store at ~/.config/kalamdb/credentials.toml with 0600 permissions)
-- [ ] T116 [US6] Implement automatic authentication in CLI session in cli/src/session.rs (read credentials, authenticate on connect)
-- [ ] T117 [US6] Add CLI commands to view system user credentials in cli/src/commands/credentials.rs (show-credentials command)
-- [ ] T118 [US6] Add CLI commands to update system user credentials in cli/src/commands/credentials.rs (update-credentials command)
-- [ ] T119 [US6] Implement per-instance credential management in cli/src/config.rs (support multiple database configurations)
-- [ ] T120 [US6] Add authentication error handling in CLI with clear messages in cli/src/error.rs (handle 401, 403 responses)
+#### Shared Authentication Logic (kalamdb-link crate)
 
-**Checkpoint**: User Story 6 complete - CLI authentication working seamlessly
+- [ ] T114 [P] [US6] Update AuthProvider enum in link/src/auth.rs to support HTTP Basic Auth (add BasicAuth(username, password) variant)
+- [ ] T115 [P] [US6] Implement BasicAuth header formatting in link/src/auth.rs (base64 encode username:password, follow HTTP Basic Auth RFC 7617)
+- [ ] T116 [P] [US6] Add system_user_auth() helper in link/src/auth.rs (convenience method for system user credentials)
+- [ ] T117 [P] [US6] Update apply_to_request() in link/src/auth.rs to handle BasicAuth variant (set Authorization: Basic header)
+- [ ] T118 [P] [US6] Add credential storage abstraction in link/src/credentials.rs (trait CredentialStore with get_credentials(), set_credentials(), supports multiple storage backends)
+
+#### CLI-Specific Implementation (cli crate)
+
+- [ ] T119 [US6] Implement FileCredentialStore in cli/src/config.rs (store at ~/.config/kalamdb/credentials.toml with 0600 permissions, implements CredentialStore trait from link)
+- [ ] T120 [US6] Implement automatic authentication in CLI session in cli/src/session.rs (read credentials via FileCredentialStore, create BasicAuth provider, pass to KalamLinkClient)
+- [ ] T121 [US6] Add CLI commands to view system user credentials in cli/src/commands/credentials.rs (show-credentials command, uses FileCredentialStore)
+- [ ] T122 [US6] Add CLI commands to update system user credentials in cli/src/commands/credentials.rs (update-credentials command, uses FileCredentialStore)
+- [ ] T123 [US6] Implement per-instance credential management in cli/src/config.rs (support multiple database configurations in credentials.toml)
+- [ ] T124 [US6] Add authentication error handling in CLI with clear messages in cli/src/error.rs (handle 401, 403 responses, suggest credential check)
+
+#### Backend System User Initialization
+
+- [ ] T125 [US6] Add system user creation to database initialization in backend/src/lifecycle.rs (create default system user on first startup, username: "kalamdb_cli", auth_type: "internal", role: "system")
+- [ ] T126 [US6] Generate and store system user credentials during init in backend/src/lifecycle.rs (create random password for emergency remote access, store in secure location)
+- [ ] T127 [US6] Log system user credentials to stdout during first init in backend/src/lifecycle.rs (display username and credentials path, remind user to save securely)
+
+**Checkpoint**: User Story 6 complete - CLI authentication working seamlessly, reusable in WASM and other clients
 
 ---
 
@@ -364,9 +441,85 @@
 - [ ] T165 [P] Performance benchmarking for authentication endpoints (measure p50, p95, p99 latency)
 - [ ] T166 [P] Security audit of authentication code (password handling, timing attacks, error messages)
 - [ ] T167 Implement user record caching for performance (moka cache, 99%+ hit rate, saves 1-5ms RocksDB lookup)
-- [ ] T168 Implement JWT token claim caching (LRU cache, 95%+ hit rate, saves 1-2ms signature verification)
-- [ ] T169 [P] Add Bruno API test collection in docs/API-Kalam/ (CREATE USER, LOGIN, JWT AUTH, RBAC tests)
-- [ ] T170 Run quickstart.md validation (execute all examples, verify they work)
+- [ ] T168 Implement JWT token claim caching for performance (moka cache, 5-10x speedup, <1ms p95 latency)
+- [ ] T169 [P] Add request_id to all authentication error responses in backend/src/middleware.rs (for troubleshooting)
+- [ ] T170 Final end-to-end test in backend/tests/test_e2e_auth_flow.rs (create user → authenticate → execute query → soft delete → restore)
+
+---
+
+## Phase 13: Additional Features from User-Management.md
+
+**Purpose**: Complete features specified in User-Management.md but not in original spec
+
+### Scheduled Cleanup Job
+
+- [ ] T171 Create UserCleanupJob struct in backend/crates/kalamdb-core/src/jobs/user_cleanup.rs (follow RetentionPolicy pattern from retention.rs)
+- [ ] T172 Implement UserCleanupConfig with grace_period_days in backend/crates/kalamdb-core/src/jobs/user_cleanup.rs (follow RetentionConfig pattern)
+- [ ] T173 Implement enforce() method in UserCleanupJob (find expired users where deleted_at < now - grace_period, delete tables, delete users, follow RetentionPolicy::enforce() pattern)
+- [ ] T174 Export UserCleanupJob from backend/crates/kalamdb-core/src/jobs/mod.rs (add to pub use statements)
+- [ ] T175 Integrate cleanup job into scheduler in backend/src/lifecycle.rs (use TokioJobManager::start_job(), register in system.jobs table, follow flush job pattern)
+- [ ] T176 [P] Add cleanup job configuration in backend/config.toml (deletion_grace_period_days, cleanup_job_schedule cron expression)
+- [ ] T177 [P] Integration test for cleanup job in backend/tests/test_user_cleanup.rs (test_cleanup_deletes_expired_users, test_cleanup_cascade_deletes_tables, verify system.jobs entries)
+
+### Database Indexes
+
+- [ ] T178 Add idx_users_username index constant to ColumnFamilyNames in backend/crates/kalamdb-commons/src/constants.rs (follow existing index naming pattern)
+- [ ] T179 Implement create_username_index() in backend/crates/kalamdb-store/src/users.rs (secondary index column family, follow existing index patterns)
+- [ ] T180 [P] Create idx_users_role index for role filtering in backend/crates/kalamdb-store/src/users.rs (use db.put_cf() for index updates)
+- [ ] T181 [P] Create idx_users_deleted_at index for cleanup job efficiency in backend/crates/kalamdb-store/src/users.rs
+- [ ] T182 [P] Create idx_tables_access index in backend/crates/kalamdb-store/src/tables.rs (for shared table access level queries)
+
+### Comprehensive Audit Logging
+
+- [ ] T178 [P] Create system.audit_log table schema in backend/crates/kalamdb-store/src/audit_log.rs (audit_id, timestamp, user_id, action, target, details, ip_address)
+- [ ] T179 [P] Implement audit logging for CREATE USER in backend/crates/kalamdb-core/src/sql/user_executor.rs
+- [ ] T180 [P] Implement audit logging for ALTER USER in backend/crates/kalamdb-core/src/sql/user_executor.rs
+- [ ] T181 [P] Implement audit logging for DROP USER in backend/crates/kalamdb-core/src/sql/user_executor.rs
+- [ ] T182 [P] Implement audit logging for ALTER TABLE SET ACCESS in backend/crates/kalamdb-core/src/sql/table_executor.rs
+
+### Migration Scripts
+
+- [ ] T183 [P] Create schema migration script in backend/migrations/001_add_auth_columns.sql (ALTER TABLE system.users ADD COLUMN role, auth_type, auth_data, metadata, deleted_at)
+- [ ] T184 [P] Create data migration script in backend/migrations/002_migrate_existing_users.sql (SET auth_type='password', generate placeholder hashes)
+- [ ] T185 [P] Create index creation script in backend/migrations/003_create_auth_indexes.sql (CREATE INDEX idx_users_username, idx_users_role, idx_users_deleted_at, idx_tables_access)
+- [ ] T186 [P] Create migration runner in backend/src/migrations/runner.rs (execute migrations in order, track applied migrations)
+
+### Password Complexity Validation
+
+- [ ] T187 [P] Implement password complexity validation in backend/crates/kalamdb-auth/src/password.rs (uppercase, lowercase, digit, special char)
+- [ ] T188 [P] Add enforce_password_complexity configuration flag in backend/config.toml
+- [ ] T189 [P] Integration test for password complexity in backend/tests/test_password_complexity.rs (test_complexity_uppercase_required, test_complexity_lowercase_required, test_complexity_digit_required, test_complexity_special_char_required)
+
+### Integration Tests for SQL Commands (from User-Management.md)
+
+- [ ] T190 [P] Integration test for CREATE USER WITH PASSWORD in backend/tests/test_user_sql.rs
+- [ ] T191 [P] Integration test for CREATE USER WITH OAUTH in backend/tests/test_user_sql.rs
+- [ ] T192 [P] Integration test for CREATE USER WITH INTERNAL in backend/tests/test_user_sql.rs
+- [ ] T193 [P] Integration test for CREATE USER duplicate error in backend/tests/test_user_sql.rs
+- [ ] T194 [P] Integration test for ALTER USER SET PASSWORD in backend/tests/test_user_sql.rs
+- [ ] T195 [P] Integration test for ALTER USER SET ROLE in backend/tests/test_user_sql.rs
+- [ ] T196 [P] Integration test for ALTER USER SET EMAIL in backend/tests/test_user_sql.rs
+- [ ] T197 [P] Integration test for ALTER USER not found error in backend/tests/test_user_sql.rs
+- [ ] T198 [P] Integration test for DROP USER soft delete in backend/tests/test_user_sql.rs
+- [ ] T199 [P] Integration test for DROP USER IF EXISTS in backend/tests/test_user_sql.rs
+- [ ] T200 [P] Integration test for restore deleted user (UPDATE deleted_at = NULL) in backend/tests/test_user_sql.rs
+- [ ] T201 [P] Integration test for SELECT users excludes deleted in backend/tests/test_user_sql.rs
+- [ ] T202 [P] Integration test for SELECT deleted users explicit in backend/tests/test_user_sql.rs
+
+### System User Tests
+
+- [ ] T203 [P] Integration test for system user localhost access without password in backend/tests/test_system_user.rs
+- [ ] T204 [P] Integration test for system user remote access blocked by default in backend/tests/test_system_user.rs
+- [ ] T205 [P] Integration test for system user remote access with password in backend/tests/test_system_user.rs
+- [ ] T206 [P] Integration test for system user remote access without password rejected in backend/tests/test_system_user.rs
+
+### Last Seen Tracking
+
+- [ ] T207 [P] Implement last_seen column in system.users in backend/crates/kalamdb-store/src/users.rs
+- [ ] T208 [P] Implement daily last_seen update in backend/crates/kalamdb-auth/src/service.rs (async, non-blocking, once per day)
+- [ ] T209 [P] Integration test for last_seen tracking in backend/tests/test_last_seen.rs (test_last_seen_updated_once_per_day)
+
+**Checkpoint**: All features from User-Management.md fully implemented
 
 ---
 

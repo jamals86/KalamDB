@@ -15,6 +15,126 @@
 - Q: What rate limiting strategy should be used for authentication attempts? → A: Per-IP + Per-Username combined with dedicated logs/auth.log file for all authentication events
 - Q: What password complexity policy should be enforced beyond min/max length? → A: Length-focused with common password blocking (NIST SP 800-63B aligned)
 
+## Architectural Consistency Requirements
+
+**CRITICAL**: All implementation MUST follow existing KalamDB patterns and architecture:
+
+### 1. SQL Command Parsing (FR-ARCH-001)
+
+User management SQL commands (CREATE USER, ALTER USER, DROP USER) **MUST**:
+- Follow the same parser structure as existing DDL commands in `backend/crates/kalamdb-sql/src/parser/`
+- Use `ExtensionStatement` enum pattern (see `extensions.rs`) for KalamDB-specific SQL
+- Follow the `parse()` method pattern used in `CreateStorageStatement`, `FlushTableStatement`, etc.
+- Add to `parser/mod.rs` exports like other custom commands
+- Return `Result<Statement, String>` for error handling consistency
+
+**Example Pattern** (from existing `extensions.rs`):
+```rust
+// In parser/extensions.rs
+pub enum ExtensionStatement {
+    CreateStorage(CreateStorageStatement),
+    FlushTable(FlushTableStatement),
+    CreateUser(CreateUserStatement),  // NEW - follow same pattern
+    AlterUser(AlterUserStatement),    // NEW - follow same pattern
+    DropUser(DropUserStatement),      // NEW - follow same pattern
+}
+
+// Each statement has parse() method
+impl CreateUserStatement {
+    pub fn parse(sql: &str) -> Result<Self, String> {
+        // Follow same pattern as CreateStorageStatement
+    }
+}
+```
+
+### 2. Background Job Management (FR-ARCH-002)
+
+User cleanup jobs **MUST** follow existing job infrastructure in `backend/crates/kalamdb-core/src/jobs/`:
+- Use `JobManager` trait for job execution (see `job_manager.rs`)
+- Implement job using `JobExecutor` pattern (see `executor.rs`)
+- Follow `RetentionPolicy` pattern for cleanup logic (see `retention.rs`)
+- Register jobs in `system.jobs` table via `JobsTableProvider`
+- Use `TokioJobManager::start_job()` for async execution
+- Follow job lifecycle: created → running → completed/failed/cancelled
+
+**Example Pattern** (from existing `retention.rs`):
+```rust
+// User cleanup job should follow RetentionPolicy pattern
+pub struct UserCleanupJob {
+    users_provider: Arc<UsersTableProvider>,
+    config: UserCleanupConfig,
+}
+
+impl UserCleanupJob {
+    pub fn enforce(&self) -> Result<usize, KalamDbError> {
+        // Follow same pattern as RetentionPolicy::enforce()
+        // Delete users where deleted_at < (now - grace_period)
+    }
+}
+```
+
+### 3. Storage Layer Organization (FR-ARCH-003)
+
+`system.users` storage **MUST** follow existing patterns in `backend/crates/kalamdb-store/src/`:
+- Create dedicated module `users.rs` (similar to `user_table_store.rs`, `shared_table_store.rs`)
+- Use RocksDB column family pattern: `system_users` (follow `ColumnFamilyNames` constants)
+- Implement CRUD functions: `create_user()`, `get_user()`, `update_user()`, `delete_user()` (similar to table stores)
+- Use `ensure_cf()` pattern for lazy column family creation
+- Follow `create_column_family()` pattern from `user_table_store.rs`
+- Return `Result<T, anyhow::Error>` for error handling
+
+**Example Pattern** (from existing `user_table_store.rs`):
+```rust
+// In kalamdb-store/src/users.rs
+pub struct UsersStore {
+    db: Arc<DB>,
+}
+
+impl UsersStore {
+    fn ensure_cf(&self) -> Result<&ColumnFamily> {
+        // Follow pattern from user_table_store.rs
+        let cf_name = "system_users";
+        if self.db.cf_handle(cf_name).is_none() {
+            self.create_column_family()?;
+        }
+        // ... return handle
+    }
+
+    pub fn create_user(&self, user: User) -> Result<()> {
+        // Follow CRUD pattern from existing stores
+    }
+}
+```
+
+### 4. SQL Execution Flow (FR-ARCH-004)
+
+User management command execution **MUST**:
+- Add executor in `backend/crates/kalamdb-core/src/sql/` (similar to table executors)
+- Integrate with existing `ExecutionContext` pattern
+- Use authorization checks before execution (same pattern as CREATE TABLE, DROP TABLE)
+- Return execution results via `system.jobs` table for async operations
+- Follow error propagation pattern: `Result<ExecutionResult, KalamDbError>`
+
+### 5. Data Model Consistency (FR-ARCH-005)
+
+`system.users` table **MUST**:
+- Follow same schema patterns as `system.tables`, `system.storages`, `system.jobs`
+- Use consistent column naming: `created_at`, `updated_at`, `deleted_at` (timestamps in milliseconds)
+- Store JSON metadata in `metadata` column (same as `system.tables.metadata`)
+- Use enum serialization patterns from `kalamdb-commons` (lowercase strings)
+- Follow soft delete pattern: `deleted_at IS NULL` for active records
+
+### 6. Error Handling (FR-ARCH-006)
+
+Authentication/authorization errors **MUST**:
+- Use `KalamDbError` enum from `backend/crates/kalamdb-core/src/error.rs`
+- Add new error variants: `AuthenticationFailed`, `AuthorizationFailed`, `InvalidCredentials`
+- Follow error response pattern from existing API handlers
+- Return structured JSON errors with `error`, `message`, `request_id` fields
+- Use `anyhow::Context` for error context propagation
+
+**Validation**: All new code must be reviewed against existing patterns before PR submission.
+
 ## User Scenarios & Testing *(mandatory)*
 
 <!--
@@ -211,6 +331,155 @@ Service accounts and automated systems should be able to authenticate using OAut
 - **JWT Token Without 'sub' Claim**: What happens when a JWT token is valid but missing the required 'sub' (subject) claim? System must reject with clear error about missing user identity.
 
 - **Deleted User Authentication**: What happens when a soft-deleted user attempts to authenticate? System must deny access and treat as non-existent user.
+
+---
+
+## Integration Test Requirements
+
+### Required Integration Tests (60+ tests total)
+
+All integration tests must be written **BEFORE** implementation (TDD approach) and organized by feature area:
+
+#### 1. Authentication Tests (backend/tests/test_basic_auth.rs, test_jwt_auth.rs)
+
+**HTTP Basic Auth**:
+- test_basic_auth_success - Valid username/password authenticates successfully
+- test_basic_auth_invalid_credentials - Wrong password returns 401
+- test_basic_auth_missing_header - No Authorization header returns 401
+- test_basic_auth_malformed_header - Invalid header format returns 400
+- test_basic_auth_deleted_user - Soft-deleted user authentication denied
+
+**JWT Token Auth**:
+- test_jwt_auth_success - Valid JWT authenticates successfully
+- test_jwt_auth_expired_token - Expired token returns 401 TOKEN_EXPIRED
+- test_jwt_auth_invalid_signature - Invalid signature returns 401
+- test_jwt_auth_untrusted_issuer - Untrusted issuer returns 401
+- test_jwt_auth_missing_sub_claim - Token without 'sub' claim returns 401
+- test_jwt_auth_user_not_exists - JWT with unknown user_id (if verify_user_exists=true)
+
+#### 2. Authorization Tests (backend/tests/test_rbac.rs)
+
+**User Role Permissions**:
+- test_user_role_own_tables_access - User can SELECT/INSERT/UPDATE/DELETE own tables
+- test_user_role_cannot_access_others - User cannot access other users' tables
+- test_user_role_cannot_create_namespace - User role cannot create namespaces
+- test_user_role_cannot_manage_users - User role cannot create/update/delete users
+- test_user_role_public_shared_table_read - User can SELECT from public shared tables
+- test_user_role_private_shared_table_denied - User cannot access private shared tables
+
+**Service Role Permissions**:
+- test_service_role_cross_user_access - Service can access any user table
+- test_service_role_flush_operations - Service can execute FLUSH commands
+- test_service_role_read_system_tables - Service can read system.jobs, system.live_queries
+- test_service_role_cannot_manage_users - Service cannot create/update/delete users
+
+**DBA Role Permissions**:
+- test_dba_role_create_tables - DBA can CREATE/DROP tables
+- test_dba_role_manage_users - DBA can CREATE/ALTER/DROP users
+- test_dba_role_all_access - DBA has full access to all tables
+- test_dba_role_restore_deleted_users - DBA can restore soft-deleted users
+
+**System Role Permissions**:
+- test_system_role_all_access - System role has unrestricted access
+- test_system_role_localhost_no_password - System user from localhost needs no password
+- test_system_role_remote_access_blocked - System user remote access blocked by default
+- test_system_role_remote_with_password - System user remote access works with password
+
+#### 3. Shared Table Access Control Tests (backend/tests/test_shared_access.rs)
+
+- test_public_table_read_only_for_users - User role can only SELECT from public tables
+- test_private_table_service_dba_only - Only service/dba/system can access private tables
+- test_shared_table_defaults_to_private - Shared table without access level defaults to private
+- test_change_access_level_requires_privileges - Only dba/system can ALTER TABLE SET ACCESS
+- test_user_cannot_modify_public_table - User cannot INSERT/UPDATE/DELETE public tables
+
+#### 4. SQL User Management Tests (backend/tests/test_user_sql.rs)
+
+**CREATE USER**:
+- test_create_user_with_password - CREATE USER with password auth
+- test_create_user_with_oauth - CREATE USER with OAuth provider
+- test_create_user_with_internal - CREATE USER with internal auth (system user)
+- test_create_user_duplicate_error - Duplicate username returns error
+- test_create_user_weak_password - Weak password rejected (too short, common)
+- test_create_user_system_remote_requires_password - System user with allow_remote needs password
+
+**ALTER USER**:
+- test_alter_user_set_password - ALTER USER SET PASSWORD updates hash
+- test_alter_user_set_role - ALTER USER SET ROLE (dba only)
+- test_alter_user_set_email - ALTER USER SET EMAIL updates metadata
+- test_alter_user_not_found - ALTER non-existent user returns error
+- test_alter_user_self_password - User can change own password
+- test_alter_user_self_role_denied - User cannot change own role
+
+**DROP USER**:
+- test_drop_user_soft_delete - DROP USER sets deleted_at
+- test_drop_user_if_exists - DROP USER IF EXISTS handles non-existent
+- test_restore_deleted_user - UPDATE deleted_at = NULL restores user
+- test_select_users_excludes_deleted - Default SELECT hides deleted users
+- test_select_deleted_users_explicit - WHERE deleted_at IS NOT NULL shows deleted
+
+#### 5. Password Security Tests (backend/tests/test_password_security.rs)
+
+- test_password_never_plaintext - Password stored as bcrypt hash, never plaintext
+- test_concurrent_bcrypt_non_blocking - Concurrent authentication doesn't block
+- test_weak_password_rejected - Password < 8 chars rejected
+- test_common_password_rejected - Top 10,000 common passwords blocked
+- test_max_password_length - Password > 1024 chars rejected
+- test_password_complexity_enforced - Uppercase/lowercase/digit/special char required (if configured)
+
+#### 6. OAuth Integration Tests (backend/tests/test_oauth.rs)
+
+- test_oauth_google_success - OAuth user authenticates with Google token
+- test_oauth_user_password_rejected - OAuth user cannot use password auth
+- test_oauth_subject_matching - OAuth token subject matches auth_data
+- test_oauth_auto_provision_disabled - Auto-provisioning disabled by default
+
+#### 7. System User Tests (backend/tests/test_system_user.rs)
+
+- test_system_user_localhost_no_password - Localhost access without password
+- test_system_user_remote_blocked_default - Remote access blocked by default
+- test_system_user_remote_with_password - Remote access enabled with password
+- test_system_user_remote_without_password_rejected - Remote without password rejected
+
+#### 8. Cleanup Job Tests (backend/tests/test_user_cleanup.rs)
+
+- test_cleanup_deletes_expired_users - Cleanup job deletes users after grace period
+- test_cleanup_cascade_deletes_tables - User deletion cascades to user tables
+- test_cleanup_job_logging - Cleanup job logs to system.jobs
+
+#### 9. Edge Case Tests (backend/tests/test_edge_cases.rs)
+
+- test_empty_credentials_401 - Empty Authorization header returns 401
+- test_concurrent_auth_no_race_conditions - Concurrent auth requests handle correctly
+- test_role_change_during_session - Role change applies to next request
+- test_jwt_token_claim_caching - JWT claims cached for performance
+
+#### 10. End-to-End Flow Test (backend/tests/test_e2e_auth_flow.rs)
+
+- test_complete_user_lifecycle - Create user → authenticate → query → soft delete → restore
+
+### Test Organization
+
+```
+backend/tests/
+├── test_basic_auth.rs          # 5 tests - HTTP Basic Auth
+├── test_jwt_auth.rs            # 6 tests - JWT authentication
+├── test_rbac.rs                # 14 tests - Role-based access control
+├── test_shared_access.rs       # 5 tests - Shared table access levels
+├── test_user_sql.rs            # 16 tests - SQL user management commands
+├── test_password_security.rs   # 6 tests - Password hashing & validation
+├── test_oauth.rs               # 4 tests - OAuth integration
+├── test_system_user.rs         # 4 tests - System user security
+├── test_user_cleanup.rs        # 3 tests - Scheduled cleanup job
+├── test_edge_cases.rs          # 4 tests - Edge cases
+├── test_e2e_auth_flow.rs       # 1 test - End-to-end lifecycle
+└── common/
+    └── auth_helper.rs          # Test utilities (create_test_user, authenticate_basic, etc.)
+```
+
+**Total**: 68 integration tests + 16 unit tests = **84 comprehensive tests**
+
+---
 
 - **Role Change During Active Session**: What happens when a DBA changes a user's role while they have an active session? Behavior depends on session implementation - may require re-authentication.
 

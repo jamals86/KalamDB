@@ -19,8 +19,14 @@ Future:
 20) For flushing tests first create a storage and direct all the storage into a temporary directory so we can remove it after each flush test to not leave with un-needed temporary data
 21) support deleting rows while they are in the parquet files and have been flushed, also the update should be supported on flushed rows
 22) For storing inside rocksdb as bytearray we should use protobuf instead of json
+23) Add https://docs.rs/object_store/latest/object_store/ to support any object storage out there easily
+24) Check if we cna replace rocksdb with this one: https://github.com/foyer-rs/foyer, it already support objectstore so we can also store the non-flushed tables into s3 directly, and not forcing flushing when server goes down, even whenever we use the filesystem we can rely on the same logic inside foyer as well
+
+
 
 
 Key Findings
 Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB column families yet, resulting in 0 rows flushed
 Parquet Querying Limitation: After flush, data is removed from RocksDB but queries don't yet retrieve from Parquet files - this is a known gap
+
+
