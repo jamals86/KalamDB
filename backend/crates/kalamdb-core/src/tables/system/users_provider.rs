@@ -26,7 +26,7 @@ use std::sync::Arc;
 /// User data structure stored in RocksDB
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserRecord {
-    pub user_id: String,
+    pub user_id: String,  //TODO: Use UserId type?
     pub username: String,
     pub email: Option<String>,
     pub created_at: i64, // timestamp in milliseconds
@@ -36,7 +36,7 @@ pub struct UserRecord {
 /// Request structure for creating a new user (legacy, not currently used)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateUserRequest {
-    pub user_id: String,
+    pub user_id: String, //TODO: Use UserId type?
     pub username: String,
     pub email: Option<String>,
     pub created_at: i64,
@@ -80,8 +80,8 @@ impl UsersTableProvider {
             .map_err(|e| KalamDbError::Other(format!("Failed to insert user: {}", e)))
     }
 
-    /// Update an existing user
-    pub fn update_user(&self, user: UserRecord) -> Result<(), KalamDbError> {
+    /// Update an existing user (legacy method using UserRecord)
+    pub fn update_user_legacy(&self, user: UserRecord) -> Result<(), KalamDbError> {
         // Check if user exists
         let existing = self
             .kalam_sql
@@ -120,7 +120,68 @@ impl UsersTableProvider {
     }
 
     /// Delete a user (not implemented in kalamdb-sql yet)
-    pub fn delete_user(&self, _user_id: &str) -> Result<(), KalamDbError> {
+    pub fn delete_user(&self, user_id: &UserId) -> Result<(), KalamDbError> {
+        // TODO: Implement soft delete in kalamdb-sql adapter
+        // For now, we can mark as deleted by updating the user
+        let username = user_id.to_string();
+        let user = self
+            .kalam_sql
+            .get_user(&username)
+            .map_err(|e| KalamDbError::Other(format!("Failed to get user: {}", e)))?;
+
+        if let Some(mut user) = user {
+            user.deleted_at = Some(chrono::Utc::now().timestamp_millis());
+            self.kalam_sql
+                .insert_user(&user)
+                .map_err(|e| KalamDbError::Other(format!("Failed to delete user: {}", e)))?;
+            Ok(())
+        } else {
+            Err(KalamDbError::NotFound(format!(
+                "User not found: {}",
+                username
+            )))
+        }
+    }
+
+    /// Create a new user (full User model)
+    pub fn create_user(&self, user: kalamdb_commons::system::User) -> Result<(), KalamDbError> {
+        self.kalam_sql
+            .insert_user(&user)
+            .map_err(|e| KalamDbError::Other(format!("Failed to create user: {}", e)))
+    }
+
+    /// Update a user (full User model)
+    pub fn update_user(&self, user: kalamdb_commons::system::User) -> Result<(), KalamDbError> {
+        // Check if user exists
+        let existing = self
+            .kalam_sql
+            .get_user(&user.username)
+            .map_err(|e| KalamDbError::Other(format!("Failed to get user: {}", e)))?;
+
+        if existing.is_none() {
+            return Err(KalamDbError::NotFound(format!(
+                "User not found: {}",
+                user.username
+            )));
+        }
+
+        // Update user
+        self.kalam_sql
+            .insert_user(&user)
+            .map_err(|e| KalamDbError::Other(format!("Failed to update user: {}", e)))
+    }
+
+    /// Get a user by ID
+    pub fn get_user_by_id(&self, user_id: &UserId) -> Result<kalamdb_commons::system::User, KalamDbError> {
+        let username = user_id.to_string();
+        self.kalam_sql
+            .get_user(&username)
+            .map_err(|e| KalamDbError::Other(format!("Failed to get user: {}", e)))?
+            .ok_or_else(|| KalamDbError::NotFound(format!("User not found: {}", username)))
+    }
+
+    /// Delete a user (legacy method using string ID)
+    pub fn delete_user_legacy(&self, _user_id: &str) -> Result<(), KalamDbError> {
         // TODO: Implement delete in kalamdb-sql adapter
         Err(KalamDbError::Other(
             "Delete user not yet implemented in kalamdb-sql".to_string(),

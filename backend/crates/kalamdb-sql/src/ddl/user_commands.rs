@@ -5,6 +5,8 @@
 //! - ALTER USER: Modify user properties (password, role, email)
 //! - DROP USER: Soft delete a user account
 
+use kalamdb_commons::Role;
+use kalamdb_commons::AuthType;
 use serde::{Deserialize, Serialize};
 
 /// CREATE USER command
@@ -38,27 +40,16 @@ pub struct CreateUserStatement {
     pub username: String,
 
     /// Authentication type
-    pub auth_type: UserAuthType,
+    pub auth_type: AuthType,
 
     /// User role (dba, admin, developer, analyst, viewer)
-    pub role: String,
+    pub role: Role,
 
     /// Optional email address
     pub email: Option<String>,
 
     /// Password (only for Password auth type)
     pub password: Option<String>,
-}
-
-/// Authentication type for user creation
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum UserAuthType {
-    /// Password-based authentication
-    Password,
-    /// OAuth/external authentication
-    OAuth,
-    /// Internal/system authentication
-    Internal,
 }
 
 impl CreateUserStatement {
@@ -80,11 +71,11 @@ impl CreateUserStatement {
 
         // Determine auth type
         let auth_type = if normalized.to_uppercase().contains("WITH PASSWORD") {
-            UserAuthType::Password
+            AuthType::Password
         } else if normalized.to_uppercase().contains("WITH OAUTH") {
-            UserAuthType::OAuth
+            AuthType::OAuth
         } else if normalized.to_uppercase().contains("WITH INTERNAL") {
-            UserAuthType::Internal
+            AuthType::Internal
         } else {
             return Err(
                 "Must specify authentication type: WITH PASSWORD, WITH OAUTH, or WITH INTERNAL"
@@ -93,27 +84,25 @@ impl CreateUserStatement {
         };
 
         // Extract password if auth type is Password
-        let password = if auth_type == UserAuthType::Password {
+        let password = if auth_type == AuthType::Password {
             Some(extract_quoted_keyword_value(&normalized, "PASSWORD")?)
         } else {
             None
         };
 
         // Extract role (required)
-        let role = extract_keyword_value(&normalized, "ROLE")
+        let role_str = extract_keyword_value(&normalized, "ROLE")
             .or_else(|_| extract_quoted_keyword_value(&normalized, "ROLE"))?;
 
-        // Validate role
-        let role_lower = role.to_lowercase();
-        if !matches!(
-            role_lower.as_str(),
-            "dba" | "admin" | "developer" | "analyst" | "viewer" | "system"
-        ) {
-            return Err(format!(
-                "Invalid role '{}'. Must be one of: dba, admin, developer, analyst, viewer, system",
-                role
-            ));
-        }
+        // Map SQL role names to Role enum
+
+        let role =  Role::from_str(&role_str)
+            .map_err(|_| {
+                format!(
+                    "Invalid role '{}'. Must be one of: dba, user, service, system",
+                    role_str
+                )
+            })?;
 
         // Extract email (optional)
         let email = extract_quoted_keyword_value(&normalized, "EMAIL").ok();
@@ -121,7 +110,7 @@ impl CreateUserStatement {
         Ok(CreateUserStatement {
             username,
             auth_type,
-            role: role_lower,
+            role,
             email,
             password,
         })
@@ -158,7 +147,7 @@ pub enum UserModification {
     /// Set new password
     SetPassword(String),
     /// Set new role
-    SetRole(String),
+    SetRole(Role),
     /// Set new email
     SetEmail(String),
 }
@@ -184,7 +173,7 @@ impl AlterUserStatement {
             UserModification::SetPassword(password)
         } else if sql_upper.contains("SET ROLE") {
             // Try unquoted first (ROLE admin), then quoted (ROLE 'admin')
-            let role = extract_quoted_keyword_value(&normalized, "ROLE")
+            let role_str = extract_quoted_keyword_value(&normalized, "ROLE")
                 .or_else(|_| -> Result<String, String> {
                     // Extract unquoted role value manually
                     let set_role_idx = sql_upper.find("SET ROLE").ok_or("ROLE not found")?;
@@ -197,18 +186,20 @@ impl AlterUserStatement {
                     Ok(role_value.to_string())
                 })?;
 
-            // Validate role
-            let role_lower = role.to_lowercase();
-            if !matches!(
-                role_lower.as_str(),
-                "dba" | "admin" | "developer" | "analyst" | "viewer" | "system"
-            ) {
-                return Err(format!(
-                    "Invalid role '{}'. Must be one of: dba, admin, developer, analyst, viewer, system",
-                    role
-                ));
-            }
-            UserModification::SetRole(role_lower)
+            // Map SQL role names to Role enum
+            let role = match role_str.to_lowercase().as_str() {
+                "dba" | "admin" => Role::Dba,
+                "developer" | "analyst" | "service" => Role::Service,
+                "viewer" | "readonly" | "user" => Role::User,
+                "system" => Role::System,
+                _ => {
+                    return Err(format!(
+                        "Invalid role '{}'. Must be one of: dba, admin, developer, analyst, viewer, user, service, system",
+                        role_str
+                    ))
+                }
+            };
+            UserModification::SetRole(role)
         } else if sql_upper.contains("SET EMAIL") {
             let email = extract_quoted_keyword_value(&normalized, "EMAIL")?;
             UserModification::SetEmail(email)
@@ -272,9 +263,9 @@ mod tests {
         assert!(result.is_ok());
         let stmt = result.unwrap();
         assert_eq!(stmt.username, "alice");
-        assert_eq!(stmt.auth_type, UserAuthType::Password);
+        assert_eq!(stmt.auth_type, AuthType::Password);
         assert_eq!(stmt.password, Some("secure123".to_string()));
-        assert_eq!(stmt.role, "developer");
+        assert_eq!(stmt.role, Role::Service); // developer maps to Service
         assert_eq!(stmt.email, Some("alice@example.com".to_string()));
     }
 
@@ -285,9 +276,9 @@ mod tests {
         assert!(result.is_ok());
         let stmt = result.unwrap();
         assert_eq!(stmt.username, "oauth_user");
-        assert_eq!(stmt.auth_type, UserAuthType::OAuth);
+        assert_eq!(stmt.auth_type, AuthType::OAuth);
         assert_eq!(stmt.password, None);
-        assert_eq!(stmt.role, "viewer");
+        assert_eq!(stmt.role, Role::User); // viewer maps to User
     }
 
     #[test]
@@ -297,8 +288,8 @@ mod tests {
         assert!(result.is_ok());
         let stmt = result.unwrap();
         assert_eq!(stmt.username, "service_account");
-        assert_eq!(stmt.auth_type, UserAuthType::Internal);
-        assert_eq!(stmt.role, "system");
+        assert_eq!(stmt.auth_type, AuthType::Internal);
+        assert_eq!(stmt.role, Role::System);
     }
 
     #[test]

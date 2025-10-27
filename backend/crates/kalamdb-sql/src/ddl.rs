@@ -50,5 +50,5 @@ pub use storage_commands::{
 };
 pub use subscribe_commands::{SubscribeOptions, SubscribeStatement};
 pub use user_commands::{
-    AlterUserStatement, CreateUserStatement, DropUserStatement, UserAuthType, UserModification,
+    AlterUserStatement, CreateUserStatement, DropUserStatement, UserModification,
 };

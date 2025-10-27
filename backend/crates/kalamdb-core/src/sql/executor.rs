@@ -47,7 +47,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::prelude::SessionContext;
-use kalamdb_commons::{JobStatus, JobType};
+use kalamdb_commons::{JobStatus, JobType, Role};
 use kalamdb_commons::system::Namespace;
 use datafusion::sql::sqlparser;
 use kalamdb_commons::models::{NamespaceId as CommonNamespaceId, StorageId};
@@ -97,6 +97,7 @@ pub struct SqlExecutor {
     session_factory: DataFusionSessionFactory,
     // System tables
     jobs_table_provider: Option<Arc<crate::tables::system::JobsTableProvider>>,
+    users_table_provider: Option<Arc<SystemUsersTableProvider>>,
     // Storage registry for template validation
     storage_registry: Option<Arc<crate::storage::StorageRegistry>>,
     // Job manager for flush operations
@@ -146,6 +147,7 @@ impl SqlExecutor {
             kalam_sql: None,
             session_factory,
             jobs_table_provider: None,
+            users_table_provider: None,
             storage_registry: None,
             job_manager: None,
             live_query_manager: None,
@@ -191,6 +193,9 @@ impl SqlExecutor {
         self.shared_table_store = Some(shared_table_store);
         self.stream_table_store = Some(stream_table_store);
         self.jobs_table_provider = Some(Arc::new(crate::tables::system::JobsTableProvider::new(
+            kalam_sql.clone(),
+        )));
+        self.users_table_provider = Some(Arc::new(SystemUsersTableProvider::new(
             kalam_sql.clone(),
         )));
         self.kalam_sql = Some(kalam_sql);
@@ -2004,6 +2009,199 @@ impl SqlExecutor {
         };
 
         Ok(ExecutionResult::Success(message))
+    }
+
+    /// Execute CREATE USER
+    async fn execute_create_user(
+        &self,
+        sql: &str,
+        user_id: Option<&UserId>,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        // Parse the CREATE USER statement
+        let stmt = CreateUserStatement::parse(sql)
+            .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+
+        // Authorization check: Only DBA and System roles can create users
+        if let Some(uid) = user_id {
+            let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
+                KalamDbError::InvalidOperation("User management not configured".to_string())
+            })?;
+
+            let requesting_user = users_provider.get_user_by_id(uid)?;
+            if !matches!(
+                requesting_user.role,
+                kalamdb_commons::Role::Dba | kalamdb_commons::Role::System
+            ) {
+                return Err(KalamDbError::PermissionDenied(
+                    "Only DBA or System users can create users".to_string(),
+                ));
+            }
+        }
+
+        // Hash password if provided (for Password auth type)
+        let password_hash = if stmt.auth_type == kalamdb_commons::AuthType::Password {
+            if let Some(password) = &stmt.password {
+                // Use bcrypt with cost factor 12 (good balance of security and performance)
+                bcrypt::hash(password, 12).map_err(|e| {
+                    KalamDbError::Other(format!("Failed to hash password: {}", e))
+                })?
+            } else {
+                return Err(KalamDbError::InvalidSql(
+                    "Password required for PASSWORD auth type".to_string(),
+                ));
+            }
+        } else {
+            String::new() // Empty for OAuth/Internal auth
+        };
+
+        // Prepare auth_data for OAuth
+        let auth_data = if stmt.auth_type == kalamdb_commons::AuthType::OAuth {
+            stmt.email
+                .as_ref()
+                .map(|email| serde_json::json!({"email": email}).to_string())
+        } else {
+            None
+        };
+
+        // Create user entity
+        let now = chrono::Utc::now().timestamp_millis();
+        let user = kalamdb_commons::system::User {
+            id: UserId::new(&stmt.username),
+            username: stmt.username.clone(),
+            password_hash,
+            role: stmt.role,
+            email: stmt.email.clone(),
+            auth_type: stmt.auth_type,
+            auth_data,
+            storage_mode: kalamdb_commons::StorageMode::Table, // Default
+            storage_id: None,
+            created_at: now,
+            updated_at: now,
+            last_seen: None,
+            deleted_at: None,
+        };
+
+        // Save user via users table provider
+        let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
+            KalamDbError::InvalidOperation("User management not configured".to_string())
+        })?;
+
+        users_provider.create_user(user)?;
+
+        Ok(ExecutionResult::Success(format!(
+            "User '{}' created successfully with role '{}'",
+            stmt.username,
+            stmt.role.as_str()
+        )))
+    }
+
+    /// Execute ALTER USER
+    async fn execute_alter_user(
+        &self,
+        sql: &str,
+        user_id: Option<&UserId>,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        // Parse the ALTER USER statement
+        let stmt = AlterUserStatement::parse(sql)
+            .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+
+        // Authorization check: Only DBA and System roles can alter users
+        if let Some(uid) = user_id {
+            let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
+                KalamDbError::InvalidOperation("User management not configured".to_string())
+            })?;
+
+            let requesting_user = users_provider.get_user_by_id(uid)?;
+            if !matches!(
+                requesting_user.role,
+                kalamdb_commons::Role::Dba | kalamdb_commons::Role::System
+            ) {
+                return Err(KalamDbError::PermissionDenied(
+                    "Only DBA or System users can alter users".to_string(),
+                ));
+            }
+        }
+
+        // Get users provider
+        let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
+            KalamDbError::InvalidOperation("User management not configured".to_string())
+        })?;
+
+        // Get existing user
+        let target_user_id = UserId::new(&stmt.username);
+        let mut user = users_provider.get_user_by_id(&target_user_id)?;
+
+        // Apply modifications
+        use kalamdb_sql::ddl::UserModification;
+        match stmt.modification {
+            UserModification::SetPassword(new_password) => {
+                // Hash the new password
+                let password_hash = bcrypt::hash(&new_password, 12).map_err(|e| {
+                    KalamDbError::Other(format!("Failed to hash password: {}", e))
+                })?;
+                user.password_hash = password_hash;
+                user.auth_type = kalamdb_commons::AuthType::Password;
+            }
+            UserModification::SetRole(new_role) => {
+                // new_role is already a Role enum from the parser
+                user.role = new_role;
+            }
+            UserModification::SetEmail(new_email) => {
+                user.email = Some(new_email);
+            }
+        }
+
+        user.updated_at = chrono::Utc::now().timestamp_millis();
+
+        // Update user
+        users_provider.update_user(user)?;
+
+        Ok(ExecutionResult::Success(format!(
+            "User '{}' updated successfully",
+            stmt.username
+        )))
+    }
+
+    /// Execute DROP USER
+    async fn execute_drop_user(
+        &self,
+        sql: &str,
+        user_id: Option<&UserId>,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        // Parse the DROP USER statement
+        let stmt = DropUserStatement::parse(sql)
+            .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+
+        // Authorization check: Only DBA and System roles can drop users
+        if let Some(uid) = user_id {
+            let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
+                KalamDbError::InvalidOperation("User management not configured".to_string())
+            })?;
+
+            let requesting_user = users_provider.get_user_by_id(uid)?;
+            if !matches!(
+                requesting_user.role,
+                kalamdb_commons::Role::Dba | kalamdb_commons::Role::System
+            ) {
+                return Err(KalamDbError::PermissionDenied(
+                    "Only DBA or System users can drop users".to_string(),
+                ));
+            }
+        }
+
+        // Get users provider
+        let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
+            KalamDbError::InvalidOperation("User management not configured".to_string())
+        })?;
+
+        // Soft delete the user
+        let target_user_id = UserId::new(&stmt.username);
+        users_provider.delete_user(&target_user_id)?;
+
+        Ok(ExecutionResult::Success(format!(
+            "User '{}' dropped successfully",
+            stmt.username
+        )))
     }
 
     /// Execute KILL JOB command
