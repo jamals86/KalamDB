@@ -18,6 +18,7 @@ Future:
 19) investigate the timestamp datatype how its being stored in rocksdb does it a string representation or binary representation? and how about the precision? is it milliseconds or nanoseconds?
 20) For flushing tests first create a storage and direct all the storage into a temporary directory so we can remove it after each flush test to not leave with un-needed temporary data
 21) support deleting rows while they are in the parquet files and have been flushed, also the update should be supported on flushed rows
+22) For storing inside rocksdb as bytearray we should use protobuf instead of json
 
 
 Key Findings
