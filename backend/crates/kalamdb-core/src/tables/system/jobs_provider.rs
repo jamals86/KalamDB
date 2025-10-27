@@ -48,49 +48,8 @@ impl JobsTableProvider {
 
     /// Insert a new job record
     pub fn insert_job(&self, job: Job) -> Result<(), KalamDbError> {
-        let Job {
-            job_id,
-            job_type,
-            namespace_id: _,
-            table_name,
-            status,
-            parameters,
-            result,
-            trace,
-            memory_used,
-            cpu_used,
-            created_at,
-            started_at,
-            completed_at,
-            node_id,
-            error_message,
-        } = job;
-
-        let parameters_vec = parameters
-            .as_ref()
-            .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
-            .unwrap_or_default();
-
-        // Convert to kalamdb_sql model (with string fields)
-        let sql_job = kalamdb_sql::Job {
-            job_id,
-            job_type: job_type.as_str().to_string(),
-            status: status.as_str().to_string(),
-            table_name: table_name.map(|tn| tn.into_string()),
-            parameters: parameters_vec,
-            result,
-            trace,
-            memory_used,
-            cpu_used,
-            created_at,
-            start_time: started_at.unwrap_or(created_at),
-            end_time: completed_at,
-            node_id,
-            error_message,
-        };
-
         self.kalam_sql
-            .insert_job(&sql_job)
+            .insert_job(&job)
             .map_err(|e| KalamDbError::Other(format!("Failed to insert job: {}", e)))
     }
 
@@ -109,32 +68,8 @@ impl JobsTableProvider {
             )));
         }
 
-        // Convert to kalamdb_sql model
-        let parameters_vec = job
-            .parameters
-            .as_ref()
-            .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
-            .unwrap_or_default();
-
-        let sql_job = kalamdb_sql::Job {
-            job_id: job.job_id,
-            job_type: job.job_type.as_str().to_string(),
-            status: job.status.as_str().to_string(),
-            table_name: job.table_name.map(|tn| tn.into_string()),
-            parameters: parameters_vec,
-            result: job.result,
-            trace: job.trace,
-            memory_used: job.memory_used,
-            cpu_used: job.cpu_used,
-            created_at: job.created_at,
-            start_time: job.started_at.unwrap_or(job.created_at),
-            end_time: job.completed_at,
-            node_id: job.node_id,
-            error_message: job.error_message,
-        };
-
         self.kalam_sql
-            .insert_job(&sql_job)
+            .insert_job(&job)
             .map_err(|e| KalamDbError::Other(format!("Failed to update job: {}", e)))
     }
 
