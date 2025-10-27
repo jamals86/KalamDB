@@ -36,57 +36,6 @@ impl JobsTableProvider {
         }
     }
 
-    fn convert_sql_job(job: kalamdb_sql::Job) -> Job {
-        use kalamdb_commons::{JobType, JobStatus, NamespaceId, TableName};
-        
-        let kalamdb_sql::Job {
-            job_id,
-            job_type,
-            status,
-            table_name,
-            parameters,
-            result,
-            trace,
-            memory_used,
-            cpu_used,
-            created_at,
-            start_time,
-            end_time,
-            node_id,
-            error_message,
-        } = job;
-
-        let parameters_json = if parameters.is_empty() {
-            None
-        } else {
-            Some(serde_json::to_string(&parameters).unwrap_or_else(|_| "[]".to_string()))
-        };
-
-        // Parse job_type string to enum (default to Flush if invalid)
-        let job_type_enum = JobType::from_str(&job_type).unwrap_or(JobType::Flush);
-        
-        // Parse status string to enum (default to Failed if invalid)
-        let status_enum = JobStatus::from_str(&status).unwrap_or(JobStatus::Failed);
-
-        Job {
-            job_id,
-            job_type: job_type_enum,
-            namespace_id: NamespaceId::new("default"), // TODO: Get from table_name or separate field
-            table_name: table_name.map(TableName::new),
-            status: status_enum,
-            parameters: parameters_json,
-            result,
-            trace,
-            memory_used,
-            cpu_used,
-            created_at: if created_at == 0 { start_time } else { created_at },
-            started_at: Some(start_time),
-            completed_at: end_time,
-            node_id,
-            error_message,
-        }
-    }
-
     /// List all jobs from the system.jobs table
     pub fn list_jobs(&self) -> Result<Vec<Job>, KalamDbError> {
         let jobs = self
@@ -94,10 +43,7 @@ impl JobsTableProvider {
             .scan_all_jobs()
             .map_err(|e| KalamDbError::Other(format!("Failed to scan jobs: {}", e)))?;
 
-        Ok(jobs
-            .into_iter()
-            .map(Self::convert_sql_job)
-            .collect::<Vec<_>>())
+        Ok(jobs)
     }
 
     /// Insert a new job record
@@ -201,16 +147,12 @@ impl JobsTableProvider {
 
     /// Get a job by ID
     pub fn get_job(&self, job_id: &str) -> Result<Option<Job>, KalamDbError> {
-        let sql_job = self
+        let job = self
             .kalam_sql
             .get_job(job_id)
             .map_err(|e| KalamDbError::Other(format!("Failed to get job: {}", e)))?;
 
-        match sql_job {
-            Some(j) => Ok(Some(Self::convert_sql_job(j))),
-            None => Ok(None),
-        }
-    }
+        Ok(job)
 
     /// Cancel a job by marking it as cancelled
     ///
@@ -297,64 +239,40 @@ impl JobsTableProvider {
         let mut error_messages = StringBuilder::new();
 
         for job in jobs {
-            let kalamdb_sql::Job {
-                job_id,
-                job_type,
-                status,
-                table_name,
-                parameters,
-                result,
-                trace,
-                memory_used: mem_used,
-                cpu_used: cpu,
-                created_at,
-                start_time,
-                end_time,
-                node_id,
-                error_message,
-            } = job;
-
-            job_ids.append_value(&job_id);
-            job_types.append_value(&job_type);
-            if let Some(name) = table_name {
-                if name.is_empty() {
-                    table_names.append_null();
-                } else {
-                    table_names.append_value(&name);
-                }
+            job_ids.append_value(&job.job_id);
+            job_types.append_value(job.job_type.as_str());
+            if let Some(name) = job.table_name {
+                table_names.append_value(name.as_str());
             } else {
                 table_names.append_null();
             }
-            statuses.append_value(&status);
+            statuses.append_value(job.status.as_str());
 
-            if parameters.is_empty() {
-                parameters_vec.append_null();
+            if let Some(params) = &job.parameters {
+                parameters_vec.append_value(params);
             } else {
-                parameters_vec.append_value(
-                    serde_json::to_string(&parameters).unwrap_or_else(|_| "[]".to_string()),
-                );
+                parameters_vec.append_null();
             }
 
-            if let Some(res) = result {
+            if let Some(res) = &job.result {
                 results.append_value(res);
             } else {
                 results.append_null();
             }
 
-            if let Some(trace) = trace {
-                traces.append_value(trace);
+            if let Some(tr) = &job.trace {
+                traces.append_value(tr);
             } else {
                 traces.append_null();
             }
 
-            memory_used.push(mem_used);
-            cpu_used.push(cpu);
-            let created = if created_at == 0 { start_time } else { created_at };
-            created_ats.push(Some(created));
-            started_ats.push(Some(start_time));
-            completed_ats.push(end_time);
-            node_ids.append_value(&node_id);
-            if let Some(err) = error_message {
+            memory_used.push(job.memory_used);
+            cpu_used.push(job.cpu_used);
+            created_ats.push(Some(job.created_at));
+            started_ats.push(job.started_at);
+            completed_ats.push(job.completed_at);
+            node_ids.append_value(&job.node_id);
+            if let Some(err) = &job.error_message {
                 error_messages.append_value(err);
             } else {
                 error_messages.append_null();

@@ -352,6 +352,22 @@ pub struct SystemTable {
     pub deleted_retention_hours: i32,
 }
 
+/// Storage configuration in system_storages table
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Storage {
+    pub storage_id: String, // PK
+    pub storage_name: String,
+    pub description: Option<String>,
+    pub storage_type: String, // "filesystem" or "s3"
+    pub base_directory: String,
+    #[serde(default)]
+    pub credentials: Option<String>,
+    pub shared_tables_template: String,
+    pub user_tables_template: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 /// Live query subscription entity for system.live_queries.
 ///
 /// Represents an active live query subscription (WebSocket connection).
@@ -507,6 +523,18 @@ pub struct UserTableCounter {
     pub row_count: u64,
     pub last_flushed_at: Option<i64>, // Unix timestamp in milliseconds
 }
+
+/// Table schema version in system_table_schemas table
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TableSchema {
+    pub schema_id: String, // PK
+    pub table_id: String,
+    pub version: i32,
+    pub arrow_schema: String, // Arrow schema as JSON
+    pub created_at: i64,
+    pub changes: String, // JSON array of schema changes
+}
+
 
 #[cfg(test)]
 mod tests {

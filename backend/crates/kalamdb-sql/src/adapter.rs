@@ -68,10 +68,12 @@ impl RocksDbAdapter {
         self.db.put_cf(&cf, key.as_bytes(), &value)?;
 
         // Feature 006: Create secondary index for API key lookup
-        let apikey_index_key = format!("apikey:{}", user.apikey);
-        let apikey_index_value = user.username.clone();
-        self.db
-            .put_cf(&cf, apikey_index_key.as_bytes(), apikey_index_value.as_bytes())?;
+        if let Some(api_key) = &user.api_key {
+            let apikey_index_key = format!("apikey:{}", api_key);
+            let apikey_index_value = user.username.clone();
+            self.db
+                .put_cf(&cf, apikey_index_key.as_bytes(), apikey_index_value.as_bytes())?;
+        }
 
         Ok(())
     }
@@ -90,8 +92,10 @@ impl RocksDbAdapter {
 
         // Feature 006: Get user first to delete apikey secondary index
         if let Some(user) = self.get_user(username)? {
-            let apikey_index_key = format!("apikey:{}", user.apikey);
-            self.db.delete_cf(&cf, apikey_index_key.as_bytes())?;
+            if let Some(api_key) = &user.api_key {
+                let apikey_index_key = format!("apikey:{}", api_key);
+                self.db.delete_cf(&cf, apikey_index_key.as_bytes())?;
+            }
         }
 
         let key = format!("user:{}", username);

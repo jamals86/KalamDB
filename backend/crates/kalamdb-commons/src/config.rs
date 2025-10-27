@@ -56,36 +56,36 @@ impl FlushPolicy {
     }
 }
 
-/// Storage location configuration.
-///
-/// Specifies where table data should be stored (filesystem, S3, etc.).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StorageLocation {
-    /// Storage path or URL (may contain {user_id} template)
-    path: String,
-}
+// /// Storage location configuration.
+// ///
+// /// Specifies where table data should be stored (filesystem, S3, etc.).
+// #[derive(Debug, Clone, PartialEq, Eq)]
+// pub struct StorageLocation {
+//     /// Storage path or URL (may contain {user_id} template)
+//     path: String,
+// }
 
-impl StorageLocation {
-    /// Creates a new storage location.
-    pub fn new(path: impl Into<String>) -> Self {
-        Self { path: path.into() }
-    }
+// impl StorageLocation {
+//     /// Creates a new storage location.
+//     pub fn new(path: impl Into<String>) -> Self {
+//         Self { path: path.into() }
+//     }
 
-    /// Returns the storage path.
-    pub fn path(&self) -> &str {
-        &self.path
-    }
+//     /// Returns the storage path.
+//     pub fn path(&self) -> &str {
+//         &self.path
+//     }
 
-    /// Returns true if the path contains a {user_id} template.
-    pub fn has_user_template(&self) -> bool {
-        self.path.contains("{user_id}")
-    }
+//     /// Returns true if the path contains a {user_id} template.
+//     pub fn has_user_template(&self) -> bool {
+//         self.path.contains("{user_id}")
+//     }
 
-    /// Resolves the template with a user_id.
-    pub fn resolve(&self, user_id: &str) -> String {
-        self.path.replace("{user_id}", user_id)
-    }
-}
+//     /// Resolves the template with a user_id.
+//     pub fn resolve(&self, user_id: &str) -> String {
+//         self.path.replace("{user_id}", user_id)
+//     }
+// }
 
 /// Retention policy for deleted rows.
 ///

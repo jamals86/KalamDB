@@ -131,11 +131,14 @@ impl KalamSql {
 
     /// Insert a new namespace
     pub fn insert_namespace(&self, namespace_id: &str, options: &str) -> Result<()> {
+        use kalamdb_commons::{NamespaceId, UserId};
+
         let namespace = Namespace {
-            namespace_id: namespace_id.to_string(),
+            namespace_id: NamespaceId::new(namespace_id),
             name: namespace_id.to_string(),
-            created_at: chrono::Utc::now().timestamp(),
-            options: options.to_string(),
+            owner_id: UserId::new("system"), // Default system owner for namespaces
+            created_at: chrono::Utc::now().timestamp_millis(),
+            options: Some(options.to_string()),
             table_count: 0,
         };
         self.adapter.insert_namespace(&namespace)

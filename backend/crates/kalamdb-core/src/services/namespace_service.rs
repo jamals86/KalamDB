@@ -74,11 +74,14 @@ impl NamespaceService {
         let options_json = serde_json::to_string(&namespace.options)
             .map_err(|e| KalamDbError::IoError(format!("Failed to serialize options: {}", e)))?;
 
-        let sql_namespace = SqlNamespace {
-            namespace_id: name.as_str().to_string(),
+        use kalamdb_commons::{system::Namespace as SystemNamespace, NamespaceId, UserId};
+
+        let sql_namespace = SystemNamespace {
+            namespace_id: NamespaceId::new(name.as_str()),
             name: name.as_str().to_string(),
-            created_at: namespace.created_at.timestamp(),
-            options: options_json,
+            owner_id: UserId::new("system"), // Default system owner for namespaces
+            created_at: namespace.created_at.timestamp_millis(),
+            options: Some(options_json),
             table_count: namespace.table_count as i32,
         };
 
