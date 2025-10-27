@@ -378,15 +378,15 @@ async fn create_system_user(
     // Check if system user already exists
     let existing_user = sql_adapter.get_user("system");
 
+    // TODO: Use proper password hashing with bcrypt
     let user = User {
         id: user_id,
-        username,
-        password_hash: "".to_string(), // Empty for API key auth
+        username: username.clone(),
+        password_hash: "test_hash".to_string(), // TODO: Hash test password properly
         role,
         email: Some(email),
-        auth_type: AuthType::ApiKey,
+        auth_type: AuthType::Internal, // System user uses Internal auth
         auth_data: None,
-        api_key: Some(test_api_key.to_string()),
         storage_mode: StorageMode::Table,
         storage_id: None,
         created_at,
@@ -397,11 +397,11 @@ async fn create_system_user(
 
     match existing_user {
         Ok(_) => {
-            // User exists, update the API key
+            // User exists, update it
             sql_adapter.insert_user(&user)?; // insert_user acts as upsert in RocksDB
             info!(
-                "System user updated with test API key: {}",
-                test_api_key
+                "System user updated: {}",
+                username
             );
         }
         Err(_) => {

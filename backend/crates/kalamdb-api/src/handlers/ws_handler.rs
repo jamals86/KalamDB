@@ -76,49 +76,21 @@ pub async fn websocket_handler_v1(
 
     info!("New WebSocket connection request: {}", connection_id);
 
-    // TODO T063AAA: Authentication for WebSocket connections
-    // For now, try JWT from Authorization header
-    let user_id = if let Some(auth_header) = req.headers().get("Authorization") {
-        if let Ok(auth_str) = auth_header.to_str() {
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                match jwt_auth.verify_token(token) {
-                    Ok(claims) => {
-                        info!(
-                            "WebSocket connection authenticated via JWT: connection_id={}, user_id={}",
-                            connection_id, claims.user_id
-                        );
-                        Some(UserId::new(&claims.user_id))
-                    }
-                    Err(e) => {
-                        warn!(
-                            "WebSocket connection rejected: invalid JWT token (connection_id={}, error={})",
-                            connection_id, e
-                        );
-                        return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
-                            "error": "INVALID_TOKEN",
-                            "message": "Invalid or expired JWT token"
-                        })));
-                    }
-                }
-            } else {
-                warn!(
-                    "WebSocket connection rejected: missing Bearer token (connection_id={})",
-                    connection_id
-                );
-                return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
-                    "error": "MISSING_TOKEN",
-                    "message": "Authorization header must use Bearer scheme"
-                })));
-            }
+    // TODO T063AAA: Implement authentication for WebSocket connections
+    // For now, allow unauthenticated connections (development mode)
+    let user_id = if let Some(user_id_header) = req.headers().get("X-USER-ID") {
+        if let Ok(user_id_str) = user_id_header.to_str() {
+            info!(
+                "WebSocket connection authenticated via X-USER-ID header: connection_id={}, user_id={}",
+                connection_id, user_id_str
+            );
+            Some(UserId::new(user_id_str))
         } else {
             warn!(
-                "WebSocket connection rejected: invalid Authorization header (connection_id={})",
+                "WebSocket connection: invalid X-USER-ID header format (connection_id={})",
                 connection_id
             );
-            return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
-                "error": "INVALID_HEADER",
-                "message": "Invalid Authorization header format"
-            })));
+            None
         }
     } else {
         // Fall back to JWT token authentication

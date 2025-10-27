@@ -33,7 +33,7 @@ pub use crate::ddl::subscribe_commands::{SubscribeOptions, SubscribeStatement};
 
 // User commands (CREATE USER, ALTER USER, DROP USER)
 pub use crate::ddl::user_commands::{
-    AlterUserStatement, CreateUserStatement, DropUserStatement, UserAuthType, UserModification,
+    AlterUserStatement, CreateUserStatement, DropUserStatement, UserModification,
 };
 
 /// Extension statement types that don't fit into standard SQL.

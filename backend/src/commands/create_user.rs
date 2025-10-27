@@ -1,9 +1,11 @@
 //! Create user command for kalamdb-server
 //!
 //! Provides CLI command to create a new user with password authentication
+//! NOTE: This module is deprecated - use SQL CREATE USER command instead
 
 use anyhow::{Context, Result};
-use kalamdb_auth::password;
+// TODO: Remove kalamdb_auth dependency
+// use kalamdb_auth::password;
 use kalamdb_core::auth::roles::validate_role;
 use kalamdb_sql::RocksDbAdapter;
 use kalamdb_sql::User;
@@ -12,6 +14,8 @@ use log::info;
 use std::sync::Arc;
 
 /// Create a new user with password authentication
+/// 
+/// DEPRECATED: Use `CREATE USER 'username' WITH PASSWORD 'pass' ROLE role` SQL command instead
 ///
 /// # Arguments
 /// * `sql_adapter` - SQL adapter for system tables
@@ -33,11 +37,11 @@ pub async fn create_user(
     // Generate unique user_id (using username for simplicity)
     let user_id = UserId::new(format!("user_{}", username));
 
+    // TODO: Use bcrypt for password hashing instead of kalamdb_auth
     // Generate a temporary password (should be changed on first login)
     let temp_password = format!("temp_{}", uuid::Uuid::new_v4());
-    let password_hash = password::hash_password(&temp_password)
-        .await
-        .context("Failed to hash password")?;
+    // let password_hash = password::hash_password(&temp_password).await?;
+    let password_hash = format!("temp_hash_{}", uuid::Uuid::new_v4()); // Placeholder
 
     // Get current timestamp
     let created_at = chrono::Utc::now().timestamp_millis();

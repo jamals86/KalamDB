@@ -95,14 +95,19 @@ impl CreateUserStatement {
             .or_else(|_| extract_quoted_keyword_value(&normalized, "ROLE"))?;
 
         // Map SQL role names to Role enum
-
-        let role =  Role::from_str(&role_str)
-            .map_err(|_| {
-                format!(
-                    "Invalid role '{}'. Must be one of: dba, user, service, system",
+        // Support common role aliases for better UX
+        let role = match role_str.to_lowercase().as_str() {
+            "dba" | "admin" => Role::Dba,
+            "developer" | "analyst" | "service" => Role::Service,
+            "viewer" | "readonly" | "user" => Role::User,
+            "system" => Role::System,
+            _ => {
+                return Err(format!(
+                    "Invalid role '{}'. Must be one of: dba, admin, developer, analyst, viewer, user, service, system",
                     role_str
-                )
-            })?;
+                ))
+            }
+        };
 
         // Extract email (optional)
         let email = extract_quoted_keyword_value(&normalized, "EMAIL").ok();
@@ -260,6 +265,9 @@ mod tests {
     fn test_parse_create_user_with_password() {
         let sql = "CREATE USER 'alice' WITH PASSWORD 'secure123' ROLE developer EMAIL 'alice@example.com'";
         let result = CreateUserStatement::parse(sql);
+        if let Err(ref e) = result {
+            eprintln!("Parse error: {}", e);
+        }
         assert!(result.is_ok());
         let stmt = result.unwrap();
         assert_eq!(stmt.username, "alice");
@@ -313,7 +321,7 @@ mod tests {
         let stmt = result.unwrap();
         assert_eq!(stmt.username, "alice");
         if let UserModification::SetRole(role) = stmt.modification {
-            assert_eq!(role, "admin");
+            assert_eq!(role, Role::Dba); // admin maps to Dba
         } else {
             panic!("Expected SetRole modification");
         }

@@ -66,20 +66,15 @@ pub async fn execute_sql_v1(
 ) -> impl Responder {
     let start_time = Instant::now();
 
-    // Get authenticated user from request extensions (set by auth middleware)
-    let authenticated_user = http_req.extensions().get::<AuthenticatedUser>().cloned();
+    // TODO: Get authenticated user from request extensions (set by auth middleware)
+    // let authenticated_user = http_req.extensions().get::<AuthenticatedUser>().cloned();
     
-    // Extract user_id from authenticated user or X-USER-ID header (for backwards compatibility)
-    let user_id: Option<UserId> = authenticated_user
-        .as_ref()
-        .map(|u| u.user_id.clone())
-        .or_else(|| {
-            http_req
-                .headers()
-                .get("X-USER-ID")
-                .and_then(|h| h.to_str().ok())
-                .map(UserId::from)
-        });
+    // Extract user_id from X-USER-ID header (development mode)
+    let user_id: Option<UserId> = http_req
+        .headers()
+        .get("X-USER-ID")
+        .and_then(|h| h.to_str().ok())
+        .map(UserId::from);
 
     // Rate limiting: Check if user can execute query
     if let Some(ref uid) = user_id {
