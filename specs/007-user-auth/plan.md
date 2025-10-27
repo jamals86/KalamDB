@@ -7,7 +7,15 @@
 
 ## Summary
 
+**⚠️ CRITICAL: This feature requires foundational storage refactoring FIRST (Phase 0.5) before authentication implementation.**
+
 Implement comprehensive user authentication and authorization system for KalamDB with:
+- **PHASE 0.5 (CRITICAL - MUST DO FIRST)**: Storage backend abstraction refactoring
+  - Two-layer abstraction: `StorageBackend` trait + `EntityStore<T>` trait
+  - Consolidate ALL stores to `kalamdb-core/src/stores/` with strongly-typed models
+  - Migrate `UserTableStore`, `SharedTableStore`, `StreamTableStore` from `kalamdb-store` to `kalamdb-core`
+  - Replace `Arc<rocksdb::DB>` with `Arc<dyn StorageBackend>` throughout codebase
+  - Remove RocksDB imports from `kalamdb-core`, `kalamdb-sql`, `backend` (only in `kalamdb-store`)
 - **HTTP Basic Auth** and **JWT token** authentication methods
 - **Role-Based Access Control (RBAC)** with four roles: user, service, dba, system
 - **Shared table access control** with public/private/restricted levels
@@ -18,6 +26,8 @@ Implement comprehensive user authentication and authorization system for KalamDB
 - **OAuth provider integration** for enterprise SSO
 - **Complete test coverage** including updates to all existing integration tests
 
+**Critical Architecture Change**: This feature includes **FOUNDATIONAL REFACTORING** that must be completed before authentication work begins. All existing stores (`UserTableStore`, `SharedTableStore`, `StreamTableStore`) must be migrated to `kalamdb-core/src/stores/` with strongly-typed entity models and use `Arc<dyn StorageBackend>` instead of direct RocksDB access. This ensures ONLY `kalamdb-store` crate depends on RocksDB. The refactoring affects the entire codebase and is estimated at 3-5 days of work.
+
 ## Technical Context
 
 **Language/Version**: Rust 1.75+ (edition 2021) - as specified in workspace Cargo.toml  
@@ -26,6 +36,7 @@ Implement comprehensive user authentication and authorization system for KalamDB
 - **New**: bcrypt 0.15 (password hashing), base64 0.21 (Basic Auth decoding)
 
 **Storage**: RocksDB column family `system_users` for user records; existing `system_tables` for access metadata  
+**Storage Abstraction**: ONLY `kalamdb-store` crate depends on RocksDB; all other crates use `StorageBackend` trait  
 **Testing**: cargo test (existing integration tests in `backend/tests/`) + new auth-specific tests  
 **Target Platform**: Linux/macOS/Windows server (existing deployment targets)  
 **Project Type**: Multi-crate workspace (backend server + CLI tool)  
@@ -41,13 +52,20 @@ Implement comprehensive user authentication and authorization system for KalamDB
 - **Zero downtime**: Must support gradual migration from old to new auth system
 - **Localhost exception**: System users accessible from localhost without password
 - **Audit logging**: All authentication attempts and authorization failures must be logged
+- **Storage abstraction**: RocksDB types MUST NOT leak outside kalamdb-store crate boundary
 
 **Scale/Scope**: 
-- Support 1M+ users in system.users table (RocksDB-based)
+- Support 1M+ users in system.users table (via StorageBackend abstraction)
 - 100+ concurrent authentication requests per second
 - 4 distinct user roles with complex permission matrix
 - 3 access levels for shared tables
 - Integration across 6 existing crates + 1 new crate (kalamdb-auth)
+- **CRITICAL REFACTORING**: Migrate ALL stores to `kalamdb-core/src/stores/` with strongly-typed models
+  - Move 3 existing stores: `UserTableStore`, `SharedTableStore`, `StreamTableStore`
+  - Create 3 new system stores: `UserStore`, `JobStore`, `NamespaceStore`
+  - Replace ~50+ occurrences of `Arc<rocksdb::DB>` with `Arc<dyn StorageBackend>`
+  - Remove RocksDB dependencies from 3 crates (kalamdb-core, kalamdb-sql, backend)
+  - Estimated 300-500 lines of code changes across 20+ files
 
 ## Constitution Check
 
@@ -221,6 +239,116 @@ This feature adds a new crate (kalamdb-auth) which aligns with the assumed libra
 
 ## Implementation Phases
 
+### Phase 0.5: Storage Backend Abstraction Refactoring (CRITICAL - DO FIRST)
+
+**⚠️ WARNING: This phase MUST be completed before any authentication work begins. It affects the entire codebase.**
+
+**Objective**: Establish two-layer storage abstraction and consolidate all stores into `kalamdb-core/src/stores/` with strongly-typed entity models.
+
+**Why This Is Critical**:
+- Authentication code depends on `UserStore` which must follow the new pattern
+- All existing stores need to be migrated to avoid technical debt
+- Touching these files later (after auth is added) would require rewriting auth code
+- Estimated 3-5 days solo / 2-3 days team effort
+
+**Refactoring Tasks**:
+
+1. **Create Storage Infrastructure in kalamdb-store** (~1 day)
+   - Create `backend.rs` with `StorageBackend` trait and `RocksDbBackend` implementation
+   - Create `traits.rs` with `EntityStore<T>` trait (serialize, deserialize, put, get, delete, scan)
+   - Update `lib.rs` to export new abstractions
+   - Add integration test with mock `StorageBackend` implementation
+
+2. **Create Domain Models in kalamdb-core** (~0.5 day)
+   - Create `models/` directory structure
+   - Define `User` struct for `system.users` table
+   - Define `Job` struct for `system.jobs` table
+   - Define `Namespace` struct for `system.namespaces` table
+   - Define `UserTableRow` struct (dynamic fields + system columns `_updated`, `_deleted`)
+   - Define `SharedTableRow` and `StreamTableRow` structs
+   - All models implement `Serialize`, `Deserialize`, `Clone`, `Debug`
+
+3. **Migrate UserTableStore to kalamdb-core** (~1 day)
+   - Move `kalamdb-store/src/user_table_store.rs` → `kalamdb-core/src/stores/user_table_store.rs`
+   - Change `db: Arc<DB>` to `backend: Arc<dyn StorageBackend>`
+   - Implement `EntityStore<UserTableRow>` trait
+   - Override `serialize()` to inject `_updated` and `_deleted` system columns
+   - Update all `self.db.put_cf()` → `self.backend.put()`
+   - Update all `self.db.get_cf()` → `self.backend.get()`
+   - Update partition handling (column family names)
+   - Fix all compilation errors in dependent code
+
+4. **Migrate SharedTableStore and StreamTableStore** (~1 day)
+   - Same migration process as UserTableStore
+   - Define `SharedTableRow` and `StreamTableRow` entity types
+   - Implement `EntityStore<T>` for each
+   - Update all callers in `kalamdb-core` and `kalamdb-sql`
+
+5. **Create New System Stores** (~0.5 day)
+   - Create `kalamdb-core/src/stores/user_store.rs` implementing `EntityStore<User>`
+   - Create `kalamdb-core/src/stores/job_store.rs` implementing `EntityStore<Job>`
+   - Create `kalamdb-core/src/stores/namespace_store.rs` implementing `EntityStore<Namespace>`
+   - Add custom domain methods (e.g., `UserStore::get_by_username()`)
+   - Use bincode serialization for system tables (faster than JSON)
+
+6. **Refactor kalamdb-core** (~1 day)
+   - Delete `storage/rocksdb_store.rs`, `storage/rocksdb_init.rs`, `storage/rocksdb_config.rs`
+   - Replace all `Arc<rocksdb::DB>` with `Arc<dyn StorageBackend>`
+   - Update constructors to accept `Arc<dyn StorageBackend>`
+   - Remove all `use rocksdb::*` imports
+   - Update all code to use `kalamdb_core::stores::*`
+   - Fix compilation errors throughout crate
+
+7. **Refactor kalamdb-sql** (~0.5 day)
+   - Update `RocksDbAdapter` to wrap `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>`
+   - Update `adapter.rs` method signatures
+   - Remove `use rocksdb::*` imports
+   - Fix compilation errors
+
+8. **Refactor backend Initialization** (~0.5 day)
+   - Create `RocksDbBackend` in `main.rs` / `lib.rs`
+   - Wrap in `Arc<dyn StorageBackend>`
+   - Pass to all stores via constructors
+   - Remove direct `Arc<rocksdb::DB>` passing
+   - Update startup initialization sequence
+
+9. **Update Cargo.toml Files** (~0.1 day)
+   - Remove `rocksdb = "0.24"` from `kalamdb-core/Cargo.toml`
+   - Remove `rocksdb = "0.24"` from `kalamdb-sql/Cargo.toml`
+   - Remove `rocksdb = "0.24"` from `backend/Cargo.toml`
+   - Keep ONLY in `kalamdb-store/Cargo.toml`
+   - Add `bincode = "1.3"` to `kalamdb-core/Cargo.toml` (for system table serialization)
+
+10. **Verification & Testing** (~0.5 day)
+    - Run `cargo check` on each workspace crate
+    - Verify NO `use rocksdb::*` imports outside `kalamdb-store`
+    - Run all existing integration tests to ensure nothing breaks
+    - Add integration test proving mock backend works
+    - Document the new architecture in `docs/architecture/STORAGE_ABSTRACTION.md`
+
+**Output**: 
+- `kalamdb-store/src/backend.rs` - StorageBackend trait + RocksDbBackend
+- `kalamdb-store/src/traits.rs` - EntityStore<T> trait
+- `kalamdb-core/src/models/*.rs` - All entity type definitions
+- `kalamdb-core/src/stores/*.rs` - All store implementations
+- Updated Cargo.toml files with correct dependencies
+- Documentation of the two-layer architecture
+
+**Success Criteria**:
+- ✅ `cargo check` passes for all crates
+- ✅ `grep -r "use rocksdb" backend/crates/kalamdb-core` returns NO results
+- ✅ `grep -r "use rocksdb" backend/crates/kalamdb-sql` returns NO results
+- ✅ `grep -r "use rocksdb" backend/src` returns NO results
+- ✅ `cargo tree -i rocksdb` shows ONLY `kalamdb-store` depends on it
+- ✅ All existing integration tests pass
+- ✅ Mock backend integration test passes
+
+**Estimated Timeline**: 
+- Solo: 5 days (with testing)
+- Team (2 people): 3 days (parallel work on different stores)
+
+---
+
 ### Phase 0: Research & Decision Making
 
 **Objective**: Resolve technical unknowns and document architectural decisions
@@ -251,6 +379,13 @@ This feature adds a new crate (kalamdb-auth) which aligns with the assumed libra
    - Dual authentication support timeline
    - Deprecation warnings for X-API-KEY
    - Database initialization with default system user
+
+6. **Storage Backend Abstraction**
+   - Current RocksDB usage in `kalamdb-core`, `kalamdb-sql`, `backend`
+   - `StorageBackend` trait interface completeness
+   - Migration path: `Arc<rocksdb::DB>` → `Arc<dyn StorageBackend>`
+   - Impact on system tables (users, jobs, namespaces)
+   - Performance implications of trait object indirection
 
 **Output**: `research.md` with decisions, rationale, and alternatives considered
 
@@ -296,8 +431,19 @@ This feature adds a new crate (kalamdb-auth) which aligns with the assumed libra
   - Fields: remote_addr (IpAddr), is_localhost (bool)
   - Used for system user access control
 
+- **StorageBackend Trait** (kalamdb-store)
+  - Methods: get(), put(), delete(), batch(), scan()
+  - Abstracts RocksDB operations for pluggable storage
+  - Implemented by: RocksDBBackend (initial), MockBackend (testing)
+
+- **Partition Abstraction** (kalamdb-store)
+  - Represents column families (RocksDB), trees (Sled), key prefixes (Redis)
+  - Used to isolate system.users, system.tables, user tables, etc.
+
 **Relationships**:
 - User → Storage (optional FK: storage_id)
+- All crates → StorageBackend trait (dependency inversion)
+- ONLY kalamdb-store → rocksdb::DB (concrete implementation)
 - User → Tables (ownership via user_id)
 - AuthenticatedUser → every authenticated request
 
@@ -415,8 +561,16 @@ Run: `.specify/scripts/bash/update-agent-context.sh copilot`
 
 3. **Storage Tasks**
    - Add system.users RocksDB column family
-   - Implement user CRUD operations
+   - Implement user CRUD operations via StorageBackend trait
    - Add access column to system.tables
+   - **Storage Abstraction Refactoring**:
+     - Move `kalamdb-core/src/storage/rocksdb_*.rs` to `kalamdb-store`
+     - Create `kalamdb-store::SystemStore` for system tables
+     - Replace `Arc<rocksdb::DB>` with `Arc<dyn StorageBackend>` in kalamdb-core
+     - Refactor `RocksDbAdapter` to wrap `StorageBackend` instead of `rocksdb::DB`
+     - Remove `rocksdb` dependency from kalamdb-core/Cargo.toml
+     - Remove `rocksdb` dependency from kalamdb-sql/Cargo.toml
+     - Remove `rocksdb` dependency from backend/Cargo.toml
 
 4. **Authorization Tasks**
    - Implement RBAC permission checking
@@ -441,6 +595,10 @@ Run: `.specify/scripts/bash/update-agent-context.sh copilot`
    - Integration tests for shared table access
    - Update ALL existing integration tests to authenticate
    - CLI authentication tests
+   - **Storage Abstraction Tests**:
+     - Mock storage backend implementation
+     - Integration test proving storage backend swap works
+     - Compile-time dependency verification (no rocksdb in kalamdb-core/sql/backend)
 
 8. **Migration Tasks**
    - Backward compatibility with X-API-KEY
@@ -511,6 +669,56 @@ Run: `.specify/scripts/bash/update-agent-context.sh copilot`
 - External validation service: Rejected - adds network dependency
 
 ### System User Access Control
+
+**Decision**: Localhost detection via connection info + allow_remote flag
+
+**Rationale**:
+- Default deny for remote access = secure by default
+- Localhost detection covers 127.0.0.1, ::1, Unix sockets
+- Per-user allow_remote flag provides flexibility
+- Explicit password requirement when remote enabled
+
+**Alternatives Considered**:
+- IP allowlist: Rejected - too complex for CLI use case
+- Certificate-based: Rejected - over-engineered for system users
+- Always allow remote: Rejected - security risk
+
+### Storage Backend Abstraction
+
+**Decision**: Isolate RocksDB to `kalamdb-store` crate only; all other crates use `StorageBackend` trait
+
+**Rationale**:
+- **Pluggable storage**: Enables future migration to Sled, TiKV, FoundationDB without rewriting business logic
+- **Clean boundaries**: `kalamdb-core` focuses on business logic, `kalamdb-store` handles storage implementation
+- **Testability**: Mock storage backend for fast unit tests without RocksDB dependency
+- **Dependency management**: `rocksdb` crate has complex build requirements (libclang); limiting to one crate reduces build issues
+- **Type safety**: Trait abstraction prevents leaking RocksDB-specific types (ColumnFamily, WriteBatch) into API surface
+
+**Current State**:
+- ❌ `kalamdb-core` imports `rocksdb` directly (storage/rocksdb_*.rs files)
+- ❌ `kalamdb-sql` imports `rocksdb::DB` (adapter.rs)
+- ❌ `backend` has `rocksdb` workspace dependency
+- ✅ `kalamdb-store` has `StorageBackend` trait defined
+
+**Refactoring Strategy**:
+1. Move `kalamdb-core/src/storage/rocksdb_*.rs` → `kalamdb-store/src/rocksdb/`
+2. Create `kalamdb-store::SystemStore` wrapping `StorageBackend` for system tables
+3. Replace all `Arc<rocksdb::DB>` parameters with `Arc<dyn StorageBackend>`
+4. Update `RocksDbAdapter` in `kalamdb-sql` to wrap `StorageBackend` trait
+5. Remove `rocksdb` from workspace dependencies except `kalamdb-store/Cargo.toml`
+6. Add compile-time test verifying no `use rocksdb::*` in restricted crates
+
+**Alternatives Considered**:
+- Keep RocksDB everywhere: Rejected - tightly couples KalamDB to single storage engine
+- Abstract only user tables: Rejected - inconsistent, system tables need abstraction too
+- Use generics instead of trait objects: Rejected - monomorphization bloat, less flexible
+- Wait for future storage needs: Rejected - refactoring is harder after authentication code is written
+
+**Performance Impact**:
+- Trait object indirection: ~1-2ns per call (negligible compared to RocksDB I/O)
+- Measured via benchmarks in `kalamdb-store/benches/storage_trait.rs`
+
+---
 
 **Decision**: Localhost detection via connection source + auth_type="internal"
 
@@ -734,6 +942,10 @@ kalamdb-auth = { path = "../backend/crates/kalamdb-auth" }
 4. **Auto-Provisioning for OAuth**: Enable by default or require explicit configuration?
    - **Recommendation**: Disabled by default (security), explicit opt-in
 
+5. **Storage Abstraction Implementation Order**: Refactor storage abstraction before or after authentication implementation?
+   - **Recommendation**: Refactor storage abstraction FIRST (Phase 1.5), then build authentication on clean abstractions. Rationale: Avoids rewriting authentication code after storage refactoring; ensures authentication uses StorageBackend from day one.
+   - **Alternative**: Implement auth with RocksDB directly, refactor later - REJECTED due to rework risk
+
 ### Risks & Mitigation
 
 | Risk | Impact | Likelihood | Mitigation |
@@ -743,6 +955,9 @@ kalamdb-auth = { path = "../backend/crates/kalamdb-auth" }
 | JWT validation failure on clock skew | MEDIUM | LOW | Allow 60s clock skew in validation |
 | System user remote access misconfiguration | HIGH | LOW | Deny by default, require explicit enable |
 | Performance regression from RBAC checks | MEDIUM | LOW | In-memory enum checks are <5ms |
+| Storage abstraction breaks existing code | HIGH | MEDIUM | Incremental refactoring, extensive testing, type system catches issues at compile time |
+| Trait object overhead impacts performance | LOW | LOW | Benchmarks show <2ns overhead; I/O dominates |
+| Mock storage backend diverges from RocksDB | MEDIUM | LOW | Property-based tests verify behavior equivalence |
 
 ---
 
@@ -763,17 +978,20 @@ kalamdb-auth = { path = "../backend/crates/kalamdb-auth" }
 11. ✅ **SC-011**: Existing tests updated and passing
 12. ✅ **SC-012**: DB init creates system user in < 5 seconds
 13. ✅ **SC-013**: OAuth users authenticate without password management
+14. ✅ **SC-014**: Storage abstraction complete - zero RocksDB imports in kalamdb-core/sql/backend
+15. ✅ **SC-015**: Mock storage backend successfully authenticates users
+16. ✅ **SC-016**: All user credential operations use kalamdb-store abstractions only
 
 **Additional Implementation Metrics**:
 - Zero security vulnerabilities in auth code (audit before merge)
-- All 93+ functional requirements implemented and tested (including User-Management.md)
-- **84 comprehensive tests**: 68 integration tests + 16 unit tests
+- All 93+ functional requirements implemented and tested (including User-Management.md + storage abstraction)
+- **90 comprehensive tests**: 74 integration tests + 16 unit tests
 - Documentation complete (quickstart, API contracts, migration guide)
 - Backward compatibility: X-API-KEY continues working
 
 ### Integration Test Coverage
 
-**Test Organization** (68 integration tests across 11 files):
+**Test Organization** (74 integration tests across 12 files):
 
 1. **Authentication** (11 tests)
    - backend/tests/test_basic_auth.rs - HTTP Basic Auth (5 tests)
@@ -805,6 +1023,10 @@ kalamdb-auth = { path = "../backend/crates/kalamdb-auth" }
 
 10. **End-to-End** (1 test)
     - backend/tests/test_e2e_auth_flow.rs - Complete user lifecycle
+
+11. **Storage Abstraction** (6 tests)
+    - backend/tests/test_storage_abstraction.rs - Mock backend, dependency verification (3 tests)
+    - kalamdb-store/src/tests/mod.rs - Encapsulation tests (3 tests)
 
 **Unit Test Coverage** (16 unit tests):
 - backend/crates/kalamdb-auth/tests/ - Password hashing, JWT validation, Basic Auth parsing

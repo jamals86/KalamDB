@@ -12,7 +12,8 @@
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
-**Total Tasks**: 213 tasks across 13 phases
+**Total Tasks**: 322 tasks across 15 phases
+- **Phase 0.5**: Storage Backend Abstraction & Store Consolidation (106 tasks) - CRITICAL, DO FIRST
 - **Phase 1**: Setup (10 tasks)
 - **Phase 2**: Foundational (32 tasks) - BLOCKING all user stories, follow existing patterns
 - **Phase 3-10**: User Stories (98 tasks) - 8 independent stories
@@ -22,12 +23,15 @@
 - **Phase 13**: Additional Features from User-Management.md (26 tasks) - follow job/index patterns
 
 **Tests Coverage**: 
-- **Integration Tests**: 45+ tests covering all user stories and SQL commands
-- **Unit Tests**: 16+ tests for parser, password hashing, JWT validation
+- **Integration Tests**: 57+ tests covering storage abstraction, authentication, SQL commands, RBAC
+- **Unit Tests**: 19+ tests for parser, password hashing, JWT validation, storage backend
 - **Edge Cases**: 7+ tests for malformed input, concurrent access, deleted users
 - **End-to-End**: Full authentication flow test
+- **Storage Abstraction**: 8 tests for mock backend, EntityStore trait, dependency verification
 
 **SQL Commands**: CREATE USER, ALTER USER, DROP USER with password/OAuth/internal auth modes
+
+**Storage Refactoring**: Isolate RocksDB to kalamdb-store only; all other crates use StorageBackend trait
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -392,7 +396,176 @@
 - [ ] T140 [US8] Prevent OAuth users from password authentication in backend/crates/kalamdb-auth/src/service.rs (check auth_type, reject password)
 - [ ] T141 [US8] Implement optional auto-provisioning for OAuth users in backend/crates/kalamdb-auth/src/service.rs (create user on first OAuth login if configured)
 
-**Checkpoint**: All user stories complete - full authentication system implemented
+**Checkpoint**: User Story 8 complete - OAuth integration working
+
+---
+
+## Phase 0.5: Storage Backend Abstraction & Store Consolidation (Priority: P0 - CRITICAL)
+
+**⚠️ CRITICAL**: This phase MUST be completed FIRST before ANY authentication implementation. Estimated 5 days solo / 3 days team.
+
+**Goal**: Establish two-layer storage abstraction (StorageBackend + EntityStore traits) and consolidate ALL stores into kalamdb-core/src/stores/ with strongly-typed entity models
+
+**Independent Test**: Verify kalamdb-core, kalamdb-sql, backend have zero rocksdb imports; mock storage backend passes integration tests; all existing tests still pass
+
+**Why This Is Critical**:
+- Authentication depends on UserStore which must follow this new pattern
+- All existing stores (UserTableStore, SharedTableStore, StreamTableStore) must be migrated
+- Touching these files after auth is added would require rewriting auth code
+- Affects 20+ files, 300-500 lines of code changes
+
+### Sub-Phase 0.5.1: Storage Infrastructure (kalamdb-store)
+
+**Purpose**: Create two-layer abstraction foundation
+
+- [ ] T001A [P] [US9] Create backend/crates/kalamdb-store/src/backend.rs with StorageBackend trait (put, get, delete, scan_prefix, scan_range, delete_batch methods)
+- [ ] T001B [P] [US9] Implement RocksDbBackend struct in backend/crates/kalamdb-store/src/backend.rs (wraps Arc<rocksdb::DB>, implements StorageBackend)
+- [ ] T001C [P] [US9] Create backend/crates/kalamdb-store/src/traits.rs with EntityStore<T> trait (backend(), partition(), serialize(), deserialize(), put(), get(), delete(), scan_prefix())
+- [ ] T001D [P] [US9] Add default JSON serialization/deserialization to EntityStore<T> trait in backend/crates/kalamdb-store/src/traits.rs
+- [ ] T001E [P] [US9] Create backend/crates/kalamdb-store/src/mock_backend.rs with MockStorageBackend (HashMap-based implementation for testing)
+- [ ] T001F [US9] Update backend/crates/kalamdb-store/src/lib.rs to export StorageBackend, EntityStore traits, RocksDbBackend, MockStorageBackend
+- [ ] T001G [P] [US9] Add integration test for MockStorageBackend in backend/crates/kalamdb-store/src/tests/mock_backend_tests.rs (verify all trait methods work)
+
+### Sub-Phase 0.5.2: Domain Models (kalamdb-core)
+
+**Purpose**: Create strongly-typed entity models for all storage
+
+- [ ] T002A [US9] Create backend/crates/kalamdb-core/src/models/mod.rs directory
+- [ ] T002B [P] [US9] Define User struct in backend/crates/kalamdb-core/src/models/system.rs (id, username, password_hash, role, email, auth_type, auth_data, created_at, updated_at, last_seen, deleted_at) with Serialize, Deserialize, Clone, Debug
+- [ ] T002C [P] [US9] Define Job struct in backend/crates/kalamdb-core/src/models/system.rs (job_id, job_type, namespace_id, table_name, status, created_at, completed_at) with Serialize, Deserialize
+- [ ] T002D [P] [US9] Define Namespace struct in backend/crates/kalamdb-core/src/models/system.rs (namespace_id, name, owner_id, created_at) with Serialize, Deserialize
+- [ ] T002E [P] [US9] Define UserTableRow struct in backend/crates/kalamdb-core/src/models/tables.rs (fields: Map<String, Value> with #[serde(flatten)], _updated: String, _deleted: bool) with Serialize, Deserialize
+- [ ] T002F [P] [US9] Define SharedTableRow struct in backend/crates/kalamdb-core/src/models/tables.rs (similar to UserTableRow with access_level field) with Serialize, Deserialize
+- [ ] T002G [P] [US9] Define StreamTableRow struct in backend/crates/kalamdb-core/src/models/tables.rs (fields + ttl fields) with Serialize, Deserialize
+- [ ] T002H [US9] Export all models from backend/crates/kalamdb-core/src/models/mod.rs (pub use system::*, pub use tables::*)
+
+### Sub-Phase 0.5.3: System Stores (kalamdb-core)
+
+**Purpose**: Create new stores for system tables with EntityStore<T> implementation
+
+**Note**: All system tables (users, jobs, namespaces) share the same pattern - they all extend EntityStore
+
+- [ ] T003A [P] [US9] Create backend/crates/kalamdb-core/src/stores/mod.rs directory structure
+- [ ] T003B [P] [US9] Create UserStore in backend/crates/kalamdb-core/src/stores/user_store.rs (backend: Arc<dyn StorageBackend>, partition: "system_users")
+- [ ] T003C [P] [US9] Implement EntityStore<User> for UserStore in backend/crates/kalamdb-core/src/stores/user_store.rs (override serialize/deserialize to use bincode for performance)
+- [ ] T003D [P] [US9] Add custom methods to UserStore: get_by_username(), list_all(), list_active() in backend/crates/kalamdb-core/src/stores/user_store.rs
+- [ ] T003E [P] [US9] Create JobStore in backend/crates/kalamdb-core/src/stores/job_store.rs (backend: Arc<dyn StorageBackend>, partition: "system_jobs")
+- [ ] T003F [P] [US9] Implement EntityStore<Job> for JobStore in backend/crates/kalamdb-core/src/stores/job_store.rs (bincode serialization)
+- [ ] T003G [P] [US9] Add custom methods to JobStore: get_by_status(), get_by_namespace() in backend/crates/kalamdb-core/src/stores/job_store.rs
+- [ ] T003H [P] [US9] Create NamespaceStore in backend/crates/kalamdb-core/src/stores/namespace_store.rs (backend: Arc<dyn StorageBackend>, partition: "system_namespaces")
+- [ ] T003I [P] [US9] Implement EntityStore<Namespace> for NamespaceStore in backend/crates/kalamdb-core/src/stores/namespace_store.rs (bincode serialization)
+- [ ] T003J [P] [US9] Add custom methods to NamespaceStore: get_by_owner(), list_all() in backend/crates/kalamdb-core/src/stores/namespace_store.rs
+- [ ] T003K [US9] Export all system stores from backend/crates/kalamdb-core/src/stores/mod.rs
+
+### Sub-Phase 0.5.4: Migrate UserTableStore
+
+**Purpose**: Move UserTableStore from kalamdb-store to kalamdb-core with new architecture
+
+- [ ] T004A [US9] Copy backend/crates/kalamdb-store/src/user_table_store.rs to backend/crates/kalamdb-core/src/stores/user_table_store.rs
+- [ ] T004B [US9] Change db: Arc<DB> to backend: Arc<dyn StorageBackend> in UserTableStore struct in backend/crates/kalamdb-core/src/stores/user_table_store.rs
+- [ ] T004C [US9] Add partition_name: String field to UserTableStore in backend/crates/kalamdb-core/src/stores/user_table_store.rs
+- [ ] T004D [US9] Update UserTableStore::new() to accept Arc<dyn StorageBackend>, namespace_id, table_name in backend/crates/kalamdb-core/src/stores/user_table_store.rs
+- [ ] T004E [US9] Implement EntityStore<UserTableRow> for UserTableStore in backend/crates/kalamdb-core/src/stores/user_table_store.rs
+- [ ] T004F [US9] Override serialize() method to inject _updated and _deleted system columns in backend/crates/kalamdb-core/src/stores/user_table_store.rs
+- [ ] T004G [US9] Update all self.db.put_cf() → self.backend.put(self.partition(), ...) in backend/crates/kalamdb-core/src/stores/user_table_store.rs
+- [ ] T004H [US9] Update all self.db.get_cf() → self.backend.get(self.partition(), ...) in backend/crates/kalamdb-core/src/stores/user_table_store.rs
+- [ ] T004I [US9] Update all self.db.delete_cf() → self.backend.delete(self.partition(), ...) in backend/crates/kalamdb-core/src/stores/user_table_store.rs
+- [ ] T004J [US9] Update scan methods to use self.backend.scan_prefix() in backend/crates/kalamdb-core/src/stores/user_table_store.rs
+- [ ] T004K [US9] Remove use rocksdb::* imports from backend/crates/kalamdb-core/src/stores/user_table_store.rs
+- [ ] T004L [US9] Fix compilation errors from RocksDB API changes in backend/crates/kalamdb-core/src/stores/user_table_store.rs
+- [ ] T004M [US9] Delete original backend/crates/kalamdb-store/src/user_table_store.rs file
+- [ ] T004N [US9] Update imports in backend/crates/kalamdb-core to use kalamdb_core::stores::UserTableStore
+
+### Sub-Phase 0.5.5: Migrate SharedTableStore
+
+**Purpose**: Move SharedTableStore from kalamdb-store to kalamdb-core with new architecture
+
+- [ ] T005A [US9] Copy backend/crates/kalamdb-store/src/shared_table_store.rs to backend/crates/kalamdb-core/src/stores/shared_table_store.rs
+- [ ] T005B [US9] Change db: Arc<DB> to backend: Arc<dyn StorageBackend> in SharedTableStore struct in backend/crates/kalamdb-core/src/stores/shared_table_store.rs
+- [ ] T005C [US9] Add partition_name: String field to SharedTableStore in backend/crates/kalamdb-core/src/stores/shared_table_store.rs
+- [ ] T005D [US9] Update SharedTableStore::new() to accept Arc<dyn StorageBackend>, namespace_id, table_name in backend/crates/kalamdb-core/src/stores/shared_table_store.rs
+- [ ] T005E [US9] Implement EntityStore<SharedTableRow> for SharedTableStore in backend/crates/kalamdb-core/src/stores/shared_table_store.rs
+- [ ] T005F [US9] Update all RocksDB calls to use StorageBackend trait in backend/crates/kalamdb-core/src/stores/shared_table_store.rs (put_cf → put, get_cf → get)
+- [ ] T005G [US9] Remove use rocksdb::* imports from backend/crates/kalamdb-core/src/stores/shared_table_store.rs
+- [ ] T005H [US9] Delete original backend/crates/kalamdb-store/src/shared_table_store.rs file
+- [ ] T005I [US9] Update imports in backend/crates/kalamdb-core to use kalamdb_core::stores::SharedTableStore
+
+### Sub-Phase 0.5.6: Migrate StreamTableStore
+
+**Purpose**: Move StreamTableStore from kalamdb-store to kalamdb-core with new architecture
+
+- [ ] T006A [US9] Copy backend/crates/kalamdb-store/src/stream_table_store.rs to backend/crates/kalamdb-core/src/stores/stream_table_store.rs
+- [ ] T006B [US9] Change db: Arc<DB> to backend: Arc<dyn StorageBackend> in StreamTableStore struct in backend/crates/kalamdb-core/src/stores/stream_table_store.rs
+- [ ] T006C [US9] Add partition_name: String field to StreamTableStore in backend/crates/kalamdb-core/src/stores/stream_table_store.rs
+- [ ] T006D [US9] Update StreamTableStore::new() to accept Arc<dyn StorageBackend>, namespace_id, table_name in backend/crates/kalamdb-core/src/stores/stream_table_store.rs
+- [ ] T006E [US9] Implement EntityStore<StreamTableRow> for StreamTableStore in backend/crates/kalamdb-core/src/stores/stream_table_store.rs
+- [ ] T006F [US9] Update all RocksDB calls to use StorageBackend trait in backend/crates/kalamdb-core/src/stores/stream_table_store.rs
+- [ ] T006G [US9] Remove use rocksdb::* imports from backend/crates/kalamdb-core/src/stores/stream_table_store.rs
+- [ ] T006H [US9] Delete original backend/crates/kalamdb-store/src/stream_table_store.rs file
+- [ ] T006I [US9] Update imports in backend/crates/kalamdb-core to use kalamdb_core::stores::StreamTableStore
+
+### Sub-Phase 0.5.7: Refactor kalamdb-core Storage Layer
+
+**Purpose**: Remove RocksDB from kalamdb-core completely
+
+- [ ] T007A [US9] Delete backend/crates/kalamdb-core/src/storage/rocksdb_store.rs file
+- [ ] T007B [US9] Delete backend/crates/kalamdb-core/src/storage/rocksdb_init.rs file
+- [ ] T007C [US9] Delete backend/crates/kalamdb-core/src/storage/rocksdb_config.rs file
+- [ ] T007D [US9] Replace all Arc<rocksdb::DB> with Arc<dyn StorageBackend> in backend/crates/kalamdb-core/src/catalog/mod.rs
+- [ ] T007E [US9] Replace all Arc<rocksdb::DB> with Arc<dyn StorageBackend> in backend/crates/kalamdb-core/src/storage/mod.rs
+- [ ] T007F [US9] Update KalamCore::new() constructor to accept Arc<dyn StorageBackend> in backend/crates/kalamdb-core/src/lib.rs
+- [ ] T007G [US9] Pass StorageBackend to all store constructors (UserTableStore, SharedTableStore, etc.) in backend/crates/kalamdb-core/src/lib.rs
+- [ ] T007H [US9] Remove all use rocksdb::* imports from backend/crates/kalamdb-core/src/**/*.rs
+- [ ] T007I [US9] Remove rocksdb = "0.24" from backend/crates/kalamdb-core/Cargo.toml dependencies
+- [ ] T007J [US9] Add bincode = "1.3" to backend/crates/kalamdb-core/Cargo.toml (for system table serialization)
+- [ ] T007K [US9] Fix all compilation errors in kalamdb-core from RocksDB removal
+- [ ] T007L [US9] Run cargo check on kalamdb-core to verify no RocksDB dependencies
+
+### Sub-Phase 0.5.8: Refactor kalamdb-sql Adapter
+
+**Purpose**: Update SQL layer to use StorageBackend instead of RocksDB
+
+- [ ] T008A [US9] Rename RocksDbAdapter to StorageAdapter in backend/crates/kalamdb-sql/src/adapter.rs
+- [ ] T008B [US9] Change db: Arc<rocksdb::DB> to backend: Arc<dyn StorageBackend> in StorageAdapter struct in backend/crates/kalamdb-sql/src/adapter.rs
+- [ ] T008C [US9] Update StorageAdapter::new() to accept Arc<dyn StorageBackend> in backend/crates/kalamdb-sql/src/adapter.rs
+- [ ] T008D [US9] Update all RocksDB-specific calls to use StorageBackend trait methods in backend/crates/kalamdb-sql/src/adapter.rs
+- [ ] T008E [US9] Update KalamSql::new() constructor to accept Arc<dyn StorageBackend> in backend/crates/kalamdb-sql/src/lib.rs
+- [ ] T008F [US9] Remove all use rocksdb::* imports from backend/crates/kalamdb-sql/src/**/*.rs
+- [ ] T008G [US9] Remove rocksdb = "0.24" from backend/crates/kalamdb-sql/Cargo.toml dependencies
+- [ ] T008H [US9] Fix all compilation errors in kalamdb-sql from RocksDB removal
+- [ ] T008I [US9] Run cargo check on kalamdb-sql to verify no RocksDB dependencies
+
+### Sub-Phase 0.5.9: Refactor Backend Initialization
+
+**Purpose**: Backend creates RocksDbBackend and passes Arc<dyn StorageBackend> to all crates
+
+- [ ] T009A [US9] Update backend/src/lifecycle.rs to create RocksDbBackend from kalamdb_store::RocksDbBackend::new()
+- [ ] T009B [US9] Wrap RocksDbBackend in Arc<dyn StorageBackend> in backend/src/lifecycle.rs
+- [ ] T009C [US9] Pass Arc<dyn StorageBackend> to KalamCore::new() in backend/src/lifecycle.rs
+- [ ] T009D [US9] Pass Arc<dyn StorageBackend> to KalamSql::new() in backend/src/lifecycle.rs
+- [ ] T009E [US9] Update backend/src/main.rs to use new initialization pattern
+- [ ] T009F [US9] Remove direct Arc<rocksdb::DB> passing from backend/src/lifecycle.rs
+- [ ] T009G [US9] Remove all use rocksdb::* imports from backend/src/**/*.rs
+- [ ] T009H [US9] Remove rocksdb = "0.24" from backend/Cargo.toml workspace dependencies (keep ONLY in kalamdb-store)
+- [ ] T009I [US9] Fix all compilation errors in backend from initialization changes
+- [ ] T009J [US9] Run cargo check on backend to verify no RocksDB dependencies
+
+### Sub-Phase 0.5.10: Verification & Testing
+
+**Purpose**: Ensure refactoring is complete and nothing breaks
+
+- [ ] T010A [P] [US9] Run cargo check on entire workspace and verify it compiles
+- [ ] T010B [P] [US9] Run grep -r "use rocksdb" backend/crates/kalamdb-core/src and verify zero results
+- [ ] T010C [P] [US9] Run grep -r "use rocksdb" backend/crates/kalamdb-sql/src and verify zero results
+- [ ] T010D [P] [US9] Run grep -r "use rocksdb" backend/src and verify zero results
+- [ ] T010E [P] [US9] Run cargo tree -i rocksdb and verify ONLY kalamdb-store depends on it
+- [ ] T010F [P] [US9] Run all existing integration tests in backend/tests/ and verify they pass
+- [ ] T010G [P] [US9] Create integration test with MockStorageBackend in backend/tests/test_mock_storage.rs (verify UserStore, JobStore work with mock)
+- [ ] T010H [P] [US9] Document two-layer architecture in docs/architecture/STORAGE_ABSTRACTION.md
+- [ ] T010I [US9] Update README.md to mention storage backend abstraction capability
+- [ ] T010J [US9] Add architecture diagram showing StorageBackend and EntityStore layers
+
+**Checkpoint**: Phase 0.5 complete - All stores migrated, RocksDB isolated to kalamdb-store only, ready for authentication implementation
 
 ---
 
@@ -402,29 +575,29 @@
 
 ### Edge Case Tests
 
-- [ ] T142 [P] Integration test for empty credentials in backend/tests/test_edge_cases.rs (test_empty_credentials_401)
-- [ ] T143 [P] Integration test for malformed Basic Auth header in backend/tests/test_edge_cases.rs (test_malformed_basic_auth_400)
-- [ ] T144 [P] Integration test for concurrent auth requests in backend/tests/test_edge_cases.rs (test_concurrent_auth_no_race_conditions)
-- [ ] T145 [P] Integration test for deleted user authentication in backend/tests/test_edge_cases.rs (test_deleted_user_denied)
-- [ ] T146 [P] Integration test for role change during session in backend/tests/test_edge_cases.rs (test_role_change_applies_next_request)
-- [ ] T147 [P] Integration test for maximum password length in backend/tests/test_edge_cases.rs (test_max_password_10mb_rejected)
-- [ ] T148 [P] Integration test for shared table default access in backend/tests/test_edge_cases.rs (test_shared_table_defaults_private)
+- [ ] T143A [P] Integration test for empty credentials in backend/tests/test_edge_cases.rs (test_empty_credentials_401)
+- [ ] T143B [P] Integration test for malformed Basic Auth header in backend/tests/test_edge_cases.rs (test_malformed_basic_auth_400)
+- [ ] T143C [P] Integration test for concurrent auth requests in backend/tests/test_edge_cases.rs (test_concurrent_auth_no_race_conditions)
+- [ ] T143D [P] Integration test for deleted user authentication in backend/tests/test_edge_cases.rs (test_deleted_user_denied)
+- [ ] T143E [P] Integration test for role change during session in backend/tests/test_edge_cases.rs (test_role_change_applies_next_request)
+- [ ] T143F [P] Integration test for maximum password length in backend/tests/test_edge_cases.rs (test_max_password_10mb_rejected)
+- [ ] T143G [P] Integration test for shared table default access in backend/tests/test_edge_cases.rs (test_shared_table_defaults_private)
 
 ### Backward Compatibility & Migration
 
-- [ ] T149 [P] Update ALL existing integration tests to use auth helper in backend/tests/ (scan for all test files, add authenticate() calls)
-- [ ] T150 Implement backward compatibility for X-API-KEY header in backend/src/middleware.rs (support old and new auth simultaneously)
-- [ ] T151 Implement backward compatibility for X-USER-ID header in backend/src/middleware.rs (honor if present)
-- [ ] T152 Add deprecation warnings for old auth headers in backend/src/logging.rs (log warning when X-API-KEY used)
-- [ ] T153 Create migration documentation in docs/migration/OLD_AUTH_TO_NEW_AUTH.md (timeline, steps, examples)
+- [ ] T144 [P] Update ALL existing integration tests to use auth helper in backend/tests/ (scan for all test files, add authenticate() calls)
+- [ ] T145 Implement backward compatibility for X-API-KEY header in backend/src/middleware.rs (support old and new auth simultaneously)
+- [ ] T146 Implement backward compatibility for X-USER-ID header in backend/src/middleware.rs (honor if present)
+- [ ] T147 Add deprecation warnings for old auth headers in backend/src/logging.rs (log warning when X-API-KEY used)
+- [ ] T148 Create migration documentation in docs/migration/OLD_AUTH_TO_NEW_AUTH.md (timeline, steps, examples)
 
 ### User Management Endpoints
 
-- [ ] T154 [P] Implement GET /v1/users/{user_id} endpoint in backend/crates/kalamdb-api/src/handlers/user_handler.rs (auth: dba/system or self)
-- [ ] T155 [P] Implement PUT /v1/users/{user_id} endpoint in backend/crates/kalamdb-api/src/handlers/user_handler.rs (auth: dba/system or self with limited fields)
-- [ ] T156 [P] Implement DELETE /v1/users/{user_id} endpoint in backend/crates/kalamdb-api/src/handlers/user_handler.rs (soft delete, auth: dba/system)
-- [ ] T157 [P] Implement GET /v1/users endpoint in backend/crates/kalamdb-api/src/handlers/user_handler.rs (list users with filters, auth: dba/system)
-- [ ] T158 [P] Implement POST /v1/users/restore/{user_id} endpoint in backend/crates/kalamdb-api/src/handlers/user_handler.rs (restore soft-deleted, auth: dba/system)
+- [ ] T149 [P] Implement GET /v1/users/{user_id} endpoint in backend/crates/kalamdb-api/src/handlers/user_handler.rs (auth: dba/system or self)
+- [ ] T150 [P] Implement PUT /v1/users/{user_id} endpoint in backend/crates/kalamdb-api/src/handlers/user_handler.rs (auth: dba/system or self with limited fields)
+- [ ] T151 [P] Implement DELETE /v1/users/{user_id} endpoint in backend/crates/kalamdb-api/src/handlers/user_handler.rs (soft delete, auth: dba/system)
+- [ ] T152 [P] Implement GET /v1/users endpoint in backend/crates/kalamdb-api/src/handlers/user_handler.rs (list users with filters, auth: dba/system)
+- [ ] T153 [P] Implement POST /v1/users/restore/{user_id} endpoint in backend/crates/kalamdb-api/src/handlers/user_handler.rs (restore soft-deleted, auth: dba/system)
 
 ---
 
@@ -432,18 +605,18 @@
 
 **Purpose**: Documentation, performance optimization, security hardening
 
-- [ ] T159 [P] Create API contracts documentation in specs/007-user-auth/contracts/auth.yaml (POST /v1/auth/login, POST /v1/auth/validate)
-- [ ] T160 [P] Create API contracts documentation in specs/007-user-auth/contracts/users.yaml (POST /v1/users, GET /v1/users/{user_id}, PUT, DELETE, GET list)
-- [ ] T161 [P] Create API contracts documentation in specs/007-user-auth/contracts/errors.yaml (401, 403 error response schemas)
-- [ ] T162 [P] Create quickstart guide in specs/007-user-auth/quickstart.md (database init, create first user, Basic Auth example, JWT example, RBAC examples, CLI auth, troubleshooting)
-- [ ] T163 [P] Update agent context with new technologies in .github/copilot-instructions.md (bcrypt, HTTP Basic Auth, JWT, RBAC, Actix-Web auth middleware)
-- [ ] T164 Code cleanup and refactoring across all modified files
-- [ ] T165 [P] Performance benchmarking for authentication endpoints (measure p50, p95, p99 latency)
-- [ ] T166 [P] Security audit of authentication code (password handling, timing attacks, error messages)
-- [ ] T167 Implement user record caching for performance (moka cache, 99%+ hit rate, saves 1-5ms RocksDB lookup)
-- [ ] T168 Implement JWT token claim caching for performance (moka cache, 5-10x speedup, <1ms p95 latency)
-- [ ] T169 [P] Add request_id to all authentication error responses in backend/src/middleware.rs (for troubleshooting)
-- [ ] T170 Final end-to-end test in backend/tests/test_e2e_auth_flow.rs (create user → authenticate → execute query → soft delete → restore)
+- [ ] T154 [P] Create API contracts documentation in specs/007-user-auth/contracts/auth.yaml (POST /v1/auth/login, POST /v1/auth/validate)
+- [ ] T155 [P] Create API contracts documentation in specs/007-user-auth/contracts/users.yaml (POST /v1/users, GET /v1/users/{user_id}, PUT, DELETE, GET list)
+- [ ] T156 [P] Create API contracts documentation in specs/007-user-auth/contracts/errors.yaml (401, 403 error response schemas)
+- [ ] T157 [P] Create quickstart guide in specs/007-user-auth/quickstart.md (database init, create first user, Basic Auth example, JWT example, RBAC examples, CLI auth, troubleshooting)
+- [ ] T158 [P] Update agent context with new technologies in .github/copilot-instructions.md (bcrypt, HTTP Basic Auth, JWT, RBAC, Actix-Web auth middleware, StorageBackend abstraction)
+- [ ] T159 Code cleanup and refactoring across all modified files
+- [ ] T160 [P] Performance benchmarking for authentication endpoints (measure p50, p95, p99 latency)
+- [ ] T161 [P] Security audit of authentication code (password handling, timing attacks, error messages)
+- [ ] T162 Implement user record caching for performance (moka cache, 99%+ hit rate, saves 1-5ms RocksDB lookup)
+- [ ] T163 Implement JWT token claim caching for performance (moka cache, 5-10x speedup, <1ms p95 latency)
+- [ ] T164 [P] Add request_id to all authentication error responses in backend/src/middleware.rs (for troubleshooting)
+- [ ] T165 Final end-to-end test in backend/tests/test_e2e_auth_flow.rs (create user → authenticate → execute query → soft delete → restore)
 
 ---
 
@@ -453,21 +626,21 @@
 
 ### Scheduled Cleanup Job
 
-- [ ] T171 Create UserCleanupJob struct in backend/crates/kalamdb-core/src/jobs/user_cleanup.rs (follow RetentionPolicy pattern from retention.rs)
-- [ ] T172 Implement UserCleanupConfig with grace_period_days in backend/crates/kalamdb-core/src/jobs/user_cleanup.rs (follow RetentionConfig pattern)
-- [ ] T173 Implement enforce() method in UserCleanupJob (find expired users where deleted_at < now - grace_period, delete tables, delete users, follow RetentionPolicy::enforce() pattern)
-- [ ] T174 Export UserCleanupJob from backend/crates/kalamdb-core/src/jobs/mod.rs (add to pub use statements)
-- [ ] T175 Integrate cleanup job into scheduler in backend/src/lifecycle.rs (use TokioJobManager::start_job(), register in system.jobs table, follow flush job pattern)
-- [ ] T176 [P] Add cleanup job configuration in backend/config.toml (deletion_grace_period_days, cleanup_job_schedule cron expression)
-- [ ] T177 [P] Integration test for cleanup job in backend/tests/test_user_cleanup.rs (test_cleanup_deletes_expired_users, test_cleanup_cascade_deletes_tables, verify system.jobs entries)
+- [ ] T166 Create UserCleanupJob struct in backend/crates/kalamdb-core/src/jobs/user_cleanup.rs (follow RetentionPolicy pattern from retention.rs)
+- [ ] T167 Implement UserCleanupConfig with grace_period_days in backend/crates/kalamdb-core/src/jobs/user_cleanup.rs (follow RetentionConfig pattern)
+- [ ] T168 Implement enforce() method in UserCleanupJob (find expired users where deleted_at < now - grace_period, delete tables, delete users, follow RetentionPolicy::enforce() pattern)
+- [ ] T169 Export UserCleanupJob from backend/crates/kalamdb-core/src/jobs/mod.rs (add to pub use statements)
+- [ ] T170 Integrate cleanup job into scheduler in backend/src/lifecycle.rs (use TokioJobManager::start_job(), register in system.jobs table, follow flush job pattern)
+- [ ] T171 [P] Add cleanup job configuration in backend/config.toml (deletion_grace_period_days, cleanup_job_schedule cron expression)
+- [ ] T172 [P] Integration test for cleanup job in backend/tests/test_user_cleanup.rs (test_cleanup_deletes_expired_users, test_cleanup_cascade_deletes_tables, verify system.jobs entries)
 
 ### Database Indexes
 
-- [ ] T178 Add idx_users_username index constant to ColumnFamilyNames in backend/crates/kalamdb-commons/src/constants.rs (follow existing index naming pattern)
-- [ ] T179 Implement create_username_index() in backend/crates/kalamdb-store/src/users.rs (secondary index column family, follow existing index patterns)
-- [ ] T180 [P] Create idx_users_role index for role filtering in backend/crates/kalamdb-store/src/users.rs (use db.put_cf() for index updates)
-- [ ] T181 [P] Create idx_users_deleted_at index for cleanup job efficiency in backend/crates/kalamdb-store/src/users.rs
-- [ ] T182 [P] Create idx_tables_access index in backend/crates/kalamdb-store/src/tables.rs (for shared table access level queries)
+- [ ] T173 Add idx_users_username index constant to ColumnFamilyNames in backend/crates/kalamdb-commons/src/constants.rs (follow existing index naming pattern)
+- [ ] T174 Implement create_username_index() in backend/crates/kalamdb-store/src/users.rs (secondary index column family, follow existing index patterns)
+- [ ] T175 [P] Create idx_users_role index for role filtering in backend/crates/kalamdb-store/src/users.rs (use db.put_cf() for index updates)
+- [ ] T176 [P] Create idx_users_deleted_at index for cleanup job efficiency in backend/crates/kalamdb-store/src/users.rs
+- [ ] T177 [P] Create idx_tables_access index in backend/crates/kalamdb-store/src/tables.rs (for shared table access level queries)
 
 ### Comprehensive Audit Logging
 
@@ -527,46 +700,95 @@
 
 ### Phase Dependencies
 
-- **Setup (Phase 1)**: No dependencies - can start immediately
-- **Foundational (Phase 2)**: Depends on Setup (Phase 1) - BLOCKS all user stories
-- **User Stories (Phase 3-10)**: All depend on Foundational (Phase 2) completion
-  - US1 (Basic Auth): Can start after Foundational - No dependencies on other stories
-  - US2 (JWT): Can start after Foundational - No dependencies on other stories (independent)
-  - US3 (RBAC): Can start after Foundational - No dependencies on other stories (independent)
-  - US4 (Shared Tables): Depends on US3 (RBAC) for role checks
-  - US5 (System Users): Can start after Foundational - No dependencies on other stories (independent)
-  - US6 (CLI): Depends on US5 (System Users) for CLI system user creation
-  - US7 (Password Security): Can start after Foundational - Enhances US1 (independent)
-  - US8 (OAuth): Can start after Foundational - No dependencies on other stories (independent)
-- **Testing & Migration (Phase 11)**: Depends on all desired user stories being complete
-- **Polish (Phase 12)**: Depends on all user stories being complete
+**⚠️ CRITICAL**: Phase 0.5 (Storage Refactoring) MUST be completed FIRST before ANY other work
+
+- **Phase 0.5 (Storage Refactoring)**: No dependencies - MUST START IMMEDIATELY - BLOCKS everything else
+- **Setup (Phase 1)**: Depends on Phase 0.5 completion (needs stores to be migrated)
+- **Foundational (Phase 2)**: Depends on Setup (Phase 1) + Phase 0.5 - BLOCKS all user stories
+- **User Stories (Phase 3-10)**: All depend on Phase 0.5 + Foundational (Phase 2) completion
+  - US1 (Basic Auth): Depends on Phase 0.5 (uses UserStore with EntityStore<User>)
+  - US2 (JWT): Depends on Phase 0.5 (uses UserStore)
+  - US3 (RBAC): Depends on Phase 0.5 (uses all stores with StorageBackend)
+  - US4 (Shared Tables): Depends on Phase 0.5 + US3 (RBAC) for role checks
+  - US5 (System Users): Depends on Phase 0.5 (uses UserStore)
+  - US6 (CLI): Depends on Phase 0.5 + US5 (System Users) for CLI system user creation
+  - US7 (Password Security): Depends on Phase 0.5 (uses UserStore)
+  - US8 (OAuth): Depends on Phase 0.5 (uses UserStore)
+- **Testing & Migration (Phase 11)**: Depends on Phase 0.5 + all desired user stories being complete
+- **Polish (Phase 12)**: Depends on Phase 0.5 + all user stories being complete
 
 ### User Story Dependencies
 
 ```
-Foundational (Phase 2)
-    ├─ US1 (Basic Auth) ────────────┐
-    ├─ US2 (JWT) ───────────────────┤
-    ├─ US3 (RBAC) ──────────────────┼─> Testing & Migration (Phase 11)
-    │       └─ US4 (Shared Tables) ─┤
-    ├─ US5 (System Users) ──────────┤
-    │       └─ US6 (CLI) ───────────┤
-    ├─ US7 (Password Security) ─────┤
-    └─ US8 (OAuth) ─────────────────┘
-            └─> Polish (Phase 12)
+Phase 0.5: Storage Refactoring (CRITICAL - DO FIRST)
+    │
+    ├─> Setup (Phase 1)
+    │       │
+    │       └─> Foundational (Phase 2)
+    │               ├─ US1 (Basic Auth) ────────────┐
+    │               ├─ US2 (JWT) ───────────────────┤
+    │               ├─ US3 (RBAC) ──────────────────┼─> Testing & Migration (Phase 11)
+    │               │       └─ US4 (Shared Tables) ─┤
+    │               ├─ US5 (System Users) ──────────┤
+    │               │       └─ US6 (CLI) ───────────┤
+    │               ├─ US7 (Password Security) ─────┤
+    │               └─ US8 (OAuth) ─────────────────┤
+    │                                                └─> Polish (Phase 12)
+    └─> (All phases depend on Phase 0.5)
 ```
 
-### Critical Path (Minimum MVP)
+**CRITICAL**: Phase 0.5 is the foundational refactoring that establishes the storage architecture. ALL authentication work depends on it because:
+- UserStore (system.users) uses `EntityStore<User>` trait
+- JobStore, NamespaceStore use same pattern
+- All table stores (UserTableStore, SharedTableStore, StreamTableStore) use `EntityStore<T>`
+- No crate except kalamdb-store can import rocksdb
 
-For fastest time-to-value, implement in this order:
-1. **Phase 1-2**: Setup + Foundational (required)
-2. **Phase 3**: US1 - Basic User Authentication (core authentication)
-3. **Phase 5**: US3 - RBAC (core authorization)
-4. **Phase 11**: Update existing tests (backward compatibility)
+### Critical Path (Correct Order)
 
-This delivers a working authenticated database with role-based access control.
+**YOU MUST FOLLOW THIS ORDER**:
+
+1. **Phase 0.5**: Storage Refactoring (5 days solo / 3 days team) - **MANDATORY FIRST**
+   - Create StorageBackend + EntityStore traits
+   - Create all domain models (User, Job, Namespace, UserTableRow, etc.)
+   - Migrate all stores from kalamdb-store to kalamdb-core/src/stores/
+   - Remove RocksDB from kalamdb-core, kalamdb-sql, backend
+   - Verify with grep checks and integration tests
+
+2. **Phase 1**: Setup (0.5 day)
+   - Create kalamdb-auth crate
+   - Add enums to kalamdb-commons
+
+3. **Phase 2**: Foundational (2 days)
+   - Implement password hashing, JWT validation, auth middleware
+   - Build on top of Phase 0.5's UserStore
+
+4. **Phase 3+**: User Stories (8-12 days)
+   - Implement authentication features using the new storage architecture
+
+**DO NOT skip Phase 0.5** - attempting authentication without it will require complete rewrite later.
 
 ### Parallel Opportunities
+
+**Within Phase 0.5 Storage Refactoring**:
+
+**Sub-Phase 0.5.1** (Storage Infrastructure):
+- T001A, T001B, T001C, T001D, T001E can run in parallel (different files in kalamdb-store)
+- T001G can run after infrastructure is created
+
+**Sub-Phase 0.5.2** (Domain Models):
+- All model creation tasks (T002A-T002H) can run in parallel (different model files)
+
+**Sub-Phase 0.5.3** (System Stores):
+- T003B-T003D (UserStore), T003E-T003G (JobStore), T003H-T003J (NamespaceStore) can run in parallel
+- Each store is independent, different files
+
+**Sub-Phases 0.5.4-0.5.6** (Store Migrations):
+- UserTableStore, SharedTableStore, StreamTableStore migrations can run in parallel (different team members)
+- Each sub-phase is self-contained
+
+**Sub-Phase 0.5.10** (Verification):
+- All grep checks (T010B-T010E) can run in parallel
+- Documentation (T010H-T010J) can happen in parallel with tests
 
 **Within Setup (Phase 1)**:
 - T003, T004, T005, T006, T008, T009, T010 can all run in parallel (different files)
@@ -578,7 +800,7 @@ This delivers a working authenticated database with role-based access control.
 - Logging functions (T036-T038) can run in parallel
 - Rate limiting modules (T040-T041) can run in parallel
 
-**Across User Stories (Phase 3-10)**:
+**Across User Stories (Phase 3-10)** (ONLY AFTER Phase 0.5 complete):
 - If team capacity allows, multiple user stories can be worked on in parallel:
   - Team Member 1: US1 (Basic Auth)
   - Team Member 2: US2 (JWT)
@@ -594,29 +816,56 @@ This delivers a working authenticated database with role-based access control.
 
 ### Recommended Execution Strategy
 
-**Solo Developer (Sequential)**:
-1. Phase 1-2: Setup + Foundational (1-2 days)
-2. Phase 3: US1 Basic Auth (1 day)
-3. Phase 4: US2 JWT (1 day)
-4. Phase 5: US3 RBAC (1-2 days)
-5. Phase 6: US4 Shared Tables (1 day)
-6. Phase 7: US5 System Users (1 day)
-7. Phase 8: US6 CLI (1 day)
-8. Phase 9: US7 Password Security (0.5 day)
-9. Phase 10: US8 OAuth (1 day)
-10. Phase 11: Testing & Migration (1-2 days)
-11. Phase 12: Polish (1 day)
+**Solo Developer (Sequential) - CORRECT ORDER**:
+1. **Phase 0.5: Storage Refactoring (5 days) - MANDATORY FIRST**
+   - Day 1-2: Create infrastructure, models, system stores
+   - Day 3-4: Migrate existing stores (UserTableStore, SharedTableStore, StreamTableStore)
+   - Day 5: Refactor kalamdb-core, kalamdb-sql, backend + verification
+2. Phase 1: Setup (0.5 day)
+3. Phase 2: Foundational (2 days)
+4. Phase 3: US1 Basic Auth (1 day)
+5. Phase 4: US2 JWT (1 day)
+6. Phase 5: US3 RBAC (1-2 days)
+7. Phase 6: US4 Shared Tables (1 day)
+8. Phase 7: US5 System Users (1 day)
+9. Phase 8: US6 CLI (1 day)
+10. Phase 9: US7 Password Security (0.5 day)
+11. Phase 10: US8 OAuth (1 day)
+12. Phase 11: Testing & Migration (1-2 days)
+13. Phase 12: Polish (1 day)
 
-**Total Estimated Time**: 10-14 days solo
+**Total Estimated Time**: 16-20 days solo (including mandatory storage refactoring)
 
-**Team of 3+ (Parallel)**:
-1. Phase 1-2: Setup + Foundational (1-2 days, all team members)
-2. Parallel work on US1, US2, US3, US5, US7, US8 (2-3 days)
-3. Sequential work on US4 (after US3), US6 (after US5) (1 day)
-4. Phase 11: Testing & Migration (1 day, all team members)
-5. Phase 12: Polish (1 day)
+**Team of 3+ (Parallel) - CORRECT ORDER**:
 
-**Total Estimated Time**: 5-7 days with team
+**Week 1 (Days 1-3): MANDATORY Storage Refactoring**
+- **Day 1-3: Phase 0.5 - All team members work on storage refactoring**
+  - Team Member 1: Sub-Phases 0.5.1-0.5.2 (infrastructure + models)
+  - Team Member 2: Sub-Phase 0.5.3 (system stores)
+  - Team Member 3: Sub-Phase 0.5.4 (UserTableStore migration)
+  - Team Member 4: Sub-Phases 0.5.5-0.5.6 (SharedTableStore + StreamTableStore)
+  - Team Member 5: Sub-Phases 0.5.7-0.5.9 (kalamdb-core, kalamdb-sql, backend refactoring)
+  - All: Sub-Phase 0.5.10 (verification + testing)
+
+**Week 1 (Days 4-5): Setup + Foundational**
+- Phase 1-2: Setup + Foundational (1-2 days, all team members work together)
+
+**Week 2 (Days 6-10): Parallel User Stories**
+- Team Member 1: US1 (Basic Auth)
+- Team Member 2: US2 (JWT)
+- Team Member 3: US3 (RBAC) → then US4 (Shared Tables)
+- Team Member 4: US5 (System Users) → then US6 (CLI)
+- Team Member 5: US7 (Password Security) + US8 (OAuth)
+
+**Week 3 (Days 11-12): Testing & Polish**
+- Phase 11: Testing & Migration (1 day, all team members)
+- Phase 12: Polish (1 day, all team members)
+
+**Total Estimated Time**: 12 days with 5-person team (3 days storage refactoring + 9 days features)
+5. Phase 11: Testing & Migration (1 day, all team members)
+6. Phase 12: Polish (1 day)
+
+**Total Estimated Time**: 7-9 days with team (including storage refactoring)
 
 ---
 

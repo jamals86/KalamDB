@@ -316,6 +316,224 @@ Service accounts and automated systems should be able to authenticate using OAut
 
 ---
 
+### User Story 9 - Storage Backend Abstraction & Store Consolidation (Priority: P0 - CRITICAL)
+
+**CRITICAL ARCHITECTURAL REFACTORING**: This is the foundational change that MUST be completed FIRST before implementing authentication. All existing storage code must be refactored to use a two-layer abstraction pattern, and all stores must be consolidated into `kalamdb-core/src/stores/` with strongly-typed entity models.
+
+The authentication system must store user credentials and metadata in a way that doesn't tightly couple to RocksDB. All database interactions should go through the `kalamdb-store` crate abstraction layer, enabling future migration to other storage backends (Sled, TiKV, FoundationDB, etc.) without rewriting authentication logic.
+
+**Why this priority**: This is P0 (CRITICAL) because it affects the entire codebase architecture. All existing table stores (UserTableStore, SharedTableStore, StreamTableStore) must be migrated to the new pattern. Authentication code depends on this foundation. Doing this refactoring after authentication would require rewriting authentication code.
+
+**Independent Test**: Can be fully tested by verifying that `kalamdb-core`, `kalamdb-sql`, and `backend` crates never import `rocksdb` directly and only use `kalamdb-store` traits/types. Mock storage backend can be implemented to prove abstraction works. Delivers value by making storage backend a pluggable implementation detail and establishing proper architectural layering.
+
+**Two-Layer Architecture**:
+
+**Layer 1: Storage Backend Abstraction** (`kalamdb-store/src/backend.rs`)
+```rust
+/// Low-level key-value storage backend (RocksDB, Sled, TiKV, etc.)
+pub trait StorageBackend: Send + Sync {
+    fn put(&self, partition: &str, key: &[u8], value: &[u8]) -> Result<()>;
+    fn get(&self, partition: &str, key: &[u8]) -> Result<Option<Vec<u8>>>;
+    fn delete(&self, partition: &str, key: &[u8]) -> Result<()>;
+    fn scan_prefix(&self, partition: &str, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>>;
+    fn scan_range(&self, partition: &str, start: &[u8], end: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>>;
+    fn delete_batch(&self, partition: &str, keys: &[Vec<u8>]) -> Result<()>;
+}
+
+/// RocksDB implementation
+pub struct RocksDbBackend {
+    db: Arc<rocksdb::DB>,
+}
+```
+
+**Layer 2: Entity Store Trait** (`kalamdb-store/src/traits.rs`)
+```rust
+/// Generic CRUD operations for strongly-typed entities
+/// Each store implements this for their specific entity type
+pub trait EntityStore<T>
+where
+    T: Serialize + for<'de> Deserialize<'de>,
+{
+    fn backend(&self) -> &Arc<dyn StorageBackend>;
+    fn partition(&self) -> &str;
+    
+    // Default JSON serialization (override for bincode/protobuf/etc.)
+    fn serialize(&self, entity: &T) -> Result<Vec<u8>> {
+        serde_json::to_vec(entity).map_err(Into::into)
+    }
+    
+    fn deserialize(&self, bytes: &[u8]) -> Result<T> {
+        serde_json::from_slice(bytes).map_err(Into::into)
+    }
+    
+    // Standard CRUD operations
+    fn put(&self, key: &str, entity: &T) -> Result<()>;
+    fn get(&self, key: &str) -> Result<Option<T>>;
+    fn delete(&self, key: &str) -> Result<()>;
+    fn scan_prefix(&self, prefix: &str) -> Result<Vec<(String, T)>>;
+}
+```
+
+**Store Consolidation Plan**:
+
+All stores MUST be moved to `kalamdb-core/src/stores/` with strongly-typed entity models:
+
+**Before (Current State)**:
+```
+kalamdb-store/
+├── user_table_store.rs      # Uses JsonValue
+├── shared_table_store.rs    # Uses JsonValue
+└── stream_table_store.rs    # Uses JsonValue
+
+kalamdb-core/
+└── (no stores, uses kalamdb-store directly)
+```
+
+**After (Target State)**:
+```
+kalamdb-store/
+├── src/
+│   ├── backend.rs           # StorageBackend trait + RocksDbBackend
+│   ├── traits.rs            # EntityStore<T> trait
+│   └── lib.rs
+
+kalamdb-core/
+├── src/
+│   ├── models/
+│   │   ├── mod.rs
+│   │   ├── system.rs        # User, Job, Namespace structs (all system tables together)
+│   │   └── tables.rs        # UserTableRow, SharedTableRow, StreamTableRow structs
+│   ├── stores/
+│   │   ├── mod.rs
+│   │   ├── user_store.rs        # impl EntityStore<User>
+│   │   ├── job_store.rs         # impl EntityStore<Job>
+│   │   ├── namespace_store.rs   # impl EntityStore<Namespace>
+│   │   ├── user_table_store.rs  # impl EntityStore<UserTableRow>
+│   │   ├── shared_table_store.rs # impl EntityStore<SharedTableRow>
+│   │   └── stream_table_store.rs # impl EntityStore<StreamTableRow>
+```
+
+**Entity Type Examples**:
+
+```rust
+// kalamdb-core/src/models/system.rs - All system table models together
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct User {
+    pub id: String,
+    pub username: String,
+    pub password_hash: String,
+    pub role: UserRole,
+    pub created_at: String,
+    // ... other fields
+}
+
+// kalamdb-core/src/models/user_table_row.rs
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UserTableRow {
+    #[serde(flatten)]
+    pub fields: serde_json::Map<String, serde_json::Value>,  // Dynamic user data
+    pub _updated: String,   // System column
+    pub _deleted: bool,     // System column
+}
+
+// kalamdb-core/src/stores/user_store.rs
+pub struct UserStore {
+    backend: Arc<dyn StorageBackend>,  // ← Generic backend, no RocksDB!
+}
+
+impl EntityStore<User> for UserStore {
+    fn backend(&self) -> &Arc<dyn StorageBackend> { &self.backend }
+    fn partition(&self) -> &str { "system_users" }
+    
+    // Override for bincode (faster than JSON)
+    fn serialize(&self, entity: &User) -> Result<Vec<u8>> {
+        bincode::serialize(entity).map_err(Into::into)
+    }
+    fn deserialize(&self, bytes: &[u8]) -> Result<User> {
+        bincode::deserialize(bytes).map_err(Into::into)
+    }
+}
+
+impl UserStore {
+    // Custom domain methods
+    pub fn get_by_username(&self, username: &str) -> Result<Option<User>> { ... }
+    pub fn list_all(&self) -> Result<Vec<User>> { ... }
+}
+```
+
+**Acceptance Scenarios**:
+
+1. **Given** the authentication system needs to store user credentials, **When** it writes to storage, **Then** it uses `UserStore` methods which internally use `StorageBackend` trait (never `rocksdb::DB` directly).
+
+2. **Given** the `system.users` table needs to be queried, **When** the SQL layer executes the query, **Then** it uses `UserStore` from `kalamdb-core/src/stores/` (not RocksDB-specific APIs).
+
+3. **Given** a developer wants to implement a new storage backend (e.g., Sled), **When** they implement the `StorageBackend` trait in `kalamdb-store`, **Then** all stores work without code changes (only backend initialization changes).
+
+4. **Given** `kalamdb-core` needs database access, **When** it performs operations, **Then** it receives `Arc<dyn StorageBackend>` from `kalamdb-store` (not `Arc<rocksdb::DB>`).
+
+5. **Given** the codebase is analyzed for dependencies, **When** checking `kalamdb-core/Cargo.toml`, `kalamdb-sql/Cargo.toml`, and `backend/Cargo.toml`, **Then** these files do NOT list `rocksdb` as a dependency (only `kalamdb-store/Cargo.toml` has it).
+
+6. **Given** RocksDB-specific operations are needed (column families, compaction, snapshots), **When** the feature is implemented, **Then** it is encapsulated inside `kalamdb-store/src/backend.rs` with generic methods exposed via `StorageBackend` trait.
+
+7. **Given** the authentication middleware needs to verify credentials, **When** it queries the users table, **Then** it calls `UserStore::get()` methods (which implement `EntityStore<User>` trait).
+
+8. **Given** system initialization creates default users and tables, **When** this happens during startup, **Then** all stores are created with `Arc<dyn StorageBackend>` and all writes go through `EntityStore<T>` trait methods.
+
+9. **Given** existing user table operations need to continue working, **When** migrated to `UserTableStore` in `kalamdb-core/src/stores/`, **Then** it implements `EntityStore<UserTableRow>` with system column injection in `serialize()` method.
+
+10. **Given** all stores are in `kalamdb-core/src/stores/`, **When** business logic needs database access, **Then** it imports stores from `kalamdb_core::stores::*` (not from `kalamdb_store`).
+
+**Current State Assessment**:
+- ✅ `kalamdb-store` crate exists with basic infrastructure
+- ❌ `UserTableStore`, `SharedTableStore`, `StreamTableStore` are in `kalamdb-store` (should be in `kalamdb-core`)
+- ❌ These stores use `Arc<DB>` directly instead of `Arc<dyn StorageBackend>`
+- ❌ `EntityStore<T>` trait doesn't exist yet
+- ❌ `StorageBackend` trait doesn't exist yet
+- ❌ `kalamdb-core` imports `rocksdb` directly (see `storage/rocksdb_store.rs`, `storage/rocksdb_init.rs`, `storage/rocksdb_config.rs`)
+- ❌ `kalamdb-sql` imports `rocksdb::DB` (see `adapter.rs`, `lib.rs`)
+- ❌ `backend` passes `Arc<rocksdb::DB>` to other crates
+
+**Refactoring Scope (MUST BE DONE FIRST)**:
+1. **Create infrastructure in kalamdb-store**:
+   - Create `backend.rs` with `StorageBackend` trait and `RocksDbBackend` implementation
+   - Create `traits.rs` with `EntityStore<T>` trait
+   
+2. **Create domain models in kalamdb-core**:
+   - Create `models/` directory with entity types (User, Job, Namespace, UserTableRow, etc.)
+   
+3. **Migrate existing stores to kalamdb-core**:
+   - Move `UserTableStore` from `kalamdb-store/src/user_table_store.rs` to `kalamdb-core/src/stores/user_table_store.rs`
+   - Move `SharedTableStore` to `kalamdb-core/src/stores/shared_table_store.rs`
+   - Move `StreamTableStore` to `kalamdb-core/src/stores/stream_table_store.rs`
+   - Refactor each to use `Arc<dyn StorageBackend>` instead of `Arc<DB>`
+   - Implement `EntityStore<T>` for each with appropriate entity types
+   
+4. **Create new system stores in kalamdb-core**:
+   - Create `stores/user_store.rs` implementing `EntityStore<User>` for `system.users`
+   - Create `stores/job_store.rs` implementing `EntityStore<Job>` for `system.jobs`
+   - Create `stores/namespace_store.rs` implementing `EntityStore<Namespace>` for `system.namespaces`
+   
+5. **Refactor kalamdb-core to remove RocksDB**:
+   - Delete `storage/rocksdb_store.rs`, `storage/rocksdb_init.rs`, `storage/rocksdb_config.rs`
+   - Replace `Arc<rocksdb::DB>` with `Arc<dyn StorageBackend>` throughout
+   - Update all code to use stores from `kalamdb_core::stores::*`
+   
+6. **Refactor kalamdb-sql**:
+   - Update `RocksDbAdapter` to wrap `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>`
+   - Remove `use rocksdb::*` imports
+   
+7. **Refactor backend initialization**:
+   - Backend creates `RocksDbBackend` and wraps in `Arc<dyn StorageBackend>`
+   - Pass backend to all stores via constructors
+   - Remove direct RocksDB passing
+   
+8. **Update Cargo.toml files**:
+   - Remove `rocksdb` from `kalamdb-core/Cargo.toml`
+   - Remove `rocksdb` from `kalamdb-sql/Cargo.toml`
+   - Remove `rocksdb` from `backend/Cargo.toml` (only in `kalamdb-store/Cargo.toml`)
+
+---
+
 ### Edge Cases
 
 - **Empty or Missing Credentials**: What happens when a user sends a request with no Authorization header or empty credentials? System must return 401 Unauthorized with clear error message.
@@ -458,6 +676,23 @@ All integration tests must be written **BEFORE** implementation (TDD approach) a
 
 - test_complete_user_lifecycle - Create user → authenticate → query → soft delete → restore
 
+#### 11. Storage Abstraction Tests (backend/tests/test_storage_abstraction.rs, kalamdb-store/src/tests/mod.rs)
+
+**Storage Backend Abstraction** (backend/tests/test_storage_abstraction.rs):
+- test_auth_uses_storage_backend_only - Authentication never imports rocksdb directly
+- test_mock_storage_backend_authentication - Mock StorageBackend implementation can authenticate users
+- test_storage_backend_swap_no_code_changes - Swap RocksDB→Mock without changing kalamdb-core/backend code
+
+**kalamdb-store Encapsulation** (kalamdb-store/src/tests/mod.rs):
+- test_users_store_crud_operations - UsersStore (or SystemStore) provides create/read/update/delete for users
+- test_partition_abstraction - Column families accessed via Partition abstraction
+- test_rocksdb_specific_features_hidden - RocksDB types (DB, ColumnFamily) never exposed in public API
+
+**Dependency Analysis** (compile-time check via CI):
+- test_kalamdb_core_no_rocksdb_dependency - `kalamdb-core/Cargo.toml` does NOT have `rocksdb` dependency
+- test_kalamdb_sql_no_rocksdb_dependency - `kalamdb-sql/Cargo.toml` does NOT have `rocksdb` dependency
+- test_backend_no_rocksdb_dependency - `backend/Cargo.toml` does NOT have `rocksdb` dependency (only `kalamdb-store`)
+
 ### Test Organization
 
 ```
@@ -473,11 +708,15 @@ backend/tests/
 ├── test_user_cleanup.rs        # 3 tests - Scheduled cleanup job
 ├── test_edge_cases.rs          # 4 tests - Edge cases
 ├── test_e2e_auth_flow.rs       # 1 test - End-to-end lifecycle
+├── test_storage_abstraction.rs # 3 tests - Storage backend abstraction
 └── common/
     └── auth_helper.rs          # Test utilities (create_test_user, authenticate_basic, etc.)
+
+kalamdb-store/src/tests/
+└── mod.rs                      # 3 tests - kalamdb-store encapsulation
 ```
 
-**Total**: 68 integration tests + 16 unit tests = **84 comprehensive tests**
+**Total**: 74 integration tests + 16 unit tests = **90 comprehensive tests**
 
 ---
 
@@ -592,6 +831,21 @@ backend/tests/
 - **FR-USER-010**: Soft-deleted users (deleted_at IS NOT NULL) MUST be hidden from default queries
 - **FR-USER-011**: Only dba and system roles MUST be able to query soft-deleted users
 
+#### Storage Backend Abstraction
+
+- **FR-STORAGE-001**: ONLY the `kalamdb-store` crate MUST have `rocksdb` as a direct dependency
+- **FR-STORAGE-002**: All crates (`kalamdb-core`, `kalamdb-sql`, `backend`) MUST access storage through `kalamdb-store` abstractions only
+- **FR-STORAGE-003**: System MUST NOT expose `rocksdb::DB` or other RocksDB-specific types outside `kalamdb-store` crate
+- **FR-STORAGE-004**: All storage operations MUST use `kalamdb-store::StorageBackend` trait interface
+- **FR-STORAGE-005**: System users table MUST be accessed via `kalamdb-store::SystemStore` (or equivalent abstraction, not direct RocksDB calls)
+- **FR-STORAGE-006**: `kalamdb-sql::RocksDbAdapter` MUST be refactored to wrap `StorageBackend` trait instead of `Arc<rocksdb::DB>`
+- **FR-STORAGE-007**: `kalamdb-core` storage modules (`storage/rocksdb_store.rs`, `storage/rocksdb_init.rs`, `storage/rocksdb_config.rs`) MUST be moved to `kalamdb-store` crate
+- **FR-STORAGE-008**: All constructors accepting database handles MUST accept `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>`
+- **FR-STORAGE-009**: RocksDB-specific features (column families, compaction, snapshots) MUST be encapsulated in `kalamdb-store` with generic interfaces
+- **FR-STORAGE-010**: System MUST support pluggable storage backends - switching from RocksDB to another backend MUST only require changes in `kalamdb-store` crate and configuration
+- **FR-STORAGE-011**: Authentication middleware MUST query user credentials via `kalamdb-store::UsersStore` (or `SystemStore`) methods, not direct RocksDB APIs
+- **FR-STORAGE-012**: Partition abstraction (column families in RocksDB, trees in Sled) MUST be mapped through `kalamdb-store::Partition` type
+
 #### Testing Requirements
 
 - **FR-TEST-001**: System MUST include integration tests for HTTP Basic Auth authentication flow
@@ -604,6 +858,7 @@ backend/tests/
 - **FR-TEST-008**: System MUST include integration tests for OAuth authentication flow
 - **FR-TEST-009**: Existing integration tests MUST be updated to authenticate properly with new authentication requirements
 - **FR-TEST-010**: System MUST include integration tests for edge cases (malformed headers, missing credentials, etc.)
+- **FR-TEST-011**: System MUST include integration test proving storage backend abstraction works (mock backend implementation authenticates successfully)
 
 ### Non-Functional Requirements
 
@@ -647,6 +902,10 @@ backend/tests/
 
 - **CLI Credentials**: Configuration data stored by CLI tool to automatically authenticate as system user, supporting multiple database instances.
 
+- **Storage Backend**: Abstraction layer (defined in `kalamdb-store::StorageBackend` trait) that encapsulates all database operations. Allows KalamDB to switch between different key-value stores (RocksDB, Sled, TiKV, FoundationDB) without changing business logic in `kalamdb-core`, `kalamdb-sql`, or `backend` crates. Provides methods for get/put/delete, batch operations, range scans, and partition management.
+
+- **Partition**: Generic abstraction for data organization within a storage backend. Maps to column families in RocksDB, trees in Sled, key prefixes in Redis, or namespace buckets in other stores. Used to isolate different table types and system metadata.
+
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
@@ -669,10 +928,17 @@ backend/tests/
 
 - **SC-009**: Authentication failures return clear error messages that don't reveal whether a username exists (prevent user enumeration)
 
-- **SC-010**: All integration tests pass with 100% success rate, including authentication, authorization, shared table access, system users, and CLI integration
+- **SC-010**: All integration tests pass with 100% success rate, including authentication, authorization, shared table access, system users, CLI integration, and storage abstraction
 
 - **SC-011**: Existing integration tests are successfully updated to work with new authentication requirements without breaking existing functionality
 
 - **SC-012**: Database initialization creates a working system user and configures CLI in under 5 seconds
 
 - **SC-013**: OAuth-authenticated users can access the system using tokens from configured providers without requiring password management
+
+- **SC-014**: Storage backend abstraction is complete - `kalamdb-core`, `kalamdb-sql`, and `backend` crates have ZERO direct imports of `rocksdb` types
+
+- **SC-015**: Mock storage backend implementation can successfully authenticate users, proving storage abstraction is properly decoupled
+
+- **SC-016**: All user credential operations (create, read, update, delete, authenticate) go through `kalamdb-store` abstractions only
+
