@@ -9,9 +9,9 @@
 //! - Uses timestamp-prefixed keys for efficient deletion
 //! - Registers eviction jobs in system.jobs for monitoring
 
-use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::jobs::{JobExecutor, JobResult};
+use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use kalamdb_sql::KalamSql;
 use kalamdb_store::StreamTableStore;
 use std::sync::Arc;
@@ -98,8 +98,10 @@ impl StreamEvictionJob {
         // Get table definitions to access TTL settings
         for table_meta in stream_tables {
             // Get full table definition to access ttl_seconds
+            let namespace_id = NamespaceId::from(table_meta.namespace.as_str());
+            let table_name = TableName::from(table_meta.table_name.as_str());
             let table_def = self.kalam_sql
-                .get_table_definition(table_meta.namespace.as_str(), table_meta.table_name.as_str())
+                .get_table_definition(&namespace_id, &table_name)
                 .map_err(|e| {
                     KalamDbError::Other(format!(
                         "Failed to get table definition for {}.{}: {}",

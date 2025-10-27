@@ -43,7 +43,8 @@ impl StorageRegistry {
     /// # }
     /// ```
     pub fn get_storage(&self, storage_id: &str) -> Result<Option<Storage>, KalamDbError> {
-        self.kalam_sql.get_storage(storage_id).map_err(|e| {
+        let storage_id_typed = StorageId::from(storage_id);
+        self.kalam_sql.get_storage(&storage_id_typed).map_err(|e| {
             KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e))
         })
     }

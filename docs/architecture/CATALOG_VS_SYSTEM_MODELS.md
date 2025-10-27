@@ -62,7 +62,6 @@ pub struct Namespace {
 pub struct Namespace {
     pub namespace_id: NamespaceId,      // Primary key
     pub name: String,                    // Namespace name (redundant with ID)
-    pub owner_id: UserId,                // Who created it
     pub created_at: i64,                 // Unix milliseconds
     pub options: Option<String>,         // JSON string blob
     pub table_count: i32,                // Signed int (for SQL compatibility)

@@ -112,9 +112,11 @@ impl LiveQueryManager {
             ))
         })?;
 
+        let namespace_id = NamespaceId::from(namespace);
+        let table_name = TableName::from(table);
         let table_def = self
             .kalam_sql
-            .get_table_definition(namespace, table)
+            .get_table_definition(&namespace_id, &table_name)
             .map_err(|e| {
                 KalamDbError::Other(format!(
                     "Failed to load table definition for {}.{}: {}",
@@ -251,9 +253,11 @@ impl LiveQueryManager {
                 ))
             })?;
 
+            let namespace_id = NamespaceId::from(namespace);
+            let table_name = TableName::from(table);
             let table_def = self
                 .kalam_sql
-                .get_table_definition(namespace, table)
+                .get_table_definition(&namespace_id, &table_name)
                 .map_err(|e| {
                     KalamDbError::Other(format!(
                         "Failed to load table definition for {}.{}: {}",

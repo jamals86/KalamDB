@@ -38,8 +38,10 @@ pub async fn execute_flush_synchronously(
     // Get table definition from kalam_sql
     let kalam_sql = &server.kalam_sql;
 
+    let namespace_id = NamespaceId::from(namespace);
+    let table_name_typed = TableName::from(table_name);
     let table_def = kalam_sql
-        .get_table_definition(namespace, table_name)
+        .get_table_definition(&namespace_id, &table_name_typed)
         .map_err(|e| format!("Failed to get table definition: {}", e))?
         .ok_or_else(|| format!("Table {}.{} not found", namespace, table_name))?;
 

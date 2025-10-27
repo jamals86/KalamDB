@@ -124,7 +124,6 @@ Located in: `backend/crates/kalamdb-commons/src/models/system.rs`
 **system::Namespace** - System table row
 - `namespace_id: NamespaceId`
 - `name: String`
-- `owner_id: UserId`
 - `created_at: i64` (milliseconds)
 - `options: Option<String>` (JSON string)
 - `table_count: i32`

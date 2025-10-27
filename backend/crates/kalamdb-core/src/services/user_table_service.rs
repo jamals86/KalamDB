@@ -209,7 +209,7 @@ impl UserTableService {
         // Get the storage location from system.storages via KalamSQL
         let storage = self
             .kalam_sql
-            .get_storage(storage_id.as_str())
+            .get_storage(storage_id)
             .map_err(|e| {
                 KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e))
             })?

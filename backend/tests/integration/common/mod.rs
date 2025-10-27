@@ -40,6 +40,7 @@ pub mod flush_helpers;
 use anyhow::Result;
 use datafusion::catalog::SchemaProvider;
 use kalamdb_api::models::{QueryResult, SqlResponse};
+use kalamdb_commons::models::{NamespaceId, StorageId, TableName};
 use kalamdb_core::live_query::{LiveQueryManager, NodeId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
@@ -226,7 +227,7 @@ impl TestServer {
         if storages.is_empty() {
             let now = chrono::Utc::now().timestamp_millis();
             let default_storage = kalamdb_sql::Storage {
-                storage_id: "local".to_string(),
+                storage_id: StorageId::new("local"),
                 storage_name: "Local Filesystem".to_string(),
                 description: Some("Default local filesystem storage".to_string()),
                 storage_type: "filesystem".to_string(),
@@ -718,7 +719,7 @@ impl TestServer {
         // Filter tables in this namespace
         let ns_tables: Vec<_> = tables
             .into_iter()
-            .filter(|t| t.namespace == namespace)
+            .filter(|t| t.namespace == NamespaceId::new(namespace))
             .collect();
 
         // Drop each table
@@ -768,7 +769,7 @@ impl TestServer {
         match self.kalam_sql.scan_all_tables() {
             Ok(tables) => tables
                 .iter()
-                .any(|t| t.namespace == namespace && t.table_name == table_name),
+                .any(|t| t.namespace == NamespaceId::new(namespace) && t.table_name == TableName::new(table_name)),
             Err(_) => false,
         }
     }

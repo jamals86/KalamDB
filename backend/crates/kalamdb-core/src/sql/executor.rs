@@ -211,8 +211,10 @@ impl SqlExecutor {
 
         for table in tables {
             // Phase 2b: Get schema from information_schema.tables (TableDefinition.schema_history)
+            let namespace_id = NamespaceId::from(table.namespace.as_str());
+            let table_name = TableName::from(table.table_name.as_str());
             let table_def =
-                match kalam_sql.get_table_definition(table.namespace.as_str(), table.table_name.as_str()) {
+                match kalam_sql.get_table_definition(&namespace_id, &table_name) {
                     Ok(Some(def)) => def,
                     Ok(None) => {
                         // No TableDefinition found - skip this table (might be legacy)
@@ -428,7 +430,7 @@ impl SqlExecutor {
 
         // T167b & T167c: Validate storage_id exists in system.storages (NOT NULL enforcement)
         if let Some(kalam_sql) = &self.kalam_sql {
-            let storage_exists = kalam_sql.get_storage(storage_id.as_str()).is_ok();
+            let storage_exists = kalam_sql.get_storage(&storage_id).is_ok();
             if !storage_exists {
                 return Err(KalamDbError::InvalidOperation(format!(
                     "Storage '{}' does not exist in system.storages",
@@ -1400,8 +1402,9 @@ impl SqlExecutor {
             .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
 
         // Check if storage already exists
+        let storage_id = StorageId::from(stmt.storage_id.as_str());
         if let Some(_) = kalam_sql
-            .get_storage(&stmt.storage_id)
+            .get_storage(&storage_id)
             .map_err(|e| KalamDbError::Other(format!("Failed to check storage: {}", e)))?
         {
             return Err(KalamDbError::InvalidOperation(format!(
@@ -1481,8 +1484,9 @@ impl SqlExecutor {
             .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
 
         // Get existing storage
+        let storage_id = StorageId::from(stmt.storage_id.as_str());
         let mut storage = kalam_sql
-            .get_storage(&stmt.storage_id)
+            .get_storage(&storage_id)
             .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!("Storage '{}' not found", stmt.storage_id))
@@ -1537,7 +1541,8 @@ impl SqlExecutor {
             .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
 
         // Check if storage exists
-        match kalam_sql.get_storage(&stmt.storage_id) {
+        let storage_id = StorageId::from(stmt.storage_id.as_str());
+        match kalam_sql.get_storage(&storage_id) {
             Ok(Some(_)) => {
                 // Storage exists, continue with the deletion logic
             }
@@ -1599,7 +1604,7 @@ impl SqlExecutor {
 
         // Delete the storage
         kalam_sql
-            .delete_storage(&stmt.storage_id)
+            .delete_storage(&storage_id)
             .map_err(|e| KalamDbError::Other(format!("Failed to delete storage: {}", e)))?;
 
         Ok(ExecutionResult::Success(format!(
@@ -1688,8 +1693,10 @@ impl SqlExecutor {
         }
 
         // Phase 2b: Get schema from information_schema.tables (TableDefinition.schema_history)
+        let namespace_id = NamespaceId::from(stmt.namespace.as_ref());
+        let table_name = TableName::from(stmt.table_name.as_ref());
         let table_def = kalam_sql
-            .get_table_definition(stmt.namespace.as_ref(), stmt.table_name.as_ref())?
+            .get_table_definition(&namespace_id, &table_name)?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table definition not found for '{}.{}'",
@@ -1816,7 +1823,8 @@ impl SqlExecutor {
             .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
 
         // Verify namespace exists
-        match kalam_sql.get_namespace(stmt.namespace.as_ref()) {
+        let namespace_id = NamespaceId::from(stmt.namespace.as_ref());
+        match kalam_sql.get_namespace(&namespace_id) {
             Ok(Some(_)) => { /* namespace exists */ }
             Ok(None) => {
                 return Err(KalamDbError::NotFound(format!(

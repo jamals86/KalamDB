@@ -270,7 +270,6 @@ impl Job {
 /// ## Fields
 /// - `namespace_id`: Unique namespace identifier
 /// - `name`: Namespace name (e.g., "default", "production")
-/// - `owner_id`: User ID of the namespace owner
 /// - `created_at`: Unix timestamp in milliseconds when namespace was created
 /// - `options`: Optional JSON configuration
 /// - `table_count`: Number of tables in this namespace
@@ -288,7 +287,6 @@ impl Job {
 /// let namespace = Namespace {
 ///     namespace_id: NamespaceId::new("default"),
 ///     name: "default".to_string(),
-///     owner_id: UserId::new("u_admin"),
 ///     created_at: 1730000000000,
 ///     options: Some("{}".to_string()),
 ///     table_count: 0,
@@ -298,7 +296,6 @@ impl Job {
 pub struct Namespace {
     pub namespace_id: NamespaceId,
     pub name: String,
-    pub owner_id: UserId,
     pub created_at: i64,           // Unix timestamp in milliseconds
     pub options: Option<String>,   // JSON configuration
     pub table_count: i32,
@@ -309,22 +306,20 @@ impl Namespace {
     ///
     /// # Arguments
     /// * `name` - Namespace identifier
-    /// * `owner_id` - User ID of the namespace owner
     ///
     /// # Example
     /// ```
-    /// use kalamdb_commons::{system::Namespace, NamespaceId, UserId};
+    /// use kalamdb_commons::{system::Namespace, NamespaceId};
     ///
-    /// let namespace = Namespace::new("app", UserId::new("u_admin"));
+    /// let namespace = Namespace::new("app");
     /// assert_eq!(namespace.name, "app");
     /// assert_eq!(namespace.table_count, 0);
     /// ```
-    pub fn new(name: impl Into<String>, owner_id: UserId) -> Self {
+    pub fn new(name: impl Into<String>) -> Self {
         let name_str = name.into();
         Self {
             namespace_id: NamespaceId::new(&name_str),
             name: name_str,
-            owner_id,
             created_at: chrono::Utc::now().timestamp_millis(),
             options: Some("{}".to_string()),
             table_count: 0,
@@ -685,7 +680,6 @@ mod tests {
         let namespace = Namespace {
             namespace_id: NamespaceId::new("default"),
             name: "default".to_string(),
-            owner_id: UserId::new("u_admin"),
             created_at: 1730000000000,
             options: Some("{}".to_string()),
             table_count: 0,

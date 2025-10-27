@@ -23,9 +23,10 @@ Future:
 24) Check if we cna replace rocksdb with this one: https://github.com/foyer-rs/foyer, it already support objectstore so we can also store the non-flushed tables into s3 directly, and not forcing flushing when server goes down, even whenever we use the filesystem we can rely on the same logic inside foyer as well
 
 26) Low Priority - Maybe instead of _updated we can use _seq which is a snowflake id for better syncing ability accross distributed nodes
-27) ✅ RESOLVED (2025-10-27) - "No owner_id for namespace" - INCORRECT: The system.Namespace struct DOES have owner_id field. The old catalog version (now removed) didn't have it.
 28) ✅ DONE (2025-10-27) - Namespace struct duplication - YES, was duplicated between kalamdb-core/catalog and kalamdb-commons/system. Now consolidated into single source of truth at `kalamdb-commons/src/models/system.rs`. Removed `kalamdb-core/src/catalog/namespace.rs`. All validation logic (validate_name, can_delete, increment/decrement_table_count) moved to the commons version.
 
+29) instead of pub struct SystemTable name it KalamTable
+30) Make sure the TableSchema which is stored cover everything in one model and not spread into multiple models
 
 
 

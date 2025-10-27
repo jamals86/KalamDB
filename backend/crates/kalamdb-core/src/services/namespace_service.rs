@@ -53,7 +53,8 @@ impl NamespaceService {
         Namespace::validate_name(name.as_str())?;
 
         // Check if namespace already exists
-        let existing = self.kalam_sql.get_namespace(name.as_str()).map_err(|e| {
+        let namespace_id = NamespaceId::new(name.as_str());
+        let existing = self.kalam_sql.get_namespace(&namespace_id).map_err(|e| {
             KalamDbError::IoError(format!("Failed to check namespace existence: {}", e))
         })?;
 
@@ -69,7 +70,7 @@ impl NamespaceService {
         }
 
         // Create namespace entity with system as default owner
-        let namespace = Namespace::new(name.as_str(), UserId::new("system"));
+        let namespace = Namespace::new(name.as_str());
 
         self.kalam_sql
             .insert_namespace_struct(&namespace)
@@ -80,7 +81,8 @@ impl NamespaceService {
 
     /// Check whether a namespace already exists.
     pub fn namespace_exists(&self, name: &str) -> Result<bool, KalamDbError> {
-        self.kalam_sql.namespace_exists(name).map_err(|e| {
+        let namespace_id = NamespaceId::new(name);
+        self.kalam_sql.namespace_exists(&namespace_id).map_err(|e| {
             KalamDbError::IoError(format!("Failed to check namespace existence: {}", e))
         })
     }
@@ -94,8 +96,9 @@ impl NamespaceService {
 
     /// Get a specific namespace by name
     pub fn get(&self, name: &str) -> Result<Option<Namespace>, KalamDbError> {
+        let namespace_id = NamespaceId::new(name);
         self.kalam_sql
-            .get_namespace(name)
+            .get_namespace(&namespace_id)
             .map_err(|e| KalamDbError::IoError(format!("Failed to get namespace: {}", e)))
     }
 
@@ -182,8 +185,9 @@ impl NamespaceService {
             )));
         }
 
+        let namespace_id = NamespaceId::new(name.as_str());
         self.kalam_sql
-            .delete_namespace(name.as_str())
+            .delete_namespace(&namespace_id)
             .map_err(|e| KalamDbError::IoError(format!("Failed to delete namespace: {}", e)))?;
 
         Ok(true)

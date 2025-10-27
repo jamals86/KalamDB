@@ -93,7 +93,7 @@ impl RestoreService {
         // Step 3: Check if namespace already exists
         let existing_namespace = self
             .kalam_sql
-            .get_namespace(namespace_id.as_str())
+            .get_namespace(namespace_id)
             .map_err(|e| KalamDbError::IoError(format!("Failed to check namespace: {}", e)))?;
 
         if existing_namespace.is_some() {
@@ -514,7 +514,7 @@ impl RestoreService {
         // Delete namespace
         if let Err(e) = self
             .kalam_sql
-            .delete_namespace(manifest.namespace.namespace_id.as_str())
+            .delete_namespace(&manifest.namespace.namespace_id)
         {
             log::error!(
                 "Failed to delete namespace '{}': {}",

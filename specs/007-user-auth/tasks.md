@@ -84,7 +84,6 @@
 - [x] T021 [US9] Fix Job struct usage: Replace all `end_time` with `completed_at` (~8 occurrences) - **COMPLETED**: All end_time → completed_at conversions done
 - [x] T022 [US9] Convert Job `job_type` string literals to JobType enum (Flush, Backup, Restore, etc.) - **COMPLETED**: Converted to JobType::Backup, JobType::Restore, JobType::Cleanup
 - [x] T023 [US9] Convert Job `status` string literals to JobStatus enum (Running, Completed, Failed, etc.) - **COMPLETED**: Converted to JobStatus::Running, JobStatus::Completed, JobStatus::Failed
-- [ ] T024 [US9] Fix Namespace struct instantiation: Add missing `owner_id` field (~3 occurrences in sql/executor.rs)
 - [ ] T025 [US9] Fix TableName/NamespaceId/StorageId type conversions: Use .to_string() / ::new() methods properly (~100 type mismatch errors)
 - [x] T026 [US9] Update users.rs schema to match canonical User model (add password_hash, role, auth_type, auth_data, api_key, last_seen, deleted_at fields) - **COMPLETED** in T004-T005
 
@@ -497,7 +496,7 @@
 - [ ] T002A [US9] Create backend/crates/kalamdb-core/src/models/mod.rs directory
 - [ ] T002B [P] [US9] Define User struct in backend/crates/kalamdb-core/src/models/system.rs (id, username, password_hash, role, email, auth_type, auth_data, created_at, updated_at, last_seen, deleted_at) with Serialize, Deserialize, Clone, Debug
 - [ ] T002C [P] [US9] Define Job struct in backend/crates/kalamdb-core/src/models/system.rs (job_id, job_type, namespace_id, table_name, status, created_at, completed_at) with Serialize, Deserialize
-- [ ] T002D [P] [US9] Define Namespace struct in backend/crates/kalamdb-core/src/models/system.rs (namespace_id, name, owner_id, created_at) with Serialize, Deserialize
+- [ ] T002D [P] [US9] Define Namespace struct in backend/crates/kalamdb-core/src/models/system.rs (namespace_id, name, created_at) with Serialize, Deserialize
 - [ ] T002E [P] [US9] Define UserTableRow struct in backend/crates/kalamdb-core/src/models/tables.rs (fields: Map<String, Value> with #[serde(flatten)], _updated: String, _deleted: bool) with Serialize, Deserialize
 - [ ] T002F [P] [US9] Define SharedTableRow struct in backend/crates/kalamdb-core/src/models/tables.rs (similar to UserTableRow with access_level field) with Serialize, Deserialize
 - [ ] T002G [P] [US9] Define StreamTableRow struct in backend/crates/kalamdb-core/src/models/tables.rs (fields + ttl fields) with Serialize, Deserialize

@@ -109,7 +109,7 @@ impl BackupService {
         // Step 1: Check if namespace exists (T180)
         let namespace_metadata = self
             .kalam_sql
-            .get_namespace(namespace_id.as_str())
+            .get_namespace(namespace_id)
             .map_err(|e| KalamDbError::IoError(format!("Failed to get namespace: {}", e)))?;
 
         if namespace_metadata.is_none() {

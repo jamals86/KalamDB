@@ -127,12 +127,6 @@ let job = Job {
 };
 ```
 
-### T024: Namespace Struct Field Migration
-
-**Issue**: Missing `owner_id` field in Namespace instantiation  
-**Occurrences**: ~3 in sql/executor.rs  
-**Fix**: Add `owner_id: UserId::new("system")` or similar
-
 ### T025: Type Conversion Issues
 
 **Issue**: 98 type mismatch errors for TableName/NamespaceId/StorageId  
@@ -155,7 +149,6 @@ let job = Job {
 - 9 × Job.end_time field missing
 - 5 × Job struct instantiation errors
 - 4 × Job.start_time field missing
-- 3 × Namespace.owner_id missing
 - 35 × Various other type/field errors
 
 **Critical Files Affected**:
@@ -190,9 +183,6 @@ let job = Job {
    ```
 
 ### Secondary Priority (T024-T025)
-
-5. **Fix Namespace owner_id in sql/executor.rs**:
-   - Add `owner_id: UserId::new("system")` to Namespace instantiations
 
 6. **Systematic Type Conversion Fixes**:
    - Create helper functions if needed

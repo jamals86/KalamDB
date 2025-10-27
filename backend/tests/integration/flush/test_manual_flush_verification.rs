@@ -28,6 +28,7 @@
 mod common;
 
 use common::{fixtures, flush_helpers, TestServer};
+use kalamdb_commons::models::JobStatus;
 use std::fs;
 use std::path::PathBuf;
 
@@ -967,8 +968,8 @@ async fn test_12_flush_empty_table() {
     
     // Verify job completed successfully (even though no data to flush)
     assert_eq!(
-        flush_result.job_record.status, "completed",
-        "Job should be completed, got: {}",
+        flush_result.job_record.status, JobStatus::Completed,
+        "Job should be completed, got: {:?}",
         flush_result.job_record.status
     );
 

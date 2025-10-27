@@ -517,7 +517,6 @@ mod tests {
         let namespace = Namespace {
             namespace_id: NamespaceId::new("test_ns"),
             name: "test_ns".to_string(),
-            owner_id: UserId::new("system"),
             created_at: chrono::Utc::now().timestamp_millis(),
             options: Some("{}".to_string()),
             table_count: 1,
