@@ -66,6 +66,14 @@ pub enum SqlStatement {
     /// SUBSCRIBE TO <namespace>.<table> [WHERE ...] [OPTIONS (...)]
     Subscribe,
 
+    // ===== User Management =====
+    /// CREATE USER <username> WITH ...
+    CreateUser,
+    /// ALTER USER <username> SET ...
+    AlterUser,
+    /// DROP USER <username>
+    DropUser,
+
     // ===== DML Operations =====
     /// UPDATE <table> SET ... WHERE ...
     Update,
@@ -160,6 +168,11 @@ impl SqlStatement {
             // Live query subscriptions
             ["SUBSCRIBE", "TO", ..] => SqlStatement::Subscribe,
 
+            // User management
+            ["CREATE", "USER", ..] => SqlStatement::CreateUser,
+            ["ALTER", "USER", ..] => SqlStatement::AlterUser,
+            ["DROP", "USER", ..] => SqlStatement::DropUser,
+
             // DML operations (single word start)
             ["UPDATE", ..] => SqlStatement::Update,
             ["DELETE", ..] => SqlStatement::Delete,
@@ -214,6 +227,9 @@ impl SqlStatement {
             SqlStatement::CommitTransaction => "COMMIT",
             SqlStatement::RollbackTransaction => "ROLLBACK",
             SqlStatement::Subscribe => "SUBSCRIBE TO",
+            SqlStatement::CreateUser => "CREATE USER",
+            SqlStatement::AlterUser => "ALTER USER",
+            SqlStatement::DropUser => "DROP USER",
             SqlStatement::Update => "UPDATE",
             SqlStatement::Delete => "DELETE",
             SqlStatement::Select => "SELECT",
@@ -380,6 +396,34 @@ mod tests {
         assert_eq!(
             SqlStatement::classify("subscribe to test.events options (last_rows=10)"),
             SqlStatement::Subscribe
+        );
+    }
+
+    #[test]
+    fn test_classify_user_commands() {
+        assert_eq!(
+            SqlStatement::classify("CREATE USER alice WITH PASSWORD 'secret123' ROLE developer"),
+            SqlStatement::CreateUser
+        );
+        assert_eq!(
+            SqlStatement::classify("create user bob with oauth email='bob@example.com' role readonly"),
+            SqlStatement::CreateUser
+        );
+        assert_eq!(
+            SqlStatement::classify("ALTER USER alice SET PASSWORD 'newpass'"),
+            SqlStatement::AlterUser
+        );
+        assert_eq!(
+            SqlStatement::classify("alter user bob set role dba"),
+            SqlStatement::AlterUser
+        );
+        assert_eq!(
+            SqlStatement::classify("DROP USER alice"),
+            SqlStatement::DropUser
+        );
+        assert_eq!(
+            SqlStatement::classify("drop user old_user"),
+            SqlStatement::DropUser
         );
     }
 

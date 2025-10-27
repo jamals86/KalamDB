@@ -52,9 +52,10 @@ use kalamdb_commons::system::Namespace;
 use datafusion::sql::sqlparser;
 use kalamdb_commons::models::{NamespaceId as CommonNamespaceId, StorageId};
 use kalamdb_sql::ddl::{
-    parse_job_command, AlterNamespaceStatement, CreateNamespaceStatement, CreateTableStatement,
-    DescribeTableStatement, DropNamespaceStatement, DropTableStatement, KillLiveQueryStatement,
-    ShowNamespacesStatement, ShowTableStatsStatement, ShowTablesStatement,
+    parse_job_command, AlterNamespaceStatement, AlterUserStatement, CreateNamespaceStatement,
+    CreateTableStatement, CreateUserStatement, DescribeTableStatement, DropNamespaceStatement,
+    DropTableStatement, DropUserStatement, KillLiveQueryStatement, ShowNamespacesStatement,
+    ShowTableStatsStatement, ShowTablesStatement,
 };
 use kalamdb_sql::statement_classifier::SqlStatement;
 use kalamdb_sql::KalamSql;
@@ -491,6 +492,9 @@ impl SqlExecutor {
             SqlStatement::CommitTransaction => self.execute_commit_transaction().await,
             SqlStatement::RollbackTransaction => self.execute_rollback_transaction().await,
             SqlStatement::Subscribe => self.execute_subscribe(sql).await,
+            SqlStatement::CreateUser => self.execute_create_user(sql, user_id).await,
+            SqlStatement::AlterUser => self.execute_alter_user(sql, user_id).await,
+            SqlStatement::DropUser => self.execute_drop_user(sql, user_id).await,
             SqlStatement::Update => self.execute_update(sql, user_id).await,
             SqlStatement::Delete => self.execute_delete(sql, user_id).await,
             SqlStatement::Select | SqlStatement::Insert => {
