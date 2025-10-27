@@ -355,7 +355,6 @@ impl From<String> for Role {
 /// Enum representing authentication types in KalamDB.
 ///
 /// - **Password**: Traditional username/password authentication
-/// - **ApiKey**: API key authentication
 /// - **OAuth**: OAuth 2.0 authentication
 /// - **Internal**: Internal system authentication
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -363,8 +362,6 @@ impl From<String> for Role {
 pub enum AuthType {
     /// Traditional username/password authentication
     Password,
-    /// API key authentication
-    ApiKey,
     /// OAuth 2.0 authentication
     OAuth,
     /// Internal system authentication
@@ -376,7 +373,6 @@ impl AuthType {
     pub fn as_str(&self) -> &'static str {
         match self {
             AuthType::Password => "password",
-            AuthType::ApiKey => "apikey",
             AuthType::OAuth => "oauth",
             AuthType::Internal => "internal",
         }
@@ -386,7 +382,6 @@ impl AuthType {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "password" => Some(AuthType::Password),
-            "apikey" => Some(AuthType::ApiKey),
             "oauth" => Some(AuthType::OAuth),
             "internal" => Some(AuthType::Internal),
             _ => None,
@@ -404,7 +399,6 @@ impl From<&str> for AuthType {
     fn from(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "password" => AuthType::Password,
-            "apikey" => AuthType::ApiKey,
             "oauth" => AuthType::OAuth,
             "internal" => AuthType::Internal,
             _ => AuthType::Password, // Default to password for safety
@@ -469,6 +463,66 @@ impl From<&str> for StorageMode {
 impl From<String> for StorageMode {
     fn from(s: String) -> Self {
         StorageMode::from(s.as_str())
+    }
+}
+
+/// Enum representing table access control in KalamDB.
+///
+/// - **Public**: Table accessible by all authenticated users
+/// - **Private**: Table accessible only by owner
+/// - **Restricted**: Table accessible by specific users/roles (requires permissions table)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum TableAccess {
+    /// Table accessible by all authenticated users
+    Public,
+    /// Table accessible only by owner
+    Private,
+    /// Table accessible by specific users/roles (requires permissions table)
+    Restricted,
+}
+
+impl TableAccess {
+    /// Returns the table access as a lowercase string.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TableAccess::Public => "public",
+            TableAccess::Private => "private",
+            TableAccess::Restricted => "restricted",
+        }
+    }
+
+    /// Parse a table access from a string (case-insensitive).
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "public" => Some(TableAccess::Public),
+            "private" => Some(TableAccess::Private),
+            "restricted" => Some(TableAccess::Restricted),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for TableAccess {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl From<&str> for TableAccess {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "public" => TableAccess::Public,
+            "private" => TableAccess::Private,
+            "restricted" => TableAccess::Restricted,
+            _ => TableAccess::Private, // Default to private for safety
+        }
+    }
+}
+
+impl From<String> for TableAccess {
+    fn from(s: String) -> Self {
+        TableAccess::from(s.as_str())
     }
 }
 

@@ -65,9 +65,8 @@ impl UsersTableProvider {
             password_hash: String::new(), // Empty for now, will be set by auth system
             role: Role::User,
             email: Some(user.email.clone().unwrap_or_default()),
-            auth_type: AuthType::ApiKey,
+            auth_type: AuthType::OAuth,
             auth_data: None,
-            api_key: Some(uuid::Uuid::new_v4().to_string()),
             storage_mode: StorageMode::Table, // Default to table-based storage
             storage_id: None, // No specific storage preference
             created_at: user.created_at,
@@ -96,7 +95,7 @@ impl UsersTableProvider {
             )));
         }
 
-        // Preserve existing apikey and role when updating
+        // Preserve existing fields when updating
         let existing_user = existing.unwrap();
 
         let kalamdb_user = User {
@@ -107,7 +106,6 @@ impl UsersTableProvider {
             email: Some(user.email.clone().unwrap_or_default()),
             auth_type: existing_user.auth_type.clone(),         // Preserve auth type
             auth_data: existing_user.auth_data.clone(),
-            api_key: existing_user.api_key.clone(),             // Preserve API key
             storage_mode: existing_user.storage_mode.clone(),   // Preserve storage mode
             storage_id: existing_user.storage_id.clone(),       // Preserve storage ID
             created_at: user.created_at,
@@ -159,7 +157,6 @@ impl UsersTableProvider {
         let mut emails = StringBuilder::new();
         let mut auth_types = StringBuilder::new();
         let mut auth_datas = StringBuilder::new();
-        let mut api_keys = StringBuilder::new();
         let mut created_ats = Vec::new();
         let mut updated_ats = Vec::new();
         let mut last_seens = Vec::new();
@@ -173,7 +170,6 @@ impl UsersTableProvider {
             emails.append_option(user.email.as_deref());
             auth_types.append_value(user.auth_type.as_str());
             auth_datas.append_option(user.auth_data.as_deref());
-            api_keys.append_option(user.api_key.as_deref());
             created_ats.push(Some(user.created_at));
             updated_ats.push(Some(user.updated_at));
             last_seens.push(user.last_seen);
@@ -190,7 +186,6 @@ impl UsersTableProvider {
                 Arc::new(emails.finish()) as ArrayRef,
                 Arc::new(auth_types.finish()) as ArrayRef,
                 Arc::new(auth_datas.finish()) as ArrayRef,
-                Arc::new(api_keys.finish()) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(last_seens)) as ArrayRef,

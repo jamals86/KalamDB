@@ -31,6 +31,11 @@ pub use crate::ddl::job_commands::{parse_job_command, JobCommand};
 // Subscribe commands (SUBSCRIBE TO)
 pub use crate::ddl::subscribe_commands::{SubscribeOptions, SubscribeStatement};
 
+// User commands (CREATE USER, ALTER USER, DROP USER)
+pub use crate::ddl::user_commands::{
+    AlterUserStatement, CreateUserStatement, DropUserStatement, UserAuthType, UserModification,
+};
+
 /// Extension statement types that don't fit into standard SQL.
 ///
 /// This enum represents KalamDB-specific commands that extend SQL
@@ -53,6 +58,12 @@ pub enum ExtensionStatement {
     KillJob(JobCommand),
     /// SUBSCRIBE TO command (for live query subscriptions)
     Subscribe(SubscribeStatement),
+    /// CREATE USER command
+    CreateUser(CreateUserStatement),
+    /// ALTER USER command
+    AlterUser(AlterUserStatement),
+    /// DROP USER command
+    DropUser(DropUserStatement),
 }
 
 impl ExtensionStatement {
@@ -126,7 +137,28 @@ impl ExtensionStatement {
                 .map_err(|e| format!("SUBSCRIBE TO parsing failed: {}", e));
         }
 
-        Err("Unknown KalamDB extension command. Supported commands: CREATE/ALTER/DROP/SHOW STORAGE, FLUSH TABLE, FLUSH ALL TABLES, KILL JOB, SUBSCRIBE TO".to_string())
+        // Try CREATE USER
+        if sql_upper.starts_with("CREATE USER") {
+            return CreateUserStatement::parse(sql)
+                .map(ExtensionStatement::CreateUser)
+                .map_err(|e| format!("CREATE USER parsing failed: {}", e));
+        }
+
+        // Try ALTER USER
+        if sql_upper.starts_with("ALTER USER") {
+            return AlterUserStatement::parse(sql)
+                .map(ExtensionStatement::AlterUser)
+                .map_err(|e| format!("ALTER USER parsing failed: {}", e));
+        }
+
+        // Try DROP USER
+        if sql_upper.starts_with("DROP USER") {
+            return DropUserStatement::parse(sql)
+                .map(ExtensionStatement::DropUser)
+                .map_err(|e| format!("DROP USER parsing failed: {}", e));
+        }
+
+        Err("Unknown KalamDB extension command. Supported commands: CREATE/ALTER/DROP/SHOW STORAGE, FLUSH TABLE, FLUSH ALL TABLES, KILL JOB, SUBSCRIBE TO, CREATE/ALTER/DROP USER".to_string())
     }
 }
 

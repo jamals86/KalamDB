@@ -40,7 +40,7 @@ pub mod parser;
 pub mod query_cache;
 pub mod statement_classifier;
 
-use kalamdb_commons::{NamespaceId, StorageId, TableName};
+use kalamdb_commons::{NamespaceId, StorageId, TableName, UserId};
 // Re-export system models from kalamdb-commons (single source of truth)
 pub use kalamdb_commons::system::{
     InformationSchemaTable, Job, LiveQuery, Namespace, Storage, SystemTable as Table,
@@ -119,9 +119,27 @@ impl KalamSql {
         self.adapter.get_user(username)
     }
 
+    /// Get a user by user ID
+    pub fn get_user_by_id(&self, user_id: &UserId) -> Result<Option<User>> {
+        // Scan all users and find by ID
+        // TODO: Add index for user_id for better performance
+        let all_users = self.adapter.scan_all_users()?;
+        Ok(all_users.into_iter().find(|u| &u.id == user_id))
+    }
+
     /// Insert a new user
     pub fn insert_user(&self, user: &User) -> Result<()> {
         self.adapter.insert_user(user)
+    }
+
+    /// Update an existing user
+    pub fn update_user(&self, user: &User) -> Result<()> {
+        self.adapter.update_user(user)
+    }
+
+    /// Delete a user by username (soft delete)
+    pub fn delete_user(&self, username: &str) -> Result<()> {
+        self.adapter.delete_user(username)
     }
 
     /// Get a namespace by ID

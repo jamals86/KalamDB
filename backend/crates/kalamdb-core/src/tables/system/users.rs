@@ -19,7 +19,6 @@ impl UsersTable {
             Field::new("email", DataType::Utf8, true),
             Field::new("auth_type", DataType::Utf8, false),
             Field::new("auth_data", DataType::Utf8, true),
-            Field::new("api_key", DataType::Utf8, true),
             Field::new(
                 "created_at",
                 DataType::Timestamp(TimeUnit::Millisecond, None),
@@ -61,7 +60,7 @@ mod tests {
     #[test]
     fn test_users_table_schema() {
         let schema = UsersTable::schema();
-        assert_eq!(schema.fields().len(), 12);
+        assert_eq!(schema.fields().len(), 11);
         assert_eq!(schema.field(0).name(), "user_id");
         assert_eq!(schema.field(1).name(), "username");
         assert_eq!(schema.field(2).name(), "password_hash");
@@ -69,11 +68,10 @@ mod tests {
         assert_eq!(schema.field(4).name(), "email");
         assert_eq!(schema.field(5).name(), "auth_type");
         assert_eq!(schema.field(6).name(), "auth_data");
-        assert_eq!(schema.field(7).name(), "api_key");
-        assert_eq!(schema.field(8).name(), "created_at");
-        assert_eq!(schema.field(9).name(), "updated_at");
-        assert_eq!(schema.field(10).name(), "last_seen");
-        assert_eq!(schema.field(11).name(), "deleted_at");
+        assert_eq!(schema.field(7).name(), "created_at");
+        assert_eq!(schema.field(8).name(), "updated_at");
+        assert_eq!(schema.field(9).name(), "last_seen");
+        assert_eq!(schema.field(10).name(), "deleted_at");
     }
 
     #[test]

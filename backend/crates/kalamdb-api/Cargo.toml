@@ -11,6 +11,7 @@ repository.workspace = true
 kalamdb-commons = { path = "../kalamdb-commons" }
 kalamdb-core = { path = "../kalamdb-core" }
 kalamdb-sql = { path = "../kalamdb-sql" }
+kalamdb-auth = { path = "../kalamdb-auth" }
 
 # Apache Arrow
 arrow.workspace = true
@@ -39,6 +40,7 @@ log.workspace = true
 
 # Async runtime
 tokio.workspace = true
+futures-util = "0.3"
 
 [dev-dependencies]
 # Testing utilities

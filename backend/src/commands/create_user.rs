@@ -1,17 +1,17 @@
 //! Create user command for kalamdb-server
 //!
-//! Provides CLI command to create a new user with auto-generated API key
+//! Provides CLI command to create a new user with password authentication
 
 use anyhow::{Context, Result};
+use kalamdb_auth::password;
 use kalamdb_core::auth::roles::validate_role;
 use kalamdb_sql::RocksDbAdapter;
 use kalamdb_sql::User;
 use kalamdb_commons::{AuthType, Role, StorageMode, UserId};
 use log::info;
 use std::sync::Arc;
-use uuid::Uuid;
 
-/// Create a new user with auto-generated API key
+/// Create a new user with password authentication
 ///
 /// # Arguments
 /// * `sql_adapter` - SQL adapter for system tables
@@ -20,7 +20,7 @@ use uuid::Uuid;
 /// * `role` - User role (admin, user, readonly)
 ///
 /// # Returns
-/// The generated API key (UUID v4)
+/// Success message
 pub async fn create_user(
     sql_adapter: Arc<RocksDbAdapter>,
     username: &str,
@@ -33,8 +33,11 @@ pub async fn create_user(
     // Generate unique user_id (using username for simplicity)
     let user_id = UserId::new(format!("user_{}", username));
 
-    // Auto-generate API key (UUID v4)
-    let apikey = Uuid::new_v4().to_string();
+    // Generate a temporary password (should be changed on first login)
+    let temp_password = format!("temp_{}", uuid::Uuid::new_v4());
+    let password_hash = password::hash_password(&temp_password)
+        .await
+        .context("Failed to hash password")?;
 
     // Get current timestamp
     let created_at = chrono::Utc::now().timestamp_millis();
@@ -51,12 +54,11 @@ pub async fn create_user(
     let user = User {
         id: user_id,
         username: username.to_string(),
-        password_hash: "".to_string(), // Empty for API key auth
+        password_hash,
         role: user_role,
         email: Some(email.to_string()),
-        auth_type: AuthType::ApiKey,
+        auth_type: AuthType::Password,
         auth_data: None,
-        api_key: Some(apikey.clone()),
         storage_mode: StorageMode::Table, // Default to table storage
         storage_id: None,
         created_at,
@@ -71,11 +73,14 @@ pub async fn create_user(
         .context("Failed to insert user into system_users")?;
 
     info!(
-        "Created user '{}' with role '{}' and API key: {}",
-        username, role, apikey
+        "Created user '{}' with role '{}' and temporary password",
+        username, role
     );
 
-    Ok(apikey)
+    Ok(format!(
+        "User created successfully. Temporary password: {}\nPlease change this password on first login.",
+        temp_password
+    ))
 }
 
 #[cfg(test)]
@@ -91,18 +96,5 @@ mod tests {
         for role in valid_roles {
             assert!(["admin", "user", "readonly"].contains(&role));
         }
-    }
-
-    #[test]
-    fn test_uuid_generation() {
-        let apikey1 = Uuid::new_v4().to_string();
-        let apikey2 = Uuid::new_v4().to_string();
-
-        // Verify UUIDs are different
-        assert_ne!(apikey1, apikey2);
-
-        // Verify UUID format (36 characters with hyphens)
-        assert_eq!(apikey1.len(), 36);
-        assert!(apikey1.contains('-'));
     }
 }

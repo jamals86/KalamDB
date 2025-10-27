@@ -59,9 +59,8 @@ use serde::{Deserialize, Serialize};
 /// - `password_hash`: Bcrypt hash of password (for password auth type)
 /// - `role`: User role (User, Service, Dba, System)
 /// - `email`: Optional email address
-/// - `auth_type`: Authentication method (Password, ApiKey, OAuth, Internal)
+/// - `auth_type`: Authentication method (Password, OAuth, Internal)
 /// - `auth_data`: JSON blob for auth-specific data (e.g., OAuth provider/subject)
-/// - `api_key`: Optional API key for authentication
 /// - `storage_mode`: Preferred storage partitioning mode (Table, Region)
 /// - `storage_id`: Optional preferred storage configuration ID
 /// - `created_at`: Unix timestamp in milliseconds when user was created
@@ -87,7 +86,6 @@ use serde::{Deserialize, Serialize};
 ///     email: Some("alice@example.com".to_string()),
 ///     auth_type: AuthType::Password,
 ///     auth_data: None,
-///     api_key: None,
 ///     storage_mode: StorageMode::Table,
 ///     storage_id: Some(StorageId::new("storage_1")),
 ///     created_at: 1730000000000,
@@ -105,7 +103,6 @@ pub struct User {
     pub email: Option<String>,
     pub auth_type: AuthType,
     pub auth_data: Option<String>, // JSON blob for OAuth provider/subject
-    pub api_key: Option<String>,   // API key for authentication
     pub storage_mode: StorageMode, // Preferred storage partitioning mode
     pub storage_id: Option<StorageId>, // Optional preferred storage configuration
     pub created_at: i64,            // Unix timestamp in milliseconds
@@ -631,10 +628,9 @@ mod tests {
             username: "alice".to_string(),
             password_hash: "$2b$12$hash".to_string(),
             role: Role::User,
-            email: Some("alice@example.com".to_string()),
+            email: Some("test@example.com".to_string()),
             auth_type: AuthType::Password,
             auth_data: None,
-            api_key: None,
             storage_mode: StorageMode::Table,
             storage_id: Some(StorageId::new("storage_1")),
             created_at: 1730000000000,
