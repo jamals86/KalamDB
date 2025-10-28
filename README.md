@@ -1021,7 +1021,7 @@ KalamDB is in active development. See [`specs/001-build-a-rust/plan.md`](specs/0
 
 ## 📄 License
 
-[License TBD]
+Apache License
 
 ---
 

@@ -4,9 +4,67 @@ This directory contains scripts and tools for building, testing, and releasing K
 
 ## Scripts
 
-### `release.sh`
+### `release-multiplatform.sh` (Recommended)
 
-Automated release script that builds both the CLI and server binaries and uploads them to GitHub Releases.
+**Multi-platform release builder** that uses Docker to cross-compile binaries for Linux, macOS, and Windows from any host OS.
+
+**Prerequisites:**
+- [Docker](https://docs.docker.com/get-docker/) installed and running
+- [GitHub CLI (`gh`)](https://cli.github.com/) installed and authenticated
+- Rust toolchain installed (for the build container)
+- At least 10GB free disk space (for Docker image)
+
+**Usage:**
+
+```bash
+./tools/release-multiplatform.sh <version> [--draft] [--prerelease] [--platforms=<list>]
+```
+
+**Examples:**
+
+```bash
+# Build for ALL platforms (Linux x64/ARM, macOS x64/ARM, Windows x64)
+./tools/release-multiplatform.sh v0.1.0
+
+# Build only for Linux and Windows
+./tools/release-multiplatform.sh v0.1.0 --platforms=linux-x86_64,windows-x86_64
+
+# Create a draft pre-release for all platforms
+./tools/release-multiplatform.sh v0.2.0-rc1 --draft --prerelease
+```
+
+**Supported Platforms:**
+
+- `linux-x86_64` - Linux AMD/Intel 64-bit
+- `linux-aarch64` - Linux ARM 64-bit
+- `darwin-x86_64` - macOS Intel
+- `darwin-aarch64` - macOS Apple Silicon
+- `windows-x86_64` - Windows 64-bit
+
+**What it does:**
+
+1. 🐳 Builds a Docker image with cross-compilation toolchains (first run only)
+2. 🔨 Compiles CLI and Server for all selected platforms
+3. 📦 Creates platform-specific archives (`.tar.gz` or `.zip`)
+4. 🔐 Generates SHA256 checksums
+5. 🚀 Uploads everything to GitHub Releases
+6. 📝 Generates comprehensive release notes
+
+**First Run:**
+
+The first time you run this script, it will build a Docker image (~5-10 minutes). This includes:
+- Rust toolchain
+- Cross-compilation tools for Windows (MinGW)
+- Cross-compilation tools for ARM Linux
+- OSXCross for macOS binaries
+
+Subsequent runs are much faster as they reuse the cached image.
+
+---
+
+### `release.sh` (Single Platform)
+
+Automated release script that builds both the CLI and server binaries for your **current platform** and uploads them to GitHub Releases.
 
 **Prerequisites:**
 - [GitHub CLI (`gh`)](https://cli.github.com/) installed and authenticated
@@ -68,6 +126,39 @@ The script automatically detects your platform:
 - The script will prompt before deleting an existing release with the same version tag
 - Use `--draft` to review the release before publishing
 - The `dist/` directory can be cleaned up after the release is created
+- This only builds for your current OS - use `release-multiplatform.sh` for cross-platform builds
+
+## Docker-based Cross-Compilation
+
+The `release-multiplatform.sh` script uses Docker to build binaries for all platforms from a single machine.
+
+### How it Works
+
+1. **Docker Image** (`Dockerfile.builder`): Contains all cross-compilation toolchains
+   - MinGW for Windows binaries
+   - aarch64-linux-gnu for ARM Linux
+   - OSXCross for macOS binaries (both Intel and Apple Silicon)
+
+2. **Cargo Configuration** (`cargo-config.toml`): Tells Rust which linker to use for each target
+
+3. **Build Process**: Mounts your code into the Docker container and builds for each platform
+
+### Benefits
+
+- ✅ Build for all platforms from Linux/macOS/Windows
+- ✅ Consistent build environment (reproducible builds)
+- ✅ No need to install cross-compilation tools on your host
+- ✅ Same binaries every time
+
+### Technical Details
+
+The Docker image includes:
+- **Base**: Rust 1.75 on Debian Bookworm
+- **Windows**: MinGW-w64 GCC
+- **Linux ARM**: GCC aarch64-linux-gnu
+- **macOS**: OSXCross with macOS 12.3 SDK
+
+Total image size: ~4-5 GB (built once, cached afterward)
 
 ## GitHub CLI Setup
 
@@ -90,23 +181,24 @@ If you haven't set up the GitHub CLI yet:
    gh auth status
    ```
 
-## Cross-Compilation (Advanced)
+## Quick Start
 
-To build binaries for multiple platforms, you can use Rust's cross-compilation:
+### Multi-Platform Release (Recommended)
 
 ```bash
-# Install cross-compilation tool
-cargo install cross
+# Build everything with Docker
+./tools/release-multiplatform.sh v0.1.0
 
-# Build for different targets
-cross build --release --target x86_64-unknown-linux-gnu
-cross build --release --target aarch64-unknown-linux-gnu
-cross build --release --target x86_64-apple-darwin
-cross build --release --target aarch64-apple-darwin
-cross build --release --target x86_64-pc-windows-gnu
+# Or build specific platforms only
+./tools/release-multiplatform.sh v0.1.0 --platforms=linux-x86_64,darwin-aarch64
 ```
 
-Note: The current `release.sh` script builds only for the host platform. Multi-platform builds require additional setup.
+### Single Platform Release
+
+```bash
+# Build only for your current OS
+./tools/release.sh v0.1.0
+```
 
 ## Troubleshooting
 
@@ -126,8 +218,36 @@ Ensure the build succeeded. Check for errors in the cargo build output.
 
 Make the script executable:
 ```bash
+chmod +x tools/release-multiplatform.sh
 chmod +x tools/release.sh
 ```
+
+### "Docker: command not found"
+
+Install Docker Desktop from: https://docs.docker.com/get-docker/
+
+### Docker build fails on macOS download
+
+The OSXCross SDK download may fail occasionally. If this happens:
+1. Manually download the SDK from: https://github.com/joseluisq/macosx-sdks/releases
+2. The Dockerfile will retry the download automatically
+
+### Docker build is very slow
+
+The first build takes 5-10 minutes to set up all toolchains. Subsequent builds are much faster as Docker caches the image layers.
+
+### "Out of disk space" when building Docker image
+
+The Docker image requires ~4-5 GB. Free up disk space or clean old Docker images:
+```bash
+docker system prune -a
+```
+
+### Cross-compilation fails for macOS
+
+macOS cross-compilation is complex. If it fails, you can:
+1. Build only other platforms: `--platforms=linux-x86_64,windows-x86_64`
+2. Use GitHub Actions to build on native macOS runners (recommended for production)
 
 ## Contributing
 
