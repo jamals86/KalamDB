@@ -16,6 +16,7 @@
 use crate::models::SharedTableRow;
 use chrono::Utc;
 use kalamdb_commons::storage::{Partition, Result as StorageResult, StorageBackend, StorageError};
+use kalamdb_commons::models::{NamespaceId, TableName};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -33,20 +34,19 @@ impl SharedTableStore {
         Self { backend }
     }
 
-    /// Generate partition name for a shared table.
-    fn partition_name(namespace_id: &str, table_name: &str) -> String {
-        format!(
+    /// Generate the Partition for a shared table (type-safe identifiers).
+    fn partition(namespace_id: &NamespaceId, table_name: &TableName) -> Partition {
+        Partition::new(format!(
             "{}{}:{}",
             kalamdb_commons::constants::ColumnFamilyNames::SHARED_TABLE_PREFIX,
-            namespace_id,
-            table_name
-        )
+            namespace_id.as_str(),
+            table_name.as_str()
+        ))
     }
 
     /// Ensure partition exists for a table.
     fn ensure_partition(&self, namespace_id: &str, table_name: &str) -> StorageResult<()> {
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
         self.backend.create_partition(&partition)
     }
 
@@ -109,8 +109,7 @@ impl SharedTableStore {
         };
 
         // Store using partition
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
         let value = serde_json::to_vec(&shared_table_row)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
         self.backend.put(&partition, row_id.as_bytes(), &value)
@@ -125,8 +124,7 @@ impl SharedTableStore {
         table_name: &str,
         row_id: &str,
     ) -> StorageResult<Option<JsonValue>> {
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
 
         match self.backend.get(&partition, row_id.as_bytes())? {
             Some(bytes) => {
@@ -162,8 +160,7 @@ impl SharedTableStore {
         table_name: &str,
         row_id: &str,
     ) -> StorageResult<Option<JsonValue>> {
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
 
         match self.backend.get(&partition, row_id.as_bytes())? {
             Some(bytes) => {
@@ -196,8 +193,7 @@ impl SharedTableStore {
         row_id: &str,
         hard: bool,
     ) -> StorageResult<()> {
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
 
         if hard {
             // Physical deletion
@@ -230,8 +226,7 @@ impl SharedTableStore {
         namespace_id: &str,
         table_name: &str,
     ) -> StorageResult<Vec<(String, JsonValue)>> {
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
 
         let iter = self.backend.scan(&partition, None, None)?;
         let mut results = Vec::new();
@@ -262,6 +257,18 @@ impl SharedTableStore {
         Ok(results)
     }
 
+    /// Streaming iterator over raw key/value bytes for a shared table.
+    ///
+    /// Uses the backend's snapshot-backed scan to provide a consistent view.
+    pub fn scan_iter(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> StorageResult<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + '_>> {
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        self.backend.scan(&partition, None, None)
+    }
+
     /// Get all rows for flush operations.
     ///
     /// Returns a vector of `(key_bytes, row_data)` pairs.
@@ -276,8 +283,7 @@ impl SharedTableStore {
         namespace_id: &str,
         table_name: &str,
     ) -> StorageResult<Vec<(Vec<u8>, JsonValue)>> {
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
 
         let iter = self.backend.scan(&partition, None, None)?;
         let mut results = Vec::new();
@@ -321,8 +327,7 @@ impl SharedTableStore {
         table_name: &str,
         keys: &[Vec<u8>],
     ) -> StorageResult<()> {
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
 
         for key_bytes in keys {
             self.backend.delete(&partition, key_bytes)?;
@@ -337,8 +342,7 @@ impl SharedTableStore {
     /// * `namespace_id` - The namespace identifier
     /// * `table_name` - The table name
     pub fn drop_table(&self, namespace_id: &str, table_name: &str) -> StorageResult<()> {
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let _partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
 
         // Note: This is a simplified implementation. In a real system,
         // you might want to iterate and delete all keys, or mark the partition as dropped.

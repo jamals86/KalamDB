@@ -13,7 +13,8 @@ use datafusion::datasource::TableProvider;
 use datafusion::execution::context::SessionState;
 use datafusion::prelude::*;
 use kalamdb_store::test_utils::TestDb;
-use kalamdb_store::StreamTableStore;
+use kalamdb_core::stores::StreamTableStore;
+use kalamdb_store::RocksDBBackend;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -21,9 +22,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
     async fn test_stream_table_ttl_eviction_with_select() {
         // Create test database
         let test_db = TestDb::new(&["test:test_events"]).expect("Failed to create test DB");
-        let stream_store = Arc::new(
-            StreamTableStore::new(test_db.db.clone()).expect("Failed to create stream store"),
-        );
+        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+            Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let stream_store = Arc::new(StreamTableStore::new(backend.clone()));
 
         // Create stream table schema
         let schema = Arc::new(Schema::new(vec![
@@ -32,7 +33,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
             Field::new("value", DataType::Int64, false),
         ]));
 
-        // Create stream table provider with 2-second TTL
+        // Create stream table provider with 1-second TTL
         let table_metadata = kalamdb_core::catalog::TableMetadata::new(
             TableName::new("test_events"),
             TableType::Stream,
@@ -44,7 +45,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
             table_metadata,
             schema.clone(),
             stream_store.clone(),
-            Some(2), // 2-second TTL
+            Some(1), // 1-second TTL
             false,
             None,
         ));
@@ -94,20 +95,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
         println!("✅ SELECT returned 3 events before TTL expiration");
 
-        // STEP 2: Wait for TTL to expire (2 seconds) + eviction interval (60 seconds)
-        // For testing, we'll manually trigger eviction instead of waiting
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
-
-        // Simulate time passing by 3 seconds (after TTL expires)
-        let cutoff_ms = now_ms + 3000;
-
-        // Manually trigger eviction
-        let evicted_count = provider
-            .evict_older_than(cutoff_ms)
-            .expect("Failed to evict old events");
+        // STEP 2: Wait slightly over TTL and evict expired
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        let evicted_count = provider.evict_expired().expect("Failed to evict expired events");
 
         println!("✅ Evicted {} events", evicted_count);
         assert_eq!(evicted_count, 3, "Expected all 3 events to be evicted");
@@ -130,9 +120,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
     async fn test_stream_table_select_with_projection() {
         // Create test database
         let test_db = TestDb::new(&["test:events"]).expect("Failed to create test DB");
-        let stream_store = Arc::new(
-            StreamTableStore::new(test_db.db.clone()).expect("Failed to create stream store"),
-        );
+        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+            Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let stream_store = Arc::new(StreamTableStore::new(backend.clone()));
 
         // Create stream table schema
         let schema = Arc::new(Schema::new(vec![
@@ -193,9 +183,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
     async fn test_stream_table_select_with_limit() {
         // Create test database
         let test_db = TestDb::new(&["test:events"]).expect("Failed to create test DB");
-        let stream_store = Arc::new(
-            StreamTableStore::new(test_db.db.clone()).expect("Failed to create stream store"),
-        );
+        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+            Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let stream_store = Arc::new(StreamTableStore::new(backend.clone()));
 
         // Create stream table schema
         let schema = Arc::new(Schema::new(vec![

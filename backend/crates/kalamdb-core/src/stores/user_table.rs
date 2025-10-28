@@ -16,6 +16,7 @@
 use crate::models::UserTableRow;
 use chrono::Utc;
 use kalamdb_commons::storage::{Partition, Result as StorageResult, StorageBackend, StorageError};
+use kalamdb_commons::models::{NamespaceId, TableName};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -33,20 +34,21 @@ impl UserTableStore {
         Self { backend }
     }
 
-    /// Generate partition name for a user table.
-    fn partition_name(namespace_id: &str, table_name: &str) -> String {
-        format!(
+    /// Generate the Partition for a user table (type-safe identifiers).
+    fn partition(namespace_id: &NamespaceId, table_name: &TableName) -> Partition {
+        Partition::new(format!(
             "{}{}:{}",
             kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX,
-            namespace_id,
-            table_name
-        )
+            namespace_id.as_str(),
+            table_name.as_str()
+        ))
     }
 
     /// Ensure partition exists for a table.
     fn ensure_partition(&self, namespace_id: &str, table_name: &str) -> StorageResult<()> {
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let ns = NamespaceId::from(namespace_id);
+        let tn = TableName::from(table_name);
+        let partition = Self::partition(&ns, &tn);
         self.backend.create_partition(&partition)
     }
 
@@ -111,8 +113,7 @@ impl UserTableStore {
         let key = format!("{}:{}", user_id, row_id);
 
         // Store using EntityStore-like interface
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
         let value = serde_json::to_vec(&user_table_row)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
         self.backend.put(&partition, key.as_bytes(), &value)
@@ -128,8 +129,7 @@ impl UserTableStore {
         user_id: &str,
         row_id: &str,
     ) -> StorageResult<Option<JsonValue>> {
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
         let key = format!("{}:{}", user_id, row_id);
 
         match self.backend.get(&partition, key.as_bytes())? {
@@ -166,8 +166,7 @@ impl UserTableStore {
         user_id: &str,
         row_id: &str,
     ) -> StorageResult<Option<JsonValue>> {
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
         let key = format!("{}:{}", user_id, row_id);
 
         match self.backend.get(&partition, key.as_bytes())? {
@@ -201,8 +200,7 @@ impl UserTableStore {
         row_id: &str,
         hard: bool,
     ) -> StorageResult<()> {
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
         let key = format!("{}:{}", user_id, row_id);
 
         if hard {
@@ -237,8 +235,7 @@ impl UserTableStore {
         table_name: &str,
         user_id: &str,
     ) -> StorageResult<Vec<(String, JsonValue)>> {
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
         let prefix = format!("{}:", user_id);
 
         let iter = self.backend.scan(&partition, Some(prefix.as_bytes()), None)?;
@@ -312,8 +309,7 @@ impl UserTableStore {
     ) -> StorageResult<std::collections::HashMap<String, Vec<(Vec<u8>, JsonValue)>>> {
         use std::collections::HashMap;
 
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
 
         let iter = self.backend.scan(&partition, None, None)?;
         let mut rows_by_user: HashMap<String, Vec<(Vec<u8>, JsonValue)>> = HashMap::new();
@@ -364,8 +360,7 @@ impl UserTableStore {
         table_name: &str,
         keys: &[Vec<u8>],
     ) -> StorageResult<()> {
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
 
         for key_bytes in keys {
             self.backend.delete(&partition, key_bytes)?;
@@ -380,7 +375,10 @@ impl UserTableStore {
     /// * `namespace_id` - The namespace identifier
     /// * `table_name` - The table name
     pub fn drop_table(&self, namespace_id: &str, table_name: &str) -> StorageResult<()> {
-        let _partition_name = Self::partition_name(namespace_id, table_name);
+        let _partition_name = format!("{}{}:{}",
+            kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX,
+            namespace_id,
+            table_name);
 
         // Note: This is a simplified implementation. In a real system,
         // you might want to iterate and delete all keys, or mark the partition as dropped.
@@ -397,8 +395,7 @@ impl UserTableStore {
         namespace_id: &str,
         table_name: &str,
     ) -> StorageResult<Vec<(String, JsonValue)>> {
-        let partition_name = Self::partition_name(namespace_id, table_name);
-        let partition = Partition::new(&partition_name);
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
 
         let iter = self.backend.scan(&partition, None, None)?;
         let mut results = Vec::new();
@@ -426,6 +423,18 @@ impl UserTableStore {
         }
 
         Ok(results)
+    }
+
+    /// Streaming iterator over raw key/value bytes for a table.
+    ///
+    /// Uses the backend's snapshot-backed scan to provide a consistent view.
+    pub fn scan_iter(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> StorageResult<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + '_>> {
+        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        self.backend.scan(&partition, None, None)
     }
 }
 

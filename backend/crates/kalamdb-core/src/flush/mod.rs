@@ -5,6 +5,7 @@
 
 pub mod policy;
 pub mod shared_table_flush;
+pub mod util;
 pub mod trigger;
 pub mod user_table_flush;
 

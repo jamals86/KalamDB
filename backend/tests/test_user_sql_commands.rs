@@ -12,8 +12,9 @@ use kalamdb_core::services::{
 };
 use kalamdb_store::RocksDbInit;
 use kalamdb_sql::KalamSql;
-use kalamdb_store::{UserTableStore, SharedTableStore, StreamTableStore, RocksDBBackend};
-use kalamdb_store::storage_trait::StorageBackend;
+use kalamdb_core::stores::{UserTableStore, SharedTableStore, StreamTableStore};
+use kalamdb_store::RocksDBBackend;
+use kalamdb_commons::storage::StorageBackend;
 use kalamdb_commons::{AuthType, NamespaceId, Role, StorageMode, UserId};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -29,12 +30,12 @@ async fn setup_test_executor() -> (SqlExecutor, TempDir, Arc<KalamSql>) {
     
     // Create KalamSql adapter via StorageBackend abstraction
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
-    let kalam_sql = Arc::new(KalamSql::new(backend).expect("Failed to create KalamSQL"));
+    let kalam_sql = Arc::new(KalamSql::new(backend.clone()).expect("Failed to create KalamSQL"));
 
-    // Create stores
-    let user_table_store = Arc::new(UserTableStore::new(db.clone()).expect("Failed to create user table store"));
-    let shared_table_store = Arc::new(SharedTableStore::new(db.clone()).expect("Failed to create shared table store"));
-    let stream_table_store = Arc::new(StreamTableStore::new(db.clone()).expect("Failed to create stream table store"));
+    // Create stores (via generic StorageBackend)
+    let user_table_store = Arc::new(UserTableStore::new(backend.clone()));
+    let shared_table_store = Arc::new(SharedTableStore::new(backend.clone()));
+    let stream_table_store = Arc::new(StreamTableStore::new(backend.clone()));
 
     // Create services
     let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));

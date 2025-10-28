@@ -61,14 +61,10 @@ pub async fn execute_flush_synchronously(
     )
     .map_err(|e| format!("Failed to parse Arrow schema: {}", e))?;
 
-    // Use DB from TestServer
-    let db = server.db.clone();
-    
-    // Create user table store
-    let user_table_store = Arc::new(
-        kalamdb_store::UserTableStore::new(db.clone())
-            .map_err(|e| format!("Failed to create UserTableStore: {}", e))?,
-    );
+    // Create storage backend and user table store
+    let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        Arc::new(kalamdb_store::RocksDBBackend::new(server.db.clone()));
+    let user_table_store = Arc::new(kalamdb_core::stores::UserTableStore::new(backend));
 
     // Get storage_id from table definition and convert to String
     let storage_id = table_def.storage_id.to_string();

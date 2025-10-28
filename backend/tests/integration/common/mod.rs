@@ -54,7 +54,8 @@ use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use std::sync::Arc;
 use tempfile::TempDir;
-use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
+use kalamdb_store::RocksDBBackend;
+use kalamdb_commons::storage::StorageBackend;
 
 /// HTTP test server wrapper - simplified to avoid complex type signatures
 pub struct HttpTestServer {
@@ -146,6 +147,8 @@ pub mod websocket;
 pub struct TestServer {
     /// Temporary directory for database files (shared via Arc to allow cloning)
     pub temp_dir: Arc<TempDir>,
+    /// Underlying RocksDB handle for tests that need direct access
+    pub db: Arc<rocksdb::DB>,
     /// KalamSQL instance for direct database access
     pub kalam_sql: Arc<kalamdb_sql::KalamSql>,
     /// SQL executor for query execution
@@ -162,6 +165,7 @@ impl Clone for TestServer {
     fn clone(&self) -> Self {
         Self {
             temp_dir: Arc::clone(&self.temp_dir),
+            db: Arc::clone(&self.db),
             kalam_sql: Arc::clone(&self.kalam_sql),
             sql_executor: Arc::clone(&self.sql_executor),
             namespace_service: Arc::clone(&self.namespace_service),
@@ -247,18 +251,12 @@ impl TestServer {
 
         // Initialize stores (needed by some services)
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
-        let user_table_store = Arc::new(
-            kalamdb_core::stores::UserTableStore::new(backend.clone())
-                .expect("Failed to create UserTableStore"),
-        );
-        let shared_table_store = Arc::new(
-            kalamdb_core::stores::SharedTableStore::new(backend.clone())
-                .expect("Failed to create SharedTableStore"),
-        );
-        let stream_table_store = Arc::new(
-            kalamdb_core::stores::StreamTableStore::new(backend.clone())
-                .expect("Failed to create StreamTableStore"),
-        );
+        let user_table_store =
+            Arc::new(kalamdb_core::stores::UserTableStore::new(backend.clone()));
+        let shared_table_store =
+            Arc::new(kalamdb_core::stores::SharedTableStore::new(backend.clone()));
+        let stream_table_store =
+            Arc::new(kalamdb_core::stores::StreamTableStore::new(backend.clone()));
 
         // Initialize services
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
@@ -292,7 +290,7 @@ impl TestServer {
         let session_context = Arc::new(session_factory.create_session());
 
         // Create "system" schema in DataFusion and register system table providers
-        use datafusion::catalog::schema::MemorySchemaProvider;
+        use datafusion::catalog::memory::MemorySchemaProvider;
 
         let system_schema = Arc::new(MemorySchemaProvider::new());
         let catalog_name = "kalam";

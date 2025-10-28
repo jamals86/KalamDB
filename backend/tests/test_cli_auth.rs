@@ -18,7 +18,8 @@ use kalamdb_commons::{AuthType, Role, UserId};
 use kalamdb_commons::system::User;
 use kalamdb_store::RocksDbInit;
 use kalamdb_sql::KalamSql;
-use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
+use kalamdb_store::RocksDBBackend;
+use kalamdb_commons::storage::StorageBackend;
 use std::sync::Arc;
 use tempfile::TempDir;
 

@@ -6,7 +6,7 @@ use crate::context::AuthenticatedUser;
 use crate::error::{AuthError, AuthResult};
 use crate::jwt_auth;
 use crate::password;
-use kalamdb_commons::{Role, UserId};
+// use kalamdb_commons::{Role, UserId}; // Unused imports removed
 use kalamdb_sql::RocksDbAdapter;
 use log::{info, warn};
 use std::sync::Arc;

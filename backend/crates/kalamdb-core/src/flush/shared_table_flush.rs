@@ -7,11 +7,11 @@ use crate::catalog::{NamespaceId, TableName};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::storage::ParquetWriter;
+use crate::models::SharedTableRow;
 use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobStatus, JobType};
+use kalamdb_commons::JobType;
 use chrono::Utc;
-use datafusion::arrow::array::{ArrayRef, BooleanArray, Int64Array, StringArray};
-use datafusion::arrow::datatypes::{DataType, SchemaRef};
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use crate::stores::SharedTableStore;
 use serde_json::{json, Value as JsonValue};
@@ -211,10 +211,10 @@ impl SharedTableFlushJob {
             self.table_name.as_str()
         );
 
-        // Scan all rows (scan already filters out soft-deleted rows)
-        let rows = self
+        // Stream snapshot-backed scan and collect active rows
+        let mut iter = self
             .store
-            .get_rows_for_flush(self.namespace_id.as_str(), self.table_name.as_str())
+            .scan_iter(self.namespace_id.as_str(), self.table_name.as_str())
             .map_err(|e| {
                 log::error!(
                     "❌ Failed to scan rows for shared table={}.{}: {}",
@@ -225,11 +225,41 @@ impl SharedTableFlushJob {
                 KalamDbError::Other(format!("Failed to scan rows: {}", e))
             })?;
 
+        let mut rows: Vec<(Vec<u8>, JsonValue)> = Vec::new();
+        let mut scanned = 0usize;
+        while let Some((key_bytes, value_bytes)) = iter.next() {
+            scanned += 1;
+            // decode and filter soft-deleted
+            let row: SharedTableRow = match serde_json::from_slice(&value_bytes) {
+                Ok(r) => r,
+                Err(e) => {
+                    log::warn!(
+                        "Skipping row due to deserialization error (table={}.{}): {}",
+                        self.namespace_id.as_str(),
+                        self.table_name.as_str(),
+                        e
+                    );
+                    continue;
+                }
+            };
+            if row._deleted { continue; }
+
+            let mut json_obj = JsonValue::Object(row.fields);
+            if let Some(obj) = json_obj.as_object_mut() {
+                obj.insert("access_level".to_string(), JsonValue::String(row.access_level));
+                obj.insert("_updated".to_string(), JsonValue::String(row._updated));
+                obj.insert("_deleted".to_string(), JsonValue::Bool(false));
+            }
+
+            rows.push((key_bytes, json_obj));
+        }
+
         log::debug!(
-            "📊 Scanned {} rows from shared table={}.{}",
-            rows.len(),
+            "📊 Scanned {} rows from shared table={}.{} ({} active)",
+            scanned,
             self.namespace_id.as_str(),
-            self.table_name.as_str()
+            self.table_name.as_str(),
+            rows.len()
         );
 
         // If no rows to flush, return early
@@ -320,50 +350,11 @@ impl SharedTableFlushJob {
         &self,
         rows: &[(Vec<u8>, JsonValue)],
     ) -> Result<RecordBatch, KalamDbError> {
-        // Build arrays for each column based on schema
-        let mut arrays: Vec<ArrayRef> = Vec::new();
-
-        for field in self.schema.fields() {
-            let field_name = field.name();
-            let array: ArrayRef = match field.data_type() {
-                DataType::Utf8 => {
-                    let values: Vec<Option<String>> = rows
-                        .iter()
-                        .map(|(_, row)| {
-                            row.get(field_name)
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                        })
-                        .collect();
-                    Arc::new(StringArray::from(values))
-                }
-                DataType::Int64 => {
-                    let values: Vec<Option<i64>> = rows
-                        .iter()
-                        .map(|(_, row)| row.get(field_name).and_then(|v| v.as_i64()))
-                        .collect();
-                    Arc::new(Int64Array::from(values))
-                }
-                DataType::Boolean => {
-                    let values: Vec<Option<bool>> = rows
-                        .iter()
-                        .map(|(_, row)| row.get(field_name).and_then(|v| v.as_bool()))
-                        .collect();
-                    Arc::new(BooleanArray::from(values))
-                }
-                _ => {
-                    return Err(KalamDbError::Other(format!(
-                        "Unsupported data type for flush: {:?}",
-                        field.data_type()
-                    )))
-                }
-            };
-
-            arrays.push(array);
+        let mut builder = crate::flush::util::JsonBatchBuilder::new(self.schema.clone())?;
+        for (_, row) in rows {
+            builder.push_object_row(row)?;
         }
-
-        RecordBatch::try_new(self.schema.clone(), arrays)
-            .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
+        builder.finish()
     }
 
     /// Delete flushed rows from RocksDB
