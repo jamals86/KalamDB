@@ -80,8 +80,8 @@ pub enum KalamDbError {
 /// Storage-related errors
 #[derive(Error, Debug)]
 pub enum StorageError {
-    #[error("RocksDB error: {0}")]
-    RocksDb(#[from] rocksdb::Error),
+    #[error("Backend error: {0}")]
+    Backend(String),
 
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),

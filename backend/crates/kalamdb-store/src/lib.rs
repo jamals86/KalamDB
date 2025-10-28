@@ -24,6 +24,7 @@ pub mod common;
 pub mod key_encoding;
 pub mod rocksdb_impl;
 pub mod rocksdb_init;
+pub mod cf;
 // pub mod s3_storage; // T171: S3 storage backend (requires cmake build dependency)
 pub mod sharding;
 pub mod shared_table_store;
@@ -34,6 +35,7 @@ pub mod user_table_store;
 
 pub use rocksdb_impl::RocksDBBackend;
 pub use rocksdb_init::RocksDbInit;
+pub use cf::ColumnFamily;
 // pub use s3_storage::S3Storage; // T171: Export S3Storage (requires cmake)
 pub use sharding::{
     AlphabeticSharding, ConsistentHashSharding, NumericSharding, ShardingRegistry, ShardingStrategy,

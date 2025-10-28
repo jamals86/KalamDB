@@ -301,7 +301,7 @@ impl TableProvider for UsersTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::RocksDbInit;
+    use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
     fn create_test_provider() -> (UsersTableProvider, TempDir) {

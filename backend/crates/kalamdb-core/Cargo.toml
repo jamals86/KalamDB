@@ -7,8 +7,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-# Storage
-rocksdb = { workspace = true }
 
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }

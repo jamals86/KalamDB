@@ -375,7 +375,7 @@ impl SharedTableChangeDetector {
 mod tests {
     use super::*;
     use crate::live_query::connection_registry::NodeId;
-    use crate::storage::RocksDbInit;
+    use kalamdb_store::RocksDbInit;
     use kalamdb_sql::KalamSql;
     use tempfile::TempDir;
 

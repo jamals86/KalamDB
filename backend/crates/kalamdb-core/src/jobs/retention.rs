@@ -114,7 +114,7 @@ impl RetentionPolicy {
 mod tests {
     use super::*;
 
-    use crate::storage::RocksDbInit;
+    use kalamdb_store::RocksDbInit;
     use kalamdb_commons::system::Job;
     use tempfile::TempDir;
 

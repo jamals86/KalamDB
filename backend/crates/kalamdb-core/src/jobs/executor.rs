@@ -269,7 +269,7 @@ impl JobExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::RocksDbInit;
+    use kalamdb_store::RocksDbInit;
     use kalamdb_sql::KalamSql;
     use std::sync::Arc;
     use tempfile::TempDir;

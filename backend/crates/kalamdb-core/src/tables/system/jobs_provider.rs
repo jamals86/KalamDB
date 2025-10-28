@@ -282,7 +282,7 @@ impl TableProvider for JobsTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::RocksDbInit;
+    use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
     fn setup_test_provider() -> (JobsTableProvider, TempDir) {

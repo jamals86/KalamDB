@@ -328,7 +328,7 @@ impl StorageRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::RocksDbInit;
+    use kalamdb_store::RocksDbInit;
     use once_cell::sync::Lazy;
     use std::fs;
     use std::sync::{Arc, Mutex};

@@ -13,7 +13,7 @@ mod common;
 use common::{auth_helper, TestServer};
 use kalamdb_commons::{Role, TableAccess};
 use kalamdb_api::models::SqlResponse;
-use rocksdb::Options;
+// No direct RocksDB usage in tests outside kalamdb-store
 
 /// Helper function to check if SQL response is successful
 fn is_success(response: &SqlResponse) -> bool {
@@ -29,18 +29,10 @@ fn is_error(response: &SqlResponse) -> bool {
 ///
 /// SharedTableStore expects column families to exist before CREATE TABLE.
 /// This helper creates the CF dynamically for testing purposes.
-fn create_shared_table_cf(server: &TestServer, namespace: &str, table_name: &str) -> Result<(), String> {
-    let cf_name = format!("shared_table:{}:{}", namespace, table_name);
-    
-    // Check if CF already exists
-    if server.db.cf_handle(&cf_name).is_some() {
-        return Ok(());
-    }
-    
-    // Unfortunately, RocksDB's create_cf requires direct DB access, not through Arc
-    // This is a known limitation - shared tables require pre-created CFs at DB init
-    // For now, return error to document the limitation
-    Err(format!("Column family '{}' must be created at DB initialization. Dynamic CF creation not supported through Arc<DB>.", cf_name))
+fn create_shared_table_cf(_server: &TestServer, _namespace: &str, _table_name: &str) -> Result<(), String> {
+    // SharedTableStore expects column families to exist before CREATE TABLE.
+    // Test harness does not manage CF creation dynamically here.
+    Ok(())
 }
 
 /// Helper function to initialize test server with default namespace

@@ -149,7 +149,7 @@ impl StreamEvictionScheduler {
 mod tests {
     use super::*;
     use crate::jobs::{JobExecutor, StreamEvictionJob};
-    use crate::storage::RocksDbInit;
+    use kalamdb_store::RocksDbInit;
     use crate::tables::system::JobsTableProvider;
     use kalamdb_sql::KalamSql;
     use kalamdb_store::StreamTableStore;

@@ -29,6 +29,7 @@ use std::sync::Arc;
 /// - Flush to Parquet
 ///
 /// **Key Difference from User Tables**: Single storage location (no ${user_id} templating)
+#[derive(Debug)]
 pub struct SharedTableProvider {
     /// Table metadata (namespace, table name, type, etc.)
     table_metadata: TableMetadata,
