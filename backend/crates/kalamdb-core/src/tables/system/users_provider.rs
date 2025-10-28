@@ -17,6 +17,7 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
 use kalamdb_sql::{KalamSql, User};
 use serde::{Deserialize, Serialize};
 use std::any::Any;
@@ -25,11 +26,20 @@ use std::sync::Arc;
 /// User data structure stored in RocksDB
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserRecord {
-    pub user_id: String,
+    pub user_id: String,  //TODO: Use UserId type?
     pub username: String,
     pub email: Option<String>,
     pub created_at: i64, // timestamp in milliseconds
     pub updated_at: i64, // timestamp in milliseconds
+}
+
+/// Request structure for creating a new user (legacy, not currently used)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateUserRequest {
+    pub user_id: String, //TODO: Use UserId type?
+    pub username: String,
+    pub email: Option<String>,
+    pub created_at: i64,
 }
 
 /// System.users table provider backed by RocksDB
@@ -48,16 +58,21 @@ impl UsersTableProvider {
     }
 
     /// Insert a new user
-    pub fn insert_user(&self, user: UserRecord) -> Result<(), KalamDbError> {
+    pub async fn insert_user(&self, user: CreateUserRequest) -> Result<(), KalamDbError> {
         let kalamdb_user = User {
-            user_id: user.user_id.clone(),
+            id: UserId::new(&user.user_id),
             username: user.username.clone(),
-            email: user.email.clone().unwrap_or_default(),
+            password_hash: String::new(), // Empty for now, will be set by auth system
+            role: Role::User,
+            email: Some(user.email.clone().unwrap_or_default()),
+            auth_type: AuthType::OAuth,
+            auth_data: None,
+            storage_mode: StorageMode::Table, // Default to table-based storage
+            storage_id: None, // No specific storage preference
             created_at: user.created_at,
-            storage_mode: Some("table".to_string()), // T163c: Default to 'table' mode
-            storage_id: None,                        // T163c: NULL by default
-            apikey: uuid::Uuid::new_v4().to_string(), // Feature 006: Auto-generate API key
-            role: "user".to_string(),                 // Feature 006: Default role
+            updated_at: user.created_at,
+            last_seen: None,
+            deleted_at: None,
         };
 
         self.kalam_sql
@@ -65,8 +80,8 @@ impl UsersTableProvider {
             .map_err(|e| KalamDbError::Other(format!("Failed to insert user: {}", e)))
     }
 
-    /// Update an existing user
-    pub fn update_user(&self, user: UserRecord) -> Result<(), KalamDbError> {
+    /// Update an existing user (legacy method using UserRecord)
+    pub fn update_user_legacy(&self, user: UserRecord) -> Result<(), KalamDbError> {
         // Check if user exists
         let existing = self
             .kalam_sql
@@ -80,18 +95,23 @@ impl UsersTableProvider {
             )));
         }
 
-        // Preserve existing apikey and role when updating
+        // Preserve existing fields when updating
         let existing_user = existing.unwrap();
 
         let kalamdb_user = User {
-            user_id: user.user_id.clone(),
+            id: UserId::new(&user.user_id),
             username: user.username.clone(),
-            email: user.email.clone().unwrap_or_default(),
+            password_hash: existing_user.password_hash.clone(), // Preserve password
+            role: existing_user.role.clone(),                   // Preserve role
+            email: Some(user.email.clone().unwrap_or_default()),
+            auth_type: existing_user.auth_type.clone(),         // Preserve auth type
+            auth_data: existing_user.auth_data.clone(),
+            storage_mode: existing_user.storage_mode.clone(),   // Preserve storage mode
+            storage_id: existing_user.storage_id.clone(),       // Preserve storage ID
             created_at: user.created_at,
-            storage_mode: Some("table".to_string()), // T163c: Default to 'table' mode
-            storage_id: None,                        // T163c: NULL by default
-            apikey: existing_user.apikey,            // Feature 006: Preserve API key
-            role: existing_user.role,                // Feature 006: Preserve role
+            updated_at: chrono::Utc::now().timestamp_millis(),
+            last_seen: existing_user.last_seen,
+            deleted_at: None,
         };
 
         self.kalam_sql
@@ -100,7 +120,68 @@ impl UsersTableProvider {
     }
 
     /// Delete a user (not implemented in kalamdb-sql yet)
-    pub fn delete_user(&self, _user_id: &str) -> Result<(), KalamDbError> {
+    pub fn delete_user(&self, user_id: &UserId) -> Result<(), KalamDbError> {
+        // TODO: Implement soft delete in kalamdb-sql adapter
+        // For now, we can mark as deleted by updating the user
+        let username = user_id.to_string();
+        let user = self
+            .kalam_sql
+            .get_user(&username)
+            .map_err(|e| KalamDbError::Other(format!("Failed to get user: {}", e)))?;
+
+        if let Some(mut user) = user {
+            user.deleted_at = Some(chrono::Utc::now().timestamp_millis());
+            self.kalam_sql
+                .insert_user(&user)
+                .map_err(|e| KalamDbError::Other(format!("Failed to delete user: {}", e)))?;
+            Ok(())
+        } else {
+            Err(KalamDbError::NotFound(format!(
+                "User not found: {}",
+                username
+            )))
+        }
+    }
+
+    /// Create a new user (full User model)
+    pub fn create_user(&self, user: kalamdb_commons::system::User) -> Result<(), KalamDbError> {
+        self.kalam_sql
+            .insert_user(&user)
+            .map_err(|e| KalamDbError::Other(format!("Failed to create user: {}", e)))
+    }
+
+    /// Update a user (full User model)
+    pub fn update_user(&self, user: kalamdb_commons::system::User) -> Result<(), KalamDbError> {
+        // Check if user exists
+        let existing = self
+            .kalam_sql
+            .get_user(&user.username)
+            .map_err(|e| KalamDbError::Other(format!("Failed to get user: {}", e)))?;
+
+        if existing.is_none() {
+            return Err(KalamDbError::NotFound(format!(
+                "User not found: {}",
+                user.username
+            )));
+        }
+
+        // Update user
+        self.kalam_sql
+            .insert_user(&user)
+            .map_err(|e| KalamDbError::Other(format!("Failed to update user: {}", e)))
+    }
+
+    /// Get a user by ID
+    pub fn get_user_by_id(&self, user_id: &UserId) -> Result<kalamdb_commons::system::User, KalamDbError> {
+        let username = user_id.to_string();
+        self.kalam_sql
+            .get_user(&username)
+            .map_err(|e| KalamDbError::Other(format!("Failed to get user: {}", e)))?
+            .ok_or_else(|| KalamDbError::NotFound(format!("User not found: {}", username)))
+    }
+
+    /// Delete a user (legacy method using string ID)
+    pub fn delete_user_legacy(&self, _user_id: &str) -> Result<(), KalamDbError> {
         // TODO: Implement delete in kalamdb-sql adapter
         Err(KalamDbError::Other(
             "Delete user not yet implemented in kalamdb-sql".to_string(),
@@ -115,11 +196,11 @@ impl UsersTableProvider {
             .map_err(|e| KalamDbError::Other(format!("Failed to get user: {}", e)))?;
 
         Ok(user.map(|u| UserRecord {
-            user_id: u.user_id,
+            user_id: u.id.to_string(),
             username: u.username,
-            email: Some(u.email),
+            email: u.email,
             created_at: u.created_at,
-            updated_at: u.created_at, // kalamdb-sql doesn't have updated_at yet
+            updated_at: u.updated_at,
         }))
     }
 
@@ -132,20 +213,28 @@ impl UsersTableProvider {
 
         let mut user_ids = StringBuilder::new();
         let mut usernames = StringBuilder::new();
+        let mut password_hashes = StringBuilder::new();
+        let mut roles = StringBuilder::new();
         let mut emails = StringBuilder::new();
-        let mut storage_modes = StringBuilder::new();
-        let mut storage_ids = StringBuilder::new();
+        let mut auth_types = StringBuilder::new();
+        let mut auth_datas = StringBuilder::new();
         let mut created_ats = Vec::new();
         let mut updated_ats = Vec::new();
+        let mut last_seens = Vec::new();
+        let mut deleted_ats = Vec::new();
 
         for user in users {
-            user_ids.append_value(&user.user_id);
+            user_ids.append_value(user.id.as_str());
             usernames.append_value(&user.username);
-            emails.append_value(&user.email);
-            storage_modes.append_option(user.storage_mode.as_deref());
-            storage_ids.append_option(user.storage_id.as_deref());
+            password_hashes.append_value(&user.password_hash);
+            roles.append_value(user.role.as_str());
+            emails.append_option(user.email.as_deref());
+            auth_types.append_value(user.auth_type.as_str());
+            auth_datas.append_option(user.auth_data.as_deref());
             created_ats.push(Some(user.created_at));
-            updated_ats.push(Some(user.created_at)); // using created_at for both since updated_at not in model
+            updated_ats.push(Some(user.updated_at));
+            last_seens.push(user.last_seen);
+            deleted_ats.push(user.deleted_at);
         }
 
         let batch = RecordBatch::try_new(
@@ -153,11 +242,15 @@ impl UsersTableProvider {
             vec![
                 Arc::new(user_ids.finish()) as ArrayRef,
                 Arc::new(usernames.finish()) as ArrayRef,
+                Arc::new(password_hashes.finish()) as ArrayRef,
+                Arc::new(roles.finish()) as ArrayRef,
                 Arc::new(emails.finish()) as ArrayRef,
-                Arc::new(storage_modes.finish()) as ArrayRef,
-                Arc::new(storage_ids.finish()) as ArrayRef,
+                Arc::new(auth_types.finish()) as ArrayRef,
+                Arc::new(auth_datas.finish()) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef,
+                Arc::new(TimestampMillisecondArray::from(last_seens)) as ArrayRef,
+                Arc::new(TimestampMillisecondArray::from(deleted_ats)) as ArrayRef,
             ],
         )
         .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))?;

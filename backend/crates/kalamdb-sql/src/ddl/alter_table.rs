@@ -9,7 +9,7 @@
 
 use crate::ddl::DdlResult;
 
-use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::models::{NamespaceId, TableAccess, TableName};
 
 /// Column alteration operation
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +29,8 @@ pub enum ColumnOperation {
         new_data_type: String,
         nullable: Option<bool>,
     },
+    /// Set access level (SHARED tables only)
+    SetAccessLevel { access_level: TableAccess },
 }
 
 /// ALTER TABLE statement
@@ -66,9 +68,9 @@ impl AlterTableStatement {
         // Find operation keyword position
         let op_pos = tokens
             .iter()
-            .position(|&t| matches!(t.to_uppercase().as_str(), "ADD" | "DROP" | "MODIFY"))
+            .position(|&t| matches!(t.to_uppercase().as_str(), "ADD" | "DROP" | "MODIFY" | "SET"))
             .ok_or_else(|| {
-                "Expected ADD COLUMN, DROP COLUMN, or MODIFY COLUMN operation".to_string()
+                "Expected ADD COLUMN, DROP COLUMN, MODIFY COLUMN, or SET ACCESS LEVEL operation".to_string()
             })?;
 
         let operation_upper = tokens[op_pos].to_uppercase();
@@ -76,9 +78,10 @@ impl AlterTableStatement {
             "ADD" => Self::parse_add_column_from_tokens(&tokens[op_pos..])?,
             "DROP" => Self::parse_drop_column_from_tokens(&tokens[op_pos..])?,
             "MODIFY" => Self::parse_modify_column_from_tokens(&tokens[op_pos..])?,
+            "SET" => Self::parse_set_access_level_from_tokens(&tokens[op_pos..])?,
             _ => {
                 return Err(
-                    "Expected ADD COLUMN, DROP COLUMN, or MODIFY COLUMN operation".to_string(),
+                    "Expected ADD COLUMN, DROP COLUMN, MODIFY COLUMN, or SET ACCESS LEVEL operation".to_string(),
                 )
             }
         };
@@ -205,6 +208,38 @@ impl AlterTableStatement {
             new_data_type,
             nullable,
         })
+    }
+
+    /// Parse SET ACCESS LEVEL operation from tokens
+    /// Expects: SET ACCESS LEVEL public|private|restricted
+    fn parse_set_access_level_from_tokens(tokens: &[&str]) -> DdlResult<ColumnOperation> {
+        // Expect: SET ACCESS LEVEL {access_level}
+        if tokens.len() < 4 {
+            return Err("Expected SET ACCESS LEVEL {public|private|restricted}".to_string());
+        }
+
+        if !tokens[1].eq_ignore_ascii_case("ACCESS") {
+            return Err("Expected ACCESS keyword after SET".to_string());
+        }
+
+        if !tokens[2].eq_ignore_ascii_case("LEVEL") {
+            return Err("Expected LEVEL keyword after ACCESS".to_string());
+        }
+
+        let access_level_str = tokens[3].to_lowercase();
+        
+        // Validate before converting
+        if !matches!(access_level_str.as_str(), "public" | "private" | "restricted") {
+            return Err(format!(
+                "Invalid access level: {}. Must be public, private, or restricted",
+                access_level_str
+            ));
+        }
+
+        // Convert to TableAccess enum
+        let access_level: TableAccess = access_level_str.as_str().into();
+
+        Ok(ColumnOperation::SetAccessLevel { access_level })
     }
 }
 
@@ -386,6 +421,74 @@ mod tests {
     #[test]
     fn test_parse_missing_operation() {
         let result = AlterTableStatement::parse("ALTER TABLE messages", &test_namespace());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_set_access_level_public() {
+        let stmt = AlterTableStatement::parse(
+            "ALTER SHARED TABLE analytics SET ACCESS LEVEL public",
+            &test_namespace(),
+        )
+        .unwrap();
+
+        assert_eq!(stmt.table_name.as_str(), "analytics");
+
+        match stmt.operation {
+            ColumnOperation::SetAccessLevel { access_level } => {
+                assert_eq!(access_level, TableAccess::Public);
+            }
+            _ => panic!("Expected SetAccessLevel operation"),
+        }
+    }
+
+    #[test]
+    fn test_parse_set_access_level_private() {
+        let stmt = AlterTableStatement::parse(
+            "ALTER TABLE reports SET ACCESS LEVEL private",
+            &test_namespace(),
+        )
+        .unwrap();
+
+        match stmt.operation {
+            ColumnOperation::SetAccessLevel { access_level } => {
+                assert_eq!(access_level, TableAccess::Private);
+            }
+            _ => panic!("Expected SetAccessLevel operation"),
+        }
+    }
+
+    #[test]
+    fn test_parse_set_access_level_restricted() {
+        let stmt = AlterTableStatement::parse(
+            "ALTER TABLE sensitive SET ACCESS LEVEL restricted",
+            &test_namespace(),
+        )
+        .unwrap();
+
+        match stmt.operation {
+            ColumnOperation::SetAccessLevel { access_level } => {
+                assert_eq!(access_level, TableAccess::Restricted);
+            }
+            _ => panic!("Expected SetAccessLevel operation"),
+        }
+    }
+
+    #[test]
+    fn test_parse_set_access_level_invalid() {
+        let result = AlterTableStatement::parse(
+            "ALTER TABLE test SET ACCESS LEVEL invalid",
+            &test_namespace(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_set_access_level_missing_keyword() {
+        let result = AlterTableStatement::parse(
+            "ALTER TABLE test SET LEVEL public",
+            &test_namespace(),
+        );
         assert!(result.is_err());
     }
 }

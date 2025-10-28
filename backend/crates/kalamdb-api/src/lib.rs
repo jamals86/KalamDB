@@ -6,6 +6,7 @@
 pub mod actors;
 pub mod auth;
 pub mod handlers;
+pub mod middleware;
 pub mod models;
 pub mod rate_limiter;
 pub mod routes;

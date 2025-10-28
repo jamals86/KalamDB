@@ -35,10 +35,13 @@
 //! ```
 
 pub mod stress_utils;
+pub mod flush_helpers;
+pub mod auth_helper;
 
 use anyhow::Result;
 use datafusion::catalog::SchemaProvider;
 use kalamdb_api::models::{QueryResult, SqlResponse};
+use kalamdb_commons::models::{NamespaceId, StorageId, TableName};
 use kalamdb_core::live_query::{LiveQueryManager, NodeId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
@@ -138,7 +141,9 @@ pub mod websocket;
 /// The server is automatically cleaned up when dropped.
 pub struct TestServer {
     /// Temporary directory for database files (shared via Arc to allow cloning)
-    temp_dir: Arc<TempDir>,
+    pub temp_dir: Arc<TempDir>,
+    /// RocksDB instance (needed for direct store access in tests)
+    pub db: Arc<rocksdb::DB>,
     /// KalamSQL instance for direct database access
     pub kalam_sql: Arc<kalamdb_sql::KalamSql>,
     /// SQL executor for query execution
@@ -155,6 +160,7 @@ impl Clone for TestServer {
     fn clone(&self) -> Self {
         Self {
             temp_dir: Arc::clone(&self.temp_dir),
+            db: Arc::clone(&self.db),
             kalam_sql: Arc::clone(&self.kalam_sql),
             sql_executor: Arc::clone(&self.sql_executor),
             namespace_service: Arc::clone(&self.namespace_service),
@@ -222,7 +228,7 @@ impl TestServer {
         if storages.is_empty() {
             let now = chrono::Utc::now().timestamp_millis();
             let default_storage = kalamdb_sql::Storage {
-                storage_id: "local".to_string(),
+                storage_id: StorageId::new("local"),
                 storage_name: "Local Filesystem".to_string(),
                 description: Some("Default local filesystem storage".to_string()),
                 storage_type: "filesystem".to_string(),
@@ -349,6 +355,7 @@ impl TestServer {
 
         Self {
             temp_dir: Arc::new(temp_dir),
+            db,
             kalam_sql,
             sql_executor,
             namespace_service,
@@ -713,7 +720,7 @@ impl TestServer {
         // Filter tables in this namespace
         let ns_tables: Vec<_> = tables
             .into_iter()
-            .filter(|t| t.namespace == namespace)
+            .filter(|t| t.namespace == NamespaceId::new(namespace))
             .collect();
 
         // Drop each table
@@ -763,7 +770,7 @@ impl TestServer {
         match self.kalam_sql.scan_all_tables() {
             Ok(tables) => tables
                 .iter()
-                .any(|t| t.namespace == namespace && t.table_name == table_name),
+                .any(|t| t.namespace == NamespaceId::new(namespace) && t.table_name == TableName::new(table_name)),
             Err(_) => false,
         }
     }

@@ -6,6 +6,7 @@
 
 pub mod completer;
 pub mod config;
+pub mod credentials;
 pub mod error;
 pub mod formatter;
 pub mod highlighter;
@@ -14,6 +15,7 @@ pub mod parser;
 pub mod session;
 
 pub use config::CLIConfiguration;
+pub use credentials::FileCredentialStore;
 pub use error::{CLIError, Result};
 pub use formatter::OutputFormatter;
 pub use session::{CLISession, OutputFormat};

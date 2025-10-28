@@ -30,6 +30,12 @@ toml.workspace = true
 # JWT authentication
 jsonwebtoken = "9.2"
 
+# Password hashing
+bcrypt = "0.15"
+
+# Random password generation
+rand = "0.8"
+
 # Logging
 log.workspace = true
 env_logger.workspace = true
@@ -120,12 +126,12 @@ name = "test_stress_and_memory"
 path = "tests/integration/combined/test_stress_and_memory.rs"
 
 [[test]]
-name = "test_code_quality"
-path = "tests/test_code_quality.rs"
-
-[[test]]
 name = "test_row_count_behavior"
 path = "tests/test_row_count_behavior.rs"
+
+[[test]]
+name = "test_basic_auth"
+path = "tests/test_basic_auth.rs"
 
 [dev-dependencies]
 tempfile = "3"
@@ -135,3 +141,5 @@ tokio-tungstenite = "0.21"
 futures-util = "0.3"
 uuid.workspace = true
 rocksdb.workspace = true
+base64 = "0.21"
+bcrypt = "0.15"

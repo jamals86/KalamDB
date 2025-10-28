@@ -75,7 +75,6 @@ impl KalamLinkClient {
             &self.base_url,
             config,
             &self.auth,
-            self.query_executor.user_id(),
         )
         .await
     }
@@ -97,7 +96,6 @@ pub struct KalamLinkClientBuilder {
     timeout: Duration,
     auth: AuthProvider,
     max_retries: u32,
-    user_id: Option<String>,
 }
 
 impl KalamLinkClientBuilder {
@@ -107,7 +105,6 @@ impl KalamLinkClientBuilder {
             timeout: Duration::from_secs(30),
             auth: AuthProvider::none(),
             max_retries: 3,
-            user_id: None,
         }
     }
 
@@ -129,21 +126,31 @@ impl KalamLinkClientBuilder {
         self
     }
 
-    /// Set API key authentication
-    pub fn api_key(mut self, key: impl Into<String>) -> Self {
-        self.auth = AuthProvider::api_key(key.into());
+    /// Set authentication provider directly
+    ///
+    /// Allows setting any AuthProvider variant including BasicAuth.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use kalam_link::{KalamLinkClient, AuthProvider};
+    ///
+    /// # async fn example() -> kalam_link::Result<()> {
+    /// let client = KalamLinkClient::builder()
+    ///     .base_url("http://localhost:3000")
+    ///     .auth(AuthProvider::basic_auth("alice".to_string(), "secret".to_string()))
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn auth(mut self, auth: AuthProvider) -> Self {
+        self.auth = auth;
         self
     }
 
     /// Set maximum number of retries for failed requests
     pub fn max_retries(mut self, retries: u32) -> Self {
         self.max_retries = retries;
-        self
-    }
-
-    /// Set user ID for X-USER-ID header
-    pub fn user_id(mut self, user_id: impl Into<String>) -> Self {
-        self.user_id = Some(user_id.into());
         self
     }
 
@@ -162,7 +169,6 @@ impl KalamLinkClientBuilder {
             base_url.clone(),
             http_client.clone(),
             self.auth.clone(),
-            self.user_id.clone(),
         );
 
         Ok(KalamLinkClient {

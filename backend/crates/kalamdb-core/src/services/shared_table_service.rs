@@ -13,8 +13,8 @@ use crate::flush::FlushPolicy;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use kalamdb_commons::models::StorageId;
+use kalamdb_commons::system::TableSchema;
 use kalamdb_sql::ddl::{CreateTableStatement, FlushPolicy as DdlFlushPolicy};
-use kalamdb_sql::models::TableSchema;
 use kalamdb_sql::KalamSql;
 use kalamdb_store::SharedTableStore;
 use std::sync::Arc;
@@ -438,18 +438,19 @@ impl SharedTableService {
             } => format!("combined:{}rows,{}s", row_limit, interval_seconds),
         };
 
-        let _table = kalamdb_sql::models::Table {
+        let _table = kalamdb_sql::Table {
             table_id: table_id.clone(),
-            table_name: table_name.as_str().to_string(),
-            namespace: namespace_id.as_str().to_string(),
-            table_type: "Shared".to_string(),
-            created_at: chrono::Utc::now().timestamp(),
+            table_name: TableName::new(table_name.as_str()),
+            namespace: NamespaceId::new(namespace_id.as_str()),
+            table_type: TableType::Shared,
+            created_at: chrono::Utc::now().timestamp_millis(),
             storage_location: storage_location.to_string(),
-            storage_id: Some("local".to_string()),
+            storage_id: Some(StorageId::new("local")),
             use_user_storage: false,
             flush_policy: flush_policy_str,
             schema_version: 1,
             deleted_retention_hours: deleted_retention.map(|s| (s / 3600) as i32).unwrap_or(0),
+            access_level: Some(kalamdb_commons::TableAccess::Private), // Default for SHARED tables
         };
 
         // TODO: Add insert_table method to kalamdb-sql

@@ -13,8 +13,8 @@ use crate::error::KalamDbError;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 use datafusion::arrow::datatypes::Schema;
 use kalamdb_commons::models::StorageId;
+use kalamdb_commons::system::TableSchema;
 use kalamdb_sql::ddl::CreateTableStatement;
-use kalamdb_sql::models::TableSchema;
 use kalamdb_sql::KalamSql;
 use kalamdb_store::StreamTableStore;
 use std::sync::Arc;
@@ -229,18 +229,19 @@ impl StreamTableService {
         // self.kalam_sql.insert_table_schema(&table_schema)?;
 
         // Create Table record in system_tables
-        let table = kalamdb_sql::models::Table {
+        let table = kalamdb_sql::Table {
             table_id: table_id.clone(),
-            table_name: table_name.as_str().to_string(),
-            namespace: namespace_id.as_str().to_string(),
-            table_type: "Stream".to_string(),
+            table_name: table_name.clone(),
+            namespace: namespace_id.clone(),
+            table_type: TableType::Stream,
             created_at: chrono::Utc::now().timestamp(),
             storage_location: String::new(), // Stream tables don't use Parquet
-            storage_id: Some("local".to_string()),
+            storage_id: Some(StorageId::from("local")),
             use_user_storage: false,
             flush_policy: String::new(), // Stream tables don't flush to Parquet
             schema_version: 1,
             deleted_retention_hours: 0, // Stream tables don't have soft deletes
+            access_level: None, // STREAM tables don't use access_level
         };
 
         // TODO: Add insert_table method to kalamdb-sql

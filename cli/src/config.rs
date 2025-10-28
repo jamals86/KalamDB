@@ -10,7 +10,6 @@
 //!
 //! [auth]
 //! jwt_token = "your-jwt-token"
-//! # api_key = "your-api-key"  # Alternative to JWT
 //!
 //! [ui]
 //! format = "table"  # table, json, csv
@@ -54,9 +53,6 @@ pub struct ServerConfig {
 pub struct AuthConfig {
     /// JWT authentication token
     pub jwt_token: Option<String>,
-
-    /// API key authentication
-    pub api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

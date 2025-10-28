@@ -24,11 +24,14 @@ tokio-tungstenite = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# HTTP Basic Auth encoding
+base64 = "0.21"
+
 # UUID generation
 uuid = { workspace = true, features = ["js"] }
 
 # Random number generation for WASM
-getrandom = { version = "0.2", features = ["js"], optional = true }
+getrandom = { version = "0.2", features = ["js"] }
 
 # Futures utilities
 futures-util = { version = "0.3", default-features = false }
@@ -37,19 +40,36 @@ futures-util = { version = "0.3", default-features = false }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 
-# WASM bindings (T039, T040)
+# WASM bindings (T039, T040, T063A-T063B)
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 js-sys = { version = "0.3", optional = true }
-web-sys = { version = "0.3", features = ["console"], optional = true }
+web-sys = { version = "0.3", features = [
+    "console",
+    # WebSocket support (T063A-T063B)
+    "WebSocket",
+    "MessageEvent",
+    "CloseEvent",
+    "ErrorEvent",
+    "Event",
+    "EventTarget",
+    # Fetch API support (T063F-T063H)
+    "Window",
+    "Request",
+    "RequestInit",
+    "RequestMode",
+    "Response",
+    "Headers",
+], optional = true }
 
 [features]
 default = ["tokio-runtime"]
 tokio-runtime = ["tokio", "reqwest", "tokio-tungstenite"]
-wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys", "getrandom"]
+wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
+wasm-bindgen-test = "0.3"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

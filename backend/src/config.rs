@@ -21,6 +21,8 @@ pub struct ServerConfig {
     pub stream: StreamSettings,
     #[serde(default)]
     pub rate_limit: RateLimitSettings,
+    #[serde(default)]
+    pub auth: AuthSettings,
 }
 
 /// Server settings
@@ -191,6 +193,36 @@ pub struct RateLimitSettings {
     pub max_subscriptions_per_user: u32,
 }
 
+/// Authentication settings (T105 - Phase 7, User Story 5)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthSettings {
+    /// Allow remote (non-localhost) connections for system users (default: false)
+    /// When false, system users with auth_type='internal' can only authenticate from localhost
+    /// When true, system users can authenticate from any IP (requires password in metadata)
+    #[serde(default = "default_auth_allow_remote_access")]
+    pub allow_remote_access: bool,
+
+    /// JWT secret for token validation (required for JWT auth)
+    #[serde(default = "default_auth_jwt_secret")]
+    pub jwt_secret: String,
+
+    /// Trusted JWT issuers (comma-separated list of domains)
+    #[serde(default = "default_auth_jwt_trusted_issuers")]
+    pub jwt_trusted_issuers: String,
+
+    /// Minimum password length (default: 8)
+    #[serde(default = "default_auth_min_password_length")]
+    pub min_password_length: usize,
+
+    /// Maximum password length (default: 1024)
+    #[serde(default = "default_auth_max_password_length")]
+    pub max_password_length: usize,
+
+    /// Bcrypt cost factor (default: 12, range: 4-31)
+    #[serde(default = "default_auth_bcrypt_cost")]
+    pub bcrypt_cost: u32,
+}
+
 impl Default for DataFusionSettings {
     fn default() -> Self {
         Self {
@@ -235,6 +267,19 @@ impl Default for RateLimitSettings {
             max_queries_per_sec: default_rate_limit_queries_per_sec(),
             max_messages_per_sec: default_rate_limit_messages_per_sec(),
             max_subscriptions_per_user: default_rate_limit_max_subscriptions(),
+        }
+    }
+}
+
+impl Default for AuthSettings {
+    fn default() -> Self {
+        Self {
+            allow_remote_access: default_auth_allow_remote_access(),
+            jwt_secret: default_auth_jwt_secret(),
+            jwt_trusted_issuers: default_auth_jwt_trusted_issuers(),
+            min_password_length: default_auth_min_password_length(),
+            max_password_length: default_auth_max_password_length(),
+            bcrypt_cost: default_auth_bcrypt_cost(),
         }
     }
 }
@@ -351,6 +396,31 @@ fn default_rate_limit_messages_per_sec() -> u32 {
 
 fn default_rate_limit_max_subscriptions() -> u32 {
     10 // 10 concurrent subscriptions per user
+}
+
+// Authentication defaults (T105 - Phase 7, User Story 5)
+fn default_auth_allow_remote_access() -> bool {
+    false // System users localhost-only by default for security
+}
+
+fn default_auth_jwt_secret() -> String {
+    "CHANGE_ME_IN_PRODUCTION".to_string() // Must be overridden in production
+}
+
+fn default_auth_jwt_trusted_issuers() -> String {
+    "".to_string() // Empty list means no JWT auth by default
+}
+
+fn default_auth_min_password_length() -> usize {
+    8 // Minimum 8 characters for passwords
+}
+
+fn default_auth_max_password_length() -> usize {
+    1024 // Maximum 1024 characters for passwords
+}
+
+fn default_auth_bcrypt_cost() -> u32 {
+    12 // Bcrypt cost factor 12 (good balance of security and performance)
 }
 
 // RocksDB defaults
@@ -552,6 +622,7 @@ impl ServerConfig {
             retention: RetentionSettings::default(),
             stream: StreamSettings::default(),
             rate_limit: RateLimitSettings::default(),
+            auth: AuthSettings::default(),
         }
     }
 }

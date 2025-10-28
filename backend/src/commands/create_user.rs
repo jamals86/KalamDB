@@ -1,16 +1,21 @@
 //! Create user command for kalamdb-server
 //!
-//! Provides CLI command to create a new user with auto-generated API key
+//! Provides CLI command to create a new user with password authentication
+//! NOTE: This module is deprecated - use SQL CREATE USER command instead
 
 use anyhow::{Context, Result};
+// TODO: Remove kalamdb_auth dependency
+// use kalamdb_auth::password;
 use kalamdb_core::auth::roles::validate_role;
 use kalamdb_sql::RocksDbAdapter;
-use kalamdb_sql::models::User;
+use kalamdb_sql::User;
+use kalamdb_commons::{AuthType, Role, StorageMode, UserId};
 use log::info;
 use std::sync::Arc;
-use uuid::Uuid;
 
-/// Create a new user with auto-generated API key
+/// Create a new user with password authentication
+/// 
+/// DEPRECATED: Use `CREATE USER 'username' WITH PASSWORD 'pass' ROLE role` SQL command instead
 ///
 /// # Arguments
 /// * `sql_adapter` - SQL adapter for system tables
@@ -19,7 +24,7 @@ use uuid::Uuid;
 /// * `role` - User role (admin, user, readonly)
 ///
 /// # Returns
-/// The generated API key (UUID v4)
+/// Success message
 pub async fn create_user(
     sql_adapter: Arc<RocksDbAdapter>,
     username: &str,
@@ -30,24 +35,40 @@ pub async fn create_user(
     validate_role(role).context("Role validation failed")?;
 
     // Generate unique user_id (using username for simplicity)
-    let user_id = format!("user_{}", username);
+    let user_id = UserId::new(format!("user_{}", username));
 
-    // Auto-generate API key (UUID v4)
-    let apikey = Uuid::new_v4().to_string();
+    // TODO: Use bcrypt for password hashing instead of kalamdb_auth
+    // Generate a temporary password (should be changed on first login)
+    let temp_password = format!("temp_{}", uuid::Uuid::new_v4());
+    // let password_hash = password::hash_password(&temp_password).await?;
+    let password_hash = format!("temp_hash_{}", uuid::Uuid::new_v4()); // Placeholder
 
     // Get current timestamp
     let created_at = chrono::Utc::now().timestamp_millis();
 
+    // Parse role
+    let user_role = match role {
+        "admin" => Role::Dba,
+        "user" => Role::User,
+        "readonly" => Role::User, // For now, map readonly to User
+        _ => return Err(anyhow::anyhow!("Invalid role: {}", role)),
+    };
+
     // Create user struct
     let user = User {
-        user_id: user_id.clone(),
+        id: user_id,
         username: username.to_string(),
-        email: email.to_string(),
-        created_at,
-        storage_mode: Some("table".to_string()), // Default to table storage
+        password_hash,
+        role: user_role,
+        email: Some(email.to_string()),
+        auth_type: AuthType::Password,
+        auth_data: None,
+        storage_mode: StorageMode::Table, // Default to table storage
         storage_id: None,
-        apikey: apikey.clone(),
-        role: role.to_string(),
+        created_at,
+        updated_at: created_at,
+        last_seen: None,
+        deleted_at: None,
     };
 
     // Insert user into system_users table
@@ -56,11 +77,14 @@ pub async fn create_user(
         .context("Failed to insert user into system_users")?;
 
     info!(
-        "Created user '{}' with role '{}' and API key: {}",
-        username, role, apikey
+        "Created user '{}' with role '{}' and temporary password",
+        username, role
     );
 
-    Ok(apikey)
+    Ok(format!(
+        "User created successfully. Temporary password: {}\nPlease change this password on first login.",
+        temp_password
+    ))
 }
 
 #[cfg(test)]
@@ -76,18 +100,5 @@ mod tests {
         for role in valid_roles {
             assert!(["admin", "user", "readonly"].contains(&role));
         }
-    }
-
-    #[test]
-    fn test_uuid_generation() {
-        let apikey1 = Uuid::new_v4().to_string();
-        let apikey2 = Uuid::new_v4().to_string();
-
-        // Verify UUIDs are different
-        assert_ne!(apikey1, apikey2);
-
-        // Verify UUID format (36 characters with hyphens)
-        assert_eq!(apikey1.len(), 36);
-        assert!(apikey1.contains('-'));
     }
 }

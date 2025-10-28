@@ -142,6 +142,9 @@ Developers evaluating KalamDB need a complete, working example demonstrating rea
 
 - **FR-019**: System MUST compile kalam-link Rust crate to WebAssembly using wasm-pack or similar tool
 - **FR-020**: System MUST generate TypeScript type definitions for the WASM module
+- **FR-020a**: System MUST organize WASM output as a multi-language SDK structure in `link/sdks/`
+- **FR-020b**: TypeScript SDK MUST be self-contained at `link/sdks/typescript/` with build.sh, tests, docs, and package.json
+- **FR-020c**: Each language SDK MUST be independently buildable and publishable to respective package managers
 - **FR-021**: WASM module MUST require KalamDB server URL as initialization parameter
 - **FR-022**: WASM module MUST require user's API key as initialization parameter
 - **FR-023**: WASM module MUST fail to initialize with clear error message if server URL or API key is missing
@@ -182,6 +185,9 @@ Developers evaluating KalamDB need a complete, working example demonstrating rea
 - **Volume Mount**: Persistent storage area for RocksDB data that survives container lifecycle
 - **Environment Variables**: Key-value pairs in docker-compose.yml that override config.toml settings
 - **WASM Module**: Compiled WebAssembly binary of kalam-link with JavaScript/TypeScript bindings, requires KalamDB server URL and API key for initialization
+- **Multi-Language SDK Architecture**: Organizational pattern where `link/sdks/{language}/` contains complete, self-contained packages for each target language
+- **TypeScript SDK**: Self-contained package at `link/sdks/typescript/` with build.sh, package.json, tests, docs, and compiled WASM artifacts
+- **SDK Build System**: Language-specific build scripts (e.g., build.sh) that compile Rust source from `link/` to target SDK directory
 - **TODO Item**: Entity in the example app with fields: `id` (auto-increment integer primary key), `title` (text, required), `completed` (boolean, default false), `created_at` (timestamp, auto-generated)
 - **Subscription**: Active WebSocket connection listening for changes to TODO table with real-time notification capability. Returns insert/update/delete change types and can filter by ID range for syncing. Required for write operations.
 - **Setup Script**: Bash script using kalam-cli to execute SQL statements from todo-app.sql file, creates database schema with idempotent behavior

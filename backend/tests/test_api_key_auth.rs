@@ -110,9 +110,9 @@ async fn test_create_user_generates_api_key() {
         .expect("User not found");
 
     assert_eq!(user.username, "testuser");
-    assert_eq!(user.email, "test@example.com");
-    assert_eq!(user.role, "user");
-    assert_eq!(user.apikey, apikey);
+    assert_eq!(user.email, Some("test@example.com".to_string()));
+    assert_eq!(user.role, "user".into());
+    assert_eq!(user.api_key, Some(apikey));
 
     println!("✅ User creation with API key generation works correctly");
 }

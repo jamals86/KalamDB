@@ -4,8 +4,148 @@
 
 use anyhow::Result;
 use rocksdb::{Options, DB};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use tempfile::TempDir;
+
+use crate::storage_trait::{Operation, Partition, StorageBackend, StorageError};
+
+/// In-memory implementation of StorageBackend for testing.
+///
+/// This provides a fast, thread-safe storage backend that doesn't require
+/// disk I/O, making it ideal for unit tests.
+///
+/// ## Example
+///
+/// ```rust,ignore
+/// use kalamdb_store::test_utils::InMemoryBackend;
+/// use kalamdb_store::{StorageBackend, Partition};
+///
+/// let backend = InMemoryBackend::new();
+/// let partition = Partition::new("test");
+/// backend.create_partition(&partition).unwrap();
+/// backend.put(&partition, b"key", b"value").unwrap();
+/// assert_eq!(backend.get(&partition, b"key").unwrap(), Some(b"value".to_vec()));
+/// ```
+pub struct InMemoryBackend {
+    // Partition -> (Key -> Value)
+    data: RwLock<HashMap<String, HashMap<Vec<u8>, Vec<u8>>>>,
+}
+
+impl InMemoryBackend {
+    /// Creates a new empty in-memory backend.
+    pub fn new() -> Self {
+        Self {
+            data: RwLock::new(HashMap::new()),
+        }
+    }
+}
+
+impl Default for InMemoryBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StorageBackend for InMemoryBackend {
+    fn get(&self, partition: &Partition, key: &[u8]) -> crate::storage_trait::Result<Option<Vec<u8>>> {
+        let data = self.data.read().unwrap();
+        Ok(data
+            .get(partition.name())
+            .and_then(|map| map.get(key))
+            .cloned())
+    }
+
+    fn put(&self, partition: &Partition, key: &[u8], value: &[u8]) -> crate::storage_trait::Result<()> {
+        let mut data = self.data.write().unwrap();
+        let map = data.entry(partition.name().to_string()).or_insert_with(HashMap::new);
+        map.insert(key.to_vec(), value.to_vec());
+        Ok(())
+    }
+
+    fn delete(&self, partition: &Partition, key: &[u8]) -> crate::storage_trait::Result<()> {
+        let mut data = self.data.write().unwrap();
+        if let Some(map) = data.get_mut(partition.name()) {
+            map.remove(key);
+        }
+        Ok(())
+    }
+
+    fn batch(&self, operations: Vec<Operation>) -> crate::storage_trait::Result<()> {
+        for op in operations {
+            match op {
+                Operation::Put {
+                    partition,
+                    key,
+                    value,
+                } => {
+                    self.put(&partition, &key, &value)?;
+                }
+                Operation::Delete { partition, key } => {
+                    self.delete(&partition, &key)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn scan(
+        &self,
+        partition: &Partition,
+        prefix: Option<&[u8]>,
+        limit: Option<usize>,
+    ) -> crate::storage_trait::Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + '_>> {
+        let data = self.data.read().unwrap();
+        let items: Vec<(Vec<u8>, Vec<u8>)> = data
+            .get(partition.name())
+            .map(|map| {
+                let mut items: Vec<_> = map
+                    .iter()
+                    .filter(|(k, _)| {
+                        if let Some(prefix) = prefix {
+                            k.starts_with(prefix)
+                        } else {
+                            true
+                        }
+                    })
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                items.sort_by(|a, b| a.0.cmp(&b.0));
+                items
+            })
+            .unwrap_or_default();
+
+        let items = if let Some(limit) = limit {
+            items.into_iter().take(limit).collect()
+        } else {
+            items
+        };
+
+        Ok(Box::new(items.into_iter()))
+    }
+
+    fn partition_exists(&self, partition: &Partition) -> bool {
+        let data = self.data.read().unwrap();
+        data.contains_key(partition.name())
+    }
+
+    fn create_partition(&self, partition: &Partition) -> crate::storage_trait::Result<()> {
+        let mut data = self.data.write().unwrap();
+        data.entry(partition.name().to_string()).or_insert_with(HashMap::new);
+        Ok(())
+    }
+
+    fn list_partitions(&self) -> crate::storage_trait::Result<Vec<Partition>> {
+        let data = self.data.read().unwrap();
+        Ok(data.keys().map(|k| Partition::new(k.clone())).collect())
+    }
+
+    fn drop_partition(&self, partition: &Partition) -> crate::storage_trait::Result<()> {
+        let mut data = self.data.write().unwrap();
+        data.remove(partition.name());
+        Ok(())
+    }
+}
 
 /// Test database wrapper that automatically cleans up on drop.
 pub struct TestDb {

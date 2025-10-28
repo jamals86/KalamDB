@@ -43,7 +43,7 @@ impl SystemStoragesProvider {
         let mut updated_ats = Vec::new();
 
         for storage in storages {
-            storage_ids.push(storage.storage_id);
+            storage_ids.push(storage.storage_id.to_string());
             storage_names.push(storage.storage_name);
             descriptions.push(storage.description);
             storage_types.push(storage.storage_type);
@@ -51,8 +51,8 @@ impl SystemStoragesProvider {
             credentials.push(storage.credentials);
             shared_tables_templates.push(storage.shared_tables_template);
             user_tables_templates.push(storage.user_tables_template);
-            created_ats.push(storage.created_at);
-            updated_ats.push(storage.updated_at);
+            created_ats.push(Some(storage.created_at));
+            updated_ats.push(Some(storage.updated_at));
         }
 
         let batch = RecordBatch::try_new(

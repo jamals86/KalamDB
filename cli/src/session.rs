@@ -10,7 +10,7 @@
 use clap::ValueEnum;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
-use kalam_link::{KalamLinkClient, SubscriptionConfig, SubscriptionOptions};
+use kalam_link::{AuthProvider, KalamLinkClient, SubscriptionConfig, SubscriptionOptions};
 use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
@@ -77,33 +77,22 @@ pub struct CLISession {
 }
 
 impl CLISession {
-    /// Create a new CLI session
-    pub async fn new(
+    /// Create a new CLI session with AuthProvider
+    ///
+    /// **Implements T120**: Create session from stored credentials
+    pub async fn with_auth(
         server_url: String,
-        jwt_token: Option<String>,
-        api_key: Option<String>,
-        user_id: Option<String>,
+        auth: AuthProvider,
         format: OutputFormat,
         color: bool,
     ) -> Result<Self> {
         // Build kalam-link client with authentication
-        let mut builder = KalamLinkClient::builder()
+        let client = KalamLinkClient::builder()
             .base_url(&server_url)
             .timeout(std::time::Duration::from_secs(30))
-            .max_retries(3);
-
-        // Add authentication
-        builder = match (jwt_token, api_key) {
-            (Some(token), _) => builder.jwt_token(token),
-            (None, Some(key)) => builder.api_key(key),
-            (None, None) => builder,
-        };
-
-        // Set user ID (default to "cli" if not provided)
-        let actual_user_id = user_id.unwrap_or_else(|| "cli".to_string());
-        builder = builder.user_id(actual_user_id.clone());
-
-        let client = builder.build()?;
+            .max_retries(3)
+            .auth(auth)
+            .build()?;
 
         // Try to fetch server info from health check
         let (server_version, server_api_version) = match client.health_check().await {
@@ -121,7 +110,7 @@ impl CLISession {
             connected: true,
             subscription_paused: false,
             loading_threshold_ms: 200, // Default: 200ms
-            user_id: actual_user_id,
+            user_id: "cli".to_string(),
             server_version,
             server_api_version,
         })
@@ -455,7 +444,7 @@ impl CLISession {
             "🗄️  Kalam CLI - Interactive Database Terminal"
                 .white()
                 .bold(),
-            "      ║".bright_blue().bold()
+            "       ║".bright_blue().bold()
         );
         println!(
             "{}",

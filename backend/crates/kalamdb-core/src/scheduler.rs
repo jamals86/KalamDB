@@ -76,6 +76,7 @@ use crate::error::KalamDbError;
 use crate::flush::{FlushPolicy, FlushTriggerMonitor};
 use crate::jobs::JobManager;
 use crate::tables::system::JobsTableProvider;
+use kalamdb_commons::{JobStatus, JobType};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -427,7 +428,7 @@ impl FlushScheduler {
         // Filter for running jobs (incomplete)
         let incomplete_jobs: Vec<_> = all_jobs
             .into_iter()
-            .filter(|job| job.status == "running")
+            .filter(|job| job.status == JobStatus::Running)
             .collect();
 
         if incomplete_jobs.is_empty() {
@@ -450,8 +451,8 @@ impl FlushScheduler {
 
             // TODO: Implement actual job resume logic based on job_type
             // For now, mark as failed with recovery message
-            let failed_job = crate::tables::system::JobRecord {
-                status: "failed".to_string(),
+            let failed_job = kalamdb_commons::system::Job {
+                status: JobStatus::Failed,
                 completed_at: Some(chrono::Utc::now().timestamp_millis()),
                 error_message: Some("Job interrupted by server restart".to_string()),
                 ..job
@@ -492,9 +493,9 @@ impl FlushScheduler {
         let all_jobs = jobs_provider.list_jobs()?;
 
         for job in all_jobs {
-            if job.status == "running"
-                && job.job_type == "flush"
-                && job.table_name.as_deref() == Some(table_name)
+            if job.status == JobStatus::Running
+                && job.job_type == JobType::Flush
+                && job.table_name.as_ref().map(|tn| tn.as_str()) == Some(table_name)
             {
                 return Ok(Some(job.job_id));
             }
@@ -533,7 +534,7 @@ impl FlushScheduler {
             let all_jobs = jobs_provider.list_jobs()?;
             let active_jobs: Vec<_> = all_jobs
                 .into_iter()
-                .filter(|job| job.status == "running")
+                .filter(|job| job.status == JobStatus::Running)
                 .collect();
 
             if active_jobs.is_empty() {
@@ -628,9 +629,9 @@ impl FlushScheduler {
                 let table_name_str = scheduled.table_name.as_str();
 
                 for job in all_jobs {
-                    if job.status == "running"
-                        && job.job_type == "flush"
-                        && job.table_name.as_deref() == Some(table_name_str)
+                    if job.status == JobStatus::Running
+                        && job.job_type == JobType::Flush
+                        && job.table_name.as_ref().map(|tn| tn.as_str()) == Some(table_name_str)
                     {
                         log::debug!(
                             "Flush already in progress for table {} (job_id={}), skipping",

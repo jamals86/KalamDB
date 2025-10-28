@@ -16,115 +16,10 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_commons::system::Job;
 use kalamdb_sql::KalamSql;
-use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::sync::Arc;
-
-/// Job data structure stored in RocksDB
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JobRecord {
-    pub job_id: String,
-    pub job_type: String, // "flush", "compact", "cleanup", etc.
-    pub table_name: Option<String>,
-    pub status: String,             // "running", "completed", "failed"
-    pub parameters: Option<String>, // JSON array of strings
-    pub result: Option<String>,
-    pub trace: Option<String>,
-    pub memory_used: Option<i64>,   // bytes
-    pub cpu_used: Option<i64>,      // microseconds
-    pub created_at: i64,
-    pub started_at: Option<i64>,
-    pub completed_at: Option<i64>,
-    pub node_id: String,
-    pub error_message: Option<String>,
-}
-
-impl JobRecord {
-    /// Create a new job record with running status
-    pub fn new(job_id: String, job_type: String, node_id: String) -> Self {
-        let now = chrono::Utc::now().timestamp_millis();
-        Self {
-            job_id,
-            job_type,
-            table_name: None,
-            status: "running".to_string(),
-            parameters: None,
-            result: None,
-            trace: None,
-            memory_used: None,
-            cpu_used: None,
-            created_at: now,
-            started_at: Some(now),
-            completed_at: None,
-            node_id,
-            error_message: None,
-        }
-    }
-
-    /// Mark job as completed with result
-    pub fn complete(mut self, result: Option<String>) -> Self {
-        let now = chrono::Utc::now().timestamp_millis();
-        self.status = "completed".to_string();
-        self.completed_at = Some(now);
-        if self.started_at.is_none() {
-            self.started_at = Some(self.created_at);
-        }
-        self.result = result;
-        self
-    }
-
-    /// Mark job as failed with error message
-    pub fn fail(mut self, error_message: String) -> Self {
-        let now = chrono::Utc::now().timestamp_millis();
-        self.status = "failed".to_string();
-        self.completed_at = Some(now);
-        if self.started_at.is_none() {
-            self.started_at = Some(self.created_at);
-        }
-        self.error_message = Some(error_message);
-        self
-    }
-
-    /// Mark job as cancelled
-    pub fn cancel(mut self) -> Self {
-        let now = chrono::Utc::now().timestamp_millis();
-        self.status = "cancelled".to_string();
-        self.completed_at = Some(now);
-        self
-    }
-
-    /// Set table name
-    pub fn with_table_name(mut self, table_name: String) -> Self {
-        self.table_name = Some(table_name);
-        self
-    }
-
-    /// Set parameters
-    pub fn with_parameters(mut self, parameters: Vec<String>) -> Self {
-        if parameters.is_empty() {
-            self.parameters = None;
-        } else {
-            self.parameters = Some(
-                serde_json::to_string(&parameters).unwrap_or_else(|_| "[]".to_string()),
-            );
-        }
-        self
-    }
-
-    /// Set trace
-    pub fn with_trace(mut self, trace: String) -> Self {
-        self.trace = Some(trace);
-        self
-    }
-
-    /// Set resource usage metrics
-    pub fn with_metrics(mut self, memory_used_bytes: i64, cpu_used_micros: i64) -> Self {
-        self.memory_used = Some(memory_used_bytes);
-        self.cpu_used = Some(cpu_used_micros);
-        self
-    }
-}
 
 /// System.jobs table provider backed by RocksDB
 pub struct JobsTableProvider {
@@ -141,110 +36,25 @@ impl JobsTableProvider {
         }
     }
 
-    fn convert_sql_job(job: kalamdb_sql::Job) -> JobRecord {
-        let kalamdb_sql::Job {
-            job_id,
-            job_type,
-            status,
-            table_name,
-            parameters,
-            result,
-            trace,
-            memory_used,
-            cpu_used,
-            created_at,
-            start_time,
-            end_time,
-            node_id,
-            error_message,
-        } = job;
-
-        let parameters_json = if parameters.is_empty() {
-            None
-        } else {
-            Some(serde_json::to_string(&parameters).unwrap_or_else(|_| "[]".to_string()))
-        };
-
-        JobRecord {
-            job_id,
-            job_type,
-            table_name,
-            status,
-            parameters: parameters_json,
-            result,
-            trace,
-            memory_used,
-            cpu_used,
-            created_at: if created_at == 0 { start_time } else { created_at },
-            started_at: Some(start_time),
-            completed_at: end_time,
-            node_id,
-            error_message,
-        }
-    }
-
     /// List all jobs from the system.jobs table
-    pub fn list_jobs(&self) -> Result<Vec<JobRecord>, KalamDbError> {
+    pub fn list_jobs(&self) -> Result<Vec<Job>, KalamDbError> {
         let jobs = self
             .kalam_sql
             .scan_all_jobs()
             .map_err(|e| KalamDbError::Other(format!("Failed to scan jobs: {}", e)))?;
 
-        Ok(jobs
-            .into_iter()
-            .map(Self::convert_sql_job)
-            .collect::<Vec<_>>())
+        Ok(jobs)
     }
 
     /// Insert a new job record
-    pub fn insert_job(&self, job: JobRecord) -> Result<(), KalamDbError> {
-        let JobRecord {
-            job_id,
-            job_type,
-            table_name,
-            status,
-            parameters,
-            result,
-            trace,
-            memory_used,
-            cpu_used,
-            created_at,
-            started_at,
-            completed_at,
-            node_id,
-            error_message,
-        } = job;
-
-        let parameters_vec = parameters
-            .as_ref()
-            .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
-            .unwrap_or_default();
-
-        // Convert to kalamdb_sql model
-        let sql_job = kalamdb_sql::Job {
-            job_id,
-            job_type,
-            status,
-            table_name,
-            parameters: parameters_vec,
-            result,
-            trace,
-            memory_used,
-            cpu_used,
-            created_at,
-            start_time: started_at.unwrap_or(created_at),
-            end_time: completed_at,
-            node_id,
-            error_message,
-        };
-
+    pub fn insert_job(&self, job: Job) -> Result<(), KalamDbError> {
         self.kalam_sql
-            .insert_job(&sql_job)
+            .insert_job(&job)
             .map_err(|e| KalamDbError::Other(format!("Failed to insert job: {}", e)))
     }
 
     /// Update an existing job record
-    pub fn update_job(&self, job: JobRecord) -> Result<(), KalamDbError> {
+    pub fn update_job(&self, job: Job) -> Result<(), KalamDbError> {
         // Check if job exists
         let existing = self
             .kalam_sql
@@ -258,32 +68,8 @@ impl JobsTableProvider {
             )));
         }
 
-        // Convert to kalamdb_sql model
-        let parameters_vec = job
-            .parameters
-            .as_ref()
-            .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
-            .unwrap_or_default();
-
-        let sql_job = kalamdb_sql::Job {
-            job_id: job.job_id,
-            job_type: job.job_type,
-            status: job.status,
-            table_name: job.table_name,
-            parameters: parameters_vec,
-            result: job.result,
-            trace: job.trace,
-            memory_used: job.memory_used,
-            cpu_used: job.cpu_used,
-            created_at: job.created_at,
-            start_time: job.started_at.unwrap_or(job.created_at),
-            end_time: job.completed_at,
-            node_id: job.node_id,
-            error_message: job.error_message,
-        };
-
         self.kalam_sql
-            .insert_job(&sql_job)
+            .insert_job(&job)
             .map_err(|e| KalamDbError::Other(format!("Failed to update job: {}", e)))
     }
 
@@ -295,16 +81,13 @@ impl JobsTableProvider {
     }
 
     /// Get a job by ID
-    pub fn get_job(&self, job_id: &str) -> Result<Option<JobRecord>, KalamDbError> {
-        let sql_job = self
+    pub fn get_job(&self, job_id: &str) -> Result<Option<Job>, KalamDbError> {
+        let job = self
             .kalam_sql
             .get_job(job_id)
             .map_err(|e| KalamDbError::Other(format!("Failed to get job: {}", e)))?;
 
-        match sql_job {
-            Some(j) => Ok(Some(Self::convert_sql_job(j))),
-            None => Ok(None),
-        }
+        Ok(job)
     }
 
     /// Cancel a job by marking it as cancelled
@@ -319,13 +102,15 @@ impl JobsTableProvider {
     /// - Job doesn't exist
     /// - Job is already completed/failed/cancelled
     pub fn cancel_job(&self, job_id: &str) -> Result<(), KalamDbError> {
+        use kalamdb_commons::JobStatus;
+        
         // Get current job
         let job = self
             .get_job(job_id)?
             .ok_or_else(|| KalamDbError::NotFound(format!("Job not found: {}", job_id)))?;
 
         // Check if job is still running
-        if job.status != "running" {
+        if job.status != JobStatus::Running {
             return Err(KalamDbError::Other(format!(
                 "Cannot cancel job {} with status '{}'",
                 job_id, job.status
@@ -341,6 +126,8 @@ impl JobsTableProvider {
 
     /// Delete jobs older than retention period (in days)
     pub fn cleanup_old_jobs(&self, retention_days: i64) -> Result<usize, KalamDbError> {
+        use kalamdb_commons::JobStatus;
+        
         let now = chrono::Utc::now().timestamp_millis();
         let retention_ms = retention_days * 24 * 60 * 60 * 1000;
 
@@ -348,7 +135,7 @@ impl JobsTableProvider {
         let mut deleted = 0;
 
         for job in jobs {
-            if job.status == "running" {
+            if job.status == JobStatus::Running {
                 continue;
             }
 
@@ -388,64 +175,40 @@ impl JobsTableProvider {
         let mut error_messages = StringBuilder::new();
 
         for job in jobs {
-            let kalamdb_sql::Job {
-                job_id,
-                job_type,
-                status,
-                table_name,
-                parameters,
-                result,
-                trace,
-                memory_used: mem_used,
-                cpu_used: cpu,
-                created_at,
-                start_time,
-                end_time,
-                node_id,
-                error_message,
-            } = job;
-
-            job_ids.append_value(&job_id);
-            job_types.append_value(&job_type);
-            if let Some(name) = table_name {
-                if name.is_empty() {
-                    table_names.append_null();
-                } else {
-                    table_names.append_value(&name);
-                }
+            job_ids.append_value(&job.job_id);
+            job_types.append_value(job.job_type.as_str());
+            if let Some(name) = job.table_name {
+                table_names.append_value(name.as_str());
             } else {
                 table_names.append_null();
             }
-            statuses.append_value(&status);
+            statuses.append_value(job.status.as_str());
 
-            if parameters.is_empty() {
-                parameters_vec.append_null();
+            if let Some(params) = &job.parameters {
+                parameters_vec.append_value(params);
             } else {
-                parameters_vec.append_value(
-                    serde_json::to_string(&parameters).unwrap_or_else(|_| "[]".to_string()),
-                );
+                parameters_vec.append_null();
             }
 
-            if let Some(res) = result {
+            if let Some(res) = &job.result {
                 results.append_value(res);
             } else {
                 results.append_null();
             }
 
-            if let Some(trace) = trace {
-                traces.append_value(trace);
+            if let Some(tr) = &job.trace {
+                traces.append_value(tr);
             } else {
                 traces.append_null();
             }
 
-            memory_used.push(mem_used);
-            cpu_used.push(cpu);
-            let created = if created_at == 0 { start_time } else { created_at };
-            created_ats.push(Some(created));
-            started_ats.push(Some(start_time));
-            completed_ats.push(end_time);
-            node_ids.append_value(&node_id);
-            if let Some(err) = error_message {
+            memory_used.push(job.memory_used);
+            cpu_used.push(job.cpu_used);
+            created_ats.push(Some(job.created_at));
+            started_ats.push(job.started_at);
+            completed_ats.push(job.completed_at);
+            node_ids.append_value(&job.node_id);
+            if let Some(err) = &job.error_message {
                 error_messages.append_value(err);
             } else {
                 error_messages.append_null();
@@ -533,11 +296,14 @@ mod tests {
 
     #[test]
     fn test_insert_job() {
+        use kalamdb_commons::{JobType, NamespaceId};
+        
         let (provider, _temp_dir) = setup_test_provider();
 
-        let job = JobRecord::new(
+        let job = Job::new(
             "job-001".to_string(),
-            "flush".to_string(),
+            JobType::Flush,
+            NamespaceId::new("default"),
             "node-1".to_string(),
         );
 
@@ -545,17 +311,20 @@ mod tests {
 
         let retrieved = provider.get_job("job-001").unwrap().unwrap();
         assert_eq!(retrieved.job_id, "job-001");
-        assert_eq!(retrieved.job_type, "flush");
-        assert_eq!(retrieved.status, "running");
+        assert_eq!(retrieved.job_type, JobType::Flush);
+        assert_eq!(retrieved.status, kalamdb_commons::JobStatus::Running);
     }
 
     #[test]
     fn test_job_completion() {
+        use kalamdb_commons::{JobType, JobStatus, NamespaceId};
+        
         let (provider, _temp_dir) = setup_test_provider();
 
-        let job = JobRecord::new(
+        let job = Job::new(
             "job-002".to_string(),
-            "compact".to_string(),
+            JobType::Compact,
+            NamespaceId::new("default"),
             "node-1".to_string(),
         )
         .complete(Some("Success".to_string()));
@@ -563,18 +332,21 @@ mod tests {
         provider.insert_job(job).unwrap();
 
         let retrieved = provider.get_job("job-002").unwrap().unwrap();
-        assert_eq!(retrieved.status, "completed");
+        assert_eq!(retrieved.status, JobStatus::Completed);
         assert!(retrieved.completed_at.is_some());
         assert_eq!(retrieved.result, Some("Success".to_string()));
     }
 
     #[test]
     fn test_job_failure() {
+        use kalamdb_commons::{JobType, JobStatus, NamespaceId};
+        
         let (provider, _temp_dir) = setup_test_provider();
 
-        let job = JobRecord::new(
+        let job = Job::new(
             "job-003".to_string(),
-            "cleanup".to_string(),
+            JobType::Cleanup,
+            NamespaceId::new("default"),
             "node-1".to_string(),
         )
         .fail("Disk full".to_string());
@@ -582,39 +354,46 @@ mod tests {
         provider.insert_job(job).unwrap();
 
         let retrieved = provider.get_job("job-003").unwrap().unwrap();
-        assert_eq!(retrieved.status, "failed");
+        assert_eq!(retrieved.status, JobStatus::Failed);
         assert!(retrieved.completed_at.is_some());
         assert_eq!(retrieved.error_message, Some("Disk full".to_string()));
     }
 
     #[test]
     fn test_job_with_table_name() {
+        use kalamdb_commons::{JobType, NamespaceId, TableName};
+        
         let (provider, _temp_dir) = setup_test_provider();
 
-        let job = JobRecord::new(
+        let job = Job::new(
             "job-004".to_string(),
-            "flush".to_string(),
+            JobType::Flush,
+            NamespaceId::new("default"),
             "node-1".to_string(),
         )
-        .with_table_name("users.messages".to_string());
+        .with_table_name(TableName::new("users.messages"));
 
         provider.insert_job(job).unwrap();
 
         let retrieved = provider.get_job("job-004").unwrap().unwrap();
-        assert_eq!(retrieved.table_name, Some("users.messages".to_string()));
+        assert_eq!(retrieved.table_name, Some(TableName::new("users.messages")));
     }
 
     #[test]
     fn test_job_with_parameters() {
+        use kalamdb_commons::{JobType, NamespaceId};
+        
         let (provider, _temp_dir) = setup_test_provider();
 
         let params = vec!["param1".to_string(), "param2".to_string()];
-        let job = JobRecord::new(
+        let params_json = serde_json::to_string(&params).unwrap();
+        let job = Job::new(
             "job-005".to_string(),
-            "backup".to_string(),
+            JobType::Backup,
+            NamespaceId::new("default"),
             "node-1".to_string(),
         )
-        .with_parameters(params.clone());
+        .with_parameters(params_json);
 
         provider.insert_job(job).unwrap();
 
@@ -626,14 +405,18 @@ mod tests {
 
     #[test]
     fn test_job_with_metrics() {
+        use kalamdb_commons::{JobType, NamespaceId};
+        
         let (provider, _temp_dir) = setup_test_provider();
 
-        let job = JobRecord::new(
+        let mut job = Job::new(
             "job-006".to_string(),
-            "flush".to_string(),
+            JobType::Flush,
+            NamespaceId::new("default"),
             "node-1".to_string(),
-        )
-        .with_metrics(268_435_456, 45_200);
+        );
+        job.memory_used = Some(268_435_456);
+        job.cpu_used = Some(45_200);
 
         provider.insert_job(job).unwrap();
 
@@ -645,11 +428,14 @@ mod tests {
     #[test]
     #[ignore] // Delete not yet implemented in kalamdb-sql adapter
     fn test_delete_job() {
+        use kalamdb_commons::{JobType, NamespaceId};
+        
         let (provider, _temp_dir) = setup_test_provider();
 
-        let job = JobRecord::new(
+        let job = Job::new(
             "job-007".to_string(),
-            "flush".to_string(),
+            JobType::Flush,
+            NamespaceId::new("default"),
             "node-1".to_string(),
         );
 
@@ -663,15 +449,18 @@ mod tests {
     #[test]
     #[ignore] // Delete not yet implemented in kalamdb-sql adapter
     fn test_cleanup_old_jobs() {
+        use kalamdb_commons::{JobType, JobStatus, NamespaceId};
+        
         let (provider, _temp_dir) = setup_test_provider();
 
         // Create an old completed job (90 days ago)
         let old_time = chrono::Utc::now().timestamp_millis() - (90 * 24 * 60 * 60 * 1000);
-        let old_job = JobRecord {
+        let old_job = Job {
             job_id: "old-job".to_string(),
-            job_type: "flush".to_string(),
+            job_type: JobType::Flush,
+            namespace_id: NamespaceId::new("default"),
             table_name: None,
-            status: "completed".to_string(),
+            status: JobStatus::Completed,
             parameters: None,
             result: None,
             trace: None,
@@ -685,9 +474,10 @@ mod tests {
         };
 
         // Create a recent job
-        let recent_job = JobRecord::new(
+        let recent_job = Job::new(
             "recent-job".to_string(),
-            "flush".to_string(),
+            JobType::Flush,
+            NamespaceId::new("default"),
             "node-1".to_string(),
         )
         .complete(None);
@@ -706,16 +496,20 @@ mod tests {
 
     #[test]
     fn test_scan_all_jobs() {
+        use kalamdb_commons::{JobType, NamespaceId};
+        
         let (provider, _temp_dir) = setup_test_provider();
 
-        let job1 = JobRecord::new(
+        let job1 = Job::new(
             "job-scan-1".to_string(),
-            "flush".to_string(),
+            JobType::Flush,
+            NamespaceId::new("default"),
             "node-1".to_string(),
         );
-        let job2 = JobRecord::new(
+        let job2 = Job::new(
             "job-scan-2".to_string(),
-            "compact".to_string(),
+            JobType::Compact,
+            NamespaceId::new("default"),
             "node-2".to_string(),
         )
         .complete(Some("OK".to_string()));

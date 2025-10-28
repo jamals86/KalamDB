@@ -33,6 +33,8 @@ pub enum SqlStatement {
     // ===== Table Operations =====
     /// CREATE [USER|SHARED|STREAM] TABLE ...
     CreateTable,
+    /// ALTER TABLE <namespace>.<table> ...
+    AlterTable,
     /// DROP [USER|SHARED|STREAM] TABLE ...
     DropTable,
     /// SHOW TABLES [IN <namespace>]
@@ -65,6 +67,14 @@ pub enum SqlStatement {
     // ===== Live Query Subscriptions =====
     /// SUBSCRIBE TO <namespace>.<table> [WHERE ...] [OPTIONS (...)]
     Subscribe,
+
+    // ===== User Management =====
+    /// CREATE USER <username> WITH ...
+    CreateUser,
+    /// ALTER USER <username> SET ...
+    AlterUser,
+    /// DROP USER <username>
+    DropUser,
 
     // ===== DML Operations =====
     /// UPDATE <table> SET ... WHERE ...
@@ -135,6 +145,7 @@ impl SqlStatement {
             ["CREATE", "SHARED", "TABLE", ..] => SqlStatement::CreateTable,
             ["CREATE", "STREAM", "TABLE", ..] => SqlStatement::CreateTable,
             ["CREATE", "TABLE", ..] => SqlStatement::CreateTable,
+            ["ALTER", "TABLE", ..] | ["ALTER", "USER", "TABLE", ..] | ["ALTER", "SHARED", "TABLE", ..] | ["ALTER", "STREAM", "TABLE", ..] => SqlStatement::AlterTable,
             ["DROP", "USER", "TABLE", ..] => SqlStatement::DropTable,
             ["DROP", "SHARED", "TABLE", ..] => SqlStatement::DropTable,
             ["DROP", "STREAM", "TABLE", ..] => SqlStatement::DropTable,
@@ -159,6 +170,11 @@ impl SqlStatement {
 
             // Live query subscriptions
             ["SUBSCRIBE", "TO", ..] => SqlStatement::Subscribe,
+
+            // User management
+            ["CREATE", "USER", ..] => SqlStatement::CreateUser,
+            ["ALTER", "USER", ..] => SqlStatement::AlterUser,
+            ["DROP", "USER", ..] => SqlStatement::DropUser,
 
             // DML operations (single word start)
             ["UPDATE", ..] => SqlStatement::Update,
@@ -202,6 +218,7 @@ impl SqlStatement {
             SqlStatement::DropStorage => "DROP STORAGE",
             SqlStatement::ShowStorages => "SHOW STORAGES",
             SqlStatement::CreateTable => "CREATE TABLE",
+            SqlStatement::AlterTable => "ALTER TABLE",
             SqlStatement::DropTable => "DROP TABLE",
             SqlStatement::ShowTables => "SHOW TABLES",
             SqlStatement::DescribeTable => "DESCRIBE TABLE",
@@ -214,6 +231,9 @@ impl SqlStatement {
             SqlStatement::CommitTransaction => "COMMIT",
             SqlStatement::RollbackTransaction => "ROLLBACK",
             SqlStatement::Subscribe => "SUBSCRIBE TO",
+            SqlStatement::CreateUser => "CREATE USER",
+            SqlStatement::AlterUser => "ALTER USER",
+            SqlStatement::DropUser => "DROP USER",
             SqlStatement::Update => "UPDATE",
             SqlStatement::Delete => "DELETE",
             SqlStatement::Select => "SELECT",
@@ -310,6 +330,14 @@ mod tests {
             SqlStatement::CreateTable
         );
         assert_eq!(
+            SqlStatement::classify("ALTER TABLE test.users ADD COLUMN email TEXT"),
+            SqlStatement::AlterTable
+        );
+        assert_eq!(
+            SqlStatement::classify("ALTER SHARED TABLE test.messages SET ACCESS LEVEL public"),
+            SqlStatement::AlterTable
+        );
+        assert_eq!(
             SqlStatement::classify("DROP TABLE test.users"),
             SqlStatement::DropTable
         );
@@ -380,6 +408,34 @@ mod tests {
         assert_eq!(
             SqlStatement::classify("subscribe to test.events options (last_rows=10)"),
             SqlStatement::Subscribe
+        );
+    }
+
+    #[test]
+    fn test_classify_user_commands() {
+        assert_eq!(
+            SqlStatement::classify("CREATE USER alice WITH PASSWORD 'secret123' ROLE developer"),
+            SqlStatement::CreateUser
+        );
+        assert_eq!(
+            SqlStatement::classify("create user bob with oauth email='bob@example.com' role readonly"),
+            SqlStatement::CreateUser
+        );
+        assert_eq!(
+            SqlStatement::classify("ALTER USER alice SET PASSWORD 'newpass'"),
+            SqlStatement::AlterUser
+        );
+        assert_eq!(
+            SqlStatement::classify("alter user bob set role dba"),
+            SqlStatement::AlterUser
+        );
+        assert_eq!(
+            SqlStatement::classify("DROP USER alice"),
+            SqlStatement::DropUser
+        );
+        assert_eq!(
+            SqlStatement::classify("drop user old_user"),
+            SqlStatement::DropUser
         );
     }
 

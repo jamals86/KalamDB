@@ -1,29 +1,78 @@
 # KalamDB SQL Syntax Reference
 
 **Version**: 0.1.0  
-**SQL Engine**: Apache DataFusion 35.0
+**SQL Engine**: Apache DataFusion 35.0  
+**Last Updated**: October 28, 2025
+
+---
 
 ## Overview
 
-KalamDB supports standard SQL via Apache DataFusion with custom DDL extensions for namespace, table, and backup operations.
+KalamDB is a **SQL-first database** built for real-time chat and AI message history storage with a unique **table-per-user architecture**. This document provides comprehensive SQL syntax reference for all operations.
+
+**Key Features**:
+- ✅ Full SQL support via Apache DataFusion
+- ✅ Three table types: USER (per-user isolation), SHARED (global), STREAM (ephemeral)
+- ✅ Real-time WebSocket subscriptions with live queries
+- ✅ Multi-storage backends (local filesystem, S3, Azure Blob, GCS)
+- ✅ Role-based access control (user, service, dba, system)
+- ✅ Schema evolution with backward compatibility
+- ✅ Automatic ID generation (SNOWFLAKE_ID, UUID_V7, ULID)
 
 ---
 
 ## Table of Contents
 
-1. [Namespace Operations](#namespace-operations)
-2. [Storage Management](#storage-management)
-3. [User Table Operations](#user-table-operations)
-4. [Shared Table Operations](#shared-table-operations)
-5. [Stream Table Operations](#stream-table-operations)
-6. [Schema Evolution](#schema-evolution)
-7. [Data Manipulation](#data-manipulation)
-8. [Manual Flushing](#manual-flushing)
-9. [Live Query Subscriptions](#live-query-subscriptions)
-10. [Backup and Restore](#backup-and-restore)
-11. [Catalog Browsing](#catalog-browsing)
-12. [Data Types](#data-types)
-13. [System Columns](#system-columns)
+### I. Core Concepts
+1. [Namespace Operations](#namespace-operations) - Logical containers for tables
+2. [Storage Management](#storage-management) - Multi-backend storage configuration
+3. [User Management](#user-management) - Authentication and role-based access control
+4. [Data Types](#data-types) - Supported SQL data types
+5. [System Columns](#system-columns) - Auto-managed metadata columns
+
+### II. Table Operations
+6. [User Table Operations](#user-table-operations) - Per-user isolated tables
+7. [Shared Table Operations](#shared-table-operations) - Global shared tables
+8. [Stream Table Operations](#stream-table-operations) - Ephemeral real-time tables
+9. [Schema Evolution](#schema-evolution) - ALTER TABLE operations
+
+### III. Data Manipulation
+10. [Data Manipulation (DML)](#data-manipulation) - INSERT, UPDATE, DELETE, SELECT
+11. [Manual Flushing](#manual-flushing) - Explicit hot-to-cold tier migration
+12. [Live Query Subscriptions](#live-query-subscriptions) - Real-time WebSocket subscriptions
+
+### IV. Administration
+13. [Backup and Restore](#backup-and-restore) - Database backup and recovery
+14. [Catalog Browsing](#catalog-browsing) - SHOW, DESCRIBE commands
+15. [Custom Functions](#kalamdb-custom-functions) - SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER
+16. [PostgreSQL/MySQL Compatibility](#postgresqlmysql-compatibility) - Migration support
+
+---
+
+## Quick Reference
+
+### Most Common Commands
+
+```sql
+-- Create namespace and tables
+CREATE NAMESPACE app;
+CREATE USER TABLE app.messages (id BIGINT DEFAULT SNOWFLAKE_ID(), content TEXT) FLUSH ROW_THRESHOLD 1000;
+
+-- Insert and query data
+INSERT INTO app.messages (content) VALUES ('Hello World');
+SELECT * FROM app.messages ORDER BY id DESC LIMIT 10;
+
+-- Real-time subscriptions
+SUBSCRIBE TO app.messages WHERE timestamp > NOW() - INTERVAL '1 hour' OPTIONS (last_rows=10);
+
+-- User management
+CREATE USER 'alice' WITH PASSWORD 'Secret123!' ROLE 'user';
+ALTER USER 'alice' SET PASSWORD 'NewPassword123!';
+
+-- Backup and restore
+BACKUP DATABASE app TO '/backups/app-20251028';
+RESTORE DATABASE app FROM '/backups/app-20251028';
+```
 
 ---
 
@@ -219,6 +268,249 @@ minio_local  | s3         | s3://kalamdb/data            | 3
 - Credentials are not displayed (security)
 - `table_count` shows how many tables reference each storage
 - Query `system.storages` table directly for full details
+
+---
+
+## User Management
+
+User management commands allow creation, modification, and deletion of user accounts with role-based access control.
+
+### CREATE USER
+
+Create a new user account with authentication credentials and role.
+
+**Basic Password Authentication**:
+```sql
+CREATE USER '<username>' 
+  WITH PASSWORD '<password>' 
+  ROLE '<user|service|dba|system>';
+```
+
+**With Email and Metadata**:
+```sql
+CREATE USER 'alice' 
+  WITH PASSWORD 'secure_password_123!' 
+  ROLE 'user'
+  EMAIL 'alice@company.com'
+  METADATA '{"department": "engineering", "team": "backend"}';
+```
+
+**OAuth Authentication**:
+```sql
+CREATE USER 'backup_service'
+  WITH OAUTH PROVIDER 'google'
+  SUBJECT 'backup@service.account'
+  ROLE 'service';
+```
+
+**Internal System User (Localhost-Only)**:
+```sql
+CREATE USER 'replicator'
+  WITH INTERNAL
+  ROLE 'system';
+-- No password required, localhost-only access
+```
+
+**System User with Remote Access**:
+```sql
+CREATE USER 'emergency_admin'
+  WITH PASSWORD 'strong_password_123!'
+  ROLE 'system'
+  ALLOW_REMOTE true;
+-- Password REQUIRED when allow_remote is enabled
+```
+
+**With IF NOT EXISTS**:
+```sql
+CREATE USER IF NOT EXISTS 'alice' WITH PASSWORD 'secret' ROLE 'user';
+```
+
+**Parameters**:
+- `user_id`: Auto-generated from username (prefixed with role: usr_, svc_, dba_, sys_)
+- `PASSWORD`: Hashed with bcrypt cost 12 (min 8 chars, max 1024 chars)
+  - **REQUIRED** for `role='system'` when `ALLOW_REMOTE true`
+  - **REQUIRED** for `role='user'`, `'service'`, `'dba'`
+  - **OPTIONAL** for `role='system'` when localhost-only
+- `ROLE`: One of `'user'`, `'service'`, `'dba'`, `'system'` (default: `'user'`)
+- `EMAIL`: Optional email address
+- `METADATA`: Optional JSON object
+- `OAUTH PROVIDER`: OAuth provider name (e.g., 'google', 'github', 'azure')
+- `SUBJECT`: OAuth subject identifier
+- `INTERNAL`: Mark as internal system user (localhost-only, no password needed)
+- `ALLOW_REMOTE`: Allow remote connections (only for `role='system'`, requires password)
+
+**Authorization**: Only `dba` and `system` roles can execute CREATE USER
+
+**Validation**:
+- If `ROLE='system'` AND `ALLOW_REMOTE=true` → `PASSWORD` is **REQUIRED**
+- If `ROLE='system'` AND `ALLOW_REMOTE=true` AND no password → **ERROR**: "System users with remote access must have a password"
+
+**Examples**:
+```sql
+-- Standard user account
+CREATE USER 'alice' WITH PASSWORD 'Secret123!' ROLE 'user';
+
+-- Service account for automation
+CREATE USER 'etl_service' WITH PASSWORD 'ServiceKey456!' ROLE 'service';
+
+-- Database administrator
+CREATE USER 'db_admin' WITH PASSWORD 'AdminPass789!' ROLE 'dba' EMAIL 'admin@company.com';
+
+-- OAuth-based user
+CREATE USER 'google_sync' WITH OAUTH PROVIDER 'google' SUBJECT 'sync@example.com' ROLE 'service';
+
+-- Internal system user (localhost only, no password)
+CREATE USER 'compaction_job' WITH INTERNAL ROLE 'system';
+
+-- Emergency admin with remote access
+CREATE USER 'emergency_dba' 
+  WITH PASSWORD 'EmergencyAccess123!' 
+  ROLE 'system' 
+  ALLOW_REMOTE true
+  METADATA '{"purpose": "emergency_access", "created_by": "db_admin"}';
+```
+
+---
+
+### ALTER USER
+
+Modify existing user credentials, role, or metadata.
+
+**Change Password**:
+```sql
+ALTER USER '<username>' SET PASSWORD '<new_password>';
+```
+
+**Change Role** (DBA only):
+```sql
+ALTER USER '<username>' SET ROLE '<new_role>';
+```
+
+**Update Email and Metadata**:
+```sql
+ALTER USER '<username>' SET 
+  EMAIL '<new_email>',
+  METADATA '<json_metadata>';
+```
+
+**Authorization**: 
+- Users can change their own password
+- Only `dba` and `system` can change roles and other user attributes
+
+**Examples**:
+```sql
+-- User changes their own password
+ALTER USER 'alice' SET PASSWORD 'NewPassword123!';
+
+-- DBA promotes user to service role
+ALTER USER 'integration_bot' SET ROLE 'service';
+
+-- Update user metadata
+ALTER USER 'alice' SET 
+  EMAIL 'alice.new@company.com',
+  METADATA '{"department": "frontend", "level": "senior"}';
+
+-- Update multiple fields
+ALTER USER 'bob' SET 
+  PASSWORD 'UpdatedPass456!',
+  EMAIL 'bob@newcompany.com',
+  METADATA '{"status": "active"}';
+```
+
+---
+
+### DROP USER
+
+Soft delete a user account (sets deleted_at timestamp, allows recovery within grace period).
+
+**Basic Syntax**:
+```sql
+DROP USER '<username>';
+```
+
+**With IF EXISTS**:
+```sql
+DROP USER IF EXISTS '<username>';
+```
+
+**Behavior**:
+- Sets `deleted_at` to current timestamp
+- User becomes hidden from default queries
+- User's tables remain accessible during grace period
+- Scheduled cleanup job deletes user permanently after grace period (default: 30 days)
+- User can be restored by DBA within grace period
+
+**Authorization**: Only `dba` and `system` roles
+
+**Examples**:
+```sql
+-- Soft delete user
+DROP USER 'alice';
+
+-- Soft delete with error suppression
+DROP USER IF EXISTS 'old_user';
+```
+
+---
+
+### Restore Deleted User
+
+Restore a soft-deleted user within the grace period (DBA only).
+
+```sql
+UPDATE system.users 
+SET deleted_at = NULL 
+WHERE user_id = '<user_id>';
+```
+
+**Requirements**:
+- Must be within grace period (default: 30 days from deletion)
+- Only `dba` and `system` roles can restore users
+
+**Example**:
+```sql
+-- Restore user by user_id
+UPDATE system.users 
+SET deleted_at = NULL 
+WHERE user_id = 'usr_alice123';
+
+-- Restore user by username
+UPDATE system.users 
+SET deleted_at = NULL 
+WHERE username = 'alice';
+```
+
+---
+
+### Query Users
+
+Standard SQL SELECT on `system.users` table.
+
+**List all active users** (excludes soft-deleted):
+```sql
+SELECT user_id, username, email, role, created_at 
+FROM system.users 
+WHERE deleted_at IS NULL;
+```
+
+**List deleted users** (within grace period):
+```sql
+SELECT user_id, username, deleted_at, role 
+FROM system.users 
+WHERE deleted_at IS NOT NULL;
+```
+
+**Filter by role**:
+```sql
+SELECT username, email, created_at 
+FROM system.users 
+WHERE role = 'service' AND deleted_at IS NULL;
+```
+
+**Find specific user**:
+```sql
+SELECT * FROM system.users WHERE username = 'alice';
+```
 
 ---
 

@@ -2,7 +2,12 @@
 //!
 //! Provides low-level read/write operations for system tables in RocksDB.
 
-use crate::models::*;
+// Import all system models from the crate root (which re-exports from commons)
+use crate::{
+    InformationSchemaTable, Job, LiveQuery, Namespace, Storage, Table, TableSchema, User,
+    UserTableCounter,
+};
+use kalamdb_commons::models::TableDefinition;
 use anyhow::{anyhow, Result};
 use rocksdb::{IteratorMode, DB};
 use std::sync::Arc;
@@ -38,24 +43,6 @@ impl RocksDbAdapter {
         }
     }
 
-    /// Get a user by API key (Feature 006)
-    pub fn get_user_by_apikey(&self, apikey: &str) -> Result<Option<User>> {
-        let cf = self
-            .db
-            .cf_handle("system_users")
-            .ok_or_else(|| anyhow!("system_users CF not found"))?;
-
-        // Look up username from apikey secondary index
-        let apikey_index_key = format!("apikey:{}", apikey);
-        match self.db.get_cf(&cf, apikey_index_key.as_bytes())? {
-            Some(username_bytes) => {
-                let username = String::from_utf8(username_bytes.to_vec())?;
-                self.get_user(&username)
-            }
-            None => Ok(None),
-        }
-    }
-
     /// Insert a new user
     pub fn insert_user(&self, user: &User) -> Result<()> {
         let cf = self
@@ -66,12 +53,6 @@ impl RocksDbAdapter {
         let key = format!("user:{}", user.username);
         let value = serde_json::to_vec(user)?;
         self.db.put_cf(&cf, key.as_bytes(), &value)?;
-
-        // Feature 006: Create secondary index for API key lookup
-        let apikey_index_key = format!("apikey:{}", user.apikey);
-        let apikey_index_value = user.username.clone();
-        self.db
-            .put_cf(&cf, apikey_index_key.as_bytes(), apikey_index_value.as_bytes())?;
 
         Ok(())
     }
@@ -87,12 +68,6 @@ impl RocksDbAdapter {
             .db
             .cf_handle("system_users")
             .ok_or_else(|| anyhow!("system_users CF not found"))?;
-
-        // Feature 006: Get user first to delete apikey secondary index
-        if let Some(user) = self.get_user(username)? {
-            let apikey_index_key = format!("apikey:{}", user.apikey);
-            self.db.delete_cf(&cf, apikey_index_key.as_bytes())?;
-        }
 
         let key = format!("user:{}", username);
         self.db.delete_cf(&cf, key.as_bytes())?;

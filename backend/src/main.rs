@@ -83,14 +83,13 @@ async fn handle_create_user(args: Vec<String>) -> Result<()> {
     let sql_adapter = std::sync::Arc::new(kalam_sql.adapter().clone());
 
     // Create user
-    let apikey = commands::create_user(sql_adapter, username, email, role).await?;
+    let result = commands::create_user(sql_adapter, username, email, role).await?;
 
     println!("✅ User created successfully!");
     println!("Username: {}", username);
     println!("Email: {}", email);
     println!("Role: {}", role);
-    println!("API Key: {}", apikey);
-    println!("\nStore this API key securely - it cannot be retrieved later.");
+    println!("\n{}", result);
 
     Ok(())
 }

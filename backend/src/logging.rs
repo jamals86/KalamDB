@@ -167,3 +167,137 @@ mod tests {
         assert!(matches!(parse_log_level("Debug"), Ok(LevelFilter::Debug)));
     }
 }
+
+// =============================================================================
+// Authentication Logging
+// =============================================================================
+
+/// Log an authentication failure
+///
+/// Logs to both the main log and auth.log for security auditing.
+///
+/// # Arguments
+/// * `username` - Username that attempted to authenticate
+/// * `source_ip` - IP address of the client
+/// * `failure_reason` - Reason for authentication failure
+/// * `request_id` - Optional request ID for correlation
+pub fn log_auth_failure(
+    username: &str,
+    source_ip: &str,
+    failure_reason: &str,
+    request_id: Option<&str>,
+) {
+    let req_id = request_id.unwrap_or("N/A");
+    log::warn!(
+        target: "kalamdb::auth",
+        "[AUTH_FAILURE] username={} source_ip={} reason={} request_id={}",
+        username,
+        source_ip,
+        failure_reason,
+        req_id
+    );
+}
+
+/// Log a successful authentication
+///
+/// # Arguments
+/// * `username` - Username that authenticated
+/// * `source_ip` - IP address of the client
+/// * `auth_method` - Authentication method used (e.g., "password", "jwt", "apikey")
+/// * `request_id` - Optional request ID for correlation
+pub fn log_auth_success(
+    username: &str,
+    source_ip: &str,
+    auth_method: &str,
+    request_id: Option<&str>,
+) {
+    let req_id = request_id.unwrap_or("N/A");
+    log::info!(
+        target: "kalamdb::auth",
+        "[AUTH_SUCCESS] username={} source_ip={} method={} request_id={}",
+        username,
+        source_ip,
+        auth_method,
+        req_id
+    );
+}
+
+/// Log a user role change
+///
+/// # Arguments
+/// * `target_user_id` - User whose role was changed
+/// * `old_role` - Previous role
+/// * `new_role` - New role
+/// * `admin_user_id` - Admin who performed the change
+pub fn log_role_change(
+    target_user_id: &str,
+    old_role: &str,
+    new_role: &str,
+    admin_user_id: &str,
+) {
+    log::warn!(
+        target: "kalamdb::auth",
+        "[ROLE_CHANGE] target_user={} old_role={} new_role={} admin_user={}",
+        target_user_id,
+        old_role,
+        new_role,
+        admin_user_id
+    );
+}
+
+/// Log an administrative operation
+///
+/// # Arguments
+/// * `admin_user_id` - Admin performing the operation
+/// * `operation` - Operation being performed (e.g., "create_user", "delete_table")
+/// * `target_user_id` - Optional target user ID
+/// * `result` - Result of the operation ("success" or error message)
+pub fn log_admin_operation(
+    admin_user_id: &str,
+    operation: &str,
+    target_user_id: Option<&str>,
+    result: &str,
+) {
+    let target = target_user_id.unwrap_or("N/A");
+    log::info!(
+        target: "kalamdb::auth",
+        "[ADMIN_OP] admin_user={} operation={} target_user={} result={}",
+        admin_user_id,
+        operation,
+        target,
+        result
+    );
+}
+
+/// Log a permission check
+///
+/// # Arguments
+/// * `user_id` - User requesting access
+/// * `resource_type` - Type of resource (e.g., "table", "namespace")
+/// * `resource_id` - Resource identifier
+/// * `permission` - Permission being checked (e.g., "read", "write", "delete")
+/// * `granted` - Whether permission was granted
+pub fn log_permission_check(
+    user_id: &str,
+    resource_type: &str,
+    resource_id: &str,
+    permission: &str,
+    granted: bool,
+) {
+    let level = if granted {
+        log::Level::Debug
+    } else {
+        log::Level::Warn
+    };
+
+    log::log!(
+        target: "kalamdb::auth",
+        level,
+        "[PERMISSION_CHECK] user={} resource={}:{} permission={} granted={}",
+        user_id,
+        resource_type,
+        resource_id,
+        permission,
+        granted
+    );
+}

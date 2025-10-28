@@ -1,14 +1,57 @@
 # kalam-link
 
-Rust client library for KalamDB with WebAssembly support.
+Rust client library for KalamDB with WebAssembly support and multi-language SDKs.
+
+## Project Structure
+
+```
+link/
+├── src/                      # Rust source code
+│   ├── lib.rs               # Library entry point
+│   ├── wasm.rs              # WASM bindings
+│   ├── client.rs            # Native Rust client (used by CLI)
+│   ├── models.rs            # Data models
+│   └── ...
+├── tests/                    # Rust crate tests
+├── Cargo.toml               # Rust package configuration
+├── README.md                # This file
+└── sdks/                    # Multi-language SDK directory
+    └── typescript/          # TypeScript/JavaScript SDK (npm-publishable)
+        ├── package.json     # npm package: @kalamdb/client
+        ├── build.sh         # Compiles Rust → WASM
+        ├── README.md        # Complete SDK documentation
+        ├── tests/           # 14 passing tests
+        ├── .gitignore       # Excludes node_modules
+        ├── kalam_link.js    # WASM bindings (37 KB)
+        ├── kalam_link.d.ts  # TypeScript definitions
+        └── kalam_link_bg.wasm  # Compiled WASM module
+```
+
+## SDK Architecture Principles
+
+**SDKs as First-Class Packages**:
+- Each language SDK in `sdks/{language}/` is a complete, publishable package
+- SDKs include: build system, tests, docs, package config, .gitignore
+- Examples import SDKs as local dependencies (e.g., `"@kalamdb/client": "file:../../link/sdks/typescript"`)
+- **Examples MUST NOT implement their own clients** - all functionality comes from SDKs
+- If examples need features, add them to the SDK for all users
+
+**Benefits**:
+- ✅ Examples validate real SDK usability
+- ✅ No code duplication between examples  
+- ✅ SDKs ready to publish without modification
+- ✅ Improvements benefit all users immediately
+
+See [SDK Integration Guide](../specs/006-docker-wasm-examples/SDK_INTEGRATION.md) for detailed architecture.
 
 ## Features
 
 - 🦀 **Dual-mode library**: Use natively in Rust or compile to WebAssembly for JavaScript/TypeScript
-- 🔐 **API key authentication**: Secure access with X-API-KEY headers
+- 🔐 **HTTP Basic Auth & JWT**: Secure authentication for all API requests
 - 🔄 **Real-time subscriptions**: Subscribe to table changes with WebSocket support
 - 📊 **SQL queries**: Execute SQL queries and get results
 - 🌐 **Cross-platform**: Works in native Rust applications, browsers, and Node.js
+- 🌍 **Multi-language SDKs**: Official SDKs for different languages
 
 ## Installation
 
@@ -18,27 +61,55 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-kalam-link = { path = "../kalam-link" }
+kalam-link = { path = "../link" }
 ```
 
-### WebAssembly (Browser/Node.js)
+### TypeScript/JavaScript SDK
 
-Build the WASM module:
+The TypeScript SDK is a complete, npm-publishable package at `sdks/typescript/`:
 
+**Installation** (as local dependency in examples):
+```json
+{
+  "dependencies": {
+    "@kalamdb/client": "file:../../link/sdks/typescript"
+  }
+}
+```
+
+**Building the SDK**:
 ```bash
-# Install wasm-pack if not already installed
-cargo install wasm-pack
-
-# Build for web target
-cd cli/kalam-link
-wasm-pack build --target web --out-dir pkg --features wasm --no-default-features
+cd link/sdks/typescript
+./build.sh  # Compiles Rust → WASM using wasm-pack
 ```
 
-This generates:
-- `pkg/kalam_link_bg.wasm` - WASM binary (36KB)
-- `pkg/kalam_link.js` - JavaScript bindings
-- `pkg/kalam_link.d.ts` - TypeScript definitions
-- `pkg/package.json` - NPM package metadata
+**Testing**:
+```bash
+npm test      # Run basic tests
+npm run test:all  # Run full test suite (14 tests)
+```
+
+**Usage**:
+```typescript
+import init, { KalamClient } from '@kalamdb/client';
+
+// Initialize WASM
+await init();
+
+// Create client with username and password
+const client = new KalamClient(
+  'http://localhost:8080',
+  'username',
+  'password'
+);
+
+// Connect and query
+await client.connect();
+const result = await client.query('SELECT * FROM todos');
+console.log(JSON.parse(result));
+```
+
+**Complete Documentation**: See [sdks/typescript/README.md](sdks/typescript/README.md) for full API reference, examples, and troubleshooting.
 
 ## Usage
 
@@ -76,7 +147,7 @@ const wasmBuffer = await readFile('./pkg/kalam_link_bg.wasm');
 await init(wasmBuffer);
 
 // Create client
-const client = new KalamClient('http://localhost:8080', 'your-api-key');
+const client = new KalamClient('http://localhost:8080', 'username', 'password');
 
 // Connect to server
 await client.connect();
@@ -112,7 +183,7 @@ await client.disconnect();
     await init();
 
     // Create client
-    const client = new KalamClient('http://localhost:8080', 'your-api-key');
+    const client = new KalamClient('http://localhost:8080', 'username', 'password');
 
     // Connect to server
     await client.connect();
@@ -152,7 +223,7 @@ import init, { KalamClient } from './pkg/kalam_link.js';
 // TypeScript knows the types!
 const client: KalamClient = new KalamClient(
   'http://localhost:8080',
-  'your-api-key'
+  'username', 'password'
 );
 
 // Methods are fully typed
@@ -166,17 +237,17 @@ const isConnected: boolean = client.isConnected();
 #### Constructor
 
 ```rust
-new KalamClient(url: string, api_key: string)
+new KalamClient(url: string, username, password: string)
 ```
 
 Creates a new KalamDB client.
 
 **Parameters:**
 - `url` - Server URL (e.g., `http://localhost:8080`)
-- `api_key` - API key for authentication
+- `username, password` - API key for authentication
 
 **Throws:**
-- Error if `url` or `api_key` is empty
+- Error if `url` or `username, password` is empty
 
 **Example:**
 ```javascript
@@ -390,3 +461,4 @@ See the main KalamDB repository for license information.
 ## Contributing
 
 See the main KalamDB repository for contribution guidelines.
+

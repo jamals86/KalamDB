@@ -6,15 +6,13 @@ use crate::tables::system::{
     JobsTableProvider,
     LiveQueriesTableProvider,
     NamespacesTableProvider,
-    // TODO: Phase 2b - StorageLocationsTableProvider deprecated (replaced by system_storages)
-    // StorageLocationsTableProvider,
     SystemStoragesProvider,
     SystemTablesTableProvider,
     TableSchemasProvider,
     UsersTableProvider,
 };
 use datafusion::catalog::schema::{MemorySchemaProvider, SchemaProvider};
-use kalamdb_commons::SystemTable;
+use kalamdb_commons::system_tables::SystemTable;
 use std::sync::Arc;
 
 /// Register all system tables with the provided schema
@@ -50,8 +48,6 @@ pub fn register_system_tables(
     let users_provider = Arc::new(UsersTableProvider::new(kalam_sql.clone()));
     let namespaces_provider = Arc::new(NamespacesTableProvider::new(kalam_sql.clone()));
     let tables_provider = Arc::new(SystemTablesTableProvider::new(kalam_sql.clone()));
-    // TODO: Phase 2b - storage_locations deprecated (replaced by system_storages)
-    // let storage_locations_provider = Arc::new(StorageLocationsTableProvider::new(kalam_sql.clone()));
     let storages_provider = Arc::new(SystemStoragesProvider::new(kalam_sql.clone()));
     let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone()));
     let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.clone()));
@@ -75,14 +71,6 @@ pub fn register_system_tables(
             tables_provider,
         )
         .map_err(|e| format!("Failed to register system.tables: {}", e))?;
-
-    // TODO: Phase 2b - system.storage_locations deprecated (replaced by system.storages)
-    // system_schema
-    //     .register_table(
-    //         SystemTable::StorageLocations.table_name().to_string(),
-    //         storage_locations_provider,
-    //     )
-    //     .map_err(|e| format!("Failed to register system.storage_locations: {}", e))?;
 
     system_schema
         .register_table(
@@ -129,7 +117,6 @@ mod tests {
             SystemTable::Namespaces,
             SystemTable::Tables,
             SystemTable::TableSchemas,
-            SystemTable::StorageLocations,
             SystemTable::Storages,
             SystemTable::LiveQueries,
             SystemTable::Jobs,

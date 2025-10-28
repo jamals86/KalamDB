@@ -52,7 +52,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-use common::{fixtures, TestServer};
+use common::{fixtures, flush_helpers, TestServer};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;

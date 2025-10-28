@@ -62,3 +62,5 @@ config.toml
 # Documentation build
 /target/doc/
 cli/.kalam/history
+examples/simple-typescript/package-lock.json
+examples/simple-typescript/package-lock.json

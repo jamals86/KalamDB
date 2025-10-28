@@ -43,6 +43,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SqlResponse {
     /// Overall execution status: "success" or "error"
+    /// TODO: Consider using an enum instead of string for stronger typing
     pub status: String,
 
     /// Array of result sets, one per executed statement

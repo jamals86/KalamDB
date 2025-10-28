@@ -65,9 +65,6 @@ impl ColumnFamilyNames {
     /// System tables column family
     pub const SYSTEM_TABLES: &'static str = "system_tables";
 
-    /// System table schemas column family
-    pub const SYSTEM_TABLE_SCHEMAS: &'static str = "system_table_schemas";
-
     /// System storages column family
     pub const SYSTEM_STORAGES: &'static str = "system_storages";
 
@@ -116,6 +113,21 @@ pub const SYSTEM_NAMESPACE: &'static str = "system";
 
 /// Default namespace name for user tables when not specified.
 pub const DEFAULT_NAMESPACE: &'static str = "default";
+
+/// Authentication-related constants.
+pub struct AuthConstants;
+
+#[allow(non_upper_case_globals)]
+impl AuthConstants {
+    /// Default system user username created on first database initialization
+    pub const DEFAULT_SYSTEM_USERNAME: &'static str = "root";
+
+    /// Default system user ID created on first database initialization
+    pub const DEFAULT_SYSTEM_USER_ID: &'static str = "sys_root";
+}
+
+/// Global instance of authentication constants.
+pub const AUTH: AuthConstants = AuthConstants;
 
 // #[cfg(test)]
 // mod tests {

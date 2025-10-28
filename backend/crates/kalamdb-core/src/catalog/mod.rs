@@ -4,14 +4,13 @@
 //!
 //! **Note**: Basic type wrappers (UserId, NamespaceId, TableName, TableType) have been
 //! moved to `kalamdb_commons::models` for shared usage across crates.
+//!
+//! **Note**: Namespace struct has been moved to `kalamdb_commons::system::Namespace` 
+//! as the single source of truth for all system table models.
 
-pub mod namespace;
-pub mod storage_location;
 pub mod table_cache;
 pub mod table_metadata;
 
-pub use namespace::Namespace;
-pub use storage_location::{LocationType, StorageLocation};
 pub use table_cache::TableCache;
 pub use table_metadata::TableMetadata;
 

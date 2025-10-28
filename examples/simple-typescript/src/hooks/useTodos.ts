@@ -1,111 +1,184 @@
 /**
  * useTodos Hook
- * Custom React hook for managing TODO state with real-time sync and localStorage caching
+ * Feature: 006-docker-wasm-examples
+ * 
+ * Custom React hook for managing TODO state with KalamDB real-time sync
+ * and localStorage caching for offline-first capabilities.
+ * 
+ * Features:
+ * - Loads TODOs from localStorage cache on mount (instant render)
+ * - Connects to KalamDB WebSocket for real-time updates
+ * - Subscribes to TODO changes from last known ID
+ * - Syncs insert/update/delete events across all tabs
+ * - Persists changes to localStorage
+ * - Tracks connection status
+ * - Disables writes when disconnected
  */
 
-import { useState, useEffect } from 'react';
-import type { Todo, NewTodo } from '../types/todo';
-import { initializeClient, getClient } from '../services/kalamClient';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import type { Todo, CreateTodoInput, ConnectionStatus, SubscriptionEvent } from '../types/todo';
+import { 
+  createKalamClient, 
+  getKalamConfig,
+  type KalamDBClient 
+} from '../services/kalamdb';
 import {
   loadTodosFromCache,
   saveTodosToCache,
   getLastSyncId,
-  setLastSyncId,
+  updateLastSyncId
 } from '../services/localStorage';
 
-interface UseTodosReturn {
+/**
+ * Hook return value
+ */
+export interface UseTodosResult {
+  /** Current TODO list */
   todos: Todo[];
-  isConnected: boolean;
-  isLoading: boolean;
-  error: string | null;
-  addTodo: (newTodo: NewTodo) => Promise<void>;
+  
+  /** WebSocket connection status */
+  connectionStatus: ConnectionStatus;
+  
+  /** Add a new TODO */
+  addTodo: (title: string) => Promise<void>;
+  
+  /** Delete a TODO by ID */
   deleteTodo: (id: number) => Promise<void>;
+  
+  /** Toggle TODO completion status */
+  toggleTodo: (id: number) => Promise<void>;
+  
+  /** Loading state (initial data fetch) */
+  isLoading: boolean;
+  
+  /** Error message (if any) */
+  error: string | null;
 }
 
-export function useTodos(): UseTodosReturn {
+/**
+ * Custom hook for TODO management with KalamDB
+ */
+export function useTodos(): UseTodosResult {
+  // State
   const [todos, setTodos] = useState<Todo[]>([]);
-  const [isConnected, setIsConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
+  
+  // Refs (to avoid re-creating callbacks)
+  const clientRef = useRef<KalamDBClient | null>(null);
+  const mountedRef = useRef(true);
 
-  // Initialize client and load data
+  /**
+   * Handle subscription events (insert/update/delete)
+   */
+  const handleSubscriptionEvent = useCallback((event: SubscriptionEvent<Todo>) => {
+    console.log('Subscription event:', event);
+
+    switch (event.type) {
+      case 'insert':
+        if (event.data) {
+          setTodos(prev => {
+            // Avoid duplicates
+            if (prev.some(t => t.id === event.data!.id)) {
+              return prev;
+            }
+            const updated = [...prev, event.data!];
+            saveTodosToCache(updated);
+            updateLastSyncId(event.id);
+            return updated;
+          });
+        }
+        break;
+
+      case 'update':
+        if (event.data) {
+          setTodos(prev => {
+            const updated = prev.map(t => t.id === event.id ? event.data! : t);
+            saveTodosToCache(updated);
+            updateLastSyncId(event.id);
+            return updated;
+          });
+        }
+        break;
+
+      case 'delete':
+        setTodos(prev => {
+          const updated = prev.filter(t => t.id !== event.id);
+          saveTodosToCache(updated);
+          updateLastSyncId(event.id);
+          return updated;
+        });
+        break;
+
+      default:
+        console.warn('Unknown event type:', event.type);
+    }
+  }, []);
+
+  /**
+   * Initialize KalamDB client and subscribe to TODOs
+   */
   useEffect(() => {
-    let mounted = true;
+    let isCancelled = false;
 
     async function init() {
       try {
-        // Load from cache immediately for instant UI
-        const cachedTodos = loadTodosFromCache();
-        if (mounted) {
-          setTodos(cachedTodos);
+        // 1. Load from cache immediately (instant render)
+        const cached = loadTodosFromCache();
+        if (cached.length > 0 && !isCancelled) {
+          console.log(`Loaded ${cached.length} TODOs from cache`);
+          setTodos(cached);
           setIsLoading(false);
         }
 
-        // Initialize WASM client
-        const client = await initializeClient();
+        // 2. Get configuration
+        const config = getKalamConfig();
 
-        // Connect to server
-        await client.connect();
+        // 3. Connect to KalamDB
+        if (!isCancelled) {
+          setConnectionStatus('connecting');
+        }
         
-        if (mounted) {
-          setIsConnected(client.isConnected());
+        const client = await createKalamClient(config);
+        
+        if (isCancelled) {
+          await client.disconnect();
+          return;
         }
 
-        // Subscribe to changes from last sync point
-        const lastSyncId = getLastSyncId();
-        const subId = await client.subscribe('app.todos', (event: string) => {
-          if (!mounted) return;
+        clientRef.current = client;
+        setConnectionStatus('connected');
+        setError(null);
 
-          try {
-            const eventData = JSON.parse(event);
+        // 4. Subscribe to TODO table from last sync ID
+        const lastId = getLastSyncId();
+        console.log(`Subscribing to todos from ID ${lastId}`);
+        
+        await client.subscribe('app.todos', lastId, handleSubscriptionEvent);
+
+        // 5. If no cache, fetch all TODOs
+        if (cached.length === 0) {
+          const allTodos = await client.query<Todo>('SELECT * FROM app.todos ORDER BY id');
+          if (!isCancelled) {
+            setTodos(allTodos);
+            saveTodosToCache(allTodos);
             
-            // Update last sync ID
-            if (eventData.id) {
-              setLastSyncId(eventData.id);
+            // Update last sync ID to highest ID
+            if (allTodos.length > 0) {
+              const maxId = Math.max(...allTodos.map(t => t.id));
+              updateLastSyncId(maxId);
             }
-
-            // Handle different event types
-            if (eventData.type === 'insert' || eventData.type === 'update') {
-              const newTodo = eventData.data as Todo;
-              setTodos((prev) => {
-                // Check if TODO already exists (update case)
-                const index = prev.findIndex((t) => t.id === newTodo.id);
-                let updated: Todo[];
-                
-                if (index >= 0) {
-                  // Update existing
-                  updated = [...prev];
-                  updated[index] = newTodo;
-                } else {
-                  // Add new
-                  updated = [...prev, newTodo];
-                }
-                
-                // Save to cache
-                saveTodosToCache(updated);
-                return updated;
-              });
-            } else if (eventData.type === 'delete') {
-              const deletedId = eventData.id || eventData.data?.id;
-              setTodos((prev) => {
-                const updated = prev.filter((t) => t.id !== deletedId);
-                saveTodosToCache(updated);
-                return updated;
-              });
-            }
-          } catch (err) {
-            console.error('Failed to process subscription event:', err);
           }
-        });
-
-        if (mounted) {
-          setSubscriptionId(subId);
         }
+
+        setIsLoading(false);
       } catch (err) {
-        console.error('Failed to initialize:', err);
-        if (mounted) {
-          setError(err instanceof Error ? err.message : 'Failed to connect');
+        if (!isCancelled) {
+          const message = err instanceof Error ? err.message : 'Failed to connect to KalamDB';
+          console.error('Init error:', err);
+          setError(message);
+          setConnectionStatus('error');
           setIsLoading(false);
         }
       }
@@ -113,70 +186,100 @@ export function useTodos(): UseTodosReturn {
 
     init();
 
-    // Cleanup
+    // Cleanup on unmount
     return () => {
-      mounted = false;
-      if (subscriptionId) {
-        try {
-          const client = getClient();
-          client.unsubscribe(subscriptionId);
-          client.disconnect();
-        } catch (err) {
-          console.error('Failed to cleanup:', err);
-        }
+      isCancelled = true;
+      mountedRef.current = false;
+      
+      if (clientRef.current) {
+        clientRef.current.disconnect().catch(console.error);
+        clientRef.current = null;
       }
     };
-  }, []);
+  }, [handleSubscriptionEvent]);
 
   /**
    * Add a new TODO
    */
-  const addTodo = async (newTodo: NewTodo): Promise<void> => {
-    try {
-      const client = getClient();
-      
-      // Prepare data
-      const data = {
-        title: newTodo.title,
-        completed: newTodo.completed ?? false,
-        created_at: new Date().toISOString(),
-      };
-
-      // Insert via WASM client
-      await client.insert('app.todos', JSON.stringify(data));
-      
-      // The subscription will handle updating the local state
-    } catch (err) {
-      console.error('Failed to add TODO:', err);
-      setError(err instanceof Error ? err.message : 'Failed to add TODO');
-      throw err;
+  const addTodo = useCallback(async (title: string) => {
+    if (!clientRef.current || connectionStatus !== 'connected') {
+      throw new Error('Not connected to KalamDB');
     }
-  };
+
+    if (!title.trim()) {
+      throw new Error('Title cannot be empty');
+    }
+
+    if (title.length > 500) {
+      throw new Error('Title must be 500 characters or less');
+    }
+
+    const input: CreateTodoInput = {
+      title: title.trim(),
+      completed: false
+    };
+
+    try {
+      await clientRef.current.insertTodo(input);
+      // Note: The actual TODO will be added via subscription event
+      // so we don't update state here to avoid duplicates
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to add TODO';
+      console.error('Add TODO error:', err);
+      throw new Error(message);
+    }
+  }, [connectionStatus]);
 
   /**
-   * Delete a TODO
+   * Delete a TODO by ID
    */
-  const deleteTodo = async (id: number): Promise<void> => {
-    try {
-      const client = getClient();
-      
-      // Delete via WASM client
-      await client.delete('app.todos', id.toString());
-      
-      // The subscription will handle updating the local state
-    } catch (err) {
-      console.error('Failed to delete TODO:', err);
-      setError(err instanceof Error ? err.message : 'Failed to delete TODO');
-      throw err;
+  const deleteTodo = useCallback(async (id: number) => {
+    if (!clientRef.current || connectionStatus !== 'connected') {
+      throw new Error('Not connected to KalamDB');
     }
-  };
+
+    try {
+      await clientRef.current.deleteTodo(id);
+      // Note: The TODO will be removed via subscription event
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete TODO';
+      console.error('Delete TODO error:', err);
+      throw new Error(message);
+    }
+  }, [connectionStatus]);
+
+  /**
+   * Toggle TODO completion status
+   */
+  const toggleTodo = useCallback(async (id: number) => {
+    if (!clientRef.current || connectionStatus !== 'connected') {
+      throw new Error('Not connected to KalamDB');
+    }
+
+    const todo = todos.find(t => t.id === id);
+    if (!todo) {
+      throw new Error('TODO not found');
+    }
+
+    try {
+      await clientRef.current.query(
+        `UPDATE todos SET completed = ${!todo.completed} WHERE id = ${id}`
+      );
+      // Note: The TODO will be updated via subscription event
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to toggle TODO';
+      console.error('Toggle TODO error:', err);
+      throw new Error(message);
+    }
+  }, [connectionStatus, todos]);
 
   return {
     todos,
-    isConnected,
-    isLoading,
-    error,
+    connectionStatus,
     addTodo,
     deleteTodo,
+    toggleTodo,
+    isLoading,
+    error
   };
 }

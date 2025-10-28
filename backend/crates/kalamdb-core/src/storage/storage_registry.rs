@@ -3,7 +3,7 @@
 //! Provides centralized access to storage configurations and path template validation.
 
 use crate::error::KalamDbError;
-use kalamdb_commons::models::{StorageConfig, StorageType};
+use kalamdb_commons::models::{StorageConfig, StorageId, StorageType};
 use kalamdb_sql::{KalamSql, Storage};
 use std::convert::TryFrom;
 use std::sync::Arc;
@@ -43,7 +43,8 @@ impl StorageRegistry {
     /// # }
     /// ```
     pub fn get_storage(&self, storage_id: &str) -> Result<Option<Storage>, KalamDbError> {
-        self.kalam_sql.get_storage(storage_id).map_err(|e| {
+        let storage_id_typed = StorageId::from(storage_id);
+        self.kalam_sql.get_storage(&storage_id_typed).map_err(|e| {
             KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e))
         })
     }
@@ -99,12 +100,12 @@ impl StorageRegistry {
 
         // Sort: 'local' first, then alphabetically
         storages.sort_by(|a, b| {
-            if a.storage_id == "local" {
+            if a.storage_id.as_ref() == "local" {
                 std::cmp::Ordering::Less
-            } else if b.storage_id == "local" {
+            } else if b.storage_id.as_ref() == "local" {
                 std::cmp::Ordering::Greater
             } else {
-                a.storage_id.cmp(&b.storage_id)
+                a.storage_id.as_ref().cmp(b.storage_id.as_ref())
             }
         });
 
@@ -292,7 +293,10 @@ impl StorageRegistry {
 
         // T169a: Step 1 - If table.use_user_storage=false, return table.storage_id
         if !table.use_user_storage {
-            return Ok(table.storage_id.unwrap_or_else(|| "local".to_string()));
+            return Ok(table
+                .storage_id
+                .unwrap_or_else(|| StorageId::from("local"))
+                .into_string());
         }
 
         // T169b: Step 2 - If table.use_user_storage=true, query user.storage_mode
@@ -303,17 +307,21 @@ impl StorageRegistry {
             .ok_or_else(|| KalamDbError::NotFound(format!("User '{}' not found", user_id)))?;
 
         // T169c: Step 3 - If user.storage_mode='region', return user.storage_id
-        if let Some(storage_mode) = &user.storage_mode {
-            if storage_mode == "region" {
-                if let Some(user_storage_id) = &user.storage_id {
-                    return Ok(user_storage_id.clone());
-                }
-            }
-        }
+        // TODO: User storage preferences (storage_mode, storage_id) not yet implemented in User model
+        // if let Some(storage_mode) = &user.storage_mode {
+        //     if storage_mode == "region" {
+        //         if let Some(user_storage_id) = &user.storage_id {
+        //             return Ok(user_storage_id.clone());
+        //         }
+        //     }
+        // }
 
         // T169d: Step 4 - If user.storage_mode='table' (or NULL), fallback to table.storage_id
         // T169e: Step 5 - If table.storage_id is NULL, fallback to storage_id='local'
-        Ok(table.storage_id.unwrap_or_else(|| "local".to_string()))
+        Ok(table
+            .storage_id
+            .unwrap_or_else(|| StorageId::from("local"))
+            .into_string())
     }
 }
 

@@ -28,6 +28,7 @@ pub mod sharding;
 pub mod shared_table_store;
 pub mod storage_trait;
 pub mod stream_table_store;
+pub mod traits; // EntityStore<T> trait
 pub mod user_table_store;
 
 pub use rocksdb_impl::RocksDBBackend;
@@ -38,6 +39,7 @@ pub use sharding::{
 pub use shared_table_store::SharedTableStore;
 pub use storage_trait::{Operation, Partition, StorageBackend, StorageError};
 pub use stream_table_store::StreamTableStore;
+pub use traits::EntityStore; // Export EntityStore trait
 pub use user_table_store::UserTableStore;
 
 #[cfg(test)]

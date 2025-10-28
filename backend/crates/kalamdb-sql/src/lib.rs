@@ -36,10 +36,16 @@ pub mod batch_execution;
 pub mod compatibility;
 pub mod ddl;
 pub mod executor;
-pub mod models;
 pub mod parser;
 pub mod query_cache;
 pub mod statement_classifier;
+
+use kalamdb_commons::{NamespaceId, StorageId, TableName, UserId};
+// Re-export system models from kalamdb-commons (single source of truth)
+pub use kalamdb_commons::system::{
+    InformationSchemaTable, Job, LiveQuery, Namespace, Storage, SystemTable as Table,
+    TableSchema, User, UserTableCounter,
+};
 
 pub use adapter::RocksDbAdapter;
 pub use batch_execution::split_statements;
@@ -55,7 +61,6 @@ pub use ddl::{
     SubscribeOptions, SubscribeStatement,
 };
 pub use executor::SqlExecutor;
-pub use models::*;
 pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
 
@@ -114,28 +119,48 @@ impl KalamSql {
         self.adapter.get_user(username)
     }
 
+    /// Get a user by user ID
+    pub fn get_user_by_id(&self, user_id: &UserId) -> Result<Option<User>> {
+        // Scan all users and find by ID
+        // TODO: Add index for user_id for better performance
+        let all_users = self.adapter.scan_all_users()?;
+        Ok(all_users.into_iter().find(|u| &u.id == user_id))
+    }
+
     /// Insert a new user
     pub fn insert_user(&self, user: &User) -> Result<()> {
         self.adapter.insert_user(user)
     }
 
+    /// Update an existing user
+    pub fn update_user(&self, user: &User) -> Result<()> {
+        self.adapter.update_user(user)
+    }
+
+    /// Delete a user by username (soft delete)
+    pub fn delete_user(&self, username: &str) -> Result<()> {
+        self.adapter.delete_user(username)
+    }
+
     /// Get a namespace by ID
-    pub fn get_namespace(&self, namespace_id: &str) -> Result<Option<Namespace>> {
-        self.adapter.get_namespace(namespace_id)
+    pub fn get_namespace(&self, namespace_id: &NamespaceId) -> Result<Option<Namespace>> {
+        self.adapter.get_namespace(namespace_id.as_str())
     }
 
     /// Check if a namespace exists.
-    pub fn namespace_exists(&self, namespace_id: &str) -> Result<bool> {
-        self.adapter.namespace_exists(namespace_id)
+    pub fn namespace_exists(&self, namespace_id: &NamespaceId) -> Result<bool> {
+        self.adapter.namespace_exists(namespace_id.as_str())
     }
 
     /// Insert a new namespace
-    pub fn insert_namespace(&self, namespace_id: &str, options: &str) -> Result<()> {
+    pub fn insert_namespace(&self, namespace_id: &NamespaceId, options: &str) -> Result<()> {
+        use kalamdb_commons::UserId;
+
         let namespace = Namespace {
-            namespace_id: namespace_id.to_string(),
-            name: namespace_id.to_string(),
-            created_at: chrono::Utc::now().timestamp(),
-            options: options.to_string(),
+            namespace_id: namespace_id.clone(),
+            name: namespace_id.as_str().to_string(),
+            created_at: chrono::Utc::now().timestamp_millis(),
+            options: Some(options.to_string()),
             table_count: 0,
         };
         self.adapter.insert_namespace(&namespace)
@@ -147,8 +172,8 @@ impl KalamSql {
     }
 
     /// Delete a namespace by namespace_id
-    pub fn delete_namespace(&self, namespace_id: &str) -> Result<()> {
-        self.adapter.delete_namespace(namespace_id)
+    pub fn delete_namespace(&self, namespace_id: &NamespaceId) -> Result<()> {
+        self.adapter.delete_namespace(namespace_id.as_str())
     }
 
     /// Get table schema by table_id and version
@@ -244,6 +269,7 @@ impl KalamSql {
     }
 
     /// Scan all tables
+    /// TODO: Use tablebyid index for better performance
     ///
     /// Returns a vector of all tables in the system.
     pub fn scan_all_tables(&self) -> Result<Vec<Table>> {
@@ -265,8 +291,8 @@ impl KalamSql {
     }
 
     /// Get a storage by ID
-    pub fn get_storage(&self, storage_id: &str) -> Result<Option<Storage>> {
-        self.adapter.get_storage(storage_id)
+    pub fn get_storage(&self, storage_id: &StorageId) -> Result<Option<Storage>> {
+        self.adapter.get_storage(storage_id.as_str())
     }
 
     /// Insert a new storage
@@ -275,8 +301,8 @@ impl KalamSql {
     }
 
     /// Delete a storage by ID
-    pub fn delete_storage(&self, storage_id: &str) -> Result<()> {
-        self.adapter.delete_storage(storage_id)
+    pub fn delete_storage(&self, storage_id: &StorageId) -> Result<()> {
+        self.adapter.delete_storage(storage_id.as_str())
     }
 
     // Additional CRUD operations for table deletion and updates
@@ -303,7 +329,7 @@ impl KalamSql {
     }
 
     /// Get a table by table_id
-    ///
+    /// TODO: 
     /// Fetches table metadata from system_tables.
     pub fn get_table(&self, table_id: &str) -> Result<Option<Table>> {
         self.adapter.get_table(table_id)
@@ -339,10 +365,10 @@ impl KalamSql {
     /// Some(TableDefinition) if found, None if not found
     pub fn get_table_definition(
         &self,
-        namespace_id: &str,
-        table_name: &str,
+        namespace_id: &NamespaceId,
+        table_name: &TableName,
     ) -> Result<Option<kalamdb_commons::models::TableDefinition>> {
-        self.adapter.get_table_definition(namespace_id, table_name)
+        self.adapter.get_table_definition(namespace_id.as_str(), table_name.as_str())
     }
 
     /// Scan all table definitions in a namespace from information_schema_tables.
@@ -355,9 +381,9 @@ impl KalamSql {
     /// Vector of all TableDefinition in the namespace
     pub fn scan_table_definitions(
         &self,
-        namespace_id: &str,
+        namespace_id: &NamespaceId,
     ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
-        self.adapter.scan_table_definitions(namespace_id)
+        self.adapter.scan_table_definitions(namespace_id.as_str())
     }
 
     /// Scan ALL table definitions across ALL namespaces

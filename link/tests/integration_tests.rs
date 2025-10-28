@@ -52,7 +52,7 @@ async fn ensure_server_running() {
 fn create_client() -> Result<KalamLinkClient, KalamLinkError> {
     KalamLinkClient::builder()
         .base_url(SERVER_URL)
-        .user_id(TEST_USER)
+
         .timeout(Duration::from_secs(10))
         .build()
 }
@@ -84,7 +84,7 @@ async fn cleanup_namespace(ns: &str) {
 async fn test_client_builder_basic() {
     let client = KalamLinkClient::builder()
         .base_url(SERVER_URL)
-        .user_id(TEST_USER)
+
         .build();
 
     assert!(client.is_ok(), "Client builder should succeed");
@@ -94,7 +94,7 @@ async fn test_client_builder_basic() {
 async fn test_client_builder_with_timeout() {
     let client = KalamLinkClient::builder()
         .base_url(SERVER_URL)
-        .user_id(TEST_USER)
+
         .timeout(Duration::from_secs(5))
         .build();
 
@@ -105,7 +105,7 @@ async fn test_client_builder_with_timeout() {
 async fn test_client_builder_with_jwt() {
     let client = KalamLinkClient::builder()
         .base_url(SERVER_URL)
-        .user_id(TEST_USER)
+
         .jwt_token("test.jwt.token")
         .build();
 
@@ -113,19 +113,8 @@ async fn test_client_builder_with_jwt() {
 }
 
 #[tokio::test]
-async fn test_client_builder_with_api_key() {
-    let client = KalamLinkClient::builder()
-        .base_url(SERVER_URL)
-        .user_id(TEST_USER)
-        .api_key("test-api-key")
-        .build();
-
-    assert!(client.is_ok(), "Client with API key should succeed");
-}
-
-#[tokio::test]
 async fn test_client_builder_missing_url() {
-    let result = KalamLinkClient::builder().user_id(TEST_USER).build();
+    let result = KalamLinkClient::builder().build();
 
     assert!(result.is_err(), "Client without URL should fail");
     if let Err(e) = result {
@@ -231,11 +220,6 @@ fn test_auth_provider_jwt() {
     assert!(auth.is_authenticated(), "JWT should be authenticated");
 }
 
-#[test]
-fn test_auth_provider_api_key() {
-    let auth = AuthProvider::api_key("test-key".to_string());
-    assert!(auth.is_authenticated(), "API key should be authenticated");
-}
 
 // =============================================================================
 // WebSocket Subscription Tests
@@ -729,7 +713,7 @@ async fn test_custom_timeout() {
 
     let client = KalamLinkClient::builder()
         .base_url(SERVER_URL)
-        .user_id(TEST_USER)
+
         .timeout(Duration::from_millis(100)) // Very short timeout
         .build()
         .unwrap();
@@ -742,7 +726,7 @@ async fn test_custom_timeout() {
 async fn test_connection_to_invalid_server() {
     let client = KalamLinkClient::builder()
         .base_url("http://localhost:9999") // Invalid port
-        .user_id(TEST_USER)
+
         .timeout(Duration::from_secs(1))
         .build()
         .unwrap();

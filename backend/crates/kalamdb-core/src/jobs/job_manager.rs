@@ -67,6 +67,7 @@ use chrono::{DateTime, Utc};
 use std::future::Future;
 use std::pin::Pin;
 
+//TODO: Use common JobStatus enum from kalamdb-commons ALWAYS
 /// Job status enumeration
 ///
 /// Represents the current state of a job in the system

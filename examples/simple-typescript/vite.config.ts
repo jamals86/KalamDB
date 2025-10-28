@@ -5,15 +5,25 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 3000,
-    open: true
+    port: 5173,
+    strictPort: true,
+    host: true,
+    fs: {
+      // Allow serving files from the SDK directory (outside project root)
+      allow: [
+        // Search up for workspace root
+        '..',
+        // Allow access to the entire KalamDB repository for SDK files
+        '../..'
+      ]
+    }
   },
   build: {
     outDir: 'dist',
-    sourcemap: true
+    sourcemap: true,
+    target: 'es2020'
   },
   optimizeDeps: {
-    exclude: ['../wasm/kalam_link.js']
-  },
-  assetsInclude: ['**/*.wasm']
+    exclude: ['kalam-link']
+  }
 })

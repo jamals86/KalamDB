@@ -14,6 +14,7 @@
 use crate::catalog::{NamespaceId, TableType};
 use crate::error::KalamDbError;
 use crate::services::backup_service::BackupManifest;
+use kalamdb_commons::models::{JobStatus, JobType};
 use kalamdb_sql::{Job, KalamSql};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -79,10 +80,10 @@ impl RestoreService {
         };
 
         // Verify namespace ID matches
-        if manifest.namespace.namespace_id != namespace_id.as_str() {
+        if manifest.namespace.namespace_id.as_str() != namespace_id.as_str() {
             let error_msg = format!(
                 "Backup namespace '{}' does not match requested namespace '{}'",
-                manifest.namespace.namespace_id,
+                manifest.namespace.namespace_id.as_str(),
                 namespace_id.as_str()
             );
             self.fail_restore_job(&job_id, &error_msg)?;
@@ -92,7 +93,7 @@ impl RestoreService {
         // Step 3: Check if namespace already exists
         let existing_namespace = self
             .kalam_sql
-            .get_namespace(namespace_id.as_str())
+            .get_namespace(namespace_id)
             .map_err(|e| KalamDbError::IoError(format!("Failed to check namespace: {}", e)))?;
 
         if existing_namespace.is_some() {
@@ -193,13 +194,11 @@ impl RestoreService {
 
         // Validate Parquet file existence for user/shared tables
         for table in &manifest.tables {
-            let table_type = TableType::from_str(&table.table_type).ok_or_else(|| {
-                KalamDbError::InvalidSql(format!("Invalid table type: {}", table.table_type))
-            })?;
+            let table_type = table.table_type;
 
             match table_type {
                 TableType::User => {
-                    let table_backup_dir = backup_dir.join("user_tables").join(&table.table_name);
+                    let table_backup_dir = backup_dir.join("user_tables").join(table.table_name.as_str());
                     if !table_backup_dir.exists() {
                         log::warn!(
                             "No Parquet files found for user table '{}' (may be empty)",
@@ -208,7 +207,7 @@ impl RestoreService {
                     }
                 }
                 TableType::Shared => {
-                    let table_backup_dir = backup_dir.join("shared_tables").join(&table.table_name);
+                    let table_backup_dir = backup_dir.join("shared_tables").join(table.table_name.as_str());
                     if !table_backup_dir.exists() {
                         log::warn!(
                             "No Parquet files found for shared table '{}' (may be empty)",
@@ -294,9 +293,7 @@ impl RestoreService {
         let mut total_bytes = 0u64;
 
         for table in &manifest.tables {
-            let table_type = TableType::from_str(&table.table_type).ok_or_else(|| {
-                KalamDbError::InvalidSql(format!("Invalid table type: {}", table.table_type))
-            })?;
+            let table_type = table.table_type;
 
             match table_type {
                 TableType::User => {
@@ -334,10 +331,10 @@ impl RestoreService {
     /// Restore Parquet files for a user table (T186)
     fn restore_user_table_files(
         &self,
-        table: &kalamdb_sql::models::Table,
+        table: &kalamdb_sql::Table,
         backup_dir: &Path,
     ) -> Result<(usize, u64), KalamDbError> {
-        let table_backup_dir = backup_dir.join("user_tables").join(&table.table_name);
+        let table_backup_dir = backup_dir.join("user_tables").join(table.table_name.as_str());
 
         if !table_backup_dir.exists() {
             // No files to restore (empty table)
@@ -396,10 +393,10 @@ impl RestoreService {
     /// Restore Parquet files for a shared table (T186)
     fn restore_shared_table_files(
         &self,
-        table: &kalamdb_sql::models::Table,
+        table: &kalamdb_sql::Table,
         backup_dir: &Path,
     ) -> Result<(usize, u64), KalamDbError> {
-        let table_backup_dir = backup_dir.join("shared_tables").join(&table.table_name);
+        let table_backup_dir = backup_dir.join("shared_tables").join(table.table_name.as_str());
 
         if !table_backup_dir.exists() {
             // No files to restore (empty table)
@@ -422,7 +419,7 @@ impl RestoreService {
         // Destination: ${storage_path}/shared/{table_name}/
         let shared_dest_dir = PathBuf::from(base_path)
             .join("shared")
-            .join(&table.table_name);
+            .join(table.table_name.as_str());
 
         // Copy Parquet files with checksum verification
         self.copy_parquet_files_with_verification(&table_backup_dir, &shared_dest_dir)
@@ -521,7 +518,7 @@ impl RestoreService {
         {
             log::error!(
                 "Failed to delete namespace '{}': {}",
-                manifest.namespace.namespace_id,
+                manifest.namespace.namespace_id.as_str(),
                 e
             );
             return Err(KalamDbError::IoError(format!(
@@ -548,17 +545,18 @@ impl RestoreService {
         let now_ms = chrono::Utc::now().timestamp_millis();
         let job = Job {
             job_id: job_id.clone(),
-            job_type: "restore".to_string(),
-            status: "running".to_string(),
-            table_name: Some(namespace_id.as_str().to_string()),
-            parameters: vec![format!(r#"{{"namespace_id":"{}"}}"#, namespace_id.as_str())],
+            job_type: JobType::Restore,
+            status: JobStatus::Running,
+            namespace_id: namespace_id.clone(),
+            table_name: None,
+            parameters: Some(format!(r#"{{"namespace_id":"{}"}}"#, namespace_id.as_str())),
             result: None,
             trace: None,
             memory_used: None,
             cpu_used: None,
             created_at: now_ms,
-            start_time: now_ms,
-            end_time: None,
+            started_at: Some(now_ms),
+            completed_at: None,
             node_id: "local".to_string(),
             error_message: None,
         };
@@ -584,8 +582,8 @@ impl RestoreService {
             .map_err(|e| KalamDbError::IoError(format!("Failed to get job: {}", e)))?
             .ok_or_else(|| KalamDbError::NotFound(format!("Job '{}' not found", job_id)))?;
 
-        job.status = "completed".to_string();
-        job.end_time = Some(chrono::Utc::now().timestamp_millis());
+        job.status = JobStatus::Completed;
+        job.completed_at = Some(chrono::Utc::now().timestamp_millis());
         job.result = Some(format!(
             r#"{{"tables_restored":{},"files_restored":{},"total_bytes":{}}}"#,
             tables_restored, files_restored, total_bytes
@@ -606,8 +604,8 @@ impl RestoreService {
             .map_err(|e| KalamDbError::IoError(format!("Failed to get job: {}", e)))?
             .ok_or_else(|| KalamDbError::NotFound(format!("Job '{}' not found", job_id)))?;
 
-        job.status = "failed".to_string();
-        job.end_time = Some(chrono::Utc::now().timestamp_millis());
+        job.status = JobStatus::Failed;
+        job.completed_at = Some(chrono::Utc::now().timestamp_millis());
         job.error_message = Some(error.to_string());
 
         self.kalam_sql

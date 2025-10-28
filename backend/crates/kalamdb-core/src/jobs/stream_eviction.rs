@@ -9,9 +9,9 @@
 //! - Uses timestamp-prefixed keys for efficient deletion
 //! - Registers eviction jobs in system.jobs for monitoring
 
-use crate::catalog::{NamespaceId, TableName};
 use crate::error::KalamDbError;
 use crate::jobs::{JobExecutor, JobResult};
+use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use kalamdb_sql::KalamSql;
 use kalamdb_store::StreamTableStore;
 use std::sync::Arc;
@@ -92,18 +92,20 @@ impl StreamEvictionJob {
         // Filter for stream tables only
         let stream_tables: Vec<_> = all_tables
             .into_iter()
-            .filter(|t| t.table_type == "stream")
+            .filter(|t| t.table_type == TableType::Stream)
             .collect();
 
         // Get table definitions to access TTL settings
         for table_meta in stream_tables {
             // Get full table definition to access ttl_seconds
+            let namespace_id = NamespaceId::from(table_meta.namespace.as_str());
+            let table_name = TableName::from(table_meta.table_name.as_str());
             let table_def = self.kalam_sql
-                .get_table_definition(&table_meta.namespace, &table_meta.table_name)
+                .get_table_definition(&namespace_id, &table_name)
                 .map_err(|e| {
                     KalamDbError::Other(format!(
                         "Failed to get table definition for {}.{}: {}",
-                        table_meta.namespace, table_meta.table_name, e
+                        table_meta.namespace.as_str(), table_meta.table_name.as_str(), e
                     ))
                 })?;
 
@@ -125,8 +127,8 @@ impl StreamEvictionJob {
 
             // Run eviction for this table
             let evicted = self.evict_for_table(
-                NamespaceId::new(&table_meta.namespace),
-                TableName::new(&table_meta.table_name),
+                table_meta.namespace.clone(),
+                table_meta.table_name.clone(),
                 retention_period_ms,
             )?;
 
