@@ -149,6 +149,8 @@ pub struct TestServer {
     pub temp_dir: Arc<TempDir>,
     /// Underlying RocksDB handle for tests that need direct access
     pub db: Arc<rocksdb::DB>,
+    /// Shared DataFusion session context used by SqlExecutor (providers registered here)
+    pub session_context: Arc<datafusion::prelude::SessionContext>,
     /// KalamSQL instance for direct database access
     pub kalam_sql: Arc<kalamdb_sql::KalamSql>,
     /// SQL executor for query execution
@@ -166,6 +168,7 @@ impl Clone for TestServer {
         Self {
             temp_dir: Arc::clone(&self.temp_dir),
             db: Arc::clone(&self.db),
+            session_context: Arc::clone(&self.session_context),
             kalam_sql: Arc::clone(&self.kalam_sql),
             sql_executor: Arc::clone(&self.sql_executor),
             namespace_service: Arc::clone(&self.namespace_service),
@@ -356,6 +359,7 @@ impl TestServer {
         Self {
             temp_dir: Arc::new(temp_dir),
             db,
+            session_context: session_context.clone(),
             kalam_sql,
             sql_executor,
             namespace_service,
@@ -513,10 +517,10 @@ impl TestServer {
                     }
                 }
             }
-            Err(kalamdb_core::error::KalamDbError::InvalidSql(_)) => {
-                // Not a custom DDL, fall back to DataFusion (same as REST API)
-                // This ensures integration tests use the SAME code path as /v1/api/sql
-                match self.session_factory.create_session().sql(sql).await {
+            Err(_) => {
+                // Any error from custom executor: fall back to DataFusion using the shared session_context
+                // where providers are registered by SqlExecutor.
+                match self.session_context.sql(sql).await {
                     Ok(df) => match df.collect().await {
                         Ok(batches) => {
                             if batches.is_empty() {

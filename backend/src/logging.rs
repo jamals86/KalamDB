@@ -262,16 +262,16 @@ pub fn redact_sensitive_data(message: &str) -> String {
     // Pattern 1: key=value (e.g., "password=secret123")
     for field in SENSITIVE_FIELDS {
         let patterns = vec![
-            // password=secret123
-            format!(r"{}=\S+", field),
-            // password = secret123
-            format!(r"{}\s*=\s*\S+", field),
-            // password: secret123
-            format!(r"{}:\s*\S+", field),
-            // "password": "secret123"
-            format!(r#""{}":\s*"[^"]*""#, field),
-            // 'password': 'secret123'
-            format!(r"'{}':\s*'[^']*'", field),
+            // password=secret123 (case-insensitive)
+            format!(r"(?i){}=\S+", field),
+            // password = secret123 (case-insensitive)
+            format!(r"(?i){}\s*=\s*\S+", field),
+            // password: secret123 (case-insensitive)
+            format!(r"(?i){}:\s*\S+", field),
+            // "password": "secret123" (case-insensitive key)
+            format!(r#"(?i)"{}":\s*"[^"]*""#, field),
+            // 'password': 'secret123' (case-insensitive key)
+            format!(r"(?i)'{}':\s*'[^']*'", field),
         ];
         
         for pattern in patterns {
@@ -287,12 +287,20 @@ pub fn redact_sensitive_data(message: &str) -> String {
     
     // Pattern 2: field: value in logs (e.g., "with password: secret123")
     for field in SENSITIVE_FIELDS {
-        let pattern = format!(r"{}\s*:\s*\S+", field);
+        let pattern = format!(r"(?i){}\s*:\s*\S+", field);
         if let Ok(re) = regex::Regex::new(&pattern) {
             redacted = re.replace_all(&redacted, |_: &regex::Captures| {
                 format!("{}: [REDACTED]", field)
             }).to_string();
         }
+    }
+
+    // Special-case: Authorization headers with scheme + token (e.g., "Authorization: Bearer <token>")
+    // Redact entire value regardless of scheme
+    if let Ok(re_auth) = regex::Regex::new(r"(?i)authorization\s*:\s*\S+(?:\s+\S+)?") {
+        redacted = re_auth
+            .replace_all(&redacted, "authorization: [REDACTED]")
+            .to_string();
     }
     
     redacted

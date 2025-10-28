@@ -6,6 +6,7 @@ use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::basic_auth::parse_basic_auth_header;
 use kalamdb_auth::password;
 use kalamdb_commons::models::UserId;
+use kalamdb_commons::{AuthType, Role};
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::{ExecutionResult, SqlExecutor};
 use log::warn;
@@ -112,27 +113,105 @@ pub async fn execute_sql_v1(
                         if let Some(adapter) = exec.get_rocks_adapter() {
                             match adapter.get_user(&username) {
                                 Ok(Some(user)) => {
-                                    if !user.password_hash.is_empty() {
-                                        match password::verify_password(&password_plain, &user.password_hash).await {
-                                            Ok(true) => {
+                                    // Determine client IP (prefer X-Forwarded-For)
+                                    let client_ip = http_req
+                                        .headers()
+                                        .get("X-Forwarded-For")
+                                        .and_then(|h| h.to_str().ok())
+                                        .map(|s| s.split(',').next().unwrap_or("").trim().to_string());
+
+                                    let is_localhost = client_ip
+                                        .as_deref()
+                                        .map(|ip| ip == "127.0.0.1" || ip == "::1")
+                                        .unwrap_or(false);
+
+                                    let is_system_internal = user.role == Role::System && user.auth_type == AuthType::Internal;
+
+                                    // Parse per-user allow_remote flag from auth_data JSON, default false
+                                    let allow_remote = user
+                                        .auth_data
+                                        .as_deref()
+                                        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                                        .and_then(|v| v.get("allow_remote").and_then(|b| b.as_bool()))
+                                        .unwrap_or(false);
+
+                                    if is_system_internal {
+                                        if is_localhost {
+                                            // T097: Localhost system user can authenticate without password
+                                            if user.password_hash.is_empty() {
                                                 user_id = Some(UserId::from(username.as_str()));
+                                            } else {
+                                                // If password is set, verify it
+                                                match password::verify_password(&password_plain, &user.password_hash).await {
+                                                    Ok(true) => {
+                                                        user_id = Some(UserId::from(username.as_str()));
+                                                    }
+                                                    _ => {
+                                                        let took_ms = start_time.elapsed().as_millis() as u64;
+                                                        return HttpResponse::Unauthorized().json(SqlResponse::error(
+                                                            "INVALID_CREDENTIALS",
+                                                            "Invalid username or password",
+                                                            took_ms,
+                                                        ));
+                                                    }
+                                                }
                                             }
-                                            _ => {
+                                        } else {
+                                            // Remote system user: require allow_remote=true AND a non-empty password that verifies
+                                            if !allow_remote {
                                                 let took_ms = start_time.elapsed().as_millis() as u64;
                                                 return HttpResponse::Unauthorized().json(SqlResponse::error(
-                                                    "INVALID_CREDENTIALS",
-                                                    "Invalid username or password",
+                                                    "REMOTE_ACCESS_DENIED",
+                                                    "Remote access is not allowed for this user",
                                                     took_ms,
                                                 ));
                                             }
+                                            if user.password_hash.is_empty() {
+                                                let took_ms = start_time.elapsed().as_millis() as u64;
+                                                return HttpResponse::Unauthorized().json(SqlResponse::error(
+                                                    "PASSWORD_REQUIRED",
+                                                    "Password is required for remote access",
+                                                    took_ms,
+                                                ));
+                                            }
+                                            match password::verify_password(&password_plain, &user.password_hash).await {
+                                                Ok(true) => {
+                                                    user_id = Some(UserId::from(username.as_str()));
+                                                }
+                                                _ => {
+                                                    let took_ms = start_time.elapsed().as_millis() as u64;
+                                                    return HttpResponse::Unauthorized().json(SqlResponse::error(
+                                                        "INVALID_CREDENTIALS",
+                                                        "Invalid username or password",
+                                                        took_ms,
+                                                    ));
+                                                }
+                                            }
                                         }
                                     } else {
-                                        let took_ms = start_time.elapsed().as_millis() as u64;
-                                        return HttpResponse::Unauthorized().json(SqlResponse::error(
-                                            "INVALID_CREDENTIALS",
-                                            "Invalid username or password",
-                                            took_ms,
-                                        ));
+                                        // Non-system users: require password
+                                        if !user.password_hash.is_empty() {
+                                            match password::verify_password(&password_plain, &user.password_hash).await {
+                                                Ok(true) => {
+                                                    user_id = Some(UserId::from(username.as_str()));
+                                                }
+                                                _ => {
+                                                    let took_ms = start_time.elapsed().as_millis() as u64;
+                                                    return HttpResponse::Unauthorized().json(SqlResponse::error(
+                                                        "INVALID_CREDENTIALS",
+                                                        "Invalid username or password",
+                                                        took_ms,
+                                                    ));
+                                                }
+                                            }
+                                        } else {
+                                            let took_ms = start_time.elapsed().as_millis() as u64;
+                                            return HttpResponse::Unauthorized().json(SqlResponse::error(
+                                                "INVALID_CREDENTIALS",
+                                                "Invalid username or password",
+                                                took_ms,
+                                            ));
+                                        }
                                     }
                                 }
                                 Ok(None) => {
