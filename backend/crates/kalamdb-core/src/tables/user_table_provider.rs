@@ -17,9 +17,8 @@ use crate::tables::user_table_update::UserTableUpdateHandler;
 use async_trait::async_trait;
 use chrono::Utc;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
-use datafusion::datasource::TableProvider;
+use datafusion::datasource::{InsertOp, TableProvider};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_store::UserTableStore;
@@ -65,6 +64,17 @@ pub struct UserTableProvider {
 
     /// LiveQueryManager for WebSocket notifications
     live_query_manager: Option<Arc<LiveQueryManager>>,
+}
+
+impl std::fmt::Debug for UserTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UserTableProvider")
+            .field("table_metadata", &self.table_metadata)
+            .field("schema", &self.schema)
+            .field("current_user_id", &self.current_user_id)
+            .field("parquet_paths", &self.parquet_paths)
+            .finish()
+    }
 }
 
 impl UserTableProvider {
@@ -414,7 +424,7 @@ impl TableProvider for UserTableProvider {
 
     async fn scan(
         &self,
-        _state: &SessionState,
+        _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         _filters: &[Expr],
         limit: Option<usize>,
@@ -541,9 +551,9 @@ impl TableProvider for UserTableProvider {
 
     async fn insert_into(
         &self,
-        _state: &SessionState,
+        _state: &dyn datafusion::catalog::Session,
         input: Arc<dyn ExecutionPlan>,
-        _overwrite: bool,
+        _op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::execution::TaskContext;
         use datafusion::physical_plan::collect;

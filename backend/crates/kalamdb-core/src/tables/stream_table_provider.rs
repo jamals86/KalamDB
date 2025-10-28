@@ -13,9 +13,8 @@ use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::tables::system::LiveQueriesTableProvider;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::datasource::TableProvider;
+use datafusion::datasource::{InsertOp, TableProvider};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_store::StreamTableStore;
@@ -59,6 +58,17 @@ pub struct StreamTableProvider {
 
     /// Counter for discarded events (ephemeral mode, no subscribers)
     discarded_count: std::sync::atomic::AtomicU64,
+}
+
+impl std::fmt::Debug for StreamTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamTableProvider")
+            .field("table_metadata", &self.table_metadata)
+            .field("retention_seconds", &self.retention_seconds)
+            .field("ephemeral", &self.ephemeral)
+            .field("max_buffer", &self.max_buffer)
+            .finish()
+    }
 }
 
 impl StreamTableProvider {
@@ -340,7 +350,7 @@ impl TableProvider for StreamTableProvider {
     /// - Filters are NOT pushed down (simple scan for now)
     async fn scan(
         &self,
-        _state: &SessionState,
+        _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         _filters: &[Expr],
         limit: Option<usize>,
@@ -412,9 +422,9 @@ impl TableProvider for StreamTableProvider {
     /// - Triggers real-time notifications to subscribers
     async fn insert_into(
         &self,
-        _state: &SessionState,
+        _state: &dyn datafusion::catalog::Session,
         input: Arc<dyn ExecutionPlan>,
-        _overwrite: bool,
+        _op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::execution::TaskContext;
         use datafusion::physical_plan::collect;

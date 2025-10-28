@@ -89,7 +89,7 @@ impl QueryRewriter {
         let deleted_filter = Expr::BinaryOp {
             left: Box::new(Expr::Identifier(Ident::new("_deleted"))),
             op: BinaryOperator::Eq,
-            right: Box::new(Expr::Value(Value::Boolean(false))),
+            right: Box::new(Expr::Value(Value::Boolean(false).into())),
         };
 
         // Combine with existing WHERE clause if present

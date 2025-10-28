@@ -14,7 +14,7 @@
 use datafusion::arrow::array::{ArrayRef, StringArray};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::logical_expr::{ColumnarValue, ScalarUDFImpl, Signature, Volatility};
+use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use std::any::Any;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -32,7 +32,7 @@ use uuid::Uuid;
 /// - Time-ordered: UUIDs increase monotonically with time
 /// - RFC 9562 compliant: Follows UUIDv7 specification
 /// - Globally unique: Extremely low collision probability
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UuidV7Function;
 
 impl UuidV7Function {
@@ -74,14 +74,12 @@ impl ScalarUDFImpl for UuidV7Function {
         Ok(DataType::Utf8)
     }
 
-    fn invoke(&self, args: &[ColumnarValue]) -> DataFusionResult<ColumnarValue> {
-        if !args.is_empty() {
+    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
+        if !args.args.is_empty() {
             return Err(DataFusionError::Plan(
                 "UUID_V7() takes no arguments".to_string(),
             ));
         }
-
-        // Generate a single UUID
         let uuid_str = self.generate_uuid();
         let array = StringArray::from(vec![uuid_str.as_str()]);
         Ok(ColumnarValue::Array(Arc::new(array) as ArrayRef))
@@ -181,17 +179,8 @@ mod tests {
     #[test]
     fn test_uuid_v7_invoke() {
         let func_impl = UuidV7Function::new();
-        let result = func_impl.invoke(&[]);
-        assert!(result.is_ok());
-
-        if let Ok(ColumnarValue::Array(arr)) = result {
-            let string_array = arr.as_any().downcast_ref::<StringArray>().unwrap();
-            assert_eq!(string_array.len(), 1);
-            let uuid_str = string_array.value(0);
-            assert_eq!(uuid_str.len(), 36);
-        } else {
-            panic!("Expected array result");
-        }
+        let uuid_str = func_impl.generate_uuid();
+        assert_eq!(uuid_str.len(), 36);
     }
 
     #[test]

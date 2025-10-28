@@ -10,7 +10,7 @@ use crate::catalog::{NamespaceId, TableMetadata, TableName};
 use crate::error::KalamDbError;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
-use datafusion::datasource::TableProvider;
+use datafusion::datasource::{InsertOp, TableProvider};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
@@ -29,7 +29,6 @@ use std::sync::Arc;
 /// - Flush to Parquet
 ///
 /// **Key Difference from User Tables**: Single storage location (no ${user_id} templating)
-#[derive(Debug)]
 pub struct SharedTableProvider {
     /// Table metadata (namespace, table name, type, etc.)
     table_metadata: TableMetadata,
@@ -39,6 +38,16 @@ pub struct SharedTableProvider {
 
     /// SharedTableStore for data operations
     store: Arc<SharedTableStore>,
+}
+
+impl std::fmt::Debug for SharedTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SharedTableProvider")
+            .field("table_metadata", &self.table_metadata)
+            .field("schema", &self.schema)
+            .field("store", &"<SharedTableStore>")
+            .finish()
+    }
 }
 
 impl SharedTableProvider {
@@ -317,7 +326,7 @@ impl TableProvider for SharedTableProvider {
 
     async fn scan(
         &self,
-        _state: &SessionState,
+        _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         _filters: &[Expr],
         limit: Option<usize>,
@@ -404,9 +413,9 @@ impl TableProvider for SharedTableProvider {
 
     async fn insert_into(
         &self,
-        _state: &SessionState,
+        _state: &dyn datafusion::catalog::Session,
         input: Arc<dyn ExecutionPlan>,
-        _overwrite: bool,
+        _op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::execution::TaskContext;
         use datafusion::physical_plan::collect;

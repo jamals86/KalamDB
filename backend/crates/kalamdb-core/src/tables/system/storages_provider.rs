@@ -7,7 +7,6 @@ use datafusion::arrow::array::{ArrayRef, RecordBatch, StringArray, TimestampMill
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::Result as DataFusionResult;
-use datafusion::execution::context::SessionState;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_sql::KalamSql;
 use std::any::Any;
@@ -16,6 +15,12 @@ use std::sync::Arc;
 /// system.storages provider backed by kalamdb-sql metadata
 pub struct SystemStoragesProvider {
     kalam_sql: Arc<KalamSql>,
+}
+
+impl std::fmt::Debug for SystemStoragesProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SystemStoragesProvider").finish()
+    }
 }
 
 impl SystemStoragesProvider {
@@ -104,7 +109,7 @@ impl TableProvider for SystemStoragesProvider {
 
     async fn scan(
         &self,
-        _state: &SessionState,
+        _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         _filters: &[datafusion::prelude::Expr],
         _limit: Option<usize>,

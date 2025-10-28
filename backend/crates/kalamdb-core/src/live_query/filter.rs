@@ -269,7 +269,7 @@ impl FilterPredicate {
             }
 
             // Literal value: convert to JsonValue
-            Expr::Value(value) => match value {
+            Expr::Value(v) => match &v.value {
                 Value::SingleQuotedString(s) | Value::DoubleQuotedString(s) => {
                     Ok(JsonValue::String(s.clone()))
                 }
@@ -292,7 +292,7 @@ impl FilterPredicate {
                 Value::Null => Ok(JsonValue::Null),
                 _ => Err(KalamDbError::InvalidOperation(format!(
                     "Unsupported literal type: {:?}",
-                    value
+                    v
                 ))),
             },
 

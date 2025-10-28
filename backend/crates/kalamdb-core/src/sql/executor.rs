@@ -743,8 +743,8 @@ impl SqlExecutor {
                     Self::extract_tables_from_set_expr(&query.body, &mut tables);
                 }
                 Statement::Insert(insert) => {
-                    // INSERT INTO table_name
-                    let table_str = insert.table_name.to_string();
+                    // INSERT INTO table
+                    let table_str = insert.table.to_string();
                     tables.insert(table_str);
                 }
                 _ => {}

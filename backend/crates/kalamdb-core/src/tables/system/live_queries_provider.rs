@@ -13,7 +13,6 @@ use datafusion::arrow::array::{
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::Result as DataFusionResult;
-use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
@@ -26,6 +25,12 @@ use std::sync::Arc;
 pub struct LiveQueriesTableProvider {
     kalam_sql: Arc<KalamSql>,
     schema: SchemaRef,
+}
+
+impl std::fmt::Debug for LiveQueriesTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LiveQueriesTableProvider").finish()
+    }
 }
 
 impl LiveQueriesTableProvider {
@@ -240,7 +245,7 @@ impl TableProvider for LiveQueriesTableProvider {
 
     async fn scan(
         &self,
-        _state: &SessionState,
+        _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         _filters: &[Expr],
         _limit: Option<usize>,

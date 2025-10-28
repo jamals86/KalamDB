@@ -13,7 +13,6 @@ use datafusion::arrow::array::{
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::Result as DataFusionResult;
-use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::Job;
@@ -25,6 +24,12 @@ use std::sync::Arc;
 pub struct JobsTableProvider {
     pub(crate) kalam_sql: Arc<KalamSql>,
     schema: SchemaRef,
+}
+
+impl std::fmt::Debug for JobsTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JobsTableProvider").finish()
+    }
 }
 
 impl JobsTableProvider {
@@ -270,7 +275,7 @@ impl TableProvider for JobsTableProvider {
 
     async fn scan(
         &self,
-        _state: &SessionState,
+        _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         _filters: &[Expr],
         _limit: Option<usize>,
