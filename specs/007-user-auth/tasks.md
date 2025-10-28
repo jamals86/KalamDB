@@ -431,20 +431,20 @@
 
 #### Shared Authentication Logic (kalamdb-link crate)
 
-- [ ] T114 [P] [US6] Update AuthProvider enum in link/src/auth.rs to support HTTP Basic Auth (add BasicAuth(username, password) variant)
-- [ ] T115 [P] [US6] Implement BasicAuth header formatting in link/src/auth.rs (base64 encode username:password, follow HTTP Basic Auth RFC 7617)
-- [ ] T116 [P] [US6] Add system_user_auth() helper in link/src/auth.rs (convenience method for system user credentials)
-- [ ] T117 [P] [US6] Update apply_to_request() in link/src/auth.rs to handle BasicAuth variant (set Authorization: Basic header)
-- [ ] T118 [P] [US6] Add credential storage abstraction in link/src/credentials.rs (trait CredentialStore with get_credentials(), set_credentials(), supports multiple storage backends)
+- [x] T114 [P] [US6] Update AuthProvider enum in link/src/auth.rs to support HTTP Basic Auth (add BasicAuth(username, password) variant) - **COMPLETED**: BasicAuth variant added with username and password fields
+- [x] T115 [P] [US6] Implement BasicAuth header formatting in link/src/auth.rs (base64 encode username:password, follow HTTP Basic Auth RFC 7617) - **COMPLETED**: apply_to_request() encodes credentials as base64 and sets Authorization: Basic header
+- [x] T116 [P] [US6] Add system_user_auth() helper in link/src/auth.rs (convenience method for system user credentials) - **COMPLETED**: system_user_auth(password) method creates BasicAuth("root", password)
+- [x] T117 [P] [US6] Update apply_to_request() in link/src/auth.rs to handle BasicAuth variant (set Authorization: Basic header) - **COMPLETED**: Integrated into apply_to_request() with base64 encoding
+- [x] T118 [P] [US6] Add credential storage abstraction in link/src/credentials.rs (trait CredentialStore with get_credentials(), set_credentials(), supports multiple storage backends) - **COMPLETED**: CredentialStore trait with Credentials struct, supports multiple storage backends
 
 #### CLI-Specific Implementation (cli crate)
 
-- [ ] T119 [US6] Implement FileCredentialStore in cli/src/config.rs (store at ~/.config/kalamdb/credentials.toml with 0600 permissions, implements CredentialStore trait from link)
-- [ ] T120 [US6] Implement automatic authentication in CLI session in cli/src/session.rs (read credentials via FileCredentialStore, create BasicAuth provider, pass to KalamLinkClient)
+- [x] T119 [US6] Implement FileCredentialStore in cli/src/credentials.rs (store at ~/.config/kalamdb/credentials.toml with 0600 permissions, implements CredentialStore trait from link) - **COMPLETED**: Full implementation with TOML serialization, secure file permissions, instance management
+- [x] T120 [US6] Implement automatic authentication in CLI session in cli/src/session.rs (read credentials via FileCredentialStore, create BasicAuth provider, pass to KalamLinkClient) - **COMPLETED**: CLISession::with_auth() accepts AuthProvider, creates authenticated KalamLinkClient
 - [ ] T121 [US6] Add CLI commands to view system user credentials in cli/src/commands/credentials.rs (show-credentials command, uses FileCredentialStore)
 - [ ] T122 [US6] Add CLI commands to update system user credentials in cli/src/commands/credentials.rs (update-credentials command, uses FileCredentialStore)
-- [ ] T123 [US6] Implement per-instance credential management in cli/src/config.rs (support multiple database configurations in credentials.toml)
-- [ ] T124 [US6] Add authentication error handling in CLI with clear messages in cli/src/error.rs (handle 401, 403 responses, suggest credential check)
+- [x] T123 [US6] Implement per-instance credential management in cli/src/config.rs (support multiple database configurations in credentials.toml) - **COMPLETED**: FileCredentialStore supports multiple instances in TOML format with [instances.<name>] sections
+- [x] T124 [US6] Add authentication error handling in CLI with clear messages in cli/src/error.rs (handle 401, 403 responses, suggest credential check) - **COMPLETED**: CLI main.rs handles authentication errors with clear messages from kalam-link
 
 #### Backend System User Initialization
 
