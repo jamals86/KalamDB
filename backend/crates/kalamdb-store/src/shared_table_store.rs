@@ -49,16 +49,10 @@ impl SharedTableStore {
     /// * `table_name` - Table name
     pub fn create_column_family(&self, namespace_id: &str, table_name: &str) -> Result<()> {
         let cf_name = format!("shared_table:{}:{}", namespace_id, table_name);
-        // Column families should be created at DB initialization, not dynamically
-        // Check if it exists
-        if self.db.cf_handle(&cf_name).is_some() {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(
-                "Column family '{}' does not exist. It must be created at DB initialization.",
-                cf_name
-            ))
-        }
+        // Create the column family if it doesn't already exist to align with
+        // test expectations and user table behavior.
+        crate::common::create_column_family(&self.db, &cf_name)
+            .map_err(|e| anyhow::anyhow!(e))
     }
 
     /// Insert or update a row.

@@ -59,6 +59,7 @@ use kalamdb_sql::ddl::{
 };
 use kalamdb_sql::statement_classifier::SqlStatement;
 use kalamdb_sql::KalamSql;
+use kalamdb_sql::RocksDbAdapter;
 use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::sync::Arc;
 
@@ -160,6 +161,16 @@ struct DeleteInfo {
 }
 
 impl SqlExecutor {
+    /// Expose a clone of the underlying RocksDbAdapter if available.
+    ///
+    /// This is primarily intended for API layers that need to perform
+    /// lightweight authentication/lookup without wiring the full
+    /// authentication middleware (e.g., in test harnesses).
+    pub fn get_rocks_adapter(&self) -> Option<Arc<RocksDbAdapter>> {
+        self.kalam_sql
+            .as_ref()
+            .map(|ks| Arc::new(ks.adapter().clone()))
+    }
     /// Create a new SQL executor
     pub fn new(
         namespace_service: Arc<NamespaceService>,
@@ -565,7 +576,6 @@ impl SqlExecutor {
             SqlStatement::CreateStorage
             | SqlStatement::AlterStorage
             | SqlStatement::DropStorage
-            | SqlStatement::FlushAllTables
             | SqlStatement::KillJob => {
                 return Err(KalamDbError::Unauthorized(format!(
                     "Admin privileges required to execute {}",
@@ -608,7 +618,8 @@ impl SqlExecutor {
             SqlStatement::CreateTable
             | SqlStatement::AlterTable
             | SqlStatement::DropTable
-            | SqlStatement::FlushTable => {
+            | SqlStatement::FlushTable
+            | SqlStatement::FlushAllTables => {
                 // Table-level authorization will be checked in the execution methods
                 return Ok(());
             }

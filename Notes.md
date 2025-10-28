@@ -40,7 +40,7 @@ Future:
 41) storing credentials in kalamdb-credentials alongside the url of the database
 42) CLI should also support a regular user as well and not only the root user
 43) Whenever a user send a query/sql statement first of all we check the role he has if he is creating create/alter tables then we first check the user role before we display an error like: namespace does not exists, maybe its better to include in these CREATE/ALTER sql also which roles can access them so we dont read data from untrusted users its a sensitive topic.
-
+44) Remove all X-USER-ID header we will be using oauth/basic auth or incase of system user we will add it to the auth basic auth with empty password and only from localhost only
 
 
 Key Findings

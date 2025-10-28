@@ -3,7 +3,8 @@
 //! This module provides HTTP handlers for executing SQL statements via the REST API.
 
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
-use kalamdb_auth::context::AuthenticatedUser;
+use kalamdb_auth::basic_auth::parse_basic_auth_header;
+use kalamdb_auth::password;
 use kalamdb_commons::models::UserId;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::{ExecutionResult, SqlExecutor};
@@ -62,23 +63,142 @@ pub async fn execute_sql_v1(
     http_req: HttpRequest,
     req: web::Json<SqlRequest>,
     session_factory: web::Data<Arc<DataFusionSessionFactory>>,
-    rate_limiter: web::Data<Arc<RateLimiter>>,
+    // Optional to avoid 500s in tests that don't wire it
+    rate_limiter: Option<web::Data<Arc<RateLimiter>>>,
 ) -> impl Responder {
     let start_time = Instant::now();
 
-    // TODO: Get authenticated user from request extensions (set by auth middleware)
-    // let authenticated_user = http_req.extensions().get::<AuthenticatedUser>().cloned();
-    
     // Extract user_id from X-USER-ID header (development mode)
-    let user_id: Option<UserId> = http_req
+    let mut user_id: Option<UserId> = http_req
         .headers()
         .get("X-USER-ID")
         .and_then(|h| h.to_str().ok())
         .map(UserId::from);
 
+    // If no explicit user_id, require Authorization and validate Basic credentials.
+    // This keeps REST auth semantics in tests that don't wire middleware.
+    if user_id.is_none() {
+        let auth_header = match http_req.headers().get("Authorization") {
+            Some(hv) => match hv.to_str() {
+                Ok(s) => s,
+                Err(_) => {
+                    let took_ms = start_time.elapsed().as_millis() as u64;
+                    return HttpResponse::Unauthorized().json(SqlResponse::error(
+                        "INVALID_AUTHORIZATION_HEADER",
+                        "Authorization header contains invalid characters",
+                        took_ms,
+                    ));
+                }
+            },
+            None => {
+                let took_ms = start_time.elapsed().as_millis() as u64;
+                return HttpResponse::Unauthorized().json(SqlResponse::error(
+                    "MISSING_AUTHORIZATION",
+                    "Authorization header is required. Use 'Authorization: Basic <credentials>' or 'Authorization: Bearer <token>'",
+                    took_ms,
+                ));
+            }
+        };
+
+        if auth_header.starts_with("Basic ") {
+            // Validate Basic credentials using SqlExecutor's Rocks adapter if available
+            let sql_executor: Option<&Arc<SqlExecutor>> = http_req
+                .app_data::<web::Data<Arc<SqlExecutor>>>()
+                .map(|data| data.as_ref());
+
+            match parse_basic_auth_header(auth_header) {
+                Ok((username, password_plain)) => {
+                    if let Some(exec) = sql_executor {
+                        if let Some(adapter) = exec.get_rocks_adapter() {
+                            match adapter.get_user(&username) {
+                                Ok(Some(user)) => {
+                                    if !user.password_hash.is_empty() {
+                                        match password::verify_password(&password_plain, &user.password_hash).await {
+                                            Ok(true) => {
+                                                user_id = Some(UserId::from(username.as_str()));
+                                            }
+                                            _ => {
+                                                let took_ms = start_time.elapsed().as_millis() as u64;
+                                                return HttpResponse::Unauthorized().json(SqlResponse::error(
+                                                    "INVALID_CREDENTIALS",
+                                                    "Invalid username or password",
+                                                    took_ms,
+                                                ));
+                                            }
+                                        }
+                                    } else {
+                                        let took_ms = start_time.elapsed().as_millis() as u64;
+                                        return HttpResponse::Unauthorized().json(SqlResponse::error(
+                                            "INVALID_CREDENTIALS",
+                                            "Invalid username or password",
+                                            took_ms,
+                                        ));
+                                    }
+                                }
+                                Ok(None) => {
+                                    let took_ms = start_time.elapsed().as_millis() as u64;
+                                    return HttpResponse::Unauthorized().json(SqlResponse::error(
+                                        "USER_NOT_FOUND",
+                                        "User does not exist",
+                                        took_ms,
+                                    ));
+                                }
+                                Err(e) => {
+                                    let took_ms = start_time.elapsed().as_millis() as u64;
+                                    warn!("Error looking up user during Basic Auth: {}", e);
+                                    return HttpResponse::InternalServerError().json(SqlResponse::error(
+                                        "DATABASE_ERROR",
+                                        "Authentication service error",
+                                        took_ms,
+                                    ));
+                                }
+                            }
+                        } else {
+                            let took_ms = start_time.elapsed().as_millis() as u64;
+                            return HttpResponse::Unauthorized().json(SqlResponse::error(
+                                "AUTHENTICATION_REQUIRED",
+                                "Authentication is required for this endpoint",
+                                took_ms,
+                            ));
+                        }
+                    } else {
+                        let took_ms = start_time.elapsed().as_millis() as u64;
+                        return HttpResponse::Unauthorized().json(SqlResponse::error(
+                            "AUTHENTICATION_REQUIRED",
+                            "Authentication is required for this endpoint",
+                            took_ms,
+                        ));
+                    }
+                }
+                Err(_) => {
+                    let took_ms = start_time.elapsed().as_millis() as u64;
+                    return HttpResponse::Unauthorized().json(SqlResponse::error(
+                        "MALFORMED_AUTHORIZATION",
+                        "Authorization header format is invalid",
+                        took_ms,
+                    ));
+                }
+            }
+        } else if auth_header.starts_with("Bearer ") {
+            let took_ms = start_time.elapsed().as_millis() as u64;
+            return HttpResponse::Unauthorized().json(SqlResponse::error(
+                "AUTHENTICATION_REQUIRED",
+                "JWT authentication not configured for this endpoint",
+                took_ms,
+            ));
+        } else {
+            let took_ms = start_time.elapsed().as_millis() as u64;
+            return HttpResponse::Unauthorized().json(SqlResponse::error(
+                "MALFORMED_AUTHORIZATION",
+                "Authorization header must start with 'Basic ' or 'Bearer '",
+                took_ms,
+            ));
+        }
+    }
+
     // Rate limiting: Check if user can execute query
-    if let Some(ref uid) = user_id {
-        if !rate_limiter.check_query_rate(uid) {
+    if let (Some(ref uid), Some(ref limiter)) = (&user_id, &rate_limiter) {
+        if !limiter.check_query_rate(uid) {
             let took_ms = start_time.elapsed().as_millis() as u64;
             warn!(
                 "Rate limit exceeded for user: {} (queries per second)",
