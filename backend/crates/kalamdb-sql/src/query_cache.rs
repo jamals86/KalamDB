@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use bincode::{Decode, Encode};
 
 /// Cache key for query results
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -112,10 +111,7 @@ impl QueryCache {
     /// Get cached result
     ///
     /// Returns None if not in cache or expired.
-    pub fn get<T>(&self, key: &QueryCacheKey) -> Option<T>
-    where
-        T: for<'de> Deserialize<'de> + Decode,
-    {
+    pub fn get<T: bincode::Decode<()>>(&self, key: &QueryCacheKey) -> Option<T> {
         let cache = self.cache.read().unwrap();
         if let Some(entry) = cache.get(key) {
             let ttl = self.get_ttl(key);
@@ -131,10 +127,7 @@ impl QueryCache {
     }
 
     /// Put result into cache
-    pub fn put<T>(&self, key: QueryCacheKey, value: T)
-    where
-        T: Serialize + Encode,
-    {
+    pub fn put<T: bincode::Encode>(&self, key: QueryCacheKey, value: T) {
         // Serialize to bytes using bincode v2
         let config = bincode::config::standard();
         if let Ok(bytes) = bincode::encode_to_vec(&value, config) {

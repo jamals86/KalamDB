@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// JWT claims structure for KalamDB tokens.
 ///
 /// Standard JWT claims plus custom KalamDB-specific fields.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JwtClaims {
     /// Subject (user ID)
     pub sub: String,

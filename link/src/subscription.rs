@@ -159,7 +159,7 @@ async fn send_subscription_request(
     });
 
     ws_stream
-        .send(Message::Text(payload.to_string()))
+        .send(Message::Text(payload.to_string().into()))
         .await
         .map_err(|e| KalamLinkError::WebSocketError(format!("Failed to subscribe: {}", e)))
 }
@@ -599,7 +599,7 @@ impl SubscriptionManager {
         });
         let _ = self
             .ws_stream
-            .send(Message::Text(unsubscribe_message.to_string()))
+            .send(Message::Text(unsubscribe_message.to_string().into()))
             .await;
 
         // Close WebSocket connection

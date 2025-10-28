@@ -16,7 +16,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.90"
 authors = ["KalamDB Team"]
 license = "Apache-2.0"
 repository = "https://github.com/jamals86/KalamDB"
@@ -52,6 +52,7 @@ rocksdb = { version = "0.22", default-features = false, features = ["snappy"] }
 
 # Apache Arrow ecosystem
 arrow = { version = "52.0", features = ["prettyprint"] }
+arrow-schema = { version = "52.2" }
 parquet = { version = "52.0", features = ["arrow", "async"] }
 datafusion = { version = "40.0" }
 sqlparser = { version = "0.47" }
@@ -62,6 +63,7 @@ actix-rt = "2.10"
 actix-web-actors = "4.3.0"
 actix = "0.13"
 actix-cors = "0.7"
+actix-http = "3.9"
 
 # UUID generation
 uuid = { version = "1.11", features = ["v4", "v7", "serde"] }
@@ -70,7 +72,7 @@ uuid = { version = "1.11", features = ["v4", "v7", "serde"] }
 ulid = "1.1"
 
 # JWT authentication
-jsonwebtoken = { version = "10.1.0", default-features = false, features = ["use_pem"] }
+jsonwebtoken = { version = "10.1.0", default-features = false, features = ["use_pem", "rust_crypto"] }
 
 # Configuration
 toml = "0.9.8"
@@ -102,10 +104,8 @@ dirs = "6.0"
 term_size = "0.3"
 assert_cmd = "2.0"
 predicates = "3.1"
-actix-http = "3.9"
 futures-util = { version = "0.3", default-features = false }
 base64 = "0.22"
-arrow-schema = { version = "52.2" }
 bincode = "2.0.1"
 async-trait = "0.1"
 metrics = "0.24"

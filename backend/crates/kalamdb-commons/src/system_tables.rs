@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn test_all() {
         let all = SystemTable::all();
-        assert_eq!(all.len(), 8);
+        assert_eq!(all.len(), 7);
         assert!(all.contains(&SystemTable::Users));
         assert!(all.contains(&SystemTable::Storages));
     }

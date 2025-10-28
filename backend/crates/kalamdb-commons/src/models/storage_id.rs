@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 /// or table names are expected.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub struct StorageId(String);
 
 impl StorageId {
@@ -64,3 +65,4 @@ impl Default for StorageId {
         Self::local()
     }
 }
+

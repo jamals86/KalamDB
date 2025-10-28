@@ -48,6 +48,7 @@
 
 use crate::{AuthType, JobStatus, JobType, NamespaceId, Role, StorageId, StorageMode, TableAccess, TableName, TableType, UserId};
 use serde::{Deserialize, Serialize};
+use bincode::{Encode, Decode};
 
 /// User entity for system.users table.
 ///
@@ -94,7 +95,7 @@ use serde::{Deserialize, Serialize};
 ///     deleted_at: None,
 /// };
 /// ```
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct User {
     pub id: UserId,
     pub username: String,
@@ -160,7 +161,7 @@ pub struct User {
 ///     error_message: None,
 /// };
 /// ```
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct Job {
     pub job_id: String,
     pub job_type: JobType,
@@ -289,7 +290,7 @@ impl Job {
 ///     table_count: 0,
 /// };
 /// ```
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct Namespace {
     pub namespace_id: NamespaceId,
     pub name: String,
@@ -418,7 +419,7 @@ impl Namespace {
 ///     deleted_retention_hours: 24,
 /// };
 /// ```
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct SystemTable {
     pub table_id: String,
     pub table_name: TableName,
@@ -495,7 +496,7 @@ pub struct Storage {
 ///     node: "server-01".to_string(),
 /// };
 /// ```
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct LiveQuery {
     pub live_id: String, // Format: {user_id}-{unique_conn_id}-{table_name}-{query_id}
     pub connection_id: String,
@@ -554,7 +555,7 @@ pub struct LiveQuery {
 ///     ttl_seconds: None,
 /// };
 /// ```
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct InformationSchemaTable {
     pub table_catalog: String,
     pub table_schema: NamespaceId,
@@ -599,7 +600,7 @@ pub struct InformationSchemaTable {
 ///     last_flushed_at: Some(1730000000000),
 /// };
 /// ```
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct UserTableCounter {
     pub key: String, // "{user_id}:{table_name}"
     pub user_id: UserId,
@@ -643,8 +644,9 @@ mod tests {
         };
 
         // Test bincode serialization
-        let bytes = bincode::serialize(&user).unwrap();
-        let deserialized: User = bincode::deserialize(&bytes).unwrap();
+        let config = bincode::config::standard();
+        let bytes = bincode::encode_to_vec(&user, config).unwrap();
+        let (deserialized, _): (User, _) = bincode::decode_from_slice(&bytes, config).unwrap();
         assert_eq!(user, deserialized);
     }
 
@@ -669,8 +671,9 @@ mod tests {
         };
 
         // Test bincode serialization
-        let bytes = bincode::serialize(&job).unwrap();
-        let deserialized: Job = bincode::deserialize(&bytes).unwrap();
+        let config = bincode::config::standard();
+        let bytes = bincode::encode_to_vec(&job, config).unwrap();
+        let (deserialized, _): (Job, _) = bincode::decode_from_slice(&bytes, config).unwrap();
         assert_eq!(job, deserialized);
     }
 
@@ -685,8 +688,9 @@ mod tests {
         };
 
         // Test bincode serialization
-        let bytes = bincode::serialize(&namespace).unwrap();
-        let deserialized: Namespace = bincode::deserialize(&bytes).unwrap();
+        let config = bincode::config::standard();
+        let bytes = bincode::encode_to_vec(&namespace, config).unwrap();
+        let (deserialized, _): (Namespace, _) = bincode::decode_from_slice(&bytes, config).unwrap();
         assert_eq!(namespace, deserialized);
     }
 
@@ -708,8 +712,9 @@ mod tests {
         };
 
         // Test bincode serialization
-        let bytes = bincode::serialize(&table).unwrap();
-        let deserialized: SystemTable = bincode::deserialize(&bytes).unwrap();
+        let config = bincode::config::standard();
+        let bytes = bincode::encode_to_vec(&table, config).unwrap();
+        let (deserialized, _): (SystemTable, _) = bincode::decode_from_slice(&bytes, config).unwrap();
         assert_eq!(table, deserialized);
     }
 
@@ -731,8 +736,9 @@ mod tests {
         };
 
         // Test bincode serialization
-        let bytes = bincode::serialize(&live_query).unwrap();
-        let deserialized: LiveQuery = bincode::deserialize(&bytes).unwrap();
+        let config = bincode::config::standard();
+        let bytes = bincode::encode_to_vec(&live_query, config).unwrap();
+        let (deserialized, _): (LiveQuery, _) = bincode::decode_from_slice(&bytes, config).unwrap();
         assert_eq!(live_query, deserialized);
     }
 
@@ -754,8 +760,9 @@ mod tests {
         };
 
         // Test bincode serialization
-        let bytes = bincode::serialize(&table).unwrap();
-        let deserialized: InformationSchemaTable = bincode::deserialize(&bytes).unwrap();
+        let config = bincode::config::standard();
+        let bytes = bincode::encode_to_vec(&table, config).unwrap();
+        let (deserialized, _): (InformationSchemaTable, _) = bincode::decode_from_slice(&bytes, config).unwrap();
         assert_eq!(table, deserialized);
     }
 
@@ -770,8 +777,9 @@ mod tests {
         };
 
         // Test bincode serialization
-        let bytes = bincode::serialize(&counter).unwrap();
-        let deserialized: UserTableCounter = bincode::deserialize(&bytes).unwrap();
+        let config = bincode::config::standard();
+        let bytes = bincode::encode_to_vec(&counter, config).unwrap();
+        let (deserialized, _): (UserTableCounter, _) = bincode::decode_from_slice(&bytes, config).unwrap();
         assert_eq!(counter, deserialized);
     }
 
@@ -808,3 +816,5 @@ mod tests {
         assert!(completed_job.completed_at.is_some());
     }
 }
+
+

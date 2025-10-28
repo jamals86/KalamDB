@@ -4,8 +4,7 @@
 //! with color-coded keywords, strings, numbers, and operators.
 
 use colored::*;
-use rustyline::highlight::Highlighter as RustylineHighlighter;
-use rustyline::Context;
+use rustyline::highlight::{Highlighter as RustylineHighlighter, CmdKind};
 use std::borrow::Cow;
 
 /// SQL syntax highlighter
@@ -238,7 +237,7 @@ impl RustylineHighlighter for SqlHighlighter {
         Cow::Borrowed(line)
     }
 
-    fn highlight_char(&self, _line: &str, _pos: usize, _forced: bool) -> bool {
+    fn highlight_char(&self, _line: &str, _pos: usize, _forced: CmdKind) -> bool {
         // Disable character-by-character highlighting
         false
     }
