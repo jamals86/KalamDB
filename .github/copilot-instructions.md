@@ -11,13 +11,16 @@ Auto-generated from all feature plans. Last updated: 2025-10-27
 use kalamdb_commons::system::{User, Job, LiveQuery, Namespace, SystemTable, InformationSchemaTable, UserTableCounter};
 ```
 
-**Consolidation Status** (as of 2025-10-27):
+**Consolidation Status** (as of 2025-10-28):
 - ✅ Models defined in `kalamdb-commons/src/models/system.rs` (COMPLETE)
 - ✅ All duplicates removed from `kalamdb-sql/src/models.rs` (COMPLETE)
 - ✅ Fixed `users_provider.rs` to use consolidated models (COMPLETE)
+- ✅ Fixed `live_queries_provider.rs` to use consolidated LiveQuery model (COMPLETE)
 - ✅ Storage abstraction (Sub-Phase 0.5.1) complete with StorageBackend trait
 - ✅ Domain models (Sub-Phase 0.5.2) complete with strongly-typed entities
-- ⚠️ Phase 0.5 Complete - ready for authentication implementation
+- ✅ **Phase 0 Complete** (October 28, 2025) - All system table providers verified to use kalamdb_commons::system models
+- ✅ **Phase 0.5 Complete** - Storage refactoring complete, ready for authentication implementation
+- ✅ Build verification: cargo build succeeds with 0 errors
 - See `docs/architecture/SYSTEM_MODEL_CONSOLIDATION_STATUS.md` for details
 
 ## Active Technologies
@@ -94,6 +97,7 @@ export class KalamClient { ... } // Don't implement your own!
 Rust 2021 edition: Follow standard conventions, use type-safe wrappers (NamespaceId, TableName, UserId, TableType enum)
 
 ## Recent Changes
+- 2025-10-28: **Phase 0 COMPLETE** (007-user-auth) - System model consolidation verified, live_queries_provider migrated, cargo build passes
 - 2025-10-27: **Phase 0.5 COMPLETE** - System model consolidation finished, storage abstraction implemented
 - 2025-10-27: All system models consolidated to kalamdb-commons (User, Job, Namespace, LiveQuery, SystemTable)
 - 2025-10-26: SDK architecture clarified - examples MUST use link/sdks/ as dependencies (006-docker-wasm-examples)

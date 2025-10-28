@@ -1,30 +1,78 @@
 # KalamDB SQL Syntax Reference
 
 **Version**: 0.1.0  
-**SQL Engine**: Apache DataFusion 35.0
+**SQL Engine**: Apache DataFusion 35.0  
+**Last Updated**: October 28, 2025
+
+---
 
 ## Overview
 
-KalamDB supports standard SQL via Apache DataFusion with custom DDL extensions for namespace, table, and backup operations.
+KalamDB is a **SQL-first database** built for real-time chat and AI message history storage with a unique **table-per-user architecture**. This document provides comprehensive SQL syntax reference for all operations.
+
+**Key Features**:
+- ✅ Full SQL support via Apache DataFusion
+- ✅ Three table types: USER (per-user isolation), SHARED (global), STREAM (ephemeral)
+- ✅ Real-time WebSocket subscriptions with live queries
+- ✅ Multi-storage backends (local filesystem, S3, Azure Blob, GCS)
+- ✅ Role-based access control (user, service, dba, system)
+- ✅ Schema evolution with backward compatibility
+- ✅ Automatic ID generation (SNOWFLAKE_ID, UUID_V7, ULID)
 
 ---
 
 ## Table of Contents
 
-1. [Namespace Operations](#namespace-operations)
-2. [Storage Management](#storage-management)
-3. [User Management](#user-management)
-4. [User Table Operations](#user-table-operations)
-5. [Shared Table Operations](#shared-table-operations)
-6. [Stream Table Operations](#stream-table-operations)
-7. [Schema Evolution](#schema-evolution)
-8. [Data Manipulation](#data-manipulation)
-9. [Manual Flushing](#manual-flushing)
-10. [Live Query Subscriptions](#live-query-subscriptions)
-11. [Backup and Restore](#backup-and-restore)
-12. [Catalog Browsing](#catalog-browsing)
-13. [Data Types](#data-types)
-14. [System Columns](#system-columns)
+### I. Core Concepts
+1. [Namespace Operations](#namespace-operations) - Logical containers for tables
+2. [Storage Management](#storage-management) - Multi-backend storage configuration
+3. [User Management](#user-management) - Authentication and role-based access control
+4. [Data Types](#data-types) - Supported SQL data types
+5. [System Columns](#system-columns) - Auto-managed metadata columns
+
+### II. Table Operations
+6. [User Table Operations](#user-table-operations) - Per-user isolated tables
+7. [Shared Table Operations](#shared-table-operations) - Global shared tables
+8. [Stream Table Operations](#stream-table-operations) - Ephemeral real-time tables
+9. [Schema Evolution](#schema-evolution) - ALTER TABLE operations
+
+### III. Data Manipulation
+10. [Data Manipulation (DML)](#data-manipulation) - INSERT, UPDATE, DELETE, SELECT
+11. [Manual Flushing](#manual-flushing) - Explicit hot-to-cold tier migration
+12. [Live Query Subscriptions](#live-query-subscriptions) - Real-time WebSocket subscriptions
+
+### IV. Administration
+13. [Backup and Restore](#backup-and-restore) - Database backup and recovery
+14. [Catalog Browsing](#catalog-browsing) - SHOW, DESCRIBE commands
+15. [Custom Functions](#kalamdb-custom-functions) - SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER
+16. [PostgreSQL/MySQL Compatibility](#postgresqlmysql-compatibility) - Migration support
+
+---
+
+## Quick Reference
+
+### Most Common Commands
+
+```sql
+-- Create namespace and tables
+CREATE NAMESPACE app;
+CREATE USER TABLE app.messages (id BIGINT DEFAULT SNOWFLAKE_ID(), content TEXT) FLUSH ROW_THRESHOLD 1000;
+
+-- Insert and query data
+INSERT INTO app.messages (content) VALUES ('Hello World');
+SELECT * FROM app.messages ORDER BY id DESC LIMIT 10;
+
+-- Real-time subscriptions
+SUBSCRIBE TO app.messages WHERE timestamp > NOW() - INTERVAL '1 hour' OPTIONS (last_rows=10);
+
+-- User management
+CREATE USER 'alice' WITH PASSWORD 'Secret123!' ROLE 'user';
+ALTER USER 'alice' SET PASSWORD 'NewPassword123!';
+
+-- Backup and restore
+BACKUP DATABASE app TO '/backups/app-20251028';
+RESTORE DATABASE app FROM '/backups/app-20251028';
+```
 
 ---
 

@@ -78,6 +78,42 @@ pub enum ExecutionResult {
     Subscription(serde_json::Value),
 }
 
+/// Execution context for SQL queries
+///
+/// Contains authentication and authorization information for the current query execution.
+#[derive(Debug, Clone)]
+pub struct ExecutionContext {
+    /// User ID of the user executing the query
+    pub user_id: UserId,
+    /// Role of the user (User, Service, Dba, System)
+    pub user_role: Role,
+}
+
+impl ExecutionContext {
+    /// Create a new execution context
+    pub fn new(user_id: UserId, user_role: Role) -> Self {
+        Self { user_id, user_role }
+    }
+
+    /// Create an anonymous execution context with User role
+    pub fn anonymous() -> Self {
+        Self {
+            user_id: UserId::from("anonymous"),
+            user_role: Role::User,
+        }
+    }
+
+    /// Check if the user is an administrator (Dba or System role)
+    pub fn is_admin(&self) -> bool {
+        matches!(self.user_role, Role::Dba | Role::System)
+    }
+
+    /// Check if the user is a system user
+    pub fn is_system(&self) -> bool {
+        matches!(self.user_role, Role::System)
+    }
+}
+
 /// SQL executor
 ///
 /// Executes SQL statements by dispatching to appropriate handlers
@@ -468,12 +504,148 @@ impl SqlExecutor {
         Ok(())
     }
 
+    /// Create ExecutionContext from user_id
+    ///
+    /// Looks up the user in the database to determine their role.
+    /// If user_id is None or user not found, returns anonymous context with User role.
+    fn create_execution_context(
+        &self,
+        user_id: Option<&UserId>,
+    ) -> Result<ExecutionContext, KalamDbError> {
+        let user_id = match user_id {
+            Some(uid) => uid.clone(),
+            None => return Ok(ExecutionContext::anonymous()),
+        };
+
+        // Look up user to get their role
+        if let Some(kalam_sql) = &self.kalam_sql {
+            match kalam_sql.get_user_by_id(&user_id) {
+                Ok(Some(user)) => {
+                    return Ok(ExecutionContext::new(user_id, user.role));
+                }
+                Ok(None) => {
+                    // User not found - treat as anonymous
+                    log::warn!("User '{}' not found in database, using anonymous context", user_id.as_str());
+                    return Ok(ExecutionContext::anonymous());
+                }
+                Err(e) => {
+                    log::error!("Failed to look up user '{}': {:?}", user_id.as_str(), e);
+                    // On error, default to anonymous for safety
+                    return Ok(ExecutionContext::anonymous());
+                }
+            }
+        }
+
+        // If KalamSQL not initialized, default to User role
+        Ok(ExecutionContext::new(user_id, Role::User))
+    }
+
+    /// Check if user is authorized to execute a SQL statement
+    ///
+    /// Authorization rules:
+    /// - System and DBA users can execute all statements
+    /// - Regular users can only access their own USER tables
+    /// - System tables (system.*, information_schema.*) are readable by all authenticated users
+    /// - DDL operations (CREATE/ALTER/DROP NAMESPACE, STORAGE, etc.) require admin privileges
+    fn check_authorization(
+        &self,
+        ctx: &ExecutionContext,
+        sql: &str,
+    ) -> Result<(), KalamDbError> {
+        // Admin users (DBA, System) can do anything
+        if ctx.is_admin() {
+            return Ok(());
+        }
+
+        // Classify the statement to determine authorization requirements
+        let stmt_type = SqlStatement::classify(sql);
+
+        match stmt_type {
+            // DDL operations require admin privileges
+            SqlStatement::CreateNamespace
+            | SqlStatement::AlterNamespace
+            | SqlStatement::DropNamespace
+            | SqlStatement::CreateStorage
+            | SqlStatement::AlterStorage
+            | SqlStatement::DropStorage
+            | SqlStatement::FlushAllTables
+            | SqlStatement::KillJob => {
+                return Err(KalamDbError::Unauthorized(format!(
+                    "Admin privileges required to execute {}",
+                    sql.lines().next().unwrap_or("this statement")
+                )));
+            }
+
+            // User management requires admin privileges (except for self-modification)
+            SqlStatement::CreateUser | SqlStatement::DropUser => {
+                return Err(KalamDbError::Unauthorized(
+                    "Admin privileges required for user management".to_string(),
+                ));
+            }
+
+            // ALTER USER allowed for self (changing own password), admin for others
+            SqlStatement::AlterUser => {
+                // Extract username from ALTER USER statement
+                // For now, we'll allow it and let the execute_alter_user method do the check
+                // TODO: Parse and verify user is modifying their own account
+                return Ok(());
+            }
+
+            // Read-only operations on system tables are allowed for all authenticated users
+            SqlStatement::ShowNamespaces
+            | SqlStatement::ShowTables
+            | SqlStatement::ShowStorages
+            | SqlStatement::ShowStats
+            | SqlStatement::DescribeTable => {
+                return Ok(());
+            }
+
+            // CREATE TABLE, DROP TABLE, FLUSH TABLE - check table ownership in execute methods
+            SqlStatement::CreateTable
+            | SqlStatement::DropTable
+            | SqlStatement::FlushTable => {
+                // Table-level authorization will be checked in the execution methods
+                return Ok(());
+            }
+
+            // SELECT, INSERT, UPDATE, DELETE - check table access in execution
+            SqlStatement::Select
+            | SqlStatement::Insert
+            | SqlStatement::Update
+            | SqlStatement::Delete => {
+                // Query-level authorization will be enforced by using per-user sessions
+                // User tables are filtered by user_id in UserTableProvider
+                return Ok(());
+            }
+
+            // Subscriptions, transactions, and other operations allowed for all users
+            SqlStatement::Subscribe
+            | SqlStatement::KillLiveQuery
+            | SqlStatement::BeginTransaction
+            | SqlStatement::CommitTransaction
+            | SqlStatement::RollbackTransaction => {
+                return Ok(());
+            }
+
+            SqlStatement::Unknown => {
+                // Unknown statements will fail in execute anyway
+                return Ok(());
+            }
+        }
+    }
+
     /// Execute a SQL statement
     pub async fn execute(
         &self,
         sql: &str,
         user_id: Option<&UserId>,
     ) -> Result<ExecutionResult, KalamDbError> {
+        // Create execution context with user role
+        let ctx = self.create_execution_context(user_id)?;
+
+        // Check authorization before executing
+        self.check_authorization(&ctx, sql)?;
+
         // Classify the SQL statement and dispatch to appropriate handler
         match SqlStatement::classify(sql) {
             SqlStatement::CreateNamespace => self.execute_create_namespace(sql).await,

@@ -36,6 +36,7 @@
 
 pub mod stress_utils;
 pub mod flush_helpers;
+pub mod auth_helper;
 
 use anyhow::Result;
 use datafusion::catalog::SchemaProvider;
