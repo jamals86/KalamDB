@@ -142,29 +142,29 @@ pub fn can_execute_admin_operations(role: Role) -> bool {
 /// Check if a user can access a shared table based on its access level.
 ///
 /// # Access Rules
-/// - **Public**: All authenticated users can access
-/// - **Private**: Only owner can access
-/// - **Restricted**: Requires explicit permission (to be implemented)
+/// - **Public**: All authenticated users can READ (SELECT only)
+/// - **Private**: Only service/dba/system roles can access
+/// - **Restricted**: Only service/dba/system roles can access (owner check for future expansion)
 ///
 /// # Arguments
 /// * `access_level` - Table's access level
-/// * `is_owner` - Whether the user owns the table
+/// * `is_owner` - Whether the user owns the table (reserved for future use)
 /// * `role` - User's role
 ///
 /// # Returns
 /// True if access is allowed, false otherwise
 pub fn can_access_shared_table(access_level: TableAccess, is_owner: bool, role: Role) -> bool {
-    // Admins can access everything
-    if matches!(role, Role::System | Role::Dba) {
+    // Admins and service accounts can access everything
+    if matches!(role, Role::System | Role::Dba | Role::Service) {
         return true;
     }
 
     match access_level {
-        TableAccess::Public => true,
-        TableAccess::Private => is_owner,
+        TableAccess::Public => true, // All authenticated users can read public tables
+        TableAccess::Private => false, // Only privileged roles (checked above)
         TableAccess::Restricted => {
-            // TODO: Check permissions table for explicit grants
-            // For now, only owner can access
+            // For now, only privileged roles or table owner
+            // TODO: Implement permissions table for explicit grants
             is_owner
         }
     }
@@ -219,16 +219,23 @@ mod tests {
 
     #[test]
     fn test_can_access_shared_table() {
-        // Public tables accessible to all
+        // Public tables accessible to all authenticated users (read-only)
         assert!(can_access_shared_table(TableAccess::Public, false, Role::User));
         assert!(can_access_shared_table(TableAccess::Public, true, Role::User));
+        assert!(can_access_shared_table(TableAccess::Public, false, Role::Service));
 
-        // Private tables only accessible to owner
+        // Private tables only accessible to service/dba/system
         assert!(!can_access_shared_table(TableAccess::Private, false, Role::User));
-        assert!(can_access_shared_table(TableAccess::Private, true, Role::User));
-
-        // Admins can access everything
+        assert!(!can_access_shared_table(TableAccess::Private, true, Role::User)); // Even owner cannot access if they're just a user
+        assert!(can_access_shared_table(TableAccess::Private, false, Role::Service));
         assert!(can_access_shared_table(TableAccess::Private, false, Role::Dba));
+        assert!(can_access_shared_table(TableAccess::Private, false, Role::System));
+
+        // Restricted tables accessible to privileged roles or owner
+        assert!(!can_access_shared_table(TableAccess::Restricted, false, Role::User));
+        assert!(can_access_shared_table(TableAccess::Restricted, true, Role::User)); // Owner can access
+        assert!(can_access_shared_table(TableAccess::Restricted, false, Role::Service));
+        assert!(can_access_shared_table(TableAccess::Restricted, false, Role::Dba));
         assert!(can_access_shared_table(TableAccess::Restricted, false, Role::System));
     }
 }

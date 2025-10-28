@@ -46,7 +46,7 @@
 //! };
 //! ```
 
-use crate::{AuthType, JobStatus, JobType, NamespaceId, Role, StorageId, StorageMode, TableName, TableType, UserId};
+use crate::{AuthType, JobStatus, JobType, NamespaceId, Role, StorageId, StorageMode, TableAccess, TableName, TableType, UserId};
 use serde::{Deserialize, Serialize};
 
 /// User entity for system.users table.
@@ -431,6 +431,9 @@ pub struct SystemTable {
     pub flush_policy: String, // JSON
     pub schema_version: i32,
     pub deleted_retention_hours: i32,
+    /// Access level for SHARED tables (public, private, restricted)
+    /// NULL for USER and SYSTEM tables (they have different access control)
+    pub access_level: Option<TableAccess>,
 }
 
 /// Storage configuration in system_storages table
@@ -701,6 +704,7 @@ mod tests {
             flush_policy: "{}".to_string(),
             schema_version: 1,
             deleted_retention_hours: 24,
+            access_level: None, // USER table - no access_level
         };
 
         // Test bincode serialization

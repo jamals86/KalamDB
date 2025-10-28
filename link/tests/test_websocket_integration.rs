@@ -47,7 +47,7 @@ async fn is_server_running() -> bool {
 fn create_test_client() -> Result<KalamLinkClient, kalam_link::KalamLinkError> {
     KalamLinkClient::builder()
         .base_url(SERVER_URL)
-        .user_id(TEST_USER_ID)
+
         .timeout(Duration::from_secs(30))
         .build()
 }
@@ -108,7 +108,7 @@ async fn cleanup_test_data(table_full_name: &str) -> Result<(), Box<dyn std::err
 async fn test_kalam_link_client_creation() {
     let result = KalamLinkClient::builder()
         .base_url(SERVER_URL)
-        .user_id(TEST_USER_ID)
+
         .build();
 
     assert!(result.is_ok(), "Client should be created successfully");
@@ -941,7 +941,7 @@ async fn test_error_connection_refused() {
     // Try to connect to non-existent server
     let client = KalamLinkClient::builder()
         .base_url("http://localhost:9999")
-        .user_id(TEST_USER_ID)
+
         .timeout(Duration::from_secs(2))
         .build()
         .expect("Client creation should succeed");

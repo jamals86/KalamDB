@@ -160,32 +160,29 @@ max_messages_per_sec = 50
 # Limits total active subscriptions to prevent resource exhaustion
 max_subscriptions_per_user = 10
 
-[authentication]
-# Bcrypt cost factor for password hashing (default: 12)
-# Higher values are more secure but slower (range: 4-31)
-# Cost 12 = ~250ms per hash on modern hardware
-bcrypt_cost = 12
+# T105 - Phase 7, User Story 5: System User Management
+[auth]
+# Allow remote (non-localhost) connections for system users (default: false)
+# When false, system users with auth_type='internal' can only authenticate from localhost
+# When true, system users can authenticate from any IP (requires password in metadata)
+allow_remote_access = false
+
+# JWT secret for token validation (REQUIRED for JWT auth)
+# IMPORTANT: Change this in production! Use a long, random string
+jwt_secret = "CHANGE_ME_IN_PRODUCTION"
+
+# Trusted JWT issuers (comma-separated list of domains)
+# Example: "auth.example.com,login.company.com"
+# Empty list means JWT authentication is disabled
+jwt_trusted_issuers = ""
 
 # Minimum password length (default: 8 characters)
 min_password_length = 8
 
-# Maximum password length (default: 72 characters, bcrypt limit)
-max_password_length = 72
+# Maximum password length (default: 1024 characters)
+max_password_length = 1024
 
-# JWT secret key for token validation
-# IMPORTANT: Change this to a secure random string in production!
-jwt_secret = "CHANGE_THIS_SECRET_KEY_IN_PRODUCTION"
-
-# Trusted JWT issuers (comma-separated list)
-# Leave empty to accept tokens from any issuer (not recommended for production)
-# Example: "kalamdb.io,auth.kalamdb.io"
-jwt_trusted_issuers = ""
-
-# Allow remote (non-localhost) access (default: false)
-# When false, only connections from 127.0.0.1 or ::1 are allowed
-# Set to true for production deployments
-allow_remote_access = false
-
-# Session timeout in seconds (default: 3600s = 1 hour)
-# JWT tokens and sessions expire after this duration
-session_timeout_seconds = 3600
+# Bcrypt cost factor (default: 12, range: 4-31)
+# Higher values are more secure but slower
+# 12 is recommended for production (good balance of security and performance)
+bcrypt_cost = 12

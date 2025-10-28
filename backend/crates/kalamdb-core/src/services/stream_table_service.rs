@@ -241,6 +241,7 @@ impl StreamTableService {
             flush_policy: String::new(), // Stream tables don't flush to Parquet
             schema_version: 1,
             deleted_retention_hours: 0, // Stream tables don't have soft deletes
+            access_level: None, // STREAM tables don't use access_level
         };
 
         // TODO: Add insert_table method to kalamdb-sql

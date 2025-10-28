@@ -450,6 +450,7 @@ impl SharedTableService {
             flush_policy: flush_policy_str,
             schema_version: 1,
             deleted_retention_hours: deleted_retention.map(|s| (s / 3600) as i32).unwrap_or(0),
+            access_level: Some(kalamdb_commons::TableAccess::Private), // Default for SHARED tables
         };
 
         // TODO: Add insert_table method to kalamdb-sql

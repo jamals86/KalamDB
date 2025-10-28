@@ -47,7 +47,7 @@ See [SDK Integration Guide](../specs/006-docker-wasm-examples/SDK_INTEGRATION.md
 ## Features
 
 - 🦀 **Dual-mode library**: Use natively in Rust or compile to WebAssembly for JavaScript/TypeScript
-- 🔐 **API key authentication**: Secure access with X-API-KEY headers
+- 🔐 **HTTP Basic Auth & JWT**: Secure authentication for all API requests
 - 🔄 **Real-time subscriptions**: Subscribe to table changes with WebSocket support
 - 📊 **SQL queries**: Execute SQL queries and get results
 - 🌐 **Cross-platform**: Works in native Rust applications, browsers, and Node.js
@@ -96,10 +96,11 @@ import init, { KalamClient } from '@kalamdb/client';
 // Initialize WASM
 await init();
 
-// Create client
+// Create client with username and password
 const client = new KalamClient(
   'http://localhost:8080',
-  'your-api-key-here'
+  'username',
+  'password'
 );
 
 // Connect and query
@@ -146,7 +147,7 @@ const wasmBuffer = await readFile('./pkg/kalam_link_bg.wasm');
 await init(wasmBuffer);
 
 // Create client
-const client = new KalamClient('http://localhost:8080', 'your-api-key');
+const client = new KalamClient('http://localhost:8080', 'username', 'password');
 
 // Connect to server
 await client.connect();
@@ -182,7 +183,7 @@ await client.disconnect();
     await init();
 
     // Create client
-    const client = new KalamClient('http://localhost:8080', 'your-api-key');
+    const client = new KalamClient('http://localhost:8080', 'username', 'password');
 
     // Connect to server
     await client.connect();
@@ -222,7 +223,7 @@ import init, { KalamClient } from './pkg/kalam_link.js';
 // TypeScript knows the types!
 const client: KalamClient = new KalamClient(
   'http://localhost:8080',
-  'your-api-key'
+  'username', 'password'
 );
 
 // Methods are fully typed
@@ -236,17 +237,17 @@ const isConnected: boolean = client.isConnected();
 #### Constructor
 
 ```rust
-new KalamClient(url: string, api_key: string)
+new KalamClient(url: string, username, password: string)
 ```
 
 Creates a new KalamDB client.
 
 **Parameters:**
 - `url` - Server URL (e.g., `http://localhost:8080`)
-- `api_key` - API key for authentication
+- `username, password` - API key for authentication
 
 **Throws:**
-- Error if `url` or `api_key` is empty
+- Error if `url` or `username, password` is empty
 
 **Example:**
 ```javascript
@@ -460,3 +461,4 @@ See the main KalamDB repository for license information.
 ## Contributing
 
 See the main KalamDB repository for contribution guidelines.
+

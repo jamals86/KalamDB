@@ -139,7 +139,6 @@ async fn cleanup_test_data(table_full_name: &str) -> Result<(), Box<dyn std::err
 /// Helper to create a CLI command with default test settings
 fn create_cli_command() -> Command {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
-    cmd.arg("--user-id").arg("test_user");
     cmd
 }
 
@@ -155,8 +154,6 @@ async fn test_cli_connection_and_prompt() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--help");
 
     cmd.assert()
@@ -222,8 +219,6 @@ async fn test_cli_table_output_formatting() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
-        .arg("test_user")
         .arg("--command")
         .arg(&format!("SELECT * FROM {}", table))
         .timeout(TEST_TIMEOUT);
@@ -261,7 +256,7 @@ async fn test_cli_json_output_format() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--json")
         .arg("--command")
@@ -299,7 +294,7 @@ async fn test_cli_csv_output_format() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--csv")
         .arg("--command")
@@ -350,7 +345,7 @@ SELECT * FROM batch_test.items;"#,
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--file")
         .arg(sql_file.to_str().unwrap())
@@ -382,7 +377,7 @@ async fn test_cli_syntax_error_handling() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--command")
         .arg("INVALID SQL SYNTAX HERE")
@@ -501,7 +496,7 @@ async fn test_cli_list_tables() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--command")
         .arg("SELECT table_name FROM system.tables WHERE namespace = 'test_cli'")
@@ -534,7 +529,7 @@ async fn test_cli_describe_table() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--command")
         .arg(&format!("SELECT '{}' as table_info", table))
@@ -834,7 +829,7 @@ async fn test_cli_jwt_authentication() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--command")
         .arg("SELECT 1 as auth_test")
@@ -860,7 +855,7 @@ async fn test_cli_invalid_token() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--token")
         .arg("invalid.jwt.token")
@@ -892,7 +887,7 @@ async fn test_cli_localhost_auth_bypass() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--command")
         .arg("SELECT 'localhost' as test")
@@ -959,7 +954,7 @@ async fn test_cli_explicit_flush() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--command")
         .arg(&format!("FLUSH TABLE {}", table))
@@ -1001,7 +996,7 @@ async fn test_cli_color_output() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--command")
         .arg("SELECT 'color' as test")
@@ -1014,7 +1009,7 @@ async fn test_cli_color_output() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--no-color")
         .arg("--command")
@@ -1039,7 +1034,7 @@ async fn test_cli_session_timeout() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--command")
         .arg("SELECT 1")
@@ -1099,7 +1094,7 @@ async fn test_cli_multiline_query() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--command")
         .arg(&multi_line_query)
@@ -1126,7 +1121,7 @@ async fn test_cli_query_with_comments() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--command")
         .arg(query_simple)
@@ -1151,7 +1146,7 @@ async fn test_cli_empty_query() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--command")
         .arg("   ")
@@ -1189,7 +1184,7 @@ async fn test_cli_result_pagination() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--command")
         .arg(&format!("SELECT * FROM {}", table))
@@ -1218,7 +1213,7 @@ async fn test_cli_verbose_output() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("--user-id")
+
         .arg("test_user")
         .arg("--verbose")
         .arg("--command")

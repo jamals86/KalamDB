@@ -238,7 +238,7 @@ CREATE USER TABLE app.messages (...) STORAGE s3_prod;
 - **Four Roles**: `user` (default), `service` (automation), `dba` (admin), `system` (internal)
 - **Password Authentication**: bcrypt hashing with configurable cost
 - **OAuth Integration**: Google, GitHub, Azure providers
-- **API Keys**: Long-lived credentials for service accounts
+- **HTTP Basic Auth & JWT**: Secure authentication for all API requests
 - **Soft Delete Users**: 30-day grace period for recovery
 
 ```sql
@@ -301,8 +301,7 @@ SELECT * FROM system.users WHERE role = 'dba';
 
 ## 🌟 Core Features Summary
 
-### ✅ **Implemented** (Phases 1-16 + 006)
-- ✅ Complete specification design and three-layer architecture
+### ✅ **Implemented**
 - ✅ Three table types (USER, SHARED, STREAM) with isolated storage
 - ✅ DataFusion SQL engine with full DDL/DML support
 - ✅ Sub-millisecond writes (RocksDB hot tier + Parquet cold tier)
@@ -312,14 +311,12 @@ SELECT * FROM system.users WHERE role = 'dba';
 - ✅ Role-based access control (user, service, dba, system)
 - ✅ Backup/restore with Parquet file verification
 - ✅ Catalog browsing (SHOW/DESCRIBE/STATS commands)
-- ✅ API key authentication and soft delete
+- ✅ HTTP Basic Auth and JWT authentication with soft delete
 - ✅ Docker deployment with environment variable config
 - ✅ TypeScript SDK (WASM) with React example app
 - ✅ Custom SQL functions (SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER)
-- ✅ PostgreSQL/MySQL compatibility layer
-- ✅ 32 automated integration tests
 
-### � **In Progress** (Phase 17 - Polish)
+### � **In Progress**
 - 🔄 Enhanced error handling (types added, integration pending)
 - 🔄 Structured logging for all operations
 - 🔄 Request/response logging (REST + WebSocket)
@@ -328,7 +325,7 @@ SELECT * FROM system.users WHERE role = 'dba';
 - 🔄 WebSocket authentication and rate limiting
 - 🔄 Comprehensive documentation (API docs, ADRs)
 
-### � **Planned** (Post Phase 17)
+### � **Planned**
 - 📋 Distributed replication with tag-based routing
 - 📋 Incremental backups
 - 📋 Admin web UI
@@ -345,7 +342,7 @@ KalamDB follows a clean **three-layer architecture** that ensures maintainabilit
 
 ```
 ┌──────────────────────────────────────────┐
-│         kalamdb-core (Layer 1)          │  ← Business logic, services, SQL execution
+│         kalamdb-core (Layer 1)           │  ← Business logic, services, SQL execution
 │  - Table operations                      │
 │  - Live query management                 │
 │  - Flush/backup services                 │
@@ -354,14 +351,14 @@ KalamDB follows a clean **three-layer architecture** that ensures maintainabilit
             │ uses (no direct RocksDB access)
             ▼
 ┌──────────────────────────────────────────┐
-│    kalamdb-sql + kalamdb-store (Layer 2)│  ← Data access layer
+│    kalamdb-sql + kalamdb-store (Layer 2) │  ← Data access layer
 │                                          │
-│  kalamdb-sql:                           │
-│  - System tables (namespaces, tables,   │
-│    schemas, storage_locations, jobs)    │
+│  kalamdb-sql:                            │
+│  - System tables (namespaces, tables,    │
+│    schemas, storage_locations, jobs)     │
 │  - Metadata operations                   │
 │                                          │
-│  kalamdb-store:                         │
+│  kalamdb-store:                          │
 │  - UserTableStore                        │
 │  - SharedTableStore                      │
 │  - StreamTableStore                      │
@@ -370,7 +367,7 @@ KalamDB follows a clean **three-layer architecture** that ensures maintainabilit
             │ uses
             ▼
 ┌──────────────────────────────────────────┐
-│         RocksDB (Layer 3)               │  ← Persistence layer
+│         RocksDB (Layer 3)                │  ← Persistence layer
 │  - Column families                       │
 │  - System tables storage                 │
 │  - Hot data buffering                    │
@@ -378,26 +375,6 @@ KalamDB follows a clean **three-layer architecture** that ensures maintainabilit
 ```
 
 **Key Principle**: `kalamdb-core` **never** directly accesses RocksDB. All data operations flow through `kalamdb-sql` (for metadata) and `kalamdb-store` (for user/shared/stream data).
-
-### RocksDB Column Family Architecture
-
-All configuration and metadata is stored in **RocksDB system tables** (no JSON config files):
-
-```
-RocksDB Column Families:
-├── system_namespaces           # Namespace definitions
-├── system_tables               # Table metadata (name, type, flush policy, location)
-├── system_table_schemas        # Schema versions per table
-├── system_storage_locations    # Centralized storage location registry
-├── system_jobs                 # Background job tracking (flush, backup, etc.)
-├── system_live_queries         # Active WebSocket subscriptions
-├── system_users                # User authentication and permissions
-│
-├── user_table:{table_name}     # Hot data buffer (per user table)
-├── shared_table:{table_name}   # Hot data buffer (per shared table)
-├── stream_table:{table_name}   # Ephemeral data buffer (per stream table)
-└── user_table_counters         # Per-user row counts for flush triggers
-```
 
 ### Storage Layout
 
@@ -434,23 +411,23 @@ RocksDB Column Families:
 ┌─────────────────────────────────────┐
 │         KalamDB Server              │
 │  ┌────────────┐    ┌─────────────┐  │
-│  │ DataFusion │──▶│  RocksDB   │ │ ◀── Hot storage (<1ms)
+│  │ DataFusion │    │  RocksDB    │  │ ◀── Hot storage (<1ms)
 │  │ SQL Engine │    │  (Hot)      │  │
 │  └────────────┘    └─────────────┘  │
 │         │                           │
 │         │ Consolidate (periodic)    │
 │         ▼                           │
-│  ┌─────────────┐                   │
-│  │  Parquet    │                   │ ◀── Cold storage (optimized)
-│  │  (Cold)     │                   │
-│  └─────────────┘                   │
+│  ┌─────────────┐                    │
+│  │  Parquet    │                    │ ◀── Cold storage (optimized)
+│  │  (Cold)     │                    │
+│  └─────────────┘                    │
 │         │                           │
 │         │ Notify via WebSocket      │
 │         ▼                           │
-│  ┌─────────────┐                   │
-│  │ Real-time   │                   │
-│  │ Subscriber  │                   │
-│  └─────────────┘                   │
+│  ┌─────────────┐                    │
+│  │ Real-time   │                    │
+│  │ Subscriber  │                    │
+│  └─────────────┘                    │
 └──────────┬──────────────────────────┘
            │
            │ WS: New message notification
@@ -487,14 +464,14 @@ See [Quick Start Guide](docs/QUICK_START.md) for detailed setup instructions.
 
 ```bash
 curl -X POST http://localhost:8080/api/sql \
-  -H "X-User-Id: user1" \
+  -u user1:password \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "CREATE NAMESPACE IF NOT EXISTS app"
   }'
 
 curl -X POST http://localhost:8080/api/sql \
-  -H "X-User-Id: user1" \
+  -u user1:password \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "CREATE USER TABLE app.messages (id BIGINT, content TEXT, timestamp TIMESTAMP) FLUSH POLICY ROW_LIMIT 1000"
@@ -506,7 +483,7 @@ curl -X POST http://localhost:8080/api/sql \
 ```bash
 # Insert data (goes to RocksDB hot buffer)
 curl -X POST http://localhost:8080/api/sql \
-  -H "X-User-Id: user1" \
+  -u user1:password \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "INSERT INTO app.messages (id, content, timestamp) VALUES (1, '\''Hello World'\'', NOW())"
@@ -514,7 +491,7 @@ curl -X POST http://localhost:8080/api/sql \
 
 # Query data (reads from hot + cold storage)
 curl -X POST http://localhost:8080/api/sql \
-  -H "X-User-Id: user1" \
+  -u user1:password \
   -H "Content-Type: application/json" \
   -d '{
     "sql": "SELECT * FROM app.messages ORDER BY timestamp DESC LIMIT 10"
@@ -899,8 +876,8 @@ cd docker/backend
 # Start with docker-compose
 docker-compose up -d
 
-# Create a user with API key
-docker exec -it kalamdb kalam user create --name "myuser" --role "user"
+# Create a user with password
+docker exec -it kalamdb kalam user create --name "myuser" --password "SecurePass123!" --role "user"
 ```
 
 Features:
@@ -926,10 +903,11 @@ import init, { KalamClient } from '@kalamdb/client';
 // Initialize WASM module
 await init();
 
-// Create client
+// Create client with username and password
 const client = new KalamClient(
   'http://localhost:8080',
-  'your-api-key-here'
+  'myuser',
+  'SecurePass123!'
 );
 
 // Connect and query
@@ -998,7 +976,7 @@ Features:
 - [x] Integration tests and quickstart script (32 automated tests)
 - [x] **Multi-storage backends** (local, S3, Azure Blob, GCS) (Phase 006)
 - [x] **User management with RBAC** (CREATE/ALTER/DROP USER, 4 roles) (Phase 007)
-- [x] **API key authentication via X-API-KEY header** (Phase 006)
+- [x] **HTTP Basic Auth and JWT authentication** (Phase 007)
 - [x] **Soft delete for user tables** (Phase 006)
 - [x] **Docker deployment with environment variable config** (Phase 006)
 - [x] **WASM client compilation for TypeScript/JavaScript** (Phase 006)

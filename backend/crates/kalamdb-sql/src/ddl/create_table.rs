@@ -6,7 +6,7 @@
 use crate::compatibility::map_sql_type_to_arrow;
 use crate::ddl::DdlResult;
 use arrow::datatypes::{Field, Schema};
-use kalamdb_commons::models::{ColumnDefault, NamespaceId, StorageId, TableName, TableType};
+use kalamdb_commons::models::{ColumnDefault, NamespaceId, StorageId, TableAccess, TableName, TableType};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,10 @@ static USE_USER_STORAGE_RE: Lazy<Regex> = Lazy::new(|| {
 
 static TTL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)\s+TTL\s+\d+[a-z]*"#).unwrap());
 
+static ACCESS_LEVEL_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?i)\s+ACCESS\s+LEVEL\s+['\"]?(public|private|restricted)['\"]?"#).unwrap()
+});
+
 static INTERVAL_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)FLUSH\s+INTERVAL\s+(\d+)s").unwrap());
 
@@ -53,6 +57,10 @@ static USE_USER_STORAGE_MATCH_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)USE_USER_STORAGE(\s+TRUE)?").unwrap());
 
 static TTL_MATCH_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)TTL\s+(\d+)").unwrap());
+
+static ACCESS_LEVEL_MATCH_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?i)ACCESS\s+LEVEL\s+(?:'([^']+)'|"([^"]+)"|([a-z]+))"#).unwrap()
+});
 
 /// Common flush policy for all table types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,6 +153,9 @@ pub struct CreateTableStatement {
     pub ttl_seconds: Option<u64>,
     /// If true, don't error if table already exists
     pub if_not_exists: bool,
+    /// Access level for SHARED tables (public, private, restricted)
+    /// Defaults to private. Only applicable to SHARED tables.
+    pub access_level: Option<TableAccess>,
 }
 
 impl CreateTableStatement {
@@ -175,6 +186,7 @@ impl CreateTableStatement {
             .replace_all(&normalized_sql, "")
             .into_owned();
         normalized_sql = TTL_RE.replace_all(&normalized_sql, "").into_owned();
+        normalized_sql = ACCESS_LEVEL_RE.replace_all(&normalized_sql, "").into_owned();
 
         // Parse with sqlparser - use PostgreSQL dialect for better TEXT support
         let dialect = PostgreSqlDialect {};
@@ -244,6 +256,7 @@ impl CreateTableStatement {
                 let use_user_storage = Self::parse_use_user_storage(original_sql);
                 let ttl_seconds = Self::parse_ttl(original_sql)?;
                 let deleted_retention_hours = None; // TODO: Parse from SQL if needed
+                let access_level = Self::parse_access_level(original_sql, &table_type)?;
 
                 Ok(CreateTableStatement {
                     table_name: TableName::new(table_name),
@@ -258,6 +271,7 @@ impl CreateTableStatement {
                     deleted_retention_hours,
                     ttl_seconds,
                     if_not_exists: *if_not_exists,
+                    access_level,
                 })
             }
             _ => Err("Expected CREATE TABLE statement".to_string()),
@@ -456,6 +470,36 @@ impl CreateTableStatement {
             Ok(Some(ttl))
         } else {
             Ok(None)
+        }
+    }
+
+    /// Parse ACCESS LEVEL from SQL (for SHARED tables only)
+    fn parse_access_level(sql: &str, table_type: &TableType) -> DdlResult<Option<TableAccess>> {
+        // ACCESS LEVEL is only valid for SHARED tables
+        if *table_type != TableType::Shared {
+            // If ACCESS LEVEL is specified for non-SHARED table, that's an error
+            if ACCESS_LEVEL_MATCH_RE.is_match(sql) {
+                return Err("ACCESS LEVEL can only be specified for SHARED tables".to_string());
+            }
+            return Ok(None);
+        }
+
+        // Extract access level from SQL
+        if let Some(caps) = ACCESS_LEVEL_MATCH_RE.captures(sql) {
+            // Try each capture group (single quote, double quote, or unquoted)
+            let access_level_str = caps
+                .get(1)
+                .or_else(|| caps.get(2))
+                .or_else(|| caps.get(3))
+                .map(|m| m.as_str().to_lowercase())
+                .ok_or_else(|| "Invalid ACCESS LEVEL syntax".to_string())?;
+
+            // Convert string to TableAccess enum (validates automatically via From<&str>)
+            let access_level: TableAccess = access_level_str.as_str().into();
+            Ok(Some(access_level))
+        } else {
+            // Default to private for SHARED tables
+            Ok(Some(TableAccess::Private))
         }
     }
 

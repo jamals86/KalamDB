@@ -15,7 +15,7 @@ use tokio_tungstenite::{
     tungstenite::{
         client::IntoClientRequest,
         error::Error as WsError,
-        http::header::{HeaderName, HeaderValue, AUTHORIZATION},
+        http::header::{HeaderValue, AUTHORIZATION},
         protocol::Message,
     },
 };
@@ -74,8 +74,12 @@ fn resolve_ws_url(base_url: &str, override_url: Option<&str>) -> String {
 
 fn build_request_url(ws_url: &str, auth: &AuthProvider) -> String {
     match auth {
+        AuthProvider::BasicAuth(_username, _password) => {
+            // For HTTP Basic Auth, we'll send via Authorization header instead of query params
+            // This is more secure than exposing credentials in the URL
+            ws_url.to_string()
+        }
         AuthProvider::JwtToken(token) => append_query(ws_url, "token", token),
-        AuthProvider::ApiKey(key) => append_query(ws_url, "api_key", key),
         AuthProvider::None => ws_url.to_string(),
     }
 }
@@ -91,9 +95,23 @@ fn append_query(base: &str, key: &str, value: &str) -> String {
 fn apply_ws_auth_headers(
     request: &mut tokio_tungstenite::tungstenite::http::Request<()>,
     auth: &AuthProvider,
-    user_id: Option<&str>,
 ) -> Result<()> {
+    use base64::{engine::general_purpose, Engine as _};
+    
     match auth {
+        AuthProvider::BasicAuth(username, password) => {
+            // Encode username:password as base64 (RFC 7617)
+            let credentials = format!("{}:{}", username, password);
+            let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
+            let value = format!("Basic {}", encoded);
+            let header_value = HeaderValue::from_str(&value).map_err(|e| {
+                KalamLinkError::ConfigurationError(format!(
+                    "Invalid Basic Auth header value: {}",
+                    e
+                ))
+            })?;
+            request.headers_mut().insert(AUTHORIZATION, header_value);
+        }
         AuthProvider::JwtToken(token) => {
             let value = format!("Bearer {}", token);
             let header_value = HeaderValue::from_str(&value).map_err(|e| {
@@ -104,25 +122,7 @@ fn apply_ws_auth_headers(
             })?;
             request.headers_mut().insert(AUTHORIZATION, header_value);
         }
-        AuthProvider::ApiKey(key) => {
-            let header_value = HeaderValue::from_str(key).map_err(|e| {
-                KalamLinkError::ConfigurationError(format!("Invalid API key header value: {}", e))
-            })?;
-            request
-                .headers_mut()
-                .insert(HeaderName::from_static("x-api-key"), header_value);
-        }
         AuthProvider::None => {}
-    }
-
-    if let Some(uid) = user_id {
-        if !uid.is_empty() {
-            if let Ok(header_value) = HeaderValue::from_str(uid) {
-                request
-                    .headers_mut()
-                    .insert(HeaderName::from_static("x-user-id"), header_value);
-            }
-        }
     }
 
     Ok(())
@@ -466,7 +466,6 @@ impl SubscriptionManager {
         base_url: &str,
         config: SubscriptionConfig,
         auth: &AuthProvider,
-        user_id: Option<&str>,
     ) -> Result<Self> {
         let SubscriptionConfig {
             id,
@@ -483,7 +482,7 @@ impl SubscriptionManager {
             KalamLinkError::WebSocketError(format!("Failed to build WebSocket request: {}", e))
         })?;
 
-        apply_ws_auth_headers(&mut request, auth, user_id)?;
+        apply_ws_auth_headers(&mut request, auth)?;
 
         let (ws_stream, _) = match connect_async(request).await {
             Ok(result) => result,

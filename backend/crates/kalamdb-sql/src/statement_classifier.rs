@@ -33,6 +33,8 @@ pub enum SqlStatement {
     // ===== Table Operations =====
     /// CREATE [USER|SHARED|STREAM] TABLE ...
     CreateTable,
+    /// ALTER TABLE <namespace>.<table> ...
+    AlterTable,
     /// DROP [USER|SHARED|STREAM] TABLE ...
     DropTable,
     /// SHOW TABLES [IN <namespace>]
@@ -143,6 +145,7 @@ impl SqlStatement {
             ["CREATE", "SHARED", "TABLE", ..] => SqlStatement::CreateTable,
             ["CREATE", "STREAM", "TABLE", ..] => SqlStatement::CreateTable,
             ["CREATE", "TABLE", ..] => SqlStatement::CreateTable,
+            ["ALTER", "TABLE", ..] | ["ALTER", "USER", "TABLE", ..] | ["ALTER", "SHARED", "TABLE", ..] | ["ALTER", "STREAM", "TABLE", ..] => SqlStatement::AlterTable,
             ["DROP", "USER", "TABLE", ..] => SqlStatement::DropTable,
             ["DROP", "SHARED", "TABLE", ..] => SqlStatement::DropTable,
             ["DROP", "STREAM", "TABLE", ..] => SqlStatement::DropTable,
@@ -215,6 +218,7 @@ impl SqlStatement {
             SqlStatement::DropStorage => "DROP STORAGE",
             SqlStatement::ShowStorages => "SHOW STORAGES",
             SqlStatement::CreateTable => "CREATE TABLE",
+            SqlStatement::AlterTable => "ALTER TABLE",
             SqlStatement::DropTable => "DROP TABLE",
             SqlStatement::ShowTables => "SHOW TABLES",
             SqlStatement::DescribeTable => "DESCRIBE TABLE",
@@ -324,6 +328,14 @@ mod tests {
         assert_eq!(
             SqlStatement::classify("CREATE TABLE test.data (id INT)"),
             SqlStatement::CreateTable
+        );
+        assert_eq!(
+            SqlStatement::classify("ALTER TABLE test.users ADD COLUMN email TEXT"),
+            SqlStatement::AlterTable
+        );
+        assert_eq!(
+            SqlStatement::classify("ALTER SHARED TABLE test.messages SET ACCESS LEVEL public"),
+            SqlStatement::AlterTable
         );
         assert_eq!(
             SqlStatement::classify("DROP TABLE test.users"),

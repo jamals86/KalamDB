@@ -90,6 +90,12 @@ impl AuthService {
     ///
     /// # Returns
     /// Authenticated user context
+    /// 
+    /// # System User Authentication (T103, T104, T106 - Phase 7, User Story 5)
+    /// - Internal auth_type users (system users) can only authenticate from localhost by default
+    /// - Global allow_remote_access flag allows remote connections for all internal users
+    /// - Per-user metadata {"allow_remote": true} overrides localhost restriction
+    /// - Remote-enabled internal users MUST have a password set (enforced during user creation)
     async fn authenticate_basic(
         &self,
         auth_header: &str,
@@ -108,18 +114,77 @@ impl AuthService {
             return Err(AuthError::UserDeleted);
         }
 
-        // Verify password
-        let password_match = password::verify_password(&password, &user.password_hash).await?;
-        if !password_match {
-            warn!("Invalid password for user: {}", username);
-            return Err(AuthError::InvalidCredentials);
-        }
+        // T103: Check if user has internal auth_type (system users)
+        // T104: Check per-user allow_remote metadata
+        // T106: Validate password requirement for remote system users
+        if user.auth_type == kalamdb_commons::AuthType::Internal {
+            // Parse user metadata to check for per-user allow_remote flag
+            let per_user_allow_remote = if let Some(ref metadata) = user.auth_data {
+                // Try to parse metadata as JSON to check for allow_remote flag
+                match serde_json::from_str::<serde_json::Value>(metadata) {
+                    Ok(json) => {
+                        json.get("allow_remote")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
+                    }
+                    Err(_) => false,
+                }
+            } else {
+                false
+            };
 
-        // Check remote access permission
-        if !connection_info.is_access_allowed(self.allow_remote_access) {
-            return Err(AuthError::AuthenticationFailed(
-                "Remote access is disabled".to_string(),
-            ));
+            // Determine if remote access is allowed for this user
+            // Priority: per-user metadata > global config > default (localhost-only)
+            let remote_allowed = per_user_allow_remote || self.allow_remote_access;
+
+            // T103: Internal users must connect from localhost unless remote access is explicitly enabled
+            if !connection_info.is_localhost() && !remote_allowed {
+                warn!(
+                    "System user '{}' attempted remote authentication (not allowed)",
+                    username
+                );
+                return Err(AuthError::AuthenticationFailed(
+                    "System users can only authenticate from localhost unless remote access is enabled".to_string(),
+                ));
+            }
+
+            // T106: If remote access is enabled for internal user, password MUST be set
+            if remote_allowed && !connection_info.is_localhost() {
+                if user.password_hash.is_empty() {
+                    warn!(
+                        "System user '{}' attempted remote authentication without password",
+                        username
+                    );
+                    return Err(AuthError::AuthenticationFailed(
+                        "Remote-enabled system users must have a password set".to_string(),
+                    ));
+                }
+            }
+
+            // For localhost connections with internal auth_type, password can be empty
+            // For remote connections, password is required (enforced above)
+            if !user.password_hash.is_empty() {
+                // Verify password if one is set
+                let password_match = password::verify_password(&password, &user.password_hash).await?;
+                if !password_match {
+                    warn!("Invalid password for system user: {}", username);
+                    return Err(AuthError::InvalidCredentials);
+                }
+            }
+        } else {
+            // For non-internal users (password, oauth), always verify password
+            let password_match = password::verify_password(&password, &user.password_hash).await?;
+            if !password_match {
+                warn!("Invalid password for user: {}", username);
+                return Err(AuthError::InvalidCredentials);
+            }
+
+            // Check global remote access permission for regular users
+            if !connection_info.is_access_allowed(self.allow_remote_access) {
+                return Err(AuthError::AuthenticationFailed(
+                    "Remote access is disabled".to_string(),
+                ));
+            }
         }
 
         info!("User authenticated via Basic Auth: {}", username);

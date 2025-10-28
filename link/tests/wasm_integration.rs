@@ -13,7 +13,8 @@ wasm_bindgen_test_configure!(run_in_browser);
 fn test_client_creation_valid() {
     let client = KalamClient::new(
         "http://localhost:8080".to_string(),
-        "test-api-key".to_string()
+        "testuser".to_string(),
+        "testpass".to_string()
     );
     assert!(client.is_ok(), "Client creation should succeed with valid parameters");
 }
@@ -22,18 +23,30 @@ fn test_client_creation_valid() {
 fn test_client_creation_empty_url() {
     let client = KalamClient::new(
         "".to_string(),
-        "test-api-key".to_string()
+        "testuser".to_string(),
+        "testpass".to_string()
     );
     assert!(client.is_err(), "Client creation should fail with empty URL");
 }
 
 #[wasm_bindgen_test]
-fn test_client_creation_empty_api_key() {
+fn test_client_creation_empty_username() {
     let client = KalamClient::new(
         "http://localhost:8080".to_string(),
+        "".to_string(),
+        "testpass".to_string()
+    );
+    assert!(client.is_err(), "Client creation should fail with empty username");
+}
+
+#[wasm_bindgen_test]
+fn test_client_creation_empty_password() {
+    let client = KalamClient::new(
+        "http://localhost:8080".to_string(),
+        "testuser".to_string(),
         "".to_string()
     );
-    assert!(client.is_err(), "Client creation should fail with empty API key");
+    assert!(client.is_err(), "Client creation should fail with empty password");
 }
 
 // T063S: Test connect() establishes WebSocket connection
@@ -41,7 +54,8 @@ fn test_client_creation_empty_api_key() {
 async fn test_connect() {
     let mut client = KalamClient::new(
         "http://localhost:8080".to_string(),
-        "test-api-key".to_string()
+        "testuser".to_string(),
+        "testpass".to_string()
     ).expect("Client creation should succeed");
     
     // Note: This will attempt to connect to ws://localhost:8080/ws
@@ -58,7 +72,7 @@ async fn test_connect() {
 async fn test_disconnect() {
     let mut client = KalamClient::new(
         "http://localhost:8080".to_string(),
-        "test-api-key".to_string()
+        "testuser".to_string(), "testpass".to_string()
     ).expect("Client creation should succeed");
     
     let _ = client.connect().await;
@@ -73,7 +87,7 @@ async fn test_disconnect() {
 async fn test_query_not_connected() {
     let client = KalamClient::new(
         "http://localhost:8080".to_string(),
-        "test-api-key".to_string()
+        "testuser".to_string(), "testpass".to_string()
     ).expect("Client creation should succeed");
     
     // Query without connecting should work (HTTP doesn't require connection)
@@ -88,7 +102,7 @@ async fn test_query_not_connected() {
 async fn test_insert() {
     let client = KalamClient::new(
         "http://localhost:8080".to_string(),
-        "test-api-key".to_string()
+        "testuser".to_string(), "testpass".to_string()
     ).expect("Client creation should succeed");
     
     let result = client.insert(
@@ -105,7 +119,7 @@ async fn test_insert() {
 async fn test_delete() {
     let client = KalamClient::new(
         "http://localhost:8080".to_string(),
-        "test-api-key".to_string()
+        "testuser".to_string(), "testpass".to_string()
     ).expect("Client creation should succeed");
     
     let result = client.delete(
@@ -122,7 +136,7 @@ async fn test_delete() {
 async fn test_subscribe_not_connected() {
     let client = KalamClient::new(
         "http://localhost:8080".to_string(),
-        "test-api-key".to_string()
+        "testuser".to_string(), "testpass".to_string()
     ).expect("Client creation should succeed");
     
     let callback = js_sys::Function::new_no_args("");
@@ -137,7 +151,7 @@ async fn test_subscribe_not_connected() {
 async fn test_unsubscribe_not_connected() {
     let client = KalamClient::new(
         "http://localhost:8080".to_string(),
-        "test-api-key".to_string()
+        "testuser".to_string(), "testpass".to_string()
     ).expect("Client creation should succeed");
     
     let result = client.unsubscribe("test-subscription".to_string()).await;
@@ -151,7 +165,7 @@ async fn test_unsubscribe_not_connected() {
 async fn test_memory_safety_callback() {
     let mut client = KalamClient::new(
         "http://localhost:8080".to_string(),
-        "test-api-key".to_string()
+        "testuser".to_string(), "testpass".to_string()
     ).expect("Client creation should succeed");
     
     // Connect and subscribe with a callback
@@ -178,3 +192,4 @@ async fn test_memory_safety_callback() {
 // T063AA: Run tests with: wasm-pack test --headless --firefox (or --chrome)
 // Note: These tests require a running KalamDB server for full integration testing
 // For CI/CD, consider using a mock server or headless browser testing framework
+

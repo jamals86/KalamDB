@@ -30,6 +30,12 @@ toml.workspace = true
 # JWT authentication
 jsonwebtoken = "9.2"
 
+# Password hashing
+bcrypt = "0.15"
+
+# Random password generation
+rand = "0.8"
+
 # Logging
 log.workspace = true
 env_logger.workspace = true

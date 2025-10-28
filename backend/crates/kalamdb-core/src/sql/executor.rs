@@ -600,8 +600,9 @@ impl SqlExecutor {
                 return Ok(());
             }
 
-            // CREATE TABLE, DROP TABLE, FLUSH TABLE - check table ownership in execute methods
+            // CREATE TABLE, DROP TABLE, FLUSH TABLE, ALTER TABLE - check table ownership in execute methods
             SqlStatement::CreateTable
+            | SqlStatement::AlterTable
             | SqlStatement::DropTable
             | SqlStatement::FlushTable => {
                 // Table-level authorization will be checked in the execution methods
@@ -657,6 +658,7 @@ impl SqlExecutor {
             SqlStatement::DropStorage => self.execute_drop_storage(sql).await,
             SqlStatement::ShowStorages => self.execute_show_storages(sql, user_id).await,
             SqlStatement::CreateTable => self.execute_create_table(sql, user_id).await,
+            SqlStatement::AlterTable => self.execute_alter_table(sql, user_id).await,
             SqlStatement::DropTable => self.execute_drop_table(sql).await,
             SqlStatement::ShowTables => self.execute_show_tables(sql).await,
             SqlStatement::DescribeTable => self.execute_describe_table(sql).await,
@@ -2585,6 +2587,7 @@ impl SqlExecutor {
                         .unwrap_or_else(|_| "{}".to_string()),
                     schema_version: 1,
                     deleted_retention_hours: deleted_retention_hours.unwrap_or(0) as i32,
+                    access_level: None, // USER tables don't use access_level
                 };
                 kalam_sql.insert_table(&table).map_err(|e| {
                     KalamDbError::Other(format!(
@@ -2651,6 +2654,7 @@ impl SqlExecutor {
                     deleted_retention_hours: retention_seconds
                         .map(|s| (s / 3600) as i32)
                         .unwrap_or(0),
+                    access_level: None, // STREAM tables don't use access_level
                 };
                 kalam_sql.insert_table(&table).map_err(|e| {
                     KalamDbError::Other(format!(
@@ -2695,8 +2699,9 @@ impl SqlExecutor {
             let flush_policy = stmt.flush_policy.clone();
             let deleted_retention = stmt.deleted_retention_hours.map(|h| h as u64 * 3600);
 
-            // Extract storage_id before stmt is moved
+            // Extract storage_id and access_level before stmt is moved
             let stmt_storage_id = stmt.storage_id.clone();
+            let stmt_access_level = stmt.access_level.clone();
 
             // Validate and resolve storage_id
             let storage_id = self.validate_storage_id(stmt_storage_id)?;
@@ -2728,6 +2733,7 @@ impl SqlExecutor {
                         deleted_retention_hours: deleted_retention
                             .map(|s| (s / 3600) as i32)
                             .unwrap_or(0),
+                        access_level: stmt_access_level, // Already TableAccess enum
                     };
                     kalam_sql.insert_table(&table).map_err(|e| {
                         KalamDbError::Other(format!(
@@ -2775,8 +2781,9 @@ impl SqlExecutor {
             let flush_policy = stmt.flush_policy.clone();
             let deleted_retention = stmt.deleted_retention_hours.map(|h| h as u64 * 3600);
 
-            // Extract storage_id before stmt is moved
+            // Extract storage_id and access_level before stmt is moved
             let stmt_storage_id = stmt.storage_id.clone();
+            let stmt_access_level = stmt.access_level.clone();
 
             // Validate and resolve storage_id
             let storage_id = self.validate_storage_id(stmt_storage_id)?;
@@ -2806,6 +2813,7 @@ impl SqlExecutor {
                         deleted_retention_hours: deleted_retention
                             .map(|s| (s / 3600) as i32)
                             .unwrap_or(0),
+                        access_level: stmt_access_level, // Already TableAccess enum
                     };
                     kalam_sql.insert_table(&table).map_err(|e| {
                         KalamDbError::Other(format!(
@@ -2836,6 +2844,81 @@ impl SqlExecutor {
                 )))
             }
         }
+    }
+
+    /// Execute ALTER TABLE
+    async fn execute_alter_table(
+        &self,
+        sql: &str,
+        user_id: Option<&UserId>,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        use kalamdb_sql::ddl::{AlterTableStatement, ColumnOperation};
+
+        // Create execution context for authorization
+        let ctx = self.create_execution_context(user_id)?;
+
+        // Parse ALTER TABLE statement (use default namespace for now)
+        let default_namespace = kalamdb_commons::NamespaceId::new("default");
+        let stmt = AlterTableStatement::parse(sql, &default_namespace)
+            .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+
+        // Handle SET ACCESS LEVEL operation
+        if let ColumnOperation::SetAccessLevel { access_level } = &stmt.operation {
+            // Only Service/Dba/System can modify access levels
+            if !matches!(
+                ctx.user_role,
+                Role::Service | Role::Dba | Role::System
+            ) {
+                return Err(KalamDbError::Unauthorized(
+                    "Only service, dba, or system users can modify table access levels".to_string(),
+                ));
+            }
+
+            // Get the table to verify it exists and is a SHARED table
+            let kalam_sql = self
+                .kalam_sql
+                .as_ref()
+                .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+
+            let table_id = format!("{}.{}", stmt.namespace_id.as_str(), stmt.table_name.as_str());
+            let mut table = kalam_sql
+                .get_table(&table_id)
+                .map_err(|e| KalamDbError::Other(format!("Failed to get table: {}", e)))?
+                .ok_or_else(|| {
+                    KalamDbError::table_not_found(format!(
+                        "Table '{}' not found",
+                        table_id
+                    ))
+                })?;
+
+            // Verify table is SHARED type
+            if table.table_type != TableType::Shared {
+                return Err(KalamDbError::InvalidOperation(
+                    "ACCESS LEVEL can only be set on SHARED tables".to_string(),
+                ));
+            }
+
+            // Update the table's access_level (already TableAccess enum)
+            table.access_level = Some(access_level.clone());
+
+            // Persist the change
+            kalam_sql
+                .update_table(&table)
+                .map_err(|e| KalamDbError::Other(format!("Failed to update table: {}", e)))?;
+
+            return Ok(ExecutionResult::Success(format!(
+                "Table '{}' access level changed to '{:?}'",
+                table_id,
+                access_level
+            )));
+        }
+
+        // For other ALTER TABLE operations (ADD COLUMN, DROP COLUMN, etc.),
+        // return error for now (not yet implemented)
+        Err(KalamDbError::InvalidOperation(
+            "ALTER TABLE operations other than SET ACCESS LEVEL are not yet supported via this path. \
+             Use SchemaEvolutionService directly for column modifications.".to_string(),
+        ))
     }
 
     /// Execute DROP TABLE
@@ -3837,6 +3920,7 @@ mod tests {
             flush_policy: String::new(),
             schema_version: 1,
             deleted_retention_hours: 0,
+            access_level: None, // Test STREAM table doesn't use access_level
         };
 
         kalam_sql.insert_table(&table).unwrap();

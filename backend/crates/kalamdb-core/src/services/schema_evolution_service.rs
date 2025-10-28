@@ -173,6 +173,9 @@ impl SchemaEvolutionService {
                     format!("MODIFY COLUMN {} {}", column_name, new_data_type)
                 }
             }
+            ColumnOperation::SetAccessLevel { access_level } => {
+                format!("SET ACCESS LEVEL {:?}", access_level)
+            }
         };
 
         // Create and insert new schema version
@@ -222,6 +225,10 @@ impl SchemaEvolutionService {
             ColumnOperation::Add { column_name, .. } => column_name,
             ColumnOperation::Drop { column_name } => column_name,
             ColumnOperation::Modify { column_name, .. } => column_name,
+            ColumnOperation::SetAccessLevel { .. } => {
+                // SetAccessLevel doesn't affect columns, skip validation
+                return Ok(());
+            }
         };
 
         if system_columns.contains(&column_name.as_str()) {
@@ -381,6 +388,10 @@ impl SchemaEvolutionService {
 
                 Ok(())
             }
+            ColumnOperation::SetAccessLevel { .. } => {
+                // SetAccessLevel doesn't modify schema, no validation needed
+                Ok(())
+            }
         }
     }
 
@@ -451,6 +462,10 @@ impl SchemaEvolutionService {
                     .collect();
 
                 Ok(Schema::new(fields))
+            }
+            ColumnOperation::SetAccessLevel { .. } => {
+                // SetAccessLevel doesn't modify schema, just return existing
+                Ok(schema)
             }
         }
     }

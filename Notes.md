@@ -27,6 +27,11 @@ Future:
 
 29) instead of pub struct SystemTable name it KalamTable
 30) Make sure the TableSchema which is stored cover everything in one model and not spread into multiple models
+31) SHOW STATS FOR TABLE app.messages;
+32) Do we have counter per userId per buffered rows? this will help us tune the select from user table to check if we even need to query the buffer in first place
+33) Add option for a specific usere to download all his data
+34) Add to the roadmap adding join which can join tables: shared<->shared, shared<->user, user<->user, user<->stream
+35) Add to cli/server a version which will print the commit and build date as well which is auto-increment: add prompt instead of this one: Starting KalamDB Server v0.1.0
 
 
 

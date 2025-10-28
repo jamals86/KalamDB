@@ -10,6 +10,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use web_sys::{WebSocket, MessageEvent, CloseEvent, ErrorEvent, Request, RequestInit, RequestMode, Response, Headers};
+use base64::{engine::general_purpose, Engine as _};
 
 /// WASM-compatible KalamDB client
 /// 
@@ -20,13 +21,15 @@ use web_sys::{WebSocket, MessageEvent, CloseEvent, ErrorEvent, Request, RequestI
 /// await init();
 /// const client = new KalamClient(
 ///   "http://localhost:8080",
-///   "your-api-key-here"
+///   "username",
+///   "password"
 /// );
 /// ```
 #[wasm_bindgen]
 pub struct KalamClient {
     url: String,
-    api_key: String,
+    username: String,
+    password: String,
     ws: Rc<RefCell<Option<WebSocket>>>,
     subscriptions: Rc<RefCell<HashMap<String, js_sys::Function>>>,
 }
@@ -37,23 +40,28 @@ impl KalamClient {
     /// 
     /// # Arguments
     /// * `url` - KalamDB server URL (required, e.g., "http://localhost:8080")
-    /// * `api_key` - API key for authentication (required, generated via create-user command)
+    /// * `username` - Username for authentication (required)
+    /// * `password` - Password for authentication (required)
     /// 
     /// # Errors
-    /// Returns JsValue error if url or api_key is empty
+    /// Returns JsValue error if url, username, or password is empty
     #[wasm_bindgen(constructor)]
-    pub fn new(url: String, api_key: String) -> Result<KalamClient, JsValue> {
+    pub fn new(url: String, username: String, password: String) -> Result<KalamClient, JsValue> {
         // T044: Validate required parameters with clear error messages
         if url.is_empty() {
             return Err(JsValue::from_str("KalamClient: 'url' parameter is required and cannot be empty"));
         }
-        if api_key.is_empty() {
-            return Err(JsValue::from_str("KalamClient: 'api_key' parameter is required and cannot be empty"));
+        if username.is_empty() {
+            return Err(JsValue::from_str("KalamClient: 'username' parameter is required and cannot be empty"));
+        }
+        if password.is_empty() {
+            return Err(JsValue::from_str("KalamClient: 'password' parameter is required and cannot be empty"));
         }
 
         Ok(KalamClient {
             url,
-            api_key,
+            username,
+            password,
             ws: Rc::new(RefCell::new(None)),
             subscriptions: Rc::new(RefCell::new(HashMap::new())),
         })
@@ -71,8 +79,10 @@ impl KalamClient {
         
         // Convert http(s) URL to ws(s) URL
         let ws_url = self.url.replace("http://", "ws://").replace("https://", "wss://");
-        // T063AAB: Pass API key as query parameter for WebSocket authentication
-        let ws_url = format!("{}/v1/ws?api_key={}", ws_url, self.api_key);
+        // WebSocket URL with Basic Auth credentials embedded
+        let credentials = format!("{}:{}", self.username, self.password);
+        let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
+        let ws_url = format!("{}/v1/ws?auth={}", ws_url, encoded);
         
         // T063C: Implement proper WebSocket connection using web-sys::WebSocket
         let ws = WebSocket::new(&ws_url)?;
@@ -291,15 +301,19 @@ impl KalamClient {
         // T063N: Add proper error handling with JsValue conversion
         let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window object available"))?;
         
-        // T063F: Implement HTTP fetch for SQL queries with X-API-KEY header
+        // T063F: Implement HTTP fetch for SQL queries with Basic Auth
         let opts = RequestInit::new();
         opts.set_method("POST");
         opts.set_mode(RequestMode::Cors);
         
-        // Set headers
+        // Set headers with HTTP Basic Auth
         let headers = Headers::new()?;
         headers.set("Content-Type", "application/json")?;
-        headers.set("X-API-KEY", &self.api_key)?;
+        
+        // Encode username:password as base64 for Authorization: Basic header
+        let credentials = format!("{}:{}", self.username, self.password);
+        let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
+        headers.set("Authorization", &format!("Basic {}", encoded))?;
         opts.set_headers(&headers);
         
         // Set body

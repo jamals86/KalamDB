@@ -9,6 +9,9 @@ use serde_json::Value as JsonValue;
 
 use crate::{error::Result, session::OutputFormat};
 
+/// Maximum column width before truncation
+const MAX_COLUMN_WIDTH: usize = 50;
+
 /// Formats query results for display
 pub struct OutputFormatter {
     format: OutputFormat,
@@ -19,6 +22,27 @@ impl OutputFormatter {
     /// Create a new formatter
     pub fn new(format: OutputFormat, color: bool) -> Self {
         Self { format, color }
+    }
+
+    /// Get terminal width, defaulting to 80 if unavailable
+    fn get_terminal_width() -> usize {
+        if let Some((w, _h)) = term_size::dimensions() {
+            w
+        } else {
+            80 // Default fallback
+        }
+    }
+
+    /// Truncate a string to max width with ellipsis
+    fn truncate_value(value: &str, max_width: usize) -> String {
+        if value.len() <= max_width {
+            value.to_string()
+        } else if max_width <= 3 {
+            value.chars().take(max_width).collect()
+        } else {
+            let take = max_width - 3;
+            format!("{}...", value.chars().take(take).collect::<String>())
+        }
     }
 
     /// Format a query response
@@ -65,6 +89,9 @@ impl OutputFormatter {
                 rows[0].keys().cloned().collect()
             };
 
+            let terminal_width = Self::get_terminal_width();
+            
+            // Calculate initial column widths
             let mut col_widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
             for row in rows {
                 for (i, col) in columns.iter().enumerate() {
@@ -73,6 +100,18 @@ impl OutputFormatter {
                         .map(|v| self.format_json_value(v))
                         .unwrap_or_else(|| "NULL".to_string());
                     col_widths[i] = col_widths[i].max(value.len());
+                }
+            }
+
+            // Calculate total table width (columns + borders + padding)
+            let total_width: usize = col_widths.iter().sum::<usize>() 
+                + (col_widths.len() * 3) // 2 spaces padding + 1 border per column
+                + 1; // Final border
+
+            // If table is too wide, apply truncation
+            if total_width > terminal_width {
+                for width in col_widths.iter_mut() {
+                    *width = (*width).min(MAX_COLUMN_WIDTH);
                 }
             }
 
@@ -94,7 +133,8 @@ impl OutputFormatter {
             output.push('│');
             for (i, col) in columns.iter().enumerate() {
                 output.push(' ');
-                output.push_str(&format!("{:width$}", col, width = col_widths[i]));
+                let truncated = Self::truncate_value(col, col_widths[i]);
+                output.push_str(&format!("{:width$}", truncated, width = col_widths[i]));
                 output.push(' ');
                 output.push('│');
             }
@@ -121,7 +161,8 @@ impl OutputFormatter {
                         .map(|v| self.format_json_value(v))
                         .unwrap_or_else(|| "NULL".to_string());
                     output.push(' ');
-                    output.push_str(&format!("{:width$}", value, width = col_widths[i]));
+                    let truncated = Self::truncate_value(&value, col_widths[i]);
+                    output.push_str(&format!("{:width$}", truncated, width = col_widths[i]));
                     output.push(' ');
                     output.push('│');
                 }
@@ -281,5 +322,36 @@ mod tests {
         let formatter = OutputFormatter::new(OutputFormat::Csv, false);
         let value = JsonValue::String("hello, world".into());
         assert_eq!(formatter.format_csv_value(&value), "\"hello, world\"");
+    }
+
+    #[test]
+    fn test_truncate_value() {
+        // No truncation needed
+        assert_eq!(OutputFormatter::truncate_value("short", 10), "short");
+        
+        // Truncation with ellipsis
+        assert_eq!(
+            OutputFormatter::truncate_value("this is a very long string that needs truncation", 20),
+            "this is a very lo..."
+        );
+        
+        // Edge case: max_width = 3 (can't fit ellipsis, just truncate)
+        assert_eq!(OutputFormatter::truncate_value("test", 3), "tes");
+        
+        // Edge case: max_width < 3 (just truncate)
+        assert_eq!(OutputFormatter::truncate_value("test", 2), "te");
+        
+        // Edge case: exactly at max_width = 4
+        assert_eq!(OutputFormatter::truncate_value("test", 4), "test");
+        
+        // Edge case: one over max_width with ellipsis
+        assert_eq!(OutputFormatter::truncate_value("hello", 4), "h...");
+    }
+
+    #[test]
+    fn test_terminal_width_detection() {
+        // Should return a reasonable default if terminal size unavailable
+        let width = OutputFormatter::get_terminal_width();
+        assert!(width >= 80); // Should be at least 80 columns
     }
 }

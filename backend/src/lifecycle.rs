@@ -259,10 +259,8 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         config.stream.eviction_interval_seconds
     );
 
-    // Create system user if test_api_key is configured (T063AAE-T063AAF)
-    if let Some(test_api_key) = &config.server.test_api_key {
-        create_system_user(rocks_db_adapter.clone(), test_api_key).await?;
-    }
+    // T125-T127: Create default system user on first startup
+    create_default_system_user(kalam_sql.clone()).await?;
 
     Ok(ApplicationComponents {
         session_factory,
@@ -352,67 +350,122 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
     Ok(())
 }
 
-/// Create or update a system user with a test API key (T063AAE-T063AAF)
+/// T125-T127: Create default system user on database initialization
 ///
-/// Creates a system user with username "system", role "admin", and the provided API key.
-/// If the user already exists, updates their API key.
+/// Creates a default system user with:
+/// - Username: "root" (AUTH::DEFAULT_SYSTEM_USERNAME)
+/// - Auth type: Internal (localhost-only by default)
+/// - Role: System
+/// - Random password for emergency remote access
+///
+/// On first startup, logs the credentials to stdout for the administrator to save.
 ///
 /// # Arguments
-/// * `sql_adapter` - SQL adapter for system tables
-/// * `test_api_key` - The API key to use for the system user
+/// * `kalam_sql` - KalamSQL adapter for system tables
 ///
 /// # Returns
 /// Result indicating success or failure
-async fn create_system_user(
-    sql_adapter: Arc<RocksDbAdapter>,
-    test_api_key: &str,
-) -> Result<()> {
-    use kalamdb_sql::User;
+async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
+    use kalamdb_commons::constants::AuthConstants;
+    use kalamdb_commons::system::User;
+    use rand::Rng;
 
-    let user_id = UserId::from("system");
-    let username = "system".to_string();
-    let email = "system@kalamdb.dev".to_string();
-    let role = Role::Dba; // admin role
-    let created_at = chrono::Utc::now().timestamp_millis();
-
-    // Check if system user already exists
-    let existing_user = sql_adapter.get_user("system");
-
-    // TODO: Use proper password hashing with bcrypt
-    let user = User {
-        id: user_id,
-        username: username.clone(),
-        password_hash: "test_hash".to_string(), // TODO: Hash test password properly
-        role,
-        email: Some(email),
-        auth_type: AuthType::Internal, // System user uses Internal auth
-        auth_data: None,
-        storage_mode: StorageMode::Table,
-        storage_id: None,
-        created_at,
-        updated_at: created_at,
-        last_seen: None,
-        deleted_at: None,
-    };
+    // Check if root user already exists
+    let existing_user = kalam_sql.get_user(AuthConstants::DEFAULT_SYSTEM_USERNAME);
 
     match existing_user {
-        Ok(_) => {
-            // User exists, update it
-            sql_adapter.insert_user(&user)?; // insert_user acts as upsert in RocksDB
+        Ok(Some(_)) => {
+            // User already exists, skip creation
             info!(
-                "System user updated: {}",
-                username
+                "System user '{}' already exists, skipping initialization",
+                AuthConstants::DEFAULT_SYSTEM_USERNAME
             );
+            Ok(())
         }
-        Err(_) => {
-            // User doesn't exist, create new
-            sql_adapter.insert_user(&user)?;
-            info!(
-                "System user created with test API key: {}",
-                test_api_key
-            );
+        Ok(None) | Err(_) => {
+            // User doesn't exist, create new system user
+            let user_id = UserId::new(AuthConstants::DEFAULT_SYSTEM_USER_ID);
+            let username = AuthConstants::DEFAULT_SYSTEM_USERNAME.to_string();
+            let email = format!("{}@localhost", AuthConstants::DEFAULT_SYSTEM_USERNAME);
+            let role = Role::System; // Highest privilege level
+            let created_at = chrono::Utc::now().timestamp_millis();
+
+            // T126: Generate random password for emergency remote access
+            let password = generate_random_password(24);
+            let password_hash = bcrypt::hash(&password, bcrypt::DEFAULT_COST)?;
+
+            let user = User {
+                id: user_id,
+                username: username.clone(),
+                password_hash,
+                role,
+                email: Some(email),
+                auth_type: AuthType::Internal, // System user uses Internal auth
+                auth_data: None, // No allow_remote flag = localhost-only by default
+                storage_mode: StorageMode::Table,
+                storage_id: Some(StorageId::local()),
+                created_at,
+                updated_at: created_at,
+                last_seen: None,
+                deleted_at: None,
+            };
+
+            kalam_sql.insert_user(&user)?;
+
+            // T127: Log system user credentials to stdout
+            log_system_user_credentials(&username, &password);
+
+            Ok(())
         }
     }
+}
 
-    Ok(())
+/// Generate a random password for system user
+///
+/// Creates a cryptographically secure random password with:
+/// - Uppercase letters
+/// - Lowercase letters  
+/// - Numbers
+/// - Special characters
+fn generate_random_password(length: usize) -> String {
+    use rand::Rng;
+    
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
+    let mut rng = rand::thread_rng();
+    
+    (0..length)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
+}
+
+/// T127: Log system user credentials to stdout on first initialization
+///
+/// Displays credentials in a clear, formatted box for the administrator to save.
+/// Includes security warnings about saving credentials securely.
+fn log_system_user_credentials(username: &str, password: &str) {
+    println!("\n");
+    println!("╔═══════════════════════════════════════════════════════════════════╗");
+    println!("║                  KALAMDB SYSTEM USER CREATED                      ║");
+    println!("╠═══════════════════════════════════════════════════════════════════╣");
+    println!("║                                                                   ║");
+    println!("║  Username: {:<54} ║", username);
+    println!("║  Password: {:<54} ║", password);
+    println!("║                                                                   ║");
+    println!("║  ⚠️  IMPORTANT: Save these credentials securely!                   ║");
+    println!("║                                                                   ║");
+    println!("║  Default Access: Localhost only (127.0.0.1, ::1)                   ║");
+    println!("║  Remote Access:  Disabled by default for security                 ║");
+    println!("║                                                                   ║");
+    println!("║  To enable remote access:                                        ║");
+    println!("║  1. Set allow_remote_access=true in config.toml [auth] section    ║");
+    println!("║  2. OR add {{\"allow_remote\": true}} to user metadata via SQL        ║");
+    println!("║                                                                   ║");
+    println!("║  This password is for emergency remote access only.              ║");
+    println!("║  For localhost connections, password is optional.                ║");
+    println!("║                                                                   ║");
+    println!("╚═══════════════════════════════════════════════════════════════════╝");
+    println!("\n");
 }

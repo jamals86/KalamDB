@@ -6,6 +6,14 @@ Auto-generated from all feature plans. Last updated: 2025-10-27
 
 **SINGLE SOURCE OF TRUTH**: All system table models are defined in `kalamdb-commons/src/models/system.rs`
 
+**Authentication Constants**: System user constants defined in `kalamdb-commons/src/constants.rs`
+```rust
+// Use AuthConstants::DEFAULT_SYSTEM_USERNAME instead of hardcoded "root"
+use kalamdb_commons::constants::AuthConstants;
+let username = AuthConstants::DEFAULT_SYSTEM_USERNAME;  // "root"
+let user_id = AuthConstants::DEFAULT_SYSTEM_USER_ID;    // "sys_root"
+```
+
 **DO NOT create duplicate model definitions**. Always import from:
 ```rust
 use kalamdb_commons::system::{User, Job, LiveQuery, Namespace, SystemTable, InformationSchemaTable, UserTableCounter};

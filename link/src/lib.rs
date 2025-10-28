@@ -7,7 +7,8 @@
 //!
 //! - **Query Execution**: Execute SQL queries via HTTP with automatic retry
 //! - **WebSocket Subscriptions**: Real-time change notifications via WebSocket streams
-//! - **Authentication**: JWT token and API key support
+//! - **Authentication**: HTTP Basic Auth, JWT token, and API key support
+//! - **Credential Storage**: Platform-agnostic credential management trait
 //! - **WASM Compatible**: Can be compiled to WebAssembly for browser usage
 //! - **Connection Pooling**: Automatic HTTP connection reuse
 //! - **Configurable Timeouts**: Per-request timeout and retry configuration
@@ -42,26 +43,59 @@
 //! ## Authentication
 //!
 //! ```rust,no_run
-//! use kalam_link::KalamLinkClient;
+//! use kalam_link::{KalamLinkClient, AuthProvider};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Using HTTP Basic Auth (recommended)
+//! let client = KalamLinkClient::builder()
+//!     .base_url("http://localhost:3000")
+//!     .auth(AuthProvider::basic_auth("username".to_string(), "password".to_string()))
+//!     .build()?;
+//!
+//! // Using system user (default "root" user created during DB initialization)
+//! let client = KalamLinkClient::builder()
+//!     .base_url("http://localhost:3000")
+//!     .auth(AuthProvider::system_user_auth("admin_password".to_string()))
+//!     .build()?;
+//!
 //! // Using JWT token
 //! let client = KalamLinkClient::builder()
 //!     .base_url("http://localhost:3000")
 //!     .jwt_token("your-jwt-token")
 //!     .build()?;
+//! # Ok(())
+//! # }
+//! ```
 //!
-//! // Using API key
-//! let client = KalamLinkClient::builder()
-//!     .base_url("http://localhost:3000")
-//!     .api_key("your-api-key")
-//!     .build()?;
+//! ## Credential Storage
+//!
+//! ```rust,no_run
+//! use kalam_link::credentials::{CredentialStore, Credentials, MemoryCredentialStore};
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut store = MemoryCredentialStore::new();
+//!
+//! // Store credentials
+//! let creds = Credentials::new(
+//!     "production".to_string(),
+//!     "alice".to_string(),
+//!     "secret123".to_string(),
+//! );
+//! store.set_credentials(&creds)?;
+//!
+//! // Retrieve credentials
+//! if let Some(stored) = store.get_credentials("production")? {
+//!     println!("Found credentials for user: {}", stored.username);
+//! }
 //! # Ok(())
 //! # }
 //! ```
 
 pub mod error;
 pub mod models;
+
+// Credential storage (available in both native and WASM)
+pub mod credentials;
 
 // Native-only modules (use tokio, reqwest, tokio-tungstenite)
 #[cfg(feature = "tokio-runtime")]
@@ -83,6 +117,7 @@ pub use auth::AuthProvider;
 #[cfg(feature = "tokio-runtime")]
 pub use client::KalamLinkClient;
 
+pub use credentials::{CredentialStore, Credentials, MemoryCredentialStore};
 pub use error::{KalamLinkError, Result};
 pub use models::{
     ChangeEvent, ErrorDetail, HealthCheckResponse, QueryRequest, QueryResponse, SubscriptionOptions,

@@ -40,6 +40,9 @@ console = "0.15"
 # Config file parsing
 toml = { workspace = true }
 
+# Secure password input
+rpassword = "7.3"
+
 # Async runtime
 tokio = { workspace = true }
 
@@ -53,6 +56,9 @@ thiserror = { workspace = true }
 
 # Home directory detection
 dirs = "5.0"
+
+# Terminal dimensions
+term_size = "0.3"
 
 # Date/time formatting
 chrono = "0.4"

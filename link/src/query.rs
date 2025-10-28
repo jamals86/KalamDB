@@ -12,7 +12,6 @@ pub struct QueryExecutor {
     base_url: String,
     http_client: reqwest::Client,
     auth: AuthProvider,
-    user_id: Option<String>,
 }
 
 impl QueryExecutor {
@@ -20,19 +19,12 @@ impl QueryExecutor {
         base_url: String,
         http_client: reqwest::Client,
         auth: AuthProvider,
-        user_id: Option<String>,
     ) -> Self {
         Self {
             base_url,
             http_client,
             auth,
-            user_id,
         }
-    }
-
-    /// Returns the user ID configured for this executor, if any
-    pub fn user_id(&self) -> Option<&str> {
-        self.user_id.as_deref()
     }
 
     /// Execute a SQL query with optional parameters
@@ -51,11 +43,6 @@ impl QueryExecutor {
 
         // Apply authentication
         req_builder = self.auth.apply_to_request(req_builder)?;
-
-        // Add user ID header if provided
-        if let Some(user_id) = &self.user_id {
-            req_builder = req_builder.header("X-USER-ID", user_id);
-        }
 
         // Send request with retry logic
         let mut retries = 0;
