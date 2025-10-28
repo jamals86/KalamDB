@@ -93,7 +93,7 @@ async fn test_create_user_with_password_success() {
     let admin_id = create_system_user(&kalam_sql).await;
 
     // Execute CREATE USER command
-    let sql = "CREATE USER 'alice' WITH PASSWORD 'secure123' ROLE developer EMAIL 'alice@example.com'";
+    let sql = "CREATE USER 'alice' WITH PASSWORD 'SecurePass123' ROLE developer EMAIL 'alice@example.com'";
     let result = executor.execute(sql, Some(&admin_id)).await;
 
     assert!(result.is_ok(), "CREATE USER should succeed: {:?}", result);
@@ -151,16 +151,22 @@ async fn test_create_user_without_authorization_fails() {
     kalam_sql.insert_user(&regular_user).expect("Failed to create regular user");
 
     // Try to create a user as regular user
-    let sql = "CREATE USER 'charlie' WITH PASSWORD 'test123' ROLE user";
+    let sql = "CREATE USER 'charlie' WITH PASSWORD 'TestPass123' ROLE user";
     let result = executor.execute(sql, Some(&regular_user_id)).await;
 
     assert!(result.is_err(), "Regular user should not be able to create users");
     
     let err = result.unwrap_err();
+    let err_msg = format!("{:?}", err);
+    println!("Error received: {}", err_msg);
     assert!(
-        format!("{:?}", err).contains("PermissionDenied") || 
-        format!("{:?}", err).contains("Only DBA or System"),
-        "Should be permission denied error"
+        err_msg.contains("PermissionDenied") || 
+        err_msg.contains("Unauthorized") ||
+        err_msg.contains("Only DBA or System") ||
+        err_msg.contains("Admin privileges") ||
+        err_msg.contains("permission"),
+        "Should be permission denied error, got: {}",
+        err_msg
     );
 }
 
@@ -170,14 +176,14 @@ async fn test_alter_user_set_password() {
     let admin_id = create_system_user(&kalam_sql).await;
 
     // Create user first
-    let create_sql = "CREATE USER 'dave' WITH PASSWORD 'oldpass' ROLE user";
+    let create_sql = "CREATE USER 'dave' WITH PASSWORD 'OldPass123' ROLE user";
     executor.execute(create_sql, Some(&admin_id)).await.expect("CREATE USER failed");
     
     let old_user = kalam_sql.get_user("dave").unwrap().unwrap();
     let old_hash = old_user.password_hash.clone();
 
     // Change password
-    let alter_sql = "ALTER USER 'dave' SET PASSWORD 'newpass'";
+    let alter_sql = "ALTER USER 'dave' SET PASSWORD 'NewPass456'";
     let result = executor.execute(alter_sql, Some(&admin_id)).await;
 
     assert!(result.is_ok(), "ALTER USER SET PASSWORD should succeed");
@@ -193,7 +199,7 @@ async fn test_alter_user_set_role() {
     let admin_id = create_system_user(&kalam_sql).await;
 
     // Create user first
-    let create_sql = "CREATE USER 'eve' WITH PASSWORD 'pass' ROLE user";
+    let create_sql = "CREATE USER 'eve' WITH PASSWORD 'Password123' ROLE user";
     executor.execute(create_sql, Some(&admin_id)).await.expect("CREATE USER failed");
 
     // Change role
@@ -212,7 +218,7 @@ async fn test_drop_user_soft_delete() {
     let admin_id = create_system_user(&kalam_sql).await;
 
     // Create user first
-    let create_sql = "CREATE USER 'frank' WITH PASSWORD 'pass' ROLE user";
+    let create_sql = "CREATE USER 'frank' WITH PASSWORD 'Password123' ROLE user";
     executor.execute(create_sql, Some(&admin_id)).await.expect("CREATE USER failed");
 
     // Drop user
@@ -246,7 +252,7 @@ async fn test_create_user_role_mapping() {
 
     for (username, role_str, expected_role) in test_cases {
         let sql = format!(
-            "CREATE USER '{}' WITH PASSWORD 'pass' ROLE {}",
+            "CREATE USER '{}' WITH PASSWORD 'TestPass123' ROLE {}",
             username, role_str
         );
         
@@ -260,4 +266,236 @@ async fn test_create_user_role_mapping() {
             role_str, expected_role
         );
     }
+}
+
+/// T084S - Test CREATE USER WITH INTERNAL (system users)
+#[tokio::test]
+async fn test_create_user_with_internal_auth() {
+    let (executor, _temp_dir, kalam_sql) = setup_test_executor().await;
+    let admin_id = create_system_user(&kalam_sql).await;
+
+    let sql = "CREATE USER 'system_user' WITH INTERNAL ROLE system";
+    let result = executor.execute(sql, Some(&admin_id)).await;
+
+    assert!(result.is_ok(), "CREATE USER with INTERNAL should succeed");
+    
+    let user = kalam_sql.get_user("system_user").expect("Failed to get user").unwrap();
+    assert_eq!(user.username, "system_user");
+    assert_eq!(user.auth_type, AuthType::Internal);
+    assert_eq!(user.role, Role::System);
+    assert!(user.password_hash.is_empty(), "Internal users should not have password hash");
+}
+
+/// T084T - Test ALTER USER SET EMAIL
+#[tokio::test]
+async fn test_alter_user_set_email() {
+    let (executor, _temp_dir, kalam_sql) = setup_test_executor().await;
+    let admin_id = create_system_user(&kalam_sql).await;
+
+    // Create user first
+    let create_sql = "CREATE USER 'george' WITH PASSWORD 'Password123' ROLE user EMAIL 'george@old.com'";
+    executor.execute(create_sql, Some(&admin_id)).await.expect("CREATE USER failed");
+
+    // Change email
+    let alter_sql = "ALTER USER 'george' SET EMAIL 'george@new.com'";
+    let result = executor.execute(alter_sql, Some(&admin_id)).await;
+
+    assert!(result.is_ok(), "ALTER USER SET EMAIL should succeed");
+    
+    let updated_user = kalam_sql.get_user("george").unwrap().unwrap();
+    assert_eq!(updated_user.email, Some("george@new.com".to_string()));
+}
+
+/// T084V - Additional authorization test for ALTER USER
+#[tokio::test]
+async fn test_alter_user_without_authorization_fails() {
+    let (executor, _temp_dir, kalam_sql) = setup_test_executor().await;
+    let admin_id = create_system_user(&kalam_sql).await;
+    
+    // Create target user
+    let create_sql = "CREATE USER 'target' WITH PASSWORD 'Password123' ROLE user";
+    executor.execute(create_sql, Some(&admin_id)).await.expect("CREATE USER failed");
+    
+    // Create regular user (not DBA/System)
+    let regular_user_id = UserId::new("regular_user2");
+    let regular_user = kalamdb_commons::system::User {
+        id: regular_user_id.clone(),
+        username: "regular_user2".to_string(),
+        password_hash: "hashed".to_string(),
+        role: Role::User,
+        email: Some("user2@test.com".to_string()),
+        auth_type: AuthType::Password,
+        auth_data: None,
+        storage_mode: StorageMode::Table,
+        storage_id: None,
+        created_at: chrono::Utc::now().timestamp_millis(),
+        updated_at: chrono::Utc::now().timestamp_millis(),
+        last_seen: None,
+        deleted_at: None,
+    };
+    kalam_sql.insert_user(&regular_user).expect("Failed to create regular user");
+
+    // Try to alter user as regular user
+    let alter_sql = "ALTER USER 'target' SET ROLE dba";
+    let result = executor.execute(alter_sql, Some(&regular_user_id)).await;
+
+    assert!(result.is_err(), "Regular user should not be able to alter users");
+    
+    let err = result.unwrap_err();
+    let err_msg = format!("{:?}", err);
+    assert!(
+        err_msg.contains("PermissionDenied") || 
+        err_msg.contains("Unauthorized") ||
+        err_msg.contains("Only DBA or System") ||
+        err_msg.contains("Admin privileges"),
+        "Should be permission denied error"
+    );
+}
+
+/// T084V - Additional authorization test for DROP USER
+#[tokio::test]
+async fn test_drop_user_without_authorization_fails() {
+    let (executor, _temp_dir, kalam_sql) = setup_test_executor().await;
+    let admin_id = create_system_user(&kalam_sql).await;
+    
+    // Create target user
+    let create_sql = "CREATE USER 'to_delete' WITH PASSWORD 'Password123' ROLE user";
+    executor.execute(create_sql, Some(&admin_id)).await.expect("CREATE USER failed");
+    
+    // Create regular user (not DBA/System)
+    let regular_user_id = UserId::new("regular_user3");
+    let regular_user = kalamdb_commons::system::User {
+        id: regular_user_id.clone(),
+        username: "regular_user3".to_string(),
+        password_hash: "hashed".to_string(),
+        role: Role::User,
+        email: Some("user3@test.com".to_string()),
+        auth_type: AuthType::Password,
+        auth_data: None,
+        storage_mode: StorageMode::Table,
+        storage_id: None,
+        created_at: chrono::Utc::now().timestamp_millis(),
+        updated_at: chrono::Utc::now().timestamp_millis(),
+        last_seen: None,
+        deleted_at: None,
+    };
+    kalam_sql.insert_user(&regular_user).expect("Failed to create regular user");
+
+    // Try to drop user as regular user
+    let drop_sql = "DROP USER 'to_delete'";
+    let result = executor.execute(drop_sql, Some(&regular_user_id)).await;
+
+    assert!(result.is_err(), "Regular user should not be able to drop users");
+    
+    let err = result.unwrap_err();
+    let err_msg = format!("{:?}", err);
+    assert!(
+        err_msg.contains("PermissionDenied") || 
+        err_msg.contains("Unauthorized") ||
+        err_msg.contains("Only DBA or System") ||
+        err_msg.contains("Admin privileges"),
+        "Should be permission denied error"
+    );
+}
+
+/// T084W - Test weak password rejection (common passwords)
+#[tokio::test]
+async fn test_create_user_weak_password_rejected() {
+    let (executor, _temp_dir, kalam_sql) = setup_test_executor().await;
+    let admin_id = create_system_user(&kalam_sql).await;
+
+    // Common weak passwords that should be rejected
+    let weak_passwords = vec![
+        "password",
+        "123456",
+        "qwerty",
+        "admin",
+        "letmein",
+        "welcome",
+        "monkey",
+    ];
+
+    for weak_pass in weak_passwords {
+        let sql = format!(
+            "CREATE USER 'weak_user_{}' WITH PASSWORD '{}' ROLE user",
+            weak_pass, weak_pass
+        );
+        
+        let result = executor.execute(&sql, Some(&admin_id)).await;
+        
+        assert!(
+            result.is_err(),
+            "Weak password '{}' should be rejected",
+            weak_pass
+        );
+        
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(
+            err_msg.contains("weak") || 
+            err_msg.contains("common") || 
+            err_msg.contains("password"),
+            "Error should mention weak/common password for '{}'",
+            weak_pass
+        );
+    }
+}
+
+/// T084W - Test password length validation
+#[tokio::test]
+async fn test_create_user_password_length_validation() {
+    let (executor, _temp_dir, kalam_sql) = setup_test_executor().await;
+    let admin_id = create_system_user(&kalam_sql).await;
+
+    // Too short password (less than 8 characters)
+    let sql_short = "CREATE USER 'short_pass' WITH PASSWORD 'abc' ROLE user";
+    let result_short = executor.execute(sql_short, Some(&admin_id)).await;
+    
+    assert!(
+        result_short.is_err(),
+        "Password too short should be rejected"
+    );
+    
+    let err_msg = format!("{:?}", result_short.unwrap_err());
+    assert!(
+        err_msg.contains("8") || err_msg.contains("short") || err_msg.contains("minimum"),
+        "Error should mention minimum length requirement"
+    );
+
+    // Valid password (8+ characters)
+    let sql_valid = "CREATE USER 'valid_pass' WITH PASSWORD 'ValidPass123' ROLE user";
+    let result_valid = executor.execute(sql_valid, Some(&admin_id)).await;
+    
+    assert!(
+        result_valid.is_ok(),
+        "Valid password should be accepted: {:?}",
+        result_valid
+    );
+}
+
+/// T084W - Test ALTER USER with weak password
+#[tokio::test]
+async fn test_alter_user_weak_password_rejected() {
+    let (executor, _temp_dir, kalam_sql) = setup_test_executor().await;
+    let admin_id = create_system_user(&kalam_sql).await;
+
+    // Create user with strong password first
+    let create_sql = "CREATE USER 'henry' WITH PASSWORD 'StrongPass123!' ROLE user";
+    executor.execute(create_sql, Some(&admin_id)).await.expect("CREATE USER failed");
+
+    // Try to change to weak password
+    let alter_sql = "ALTER USER 'henry' SET PASSWORD 'password'";
+    let result = executor.execute(alter_sql, Some(&admin_id)).await;
+
+    assert!(
+        result.is_err(),
+        "Changing to weak password should be rejected"
+    );
+    
+    let err_msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        err_msg.contains("weak") || 
+        err_msg.contains("common") || 
+        err_msg.contains("password"),
+        "Error should mention weak/common password"
+    );
 }

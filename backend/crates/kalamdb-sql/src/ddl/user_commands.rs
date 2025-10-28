@@ -95,6 +95,7 @@ impl CreateUserStatement {
             .or_else(|_| extract_quoted_keyword_value(&normalized, "ROLE"))?;
 
         // Map SQL role names to Role enum
+        //TODO: No need to map here we can only use Role names in the SQL commands
         // Support common role aliases for better UX
         let role = match role_str.to_lowercase().as_str() {
             "dba" | "admin" => Role::Dba,
@@ -191,6 +192,7 @@ impl AlterUserStatement {
                     Ok(role_value.to_string())
                 })?;
 
+            //TODO: No need to map here we can only use Role names in the SQL commands
             // Map SQL role names to Role enum
             let role = match role_str.to_lowercase().as_str() {
                 "dba" | "admin" => Role::Dba,

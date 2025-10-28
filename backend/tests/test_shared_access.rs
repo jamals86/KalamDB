@@ -184,10 +184,18 @@ async fn test_shared_table_defaults_to_private() {
         )
     "#;
     let result = server.execute_sql_as_user(create_table_sql, service_username).await;
+    if !is_success(&result) {
+        println!("CREATE TABLE failed with error: {:?}", result.error);
+        println!("Full result: {:?}", result);
+    }
     assert!(is_success(&result), "Failed to create table: {:?}", result.error);
     
     // Verify the table was created with default "private" access level
-    let table = server.kalam_sql.get_table("default.default_access")
+    println!("Attempting to get table 'default.default_access'...");
+    let table_result = server.kalam_sql.get_table("default.default_access");
+    println!("get_table result: {:?}", table_result);
+    
+    let table = table_result
         .expect("Failed to get table")
         .expect("Table should exist");
     

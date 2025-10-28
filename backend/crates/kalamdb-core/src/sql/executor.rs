@@ -598,11 +598,13 @@ impl SqlExecutor {
                 return Ok(());
             }
 
-            // Namespace DDL is allowed in test/dev flows (no strict auth here)
+            // Namespace DDL requires admin privileges
             SqlStatement::CreateNamespace
             | SqlStatement::AlterNamespace
             | SqlStatement::DropNamespace => {
-                return Ok(());
+                return Err(KalamDbError::Unauthorized(
+                    "Admin privileges required for namespace operations".to_string(),
+                ));
             }
 
             // Read-only operations on system tables are allowed for all authenticated users
@@ -2522,6 +2524,8 @@ impl SqlExecutor {
         sql: &str,
         user_id: Option<&UserId>,
     ) -> Result<ExecutionResult, KalamDbError> {
+        // Determine caller role for RBAC checks
+        let ctx = self.create_execution_context(user_id)?;
         // Determine table type based on SQL keywords or LOCATION pattern
         let sql_upper = sql.to_uppercase();
         let namespace_id = crate::catalog::NamespaceId::new("default"); // TODO: Get from context
@@ -2547,6 +2551,12 @@ impl SqlExecutor {
             || sql_upper.contains("${USER_ID}")
             || has_table_type_user
         {
+            // RBAC: Only roles permitted by policy can create USER tables
+            if !crate::auth::rbac::can_create_table(ctx.user_role, TableType::User) {
+                return Err(KalamDbError::Unauthorized(
+                    "Insufficient privileges to create USER tables".to_string(),
+                ));
+            }
             // User table - requires user_id (from header or OWNER_ID clause)
             // Try to extract OWNER_ID from SQL if user_id header is not provided
             let extracted_owner_id: Option<crate::catalog::UserId> = if user_id.is_none() {
@@ -2646,6 +2656,12 @@ impl SqlExecutor {
             || sql_upper.contains("BUFFER_SIZE")
             || has_table_type_stream
         {
+            // RBAC: Check permission for STREAM tables
+            if !crate::auth::rbac::can_create_table(ctx.user_role, TableType::Stream) {
+                return Err(KalamDbError::Unauthorized(
+                    "Insufficient privileges to create STREAM tables".to_string(),
+                ));
+            }
             // Stream table - use unified parser
             let stmt = CreateTableStatement::parse(sql, &namespace_id)
                 .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
@@ -2709,6 +2725,12 @@ impl SqlExecutor {
                 "Stream table created successfully".to_string(),
             ))
         } else if has_table_type_shared {
+            // RBAC: Check permission for SHARED tables
+            if !crate::auth::rbac::can_create_table(ctx.user_role, TableType::Shared) {
+                return Err(KalamDbError::Unauthorized(
+                    "Insufficient privileges to create SHARED tables".to_string(),
+                ));
+            }
             // Shared table specified via TABLE_TYPE
             // Use unified parser for consistent parsing
             let stmt = CreateTableStatement::parse(sql, &namespace_id)
@@ -2736,9 +2758,11 @@ impl SqlExecutor {
             let storage_id = self.validate_storage_id(stmt_storage_id)?;
 
             let (metadata, was_created) = self.shared_table_service.create_table(stmt)?;
+            log::debug!("CREATE SHARED TABLE: was_created={}, table_name={}", was_created, table_name);
 
             // Only insert into system.tables and register with DataFusion if table was newly created
             if was_created {
+                log::debug!("Inserting table into system.tables: {}.{}", namespace_id, table_name);
                 // Insert into system.tables via KalamSQL
                 if let Some(kalam_sql) = &self.kalam_sql {
                     let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
@@ -2764,12 +2788,17 @@ impl SqlExecutor {
                             .unwrap_or(0),
                         access_level: stmt_access_level, // Already TableAccess enum
                     };
+                    log::debug!("Calling insert_table for: {:?}", table);
                     kalam_sql.insert_table(&table).map_err(|e| {
+                        log::error!("Failed to insert table into system catalog: {}", e);
                         KalamDbError::Other(format!(
                             "Failed to insert table into system catalog: {}",
                             e
                         ))
                     })?;
+                    log::debug!("Successfully inserted table into system.tables");
+                } else {
+                    log::warn!("kalam_sql is None, cannot insert table into system.tables");
                 }
 
                 // Register with DataFusion if stores are configured
@@ -2818,8 +2847,12 @@ impl SqlExecutor {
             let storage_id = self.validate_storage_id(stmt_storage_id)?;
 
             let (metadata, was_created) = self.shared_table_service.create_table(stmt)?;
+            eprintln!("DEBUG: CREATE TABLE (default SHARED): was_created={}, table_name={}", was_created, table_name);
+            log::debug!("CREATE TABLE (default SHARED): was_created={}, table_name={}", was_created, table_name);
 
             if was_created {
+                eprintln!("DEBUG: Inserting default SHARED table into system.tables: {}.{}", namespace_id, table_name);
+                log::debug!("Inserting default SHARED table into system.tables: {}.{}", namespace_id, table_name);
                 if let Some(kalam_sql) = &self.kalam_sql {
                     let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
 
@@ -2844,12 +2877,17 @@ impl SqlExecutor {
                             .unwrap_or(0),
                         access_level: stmt_access_level, // Already TableAccess enum
                     };
+                    log::debug!("Calling insert_table for default SHARED table: {:?}", table);
                     kalam_sql.insert_table(&table).map_err(|e| {
+                        log::error!("Failed to insert default SHARED table into system catalog: {}", e);
                         KalamDbError::Other(format!(
                             "Failed to insert table into system catalog: {}",
                             e
                         ))
                     })?;
+                    log::debug!("Successfully inserted default SHARED table into system.tables");
+                } else {
+                    log::warn!("kalam_sql is None for default SHARED table, cannot insert into system.tables");
                 }
 
                 if self.shared_table_store.is_some() {

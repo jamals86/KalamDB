@@ -67,7 +67,8 @@ pub async fn execute_sql(server: &TestServer, sql: &str, user_id: &str) -> Resul
 /// ```
 pub async fn create_namespace(server: &TestServer, namespace: &str) -> SqlResponse {
     let sql = format!("CREATE NAMESPACE {}", namespace);
-    let resp = server.execute_sql(&sql).await;
+    // Perform namespace creation as 'system' admin user for RBAC enforcement
+    let resp = server.execute_sql_as_user(&sql, "system").await;
     if resp.status != "success" {
         eprintln!(
             "CREATE NAMESPACE failed: ns={}, error={:?}",

@@ -43,6 +43,10 @@ Future:
 44) Remove all X-USER-ID header we will be using oauth/basic auth or incase of system user we will add it to the auth basic auth with empty password and only from localhost only
 45) "system_users" is repeated so many times in the code base we should use a column family enum for all of them, and making all of them as Partition::new("system_users") instead of hardcoding the string multiple times, we already have SystemTable enum we can add ColumnFamily as well
 46) nodeId should be unique and used from the config file and use NodeId enum
+47) No need to map developer to service role we need to use only Role's values
+48) make sure we use TableAccess
+49) execute_create_table need to take namespaceId currently it creates inside default namespace only, no need to have default namespaceid any place
+
 
 Key Findings
 Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB column families yet, resulting in 0 rows flushed

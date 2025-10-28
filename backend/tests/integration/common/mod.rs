@@ -252,6 +252,29 @@ impl TestServer {
                 .expect("Failed to create default storage");
         }
 
+        // Bootstrap: ensure a default 'system' user exists for admin operations in tests
+        {
+            use kalamdb_commons::{AuthType, Role, StorageMode, UserId};
+            let sys_id = UserId::new("system");
+            let now = chrono::Utc::now().timestamp_millis();
+            let sys_user = kalamdb_commons::system::User {
+                id: sys_id.clone(),
+                username: "system".to_string(),
+                password_hash: String::new(),
+                role: Role::System,
+                email: Some("system@localhost".to_string()),
+                auth_type: AuthType::Internal,
+                auth_data: None,
+                storage_mode: StorageMode::Table,
+                storage_id: None,
+                created_at: now,
+                updated_at: now,
+                last_seen: None,
+                deleted_at: None,
+            };
+            let _ = kalam_sql.insert_user(&sys_user);
+        }
+
         // Initialize stores (needed by some services)
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
         let user_table_store =
@@ -439,7 +462,18 @@ impl TestServer {
     ///
     /// `SqlResponse` containing status, results, and any errors
     pub async fn execute_sql_with_user(&self, sql: &str, user_id: Option<&str>) -> SqlResponse {
-        let user_id_obj = user_id.map(kalamdb_core::catalog::UserId::from);
+        let mut user_id_obj = user_id.map(kalamdb_core::catalog::UserId::from);
+
+        // Auto-escalate to 'system' for admin-only namespace DDL when no user provided
+        if user_id_obj.is_none() {
+            let sql_u = sql.trim().to_uppercase();
+            if sql_u.starts_with("CREATE NAMESPACE")
+                || sql_u.starts_with("ALTER NAMESPACE")
+                || sql_u.starts_with("DROP NAMESPACE")
+            {
+                user_id_obj = Some(kalamdb_core::catalog::UserId::from("system"));
+            }
+        }
 
         let is_admin = user_id_obj
             .as_ref()
@@ -517,7 +551,7 @@ impl TestServer {
                     }
                 }
             }
-            Err(_) => {
+            Err(kalamdb_core::error::KalamDbError::InvalidSql(_)) => {
                 // Any error from custom executor: fall back to DataFusion using the shared session_context
                 // where providers are registered by SqlExecutor.
                 match self.session_context.sql(sql).await {
