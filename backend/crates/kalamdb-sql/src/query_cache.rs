@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
+use bincode::{Decode, Encode};
 
 /// Cache key for query results
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -113,14 +114,15 @@ impl QueryCache {
     /// Returns None if not in cache or expired.
     pub fn get<T>(&self, key: &QueryCacheKey) -> Option<T>
     where
-        T: for<'de> Deserialize<'de>,
+        T: for<'de> Deserialize<'de> + Decode,
     {
         let cache = self.cache.read().unwrap();
         if let Some(entry) = cache.get(key) {
             let ttl = self.get_ttl(key);
             if !entry.is_expired(ttl) {
-                // Deserialize from bytes
-                if let Ok(value) = bincode::deserialize(&entry.value) {
+                // Deserialize from bytes using bincode v2
+                let config = bincode::config::standard();
+                if let Ok((value, _)) = bincode::decode_from_slice(&entry.value, config) {
                     return Some(value);
                 }
             }
@@ -131,10 +133,11 @@ impl QueryCache {
     /// Put result into cache
     pub fn put<T>(&self, key: QueryCacheKey, value: T)
     where
-        T: Serialize,
+        T: Serialize + Encode,
     {
-        // Serialize to bytes
-        if let Ok(bytes) = bincode::serialize(&value) {
+        // Serialize to bytes using bincode v2
+        let config = bincode::config::standard();
+        if let Ok(bytes) = bincode::encode_to_vec(&value, config) {
             let mut cache = self.cache.write().unwrap();
             cache.insert(key, CachedResult::new(bytes));
         }

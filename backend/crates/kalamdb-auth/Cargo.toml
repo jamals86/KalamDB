@@ -5,13 +5,13 @@ edition = "2021"
 
 [dependencies]
 # Password hashing
-bcrypt = "0.15"
+bcrypt = { workspace = true }
 
 # Encoding/decoding
-base64 = "0.21"
+base64 = { workspace = true }
 
 # JWT validation
-jsonwebtoken = "9.2"
+jsonwebtoken = { workspace = true }
 
 # Internal dependencies
 kalamdb-commons = { path = "../kalamdb-commons" }
@@ -19,18 +19,18 @@ kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-sql = { path = "../kalamdb-sql" }
 
 # Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 # Error handling
-thiserror = "1.0"
-anyhow = "1.0"
+thiserror = { workspace = true }
+anyhow = { workspace = true }
 
 # Logging
-log = "0.4"
+log = { workspace = true }
 
 # Async runtime
-tokio = { version = "1.35", features = ["full"] }
+tokio = { workspace = true }
 
 # Time handling
-chrono = "0.4"
+chrono = { workspace = true }

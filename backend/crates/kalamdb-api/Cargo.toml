@@ -14,35 +14,35 @@ kalamdb-sql = { path = "../kalamdb-sql" }
 kalamdb-auth = { path = "../kalamdb-auth" }
 
 # Apache Arrow
-arrow.workspace = true
+arrow = { workspace = true }
 
 # Web framework
-actix-web.workspace = true
-actix-rt.workspace = true
-actix-web-actors.workspace = true
-actix.workspace = true
+actix-web = { workspace = true }
+actix-rt = { workspace = true }
+actix-web-actors = { workspace = true }
+actix = { workspace = true }
 
 # Serialization
-serde.workspace = true
-serde_json.workspace = true
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 # UUID generation
-uuid.workspace = true
+uuid = { workspace = true }
 
 # JWT authentication
-jsonwebtoken.workspace = true
+jsonwebtoken = { workspace = true }
 
 # Time handling
-chrono.workspace = true
+chrono = { workspace = true }
 
 # Logging
-log.workspace = true
+log = { workspace = true }
 
 # Async runtime
-tokio.workspace = true
-futures-util = "0.3"
+tokio = { workspace = true }
+futures-util = { workspace = true }
 
 [dev-dependencies]
 # Testing utilities
 actix-rt = { workspace = true }
-tempfile = "3"
+tempfile = { workspace = true }
