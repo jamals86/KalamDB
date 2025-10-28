@@ -46,6 +46,8 @@ Future:
 47) No need to map developer to service role we need to use only Role's values
 48) make sure we use TableAccess
 49) execute_create_table need to take namespaceId currently it creates inside default namespace only, no need to have default namespaceid any place
+50) anonymous user shouldnt be allowed to create tables or do anything except select from public tables
+51) Combine all providers into one commong code: backend/crates/kalamdb-core/src/tables/shared_table_provider.rs, backend/crates/kalamdb-core/src/tables/user_table_provider.rs, backend/crates/kalamdb-core/src/tables/stream_table_provider.rs,system_table_provider.rs
 
 
 Key Findings

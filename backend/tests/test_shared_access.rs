@@ -125,15 +125,15 @@ async fn test_private_table_service_dba_only() {
     // Create users with different roles
     let service_username = "service_user";
     let service_password = "ServicePass123!";
-    auth_helper::create_test_user(&server, service_username, service_password, Role::Service).await;
+    let service_user = auth_helper::create_test_user(&server, service_username, service_password, Role::Service).await;
     
     let dba_username = "dba_user";
     let dba_password = "DbaPass123!";
-    auth_helper::create_test_user(&server, dba_username, dba_password, Role::Dba).await;
+    let dba_user = auth_helper::create_test_user(&server, dba_username, dba_password, Role::Dba).await;
     
     let regular_username = "regular_user";
     let regular_password = "RegularPass123!";
-    auth_helper::create_test_user(&server, regular_username, regular_password, Role::User).await;
+    let regular_user = auth_helper::create_test_user(&server, regular_username, regular_password, Role::User).await;
     
     // Create a private shared table (as service user)
     let create_table_sql = r#"
@@ -142,25 +142,25 @@ async fn test_private_table_service_dba_only() {
             secret TEXT NOT NULL
         ) ACCESS LEVEL private
     "#;
-    let result = server.execute_sql_as_user(create_table_sql, service_username).await;
+    let result = server.execute_sql_as_user(create_table_sql, service_user.id.as_str()).await;
     assert!(is_success(&result), "Failed to create private table: {:?}", result.error);
     
     // Test 1: Service user CAN access private table
     let select_sql = "SELECT * FROM default.sensitive_data";
-    let result = server.execute_sql_as_user(select_sql, service_username).await;
+    let result = server.execute_sql_as_user(select_sql, service_user.id.as_str()).await;
     assert!(is_success(&result), "Service user should access private table: {:?}", result.error);
     
     // Test 2: DBA user CAN access private table
-    let result = server.execute_sql_as_user(select_sql, dba_username).await;
+    let result = server.execute_sql_as_user(select_sql, dba_user.id.as_str()).await;
     assert!(is_success(&result), "DBA user should access private table: {:?}", result.error);
     
     // Test 3: Regular user CANNOT access private table
-    let result = server.execute_sql_as_user(select_sql, regular_username).await;
+    let result = server.execute_sql_as_user(select_sql, regular_user.id.as_str()).await;
     assert!(is_error(&result), "Regular user should NOT access private table");
     
     // Test 4: Service user CAN modify private table
     let insert_sql = "INSERT INTO default.sensitive_data (id, secret) VALUES (1, 'confidential')";
-    let result = server.execute_sql_as_user(insert_sql, service_username).await;
+    let result = server.execute_sql_as_user(insert_sql, service_user.id.as_str()).await;
     assert!(is_success(&result), "Service user should be able to modify private table: {:?}", result.error);
 }
 
@@ -184,18 +184,10 @@ async fn test_shared_table_defaults_to_private() {
         )
     "#;
     let result = server.execute_sql_as_user(create_table_sql, service_username).await;
-    if !is_success(&result) {
-        println!("CREATE TABLE failed with error: {:?}", result.error);
-        println!("Full result: {:?}", result);
-    }
     assert!(is_success(&result), "Failed to create table: {:?}", result.error);
     
     // Verify the table was created with default "private" access level
-    println!("Attempting to get table 'default.default_access'...");
-    let table_result = server.kalam_sql.get_table("default.default_access");
-    println!("get_table result: {:?}", table_result);
-    
-    let table = table_result
+    let table = server.kalam_sql.get_table("default.default_access")
         .expect("Failed to get table")
         .expect("Table should exist");
     
@@ -228,15 +220,15 @@ async fn test_change_access_level_requires_privileges() {
     // Create users with different roles
     let service_username = "service_user";
     let service_password = "ServicePass123!";
-    auth_helper::create_test_user(&server, service_username, service_password, Role::Service).await;
+    let service_user = auth_helper::create_test_user(&server, service_username, service_password, Role::Service).await;
     
     let dba_username = "dba_user";
     let dba_password = "DbaPass123!";
-    auth_helper::create_test_user(&server, dba_username, dba_password, Role::Dba).await;
+    let dba_user = auth_helper::create_test_user(&server, dba_username, dba_password, Role::Dba).await;
     
     let regular_username = "regular_user";
     let regular_password = "RegularPass123!";
-    auth_helper::create_test_user(&server, regular_username, regular_password, Role::User).await;
+    let regular_user = auth_helper::create_test_user(&server, regular_username, regular_password, Role::User).await;
     
     // Create a private shared table
     let create_table_sql = r#"
@@ -245,12 +237,12 @@ async fn test_change_access_level_requires_privileges() {
             value TEXT
         ) ACCESS LEVEL private
     "#;
-    let result = server.execute_sql_as_user(create_table_sql, service_username).await;
+    let result = server.execute_sql_as_user(create_table_sql, service_user.id.as_str()).await;
     assert!(is_success(&result), "Failed to create table: {:?}", result.error);
     
     // Test 1: Regular user CANNOT change access level
     let alter_sql = "ALTER TABLE default.config SET ACCESS LEVEL public";
-    let result = server.execute_sql_as_user(alter_sql, regular_username).await;
+    let result = server.execute_sql_as_user(alter_sql, regular_user.id.as_str()).await;
     assert!(
         is_error(&result),
         "Regular user should NOT be able to change access level"
@@ -261,7 +253,7 @@ async fn test_change_access_level_requires_privileges() {
     assert_eq!(table.access_level, Some(TableAccess::Private));
     
     // Test 2: Service user CAN change access level
-    let result = server.execute_sql_as_user(alter_sql, service_username).await;
+    let result = server.execute_sql_as_user(alter_sql, service_user.id.as_str()).await;
     assert!(is_success(&result), "Service user should be able to change access level: {:?}", result.error);
     
     // Verify access level changed to public
@@ -270,7 +262,7 @@ async fn test_change_access_level_requires_privileges() {
     
     // Test 3: DBA user CAN change access level back
     let alter_sql_private = "ALTER TABLE default.config SET ACCESS LEVEL private";
-    let result = server.execute_sql_as_user(alter_sql_private, dba_username).await;
+    let result = server.execute_sql_as_user(alter_sql_private, dba_user.id.as_str()).await;
     assert!(is_success(&result), "DBA user should be able to change access level: {:?}", result.error);
     
     // Verify access level changed back to private
@@ -289,7 +281,7 @@ async fn test_user_cannot_modify_public_table() {
     // Create service user and public table
     let service_username = "service_user";
     let service_password = "ServicePass123!";
-    auth_helper::create_test_user(&server, service_username, service_password, Role::Service).await;
+    let service_user = auth_helper::create_test_user(&server, service_username, service_password, Role::Service).await;
     
     let create_table_sql = r#"
         CREATE SHARED TABLE announcements (
@@ -297,42 +289,42 @@ async fn test_user_cannot_modify_public_table() {
             message TEXT NOT NULL
         ) ACCESS LEVEL public
     "#;
-    let result = server.execute_sql_as_user(create_table_sql, service_username).await;
+    let result = server.execute_sql_as_user(create_table_sql, service_user.id.as_str()).await;
     assert!(is_success(&result), "Failed to create table: {:?}", result.error);
     
     // Service user adds some data
     let insert_sql = "INSERT INTO default.announcements (id, message) VALUES (1, 'Welcome')";
-    let result = server.execute_sql_as_user(insert_sql, service_username).await;
+    let result = server.execute_sql_as_user(insert_sql, service_user.id.as_str()).await;
     assert!(is_success(&result), "Service user should insert data: {:?}", result.error);
     
     // Create regular user
     let regular_username = "regular_user";
     let regular_password = "RegularPass123!";
-    auth_helper::create_test_user(&server, regular_username, regular_password, Role::User).await;
+    let regular_user = auth_helper::create_test_user(&server, regular_username, regular_password, Role::User).await;
     
     // Test 1: Regular user CAN read
     let select_sql = "SELECT * FROM default.announcements";
-    let result = server.execute_sql_as_user(select_sql, regular_username).await;
+    let result = server.execute_sql_as_user(select_sql, regular_user.id.as_str()).await;
     assert!(is_success(&result), "Regular user should be able to SELECT from public table: {:?}", result.error);
     
     // Test 2: Regular user CANNOT insert
     let insert_sql = "INSERT INTO default.announcements (id, message) VALUES (2, 'Hacked')";
-    let result = server.execute_sql_as_user(insert_sql, regular_username).await;
+    let result = server.execute_sql_as_user(insert_sql, regular_user.id.as_str()).await;
     assert!(is_error(&result), "Regular user should NOT be able to INSERT into public table");
     
     // Test 3: Regular user CANNOT update
     let update_sql = "UPDATE default.announcements SET message = 'Modified' WHERE id = 1";
-    let result = server.execute_sql_as_user(update_sql, regular_username).await;
+    let result = server.execute_sql_as_user(update_sql, regular_user.id.as_str()).await;
     assert!(is_error(&result), "Regular user should NOT be able to UPDATE public table");
     
     // Test 4: Regular user CANNOT delete
     let delete_sql = "DELETE FROM default.announcements WHERE id = 1";
-    let result = server.execute_sql_as_user(delete_sql, regular_username).await;
+    let result = server.execute_sql_as_user(delete_sql, regular_user.id.as_str()).await;
     assert!(is_error(&result), "Regular user should NOT be able to DELETE from public table");
     
     // Test 5: Service user CAN still modify (verification)
     let update_sql = "UPDATE default.announcements SET message = 'Updated by service' WHERE id = 1";
-    let result = server.execute_sql_as_user(update_sql, service_username).await;
+    let result = server.execute_sql_as_user(update_sql, service_user.id.as_str()).await;
     assert!(is_success(&result), "Service user should be able to modify public table: {:?}", result.error);
 }
 

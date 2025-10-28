@@ -128,7 +128,12 @@ async fn test_01_combined_data_count_and_select() {
         )
         .await;
 
-    assert_eq!(count_response.status, "success");
+    assert_eq!(
+        count_response.status,
+        "success",
+        "SQL failed: {:?}",
+        count_response.error
+    );
     if let Some(rows) = count_response.results.first().and_then(|r| r.rows.as_ref()) {
         let total = rows[0].get("total").and_then(|v| v.as_i64()).unwrap_or(0);
         assert_eq!(
@@ -151,7 +156,12 @@ async fn test_01_combined_data_count_and_select() {
         )
         .await;
 
-    assert_eq!(select_response.status, "success");
+    assert_eq!(
+        select_response.status,
+        "success",
+        "SQL failed: {:?}",
+        select_response.error
+    );
     if let Some(rows) = select_response.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(rows.len(), 15, "Should return 15 rows");
 
@@ -541,7 +551,12 @@ async fn test_04_combined_data_integrity_verification() {
         )
         .await;
 
-    assert_eq!(query_response.status, "success");
+    assert_eq!(
+        query_response.status,
+        "success",
+        "SQL failed: {:?}",
+        query_response.error
+    );
     if let Some(rows) = query_response.results.first().and_then(|r| r.rows.as_ref()) {
         assert_eq!(rows.len(), 20, "Should have exactly 20 rows");
 

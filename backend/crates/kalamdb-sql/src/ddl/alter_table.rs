@@ -63,7 +63,16 @@ impl AlterTableStatement {
         }
 
         // Extract table name (handles ALTER TABLE, ALTER USER TABLE, ALTER SHARED TABLE)
-        let table_name = Self::extract_table_name_from_tokens(&tokens)?;
+        let table_name_raw = Self::extract_table_name_from_tokens(&tokens)?;
+
+        // Parse qualified table name (namespace.table or just table)
+        let (namespace, table_name) = if let Some(dot_pos) = table_name_raw.find('.') {
+            let ns = &table_name_raw[..dot_pos];
+            let tbl = &table_name_raw[dot_pos + 1..];
+            (NamespaceId::new(ns), tbl.to_string())
+        } else {
+            (current_namespace.clone(), table_name_raw)
+        };
 
         // Find operation keyword position
         let op_pos = tokens
@@ -88,7 +97,7 @@ impl AlterTableStatement {
 
         Ok(Self {
             table_name: TableName::new(&table_name),
-            namespace_id: current_namespace.clone(),
+            namespace_id: namespace,
             operation,
         })
     }

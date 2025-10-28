@@ -86,25 +86,30 @@ impl SharedTableStore {
     ) -> StorageResult<()> {
         self.ensure_partition(namespace_id, table_name)?;
 
-        // Inject system columns
-        if let Some(obj) = row_data.as_object_mut() {
-            obj.insert(
-                kalamdb_commons::constants::SystemColumnNames::UPDATED.to_string(),
-                JsonValue::String(Utc::now().to_rfc3339()),
-            );
-            obj.insert(
-                kalamdb_commons::constants::SystemColumnNames::DELETED.to_string(),
-                JsonValue::Bool(false),
-            );
-        }
+        // Extract system columns from row_data (they should already be there from SharedTableProvider)
+        let _updated_str = if let Some(obj) = row_data.as_object_mut() {
+            // Extract _updated and remove from fields to avoid duplication
+            let updated = obj.remove("_updated")
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| Utc::now().to_rfc3339());
+            
+            // Extract _deleted and remove from fields
+            let _deleted_val = obj.remove("_deleted")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            
+            updated
+        } else {
+            Utc::now().to_rfc3339()
+        };
 
-        // Convert to SharedTableRow
+        // Convert to SharedTableRow (fields no longer contain _updated/_deleted)
         let shared_table_row = SharedTableRow {
             fields: row_data.as_object()
                 .ok_or_else(|| StorageError::SerializationError("Row data must be an object".to_string()))?
                 .clone(),
             access_level: access_level.to_string(),
-            _updated: Utc::now().to_rfc3339(),
+            _updated: _updated_str,
             _deleted: false,
         };
 

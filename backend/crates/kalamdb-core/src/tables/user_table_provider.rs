@@ -485,64 +485,10 @@ impl TableProvider for UserTableProvider {
             DataFusionError::Execution(format!("JSON to Arrow conversion failed: {}", e))
         })?;
 
-        // Apply projection if specified
-        let (final_batch, final_schema) = if let Some(proj_indices) = projection {
-            // Handle empty projection (e.g., for COUNT(*))
-            if proj_indices.is_empty() {
-                // For COUNT(*), we need a batch with correct row count but no columns
-                // Use RecordBatch with a dummy null column to preserve row count
-                use datafusion::arrow::array::new_null_array;
-                use datafusion::arrow::datatypes::DataType;
-
-                // RecordBatch with 0 columns but preserving row count
-                // We need at least one column to preserve row count, so add a dummy null column
-                let dummy_field = Arc::new(Field::new("__dummy", DataType::Null, true));
-                let projected_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(vec![
-                    dummy_field.clone(),
-                ]));
-                let null_array = new_null_array(&DataType::Null, batch.num_rows());
-
-                let projected_batch = datafusion::arrow::record_batch::RecordBatch::try_new(
-                    projected_schema.clone(),
-                    vec![null_array],
-                )
-                .map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to create temp batch: {}", e))
-                })?;
-
-                (projected_batch, projected_schema)
-            } else {
-                let projected_columns: Vec<_> = proj_indices
-                    .iter()
-                    .map(|&i| batch.column(i).clone())
-                    .collect();
-
-                let projected_fields: Vec<_> = proj_indices
-                    .iter()
-                    .map(|&i| full_schema.field(i).clone())
-                    .collect();
-
-                let projected_schema =
-                    Arc::new(datafusion::arrow::datatypes::Schema::new(projected_fields));
-
-                let projected_batch = datafusion::arrow::record_batch::RecordBatch::try_new(
-                    projected_schema.clone(),
-                    projected_columns,
-                )
-                .map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to project batch: {}", e))
-                })?;
-
-                (projected_batch, projected_schema)
-            }
-        } else {
-            (batch, full_schema)
-        };
-
-        // Create an in-memory table and return its scan plan
+        // Create an in-memory table over the full schema and let DataFusion handle projection
         use datafusion::datasource::MemTable;
-        let partitions = vec![vec![final_batch]];
-        let table = MemTable::try_new(final_schema, partitions).map_err(|e| {
+        let partitions = vec![vec![batch]];
+        let table = MemTable::try_new(full_schema, partitions).map_err(|e| {
             DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
         })?;
 

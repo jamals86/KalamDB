@@ -35,7 +35,7 @@ async fn test_basic_auth_success() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("Content-Type", "application/json"))
         .set_json(serde_json::json!({
-            "sql": "CREATE NAMESPACE test_ns"
+            "sql": "SELECT 1"
         }))
         .to_request();
 
@@ -88,7 +88,7 @@ async fn test_basic_auth_invalid_credentials() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("Content-Type", "application/json"))
         .set_json(serde_json::json!({
-            "sql": "CREATE NAMESPACE test_ns"
+            "sql": "SELECT 1"
         }))
         .to_request();
 
@@ -125,7 +125,7 @@ async fn test_basic_auth_missing_header() {
         .uri("/v1/api/sql")
         .insert_header(("Content-Type", "application/json"))
         .set_json(serde_json::json!({
-            "sql": "CREATE NAMESPACE test_ns"
+            "sql": "SELECT 1"
         }))
         .to_request();
 

@@ -88,24 +88,19 @@ impl UserTableStore {
     ) -> StorageResult<()> {
         self.ensure_partition(namespace_id, table_name)?;
 
-        // Inject system columns
-        if let Some(obj) = row_data.as_object_mut() {
-            obj.insert(
-                kalamdb_commons::constants::SystemColumnNames::UPDATED.to_string(),
-                JsonValue::String(Utc::now().to_rfc3339()),
-            );
-            obj.insert(
-                kalamdb_commons::constants::SystemColumnNames::DELETED.to_string(),
-                JsonValue::Bool(false),
-            );
-        }
+        // Prepare dynamic fields (exclude system columns to avoid duplication with flattened struct)
+        let mut fields = row_data.as_object()
+            .ok_or_else(|| StorageError::SerializationError("Row data must be an object".to_string()))?
+            .clone();
+        fields.remove(kalamdb_commons::constants::SystemColumnNames::UPDATED);
+        fields.remove(kalamdb_commons::constants::SystemColumnNames::DELETED);
+
+        let now = Utc::now().to_rfc3339();
 
         // Convert to UserTableRow
         let user_table_row = UserTableRow {
-            fields: row_data.as_object()
-                .ok_or_else(|| StorageError::SerializationError("Row data must be an object".to_string()))?
-                .clone(),
-            _updated: Utc::now().to_rfc3339(),
+            fields,
+            _updated: now,
             _deleted: false,
         };
 

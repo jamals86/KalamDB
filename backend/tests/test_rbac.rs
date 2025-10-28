@@ -47,9 +47,8 @@ async fn test_user_role_own_tables_access_and_isolation() {
         ns
     );
     let resp = server.execute_sql_as_user(&create, u1.as_str()).await;
-    if resp.status != "success" {
-        panic!("u1 create user table failed: {:?}", resp);
-    }
+    println!("create user table resp = {:?}", resp);
+    assert_eq!(resp.status, "success", "create user table resp: {:?}", resp);
 
     // Insert a row as u1
     let ins = format!("INSERT INTO {}.notes (id, content) VALUES (1, 'hi')", ns);
@@ -59,6 +58,7 @@ async fn test_user_role_own_tables_access_and_isolation() {
     // Read as u1 → sees 1 row
     let sel = format!("SELECT * FROM {}.notes", ns);
     let resp = server.execute_sql_as_user(&sel, u1.as_str()).await;
+    println!("select as u1 resp = {:?}", resp);
     assert_eq!(resp.status, "success");
     let rows = resp.results[0].rows.as_ref().unwrap();
     assert_eq!(rows.len(), 1, "u1 should see own rows");

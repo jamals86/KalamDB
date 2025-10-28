@@ -47,8 +47,9 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::prelude::SessionContext;
-use kalamdb_commons::{JobStatus, JobType, Role};
+use kalamdb_commons::{JobStatus, JobType, Role, TableAccess};
 use kalamdb_commons::system::Namespace;
+use crate::auth::rbac;
 use datafusion::sql::sqlparser;
 use kalamdb_commons::models::{NamespaceId as CommonNamespaceId, StorageId};
 use kalamdb_sql::ddl::{
@@ -1038,6 +1039,23 @@ impl SqlExecutor {
             .as_ref()
             .ok_or_else(|| KalamDbError::InvalidOperation("KalamSQL not configured".to_string()))?;
 
+        // Look up user role for RBAC authorization on shared tables
+        let user_role = if user_id.as_str() == "anonymous" {
+            Role::User
+        } else {
+            match kalam_sql.get_user_by_id(user_id) {
+                Ok(Some(user)) => user.role,
+                Ok(None) => {
+                    log::warn!("User '{}' not found, defaulting to User role", user_id.as_str());
+                    Role::User
+                }
+                Err(e) => {
+                    log::error!("Failed to lookup user '{}': {}, defaulting to User role", user_id.as_str(), e);
+                    Role::User
+                }
+            }
+        };
+
         self.register_system_tables_in_session(&user_session, kalam_sql)?;
 
         // Get the "kalam" catalog
@@ -1087,11 +1105,30 @@ impl SqlExecutor {
             }
         }
 
-        // Register shared tables (no user isolation needed)
+        // Register shared tables (with RBAC authorization check)
         for table in tables_to_load.iter().filter(|t| t.table_type == TableType::Shared) {
             let table_name = table.table_name.clone();
             let namespace_id = table.namespace.clone();
             let table_id = format!("{}:{}", table.namespace, table.table_name);
+
+            // RBAC: Check if user has access to this shared table
+            // Note: owner_id field not yet implemented, so is_owner = false for now
+            // This means Restricted tables will only be accessible to Service/Dba/System roles
+            let access_level = table.access_level.unwrap_or(TableAccess::Private);
+            let is_owner = false; // TODO: Implement owner tracking in system.tables
+            
+            if !rbac::can_access_shared_table(access_level, is_owner, user_role) {
+                // Skip tables the user cannot access - don't register them
+                log::debug!(
+                    "User '{}' (role: {:?}) does not have access to shared table '{}.{}' (access_level: {:?})",
+                    user_id.as_str(),
+                    user_role,
+                    namespace_id.as_str(),
+                    table_name.as_str(),
+                    access_level
+                );
+                continue;
+            }
 
             // Get schema
             let table_schema = kalam_sql
@@ -2612,7 +2649,7 @@ impl SqlExecutor {
 
             // Insert into system.tables via KalamSQL
             if let Some(kalam_sql) = &self.kalam_sql {
-                let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
+                let table_id = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
                 let table = kalamdb_sql::Table {
                     table_id,
                     table_name: table_name.clone(),
@@ -2683,7 +2720,7 @@ impl SqlExecutor {
 
             // Insert into system.tables via KalamSQL
             if let Some(kalam_sql) = &self.kalam_sql {
-                let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
+                let table_id = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
                 let table = kalamdb_sql::Table {
                     table_id,
                     table_name: table_name.clone(),
@@ -2765,7 +2802,7 @@ impl SqlExecutor {
                 log::debug!("Inserting table into system.tables: {}.{}", namespace_id, table_name);
                 // Insert into system.tables via KalamSQL
                 if let Some(kalam_sql) = &self.kalam_sql {
-                    let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
+                    let table_id = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
 
                     // Serialize flush policy for storage
                     let flush_policy_json =
@@ -2847,14 +2884,10 @@ impl SqlExecutor {
             let storage_id = self.validate_storage_id(stmt_storage_id)?;
 
             let (metadata, was_created) = self.shared_table_service.create_table(stmt)?;
-            eprintln!("DEBUG: CREATE TABLE (default SHARED): was_created={}, table_name={}", was_created, table_name);
-            log::debug!("CREATE TABLE (default SHARED): was_created={}, table_name={}", was_created, table_name);
 
             if was_created {
-                eprintln!("DEBUG: Inserting default SHARED table into system.tables: {}.{}", namespace_id, table_name);
-                log::debug!("Inserting default SHARED table into system.tables: {}.{}", namespace_id, table_name);
                 if let Some(kalam_sql) = &self.kalam_sql {
-                    let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
+                    let table_id = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
 
                     // Serialize flush policy for storage
                     let flush_policy_json =
@@ -2877,15 +2910,12 @@ impl SqlExecutor {
                             .unwrap_or(0),
                         access_level: stmt_access_level, // Already TableAccess enum
                     };
-                    log::debug!("Calling insert_table for default SHARED table: {:?}", table);
                     kalam_sql.insert_table(&table).map_err(|e| {
-                        log::error!("Failed to insert default SHARED table into system catalog: {}", e);
                         KalamDbError::Other(format!(
                             "Failed to insert table into system catalog: {}",
                             e
                         ))
                     })?;
-                    log::debug!("Successfully inserted default SHARED table into system.tables");
                 } else {
                     log::warn!("kalam_sql is None for default SHARED table, cannot insert into system.tables");
                 }
