@@ -21,15 +21,11 @@ pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType, String>
         TinyInt(_) => DataType::Int8,
 
         // Unsigned integers --------------------------------------------------
-        UnsignedTinyInt(_) => DataType::UInt8,
-        UnsignedSmallInt(_) | UnsignedInt2(_) => DataType::UInt16,
-        UnsignedMediumInt(_) => DataType::UInt32,
-        UnsignedInt(_) | UnsignedInteger(_) | UnsignedInt4(_) => DataType::UInt32,
-        UnsignedBigInt(_) | UnsignedInt8(_) => DataType::UInt64,
+        UnsignedInteger => DataType::UInt32,
 
         // Floating point -----------------------------------------------------
         Float(_) | Real | Float4 => DataType::Float32,
-        Double | DoublePrecision | Float8 | Float64 => DataType::Float64,
+        SQLDataType::Double(_) | DoublePrecision | Float8 | Float64 => DataType::Float64,
 
         // Boolean ------------------------------------------------------------
         Boolean | Bool => DataType::Boolean,
@@ -62,11 +58,11 @@ pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType, String>
         Custom(name, _) => map_custom_type(name)?,
 
         // Struct / collection types -----------------------------------------
-        Array(_) | Enum(_) | Set(_) | Struct(_) => DataType::Utf8,
+        Array(_) | Enum(_, _) | Set(_) | Struct(_, _) => DataType::Utf8,
 
         // Otherwise, leave unsupported so callers can surface a friendly error
         Numeric(_) | Decimal(_) | Dec(_) | BigNumeric(_) | BigDecimal(_) | Uuid | Regclass
-        | Unspecified => {
+        | Unspecified | _ => {
             return Err(format!("Unsupported data type: {:?}", sql_type));
         }
     };
@@ -78,7 +74,7 @@ fn map_custom_type(name: &ObjectName) -> Result<DataType, String> {
     let ident = name
         .0
         .iter()
-        .map(|id| id.value.to_lowercase())
+        .map(|id| id.to_string().to_lowercase())
         .collect::<Vec<_>>()
         .join(".");
 
