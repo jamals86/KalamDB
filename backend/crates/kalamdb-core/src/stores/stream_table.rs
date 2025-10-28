@@ -15,9 +15,8 @@
 
 use crate::models::StreamTableRow;
 use chrono::Utc;
-use kalamdb_store::EntityStore;
 use kalamdb_commons::storage::{Partition, Result as StorageResult, StorageBackend, StorageError};
-use serde_json::{Map, Value as JsonValue};
+use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
 /// Stream table storage with TTL-based eviction.

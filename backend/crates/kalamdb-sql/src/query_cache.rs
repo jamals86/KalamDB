@@ -3,7 +3,6 @@
 //! Caches results of frequently-accessed system table queries to reduce RocksDB reads.
 //! Invalidated automatically on mutations to system tables.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};

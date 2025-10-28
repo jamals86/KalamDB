@@ -3,13 +3,10 @@
 //! Provides low-level read/write operations for system tables in RocksDB.
 
 // Import all system models from the crate root (which re-exports from commons)
-use crate::{
-    InformationSchemaTable, Job, LiveQuery, Namespace, Storage, Table, TableSchema, User,
-    UserTableCounter,
-};
-use kalamdb_commons::models::TableDefinition;
+use crate::{Job, LiveQuery, Namespace, Storage, Table, TableSchema, User};
+// use kalamdb_commons::models::TableDefinition; // Unused
 use anyhow::{anyhow, Result};
-use kalamdb_commons::storage::{Partition, StorageBackend};
+use kalamdb_commons::storage::StorageBackend;
 use kalamdb_commons::{SystemTable, StoragePartition};
 use std::sync::Arc;
 
