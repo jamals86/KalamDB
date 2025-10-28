@@ -166,6 +166,136 @@ mod tests {
         assert!(matches!(parse_log_level("INFO"), Ok(LevelFilter::Info)));
         assert!(matches!(parse_log_level("Debug"), Ok(LevelFilter::Debug)));
     }
+    
+    #[test]
+    fn test_redact_password_key_value() {
+        let message = "Creating user with password=secret123 and email=test@example.com";
+        let redacted = redact_sensitive_data(message);
+        assert!(!redacted.contains("secret123"), "Password not redacted: {}", redacted);
+        assert!(redacted.contains("[REDACTED]"), "REDACTED marker missing: {}", redacted);
+        assert!(redacted.contains("email=test@example.com"), "Non-sensitive data removed: {}", redacted);
+    }
+    
+    #[test]
+    fn test_redact_password_json() {
+        let message = r#"User data: {"username": "alice", "password": "secret123"}"#;
+        let redacted = redact_sensitive_data(message);
+        assert!(!redacted.contains("secret123"), "Password not redacted: {}", redacted);
+        assert!(redacted.contains("[REDACTED]"), "REDACTED marker missing: {}", redacted);
+    }
+    
+    #[test]
+    fn test_redact_auth_token() {
+        let message = "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9";
+        let redacted = redact_sensitive_data(message);
+        assert!(!redacted.contains("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"), "Token not redacted: {}", redacted);
+        assert!(redacted.contains("[REDACTED]"), "REDACTED marker missing: {}", redacted);
+    }
+    
+    #[test]
+    fn test_redact_multiple_sensitive_fields() {
+        let message = "password=pass123 api_key=key456 email=test@example.com";
+        let redacted = redact_sensitive_data(message);
+        assert!(!redacted.contains("pass123"), "Password not redacted");
+        assert!(!redacted.contains("key456"), "API key not redacted");
+        assert!(redacted.contains("email=test@example.com"), "Email should not be redacted");
+    }
+    
+    #[test]
+    fn test_is_sensitive_field() {
+        assert!(is_sensitive_field("password"));
+        assert!(is_sensitive_field("PASSWORD"));
+        assert!(is_sensitive_field("user_password"));
+        assert!(is_sensitive_field("api_key"));
+        assert!(is_sensitive_field("secret"));
+        assert!(is_sensitive_field("auth_data"));
+        
+        assert!(!is_sensitive_field("username"));
+        assert!(!is_sensitive_field("email"));
+        assert!(!is_sensitive_field("user_id"));
+    }
+}
+
+// =============================================================================
+// Password Redaction (T126 - FR-SEC-001)
+// =============================================================================
+
+/// Sensitive fields that should be redacted from logs
+const SENSITIVE_FIELDS: &[&str] = &[
+    "password",
+    "pass",
+    "pwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "auth_data",
+    "credentials",
+    "authorization",
+];
+
+/// Check if a field name is sensitive and should be redacted
+fn is_sensitive_field(field_name: &str) -> bool {
+    let lower_field = field_name.to_lowercase();
+    SENSITIVE_FIELDS.iter().any(|&sensitive| {
+        lower_field.contains(sensitive)
+    })
+}
+
+/// Redact sensitive information from log message
+///
+/// Replaces password and other sensitive fields with "[REDACTED]"
+///
+/// Examples:
+/// - "password=secret123" → "password=[REDACTED]"
+/// - "Creating user with password: foo" → "Creating user with password: [REDACTED]"
+/// - "auth_data={'secret': 'bar'}" → "auth_data=[REDACTED]"
+///
+/// # Arguments
+/// * `message` - Original log message
+///
+/// # Returns
+/// Redacted message safe for logging
+pub fn redact_sensitive_data(message: &str) -> String {
+    let mut redacted = message.to_string();
+    
+    // Pattern 1: key=value (e.g., "password=secret123")
+    for field in SENSITIVE_FIELDS {
+        let patterns = vec![
+            // password=secret123
+            format!(r"{}=\S+", field),
+            // password = secret123
+            format!(r"{}\s*=\s*\S+", field),
+            // password: secret123
+            format!(r"{}:\s*\S+", field),
+            // "password": "secret123"
+            format!(r#""{}":\s*"[^"]*""#, field),
+            // 'password': 'secret123'
+            format!(r"'{}':\s*'[^']*'", field),
+        ];
+        
+        for pattern in patterns {
+            if let Ok(re) = regex::Regex::new(&pattern) {
+                redacted = re.replace_all(&redacted, |caps: &regex::Captures| {
+                    let full_match = caps.get(0).unwrap().as_str();
+                    let separator_idx = full_match.find(|c| c == '=' || c == ':').unwrap();
+                    format!("{}[REDACTED]", &full_match[..=separator_idx])
+                }).to_string();
+            }
+        }
+    }
+    
+    // Pattern 2: field: value in logs (e.g., "with password: secret123")
+    for field in SENSITIVE_FIELDS {
+        let pattern = format!(r"{}\s*:\s*\S+", field);
+        if let Ok(re) = regex::Regex::new(&pattern) {
+            redacted = re.replace_all(&redacted, |_: &regex::Captures| {
+                format!("{}: [REDACTED]", field)
+            }).to_string();
+        }
+    }
+    
+    redacted
 }
 
 // =============================================================================

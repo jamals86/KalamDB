@@ -20,14 +20,16 @@ use kalamdb_core::services::{
 };
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_core::storage::{RocksDbInit, StorageRegistry};
+use kalamdb_core::storage::StorageRegistry;
+use kalamdb_store::RocksDbInit;
 use kalamdb_core::{
     jobs::{JobExecutor, StreamEvictionJob, StreamEvictionScheduler, TokioJobManager},
     scheduler::FlushScheduler,
 };
-use kalamdb_sql::adapter::RocksDbAdapter;
+use kalamdb_sql::RocksDbAdapter;
 use kalamdb_sql::KalamSql;
-use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
+use kalamdb_store::RocksDBBackend;
+use kalamdb_store::storage_trait::StorageBackend;
 use log::info;
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,8 +57,9 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     let db = db_init.open()?;
     info!("RocksDB initialized at {}", db_path.display());
 
-    // Initialize KalamSQL for system table access
-    let kalam_sql = Arc::new(KalamSql::new(db.clone())?);
+    // Initialize KalamSQL for system table access (via StorageBackend abstraction)
+    let storage_backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
+    let kalam_sql = Arc::new(KalamSql::new(storage_backend.clone())?);
     info!("KalamSQL initialized");
 
     // Extract RocksDbAdapter for API key authentication
@@ -85,10 +88,11 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         info!("Found {} existing storage(s)", storages.len());
     }
 
-    // Initialize stores and services
-    let user_table_store = Arc::new(UserTableStore::new(db.clone())?);
-    let shared_table_store = Arc::new(SharedTableStore::new(db.clone())?);
-    let stream_table_store = Arc::new(StreamTableStore::new(db.clone())?);
+    // Initialize core stores from generic backend
+    let core = kalamdb_core::kalam_core::KalamCore::new(storage_backend.clone())?;
+    let user_table_store = core.user_table_store.clone();
+    let shared_table_store = core.shared_table_store.clone();
+    let stream_table_store = core.stream_table_store.clone();
 
     let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
     let user_table_service = Arc::new(UserTableService::new(

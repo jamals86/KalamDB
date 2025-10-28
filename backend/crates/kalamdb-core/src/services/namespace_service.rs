@@ -236,10 +236,12 @@ impl NamespaceService {
 mod tests {
     use super::*;
     use kalamdb_store::test_utils::TestDb;
+    use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
 
     fn setup_test_service() -> NamespaceService {
         let test_db = TestDb::new(&["system_namespaces"]).unwrap();
-        let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         NamespaceService::new(kalam_sql)
     }
 

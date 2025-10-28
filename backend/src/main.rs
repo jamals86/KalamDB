@@ -88,10 +88,12 @@ async fn handle_create_user(args: Vec<String>) -> Result<()> {
     let db_path = std::path::PathBuf::from("./data/rocksdb");
     std::fs::create_dir_all(&db_path)?;
 
-    let db_init = kalamdb_core::storage::RocksDbInit::new(db_path.to_str().unwrap());
+    let db_init = kalamdb_store::RocksDbInit::new(db_path.to_str().unwrap());
     let db = db_init.open()?;
+    let storage_backend: std::sync::Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+        std::sync::Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
 
-    let kalam_sql = std::sync::Arc::new(kalamdb_sql::KalamSql::new(db)?);
+    let kalam_sql = std::sync::Arc::new(kalamdb_sql::KalamSql::new(storage_backend)?);
     let sql_adapter = std::sync::Arc::new(kalam_sql.adapter().clone());
 
     // Create user

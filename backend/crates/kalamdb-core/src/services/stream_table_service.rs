@@ -274,6 +274,7 @@ mod tests {
     use super::*;
     use datafusion::arrow::datatypes::{DataType, Field};
     use kalamdb_store::test_utils::TestDb;
+    use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
 
     fn create_test_service() -> (StreamTableService, TestDb) {
         let test_db = TestDb::new(&[
@@ -284,7 +285,8 @@ mod tests {
         .unwrap();
 
         let stream_table_store = Arc::new(StreamTableStore::new(test_db.db.clone()).unwrap());
-        let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
 
         let service = StreamTableService::new(stream_table_store, kalam_sql);
         (service, test_db)

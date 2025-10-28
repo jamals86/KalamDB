@@ -804,7 +804,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = Arc::new(init.open().unwrap());
-        let kalam_sql = Arc::new(KalamSql::new(Arc::clone(&db)).unwrap());
+        let backend: Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+            Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let user_table_store = Arc::new(UserTableStore::new(Arc::clone(&db)).unwrap());
         let shared_table_store = Arc::new(SharedTableStore::new(Arc::clone(&db)).unwrap());
         let stream_table_store = Arc::new(StreamTableStore::new(Arc::clone(&db)).unwrap());

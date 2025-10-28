@@ -523,6 +523,7 @@ impl TableDeletionService {
 mod tests {
     use super::*;
     use kalamdb_store::test_utils::TestDb;
+    use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
 
     fn create_test_service() -> (TableDeletionService, TestDb) {
         // Create test database with all required column families
@@ -542,7 +543,8 @@ mod tests {
         let user_store = Arc::new(UserTableStore::new(db.clone()).unwrap());
         let shared_store = Arc::new(SharedTableStore::new(db.clone()).unwrap());
         let stream_store = Arc::new(StreamTableStore::new(db.clone()).unwrap());
-        let kalam_sql = Arc::new(KalamSql::new(db.clone()).unwrap());
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
 
         let service = TableDeletionService::new(user_store, shared_store, stream_store, kalam_sql);
 

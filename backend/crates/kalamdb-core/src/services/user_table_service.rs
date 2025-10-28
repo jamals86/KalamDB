@@ -406,12 +406,14 @@ impl UserTableService {
 mod tests {
     use super::*;
     use kalamdb_store::test_utils::TestDb;
+    use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
 
     fn setup_test_service() -> UserTableService {
         let test_db =
             TestDb::new(&["system_table_schemas", "system_namespaces", "system_tables"]).unwrap();
 
-        let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let user_table_store = Arc::new(UserTableStore::new(test_db.db.clone()).unwrap());
         UserTableService::new(kalam_sql, user_table_store)
     }

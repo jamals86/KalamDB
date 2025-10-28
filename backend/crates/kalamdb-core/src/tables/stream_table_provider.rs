@@ -1071,7 +1071,9 @@ mod tests {
         };
 
         let store = Arc::new(StreamTableStore::new(test_db.db.clone()).unwrap());
-        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(test_db.db.clone()).unwrap());
+        let backend: Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+            Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
+        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
         let live_queries = Arc::new(LiveQueriesTableProvider::new(kalam_sql));
 
         let provider = StreamTableProvider::new(
@@ -1121,7 +1123,9 @@ mod tests {
         };
 
         let store = Arc::new(StreamTableStore::new(test_db.db.clone()).unwrap());
-        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(test_db.db.clone()).unwrap());
+        let backend: Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+            Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
+        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
         let live_queries = Arc::new(LiveQueriesTableProvider::new(kalam_sql));
 
         let provider = StreamTableProvider::new(

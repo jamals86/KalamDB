@@ -506,9 +506,11 @@ mod tests {
     fn test_websocket_session_creation() {
         let user_id = Some(UserId::from("user-123"));
         let temp_dir = TempDir::new().unwrap();
-        let db_init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
+        let db_init = kalamdb_store::RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = db_init.open().unwrap();
-        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(db).unwrap());
+        let backend: Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+            Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
+        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
         let manager = Arc::new(LiveQueryManager::new(
             kalam_sql,
             NodeId::new("test-node".to_string()),

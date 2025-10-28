@@ -9,9 +9,9 @@ repository.workspace = true
 [dependencies]
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
+kalamdb-store = { path = "../kalamdb-store" }
 
 # Database
-rocksdb = { workspace = true }
 arrow = { workspace = true }
 
 # Serialization

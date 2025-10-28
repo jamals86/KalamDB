@@ -188,7 +188,7 @@ mod tests {
     use actix_web::{test, App};
     use jsonwebtoken::Algorithm;
     use kalamdb_core::live_query::{LiveQueryManager, NodeId};
-    use kalamdb_core::storage::RocksDbInit;
+    use kalamdb_store::RocksDbInit;
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -201,7 +201,9 @@ mod tests {
         let db_path = temp_dir.path().to_str().unwrap().to_string();
         let db_init = RocksDbInit::new(&db_path);
         let db = db_init.open().expect("open RocksDB");
-        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(db).expect("kalam sql"));
+        let backend: Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+            Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
+        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).expect("kalam sql"));
         let live_query_manager = Arc::new(LiveQueryManager::new(
             kalam_sql,
             NodeId::new("test-node".to_string()),

@@ -145,6 +145,10 @@ impl StorageBackend for InMemoryBackend {
         data.remove(partition.name());
         Ok(())
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// Test database wrapper that automatically cleans up on drop.

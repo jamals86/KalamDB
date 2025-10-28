@@ -259,7 +259,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
-        let kalam_sql = Arc::new(KalamSql::new(db).unwrap());
+        let backend: Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+            Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let provider = LiveQueriesTableProvider::new(kalam_sql);
         (provider, temp_dir)
     }

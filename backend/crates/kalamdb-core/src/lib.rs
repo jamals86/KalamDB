@@ -21,3 +21,6 @@ pub mod sql;
 pub mod storage;
 pub mod system_table_registration;
 pub mod tables;
+
+// Optional facade for initializing core stores from a generic StorageBackend
+pub mod kalam_core;

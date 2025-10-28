@@ -6,8 +6,9 @@
 use kalamdb_commons::constants::AuthConstants;
 use kalamdb_commons::system::User;
 use kalamdb_commons::{AuthType, Role, UserId};
-use kalamdb_core::storage::RocksDbInit;
+use kalamdb_store::RocksDbInit;
 use kalamdb_sql::KalamSql;
+use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
 use std::sync::Arc;
 
 /// Helper to create fresh KalamSql instance for testing
@@ -18,8 +19,8 @@ async fn setup_kalam_sql() -> Arc<KalamSql> {
     // Initialize storage using RocksDbInit
     let db_init = RocksDbInit::new(db_path.to_str().unwrap());
     let db = db_init.open().expect("Failed to open database");
-    
-    Arc::new(KalamSql::new(db).expect("Failed to create KalamSql"))
+    let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
+    Arc::new(KalamSql::new(backend).expect("Failed to create KalamSql"))
 }
 
 /// T125: Verify system user is created on first startup

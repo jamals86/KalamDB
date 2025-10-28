@@ -2230,6 +2230,15 @@ impl SqlExecutor {
         // Hash password if provided (for Password auth type)
         let password_hash = if stmt.auth_type == kalamdb_commons::AuthType::Password {
             if let Some(password) = &stmt.password {
+                // T129: Validate password before hashing (FR-AUTH-002, FR-AUTH-003, FR-AUTH-019-022)
+                // This ensures:
+                // - Minimum 8 characters
+                // - Maximum 72 characters (bcrypt limit)
+                // - Not in common passwords list
+                kalamdb_auth::password::validate_password(password).map_err(|e| {
+                    KalamDbError::InvalidOperation(format!("Password validation failed: {}", e))
+                })?;
+                
                 // Use bcrypt with cost factor 12 (good balance of security and performance)
                 bcrypt::hash(password, 12).map_err(|e| {
                     KalamDbError::Other(format!("Failed to hash password: {}", e))
@@ -2324,6 +2333,11 @@ impl SqlExecutor {
         use kalamdb_sql::ddl::UserModification;
         match stmt.modification {
             UserModification::SetPassword(new_password) => {
+                // T129: Validate password before hashing
+                kalamdb_auth::password::validate_password(&new_password).map_err(|e| {
+                    KalamDbError::InvalidOperation(format!("Password validation failed: {}", e))
+                })?;
+                
                 // Hash the new password
                 let password_hash = bcrypt::hash(&new_password, 12).map_err(|e| {
                     KalamDbError::Other(format!("Failed to hash password: {}", e))
@@ -3782,12 +3796,14 @@ mod tests {
     use datafusion::prelude::SessionContext;
     use kalamdb_sql::KalamSql;
     use kalamdb_store::test_utils::TestDb;
+    use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
 
     fn setup_test_executor() -> SqlExecutor {
         let test_db =
             TestDb::new(&["system_namespaces", "system_tables", "system_table_schemas"]).unwrap();
 
-        let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
         let session_context = Arc::new(SessionContext::new());
 
@@ -3885,7 +3901,8 @@ mod tests {
         // Create test database with necessary column families
         let test_db =
             TestDb::new(&["system_namespaces", "system_tables", "system_table_schemas"]).unwrap();
-        let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
         let session_context = Arc::new(SessionContext::new());
 

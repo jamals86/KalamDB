@@ -508,6 +508,7 @@ mod tests {
     use super::*;
     use kalamdb_sql::{LiveQuery, Namespace};
     use kalamdb_store::test_utils::TestDb;
+    use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
 
     fn setup_test_db() -> (Arc<KalamSql>, TestDb) {
         // Create TestDb with required column families
@@ -521,7 +522,8 @@ mod tests {
             "system_jobs",
         ];
         let test_db = TestDb::new(cf_names).unwrap();
-        let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         (kalam_sql, test_db)
     }
 

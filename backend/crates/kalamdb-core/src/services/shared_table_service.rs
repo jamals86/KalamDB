@@ -483,6 +483,7 @@ mod tests {
     use super::*;
     use datafusion::arrow::datatypes::DataType;
     use kalamdb_store::test_utils::TestDb;
+    use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
 
     fn create_test_service() -> (SharedTableService, TestDb) {
         let test_db = TestDb::new(&[
@@ -493,7 +494,8 @@ mod tests {
         .unwrap();
 
         let shared_table_store = Arc::new(SharedTableStore::new(test_db.db.clone()).unwrap());
-        let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
 
         let service = SharedTableService::new(shared_table_store, kalam_sql);
         (service, test_db)

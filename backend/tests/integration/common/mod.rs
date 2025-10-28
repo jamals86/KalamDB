@@ -54,6 +54,7 @@ use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use std::sync::Arc;
 use tempfile::TempDir;
+use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
 
 /// HTTP test server wrapper - simplified to avoid complex type signatures
 pub struct HttpTestServer {
@@ -217,12 +218,12 @@ impl TestServer {
         });
 
         // Initialize RocksDB with all system tables
-        let db_init = kalamdb_core::storage::RocksDbInit::new(&db_path);
+        let db_init = kalamdb_store::RocksDbInit::new(&db_path);
         let db = db_init.open().expect("Failed to open RocksDB");
 
-        // Initialize KalamSQL
-        let kalam_sql =
-            Arc::new(kalamdb_sql::KalamSql::new(db.clone()).expect("Failed to create KalamSQL"));
+        // Initialize KalamSQL via StorageBackend abstraction
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
+        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).expect("Failed to create KalamSQL"));
 
         // Create default 'local' storage if system.storages is empty
         let storages = kalam_sql

@@ -60,6 +60,7 @@
 //! ```
 
 use std::fmt;
+use std::any::Any;
 
 /// Result type for storage operations.
 pub type Result<T> = std::result::Result<T, StorageError>;
@@ -224,6 +225,12 @@ pub trait StorageBackend: Send + Sync {
     ///
     /// **Warning**: This is a destructive operation and cannot be undone.
     fn drop_partition(&self, partition: &Partition) -> Result<()>;
+
+    /// Downcast support to enable integration paths that need concrete backends.
+    ///
+    /// This should be used sparingly; prefer the trait methods above. It exists
+    /// to help legacy components that still require a concrete backend handle.
+    fn as_any(&self) -> &dyn Any;
 }
 
 #[cfg(test)]

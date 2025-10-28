@@ -387,7 +387,9 @@ mod tests {
         let user_table_store = Arc::new(UserTableStore::new(Arc::clone(&db)).unwrap());
         let shared_table_store = Arc::new(SharedTableStore::new(Arc::clone(&db)).unwrap());
         let stream_table_store = Arc::new(StreamTableStore::new(Arc::clone(&db)).unwrap());
-        let kalam_sql = Arc::new(KalamSql::new(Arc::clone(&db)).unwrap());
+        let backend: Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+            Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let live_query_manager = Arc::new(LiveQueryManager::new(
             kalam_sql,
             NodeId::new("test".to_string()),

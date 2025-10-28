@@ -9,51 +9,39 @@ use crate::{
 };
 use kalamdb_commons::models::TableDefinition;
 use anyhow::{anyhow, Result};
-use rocksdb::{IteratorMode, DB};
+use kalamdb_store::storage_trait::{Partition, StorageBackend};
 use std::sync::Arc;
 
-/// RocksDB adapter for system tables
+/// Storage adapter for system tables (backend-agnostic)
 #[derive(Clone)]
-pub struct RocksDbAdapter {
-    db: Arc<DB>,
+pub struct StorageAdapter {
+    backend: Arc<dyn StorageBackend>,
 }
 
-impl RocksDbAdapter {
-    /// Create a new RocksDB adapter
-    pub fn new(db: Arc<DB>) -> Self {
-        Self { db }
+impl StorageAdapter {
+    /// Create a new adapter backed by a generic storage backend
+    pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
+        Self { backend }
     }
 
     // User operations
 
     /// Get a user by username
     pub fn get_user(&self, username: &str) -> Result<Option<User>> {
-        let cf = self
-            .db
-            .cf_handle("system_users")
-            .ok_or_else(|| anyhow!("system_users CF not found"))?;
-
+        let p = Partition::new("system_users");
         let key = format!("user:{}", username);
-        match self.db.get_cf(&cf, key.as_bytes())? {
-            Some(value) => {
-                let user: User = serde_json::from_slice(&value)?;
-                Ok(Some(user))
-            }
+        match self.backend.get(&p, key.as_bytes())? {
+            Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
             None => Ok(None),
         }
     }
 
     /// Insert a new user
     pub fn insert_user(&self, user: &User) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_users")
-            .ok_or_else(|| anyhow!("system_users CF not found"))?;
-
+        let p = Partition::new("system_users");
         let key = format!("user:{}", user.username);
         let value = serde_json::to_vec(user)?;
-        self.db.put_cf(&cf, key.as_bytes(), &value)?;
-
+        self.backend.put(&p, key.as_bytes(), &value)?;
         Ok(())
     }
 
@@ -64,13 +52,9 @@ impl RocksDbAdapter {
 
     /// Delete a user
     pub fn delete_user(&self, username: &str) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_users")
-            .ok_or_else(|| anyhow!("system_users CF not found"))?;
-
+        let p = Partition::new("system_users");
         let key = format!("user:{}", username);
-        self.db.delete_cf(&cf, key.as_bytes())?;
+        self.backend.delete(&p, key.as_bytes())?;
         Ok(())
     }
 
@@ -78,17 +62,10 @@ impl RocksDbAdapter {
 
     /// Get a namespace by ID
     pub fn get_namespace(&self, namespace_id: &str) -> Result<Option<Namespace>> {
-        let cf = self
-            .db
-            .cf_handle("system_namespaces")
-            .ok_or_else(|| anyhow!("system_namespaces CF not found"))?;
-
+        let p = Partition::new("system_namespaces");
         let key = format!("ns:{}", namespace_id);
-        match self.db.get_cf(&cf, key.as_bytes())? {
-            Some(value) => {
-                let namespace: Namespace = serde_json::from_slice(&value)?;
-                Ok(Some(namespace))
-            }
+        match self.backend.get(&p, key.as_bytes())? {
+            Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
             None => Ok(None),
         }
     }
@@ -100,26 +77,18 @@ impl RocksDbAdapter {
 
     /// Insert a new namespace
     pub fn insert_namespace(&self, namespace: &Namespace) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_namespaces")
-            .ok_or_else(|| anyhow!("system_namespaces CF not found"))?;
-
+        let p = Partition::new("system_namespaces");
         let key = format!("ns:{}", namespace.namespace_id);
         let value = serde_json::to_vec(namespace)?;
-        self.db.put_cf(&cf, key.as_bytes(), &value)?;
+        self.backend.put(&p, key.as_bytes(), &value)?;
         Ok(())
     }
 
     /// Delete a namespace by namespace_id
     pub fn delete_namespace(&self, namespace_id: &str) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_namespaces")
-            .ok_or_else(|| anyhow!("system_namespaces CF not found"))?;
-
+        let p = Partition::new("system_namespaces");
         let key = format!("ns:{}", namespace_id);
-        self.db.delete_cf(&cf, key.as_bytes())?;
+        self.backend.delete(&p, key.as_bytes())?;
         Ok(())
     }
 
@@ -218,11 +187,6 @@ impl RocksDbAdapter {
         ordinal_position: i32,
         default_expression: Option<&str>,
     ) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_columns")
-            .ok_or_else(|| anyhow!("system_columns CF not found"))?;
-
         // Key format: {table_id}:{column_name}
         let key = format!("{}:{}", table_id, column_name);
 
@@ -235,8 +199,9 @@ impl RocksDbAdapter {
             "default_expression": default_expression,
         });
 
+        let p = Partition::new("system_columns");
         let value = serde_json::to_vec(&column_meta)?;
-        self.db.put_cf(&cf, key.as_bytes(), &value)?;
+        self.backend.put(&p, key.as_bytes(), &value)?;
         Ok(())
     }
 
@@ -244,43 +209,28 @@ impl RocksDbAdapter {
 
     /// Get a live query by ID
     pub fn get_live_query(&self, live_id: &str) -> Result<Option<LiveQuery>> {
-        let cf = self
-            .db
-            .cf_handle("system_live_queries")
-            .ok_or_else(|| anyhow!("system_live_queries CF not found"))?;
-
+        let p = Partition::new("system_live_queries");
         let key = format!("lq:{}", live_id);
-        match self.db.get_cf(&cf, key.as_bytes())? {
-            Some(value) => {
-                let live_query: LiveQuery = serde_json::from_slice(&value)?;
-                Ok(Some(live_query))
-            }
+        match self.backend.get(&p, key.as_bytes())? {
+            Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
             None => Ok(None),
         }
     }
 
     /// Insert a new live query
     pub fn insert_live_query(&self, live_query: &LiveQuery) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_live_queries")
-            .ok_or_else(|| anyhow!("system_live_queries CF not found"))?;
-
+        let p = Partition::new("system_live_queries");
         let key = format!("lq:{}", live_query.live_id);
         let value = serde_json::to_vec(live_query)?;
-        self.db.put_cf(&cf, key.as_bytes(), &value)?;
+        self.backend.put(&p, key.as_bytes(), &value)?;
         Ok(())
     }
 
     /// Delete a live query by ID
     pub fn delete_live_query(&self, live_id: &str) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_live_queries")
-            .ok_or_else(|| anyhow!("system_live_queries CF not found"))?;
-
+        let p = Partition::new("system_live_queries");
         let key = format!("lq:{}", live_id);
-        self.db.delete_cf(&cf, key.as_bytes())?;
+        self.backend.delete(&p, key.as_bytes())?;
         Ok(())
     }
 
@@ -288,43 +238,28 @@ impl RocksDbAdapter {
 
     /// Get a job by ID
     pub fn get_job(&self, job_id: &str) -> Result<Option<Job>> {
-        let cf = self
-            .db
-            .cf_handle("system_jobs")
-            .ok_or_else(|| anyhow!("system_jobs CF not found"))?;
-
+        let p = Partition::new("system_jobs");
         let key = format!("job:{}", job_id);
-        match self.db.get_cf(&cf, key.as_bytes())? {
-            Some(value) => {
-                let job: Job = serde_json::from_slice(&value)?;
-                Ok(Some(job))
-            }
+        match self.backend.get(&p, key.as_bytes())? {
+            Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
             None => Ok(None),
         }
     }
 
     /// Insert a new job
     pub fn insert_job(&self, job: &Job) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_jobs")
-            .ok_or_else(|| anyhow!("system_jobs CF not found"))?;
-
+        let p = Partition::new("system_jobs");
         let key = format!("job:{}", job.job_id);
         let value = serde_json::to_vec(job)?;
-        self.db.put_cf(&cf, key.as_bytes(), &value)?;
+        self.backend.put(&p, key.as_bytes(), &value)?;
         Ok(())
     }
 
     /// Delete a job by ID
     pub fn delete_job(&self, job_id: &str) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_jobs")
-            .ok_or_else(|| anyhow!("system_jobs CF not found"))?;
-
+        let p = Partition::new("system_jobs");
         let key = format!("job:{}", job_id);
-        self.db.delete_cf(&cf, key.as_bytes())?;
+        self.backend.delete(&p, key.as_bytes())?;
         Ok(())
     }
 
@@ -332,31 +267,20 @@ impl RocksDbAdapter {
 
     /// Get a table by ID
     pub fn get_table(&self, table_id: &str) -> Result<Option<Table>> {
-        let cf = self
-            .db
-            .cf_handle("system_tables")
-            .ok_or_else(|| anyhow!("system_tables CF not found"))?;
-
+        let p = Partition::new("system_tables");
         let key = format!("table:{}", table_id);
-        match self.db.get_cf(&cf, key.as_bytes())? {
-            Some(value) => {
-                let table: Table = serde_json::from_slice(&value)?;
-                Ok(Some(table))
-            }
+        match self.backend.get(&p, key.as_bytes())? {
+            Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
             None => Ok(None),
         }
     }
 
     /// Insert a new table
     pub fn insert_table(&self, table: &Table) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_tables")
-            .ok_or_else(|| anyhow!("system_tables CF not found"))?;
-
+        let p = Partition::new("system_tables");
         let key = format!("table:{}", table.table_id);
         let value = serde_json::to_vec(table)?;
-        self.db.put_cf(&cf, key.as_bytes(), &value)?;
+        self.backend.put(&p, key.as_bytes(), &value)?;
         Ok(())
     }
 
@@ -376,14 +300,10 @@ impl RocksDbAdapter {
         &self,
         table_def: &kalamdb_commons::models::TableDefinition,
     ) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("information_schema_tables")
-            .ok_or_else(|| anyhow!("information_schema_tables CF not found"))?;
-
+        let p = Partition::new("information_schema_tables");
         let key = format!("{}:{}", table_def.namespace_id, table_def.table_name);
         let value = serde_json::to_vec(table_def)?;
-        self.db.put_cf(&cf, key.as_bytes(), &value)?;
+        self.backend.put(&p, key.as_bytes(), &value)?;
         Ok(())
     }
 
@@ -401,13 +321,9 @@ impl RocksDbAdapter {
         namespace_id: &str,
         table_name: &str,
     ) -> Result<Option<kalamdb_commons::models::TableDefinition>> {
-        let cf = self
-            .db
-            .cf_handle("information_schema_tables")
-            .ok_or_else(|| anyhow!("information_schema_tables CF not found"))?;
-
+        let p = Partition::new("information_schema_tables");
         let key = format!("{}:{}", namespace_id, table_name);
-        match self.db.get_cf(&cf, key.as_bytes())? {
+        match self.backend.get(&p, key.as_bytes())? {
             Some(value) => {
                 let table_def: kalamdb_commons::models::TableDefinition =
                     serde_json::from_slice(&value)?;
@@ -429,26 +345,13 @@ impl RocksDbAdapter {
         &self,
         namespace_id: &str,
     ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
-        let cf = self
-            .db
-            .cf_handle("information_schema_tables")
-            .ok_or_else(|| anyhow!("information_schema_tables CF not found"))?;
-
+        let p = Partition::new("information_schema_tables");
         let prefix = format!("{}:", namespace_id);
         let mut tables = Vec::new();
-
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-        for item in iter {
-            let (key, value) = item?;
-            let key_str = String::from_utf8_lossy(&key);
-
-            if key_str.starts_with(&prefix) {
-                let table_def: kalamdb_commons::models::TableDefinition =
-                    serde_json::from_slice(&value)?;
-                tables.push(table_def);
-            }
+        let iter = self.backend.scan(&p, Some(prefix.as_bytes()), None)?;
+        for (_k, v) in iter {
+            tables.push(serde_json::from_slice(&v)?);
         }
-
         Ok(tables)
     }
 
@@ -459,21 +362,12 @@ impl RocksDbAdapter {
     pub fn scan_all_table_definitions(
         &self,
     ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
-        let cf = self
-            .db
-            .cf_handle("information_schema_tables")
-            .ok_or_else(|| anyhow!("information_schema_tables CF not found"))?;
-
+        let p = Partition::new("information_schema_tables");
+        let iter = self.backend.scan(&p, None, None)?;
         let mut tables = Vec::new();
-
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-        for item in iter {
-            let (_key, value) = item?;
-            let table_def: kalamdb_commons::models::TableDefinition =
-                serde_json::from_slice(&value)?;
-            tables.push(table_def);
+        for (_k, v) in iter {
+            tables.push(serde_json::from_slice(&v)?);
         }
-
         Ok(tables)
     }
 
@@ -481,43 +375,28 @@ impl RocksDbAdapter {
 
     /// Get a storage by ID
     pub fn get_storage(&self, storage_id: &str) -> Result<Option<Storage>> {
-        let cf = self
-            .db
-            .cf_handle("system_storages")
-            .ok_or_else(|| anyhow!("system_storages CF not found"))?;
-
+        let p = Partition::new("system_storages");
         let key = format!("storage:{}", storage_id);
-        match self.db.get_cf(&cf, key.as_bytes())? {
-            Some(value) => {
-                let storage: Storage = serde_json::from_slice(&value)?;
-                Ok(Some(storage))
-            }
+        match self.backend.get(&p, key.as_bytes())? {
+            Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
             None => Ok(None),
         }
     }
 
     /// Insert a new storage
     pub fn insert_storage(&self, storage: &Storage) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_storages")
-            .ok_or_else(|| anyhow!("system_storages CF not found"))?;
-
+        let p = Partition::new("system_storages");
         let key = format!("storage:{}", storage.storage_id);
         let value = serde_json::to_vec(storage)?;
-        self.db.put_cf(&cf, key.as_bytes(), &value)?;
+        self.backend.put(&p, key.as_bytes(), &value)?;
         Ok(())
     }
 
     /// Delete a storage by ID
     pub fn delete_storage(&self, storage_id: &str) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_storages")
-            .ok_or_else(|| anyhow!("system_storages CF not found"))?;
-
+        let p = Partition::new("system_storages");
         let key = format!("storage:{}", storage_id);
-        self.db.delete_cf(&cf, key.as_bytes())?;
+        self.backend.delete(&p, key.as_bytes())?;
         Ok(())
     }
 
@@ -525,115 +404,67 @@ impl RocksDbAdapter {
 
     /// Scan all users
     pub fn scan_all_users(&self) -> Result<Vec<User>> {
-        let cf = self
-            .db
-            .cf_handle("system_users")
-            .ok_or_else(|| anyhow!("system_users CF not found"))?;
-
+        let p = Partition::new("system_users");
+        let iter = self.backend.scan(&p, None, None)?;
         let mut users = Vec::new();
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-
-        for item in iter {
-            let (_, value) = item?;
-            let user: User = serde_json::from_slice(&value)?;
-            users.push(user);
+        for (_k, v) in iter {
+            users.push(serde_json::from_slice(&v)?);
         }
-
         Ok(users)
     }
 
     /// Scan all namespaces
     pub fn scan_all_namespaces(&self) -> Result<Vec<Namespace>> {
-        let cf = self
-            .db
-            .cf_handle("system_namespaces")
-            .ok_or_else(|| anyhow!("system_namespaces CF not found"))?;
-
+        let p = Partition::new("system_namespaces");
+        let iter = self.backend.scan(&p, None, None)?;
         let mut namespaces = Vec::new();
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-
-        for item in iter {
-            let (_, value) = item?;
-            let namespace: Namespace = serde_json::from_slice(&value)?;
-            namespaces.push(namespace);
+        for (_k, v) in iter {
+            namespaces.push(serde_json::from_slice(&v)?);
         }
-
         Ok(namespaces)
     }
 
     /// Scan all live queries
     pub fn scan_all_live_queries(&self) -> Result<Vec<LiveQuery>> {
-        let cf = self
-            .db
-            .cf_handle("system_live_queries")
-            .ok_or_else(|| anyhow!("system_live_queries CF not found"))?;
-
+        let p = Partition::new("system_live_queries");
+        let iter = self.backend.scan(&p, None, None)?;
         let mut live_queries = Vec::new();
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-
-        for item in iter {
-            let (_, value) = item?;
-            let live_query: LiveQuery = serde_json::from_slice(&value)?;
-            live_queries.push(live_query);
+        for (_k, v) in iter {
+            live_queries.push(serde_json::from_slice(&v)?);
         }
-
         Ok(live_queries)
     }
 
     /// Scan all jobs
     pub fn scan_all_jobs(&self) -> Result<Vec<Job>> {
-        let cf = self
-            .db
-            .cf_handle("system_jobs")
-            .ok_or_else(|| anyhow!("system_jobs CF not found"))?;
-
+        let p = Partition::new("system_jobs");
+        let iter = self.backend.scan(&p, None, None)?;
         let mut jobs = Vec::new();
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-
-        for item in iter {
-            let (_, value) = item?;
-            let job: Job = serde_json::from_slice(&value)?;
-            jobs.push(job);
+        for (_k, v) in iter {
+            jobs.push(serde_json::from_slice(&v)?);
         }
-
         Ok(jobs)
     }
 
     /// Scan all tables
     pub fn scan_all_tables(&self) -> Result<Vec<Table>> {
-        let cf = self
-            .db
-            .cf_handle("system_tables")
-            .ok_or_else(|| anyhow!("system_tables CF not found"))?;
-
+        let p = Partition::new("system_tables");
+        let iter = self.backend.scan(&p, None, None)?;
         let mut tables = Vec::new();
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-
-        for item in iter {
-            let (_, value) = item?;
-            let table: Table = serde_json::from_slice(&value)?;
-            tables.push(table);
+        for (_k, v) in iter {
+            tables.push(serde_json::from_slice(&v)?);
         }
-
         Ok(tables)
     }
 
     /// Scan all storages
     pub fn scan_all_storages(&self) -> Result<Vec<Storage>> {
-        let cf = self
-            .db
-            .cf_handle("system_storages")
-            .ok_or_else(|| anyhow!("system_storages CF not found"))?;
-
+        let p = Partition::new("system_storages");
+        let iter = self.backend.scan(&p, None, None)?;
         let mut storages = Vec::new();
-        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
-
-        for item in iter {
-            let (_, value) = item?;
-            let storage: Storage = serde_json::from_slice(&value)?;
-            storages.push(storage);
+        for (_k, v) in iter {
+            storages.push(serde_json::from_slice(&v)?);
         }
-
         Ok(storages)
     }
 
@@ -641,16 +472,9 @@ impl RocksDbAdapter {
 
     /// Delete a table by table_id
     pub fn delete_table(&self, table_id: &str) -> Result<()> {
-        let cf = self
-            .db
-            .cf_handle("system_tables")
-            .ok_or_else(|| anyhow!("system_tables CF not found"))?;
-
+        let p = Partition::new("system_tables");
         let key = format!("table:{}", table_id);
-        self.db.delete_cf(&cf, key.as_bytes())?;
-
-        // Flush to ensure delete is immediately visible
-        self.db.flush_cf(&cf)?;
+        self.backend.delete(&p, key.as_bytes())?;
         Ok(())
     }
 

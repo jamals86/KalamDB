@@ -122,7 +122,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
-        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(db).unwrap());
+        let backend: Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+            Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
+        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql));
         let retention = RetentionPolicy::with_defaults(Arc::clone(&jobs_provider));
         (retention, jobs_provider, temp_dir)
@@ -259,7 +261,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
-        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(db).unwrap());
+        let backend: Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+            Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
+        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql));
 
         let custom_config = RetentionConfig {

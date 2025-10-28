@@ -424,8 +424,11 @@ mod tests {
             .open()
             .expect("Failed to open RocksDB for storage registry tests");
 
+        let backend: Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+            Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(
-            KalamSql::new(db).expect("Failed to create KalamSQL for storage registry tests"),
+            KalamSql::new(backend)
+                .expect("Failed to create KalamSQL for storage registry tests"),
         );
 
         StorageRegistry::new(kalam_sql)

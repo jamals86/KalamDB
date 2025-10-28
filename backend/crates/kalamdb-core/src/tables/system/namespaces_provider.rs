@@ -53,8 +53,8 @@ impl NamespacesTableProvider {
                 options.append_null();
             }
             table_counts.push(Some(ns.table_count));
-            // Stored as seconds; convert to milliseconds for TimestampMillisecond
-            created_ats.push(Some(ns.created_at * 1000));
+            // Commons Namespace.created_at is already in milliseconds
+            created_ats.push(Some(ns.created_at));
         }
 
         let batch = RecordBatch::try_new(

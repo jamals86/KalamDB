@@ -14,6 +14,8 @@ pub const BCRYPT_COST: u32 = DEFAULT_COST;
 pub const MIN_PASSWORD_LENGTH: usize = 8;
 
 /// Maximum password length (bcrypt has a 72-byte limit)
+/// Note: Passwords longer than 72 bytes are truncated by bcrypt
+/// Spec requests 1024, but bcrypt's cryptographic limit is 72
 pub const MAX_PASSWORD_LENGTH: usize = 72;
 
 /// Common passwords list (loaded once)
@@ -75,17 +77,18 @@ pub async fn verify_password(password: &str, hash: &str) -> AuthResult<bool> {
 /// Checks:
 /// - Minimum length (8 characters)
 /// - Maximum length (72 characters for bcrypt)
-/// - Not in common passwords list
+/// - Not in common passwords list (unless disabled)
 ///
 /// # Arguments
 /// * `password` - Password to validate
+/// * `skip_common_check` - If true, skip common password validation (for testing/config)
 ///
 /// # Returns
 /// `Ok(())` if valid, `Err` with reason if invalid
 ///
 /// # Errors
 /// Returns `AuthError::WeakPassword` with specific reason
-pub fn validate_password(password: &str) -> AuthResult<()> {
+pub fn validate_password_with_config(password: &str, skip_common_check: bool) -> AuthResult<()> {
     // Check minimum length
     if password.len() < MIN_PASSWORD_LENGTH {
         return Err(AuthError::WeakPassword(format!(
@@ -97,19 +100,35 @@ pub fn validate_password(password: &str) -> AuthResult<()> {
     // Check maximum length (bcrypt limit)
     if password.len() > MAX_PASSWORD_LENGTH {
         return Err(AuthError::WeakPassword(format!(
-            "Password must be at most {} characters",
+            "Password must be at most {} characters (bcrypt limit)",
             MAX_PASSWORD_LENGTH
         )));
     }
 
-    // Check against common passwords
-    if is_common_password(password) {
+    // Check against common passwords (unless disabled)
+    if !skip_common_check && is_common_password(password) {
         return Err(AuthError::WeakPassword(
             "Password is too common".to_string(),
         ));
     }
 
     Ok(())
+}
+
+/// Validate password meets security requirements (with common password check enabled).
+///
+/// Convenience wrapper for `validate_password_with_config(password, false)`.
+///
+/// # Arguments
+/// * `password` - Password to validate
+///
+/// # Returns
+/// `Ok(())` if valid, `Err` with reason if invalid
+///
+/// # Errors
+/// Returns `AuthError::WeakPassword` with specific reason
+pub fn validate_password(password: &str) -> AuthResult<()> {
+    validate_password_with_config(password, false)
 }
 
 /// Check if a password is in the common passwords list.
@@ -175,6 +194,17 @@ mod tests {
     fn test_validate_password_valid() {
         let result = validate_password("MySecurePassword123!");
         assert!(result.is_ok());
+    }
+    
+    #[test]
+    fn test_validate_password_skip_common_check() {
+        // Common password should fail with check enabled
+        let result = validate_password("password");
+        assert!(matches!(result, Err(AuthError::WeakPassword(_))));
+        
+        // Same password should pass with check disabled
+        let result = validate_password_with_config("password", true);
+        assert!(result.is_ok(), "Password should be accepted when common check disabled");
     }
 
     #[test]

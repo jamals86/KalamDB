@@ -16,8 +16,9 @@
 use kalamdb_commons::constants::AuthConstants;
 use kalamdb_commons::{AuthType, Role, UserId};
 use kalamdb_commons::system::User;
-use kalamdb_core::storage::RocksDbInit;
+use kalamdb_store::RocksDbInit;
 use kalamdb_sql::KalamSql;
+use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -28,8 +29,8 @@ async fn create_test_db() -> (Arc<KalamSql>, TempDir) {
     
     let db_init = RocksDbInit::new(db_path.to_str().unwrap());
     let db = db_init.open().expect("Failed to open DB");
-
-    let kalam_sql = KalamSql::new(db).expect("Failed to create KalamSQL");
+    let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
+    let kalam_sql = KalamSql::new(backend).expect("Failed to create KalamSQL");
 
     (Arc::new(kalam_sql), temp_dir)
 }
@@ -151,7 +152,8 @@ async fn test_system_user_not_duplicated_on_restart() {
     {
         let db_init = RocksDbInit::new(db_path.to_str().unwrap());
         let db = db_init.open().expect("Failed to open DB");
-        let kalam_sql = KalamSql::new(db).expect("Failed to create KalamSQL");
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
+        let kalam_sql = KalamSql::new(backend).expect("Failed to create KalamSQL");
         create_system_user(&kalam_sql).await.expect("Failed to create system user");
 
         let system_user_id = UserId::new(AuthConstants::DEFAULT_SYSTEM_USER_ID);
@@ -167,7 +169,8 @@ async fn test_system_user_not_duplicated_on_restart() {
     {
         let db_init = RocksDbInit::new(db_path.to_str().unwrap());
         let db = db_init.open().expect("Failed to open DB on restart");
-        let kalam_sql = KalamSql::new(db).expect("Failed to create KalamSQL on restart");
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
+        let kalam_sql = KalamSql::new(backend).expect("Failed to create KalamSQL on restart");
         create_system_user(&kalam_sql).await.expect("Failed to create system user on restart");
 
         let system_user_id = UserId::new(AuthConstants::DEFAULT_SYSTEM_USER_ID);
