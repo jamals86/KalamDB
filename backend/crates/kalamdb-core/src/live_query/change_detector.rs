@@ -36,7 +36,7 @@
 
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, ChangeType, LiveQueryManager};
-use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
+use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -259,7 +259,7 @@ impl SharedTableChangeDetector {
 
         // Store the row
         self.store
-            .put(namespace_id, table_name, row_id, row_data.clone())
+            .put(namespace_id, table_name, row_id, row_data.clone(), "public")
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         // Get stored value with system columns
@@ -375,7 +375,7 @@ impl SharedTableChangeDetector {
 mod tests {
     use super::*;
     use crate::live_query::connection_registry::NodeId;
-    use crate::storage::RocksDbInit;
+    use kalamdb_store::RocksDbInit;
     use kalamdb_sql::KalamSql;
     use tempfile::TempDir;
 
@@ -387,7 +387,9 @@ mod tests {
         let user_table_store = Arc::new(UserTableStore::new(Arc::clone(&db)).unwrap());
         let shared_table_store = Arc::new(SharedTableStore::new(Arc::clone(&db)).unwrap());
         let stream_table_store = Arc::new(StreamTableStore::new(Arc::clone(&db)).unwrap());
-        let kalam_sql = Arc::new(KalamSql::new(Arc::clone(&db)).unwrap());
+        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+            Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let live_query_manager = Arc::new(LiveQueryManager::new(
             kalam_sql,
             NodeId::new("test".to_string()),

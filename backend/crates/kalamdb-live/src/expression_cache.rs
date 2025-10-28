@@ -150,9 +150,10 @@ impl CachedExpression {
         // sql_parser.parse_sql_into_expr(filter_sql)?
 
         // Return a placeholder expression
-        Ok(Expr::Literal(datafusion::scalar::ScalarValue::Boolean(
-            Some(true),
-        )))
+        Ok(Expr::Literal(
+            datafusion::scalar::ScalarValue::Boolean(Some(true)),
+            None,
+        ))
     }
 
     /// Compute a simple hash of the schema for cache invalidation

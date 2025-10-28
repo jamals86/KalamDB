@@ -14,7 +14,7 @@ use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use arrow::datatypes::Schema;
 use chrono::Utc;
 use kalamdb_commons::models::ColumnDefault;
-use kalamdb_store::UserTableStore;
+use crate::stores::UserTableStore;
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -406,12 +406,12 @@ impl UserTableInsertHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::UserTableStore;
+    use kalamdb_store::test_utils::InMemoryBackend;
+    use crate::stores::UserTableStore;
 
     fn setup_test_handler() -> UserTableInsertHandler {
-        let test_db = TestDb::single_cf("user_table:test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(test_db.db).unwrap());
+        let backend = Arc::new(InMemoryBackend::new());
+        let store = Arc::new(UserTableStore::new(backend).unwrap());
         UserTableInsertHandler::new(store)
     }
 

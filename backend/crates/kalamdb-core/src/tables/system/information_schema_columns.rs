@@ -9,9 +9,9 @@ use datafusion::arrow::array::{BooleanArray, RecordBatch, StringArray, UInt32Arr
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::datasource::TableProvider;
 use datafusion::error::Result as DataFusionResult;
-use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::{Expr, TableType};
-use datafusion::physical_plan::{memory::MemoryExec, ExecutionPlan};
+use datafusion::datasource::MemTable;
+use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_sql::KalamSql;
 use std::any::Any;
 use std::sync::Arc;
@@ -19,6 +19,12 @@ use std::sync::Arc;
 pub struct InformationSchemaColumnsProvider {
     kalam_sql: Arc<KalamSql>,
     schema: SchemaRef,
+}
+
+impl std::fmt::Debug for InformationSchemaColumnsProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InformationSchemaColumnsProvider").finish()
+    }
 }
 
 impl InformationSchemaColumnsProvider {
@@ -104,7 +110,7 @@ impl TableProvider for InformationSchemaColumnsProvider {
 
     async fn scan(
         &self,
-        _state: &SessionState,
+        _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         _filters: &[Expr],
         _limit: Option<usize>,
@@ -116,8 +122,8 @@ impl TableProvider for InformationSchemaColumnsProvider {
             .map_err(|e| datafusion::error::DataFusionError::Execution(e.to_string()))?;
 
         let partitions = vec![vec![batch]];
-        let exec = MemoryExec::try_new(&partitions, schema, projection.cloned())?;
-
-        Ok(Arc::new(exec))
+        let table = MemTable::try_new(schema, partitions)
+            .map_err(|e| datafusion::error::DataFusionError::Execution(e.to_string()))?;
+        table.scan(_state, projection, &[], _limit).await
     }
 }

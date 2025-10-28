@@ -74,6 +74,12 @@ pub struct CLISession {
 
     /// Server API version
     server_api_version: Option<String>,
+
+    /// Instance name for credential management
+    instance: Option<String>,
+
+    /// Credential store for managing saved credentials
+    credential_store: Option<crate::credentials::FileCredentialStore>,
 }
 
 impl CLISession {
@@ -85,6 +91,20 @@ impl CLISession {
         auth: AuthProvider,
         format: OutputFormat,
         color: bool,
+    ) -> Result<Self> {
+        Self::with_auth_and_instance(server_url, auth, format, color, None, None).await
+    }
+
+    /// Create a new CLI session with AuthProvider, instance name, and credential store
+    ///
+    /// **Implements T121-T122**: CLI credential management commands
+    pub async fn with_auth_and_instance(
+        server_url: String,
+        auth: AuthProvider,
+        format: OutputFormat,
+        color: bool,
+        instance: Option<String>,
+        credential_store: Option<crate::credentials::FileCredentialStore>,
     ) -> Result<Self> {
         // Build kalam-link client with authentication
         let client = KalamLinkClient::builder()
@@ -113,6 +133,8 @@ impl CLISession {
             user_id: "cli".to_string(),
             server_version,
             server_api_version,
+            instance,
+            credential_store,
         })
     }
 
@@ -608,6 +630,15 @@ impl CLISession {
             Command::Unsubscribe => {
                 println!("No active subscription to cancel");
             }
+            Command::ShowCredentials => {
+                self.show_credentials();
+            }
+            Command::UpdateCredentials { username, password } => {
+                self.update_credentials(username, password)?;
+            }
+            Command::DeleteCredentials => {
+                self.delete_credentials()?;
+            }
             Command::Unknown(cmd) => {
                 eprintln!("Unknown command: {}. Type \\help for help.", cmd);
             }
@@ -921,6 +952,9 @@ impl CLISession {
         println!("    \\watch <query>         Alias for \\subscribe");
         println!("    \\unsubscribe           Cancel active subscription");
         println!("    \\refresh-tables        Refresh table names for autocomplete");
+        println!("    \\show-credentials      Show stored credentials for current instance");
+        println!("    \\update-credentials <user> <pass>  Update credentials");
+        println!("    \\delete-credentials    Delete stored credentials");
         println!();
         println!("  Features:");
         println!("    - TAB completion for SQL keywords, table names, and columns");
@@ -933,6 +967,7 @@ impl CLISession {
         println!("    \\dt");
         println!("    \\d users");
         println!("    \\subscribe SELECT * FROM messages");
+        println!("    \\show-credentials");
         println!();
     }
 
@@ -963,6 +998,126 @@ impl CLISession {
     pub fn set_color(&mut self, enabled: bool) {
         self.color = enabled;
         self.formatter = OutputFormatter::new(self.format, enabled);
+    }
+
+    /// Show stored credentials for current instance
+    ///
+    /// **Implements T121**: Display credentials command
+    fn show_credentials(&self) {
+        use colored::Colorize;
+        use kalam_link::credentials::CredentialStore;
+
+        match (&self.instance, &self.credential_store) {
+            (Some(instance), Some(store)) => {
+                match store.get_credentials(instance) {
+                    Ok(Some(creds)) => {
+                        println!("{}", "Stored Credentials".bold().cyan());
+                        println!("  Instance: {}", creds.instance.green());
+                        println!("  Username: {}", creds.username.green());
+                        println!("  Password: {}", "****** (hidden)".dimmed());
+                        if let Some(ref server_url) = creds.server_url {
+                            println!("  Server URL: {}", server_url.green());
+                        }
+                        println!();
+                        println!("{}", "Security Note:".yellow().bold());
+                        println!("  Credentials are stored in: {}", 
+                            crate::credentials::FileCredentialStore::default_path().display().to_string().dimmed());
+                        #[cfg(unix)]
+                        println!("{}", "  File permissions: 0600 (owner read/write only)".dimmed());
+                    }
+                    Ok(None) => {
+                        println!("{}", "No credentials stored for this instance".yellow());
+                        println!("Use \\update-credentials <username> <password> to store credentials");
+                    }
+                    Err(e) => {
+                        eprintln!("{} {}", "Error loading credentials:".red(), e);
+                    }
+                }
+            }
+            (None, _) => {
+                println!("{}", "Credential management not available".yellow());
+                println!("Instance name not set for this session");
+            }
+            (_, None) => {
+                println!("{}", "Credential store not available".yellow());
+                println!("Credential storage was not initialized for this session");
+            }
+        }
+    }
+
+    /// Update credentials for current instance
+    ///
+    /// **Implements T122**: Update credentials command
+    fn update_credentials(&mut self, username: String, password: String) -> Result<()> {
+        use colored::Colorize;
+        use kalam_link::credentials::{Credentials, CredentialStore};
+
+        match (&self.instance, &mut self.credential_store) {
+            (Some(instance), Some(store)) => {
+                let creds = Credentials::with_server_url(
+                    instance.clone(),
+                    username.clone(),
+                    password,
+                    self.server_url.clone(),
+                );
+
+                store.set_credentials(&creds)?;
+
+                println!("{}", "✓ Credentials updated successfully".green().bold());
+                println!("  Instance: {}", instance.cyan());
+                println!("  Username: {}", username.cyan());
+                println!("  Server URL: {}", self.server_url.cyan());
+                println!();
+                println!("{}", "Security Reminder:".yellow().bold());
+                println!("  Credentials are stored at: {}", 
+                    crate::credentials::FileCredentialStore::default_path().display().to_string().dimmed());
+                #[cfg(unix)]
+                println!("{}", "  File permissions: 0600 (owner read/write only)".dimmed());
+
+                Ok(())
+            }
+            (None, _) => {
+                Err(CLIError::ConfigurationError(
+                    "Instance name not set for this session".to_string(),
+                ))
+            }
+            (_, None) => {
+                Err(CLIError::ConfigurationError(
+                    "Credential store not initialized for this session".to_string(),
+                ))
+            }
+        }
+    }
+
+    /// Delete credentials for current instance
+    ///
+    /// **Implements T122**: Delete credentials functionality
+    fn delete_credentials(&mut self) -> Result<()> {
+        use colored::Colorize;
+        use kalam_link::credentials::CredentialStore;
+
+        match (&self.instance, &mut self.credential_store) {
+            (Some(instance), Some(store)) => {
+                store.delete_credentials(instance)?;
+
+                println!("{}", "✓ Credentials deleted successfully".green().bold());
+                println!("  Instance: {}", instance.cyan());
+                println!();
+                println!("You will need to provide authentication credentials for future connections.");
+
+                Ok(())
+            }
+            (None, _) => {
+                Err(CLIError::ConfigurationError(
+                    "Instance name not set for this session".to_string(),
+                ))
+            }
+            (_, None) => {
+                Err(CLIError::ConfigurationError(
+                    "Credential store not initialized for this session".to_string(),
+                ))
+            }
+        }
     }
 }
 

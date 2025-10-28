@@ -268,10 +268,10 @@ mod tests {
     async fn test_missing_authorization_header() {
         // This would require a full integration test setup
         // For now, we verify the error response structure
-        let error = AuthError::MissingAuthorizationHeader;
+        let error = AuthError::MissingAuthorization;
         assert_eq!(
             format!("{}", error),
-            "Missing Authorization header"
+            "Missing authorization header"
         );
     }
 }

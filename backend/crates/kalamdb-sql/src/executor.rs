@@ -5,7 +5,7 @@
 //! Note: This module is currently a stub for future implementation.
 //! System table queries are handled directly by the adapter layer.
 
-use crate::adapter::RocksDbAdapter;
+use crate::RocksDbAdapter;
 use crate::parser::SystemStatement;
 use anyhow::{bail, Result};
 

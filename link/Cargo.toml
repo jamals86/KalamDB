@@ -25,26 +25,26 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 # HTTP Basic Auth encoding
-base64 = "0.21"
+base64 = { workspace = true }
 
 # UUID generation
 uuid = { workspace = true, features = ["js"] }
 
 # Random number generation for WASM
-getrandom = { version = "0.2", features = ["js"] }
+getrandom = { workspace = true }
 
 # Futures utilities
-futures-util = { version = "0.3", default-features = false }
+futures-util = { workspace = true, default-features = false }
 
 # Error handling
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 
 # WASM bindings (T039, T040, T063A-T063B)
-wasm-bindgen = { version = "0.2", optional = true }
-wasm-bindgen-futures = { version = "0.4", optional = true }
-js-sys = { version = "0.3", optional = true }
-web-sys = { version = "0.3", features = [
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+js-sys = { workspace = true, optional = true }
+web-sys = { workspace = true, features = [
     "console",
     # WebSocket support (T063A-T063B)
     "WebSocket",
@@ -69,7 +69,7 @@ wasm = ["wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
-wasm-bindgen-test = "0.3"
+wasm-bindgen-test = { workspace = true }
 
 [lib]
 crate-type = ["cdylib", "rlib"]

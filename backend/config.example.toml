@@ -160,6 +160,34 @@ max_messages_per_sec = 50
 # Limits total active subscriptions to prevent resource exhaustion
 max_subscriptions_per_user = 10
 
+[authentication]
+# Bcrypt cost factor for password hashing (default: 12, range: 10-14)
+# Higher values = more secure but slower
+# Changing this only affects NEW passwords
+bcrypt_cost = 12
+
+# Minimum password length (default: 8)
+min_password_length = 8
+
+# Maximum password length (default: 72, bcrypt limit)
+# Note: Passwords longer than 72 bytes are truncated by bcrypt
+max_password_length = 72
+
+# Disable common password checking (default: false)
+# If true, allows passwords like "password", "123456", etc.
+# WARNING: Only disable for testing/development environments!
+disable_common_password_check = false
+
+# JWT configuration (if using JWT authentication)
+# jwt_secret = "your-secret-key-at-least-32-chars"
+# jwt_trusted_issuers = ["https://kalamdb.io"]
+
+# Allow remote access for system users (default: false)
+# If true, system users can authenticate remotely (requires password)
+# If false, system users can only authenticate from localhost
+allow_remote_access = false
+
+
 # T105 - Phase 7, User Story 5: System User Management
 [auth]
 # Allow remote (non-localhost) connections for system users (default: false)

@@ -229,7 +229,7 @@ impl KalamClient {
     /// const data = JSON.parse(result);
     /// ```
     pub async fn query(&self, sql: String) -> Result<String, JsValue> {
-        // T063F: Implement query() using web-sys fetch API with X-API-KEY header
+        // T063F: Implement query() using web-sys fetch API
         self.execute_sql(&sql).await
     }
 

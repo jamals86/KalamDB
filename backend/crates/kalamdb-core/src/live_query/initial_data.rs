@@ -7,7 +7,7 @@
 use crate::catalog::TableType;
 use crate::error::KalamDbError;
 use crate::live_query::filter::FilterPredicate;
-use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
+use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use chrono::DateTime;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
@@ -206,12 +206,14 @@ impl InitialDataFetcher {
                     })?;
 
                 let mut rows = Vec::new();
-                for (timestamp, _row_id, row) in store.scan(&namespace, &table).map_err(|e| {
+                for (row_id, row) in store.scan(&namespace, &table).map_err(|e| {
                     KalamDbError::Other(format!(
                         "Failed to scan stream table {}.{}: {}",
                         namespace, table, e
                     ))
                 })? {
+                    let timestamp = Self::extract_updated_timestamp(&row);
+
                     if let Some(since) = since_timestamp {
                         if timestamp < since {
                             continue;

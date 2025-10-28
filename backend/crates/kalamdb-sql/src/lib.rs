@@ -15,13 +15,14 @@
 //!
 //! ```no_run
 //! use kalamdb_sql::KalamSql;
-//! use rocksdb::DB;
+//! use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
 //! use std::sync::Arc;
 //!
 //! # fn example() -> anyhow::Result<()> {
-//! # let db = Arc::new(DB::open_default("test_db")?);
+//! # let db = std::sync::Arc::new(rocksdb::DB::open_default("test_db")?);
+//! # let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db));
 //! // Execute SQL against system tables
-//! let kalamdb = KalamSql::new(db)?;
+//! let kalamdb = KalamSql::new(backend)?;
 //! let results = kalamdb.execute("SELECT * FROM system.users WHERE username = 'alice'")?;
 //!
 //! // Typed helpers for common operations
@@ -41,13 +42,16 @@ pub mod query_cache;
 pub mod statement_classifier;
 
 use kalamdb_commons::{NamespaceId, StorageId, TableName, UserId};
+use kalamdb_commons::storage::StorageBackend;
 // Re-export system models from kalamdb-commons (single source of truth)
 pub use kalamdb_commons::system::{
     InformationSchemaTable, Job, LiveQuery, Namespace, Storage, SystemTable as Table,
     TableSchema, User, UserTableCounter,
 };
 
-pub use adapter::RocksDbAdapter;
+pub use adapter::StorageAdapter;
+// Backwards-compatibility alias
+pub type RocksDbAdapter = StorageAdapter;
 pub use batch_execution::split_statements;
 pub use compatibility::{
     format_mysql_column_not_found, format_mysql_error, format_mysql_syntax_error,
@@ -65,20 +69,19 @@ pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
 
 use anyhow::Result;
-use rocksdb::DB;
 use std::sync::Arc;
 
 /// Main SQL interface for system tables
 pub struct KalamSql {
-    adapter: RocksDbAdapter,
+    adapter: StorageAdapter,
     parser: SqlParser,
     executor: SqlExecutor,
 }
 
 impl KalamSql {
-    /// Create a new KalamSQL instance
-    pub fn new(db: Arc<DB>) -> Result<Self> {
-        let adapter = RocksDbAdapter::new(db);
+    /// Create a new KalamSQL instance using a generic storage backend
+    pub fn new(backend: Arc<dyn StorageBackend>) -> Result<Self> {
+        let adapter = StorageAdapter::new(backend);
         let parser = SqlParser::new();
         let executor = SqlExecutor::new(adapter.clone());
 
@@ -90,7 +93,7 @@ impl KalamSql {
     }
 
     /// Get the underlying RocksDB adapter
-    pub fn adapter(&self) -> &RocksDbAdapter {
+    pub fn adapter(&self) -> &StorageAdapter {
         &self.adapter
     }
 
@@ -154,8 +157,6 @@ impl KalamSql {
 
     /// Insert a new namespace
     pub fn insert_namespace(&self, namespace_id: &NamespaceId, options: &str) -> Result<()> {
-        use kalamdb_commons::UserId;
-
         let namespace = Namespace {
             namespace_id: namespace_id.clone(),
             name: namespace_id.as_str().to_string(),

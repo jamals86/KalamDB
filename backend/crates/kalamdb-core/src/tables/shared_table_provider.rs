@@ -11,11 +11,12 @@ use crate::error::KalamDbError;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::TableProvider;
+use datafusion::logical_expr::dml::InsertOp;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_store::SharedTableStore;
+use crate::stores::SharedTableStore;
 use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;
@@ -38,6 +39,16 @@ pub struct SharedTableProvider {
 
     /// SharedTableStore for data operations
     store: Arc<SharedTableStore>,
+}
+
+impl std::fmt::Debug for SharedTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SharedTableProvider")
+            .field("table_metadata", &self.table_metadata)
+            .field("schema", &self.schema)
+            .field("store", &"<SharedTableStore>")
+            .finish()
+    }
 }
 
 impl SharedTableProvider {
@@ -102,6 +113,7 @@ impl SharedTableProvider {
                 self.table_name().as_str(),
                 row_id,
                 row_data,
+                "public", // Default access level for shared tables
             )
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
@@ -149,6 +161,7 @@ impl SharedTableProvider {
                 self.table_name().as_str(),
                 row_id,
                 row_data,
+                "public", // Default access level for shared tables
             )
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
@@ -258,6 +271,7 @@ impl SharedTableProvider {
                 self.table_name().as_str(),
                 row_id,
                 updated_row,
+                "public", // Default access level for shared tables
             )
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
@@ -316,7 +330,7 @@ impl TableProvider for SharedTableProvider {
 
     async fn scan(
         &self,
-        _state: &SessionState,
+        _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         _filters: &[Expr],
         limit: Option<usize>,
@@ -390,22 +404,21 @@ impl TableProvider for SharedTableProvider {
             (batch, full_schema.clone())
         };
 
-        // Create a MemoryExec plan that returns our batch
-        use datafusion::physical_plan::memory::MemoryExec;
-
+        // Create an in-memory table and return its scan plan
+        use datafusion::datasource::MemTable;
         let partitions = vec![vec![final_batch]];
-        let exec = MemoryExec::try_new(&partitions, final_schema, None).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemoryExec: {}", e))
+        let table = MemTable::try_new(final_schema, partitions).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
         })?;
 
-        Ok(Arc::new(exec))
+        table.scan(_state, projection, &[], limit).await
     }
 
     async fn insert_into(
         &self,
-        _state: &SessionState,
+        _state: &dyn datafusion::catalog::Session,
         input: Arc<dyn ExecutionPlan>,
-        _overwrite: bool,
+        _op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::execution::TaskContext;
         use datafusion::physical_plan::collect;

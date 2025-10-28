@@ -15,8 +15,8 @@ use datafusion::arrow::datatypes::Schema;
 use kalamdb_commons::models::StorageId;
 use kalamdb_commons::system::TableSchema;
 use kalamdb_sql::ddl::CreateTableStatement;
+use crate::stores::StreamTableStore;
 use kalamdb_sql::KalamSql;
-use kalamdb_store::StreamTableStore;
 use std::sync::Arc;
 
 /// Stream table service
@@ -274,6 +274,7 @@ mod tests {
     use super::*;
     use datafusion::arrow::datatypes::{DataType, Field};
     use kalamdb_store::test_utils::TestDb;
+    use kalamdb_store::{RocksDBBackend, kalamdb_commons::storage::StorageBackend};
 
     fn create_test_service() -> (StreamTableService, TestDb) {
         let test_db = TestDb::new(&[
@@ -284,7 +285,8 @@ mod tests {
         .unwrap();
 
         let stream_table_store = Arc::new(StreamTableStore::new(test_db.db.clone()).unwrap());
-        let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
 
         let service = StreamTableService::new(stream_table_store, kalam_sql);
         (service, test_db)
@@ -317,6 +319,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: Some(300), // 5 minutes (was retention_seconds)
             if_not_exists: false,
+            access_level: None,
         };
 
         let result = service.create_table(stmt);
@@ -353,6 +356,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None, // No retention (was retention_seconds)
             if_not_exists: false,
+            access_level: None,
         };
 
         let result = service.create_table(stmt);
@@ -382,6 +386,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None,
             if_not_exists: false,
+            access_level: None,
         };
 
         // First creation should succeed
@@ -434,6 +439,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None,
             if_not_exists: false,
+            access_level: None,
         };
 
         let result = service.create_table(stmt);

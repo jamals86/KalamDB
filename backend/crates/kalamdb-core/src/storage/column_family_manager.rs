@@ -5,15 +5,11 @@
 
 use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
-use rocksdb::{Options, DB};
-use std::sync::Arc;
 
 /// Column family manager for RocksDB
 ///
 /// Manages column families for different table types with proper naming conventions.
-pub struct ColumnFamilyManager {
-    db: Arc<DB>,
-}
+pub struct ColumnFamilyManager;
 
 /// System column families that must be created on DB initialization
 ///
@@ -22,23 +18,9 @@ pub struct ColumnFamilyManager {
 /// - `information_schema_tables` is the TARGET - will be the SINGLE SOURCE OF TRUTH
 /// - Once Phase 2b is complete, `system_tables` CF will be removed entirely
 /// - The migration path: system_tables (Phase 2a) → information_schema_tables (Phase 2b)
-pub const SYSTEM_COLUMN_FAMILIES: &[&str] = &[
-    "system_users",              // User management (user_id, username, email, created_at)
-    "system_live_queries", // Live query subscriptions (live_id, connection_id, namespace_id, table_name, query_id, user_id, query, options, created_at, last_update, changes, node)
-    "system_jobs", // Background job tracking (job_id, job_type, table_name, status, parameters, result, trace, memory_used, cpu_used, created_at, started_at, completed_at, node_id, error_message)
-    "system_namespaces", // Namespace metadata (namespace_id, name, created_at, options, table_count)
-    "system_tables",     // TEMPORARY: Basic table metadata (will be removed in Phase 2b)
-    "system_storages", // Storage backend configurations (storage_id, storage_name, description, storage_type, base_directory, shared_tables_template, user_tables_template, created_at, updated_at)
-    "information_schema_tables", // TARGET (Phase 2b): SINGLE SOURCE OF TRUTH - Complete table definitions (replaces system_tables + system_table_schemas - includes metadata + schema + columns + defaults + constraints + history)
-    "user_table_counters",       // Per-user flush tracking (user_id, table_name, row_count)
-];
+// System column family names are centralized in kalamdb_commons::constants
 
 impl ColumnFamilyManager {
-    /// Create a new column family manager
-    pub fn new(db: Arc<DB>) -> Self {
-        Self { db }
-    }
-
     /// Generate column family name from table metadata
     ///
     /// Naming convention:
@@ -119,61 +101,7 @@ impl ColumnFamilyManager {
         ))
     }
 
-    /// Create a new column family
-    pub fn create_column_family(
-        &self,
-        table_type: TableType,
-        namespace: Option<&NamespaceId>,
-        table_name: &TableName,
-        _options: &Options,
-    ) -> Result<(), KalamDbError> {
-        let _cf_name = Self::column_family_name(table_type, namespace, table_name);
-
-        // RocksDB's create_cf requires &mut access but Arc prevents that
-        // We need to use the DB directly in the calling code instead
-        // For now, this is a placeholder that will be refactored
-
-        Err(KalamDbError::Other(
-            "Column family creation must be done during DB initialization".to_string(),
-        ))
-    }
-
-    /// Delete a column family
-    pub fn delete_column_family(
-        &self,
-        table_type: TableType,
-        namespace: Option<&NamespaceId>,
-        table_name: &TableName,
-    ) -> Result<(), KalamDbError> {
-        let _cf_name = Self::column_family_name(table_type, namespace, table_name);
-
-        // RocksDB's drop_cf requires &mut access but Arc prevents that
-        // We need to use the DB directly in the calling code instead
-        // For now, this is a placeholder that will be refactored
-
-        Err(KalamDbError::Other(
-            "Column family deletion must be done directly on DB".to_string(),
-        ))
-    }
-
-    /// Check if a column family exists
-    pub fn column_family_exists(
-        &self,
-        table_type: TableType,
-        namespace: Option<&NamespaceId>,
-        table_name: &TableName,
-    ) -> bool {
-        let cf_name = Self::column_family_name(table_type, namespace, table_name);
-        self.db.cf_handle(&cf_name).is_some()
-    }
-
-    /// List all column families in the database
-    pub fn list_column_families(&self) -> Vec<String> {
-        // RocksDB doesn't provide a direct way to list CFs from an open DB
-        // This would need to be tracked separately or queried from DB metadata
-        // For now, return empty vector - this will be implemented when needed
-        vec![]
-    }
+    // All methods below are pure naming helpers (no RocksDB dependency)
 }
 
 #[cfg(test)]

@@ -8,12 +8,12 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::storage::ParquetWriter;
 use kalamdb_commons::system::Job;
-use kalamdb_commons::JobType;
+use kalamdb_commons::{JobStatus, JobType};
 use chrono::Utc;
 use datafusion::arrow::array::{ArrayRef, BooleanArray, Int64Array, StringArray};
 use datafusion::arrow::datatypes::{DataType, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
-use kalamdb_store::SharedTableStore;
+use crate::stores::SharedTableStore;
 use serde_json::{json, Value as JsonValue};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -214,7 +214,7 @@ impl SharedTableFlushJob {
         // Scan all rows (scan already filters out soft-deleted rows)
         let rows = self
             .store
-            .scan(self.namespace_id.as_str(), self.table_name.as_str())
+            .get_rows_for_flush(self.namespace_id.as_str(), self.table_name.as_str())
             .map_err(|e| {
                 log::error!(
                     "❌ Failed to scan rows for shared table={}.{}: {}",
@@ -318,7 +318,7 @@ impl SharedTableFlushJob {
     /// Convert JSON rows to Arrow RecordBatch
     fn rows_to_record_batch(
         &self,
-        rows: &[(String, JsonValue)],
+        rows: &[(Vec<u8>, JsonValue)],
     ) -> Result<RecordBatch, KalamDbError> {
         // Build arrays for each column based on schema
         let mut arrays: Vec<ArrayRef> = Vec::new();
@@ -367,23 +367,23 @@ impl SharedTableFlushJob {
     }
 
     /// Delete flushed rows from RocksDB
-    fn delete_flushed_rows(&self, rows: &[(String, JsonValue)]) -> Result<(), KalamDbError> {
-        // Collect all row IDs for batch deletion
-        let row_ids: Vec<String> = rows.iter().map(|(row_id, _)| row_id.clone()).collect();
+    fn delete_flushed_rows(&self, rows: &[(Vec<u8>, JsonValue)]) -> Result<(), KalamDbError> {
+        // Collect all raw key bytes for batch deletion
+        let keys: Vec<Vec<u8>> = rows.iter().map(|(key_bytes, _)| key_bytes.clone()).collect();
 
-        if row_ids.is_empty() {
+        if keys.is_empty() {
             return Ok(());
         }
 
         self.store
-            .delete_batch_by_row_ids(
+            .delete_batch_by_keys(
                 self.namespace_id.as_str(),
                 self.table_name.as_str(),
-                &row_ids,
+                &keys,
             )
             .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed rows: {}", e)))?;
 
-        log::debug!("Deleted {} flushed rows from storage", row_ids.len());
+        log::debug!("Deleted {} flushed rows from storage", keys.len());
         Ok(())
     }
 }
@@ -392,7 +392,6 @@ impl SharedTableFlushJob {
 mod tests {
     use super::*;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
-    use kalamdb_store::test_utils::TestDb;
     use serde_json::json;
     use std::env;
     use std::fs;
@@ -408,8 +407,8 @@ mod tests {
 
     #[test]
     fn test_shared_table_flush_job_creation() {
-        let test_db = TestDb::single_cf("shared_table:test_ns:test_table").unwrap();
-        let store = Arc::new(SharedTableStore::new(test_db.db.clone()).unwrap());
+        let backend = Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
+        let store = Arc::new(SharedTableStore::new(backend));
         let schema = create_test_schema();
 
         let job = SharedTableFlushJob::new(
@@ -427,8 +426,8 @@ mod tests {
 
     #[test]
     fn test_shared_table_flush_empty_table() {
-        let test_db = TestDb::single_cf("shared_table:test_ns:test_table").unwrap();
-        let store = Arc::new(SharedTableStore::new(test_db.db.clone()).unwrap());
+        let backend = Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
+        let store = Arc::new(SharedTableStore::new(backend));
         let schema = create_test_schema();
 
         let temp_storage = env::temp_dir().join("kalamdb_shared_flush_test_empty");
@@ -445,16 +444,16 @@ mod tests {
         let result = job.execute().unwrap();
         assert_eq!(result.rows_flushed, 0); // 0 rows flushed
         assert!(result.parquet_file.is_none()); // No Parquet file
-        assert_eq!(result.job_record.status, "completed");
-        assert_eq!(result.job_record.job_type, "flush");
+        assert_eq!(result.job_record.status, JobStatus::Completed);
+        assert_eq!(result.job_record.job_type, JobType::Flush);
 
         let _ = fs::remove_dir_all(&temp_storage);
     }
 
     #[test]
     fn test_shared_table_flush_with_rows() {
-        let test_db = TestDb::single_cf("shared_table:test_ns:test_table").unwrap();
-        let store = Arc::new(SharedTableStore::new(test_db.db.clone()).unwrap());
+        let backend = Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
+        let store = Arc::new(SharedTableStore::new(backend));
         let schema = create_test_schema();
 
         // Insert test data
@@ -471,9 +470,9 @@ mod tests {
             "content": "Shared Message 3"
         });
 
-        store.put("test_ns", "test_table", "row1", row1).unwrap();
-        store.put("test_ns", "test_table", "row2", row2).unwrap();
-        store.put("test_ns", "test_table", "row3", row3).unwrap();
+        store.put("test_ns", "test_table", "row1", row1, "public").unwrap();
+        store.put("test_ns", "test_table", "row2", row2, "public").unwrap();
+        store.put("test_ns", "test_table", "row3", row3, "public").unwrap();
 
         let temp_storage = env::temp_dir().join("kalamdb_shared_flush_test_with_rows");
         let _ = fs::remove_dir_all(&temp_storage);
@@ -489,7 +488,7 @@ mod tests {
         let result = job.execute().unwrap();
         assert_eq!(result.rows_flushed, 3); // 3 rows flushed
         assert!(result.parquet_file.is_some()); // Parquet file created
-        assert_eq!(result.job_record.status, "completed");
+        assert_eq!(result.job_record.status, JobStatus::Completed);
 
         // Verify rows deleted from storage
         let remaining = store.scan("test_ns", "test_table").unwrap();
@@ -505,8 +504,8 @@ mod tests {
 
     #[test]
     fn test_shared_table_flush_filters_soft_deleted() {
-        let test_db = TestDb::single_cf("shared_table:test_ns:test_table").unwrap();
-        let store = Arc::new(SharedTableStore::new(test_db.db.clone()).unwrap());
+        let backend = Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
+        let store = Arc::new(SharedTableStore::new(backend));
         let schema = create_test_schema();
 
         // Insert test data with one active and one soft-deleted row
@@ -519,8 +518,8 @@ mod tests {
             "content": "Deleted Message"
         });
 
-        store.put("test_ns", "test_table", "row1", row1).unwrap();
-        store.put("test_ns", "test_table", "row2", row2).unwrap();
+        store.put("test_ns", "test_table", "row1", row1, "public").unwrap();
+        store.put("test_ns", "test_table", "row2", row2, "public").unwrap();
 
         // Soft-delete row2
         store
@@ -540,7 +539,7 @@ mod tests {
 
         let result = job.execute().unwrap();
         assert_eq!(result.rows_flushed, 1); // Only 1 row flushed (soft-deleted filtered out by scan)
-        assert_eq!(result.job_record.status, "completed");
+        assert_eq!(result.job_record.status, JobStatus::Completed);
 
         // Verify only active row was flushed and deleted
         let remaining = store.scan("test_ns", "test_table").unwrap();
@@ -551,8 +550,8 @@ mod tests {
 
     #[test]
     fn test_shared_table_flush_job_record() {
-        let test_db = TestDb::single_cf("shared_table:test_ns:test_table").unwrap();
-        let store = Arc::new(SharedTableStore::new(test_db.db.clone()).unwrap());
+        let backend = Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
+        let store = Arc::new(SharedTableStore::new(backend));
         let schema = create_test_schema();
 
         // Insert test data
@@ -560,7 +559,7 @@ mod tests {
             "id": "row1",
             "content": "Test Message"
         });
-        store.put("test_ns", "test_table", "row1", row1).unwrap();
+        store.put("test_ns", "test_table", "row1", row1, "public").unwrap();
 
         let temp_storage = env::temp_dir().join("kalamdb_shared_flush_test_job_record");
         let _ = fs::remove_dir_all(&temp_storage);
@@ -576,14 +575,21 @@ mod tests {
         let result = job.execute().unwrap();
 
         // Verify job record fields
-        assert_eq!(result.job_record.job_type, "flush");
-        assert_eq!(result.job_record.status, "completed");
+        assert_eq!(result.job_record.job_type, JobType::Flush);
+        assert_eq!(result.job_record.status, JobStatus::Completed);
         assert!(result
             .job_record
             .job_id
             .starts_with("flush-shared-test_table-"));
-        assert!(result.job_record.table_name.is_some());
-        assert_eq!(result.job_record.table_name.unwrap(), "test_ns.test_table");
+        assert_eq!(
+            result
+                .job_record
+                .table_name
+                .as_ref()
+                .map(|name| name.as_str()),
+            Some("test_table")
+        );
+        assert_eq!(result.job_record.namespace_id.as_str(), "test_ns");
         assert!(result.job_record.result.is_some());
 
         // Verify result JSON contains expected fields

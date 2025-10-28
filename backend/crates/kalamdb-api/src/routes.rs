@@ -9,7 +9,7 @@ use serde_json::json;
 /// Configure API routes for KalamDB
 ///
 /// All endpoints use the /v1 version prefix:
-/// - POST /v1/api/sql - Execute SQL statements (requires X-API-KEY, except localhost)
+/// - POST /v1/api/sql - Execute SQL statements (requires Auth, except localhost)
 /// - GET /v1/ws - WebSocket connection for live query subscriptions
 /// - GET /v1/api/healthcheck - Health check endpoint
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {

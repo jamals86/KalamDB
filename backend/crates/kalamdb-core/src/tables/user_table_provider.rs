@@ -18,11 +18,11 @@ use async_trait::async_trait;
 use chrono::Utc;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::TableProvider;
+use datafusion::logical_expr::dml::InsertOp;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_store::UserTableStore;
+use crate::stores::UserTableStore;
 use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
 use std::any::Any;
@@ -65,6 +65,17 @@ pub struct UserTableProvider {
 
     /// LiveQueryManager for WebSocket notifications
     live_query_manager: Option<Arc<LiveQueryManager>>,
+}
+
+impl std::fmt::Debug for UserTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UserTableProvider")
+            .field("table_metadata", &self.table_metadata)
+            .field("schema", &self.schema)
+            .field("current_user_id", &self.current_user_id)
+            .field("parquet_paths", &self.parquet_paths)
+            .finish()
+    }
 }
 
 impl UserTableProvider {
@@ -414,7 +425,7 @@ impl TableProvider for UserTableProvider {
 
     async fn scan(
         &self,
-        _state: &SessionState,
+        _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         _filters: &[Expr],
         limit: Option<usize>,
@@ -528,22 +539,21 @@ impl TableProvider for UserTableProvider {
             (batch, full_schema)
         };
 
-        // Create a MemoryExec plan that returns our batch
-        use datafusion::physical_plan::memory::MemoryExec;
-
+        // Create an in-memory table and return its scan plan
+        use datafusion::datasource::MemTable;
         let partitions = vec![vec![final_batch]];
-        let exec = MemoryExec::try_new(&partitions, final_schema, None).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemoryExec: {}", e))
+        let table = MemTable::try_new(final_schema, partitions).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
         })?;
 
-        Ok(Arc::new(exec))
+        table.scan(_state, projection, &[], limit).await
     }
 
     async fn insert_into(
         &self,
-        _state: &SessionState,
+        _state: &dyn datafusion::catalog::Session,
         input: Arc<dyn ExecutionPlan>,
-        _overwrite: bool,
+        _op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::execution::TaskContext;
         use datafusion::physical_plan::collect;
@@ -864,7 +874,7 @@ mod tests {
     use chrono::Utc;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::UserTableStore;
+    use crate::stores::UserTableStore;
     use serde_json::json;
 
     fn create_test_db() -> Arc<UserTableStore> {

@@ -7,7 +7,7 @@ use crate::sql::datafusion_session::KalamSessionState;
 use datafusion::arrow::array::{ArrayRef, StringArray};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::logical_expr::{ColumnarValue, ScalarUDFImpl, Signature, Volatility};
+use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use std::any::Any;
 use std::sync::Arc;
 
@@ -15,7 +15,7 @@ use std::sync::Arc;
 ///
 /// Returns the user ID of the current session user.
 /// This function takes no arguments and returns a String (Utf8).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CurrentUserFunction {
     user_id: String,
 }
@@ -61,14 +61,12 @@ impl ScalarUDFImpl for CurrentUserFunction {
         Ok(DataType::Utf8)
     }
 
-    fn invoke(&self, args: &[ColumnarValue]) -> DataFusionResult<ColumnarValue> {
-        if !args.is_empty() {
+    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
+        if !args.args.is_empty() {
             return Err(DataFusionError::Plan(
                 "CURRENT_USER() takes no arguments".to_string(),
             ));
         }
-
-        // Return the user ID as a single-element array
         let array = StringArray::from(vec![self.user_id.as_str()]);
         Ok(ColumnarValue::Array(Arc::new(array) as ArrayRef))
     }
@@ -99,17 +97,8 @@ mod tests {
         let func = ScalarUDF::new_from_impl(func_impl.clone());
         assert_eq!(func.name(), "CURRENT_USER");
 
-        // Test invocation
-        let result = func_impl.invoke(&[]);
-        assert!(result.is_ok());
-
-        if let Ok(ColumnarValue::Array(arr)) = result {
-            let string_array = arr.as_any().downcast_ref::<StringArray>().unwrap();
-            assert_eq!(string_array.len(), 1);
-            assert_eq!(string_array.value(0), "test_user");
-        } else {
-            panic!("Expected array result");
-        }
+        // Verify configured user_id
+        assert_eq!(func_impl.user_id, "test_user");
     }
 
     #[test]

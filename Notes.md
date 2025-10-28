@@ -32,8 +32,17 @@ Future:
 33) Add option for a specific usere to download all his data
 34) Add to the roadmap adding join which can join tables: shared<->shared, shared<->user, user<->user, user<->stream
 35) Add to cli/server a version which will print the commit and build date as well which is auto-increment: add prompt instead of this one: Starting KalamDB Server v0.1.0
-
-
+36) update all packages to the latest available version
+37) Make the cli connect to the root user by default
+38) Force always including namespace to the queries alongside the tableName
+39) Whenever we create a table we can create it with a specific access policy: public, private, protected
+40) Add to the cli a command session which will show the current user all info, namespace, and other session related info.
+41) storing credentials in kalamdb-credentials alongside the url of the database
+42) CLI should also support a regular user as well and not only the root user
+43) Whenever a user send a query/sql statement first of all we check the role he has if he is creating create/alter tables then we first check the user role before we display an error like: namespace does not exists, maybe its better to include in these CREATE/ALTER sql also which roles can access them so we dont read data from untrusted users its a sensitive topic.
+44) Remove all X-USER-ID header we will be using oauth/basic auth or incase of system user we will add it to the auth basic auth with empty password and only from localhost only
+45) "system_users" is repeated so many times in the code base we should use a column family enum for all of them, and making all of them as Partition::new("system_users") instead of hardcoding the string multiple times, we already have SystemTable enum we can add ColumnFamily as well
+46) nodeId should be unique and used from the config file and use NodeId enum
 
 Key Findings
 Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB column families yet, resulting in 0 rows flushed

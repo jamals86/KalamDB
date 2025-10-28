@@ -9,10 +9,10 @@ use crate::middleware;
 use crate::routes;
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
-use datafusion::catalog::schema::MemorySchemaProvider;
+use datafusion::catalog::memory::MemorySchemaProvider;
 use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
-use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
+use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId, StorageBackend};
 use kalamdb_core::live_query::{LiveQueryManager, NodeId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
@@ -20,14 +20,16 @@ use kalamdb_core::services::{
 };
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_core::storage::{RocksDbInit, StorageRegistry};
+use kalamdb_core::storage::StorageRegistry;
+use kalamdb_core::stores::{SharedTableStore, StreamTableStore, UserTableStore};
+use kalamdb_store::RocksDbInit;
 use kalamdb_core::{
     jobs::{JobExecutor, StreamEvictionJob, StreamEvictionScheduler, TokioJobManager},
     scheduler::FlushScheduler,
 };
-use kalamdb_sql::adapter::RocksDbAdapter;
+use kalamdb_sql::RocksDbAdapter;
 use kalamdb_sql::KalamSql;
-use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
+use kalamdb_store::RocksDBBackend;
 use log::info;
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,8 +57,9 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     let db = db_init.open()?;
     info!("RocksDB initialized at {}", db_path.display());
 
-    // Initialize KalamSQL for system table access
-    let kalam_sql = Arc::new(KalamSql::new(db.clone())?);
+    // Initialize KalamSQL for system table access (via StorageBackend abstraction)
+    let storage_backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
+    let kalam_sql = Arc::new(KalamSql::new(storage_backend.clone())?);
     info!("KalamSQL initialized");
 
     // Extract RocksDbAdapter for API key authentication
@@ -85,10 +88,11 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         info!("Found {} existing storage(s)", storages.len());
     }
 
-    // Initialize stores and services
-    let user_table_store = Arc::new(UserTableStore::new(db.clone())?);
-    let shared_table_store = Arc::new(SharedTableStore::new(db.clone())?);
-    let stream_table_store = Arc::new(StreamTableStore::new(db.clone())?);
+    // Initialize core stores from generic backend
+    let core = kalamdb_core::kalam_core::KalamCore::new(storage_backend.clone())?;
+    let user_table_store = core.user_table_store.clone();
+    let shared_table_store = core.shared_table_store.clone();
+    let stream_table_store = core.stream_table_store.clone();
 
     let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
     let user_table_service = Arc::new(UserTableService::new(
@@ -181,7 +185,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         "SqlExecutor initialized with DROP TABLE support, storage registry, job manager, and table registration"
     );
 
-    let default_user_id = kalamdb_core::catalog::UserId::from("system");
+    let default_user_id = UserId::from("system");
     sql_executor.load_existing_tables(default_user_id).await?;
     info!("Existing tables loaded and registered with DataFusion");
 

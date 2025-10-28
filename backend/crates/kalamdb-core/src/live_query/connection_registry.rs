@@ -10,6 +10,7 @@ use std::fmt;
 
 // Re-export from kalamdb-commons
 pub use kalamdb_commons::models::{ConnectionId, LiveId};
+pub use kalamdb_commons::models::UserId;
 
 /// Type alias for sending live query notifications to WebSocket clients
 /// 
@@ -65,31 +66,7 @@ impl fmt::Display for NodeId {
     }
 }
 
-/// User identifier
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct UserId(pub String);
-
-impl UserId {
-    pub fn new(id: String) -> Self {
-        Self(id)
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl AsRef<str> for UserId {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for UserId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+// Use shared UserId from kalamdb-commons
 
 /// Live query options
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

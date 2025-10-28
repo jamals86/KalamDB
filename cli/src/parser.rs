@@ -27,6 +27,9 @@ pub enum Command {
     Subscribe(String),
     Unsubscribe,
     RefreshTables,
+    ShowCredentials,
+    UpdateCredentials { username: String, password: String },
+    DeleteCredentials,
     Unknown(String),
 }
 
@@ -113,6 +116,20 @@ impl CommandParser {
             }
             "\\unsubscribe" | "\\unwatch" => Ok(Command::Unsubscribe),
             "\\refresh-tables" | "\\refresh" => Ok(Command::RefreshTables),
+            "\\show-credentials" | "\\credentials" => Ok(Command::ShowCredentials),
+            "\\update-credentials" => {
+                if args.len() < 2 {
+                    Err(CLIError::ParseError(
+                        "\\update-credentials requires username and password".into(),
+                    ))
+                } else {
+                    Ok(Command::UpdateCredentials {
+                        username: args[0].to_string(),
+                        password: args[1].to_string(),
+                    })
+                }
+            }
+            "\\delete-credentials" => Ok(Command::DeleteCredentials),
             _ => Ok(Command::Unknown(command.to_string())),
         }
     }

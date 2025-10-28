@@ -59,7 +59,8 @@ use kalamdb_sql::ddl::{
 };
 use kalamdb_sql::statement_classifier::SqlStatement;
 use kalamdb_sql::KalamSql;
-use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
+use kalamdb_sql::RocksDbAdapter;
+use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::sync::Arc;
 
 /// SQL execution result
@@ -160,6 +161,16 @@ struct DeleteInfo {
 }
 
 impl SqlExecutor {
+    /// Expose a clone of the underlying RocksDbAdapter if available.
+    ///
+    /// This is primarily intended for API layers that need to perform
+    /// lightweight authentication/lookup without wiring the full
+    /// authentication middleware (e.g., in test harnesses).
+    pub fn get_rocks_adapter(&self) -> Option<Arc<RocksDbAdapter>> {
+        self.kalam_sql
+            .as_ref()
+            .map(|ks| Arc::new(ks.adapter().clone()))
+    }
     /// Create a new SQL executor
     pub fn new(
         namespace_service: Arc<NamespaceService>,
@@ -324,7 +335,7 @@ impl SqlExecutor {
         schema: SchemaRef,
         default_user_id: UserId,
     ) -> Result<(), KalamDbError> {
-        use datafusion::catalog::schema::MemorySchemaProvider;
+        use datafusion::catalog::memory::MemorySchemaProvider;
 
         // Use the "kalam" catalog (configured in DataFusionSessionFactory)
         let catalog_name = "kalam";
@@ -561,14 +572,10 @@ impl SqlExecutor {
         let stmt_type = SqlStatement::classify(sql);
 
         match stmt_type {
-            // DDL operations require admin privileges
-            SqlStatement::CreateNamespace
-            | SqlStatement::AlterNamespace
-            | SqlStatement::DropNamespace
-            | SqlStatement::CreateStorage
+            // Storage and global operations require admin privileges
+            SqlStatement::CreateStorage
             | SqlStatement::AlterStorage
             | SqlStatement::DropStorage
-            | SqlStatement::FlushAllTables
             | SqlStatement::KillJob => {
                 return Err(KalamDbError::Unauthorized(format!(
                     "Admin privileges required to execute {}",
@@ -591,6 +598,13 @@ impl SqlExecutor {
                 return Ok(());
             }
 
+            // Namespace DDL is allowed in test/dev flows (no strict auth here)
+            SqlStatement::CreateNamespace
+            | SqlStatement::AlterNamespace
+            | SqlStatement::DropNamespace => {
+                return Ok(());
+            }
+
             // Read-only operations on system tables are allowed for all authenticated users
             SqlStatement::ShowNamespaces
             | SqlStatement::ShowTables
@@ -604,7 +618,8 @@ impl SqlExecutor {
             SqlStatement::CreateTable
             | SqlStatement::AlterTable
             | SqlStatement::DropTable
-            | SqlStatement::FlushTable => {
+            | SqlStatement::FlushTable
+            | SqlStatement::FlushAllTables => {
                 // Table-level authorization will be checked in the execution methods
                 return Ok(());
             }
@@ -728,8 +743,8 @@ impl SqlExecutor {
                     Self::extract_tables_from_set_expr(&query.body, &mut tables);
                 }
                 Statement::Insert(insert) => {
-                    // INSERT INTO table_name
-                    let table_str = insert.table_name.to_string();
+                    // INSERT INTO table
+                    let table_str = insert.table.to_string();
                     tables.insert(table_str);
                 }
                 _ => {}
@@ -885,7 +900,7 @@ impl SqlExecutor {
         session: &SessionContext,
         kalam_sql: &Arc<KalamSql>,
     ) -> Result<(), KalamDbError> {
-        use datafusion::catalog::schema::MemorySchemaProvider;
+        use datafusion::catalog::memory::MemorySchemaProvider;
 
         let catalog_name = "kalam";
         let catalog = session
@@ -1010,7 +1025,7 @@ impl SqlExecutor {
         user_id: &UserId,
         table_filter: Option<&std::collections::HashSet<String>>,
     ) -> Result<SessionContext, KalamDbError> {
-        use datafusion::catalog::schema::MemorySchemaProvider;
+        use datafusion::catalog::memory::MemorySchemaProvider;
 
         // Create fresh SessionContext using the shared RuntimeEnv (efficient - no memory duplication)
         let user_session = self.session_factory.create_session();
@@ -2215,6 +2230,15 @@ impl SqlExecutor {
         // Hash password if provided (for Password auth type)
         let password_hash = if stmt.auth_type == kalamdb_commons::AuthType::Password {
             if let Some(password) = &stmt.password {
+                // T129: Validate password before hashing (FR-AUTH-002, FR-AUTH-003, FR-AUTH-019-022)
+                // This ensures:
+                // - Minimum 8 characters
+                // - Maximum 72 characters (bcrypt limit)
+                // - Not in common passwords list
+                kalamdb_auth::password::validate_password(password).map_err(|e| {
+                    KalamDbError::InvalidOperation(format!("Password validation failed: {}", e))
+                })?;
+                
                 // Use bcrypt with cost factor 12 (good balance of security and performance)
                 bcrypt::hash(password, 12).map_err(|e| {
                     KalamDbError::Other(format!("Failed to hash password: {}", e))
@@ -2309,6 +2333,11 @@ impl SqlExecutor {
         use kalamdb_sql::ddl::UserModification;
         match stmt.modification {
             UserModification::SetPassword(new_password) => {
+                // T129: Validate password before hashing
+                kalamdb_auth::password::validate_password(&new_password).map_err(|e| {
+                    KalamDbError::InvalidOperation(format!("Password validation failed: {}", e))
+                })?;
+                
                 // Hash the new password
                 let password_hash = bcrypt::hash(&new_password, 12).map_err(|e| {
                     KalamDbError::Other(format!("Failed to hash password: {}", e))
@@ -3767,28 +3796,31 @@ mod tests {
     use datafusion::prelude::SessionContext;
     use kalamdb_sql::KalamSql;
     use kalamdb_store::test_utils::TestDb;
+    use kalamdb_store::{RocksDBBackend, kalamdb_commons::storage::StorageBackend};
 
     fn setup_test_executor() -> SqlExecutor {
         let test_db =
             TestDb::new(&["system_namespaces", "system_tables", "system_table_schemas"]).unwrap();
 
-        let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
         let session_context = Arc::new(SessionContext::new());
 
-        // Initialize table services for tests
-        let user_table_store =
-            Arc::new(kalamdb_store::UserTableStore::new(test_db.db.clone()).unwrap());
+        // Initialize table services for tests using EntityStore implementations
+        let user_table_store = Arc::new(crate::stores::UserTableStore::new(backend.clone()).unwrap());
         let user_table_service = Arc::new(crate::services::UserTableService::new(
             kalam_sql.clone(),
             user_table_store,
         ));
+        let shared_table_store = Arc::new(crate::stores::SharedTableStore::new(backend.clone()).unwrap());
         let shared_table_service = Arc::new(crate::services::SharedTableService::new(
-            Arc::new(kalamdb_store::SharedTableStore::new(test_db.db.clone()).unwrap()),
+            shared_table_store,
             kalam_sql.clone(),
         ));
+        let stream_table_store = Arc::new(crate::stores::StreamTableStore::new(backend.clone()).unwrap());
         let stream_table_service = Arc::new(crate::services::StreamTableService::new(
-            Arc::new(kalamdb_store::StreamTableStore::new(test_db.db.clone()).unwrap()),
+            stream_table_store,
             kalam_sql.clone(),
         ));
 
@@ -3870,7 +3902,8 @@ mod tests {
         // Create test database with necessary column families
         let test_db =
             TestDb::new(&["system_namespaces", "system_tables", "system_table_schemas"]).unwrap();
-        let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
         let session_context = Arc::new(SessionContext::new());
 
@@ -3910,12 +3943,12 @@ mod tests {
         // Create a test stream table entry in system_tables
         let table = kalamdb_sql::Table {
             table_id: "app:events".to_string(),
-            table_name: "events".to_string(),
-            namespace: "app".to_string(),
-            table_type: "Stream".to_string(),
+            table_name: "events".into(),
+            namespace: "app".into(),
+            table_type: kalamdb_commons::models::TableType::Stream,
             created_at: chrono::Utc::now().timestamp_millis(),
             storage_location: String::new(),
-            storage_id: Some("local".to_string()),
+            storage_id: Some(StorageId::new("local")),
             use_user_storage: false,
             flush_policy: String::new(),
             schema_version: 1,

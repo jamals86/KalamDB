@@ -10,7 +10,6 @@ use crate::sql::functions::{
 };
 use datafusion::error::Result as DataFusionResult;
 use datafusion::execution::context::SessionContext;
-use datafusion::execution::runtime_env::{RuntimeConfig, RuntimeEnv};
 use datafusion::logical_expr::ScalarUDF;
 use datafusion::prelude::SessionConfig;
 use std::sync::Arc;
@@ -40,20 +39,11 @@ impl KalamSessionState {
 }
 
 /// DataFusion session factory
-pub struct DataFusionSessionFactory {
-    runtime_env: Arc<RuntimeEnv>,
-}
+pub struct DataFusionSessionFactory {}
 
 impl DataFusionSessionFactory {
     /// Create a new session factory
-    pub fn new() -> DataFusionResult<Self> {
-        let runtime_config = RuntimeConfig::new();
-        let runtime_env = RuntimeEnv::new(runtime_config)?;
-
-        Ok(Self {
-            runtime_env: Arc::new(runtime_env),
-        })
-    }
+    pub fn new() -> DataFusionResult<Self> { Ok(Self {}) }
 
     /// Create a session with default configuration
     pub fn create_session(&self) -> SessionContext {
@@ -61,7 +51,7 @@ impl DataFusionSessionFactory {
             .with_information_schema(true)
             .with_default_catalog_and_schema("kalam", "default");
 
-        let ctx = SessionContext::new_with_config_rt(config, self.runtime_env.clone());
+        let ctx = SessionContext::new_with_config(config);
 
         // Register custom functions that are not built-in to DataFusion
         // Note: NOW() and CURRENT_TIMESTAMP() are already built-in to DataFusion
@@ -81,7 +71,7 @@ impl DataFusionSessionFactory {
             .with_information_schema(true)
             .with_default_catalog_and_schema("kalam", "default");
 
-        let ctx = SessionContext::new_with_config_rt(config, self.runtime_env.clone());
+        let ctx = SessionContext::new_with_config(config);
         let state = KalamSessionState::new(user_id.clone(), namespace_id, table_cache);
 
         // Register custom functions with user context for CURRENT_USER()
@@ -129,7 +119,7 @@ impl DataFusionSessionFactory {
 
     /// Create a session with custom configuration
     pub fn create_session_with_config(&self, config: SessionConfig) -> SessionContext {
-        SessionContext::new_with_config_rt(config, self.runtime_env.clone())
+        SessionContext::new_with_config(config)
     }
 }
 

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 /// are expected.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub struct TableName(String);
 
 impl TableName {
@@ -53,3 +54,4 @@ impl AsRef<str> for TableName {
         &self.0
     }
 }
+

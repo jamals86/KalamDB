@@ -3,7 +3,6 @@
 //! Caches results of frequently-accessed system table queries to reduce RocksDB reads.
 //! Invalidated automatically on mutations to system tables.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -111,16 +110,14 @@ impl QueryCache {
     /// Get cached result
     ///
     /// Returns None if not in cache or expired.
-    pub fn get<T>(&self, key: &QueryCacheKey) -> Option<T>
-    where
-        T: for<'de> Deserialize<'de>,
-    {
+    pub fn get<T: bincode::Decode<()>>(&self, key: &QueryCacheKey) -> Option<T> {
         let cache = self.cache.read().unwrap();
         if let Some(entry) = cache.get(key) {
             let ttl = self.get_ttl(key);
             if !entry.is_expired(ttl) {
-                // Deserialize from bytes
-                if let Ok(value) = bincode::deserialize(&entry.value) {
+                // Deserialize from bytes using bincode v2
+                let config = bincode::config::standard();
+                if let Ok((value, _)) = bincode::decode_from_slice(&entry.value, config) {
                     return Some(value);
                 }
             }
@@ -129,12 +126,10 @@ impl QueryCache {
     }
 
     /// Put result into cache
-    pub fn put<T>(&self, key: QueryCacheKey, value: T)
-    where
-        T: Serialize,
-    {
-        // Serialize to bytes
-        if let Ok(bytes) = bincode::serialize(&value) {
+    pub fn put<T: bincode::Encode>(&self, key: QueryCacheKey, value: T) {
+        // Serialize to bytes using bincode v2
+        let config = bincode::config::standard();
+        if let Ok(bytes) = bincode::encode_to_vec(&value, config) {
             let mut cache = self.cache.write().unwrap();
             cache.insert(key, CachedResult::new(bytes));
         }
@@ -250,7 +245,7 @@ pub struct CacheStats {
 mod tests {
     use super::*;
 
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
     struct TestData {
         id: String,
         value: i32,

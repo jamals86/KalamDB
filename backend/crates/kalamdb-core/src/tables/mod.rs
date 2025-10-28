@@ -8,7 +8,6 @@
 
 pub mod hybrid_table_provider;
 pub mod parquet_scan;
-pub mod rocksdb_scan;
 pub mod shared_table_provider;
 pub mod stream_table_provider;
 pub mod system;

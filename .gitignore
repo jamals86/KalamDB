@@ -19,6 +19,7 @@ cli/kalam-link/pkg/
 
 # Configuration (keep example, ignore actual config)
 config.toml
+!/.cargo/config.toml
 !config.example.toml
 
 # IDE
@@ -64,3 +65,5 @@ config.toml
 cli/.kalam/history
 examples/simple-typescript/package-lock.json
 examples/simple-typescript/package-lock.json
+/backend/manual_flush
+/backend/multi_flush

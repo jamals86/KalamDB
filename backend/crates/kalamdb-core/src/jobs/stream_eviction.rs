@@ -13,7 +13,7 @@ use crate::error::KalamDbError;
 use crate::jobs::{JobExecutor, JobResult};
 use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use kalamdb_sql::KalamSql;
-use kalamdb_store::StreamTableStore;
+use crate::stores::StreamTableStore;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -38,7 +38,6 @@ impl Default for StreamEvictionConfig {
 /// Stream table eviction job
 pub struct StreamEvictionJob {
     stream_store: Arc<StreamTableStore>,
-    #[allow(dead_code)]
     kalam_sql: Arc<KalamSql>,
     job_executor: Arc<JobExecutor>,
     config: StreamEvictionConfig,
@@ -163,58 +162,16 @@ impl StreamEvictionJob {
         table_name: TableName,
         retention_period_ms: i64,
     ) -> Result<usize, KalamDbError> {
-        // Calculate cutoff timestamp
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| KalamDbError::Other(format!("Failed to get system time: {}", e)))?
-            .as_millis() as i64;
-
-        let cutoff_ms = now_ms - retention_period_ms;
-
-        // Execute eviction through job executor for monitoring
-        let job_id = format!(
-            "stream-evict-{}:{}",
-            namespace_id.as_str(),
-            table_name.as_str()
-        );
-        let job_type = "stream_eviction".to_string();
-        let target_resource = Some(format!("{}:{}", namespace_id.as_str(), table_name.as_str()));
-
+        // For the new StreamTableStore, we use cleanup_expired_rows
+        // which handles TTL-based eviction automatically
         let namespace_id_str = namespace_id.as_str().to_string();
         let table_name_str = table_name.as_str().to_string();
-        let stream_store = Arc::clone(&self.stream_store);
 
-        let result = self.job_executor.execute_job(
-            job_id,
-            job_type,
-            target_resource,
-            vec![],
-            move || {
-                // Perform eviction
-                let deleted_count = stream_store
-                    .evict_older_than(&namespace_id_str, &table_name_str, cutoff_ms)
-                    .map_err(|e| format!("Eviction failed: {}", e))?;
+        let deleted_count = self.stream_store
+            .cleanup_expired_rows(&namespace_id_str, &table_name_str)
+            .map_err(|e| KalamDbError::Other(format!("Failed to cleanup expired rows: {}", e)))?;
 
-                Ok(format!(
-                    "Evicted {} events (cutoff: {}ms)",
-                    deleted_count, cutoff_ms
-                ))
-            },
-        )?;
-
-        // Extract count from JobResult
-        let count = match result {
-            JobResult::Success(msg) => {
-                // Parse "Evicted N events (cutoff: Xms)"
-                msg.split_whitespace()
-                    .nth(1)
-                    .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(0)
-            }
-            JobResult::Failure(_) => 0,
-        };
-
-        Ok(count)
+        Ok(deleted_count)
     }
 
     /// Run max buffer eviction for a specific stream table
@@ -254,7 +211,7 @@ impl StreamEvictionJob {
             target_resource,
             vec![format!("max_events={}", max_events)],
             move || {
-                // Get all events sorted by timestamp (oldest first)
+                // Get all events - the new scan method returns (row_id, row_data)
                 let mut events = stream_store
                     .scan(&namespace_id_str, &table_name_str)
                     .map_err(|e| format!("Failed to scan table: {}", e))?;
@@ -269,17 +226,26 @@ impl StreamEvictionJob {
                     ));
                 }
 
-                // Sort by timestamp (already sorted from scan, but ensure it)
-                events.sort_by_key(|(timestamp, _, _)| *timestamp);
+                // Sort by inserted_at timestamp from the row data
+                // The row_data contains "inserted_at" field
+                events.sort_by(|(_, a), (_, b)| {
+                    let a_time = a.get("inserted_at")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("1970-01-01T00:00:00Z");
+                    let b_time = b.get("inserted_at")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("1970-01-01T00:00:00Z");
+                    a_time.cmp(b_time)
+                });
 
                 // Calculate how many to delete
                 let to_delete = total_count - max_events;
 
                 // Delete oldest entries (keep newest max_events)
                 let mut deleted_count = 0;
-                for (timestamp, row_id, _) in events.iter().take(to_delete) {
+                for (row_id, _) in events.iter().take(to_delete) {
                     stream_store
-                        .delete(&namespace_id_str, &table_name_str, *timestamp, row_id)
+                        .delete(&namespace_id_str, &table_name_str, row_id, true) // Hard delete for max buffer eviction
                         .map_err(|e| format!("Failed to delete event: {}", e))?;
                     deleted_count += 1;
                 }
@@ -330,7 +296,7 @@ impl StreamEvictionJob {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::RocksDbInit;
+    use kalamdb_store::RocksDbInit;
     use crate::tables::system::JobsTableProvider;
     use tempfile::TempDir;
 
@@ -340,7 +306,9 @@ mod tests {
         let db = init.open().unwrap();
 
         let stream_store = Arc::new(StreamTableStore::new(db.clone()).unwrap());
-        let kalam_sql = Arc::new(KalamSql::new(db.clone()).unwrap());
+        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+            Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(Arc::clone(&kalam_sql)));
         let job_executor = Arc::new(JobExecutor::new(jobs_provider, "test-node".to_string()));
 
@@ -364,7 +332,9 @@ mod tests {
         let db = init.open().unwrap();
 
         let stream_store = Arc::new(StreamTableStore::new(db.clone()).unwrap());
-        let kalam_sql = Arc::new(KalamSql::new(db.clone()).unwrap());
+        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+            Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(Arc::clone(&kalam_sql)));
         let job_executor = Arc::new(JobExecutor::new(jobs_provider, "test-node".to_string()));
 

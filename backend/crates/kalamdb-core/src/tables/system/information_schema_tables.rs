@@ -15,8 +15,7 @@ use datafusion::arrow::array::{
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::Result as DataFusionResult;
-use datafusion::execution::context::SessionState;
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_sql::KalamSql;
@@ -27,6 +26,12 @@ use std::sync::Arc;
 pub struct InformationSchemaTablesProvider {
     kalam_sql: Arc<KalamSql>,
     schema: SchemaRef,
+}
+
+impl std::fmt::Debug for InformationSchemaTablesProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InformationSchemaTablesProvider").finish()
+    }
 }
 
 impl InformationSchemaTablesProvider {
@@ -165,12 +170,24 @@ impl TableProvider for InformationSchemaTablesProvider {
 
     async fn scan(
         &self,
-        _state: &SessionState,
+        _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        self.into_memory_exec(projection)
+        use datafusion::datasource::MemTable;
+        let schema = self.schema.clone();
+        let batch = self.scan_all_tables().map_err(|e| {
+            DataFusionError::Execution(format!(
+                "Failed to build information_schema.tables batch: {}",
+                e
+            ))
+        })?;
+        let partitions = vec![vec![batch]];
+        let table = MemTable::try_new(schema, partitions).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
+        })?;
+        table.scan(_state, projection, &[], _limit).await
     }
 }
 

@@ -90,6 +90,7 @@ impl From<String> for StorageType {
 /// - **System**: Internal system metadata tables (e.g., `information_schema.tables`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub enum TableType {
     /// Per-user tables with user-specific partitioning
     User,
@@ -156,6 +157,7 @@ impl From<String> for TableType {
 /// - **Cancelled**: Job was cancelled by user or system
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub enum JobStatus {
     /// Job is currently executing
     Running,
@@ -223,6 +225,7 @@ impl From<String> for JobStatus {
 /// - **Restore**: Restore namespace from backup
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub enum JobType {
     /// Flush table data from RocksDB to Parquet
     Flush,
@@ -294,6 +297,7 @@ impl From<String> for JobType {
 /// - **System**: Internal system user (highest privileges)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub enum Role {
     /// Regular user with standard permissions
     User,
@@ -359,6 +363,7 @@ impl From<String> for Role {
 /// - **Internal**: Internal system authentication
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub enum AuthType {
     /// Traditional username/password authentication
     Password,
@@ -418,6 +423,7 @@ impl From<String> for AuthType {
 /// - **Region**: User prefers region-based storage partitioning
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub enum StorageMode {
     /// Table-based storage partitioning
     Table,
@@ -473,6 +479,7 @@ impl From<String> for StorageMode {
 /// - **Restricted**: Table accessible by specific users/roles (requires permissions table)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub enum TableAccess {
     /// Table accessible by all authenticated users
     Public,
@@ -978,3 +985,4 @@ mod tests {
         assert_eq!(id.as_str(), "local");
     }
 }
+

@@ -1,24 +1,19 @@
 //! Storage module for data persistence
 //!
-//! This module provides storage backends including RocksDB for fast writes
-//! and Parquet for analytics-ready persistence.
+//! This module provides storage utilities for KalamDB core.
+//! Low-level storage engines are isolated in `kalamdb-store` to allow
+//! pluggable backends (RocksDB, in-memory, etc.).
 
-pub mod backend;
 pub mod column_family_manager;
 pub mod filesystem_backend;
 pub mod parquet_writer;
 pub mod path_template;
-pub mod rocksdb_config;
-pub mod rocksdb_init;
-pub mod rocksdb_store;
 pub mod storage_registry;
 
-pub use backend::{RocksDbBackend, StorageBackend};
-pub use column_family_manager::{ColumnFamilyManager, SYSTEM_COLUMN_FAMILIES};
+// Re-export generic backend traits from kalamdb-store
+pub use kalamdb_commons::storage::StorageBackend;
+pub use column_family_manager::ColumnFamilyManager;
 pub use filesystem_backend::FilesystemBackend;
 pub use parquet_writer::ParquetWriter;
 pub use path_template::PathTemplate;
-pub use rocksdb_config::RocksDbConfig;
-pub use rocksdb_init::RocksDbInit;
-pub use rocksdb_store::RocksDbStore;
 pub use storage_registry::StorageRegistry;

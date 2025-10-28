@@ -3,7 +3,8 @@
 //! This provider combines hot data from RocksDB with cold data from Parquet files.
 
 use crate::catalog::TableMetadata;
-use crate::storage::{RocksDbBackend, StorageBackend};
+use crate::storage::StorageBackend;
+use kalamdb_store::RocksDBBackend;
 use datafusion::arrow::datatypes::SchemaRef;
 use std::sync::Arc;
 
@@ -40,15 +41,14 @@ impl HybridTableProvider {
         }
     }
 
-    /// Create a new hybrid table provider from a RocksDB instance (convenience method)
-    pub fn from_db(
+    // Convenience constructor for RocksDB-backed backend
+    pub fn from_rocks_backend(
         table_metadata: TableMetadata,
         schema: SchemaRef,
-        db: Arc<rocksdb::DB>,
+        backend: RocksDBBackend,
         parquet_paths: Vec<String>,
     ) -> Self {
-        let backend = Arc::new(RocksDbBackend::new(db));
-        Self::new(table_metadata, schema, backend, parquet_paths)
+        Self::new(table_metadata, schema, Arc::new(backend), parquet_paths)
     }
 
     /// Get the column family name for this table
@@ -67,7 +67,7 @@ mod tests {
     use super::*;
     use crate::catalog::{NamespaceId, TableName, TableType};
     use crate::flush::FlushPolicy;
-    use crate::storage::RocksDbInit;
+    use kalamdb_store::{RocksDbInit, RocksDBBackend};
     use chrono::Utc;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use std::env;
@@ -97,8 +97,9 @@ mod tests {
             deleted_retention_hours: Some(720),
         };
 
+        let backend = RocksDBBackend::new(db.clone());
         let provider =
-            HybridTableProvider::from_db(table_metadata, schema.clone(), db.clone(), vec![]);
+            HybridTableProvider::from_rocks_backend(table_metadata, schema.clone(), backend, vec![]);
 
         assert_eq!(provider.schema(), schema);
 

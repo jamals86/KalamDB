@@ -31,17 +31,17 @@ tabled = { workspace = true }
 crossterm = { workspace = true }
 
 # Progress indicators
-indicatif = "0.17"
+indicatif = { workspace = true }
 
 # Terminal colors and styling
-colored = "2.1"
-console = "0.15"
+colored = { workspace = true }
+console = { workspace = true }
 
 # Config file parsing
 toml = { workspace = true }
 
 # Secure password input
-rpassword = "7.3"
+rpassword = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
@@ -55,19 +55,19 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 
 # Home directory detection
-dirs = "5.0"
+dirs = { workspace = true }
 
 # Terminal dimensions
-term_size = "0.3"
+term_size = { workspace = true }
 
 # Date/time formatting
-chrono = "0.4"
+chrono = { workspace = true }
 
 [build-dependencies]
-chrono = "0.4"
+chrono = { workspace = true }
 
 [dev-dependencies]
-assert_cmd = "2.0"
-predicates = "3.0"
-tempfile = "3.8"
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+tempfile = { workspace = true }
 reqwest = { workspace = true }

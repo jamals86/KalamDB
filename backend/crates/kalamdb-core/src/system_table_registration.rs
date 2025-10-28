@@ -11,7 +11,8 @@ use crate::tables::system::{
     TableSchemasProvider,
     UsersTableProvider,
 };
-use datafusion::catalog::schema::{MemorySchemaProvider, SchemaProvider};
+use datafusion::catalog::memory::MemorySchemaProvider;
+use datafusion::catalog::SchemaProvider;
 use kalamdb_commons::system_tables::SystemTable;
 use std::sync::Arc;
 
@@ -32,10 +33,12 @@ use std::sync::Arc;
 /// use datafusion::catalog::schema::MemorySchemaProvider;
 /// use std::sync::Arc;
 /// use kalamdb_core::system_table_registration::register_system_tables;
-/// # use kalamdb_sql::KalamSql;
-/// # let db = Arc::new(rocksdb::DB::open_default("test").unwrap());
-/// # let kalam_sql = Arc::new(KalamSql::new(db).unwrap());
+/// use kalamdb_sql::KalamSql;
+/// use kalamdb_commons::storage::StorageBackend;
 ///
+/// # // In real code, construct a concrete backend (e.g., RocksDBBackend) in kalamdb-store.
+/// # let backend: Arc<dyn StorageBackend> = unimplemented!("provide a StorageBackend");
+/// # let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
 /// let system_schema = Arc::new(MemorySchemaProvider::new());
 /// let jobs_provider = register_system_tables(&system_schema, kalam_sql)
 ///     .expect("Failed to register system tables");

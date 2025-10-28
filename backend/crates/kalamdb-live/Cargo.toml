@@ -12,27 +12,27 @@ description = "Live query subscription management for KalamDB"
 kalamdb-commons = { path = "../kalamdb-commons" }
 
 # Apache Arrow ecosystem (for expression caching)
-datafusion.workspace = true
+datafusion = { workspace = true }
 
 # Actor framework
-actix.workspace = true
+actix = { workspace = true }
 
 # Async runtime
-tokio.workspace = true
+tokio = { workspace = true }
 
 # Serialization
-serde.workspace = true
-serde_json.workspace = true
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 # Error handling
-thiserror.workspace = true
-anyhow.workspace = true
+thiserror = { workspace = true }
+anyhow = { workspace = true }
 
 # Logging
-log.workspace = true
+log = { workspace = true }
 
 # UUID generation
-uuid.workspace = true
+uuid = { workspace = true }
 
 [lib]
 name = "kalamdb_live"

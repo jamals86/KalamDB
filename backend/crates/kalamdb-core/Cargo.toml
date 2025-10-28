@@ -7,56 +7,55 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-# Storage
-rocksdb.workspace = true
 
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["serde"] }
 kalamdb-sql = { path = "../kalamdb-sql" }
 kalamdb-store = { path = "../kalamdb-store" }
+kalamdb-auth = { path = "../kalamdb-auth" }
 
 # Apache Arrow ecosystem
-arrow.workspace = true
-datafusion.workspace = true
+arrow = { workspace = true }
+datafusion = { workspace = true }
 
 # Async
-async-trait = "0.1"
+async-trait = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
 
 # Serialization
-serde.workspace = true
-serde_json.workspace = true
-bincode = "1.3" # For system table serialization (faster than JSON)
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true } # For system table serialization (faster than JSON)
 
 # Error handling
-thiserror.workspace = true
-anyhow.workspace = true
+thiserror = { workspace = true }
+anyhow = { workspace = true }
 
 # Time handling
-chrono.workspace = true
+chrono = { workspace = true }
 
 # Logging
-log.workspace = true
+log = { workspace = true }
 
 # Metrics
-metrics = "0.22"
+metrics = { workspace = true }
 
 # UUID generation
-uuid.workspace = true
+uuid = { workspace = true }
 
 # ULID generation
-ulid.workspace = true
+ulid = { workspace = true }
 
 # Password hashing
-bcrypt = "0.15"
+bcrypt = { workspace = true }
 
 # Single-assignment statics
-once_cell = "1.19"
+once_cell = { workspace = true }
 
 # Regular expressions
-regex = "1.10"
+regex = { workspace = true }
 
 [dev-dependencies]
 # Testing utilities
-tempfile = "3.8"
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

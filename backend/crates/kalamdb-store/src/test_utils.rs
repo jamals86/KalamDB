@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tempfile::TempDir;
 
-use crate::storage_trait::{Operation, Partition, StorageBackend, StorageError};
+use kalamdb_commons::storage::{Operation, Partition, StorageBackend};
 
 /// In-memory implementation of StorageBackend for testing.
 ///
@@ -48,7 +48,7 @@ impl Default for InMemoryBackend {
 }
 
 impl StorageBackend for InMemoryBackend {
-    fn get(&self, partition: &Partition, key: &[u8]) -> crate::storage_trait::Result<Option<Vec<u8>>> {
+    fn get(&self, partition: &Partition, key: &[u8]) -> kalamdb_commons::storage::Result<Option<Vec<u8>>> {
         let data = self.data.read().unwrap();
         Ok(data
             .get(partition.name())
@@ -56,14 +56,14 @@ impl StorageBackend for InMemoryBackend {
             .cloned())
     }
 
-    fn put(&self, partition: &Partition, key: &[u8], value: &[u8]) -> crate::storage_trait::Result<()> {
+    fn put(&self, partition: &Partition, key: &[u8], value: &[u8]) -> kalamdb_commons::storage::Result<()> {
         let mut data = self.data.write().unwrap();
         let map = data.entry(partition.name().to_string()).or_insert_with(HashMap::new);
         map.insert(key.to_vec(), value.to_vec());
         Ok(())
     }
 
-    fn delete(&self, partition: &Partition, key: &[u8]) -> crate::storage_trait::Result<()> {
+    fn delete(&self, partition: &Partition, key: &[u8]) -> kalamdb_commons::storage::Result<()> {
         let mut data = self.data.write().unwrap();
         if let Some(map) = data.get_mut(partition.name()) {
             map.remove(key);
@@ -71,7 +71,7 @@ impl StorageBackend for InMemoryBackend {
         Ok(())
     }
 
-    fn batch(&self, operations: Vec<Operation>) -> crate::storage_trait::Result<()> {
+    fn batch(&self, operations: Vec<Operation>) -> kalamdb_commons::storage::Result<()> {
         for op in operations {
             match op {
                 Operation::Put {
@@ -94,7 +94,7 @@ impl StorageBackend for InMemoryBackend {
         partition: &Partition,
         prefix: Option<&[u8]>,
         limit: Option<usize>,
-    ) -> crate::storage_trait::Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + '_>> {
+    ) -> kalamdb_commons::storage::Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + '_>> {
         let data = self.data.read().unwrap();
         let items: Vec<(Vec<u8>, Vec<u8>)> = data
             .get(partition.name())
@@ -129,21 +129,25 @@ impl StorageBackend for InMemoryBackend {
         data.contains_key(partition.name())
     }
 
-    fn create_partition(&self, partition: &Partition) -> crate::storage_trait::Result<()> {
+    fn create_partition(&self, partition: &Partition) -> kalamdb_commons::storage::Result<()> {
         let mut data = self.data.write().unwrap();
         data.entry(partition.name().to_string()).or_insert_with(HashMap::new);
         Ok(())
     }
 
-    fn list_partitions(&self) -> crate::storage_trait::Result<Vec<Partition>> {
+    fn list_partitions(&self) -> kalamdb_commons::storage::Result<Vec<Partition>> {
         let data = self.data.read().unwrap();
         Ok(data.keys().map(|k| Partition::new(k.clone())).collect())
     }
 
-    fn drop_partition(&self, partition: &Partition) -> crate::storage_trait::Result<()> {
+    fn drop_partition(&self, partition: &Partition) -> kalamdb_commons::storage::Result<()> {
         let mut data = self.data.write().unwrap();
         data.remove(partition.name());
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

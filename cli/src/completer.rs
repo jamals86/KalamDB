@@ -168,6 +168,10 @@ impl AutoCompleter {
             "\\describe",
             "\\format",
             "\\refresh-tables",
+            "\\show-credentials",
+            "\\credentials",
+            "\\update-credentials",
+            "\\delete-credentials",
         ]
         .iter()
         .map(|s| s.to_string())

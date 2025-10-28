@@ -269,7 +269,7 @@ impl JobExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::RocksDbInit;
+    use kalamdb_store::RocksDbInit;
     use kalamdb_sql::KalamSql;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -278,7 +278,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
-        let kalam_sql = Arc::new(KalamSql::new(db).unwrap());
+        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+            Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql));
         let executor = JobExecutor::new(jobs_provider, "test-node-1".to_string());
         (executor, temp_dir)
@@ -308,7 +310,7 @@ mod tests {
             .get_job("test-job-1")
             .unwrap()
             .unwrap();
-        assert_eq!(job.status, "completed");
+        assert_eq!(job.status, JobStatus::Completed);
         assert!(job.completed_at.is_some());
         assert_eq!(job.result, Some("Job completed successfully".to_string()));
     }
@@ -337,7 +339,7 @@ mod tests {
             .get_job("test-job-2")
             .unwrap()
             .unwrap();
-        assert_eq!(job.status, "failed");
+        assert_eq!(job.status, JobStatus::Failed);
         assert!(job.completed_at.is_some());
         assert_eq!(job.error_message, Some("Job failed with error".to_string()));
     }
@@ -361,7 +363,10 @@ mod tests {
             .get_job("test-job-3")
             .unwrap()
             .unwrap();
-        assert_eq!(job.table_name, Some("test_table".to_string()));
+        assert_eq!(
+            job.table_name.as_ref().map(|name| name.as_str()),
+            Some("test_table")
+        );
     }
 
     #[test]
@@ -468,7 +473,7 @@ mod tests {
             .get_job("async-job-1")
             .unwrap()
             .unwrap();
-        assert_eq!(job.status, "completed");
+        assert_eq!(job.status, JobStatus::Completed);
         assert_eq!(job.result, Some("Async completed".to_string()));
     }
 }

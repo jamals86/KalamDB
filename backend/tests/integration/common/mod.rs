@@ -39,6 +39,9 @@ pub mod flush_helpers;
 pub mod auth_helper;
 
 use anyhow::Result;
+use datafusion::arrow::array::{
+    BooleanArray, Float64Array, Int32Array, Int64Array, StringArray, TimestampMillisecondArray,
+};
 use datafusion::catalog::SchemaProvider;
 use kalamdb_api::models::{QueryResult, SqlResponse};
 use kalamdb_commons::models::{NamespaceId, StorageId, TableName};
@@ -51,6 +54,7 @@ use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use std::sync::Arc;
 use tempfile::TempDir;
+use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
 
 /// HTTP test server wrapper - simplified to avoid complex type signatures
 pub struct HttpTestServer {
@@ -142,8 +146,6 @@ pub mod websocket;
 pub struct TestServer {
     /// Temporary directory for database files (shared via Arc to allow cloning)
     pub temp_dir: Arc<TempDir>,
-    /// RocksDB instance (needed for direct store access in tests)
-    pub db: Arc<rocksdb::DB>,
     /// KalamSQL instance for direct database access
     pub kalam_sql: Arc<kalamdb_sql::KalamSql>,
     /// SQL executor for query execution
@@ -160,7 +162,6 @@ impl Clone for TestServer {
     fn clone(&self) -> Self {
         Self {
             temp_dir: Arc::clone(&self.temp_dir),
-            db: Arc::clone(&self.db),
             kalam_sql: Arc::clone(&self.kalam_sql),
             sql_executor: Arc::clone(&self.sql_executor),
             namespace_service: Arc::clone(&self.namespace_service),
@@ -214,12 +215,12 @@ impl TestServer {
         });
 
         // Initialize RocksDB with all system tables
-        let db_init = kalamdb_core::storage::RocksDbInit::new(&db_path);
+        let db_init = kalamdb_store::RocksDbInit::new(&db_path);
         let db = db_init.open().expect("Failed to open RocksDB");
 
-        // Initialize KalamSQL
-        let kalam_sql =
-            Arc::new(kalamdb_sql::KalamSql::new(db.clone()).expect("Failed to create KalamSQL"));
+        // Initialize KalamSQL via StorageBackend abstraction
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
+        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).expect("Failed to create KalamSQL"));
 
         // Create default 'local' storage if system.storages is empty
         let storages = kalam_sql
@@ -245,16 +246,17 @@ impl TestServer {
         }
 
         // Initialize stores (needed by some services)
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
         let user_table_store = Arc::new(
-            kalamdb_store::UserTableStore::new(db.clone())
+            kalamdb_core::stores::UserTableStore::new(backend.clone())
                 .expect("Failed to create UserTableStore"),
         );
         let shared_table_store = Arc::new(
-            kalamdb_store::SharedTableStore::new(db.clone())
+            kalamdb_core::stores::SharedTableStore::new(backend.clone())
                 .expect("Failed to create SharedTableStore"),
         );
         let stream_table_store = Arc::new(
-            kalamdb_store::StreamTableStore::new(db.clone())
+            kalamdb_core::stores::StreamTableStore::new(backend.clone())
                 .expect("Failed to create StreamTableStore"),
         );
 

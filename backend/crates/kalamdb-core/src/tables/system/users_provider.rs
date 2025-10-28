@@ -13,8 +13,7 @@ use async_trait::async_trait;
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, TimestampMillisecondArray};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::Result as DataFusionResult;
-use datafusion::execution::context::SessionState;
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
@@ -48,6 +47,12 @@ pub struct UsersTableProvider {
     schema: SchemaRef,
 }
 
+impl std::fmt::Debug for UsersTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UsersTableProvider").finish()
+    }
+}
+
 impl UsersTableProvider {
     /// Create a new users table provider
     pub fn new(kalam_sql: Arc<KalamSql>) -> Self {
@@ -58,7 +63,7 @@ impl UsersTableProvider {
     }
 
     /// Insert a new user
-    pub async fn insert_user(&self, user: CreateUserRequest) -> Result<(), KalamDbError> {
+    pub fn insert_user(&self, user: CreateUserRequest) -> Result<(), KalamDbError> {
         let kalamdb_user = User {
             id: UserId::new(&user.user_id),
             username: user.username.clone(),
@@ -289,26 +294,37 @@ impl TableProvider for UsersTableProvider {
 
     async fn scan(
         &self,
-        _state: &SessionState,
+        _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        self.into_memory_exec(projection)
+        use datafusion::datasource::MemTable;
+        let schema = self.schema.clone();
+        let batch = self.scan_all_users().map_err(|e| {
+            DataFusionError::Execution(format!("Failed to build users batch: {}", e))
+        })?;
+        let partitions = vec![vec![batch]];
+        let table = MemTable::try_new(schema, partitions).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
+        })?;
+        table.scan(_state, projection, &[], _limit).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::RocksDbInit;
+    use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
     fn create_test_provider() -> (UsersTableProvider, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
-        let kalam_sql = Arc::new(KalamSql::new(db).unwrap());
+        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+            Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let provider = UsersTableProvider::new(kalam_sql);
         (provider, temp_dir)
     }
@@ -317,15 +333,14 @@ mod tests {
     fn test_insert_and_get_user() {
         let (provider, _temp_dir) = create_test_provider();
 
-        let user = UserRecord {
+        let user = CreateUserRequest {
             user_id: "user1".to_string(),
             username: "testuser".to_string(),
             email: Some("test@example.com".to_string()),
             created_at: 1000,
-            updated_at: 1000,
         };
 
-        provider.insert_user(user.clone()).unwrap();
+        provider.insert_user(user).unwrap();
 
         let retrieved = provider.get_user("testuser").unwrap(); // Use username as key
         assert!(retrieved.is_some());
@@ -339,23 +354,20 @@ mod tests {
     fn test_update_user() {
         let (provider, _temp_dir) = create_test_provider();
 
-        let user = UserRecord {
+        let user = CreateUserRequest {
             user_id: "user1".to_string(),
             username: "testuser".to_string(),
             email: Some("test@example.com".to_string()),
             created_at: 1000,
-            updated_at: 1000,
         };
 
-        provider.insert_user(user.clone()).unwrap();
+        provider.insert_user(user).unwrap();
 
-        let updated_user = UserRecord {
-            user_id: "user1".to_string(),
-            username: "testuser".to_string(),
-            email: Some("updated@example.com".to_string()),
-            created_at: 1000,
-            updated_at: 2000,
-        };
+        let mut updated_user = provider
+            .get_user_by_id(&UserId::new("user1"))
+            .unwrap();
+        updated_user.email = Some("updated@example.com".to_string());
+        updated_user.updated_at = 2000;
 
         provider.update_user(updated_user).unwrap();
 
@@ -368,12 +380,20 @@ mod tests {
     fn test_update_nonexistent_user() {
         let (provider, _temp_dir) = create_test_provider();
 
-        let user = UserRecord {
-            user_id: "nonexistent".to_string(),
+        let user = kalamdb_commons::system::User {
+            id: UserId::new("nonexistent"),
             username: "nonexistentuser".to_string(),
+            password_hash: String::new(),
+            role: Role::User,
             email: None,
+            auth_type: AuthType::OAuth,
+            auth_data: None,
+            storage_mode: StorageMode::Table,
+            storage_id: None,
             created_at: 1000,
             updated_at: 1000,
+            last_seen: None,
+            deleted_at: None,
         };
 
         let result = provider.update_user(user);
@@ -385,16 +405,15 @@ mod tests {
     fn test_delete_user() {
         let (provider, _temp_dir) = create_test_provider();
 
-        let user = UserRecord {
+        let user = CreateUserRequest {
             user_id: "user1".to_string(),
             username: "testuser".to_string(),
             email: None,
             created_at: 1000,
-            updated_at: 1000,
         };
 
         provider.insert_user(user).unwrap();
-        provider.delete_user("user1").unwrap();
+        provider.delete_user(&UserId::new("user1")).unwrap();
 
         let retrieved = provider.get_user("testuser").unwrap();
         assert!(retrieved.is_none());
@@ -405,19 +424,17 @@ mod tests {
         let (provider, _temp_dir) = create_test_provider();
 
         let users = vec![
-            UserRecord {
+            CreateUserRequest {
                 user_id: "user1".to_string(),
                 username: "user1".to_string(),
                 email: Some("user1@example.com".to_string()),
                 created_at: 1000,
-                updated_at: 1000,
             },
-            UserRecord {
+            CreateUserRequest {
                 user_id: "user2".to_string(),
                 username: "user2".to_string(),
                 email: None,
                 created_at: 2000,
-                updated_at: 2000,
             },
         ];
 
@@ -427,14 +444,14 @@ mod tests {
 
         let batch = provider.scan_all_users().unwrap();
         assert_eq!(batch.num_rows(), 2);
-        assert_eq!(batch.num_columns(), 7);
+        assert_eq!(batch.num_columns(), 11);
     }
 
     #[test]
     fn test_table_provider_schema() {
         let (provider, _temp_dir) = create_test_provider();
         let schema = provider.schema();
-        assert_eq!(schema.fields().len(), 7);
+        assert_eq!(schema.fields().len(), 11);
         assert_eq!(schema.field(0).name(), "user_id");
         assert_eq!(schema.field(1).name(), "username");
     }

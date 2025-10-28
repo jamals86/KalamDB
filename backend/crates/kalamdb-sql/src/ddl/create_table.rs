@@ -40,6 +40,10 @@ static ACCESS_LEVEL_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"(?i)\s+ACCESS\s+LEVEL\s+['\"]?(public|private|restricted)['\"]?"#).unwrap()
 });
 
+// MySQL compatibility: strip AUTO_INCREMENT from column definitions
+static AUTO_INCREMENT_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)\s+AUTO_INCREMENT"#).unwrap());
+
 static INTERVAL_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)FLUSH\s+INTERVAL\s+(\d+)s").unwrap());
 
@@ -187,6 +191,10 @@ impl CreateTableStatement {
             .into_owned();
         normalized_sql = TTL_RE.replace_all(&normalized_sql, "").into_owned();
         normalized_sql = ACCESS_LEVEL_RE.replace_all(&normalized_sql, "").into_owned();
+        // Strip non-Postgres AUTO_INCREMENT for compatibility
+        normalized_sql = AUTO_INCREMENT_RE
+            .replace_all(&normalized_sql, "")
+            .into_owned();
 
         // Parse with sqlparser - use PostgreSQL dialect for better TEXT support
         let dialect = PostgreSqlDialect {};
@@ -230,12 +238,11 @@ impl CreateTableStatement {
         table_type: TableType,
     ) -> DdlResult<Self> {
         match stmt {
-            Statement::CreateTable {
-                name,
-                columns,
-                if_not_exists,
-                ..
-            } => {
+            Statement::CreateTable(create_table) => {
+                let name = &create_table.name;
+                let columns = &create_table.columns;
+                let if_not_exists = create_table.if_not_exists;
+                
                 // Extract table name
                 let table_name = Self::extract_table_name(name)?;
 
@@ -270,7 +277,7 @@ impl CreateTableStatement {
                     flush_policy,
                     deleted_retention_hours,
                     ttl_seconds,
-                    if_not_exists: *if_not_exists,
+                    if_not_exists,
                     access_level,
                 })
             }
@@ -284,14 +291,14 @@ impl CreateTableStatement {
         if parts.is_empty() {
             return Err("Empty table name".to_string());
         }
-        Ok(parts.last().unwrap().value.clone())
+        Ok(parts.last().unwrap().to_string())
     }
 
     /// Extract namespace from object name if qualified
     fn extract_namespace(name: &sqlparser::ast::ObjectName) -> Option<String> {
         let parts = &name.0;
         if parts.len() >= 2 {
-            Some(parts[0].value.clone())
+            Some(parts[0].to_string())
         } else {
             None
         }
@@ -381,14 +388,14 @@ impl CreateTableStatement {
             }
 
             // Literal value: DEFAULT 'text', DEFAULT 42, DEFAULT TRUE
-            Expr::Value(value) => {
-                let literal_str = match value {
+            Expr::Value(value_with_span) => {
+                let literal_str = match &value_with_span.value {
                     sqlparser::ast::Value::SingleQuotedString(s) => s.clone(),
                     sqlparser::ast::Value::DoubleQuotedString(s) => s.clone(),
                     sqlparser::ast::Value::Number(n, _) => n.clone(),
                     sqlparser::ast::Value::Boolean(b) => b.to_string(),
                     sqlparser::ast::Value::Null => return Ok(ColumnDefault::None),
-                    _ => return Err(format!("Unsupported DEFAULT literal: {:?}", value)),
+                    _ => return Err(format!("Unsupported DEFAULT literal: {:?}", value_with_span)),
                 };
                 Ok(ColumnDefault::Literal(literal_str))
             }

@@ -18,8 +18,8 @@ use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::schema::ArrowSchemaWithOptions;
 use arrow::datatypes::{DataType, Field, Schema};
-use kalamdb_commons::models::UserId;
-use kalamdb_commons::system::Namespace;
+use kalamdb_commons::models::{StorageId, UserId};
+use kalamdb_commons::system::{LiveQuery, Namespace};
 use kalamdb_sql::ddl::ColumnOperation;
 use kalamdb_sql::{KalamSql, Table, TableSchema};
 use std::sync::Arc;
@@ -508,6 +508,7 @@ mod tests {
     use super::*;
     use kalamdb_sql::{LiveQuery, Namespace};
     use kalamdb_store::test_utils::TestDb;
+    use kalamdb_store::{RocksDBBackend, kalamdb_commons::storage::StorageBackend};
 
     fn setup_test_db() -> (Arc<KalamSql>, TestDb) {
         // Create TestDb with required column families
@@ -521,7 +522,8 @@ mod tests {
             "system_jobs",
         ];
         let test_db = TestDb::new(cf_names).unwrap();
-        let kalam_sql = Arc::new(KalamSql::new(test_db.db.clone()).unwrap());
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         (kalam_sql, test_db)
     }
 
@@ -541,16 +543,17 @@ mod tests {
         // Create table
         let table = Table {
             table_id: table_id.clone(),
-            table_name: "test_table".to_string(),
-            namespace: "test_ns".to_string(),
-            table_type: table_type.to_string(),
-            created_at: chrono::Utc::now().timestamp(),
+            table_name: TableName::new("test_table"),
+            namespace: NamespaceId::new("test_ns"),
+            table_type: TableType::from(table_type),
+            created_at: chrono::Utc::now().timestamp_millis(),
             storage_location: "/tmp/test".to_string(),
-            storage_id: Some("local".to_string()),
+            storage_id: Some(StorageId::new("local")),
             use_user_storage: false,
             flush_policy: "{}".to_string(),
             schema_version: 1,
             deleted_retention_hours: 72,
+            access_level: None,
         };
         kalam_sql.insert_table(&table).unwrap();
 
@@ -563,7 +566,7 @@ mod tests {
 
         let schema_with_opts = ArrowSchemaWithOptions::new(Arc::new(schema));
         let schema_json = schema_with_opts.to_json_string().unwrap();
-        let table_schema = TableSchema {
+        let _table_schema = TableSchema {
             schema_id: format!("{}:v1", table_id),
             table_id: table_id.clone(),
             version: 1,
@@ -716,14 +719,14 @@ mod tests {
         let live_query = LiveQuery {
             live_id: "lq123".to_string(),
             connection_id: "conn1".to_string(),
-            namespace_id: "test_ns".to_string(),
-            user_id: "user1".to_string(),
-            table_name: "test_table".to_string(),
+            namespace_id: NamespaceId::new("test_ns"),
+            table_name: TableName::new("test_table"),
             query_id: "query1".to_string(),
+            user_id: UserId::new("user1"),
             query: "SELECT name, age FROM test_table WHERE age > 18".to_string(),
-            options: "{}".to_string(),
-            created_at: chrono::Utc::now().timestamp(),
-            last_update: chrono::Utc::now().timestamp(),
+            options: Some("{}".to_string()),
+            created_at: chrono::Utc::now().timestamp_millis(),
+            last_update: chrono::Utc::now().timestamp_millis(),
             changes: 0,
             node: "node1".to_string(),
         };

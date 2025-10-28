@@ -17,7 +17,7 @@ use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
 use kalamdb_commons::models::{JobStatus, JobType};
 use kalamdb_sql::{Job, KalamSql};
-use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
+use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -523,6 +523,7 @@ impl TableDeletionService {
 mod tests {
     use super::*;
     use kalamdb_store::test_utils::TestDb;
+    use kalamdb_store::{RocksDBBackend, kalamdb_commons::storage::StorageBackend};
 
     fn create_test_service() -> (TableDeletionService, TestDb) {
         // Create test database with all required column families
@@ -542,7 +543,8 @@ mod tests {
         let user_store = Arc::new(UserTableStore::new(db.clone()).unwrap());
         let shared_store = Arc::new(SharedTableStore::new(db.clone()).unwrap());
         let stream_store = Arc::new(StreamTableStore::new(db.clone()).unwrap());
-        let kalam_sql = Arc::new(KalamSql::new(db.clone()).unwrap());
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
+        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
 
         let service = TableDeletionService::new(user_store, shared_store, stream_store, kalam_sql);
 
