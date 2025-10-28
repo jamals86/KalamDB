@@ -1,0 +1,8 @@
+# Build artifacts
+dist/
+*.tar.gz
+*.zip
+SHA256SUMS
+
+# Docker build cache
+.docker/
