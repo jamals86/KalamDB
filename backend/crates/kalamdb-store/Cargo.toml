@@ -25,8 +25,3 @@ log = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 criterion = { workspace = true }
-
-[[bench]]
-name = "performance"
-harness = false
-path = "../../benches/performance.rs"

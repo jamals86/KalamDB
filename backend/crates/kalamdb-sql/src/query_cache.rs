@@ -246,7 +246,7 @@ pub struct CacheStats {
 mod tests {
     use super::*;
 
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
     struct TestData {
         id: String,
         value: i32,
