@@ -432,7 +432,7 @@ impl FlushScheduler {
             .collect();
 
         if incomplete_jobs.is_empty() {
-            log::info!("No incomplete jobs to resume");
+            log::trace!("No incomplete jobs to resume");
             return Ok(0);
         }
 

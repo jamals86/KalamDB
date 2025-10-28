@@ -41,7 +41,19 @@ async fn main() -> Result<()> {
         config.logging.log_to_console,
     )?;
 
-    info!("Starting KalamDB Server v{}", env!("CARGO_PKG_VERSION"));
+    // Display enhanced version information
+    let version = env!("CARGO_PKG_VERSION");
+    let commit = env!("GIT_COMMIT_HASH");
+    let build_date = env!("BUILD_DATE");
+    let branch = env!("GIT_BRANCH");
+    
+    info!("╔═══════════════════════════════════════════════════════════════╗");
+    info!("║           KalamDB Server v{:<37} ║", version);
+    info!("╠═══════════════════════════════════════════════════════════════╣");
+    info!("║  Commit:     {:<49} ║", commit);
+    info!("║  Branch:     {:<49} ║", branch);
+    info!("║  Built:      {:<49} ║", build_date);
+    info!("╚═══════════════════════════════════════════════════════════════╝");
     info!("Host: {}  Port: {}", config.server.host, config.server.port);
 
     // Build application state and kick off background services
