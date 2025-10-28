@@ -67,7 +67,14 @@ pub async fn execute_sql(server: &TestServer, sql: &str, user_id: &str) -> Resul
 /// ```
 pub async fn create_namespace(server: &TestServer, namespace: &str) -> SqlResponse {
     let sql = format!("CREATE NAMESPACE {}", namespace);
-    server.execute_sql(&sql).await
+    let resp = server.execute_sql(&sql).await;
+    if resp.status != "success" {
+        eprintln!(
+            "CREATE NAMESPACE failed: ns={}, error={:?}",
+            namespace, resp.error
+        );
+    }
+    resp
 }
 
 /// Create a namespace with specific options.
@@ -129,7 +136,14 @@ pub async fn create_messages_table(
         ) FLUSH ROWS 100"#,
         namespace
     );
-    server.execute_sql_with_user(&sql, user_id).await
+    let resp = server.execute_sql_with_user(&sql, user_id).await;
+    if resp.status != "success" {
+        eprintln!(
+            "CREATE MESSAGES TABLE failed: status={}, error={:?}",
+            resp.status, resp.error
+        );
+    }
+    resp
 }
 
 /// Create a user table with custom flush policy.

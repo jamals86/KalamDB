@@ -40,6 +40,10 @@ static ACCESS_LEVEL_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"(?i)\s+ACCESS\s+LEVEL\s+['\"]?(public|private|restricted)['\"]?"#).unwrap()
 });
 
+// MySQL compatibility: strip AUTO_INCREMENT from column definitions
+static AUTO_INCREMENT_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)\s+AUTO_INCREMENT"#).unwrap());
+
 static INTERVAL_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)FLUSH\s+INTERVAL\s+(\d+)s").unwrap());
 
@@ -187,6 +191,10 @@ impl CreateTableStatement {
             .into_owned();
         normalized_sql = TTL_RE.replace_all(&normalized_sql, "").into_owned();
         normalized_sql = ACCESS_LEVEL_RE.replace_all(&normalized_sql, "").into_owned();
+        // Strip non-Postgres AUTO_INCREMENT for compatibility
+        normalized_sql = AUTO_INCREMENT_RE
+            .replace_all(&normalized_sql, "")
+            .into_owned();
 
         // Parse with sqlparser - use PostgreSQL dialect for better TEXT support
         let dialect = PostgreSqlDialect {};
