@@ -62,7 +62,6 @@ pub mod test_utils;
 pub fn try_extract_rocksdb_db(
     backend: &std::sync::Arc<dyn crate::storage_trait::StorageBackend>,
 ) -> Option<std::sync::Arc<rocksdb::DB>> {
-    use crate::storage_trait::StorageBackend as _;
     if let Some(rb) = backend
         .as_any()
         .downcast_ref::<crate::rocksdb_impl::RocksDBBackend>()

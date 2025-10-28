@@ -16,7 +16,7 @@
 use crate::models::UserTableRow;
 use chrono::Utc;
 use kalamdb_commons::storage::{Partition, Result as StorageResult, StorageBackend, StorageError};
-use serde_json::{Map, Value as JsonValue};
+use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
 /// User table storage with automatic system column injection.

@@ -38,7 +38,6 @@ impl Default for StreamEvictionConfig {
 /// Stream table eviction job
 pub struct StreamEvictionJob {
     stream_store: Arc<StreamTableStore>,
-    #[allow(dead_code)]
     kalam_sql: Arc<KalamSql>,
     job_executor: Arc<JobExecutor>,
     config: StreamEvictionConfig,

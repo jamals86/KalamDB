@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tempfile::TempDir;
 
-use kalamdb_commons::storage::{Operation, Partition, StorageBackend, StorageError};
+use kalamdb_commons::storage::{Operation, Partition, StorageBackend};
 
 /// In-memory implementation of StorageBackend for testing.
 ///

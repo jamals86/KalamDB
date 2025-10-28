@@ -6,13 +6,13 @@
 
 pub mod auth;
 pub mod catalog;
-pub mod config;
+// pub mod config;
 pub mod error;
 pub mod flush;
 pub mod ids;
 pub mod jobs;
 pub mod live_query;
-pub mod metrics;
+// pub mod metrics;
 pub mod models; // Domain models for system tables and table rows
 pub mod scheduler;
 pub mod schema;

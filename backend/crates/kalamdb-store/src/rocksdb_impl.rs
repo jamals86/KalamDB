@@ -107,39 +107,67 @@ impl StorageBackend for RocksDBBackend {
         prefix: Option<&[u8]>,
         limit: Option<usize>,
     ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + '_>> {
+        use rocksdb::Direction;
+
         let cf = self.get_cf(partition)?;
+
+        // Take a consistent snapshot for the duration of the iterator
+        let snapshot = self.db.snapshot();
 
         let prefix_vec = prefix.map(|p| p.to_vec());
         let iter_mode = match &prefix_vec {
-            Some(p) => IteratorMode::From(p.as_slice(), rocksdb::Direction::Forward),
+            Some(p) => IteratorMode::From(p.as_slice(), Direction::Forward),
             None => IteratorMode::Start,
         };
 
-        let mut results = Vec::new();
-        let mut count = 0;
+        // RocksDB iterator over the snapshot: bind snapshot to ReadOptions
+        let mut readopts = rocksdb::ReadOptions::default();
+        readopts.set_snapshot(&snapshot);
+        let inner = self.db.iterator_cf_opt(cf, readopts, iter_mode);
 
-        for item in self.db.iterator_cf(cf, iter_mode) {
-            let (k, v) = item.map_err(|e| StorageError::IoError(e.to_string()))?;
+        struct SnapshotScanIter<'a, D: rocksdb::DBAccess> {
+            // Hold the snapshot to keep it alive for 'a
+            _snapshot: rocksdb::SnapshotWithThreadMode<'a, D>,
+            inner: rocksdb::DBIteratorWithThreadMode<'a, D>,
+            prefix: Option<Vec<u8>>,
+            remaining: Option<usize>,
+        }
 
-            // Check prefix match if specified
-            if let Some(ref prefix) = prefix_vec {
-                if !k.starts_with(prefix) {
-                    break;
+        impl<'a, D: rocksdb::DBAccess> Iterator for SnapshotScanIter<'a, D> {
+            type Item = (Vec<u8>, Vec<u8>);
+            fn next(&mut self) -> Option<Self::Item> {
+                // Respect limit
+                if let Some(0) = self.remaining {
+                    return None;
                 }
-            }
 
-            results.push((k.to_vec(), v.to_vec()));
-            count += 1;
-
-            // Check limit
-            if let Some(max) = limit {
-                if count >= max {
-                    break;
+                match self.inner.next()? {
+                    Ok((k, v)) => {
+                        if let Some(ref p) = self.prefix {
+                            if !k.starts_with(p) {
+                                return None;
+                            }
+                        }
+                        if let Some(ref mut left) = self.remaining {
+                            if *left > 0 {
+                                *left -= 1;
+                            }
+                        }
+                        Some((k.to_vec(), v.to_vec()))
+                    }
+                    Err(_) => None,
                 }
             }
         }
 
-        Ok(Box::new(results.into_iter()))
+        let iter = SnapshotScanIter::<DB> {
+            _snapshot: snapshot,
+            inner,
+            prefix: prefix_vec,
+            remaining: limit,
+        };
+
+        Ok(Box::new(iter))
     }
 
     fn partition_exists(&self, partition: &Partition) -> bool {

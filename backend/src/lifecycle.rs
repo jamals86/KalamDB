@@ -185,7 +185,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         "SqlExecutor initialized with DROP TABLE support, storage registry, job manager, and table registration"
     );
 
-    let default_user_id = kalamdb_core::catalog::UserId::from("system");
+    let default_user_id = UserId::from("system");
     sql_executor.load_existing_tables(default_user_id).await?;
     info!("Existing tables loaded and registered with DataFusion");
 

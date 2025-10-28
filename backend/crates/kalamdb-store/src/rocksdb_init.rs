@@ -7,6 +7,7 @@ use anyhow::Result;
 use rocksdb::{ColumnFamilyDescriptor, Options, DB};
 use std::path::Path;
 use std::sync::Arc;
+use kalamdb_commons::{SystemTable, StoragePartition};
 
 /// RocksDB initializer for creating/opening a database with system CFs.
 pub struct RocksDbInit {
@@ -33,21 +34,25 @@ impl RocksDbInit {
             _ => vec!["default".to_string()],
         };
 
-        // Ensure system CFs
-        let system_cfs = [
-            kalamdb_commons::constants::ColumnFamilyNames::SYSTEM_USERS,
-            kalamdb_commons::constants::ColumnFamilyNames::SYSTEM_NAMESPACES,
-            kalamdb_commons::constants::ColumnFamilyNames::SYSTEM_TABLES,
-            kalamdb_commons::constants::ColumnFamilyNames::SYSTEM_STORAGES,
-            kalamdb_commons::constants::ColumnFamilyNames::SYSTEM_LIVE_QUERIES,
-            kalamdb_commons::constants::ColumnFamilyNames::SYSTEM_JOBS,
-            kalamdb_commons::constants::ColumnFamilyNames::INFORMATION_SCHEMA_TABLES,
-            kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_COUNTERS,
+        // Ensure system CFs using single source of truth (SystemTable + StoragePartition)
+        // 1) All system tables' CFs
+        for table in SystemTable::all().iter() {
+            let name = table.column_family_name();
+            if !existing.iter().any(|n| n == name) {
+                existing.push(name.to_string());
+            }
+        }
+
+        // 2) Additional named partitions used by the system
+        let extra_partitions = [
+            StoragePartition::InformationSchemaTables.name(),
+            StoragePartition::SystemColumns.name(),
+            StoragePartition::UserTableCounters.name(),
         ];
 
-        for name in system_cfs.iter() {
-            if !existing.contains(&name.to_string()) {
-                existing.push(name.to_string());
+        for name in extra_partitions.iter() {
+            if !existing.iter().any(|n| n == name) {
+                existing.push((*name).to_string());
             }
         }
 
@@ -64,4 +69,3 @@ impl RocksDbInit {
     /// Close database handle (drop Arc)
     pub fn close(_db: Arc<DB>) {}
 }
-
