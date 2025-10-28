@@ -6,8 +6,8 @@ We aim to store and process data with the smallest possible footprint, reducing 
 ## Our goal:
 Faster operations. Lower infrastructure expenses. Zero waste.
 
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-TBD-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![Tests](https://img.shields.io/badge/tests-32%20passing-brightgreen.svg)](backend/tests/)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](docker/README.md)
 
