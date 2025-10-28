@@ -6,7 +6,7 @@ use crate::tables::system::SystemTableProviderExt;
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringArray, TimestampMillisecondArray};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::Result as DataFusionResult;
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_sql::KalamSql;
 use std::any::Any;
@@ -114,7 +114,16 @@ impl TableProvider for SystemStoragesProvider {
         _filters: &[datafusion::prelude::Expr],
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        self.into_memory_exec(projection)
+        use datafusion::datasource::MemTable;
+        let schema = SystemStorages::schema();
+        let batch = self.create_batch().map_err(|e| {
+            DataFusionError::Execution(format!("Failed to build system.storages batch: {}", e))
+        })?;
+        let partitions = vec![vec![batch]];
+        let table = MemTable::try_new(schema, partitions).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
+        })?;
+        table.scan(_state, projection, &[], _limit)
     }
 
     fn table_type(&self) -> TableType {

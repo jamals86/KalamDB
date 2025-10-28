@@ -12,7 +12,7 @@ use datafusion::arrow::array::{
 };
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::Result as DataFusionResult;
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
@@ -250,7 +250,16 @@ impl TableProvider for LiveQueriesTableProvider {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        self.into_memory_exec(projection)
+        use datafusion::datasource::MemTable;
+        let schema = self.schema.clone();
+        let batch = self.scan_all_live_queries().map_err(|e| {
+            DataFusionError::Execution(format!("Failed to build live_queries batch: {}", e))
+        })?;
+        let partitions = vec![vec![batch]];
+        let table = MemTable::try_new(schema, partitions).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
+        })?;
+        table.scan(_state, projection, &[], _limit)
     }
 }
 

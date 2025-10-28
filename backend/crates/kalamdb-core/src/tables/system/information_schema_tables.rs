@@ -15,7 +15,7 @@ use datafusion::arrow::array::{
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::Result as DataFusionResult;
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_sql::KalamSql;
@@ -175,7 +175,19 @@ impl TableProvider for InformationSchemaTablesProvider {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        self.into_memory_exec(projection)
+        use datafusion::datasource::MemTable;
+        let schema = self.schema.clone();
+        let batch = self.scan_all_tables().map_err(|e| {
+            DataFusionError::Execution(format!(
+                "Failed to build information_schema.tables batch: {}",
+                e
+            ))
+        })?;
+        let partitions = vec![vec![batch]];
+        let table = MemTable::try_new(schema, partitions).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
+        })?;
+        table.scan(_state, projection, &[], _limit)
     }
 }
 

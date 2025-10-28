@@ -335,7 +335,7 @@ impl SqlExecutor {
         schema: SchemaRef,
         default_user_id: UserId,
     ) -> Result<(), KalamDbError> {
-        use datafusion::catalog::schema::MemorySchemaProvider;
+        use datafusion::catalog::memory::MemorySchemaProvider;
 
         // Use the "kalam" catalog (configured in DataFusionSessionFactory)
         let catalog_name = "kalam";
@@ -900,7 +900,7 @@ impl SqlExecutor {
         session: &SessionContext,
         kalam_sql: &Arc<KalamSql>,
     ) -> Result<(), KalamDbError> {
-        use datafusion::catalog::schema::MemorySchemaProvider;
+        use datafusion::catalog::memory::MemorySchemaProvider;
 
         let catalog_name = "kalam";
         let catalog = session
@@ -1025,7 +1025,7 @@ impl SqlExecutor {
         user_id: &UserId,
         table_filter: Option<&std::collections::HashSet<String>>,
     ) -> Result<SessionContext, KalamDbError> {
-        use datafusion::catalog::schema::MemorySchemaProvider;
+        use datafusion::catalog::memory::MemorySchemaProvider;
 
         // Create fresh SessionContext using the shared RuntimeEnv (efficient - no memory duplication)
         let user_session = self.session_factory.create_session();

@@ -11,7 +11,8 @@ use crate::tables::system::{
     TableSchemasProvider,
     UsersTableProvider,
 };
-use datafusion::catalog::schema::{MemorySchemaProvider, SchemaProvider};
+use datafusion::catalog::memory::MemorySchemaProvider;
+use datafusion::catalog::SchemaProvider;
 use kalamdb_commons::system_tables::SystemTable;
 use std::sync::Arc;
 

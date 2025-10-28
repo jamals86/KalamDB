@@ -17,7 +17,8 @@ use crate::tables::user_table_update::UserTableUpdateHandler;
 use async_trait::async_trait;
 use chrono::Utc;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
-use datafusion::datasource::{InsertOp, TableProvider};
+use datafusion::datasource::TableProvider;
+use datafusion::logical_expr::dml::InsertOp;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
@@ -538,15 +539,14 @@ impl TableProvider for UserTableProvider {
             (batch, full_schema)
         };
 
-        // Create a MemoryExec plan that returns our batch
-        use datafusion::physical_plan::memory::MemoryExec;
-
+        // Create an in-memory table and return its scan plan
+        use datafusion::datasource::MemTable;
         let partitions = vec![vec![final_batch]];
-        let exec = MemoryExec::try_new(&partitions, final_schema, None).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemoryExec: {}", e))
+        let table = MemTable::try_new(final_schema, partitions).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
         })?;
 
-        Ok(Arc::new(exec))
+        table.scan(_state, projection, &[], limit).await
     }
 
     async fn insert_into(

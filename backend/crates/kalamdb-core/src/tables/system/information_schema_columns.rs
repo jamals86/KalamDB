@@ -10,7 +10,8 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::datasource::TableProvider;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableType};
-use datafusion::physical_plan::{memory::MemoryExec, ExecutionPlan};
+use datafusion::datasource::MemTable;
+use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_sql::KalamSql;
 use std::any::Any;
 use std::sync::Arc;
@@ -121,8 +122,8 @@ impl TableProvider for InformationSchemaColumnsProvider {
             .map_err(|e| datafusion::error::DataFusionError::Execution(e.to_string()))?;
 
         let partitions = vec![vec![batch]];
-        let exec = MemoryExec::try_new(&partitions, schema, projection.cloned())?;
-
-        Ok(Arc::new(exec))
+        let table = MemTable::try_new(schema, partitions)
+            .map_err(|e| datafusion::error::DataFusionError::Execution(e.to_string()))?;
+        table.scan(_state, projection, &[], _limit).await
     }
 }

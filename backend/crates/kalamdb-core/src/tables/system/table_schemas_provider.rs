@@ -128,6 +128,6 @@ impl TableProvider for TableSchemasProvider {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        self.into_memory_exec(projection)
+        self.into_memory_exec(_state, projection, _limit)
     }
 }

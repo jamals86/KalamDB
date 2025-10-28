@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringBuilder, TimestampMillisecondArray};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::Result as DataFusionResult;
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
@@ -299,7 +299,16 @@ impl TableProvider for UsersTableProvider {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        self.into_memory_exec(projection)
+        use datafusion::datasource::MemTable;
+        let schema = self.schema.clone();
+        let batch = self.scan_all_users().map_err(|e| {
+            DataFusionError::Execution(format!("Failed to build users batch: {}", e))
+        })?;
+        let partitions = vec![vec![batch]];
+        let table = MemTable::try_new(schema, partitions).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
+        })?;
+        table.scan(_state, projection, &[], _limit)
     }
 }
 

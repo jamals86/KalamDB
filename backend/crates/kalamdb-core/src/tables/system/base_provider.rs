@@ -10,8 +10,8 @@ use crate::error::KalamDbError;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::physical_plan::memory::MemoryExec;
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion::datasource::{MemTable, TableProvider};
 use std::sync::Arc;
 
 /// Shared behaviour for memory-backed system table providers.
@@ -34,10 +34,12 @@ pub trait SystemTableProviderExt: Send + Sync {
         Ok(vec![self.load_batch()?])
     }
 
-    /// Build a `MemoryExec` plan with consistent error handling.
+    /// Build an in-memory scan plan with consistent error handling.
     fn into_memory_exec(
         &self,
+        state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
+        limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let schema = self.schema_ref();
         let batches = self.load_batches().map_err(|err| {
@@ -54,15 +56,14 @@ pub trait SystemTableProviderExt: Send + Sync {
             vec![batches]
         };
 
-        let exec =
-            MemoryExec::try_new(&partitions, schema, projection.cloned()).map_err(|err| {
-                DataFusionError::Execution(format!(
-                    "Failed to build MemoryExec for {}: {}",
-                    self.table_name(),
-                    err
-                ))
-            })?;
+        let table = MemTable::try_new(schema.clone(), partitions).map_err(|err| {
+            DataFusionError::Execution(format!(
+                "Failed to build MemTable for {}: {}",
+                self.table_name(),
+                err
+            ))
+        })?;
 
-        Ok(Arc::new(exec))
+        table.scan(state, projection, &[], limit)
     }
 }

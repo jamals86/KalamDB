@@ -13,7 +13,8 @@ use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::tables::system::LiveQueriesTableProvider;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::datasource::{InsertOp, TableProvider};
+use datafusion::datasource::TableProvider;
+use datafusion::logical_expr::dml::InsertOp;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
@@ -356,7 +357,6 @@ impl TableProvider for StreamTableProvider {
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::arrow::array::{ArrayRef, RecordBatch};
-        use datafusion::physical_plan::memory::MemoryExec;
 
         // Scan all events from the store
         let events = self
@@ -473,14 +473,13 @@ impl TableProvider for StreamTableProvider {
                 DataFusionError::Execution(format!("Failed to create result batch: {}", e))
             })?;
 
-        // Return a MemoryExec with the result
-        use datafusion::physical_plan::memory::MemoryExec;
+        // Return a MemTable scan with the result
+        use datafusion::datasource::MemTable;
         let partitions = vec![vec![result_batch]];
-        let exec = MemoryExec::try_new(&partitions, schema, None).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemoryExec: {}", e))
+        let table = MemTable::try_new(schema, partitions).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
         })?;
-
-        Ok(Arc::new(exec))
+        table.scan(_state, None, &[], None).await
     }
 }
 
