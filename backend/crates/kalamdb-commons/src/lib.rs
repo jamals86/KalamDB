@@ -46,6 +46,7 @@ pub mod config;
 pub mod constants;
 pub mod errors;
 pub mod models;
+pub mod storage;
 pub mod system_tables;
 pub mod websocket;
 
@@ -56,5 +57,6 @@ pub use models::{
     system, AuthType, JobStatus, JobType, NamespaceId, Role, StorageId, StorageMode, TableAccess, TableName,
     TableType, UserId,
 };
-pub use system_tables::SystemTable as SystemTableEnum;
+pub use storage::{Operation, Partition, StorageBackend, StorageError};
+pub use system_tables::{SystemTable, StoragePartition};
 pub use websocket::{ChangeType as WsChangeType, Notification, WebSocketMessage};

@@ -34,7 +34,7 @@ use std::sync::Arc;
 /// use std::sync::Arc;
 /// use kalamdb_core::system_table_registration::register_system_tables;
 /// use kalamdb_sql::KalamSql;
-/// use kalamdb_store::storage_trait::StorageBackend;
+/// use kalamdb_commons::storage::StorageBackend;
 ///
 /// # // In real code, construct a concrete backend (e.g., RocksDBBackend) in kalamdb-store.
 /// # let backend: Arc<dyn StorageBackend> = unimplemented!("provide a StorageBackend");

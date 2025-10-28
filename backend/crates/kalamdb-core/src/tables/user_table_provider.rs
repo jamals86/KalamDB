@@ -22,7 +22,7 @@ use datafusion::logical_expr::dml::InsertOp;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_store::UserTableStore;
+use crate::stores::UserTableStore;
 use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
 use std::any::Any;
@@ -874,7 +874,7 @@ mod tests {
     use chrono::Utc;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::UserTableStore;
+    use crate::stores::UserTableStore;
     use serde_json::json;
 
     fn create_test_db() -> Arc<UserTableStore> {

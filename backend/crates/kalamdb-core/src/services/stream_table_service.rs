@@ -15,8 +15,8 @@ use datafusion::arrow::datatypes::Schema;
 use kalamdb_commons::models::StorageId;
 use kalamdb_commons::system::TableSchema;
 use kalamdb_sql::ddl::CreateTableStatement;
+use crate::stores::StreamTableStore;
 use kalamdb_sql::KalamSql;
-use kalamdb_store::StreamTableStore;
 use std::sync::Arc;
 
 /// Stream table service
@@ -274,7 +274,7 @@ mod tests {
     use super::*;
     use datafusion::arrow::datatypes::{DataType, Field};
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
+    use kalamdb_store::{RocksDBBackend, kalamdb_commons::storage::StorageBackend};
 
     fn create_test_service() -> (StreamTableService, TestDb) {
         let test_db = TestDb::new(&[

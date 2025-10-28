@@ -9,8 +9,8 @@ use crate::{
 };
 use kalamdb_commons::models::TableDefinition;
 use anyhow::{anyhow, Result};
-use kalamdb_store::storage_trait::{Partition, StorageBackend};
-use kalamdb_store::ColumnFamily;
+use kalamdb_commons::storage::{Partition, StorageBackend};
+use kalamdb_commons::{SystemTable, StoragePartition};
 use std::sync::Arc;
 
 /// Storage adapter for system tables (backend-agnostic)
@@ -29,7 +29,7 @@ impl StorageAdapter {
 
     /// Get a user by username
     pub fn get_user(&self, username: &str) -> Result<Option<User>> {
-        let p = ColumnFamily::SystemUsers.partition();
+        let p = SystemTable::Users.partition();
         let key = format!("user:{}", username);
         match self.backend.get(&p, key.as_bytes())? {
             Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
@@ -39,7 +39,7 @@ impl StorageAdapter {
 
     /// Insert a new user
     pub fn insert_user(&self, user: &User) -> Result<()> {
-        let p = ColumnFamily::SystemUsers.partition();
+        let p = SystemTable::Users.partition();
         let key = format!("user:{}", user.username);
         let value = serde_json::to_vec(user)?;
         self.backend.put(&p, key.as_bytes(), &value)?;
@@ -53,7 +53,7 @@ impl StorageAdapter {
 
     /// Delete a user
     pub fn delete_user(&self, username: &str) -> Result<()> {
-        let p = ColumnFamily::SystemUsers.partition();
+        let p = SystemTable::Users.partition();
         let key = format!("user:{}", username);
         self.backend.delete(&p, key.as_bytes())?;
         Ok(())
@@ -63,7 +63,7 @@ impl StorageAdapter {
 
     /// Get a namespace by ID
     pub fn get_namespace(&self, namespace_id: &str) -> Result<Option<Namespace>> {
-        let p = ColumnFamily::SystemNamespaces.partition();
+        let p = SystemTable::Namespaces.partition();
         let key = format!("ns:{}", namespace_id);
         match self.backend.get(&p, key.as_bytes())? {
             Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
@@ -78,7 +78,7 @@ impl StorageAdapter {
 
     /// Insert a new namespace
     pub fn insert_namespace(&self, namespace: &Namespace) -> Result<()> {
-        let p = ColumnFamily::SystemNamespaces.partition();
+        let p = SystemTable::Namespaces.partition();
         let key = format!("ns:{}", namespace.namespace_id);
         let value = serde_json::to_vec(namespace)?;
         self.backend.put(&p, key.as_bytes(), &value)?;
@@ -87,7 +87,7 @@ impl StorageAdapter {
 
     /// Delete a namespace by namespace_id
     pub fn delete_namespace(&self, namespace_id: &str) -> Result<()> {
-        let p = ColumnFamily::SystemNamespaces.partition();
+        let p = SystemTable::Namespaces.partition();
         let key = format!("ns:{}", namespace_id);
         self.backend.delete(&p, key.as_bytes())?;
         Ok(())
@@ -200,7 +200,7 @@ impl StorageAdapter {
             "default_expression": default_expression,
         });
 
-        let p = ColumnFamily::SystemColumns.partition();
+        let p = StoragePartition::SystemColumns.partition();
         let value = serde_json::to_vec(&column_meta)?;
         self.backend.put(&p, key.as_bytes(), &value)?;
         Ok(())
@@ -210,7 +210,7 @@ impl StorageAdapter {
 
     /// Get a live query by ID
     pub fn get_live_query(&self, live_id: &str) -> Result<Option<LiveQuery>> {
-        let p = ColumnFamily::SystemLiveQueries.partition();
+        let p = SystemTable::LiveQueries.partition();
         let key = format!("lq:{}", live_id);
         match self.backend.get(&p, key.as_bytes())? {
             Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
@@ -220,7 +220,7 @@ impl StorageAdapter {
 
     /// Insert a new live query
     pub fn insert_live_query(&self, live_query: &LiveQuery) -> Result<()> {
-        let p = ColumnFamily::SystemLiveQueries.partition();
+        let p = SystemTable::LiveQueries.partition();
         let key = format!("lq:{}", live_query.live_id);
         let value = serde_json::to_vec(live_query)?;
         self.backend.put(&p, key.as_bytes(), &value)?;
@@ -229,7 +229,7 @@ impl StorageAdapter {
 
     /// Delete a live query by ID
     pub fn delete_live_query(&self, live_id: &str) -> Result<()> {
-        let p = ColumnFamily::SystemLiveQueries.partition();
+        let p = SystemTable::LiveQueries.partition();
         let key = format!("lq:{}", live_id);
         self.backend.delete(&p, key.as_bytes())?;
         Ok(())
@@ -239,7 +239,7 @@ impl StorageAdapter {
 
     /// Get a job by ID
     pub fn get_job(&self, job_id: &str) -> Result<Option<Job>> {
-        let p = ColumnFamily::SystemJobs.partition();
+        let p = SystemTable::Jobs.partition();
         let key = format!("job:{}", job_id);
         match self.backend.get(&p, key.as_bytes())? {
             Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
@@ -249,7 +249,7 @@ impl StorageAdapter {
 
     /// Insert a new job
     pub fn insert_job(&self, job: &Job) -> Result<()> {
-        let p = ColumnFamily::SystemJobs.partition();
+        let p = SystemTable::Jobs.partition();
         let key = format!("job:{}", job.job_id);
         let value = serde_json::to_vec(job)?;
         self.backend.put(&p, key.as_bytes(), &value)?;
@@ -258,7 +258,7 @@ impl StorageAdapter {
 
     /// Delete a job by ID
     pub fn delete_job(&self, job_id: &str) -> Result<()> {
-        let p = ColumnFamily::SystemJobs.partition();
+        let p = SystemTable::Jobs.partition();
         let key = format!("job:{}", job_id);
         self.backend.delete(&p, key.as_bytes())?;
         Ok(())
@@ -268,7 +268,7 @@ impl StorageAdapter {
 
     /// Get a table by ID
     pub fn get_table(&self, table_id: &str) -> Result<Option<Table>> {
-        let p = ColumnFamily::SystemTables.partition();
+        let p = SystemTable::Tables.partition();
         let key = format!("table:{}", table_id);
         match self.backend.get(&p, key.as_bytes())? {
             Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
@@ -278,7 +278,7 @@ impl StorageAdapter {
 
     /// Insert a new table
     pub fn insert_table(&self, table: &Table) -> Result<()> {
-        let p = ColumnFamily::SystemTables.partition();
+        let p = SystemTable::Tables.partition();
         let key = format!("table:{}", table.table_id);
         let value = serde_json::to_vec(table)?;
         self.backend.put(&p, key.as_bytes(), &value)?;
@@ -301,7 +301,7 @@ impl StorageAdapter {
         &self,
         table_def: &kalamdb_commons::models::TableDefinition,
     ) -> Result<()> {
-        let p = ColumnFamily::InformationSchemaTables.partition();
+        let p = StoragePartition::InformationSchemaTables.partition();
         let key = format!("{}:{}", table_def.namespace_id, table_def.table_name);
         let value = serde_json::to_vec(table_def)?;
         self.backend.put(&p, key.as_bytes(), &value)?;
@@ -322,7 +322,7 @@ impl StorageAdapter {
         namespace_id: &str,
         table_name: &str,
     ) -> Result<Option<kalamdb_commons::models::TableDefinition>> {
-        let p = ColumnFamily::InformationSchemaTables.partition();
+        let p = StoragePartition::InformationSchemaTables.partition();
         let key = format!("{}:{}", namespace_id, table_name);
         match self.backend.get(&p, key.as_bytes())? {
             Some(value) => {
@@ -346,7 +346,7 @@ impl StorageAdapter {
         &self,
         namespace_id: &str,
     ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
-        let p = ColumnFamily::InformationSchemaTables.partition();
+        let p = StoragePartition::InformationSchemaTables.partition();
         let prefix = format!("{}:", namespace_id);
         let mut tables = Vec::new();
         let iter = self.backend.scan(&p, Some(prefix.as_bytes()), None)?;
@@ -363,7 +363,7 @@ impl StorageAdapter {
     pub fn scan_all_table_definitions(
         &self,
     ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
-        let p = Partition::new("information_schema_tables");
+        let p = StoragePartition::InformationSchemaTables.partition();
         let iter = self.backend.scan(&p, None, None)?;
         let mut tables = Vec::new();
         for (_k, v) in iter {
@@ -376,7 +376,7 @@ impl StorageAdapter {
 
     /// Get a storage by ID
     pub fn get_storage(&self, storage_id: &str) -> Result<Option<Storage>> {
-        let p = ColumnFamily::SystemStorages.partition();
+        let p = SystemTable::Storages.partition();
         let key = format!("storage:{}", storage_id);
         match self.backend.get(&p, key.as_bytes())? {
             Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
@@ -386,7 +386,7 @@ impl StorageAdapter {
 
     /// Insert a new storage
     pub fn insert_storage(&self, storage: &Storage) -> Result<()> {
-        let p = ColumnFamily::SystemStorages.partition();
+        let p = SystemTable::Storages.partition();
         let key = format!("storage:{}", storage.storage_id);
         let value = serde_json::to_vec(storage)?;
         self.backend.put(&p, key.as_bytes(), &value)?;
@@ -395,7 +395,7 @@ impl StorageAdapter {
 
     /// Delete a storage by ID
     pub fn delete_storage(&self, storage_id: &str) -> Result<()> {
-        let p = ColumnFamily::SystemStorages.partition();
+        let p = SystemTable::Storages.partition();
         let key = format!("storage:{}", storage_id);
         self.backend.delete(&p, key.as_bytes())?;
         Ok(())
@@ -405,7 +405,7 @@ impl StorageAdapter {
 
     /// Scan all users
     pub fn scan_all_users(&self) -> Result<Vec<User>> {
-        let p = ColumnFamily::SystemUsers.partition();
+        let p = SystemTable::Users.partition();
         let iter = self.backend.scan(&p, None, None)?;
         let mut users = Vec::new();
         for (_k, v) in iter {
@@ -416,7 +416,7 @@ impl StorageAdapter {
 
     /// Scan all namespaces
     pub fn scan_all_namespaces(&self) -> Result<Vec<Namespace>> {
-        let p = ColumnFamily::SystemNamespaces.partition();
+        let p = SystemTable::Namespaces.partition();
         let iter = self.backend.scan(&p, None, None)?;
         let mut namespaces = Vec::new();
         for (_k, v) in iter {
@@ -427,7 +427,7 @@ impl StorageAdapter {
 
     /// Scan all live queries
     pub fn scan_all_live_queries(&self) -> Result<Vec<LiveQuery>> {
-        let p = ColumnFamily::SystemLiveQueries.partition();
+        let p = SystemTable::LiveQueries.partition();
         let iter = self.backend.scan(&p, None, None)?;
         let mut live_queries = Vec::new();
         for (_k, v) in iter {
@@ -438,7 +438,7 @@ impl StorageAdapter {
 
     /// Scan all jobs
     pub fn scan_all_jobs(&self) -> Result<Vec<Job>> {
-        let p = ColumnFamily::SystemJobs.partition();
+        let p = SystemTable::Jobs.partition();
         let iter = self.backend.scan(&p, None, None)?;
         let mut jobs = Vec::new();
         for (_k, v) in iter {
@@ -449,7 +449,7 @@ impl StorageAdapter {
 
     /// Scan all tables
     pub fn scan_all_tables(&self) -> Result<Vec<Table>> {
-        let p = ColumnFamily::SystemTables.partition();
+        let p = SystemTable::Tables.partition();
         let iter = self.backend.scan(&p, None, None)?;
         let mut tables = Vec::new();
         for (_k, v) in iter {
@@ -460,7 +460,7 @@ impl StorageAdapter {
 
     /// Scan all storages
     pub fn scan_all_storages(&self) -> Result<Vec<Storage>> {
-        let p = ColumnFamily::SystemStorages.partition();
+        let p = SystemTable::Storages.partition();
         let iter = self.backend.scan(&p, None, None)?;
         let mut storages = Vec::new();
         for (_k, v) in iter {
@@ -473,7 +473,7 @@ impl StorageAdapter {
 
     /// Delete a table by table_id
     pub fn delete_table(&self, table_id: &str) -> Result<()> {
-        let p = ColumnFamily::SystemTables.partition();
+        let p = SystemTable::Tables.partition();
         let key = format!("table:{}", table_id);
         self.backend.delete(&p, key.as_bytes())?;
         Ok(())

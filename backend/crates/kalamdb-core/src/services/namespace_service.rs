@@ -236,7 +236,7 @@ impl NamespaceService {
 mod tests {
     use super::*;
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
+    use kalamdb_store::{RocksDBBackend, kalamdb_commons::storage::StorageBackend};
 
     fn setup_test_service() -> NamespaceService {
         let test_db = TestDb::new(&["system_namespaces"]).unwrap();

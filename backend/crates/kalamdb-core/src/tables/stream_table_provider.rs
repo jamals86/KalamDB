@@ -18,7 +18,7 @@ use datafusion::logical_expr::dml::InsertOp;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_store::StreamTableStore;
+use crate::stores::StreamTableStore;
 use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;
@@ -169,7 +169,7 @@ impl StreamTableProvider {
     /// - NO system columns added (_updated, _deleted)
     /// - If ephemeral mode: check for subscribers first (T151 ✅)
     /// - After insert: notify live query manager (TODO: T154)
-    pub fn insert_event(&self, row_id: &str, row_data: JsonValue) -> Result<i64, KalamDbError> {
+    pub fn insert_event(&self, row_id: &str, row_data: JsonValue) -> Result<(), KalamDbError> {
         // T151: Ephemeral mode check - only store if subscribers exist
         if self.ephemeral {
             if let Some(live_queries) = &self.live_queries {
@@ -194,7 +194,7 @@ impl StreamTableProvider {
                     );
 
                     // Return timestamp but don't persist
-                    return Ok(chrono::Utc::now().timestamp_millis());
+                    return Ok(());
                 }
             } else {
                 // Ephemeral mode enabled but no live queries provider
@@ -215,9 +215,9 @@ impl StreamTableProvider {
             .put(
                 self.namespace_id().as_str(),
                 self.table_name().as_str(),
-                timestamp_ms,
                 row_id,
                 row_data.clone(),
+                self.retention_seconds().unwrap_or(3600u32) as u64, // Default 1 hour TTL
             )
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
@@ -245,7 +245,7 @@ impl StreamTableProvider {
             });
         }
 
-        Ok(timestamp_ms)
+        Ok(())
     }
 
     /// Insert multiple events into the stream table
@@ -254,36 +254,27 @@ impl StreamTableProvider {
     /// * `events` - Vector of (row_id, row_data) tuples
     ///
     /// # Returns
-    /// Vector of timestamps used for event keys
-    pub fn insert_batch(&self, events: Vec<(String, JsonValue)>) -> Result<Vec<i64>, KalamDbError> {
-        let mut timestamps = Vec::with_capacity(events.len());
-
+    /// Ok(()) on success
+    pub fn insert_batch(&self, events: Vec<(String, JsonValue)>) -> Result<(), KalamDbError> {
         for (row_id, row_data) in events {
-            let timestamp = self.insert_event(&row_id, row_data)?;
-            timestamps.push(timestamp);
+            self.insert_event(&row_id, row_data)?;
         }
 
-        Ok(timestamps)
+        Ok(())
     }
 
-    /// Get an event by timestamp and row ID
+    /// Get an event by row ID
     ///
     /// # Arguments
-    /// * `timestamp_ms` - Event timestamp in milliseconds
     /// * `row_id` - Event identifier
     ///
     /// # Returns
     /// Event data if found, None otherwise
-    pub fn get_event(
-        &self,
-        timestamp_ms: i64,
-        row_id: &str,
-    ) -> Result<Option<JsonValue>, KalamDbError> {
+    pub fn get_event(&self, row_id: &str) -> Result<Option<JsonValue>, KalamDbError> {
         self.store
             .get(
                 self.namespace_id().as_str(),
                 self.table_name().as_str(),
-                timestamp_ms,
                 row_id,
             )
             .map_err(|e| KalamDbError::Other(e.to_string()))
@@ -292,8 +283,8 @@ impl StreamTableProvider {
     /// Scan all events in the stream table
     ///
     /// # Returns
-    /// Vector of (timestamp_ms, row_id, row_data) tuples
-    pub fn scan_events(&self) -> Result<Vec<(i64, String, JsonValue)>, KalamDbError> {
+    /// Vector of (row_id, row_data) tuples
+    pub fn scan_events(&self) -> Result<Vec<(String, JsonValue)>, KalamDbError> {
         self.store
             .scan(self.namespace_id().as_str(), self.table_name().as_str())
             .map_err(|e| KalamDbError::Other(e.to_string()))
@@ -307,19 +298,15 @@ impl StreamTableProvider {
         Ok(events.len())
     }
 
-    /// Evict events older than the retention period
-    ///
-    /// # Arguments
-    /// * `cutoff_timestamp_ms` - Delete all events before this timestamp
+    /// Evict expired events based on TTL
     ///
     /// # Returns
     /// Number of events deleted
-    pub fn evict_older_than(&self, cutoff_timestamp_ms: i64) -> Result<usize, KalamDbError> {
+    pub fn evict_expired(&self) -> Result<usize, KalamDbError> {
         self.store
-            .evict_older_than(
+            .cleanup_expired_rows(
                 self.namespace_id().as_str(),
                 self.table_name().as_str(),
-                cutoff_timestamp_ms,
             )
             .map_err(|e| KalamDbError::Other(e.to_string()))
     }
@@ -401,13 +388,13 @@ impl TableProvider for StreamTableProvider {
             (batch, self.schema.clone())
         };
 
-        // Create MemoryExec with the batch
+        // Return a MemTable scan with the result
+        use datafusion::datasource::MemTable;
         let partitions = vec![vec![final_batch]];
-        let exec = MemoryExec::try_new(&partitions, final_schema, None).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemoryExec: {}", e))
+        let table = MemTable::try_new(final_schema, partitions).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
         })?;
-
-        Ok(Arc::new(exec))
+        table.scan(_state, projection, &[], limit).await
     }
 
     /// Insert data into the stream table
@@ -683,10 +670,10 @@ fn arrow_batch_to_json(
 
 /// Helper function to convert JSON events to Arrow RecordBatch
 ///
-/// Converts a vector of (timestamp_ms, row_id, json_data) tuples to an Arrow RecordBatch.
+/// Converts a vector of (row_id, json_data) tuples to an Arrow RecordBatch.
 /// This is the reverse operation of arrow_batch_to_json.
 fn json_events_to_arrow_batch(
-    events: &[(i64, String, JsonValue)],
+    events: &[(String, JsonValue)],
     schema: &SchemaRef,
 ) -> Result<datafusion::arrow::record_batch::RecordBatch, KalamDbError> {
     use datafusion::arrow::array::*;
@@ -703,7 +690,7 @@ fn json_events_to_arrow_batch(
         match data_type {
             DataType::Utf8 => {
                 let mut builder = StringBuilder::new();
-                for (_timestamp, _row_id, json_data) in events {
+                for (_row_id, json_data) in events {
                     if let Some(val) = json_data.get(col_name) {
                         if val.is_null() {
                             builder.append_null();
@@ -721,7 +708,7 @@ fn json_events_to_arrow_batch(
             }
             DataType::Int32 => {
                 let mut builder = Int32Builder::new();
-                for (_timestamp, _row_id, json_data) in events {
+                for (_row_id, json_data) in events {
                     if let Some(val) = json_data.get(col_name) {
                         if val.is_null() {
                             builder.append_null();
@@ -738,7 +725,7 @@ fn json_events_to_arrow_batch(
             }
             DataType::Int64 => {
                 let mut builder = Int64Builder::new();
-                for (_timestamp, _row_id, json_data) in events {
+                for (_row_id, json_data) in events {
                     if let Some(val) = json_data.get(col_name) {
                         if val.is_null() {
                             builder.append_null();
@@ -755,7 +742,7 @@ fn json_events_to_arrow_batch(
             }
             DataType::Float64 => {
                 let mut builder = Float64Builder::new();
-                for (_timestamp, _row_id, json_data) in events {
+                for (_row_id, json_data) in events {
                     if let Some(val) = json_data.get(col_name) {
                         if val.is_null() {
                             builder.append_null();
@@ -772,7 +759,7 @@ fn json_events_to_arrow_batch(
             }
             DataType::Boolean => {
                 let mut builder = BooleanBuilder::new();
-                for (_timestamp, _row_id, json_data) in events {
+                for (_row_id, json_data) in events {
                     if let Some(val) = json_data.get(col_name) {
                         if val.is_null() {
                             builder.append_null();
@@ -789,7 +776,7 @@ fn json_events_to_arrow_batch(
             }
             DataType::Timestamp(_, _) => {
                 let mut builder = TimestampMillisecondBuilder::new();
-                for (_timestamp, _row_id, json_data) in events {
+                for (_row_id, json_data) in events {
                     if let Some(val) = json_data.get(col_name) {
                         if val.is_null() {
                             builder.append_null();
@@ -853,7 +840,7 @@ mod tests {
             deleted_retention_hours: None,
         };
 
-        let store = Arc::new(StreamTableStore::new(test_db.db.clone()).unwrap());
+        let store = Arc::new(StreamTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
 
         let provider = StreamTableProvider::new(
             table_metadata,
@@ -880,11 +867,8 @@ mod tests {
         let result = provider.insert_event("evt001", event_data);
         assert!(result.is_ok());
 
-        let timestamp = result.unwrap();
-        assert!(timestamp > 0);
-
         // Verify event was inserted
-        let retrieved = provider.get_event(timestamp, "evt001").unwrap();
+        let retrieved = provider.get_event("evt001").unwrap();
         assert!(retrieved.is_some());
 
         let data = retrieved.unwrap();
@@ -912,9 +896,6 @@ mod tests {
 
         let result = provider.insert_batch(events);
         assert!(result.is_ok());
-
-        let timestamps = result.unwrap();
-        assert_eq!(timestamps.len(), 3);
 
         // Verify all events were inserted
         let all_events = provider.scan_events().unwrap();
@@ -957,25 +938,24 @@ mod tests {
     }
 
     #[test]
-    fn test_evict_older_than() {
+    fn test_evict_expired() {
         let (provider, _test_db) = create_test_provider();
 
-        // Insert events with known timestamps
-        let _ts1 = provider.insert_event("evt001", json!({"id": 1})).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        let ts2 = provider.insert_event("evt002", json!({"id": 2})).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        // Insert events with short TTL (1 second)
+        provider.insert_event("evt001", json!({"id": 1})).unwrap();
+        provider.insert_event("evt002", json!({"id": 2})).unwrap();
         provider.insert_event("evt003", json!({"id": 3})).unwrap();
 
-        // Evict events older than ts2
-        let deleted = provider.evict_older_than(ts2).unwrap();
-        assert_eq!(deleted, 1); // Only evt001 should be deleted
+        // Wait for expiration
+        std::thread::sleep(std::time::Duration::from_secs(2));
 
-        // Verify remaining events
+        // Evict expired events
+        let deleted = provider.evict_expired().unwrap();
+        assert_eq!(deleted, 3); // All events should be deleted
+
+        // Verify no events remain
         let events = provider.scan_events().unwrap();
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].1, "evt002");
-        assert_eq!(events[1].1, "evt003");
+        assert_eq!(events.len(), 0);
     }
 
     #[test]
@@ -987,10 +967,10 @@ mod tests {
             "event_type": "click"
         });
 
-        let timestamp = provider.insert_event("evt001", event_data).unwrap();
+        provider.insert_event("evt001", event_data).unwrap();
 
         // Retrieve and verify no system columns
-        let retrieved = provider.get_event(timestamp, "evt001").unwrap().unwrap();
+        let retrieved = provider.get_event("evt001").unwrap().unwrap();
 
         // Should NOT have _updated or _deleted fields
         assert!(retrieved.get("_updated").is_none());
@@ -1033,7 +1013,7 @@ mod tests {
             deleted_retention_hours: None,
         };
 
-        let store = Arc::new(StreamTableStore::new(test_db.db.clone()).unwrap());
+        let store = Arc::new(StreamTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
 
         let provider = StreamTableProvider::new(
             table_metadata,
@@ -1079,8 +1059,8 @@ mod tests {
             deleted_retention_hours: None,
         };
 
-        let store = Arc::new(StreamTableStore::new(test_db.db.clone()).unwrap());
-        let backend: Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+        let store = Arc::new(StreamTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
+        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
         let live_queries = Arc::new(LiveQueriesTableProvider::new(kalam_sql));
@@ -1131,8 +1111,8 @@ mod tests {
             deleted_retention_hours: None,
         };
 
-        let store = Arc::new(StreamTableStore::new(test_db.db.clone()).unwrap());
-        let backend: Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+        let store = Arc::new(StreamTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
+        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
         let live_queries = Arc::new(LiveQueriesTableProvider::new(kalam_sql));

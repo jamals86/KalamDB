@@ -60,7 +60,7 @@ use kalamdb_sql::ddl::{
 use kalamdb_sql::statement_classifier::SqlStatement;
 use kalamdb_sql::KalamSql;
 use kalamdb_sql::RocksDbAdapter;
-use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
+use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::sync::Arc;
 
 /// SQL execution result
@@ -3796,30 +3796,31 @@ mod tests {
     use datafusion::prelude::SessionContext;
     use kalamdb_sql::KalamSql;
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
+    use kalamdb_store::{RocksDBBackend, kalamdb_commons::storage::StorageBackend};
 
     fn setup_test_executor() -> SqlExecutor {
         let test_db =
             TestDb::new(&["system_namespaces", "system_tables", "system_table_schemas"]).unwrap();
 
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
-        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
+        let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
         let session_context = Arc::new(SessionContext::new());
 
-        // Initialize table services for tests
-        let user_table_store =
-            Arc::new(kalamdb_store::UserTableStore::new(test_db.db.clone()).unwrap());
+        // Initialize table services for tests using EntityStore implementations
+        let user_table_store = Arc::new(crate::stores::UserTableStore::new(backend.clone()).unwrap());
         let user_table_service = Arc::new(crate::services::UserTableService::new(
             kalam_sql.clone(),
             user_table_store,
         ));
+        let shared_table_store = Arc::new(crate::stores::SharedTableStore::new(backend.clone()).unwrap());
         let shared_table_service = Arc::new(crate::services::SharedTableService::new(
-            Arc::new(kalamdb_store::SharedTableStore::new(test_db.db.clone()).unwrap()),
+            shared_table_store,
             kalam_sql.clone(),
         ));
+        let stream_table_store = Arc::new(crate::stores::StreamTableStore::new(backend.clone()).unwrap());
         let stream_table_service = Arc::new(crate::services::StreamTableService::new(
-            Arc::new(kalamdb_store::StreamTableStore::new(test_db.db.clone()).unwrap()),
+            stream_table_store,
             kalam_sql.clone(),
         ));
 

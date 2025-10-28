@@ -14,7 +14,7 @@ use datafusion::arrow::array::{ArrayRef, BooleanArray, Int64Array, StringArray};
 use datafusion::arrow::datatypes::{DataType, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::models::StorageType;
-use kalamdb_store::UserTableStore;
+use crate::stores::UserTableStore;
 use serde_json::{json, Value as JsonValue};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -365,67 +365,55 @@ impl UserTableFlushJob {
             self.table_name.as_str()
         );
 
-        // T151a: Create RocksDB snapshot for read consistency
-        // This prevents missing rows from concurrent inserts during flush
-        let snapshot = self.store.create_snapshot();
+        // T151a: Note - snapshots removed for storage abstraction
+        // TODO: Re-add snapshot support when StorageBackend trait supports it
 
         log::debug!(
-            "📸 RocksDB snapshot created for table={}.{}",
+            "� Scanning rows for table={}.{}...",
             self.namespace_id.as_str(),
             self.table_name.as_str()
         );
 
-        // Initialize streaming state
-        let mut total_rows_flushed = 0;
-        let mut users_count = 0;
-        let mut parquet_files = Vec::new();
-        let mut error_messages: Vec<String> = Vec::new(); // Track all errors during flush
-
-        // T151c: Accumulate rows for current userId (streaming buffer)
-        let mut current_user_id: Option<String> = None;
-        let mut current_user_rows: Vec<(Vec<u8>, JsonValue)> = Vec::new();
-
-        // T151b: Scan table column family sequentially using snapshot iterator
-        let iter = self
+        // T151b: Scan table column family sequentially
+        let all_rows = self
             .store
-            .scan_with_snapshot(
-                &snapshot,
-                self.namespace_id.as_str(),
-                self.table_name.as_str(),
-            )
+            .scan_all(self.namespace_id.as_str(), self.table_name.as_str())
             .map_err(|e| {
                 log::error!(
-                    "❌ Failed to create snapshot iterator for table={}.{}: {}",
+                    "❌ Failed to scan table={}.{}: {}",
                     self.namespace_id.as_str(),
                     self.table_name.as_str(),
                     e
                 );
-                KalamDbError::Other(format!("Failed to create snapshot iterator: {}", e))
+                KalamDbError::Other(format!("Failed to scan table: {}", e))
             })?;
 
         log::debug!(
-            "🔍 Scanning rows for table={}.{}...",
+            "🔍 Scanned {} rows for table={}.{}",
+            all_rows.len(),
             self.namespace_id.as_str(),
             self.table_name.as_str()
         );
 
+        // Initialize variables for per-user batching
+        let mut current_user_id: Option<String> = None;
+        let mut current_user_rows: Vec<(Vec<u8>, JsonValue)> = Vec::new();
+        let mut total_rows_flushed = 0;
+        let mut users_count = 0;
+        let mut parquet_files: Vec<String> = Vec::new();
+        let mut error_messages: Vec<String> = Vec::new();
+
         let mut rows_scanned = 0;
-        for item in iter {
+        for (key_str, row_data) in all_rows {
             rows_scanned += 1;
             if rows_scanned % 1000 == 0 {
                 log::debug!(
-                    "📊 Scanned {} rows so far (table={}.{})",
+                    "📊 Processed {} rows so far (table={}.{})",
                     rows_scanned,
                     self.namespace_id.as_str(),
                     self.table_name.as_str()
                 );
             }
-            let (key_bytes, value_bytes) =
-                item.map_err(|e| KalamDbError::Other(format!("Iterator error: {}", e)))?;
-
-            // Parse JSON value
-            let row_data: JsonValue = serde_json::from_slice(&value_bytes)
-                .map_err(|e| KalamDbError::Other(format!("JSON parse error: {}", e)))?;
 
             // Skip soft-deleted rows (don't flush them)
             if let Some(obj) = row_data.as_object() {
@@ -437,8 +425,6 @@ impl UserTableFlushJob {
             }
 
             // Parse key to get user_id
-            let key_str = String::from_utf8(key_bytes.to_vec())
-                .map_err(|e| KalamDbError::Other(format!("UTF-8 decode error: {}", e)))?;
             let (user_id, _row_id) = self.parse_user_key(&key_str)?;
 
             // T151d: Detect userId boundary (current_row.user_id ≠ previous_row.user_id)
@@ -492,7 +478,7 @@ impl UserTableFlushJob {
 
             // Accumulate row for current user
             current_user_id = Some(user_id.clone());
-            current_user_rows.push((key_bytes.to_vec(), row_data));
+            current_user_rows.push((key_str.as_bytes().to_vec(), row_data));
         }
 
         // Flush final user's data (if any)
@@ -825,7 +811,7 @@ mod tests {
     #[test]
     fn test_user_table_flush_job_creation() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(test_db.db.clone()).unwrap());
+        let store = Arc::new(UserTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
         let schema = create_test_schema();
 
         let job = UserTableFlushJob::new(
@@ -845,7 +831,7 @@ mod tests {
     #[test]
     fn test_user_table_flush_empty_table() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(test_db.db.clone()).unwrap());
+        let store = Arc::new(UserTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
         let schema = create_test_schema();
 
         let temp_storage = env::temp_dir().join("kalamdb_flush_test_empty");
@@ -878,7 +864,7 @@ mod tests {
     #[test]
     fn test_user_table_flush_single_user() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(test_db.db.clone()).unwrap());
+        let store = Arc::new(UserTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
         let schema = create_test_schema();
 
         // Insert test data for user1
@@ -929,7 +915,7 @@ mod tests {
     #[test]
     fn test_user_table_flush_multiple_users() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(test_db.db.clone()).unwrap());
+        let store = Arc::new(UserTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
         let schema = create_test_schema();
 
         // Insert test data for user1 and user2
@@ -982,7 +968,7 @@ mod tests {
     #[test]
     fn test_user_table_flush_skips_soft_deleted() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(test_db.db.clone()).unwrap());
+        let store = Arc::new(UserTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
         let schema = create_test_schema();
 
         // Insert test data with one active and one soft-deleted row

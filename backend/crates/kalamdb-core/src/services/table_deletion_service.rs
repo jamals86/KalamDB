@@ -17,7 +17,7 @@ use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
 use kalamdb_commons::models::{JobStatus, JobType};
 use kalamdb_sql::{Job, KalamSql};
-use kalamdb_store::{SharedTableStore, StreamTableStore, UserTableStore};
+use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -523,7 +523,7 @@ impl TableDeletionService {
 mod tests {
     use super::*;
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
+    use kalamdb_store::{RocksDBBackend, kalamdb_commons::storage::StorageBackend};
 
     fn create_test_service() -> (TableDeletionService, TestDb) {
         // Create test database with all required column families

@@ -16,7 +16,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_store::SharedTableStore;
+use crate::stores::SharedTableStore;
 use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;
@@ -113,6 +113,7 @@ impl SharedTableProvider {
                 self.table_name().as_str(),
                 row_id,
                 row_data,
+                "public", // Default access level for shared tables
             )
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
@@ -160,6 +161,7 @@ impl SharedTableProvider {
                 self.table_name().as_str(),
                 row_id,
                 row_data,
+                "public", // Default access level for shared tables
             )
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
@@ -269,6 +271,7 @@ impl SharedTableProvider {
                 self.table_name().as_str(),
                 row_id,
                 updated_row,
+                "public", // Default access level for shared tables
             )
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 

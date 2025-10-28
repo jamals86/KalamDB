@@ -24,27 +24,30 @@ pub mod common;
 pub mod key_encoding;
 pub mod rocksdb_impl;
 pub mod rocksdb_init;
-pub mod cf;
 // pub mod s3_storage; // T171: S3 storage backend (requires cmake build dependency)
 pub mod sharding;
-pub mod shared_table_store;
 pub mod storage_trait;
-pub mod stream_table_store;
 pub mod traits; // EntityStore<T> trait
-pub mod user_table_store;
+
+// NOTE: Old RocksDB-based table stores removed - use EntityStore implementations in kalamdb-core instead
+// - UserTableStore, SharedTableStore, StreamTableStore are now in kalamdb-core/src/stores/
+// pub mod shared_table_store;
+// pub mod stream_table_store;
+// pub mod user_table_store;
 
 pub use rocksdb_impl::RocksDBBackend;
 pub use rocksdb_init::RocksDbInit;
-pub use cf::ColumnFamily;
 // pub use s3_storage::S3Storage; // T171: Export S3Storage (requires cmake)
 pub use sharding::{
     AlphabeticSharding, ConsistentHashSharding, NumericSharding, ShardingRegistry, ShardingStrategy,
 };
-pub use shared_table_store::SharedTableStore;
 pub use storage_trait::{Operation, Partition, StorageBackend, StorageError};
-pub use stream_table_store::StreamTableStore;
 pub use traits::EntityStore; // Export EntityStore trait
-pub use user_table_store::UserTableStore;
+
+// NOTE: Old RocksDB-based table stores removed - use EntityStore implementations in kalamdb-core instead
+// pub use shared_table_store::SharedTableStore;
+// pub use stream_table_store::StreamTableStore;
+// pub use user_table_store::UserTableStore;
 
 #[cfg(test)]
 mod tests;

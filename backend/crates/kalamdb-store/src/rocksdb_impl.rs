@@ -4,7 +4,7 @@
 //! as the underlying storage engine. It maps the generic partition concept to
 //! RocksDB column families.
 
-use crate::storage_trait::{Operation, Partition, Result, StorageBackend, StorageError};
+use kalamdb_commons::storage::{Operation, Partition, Result, StorageBackend, StorageError};
 use rocksdb::{ColumnFamily, IteratorMode, Options, DB};
 use std::sync::Arc;
 

@@ -19,6 +19,7 @@ pub mod schema;
 pub mod services;
 pub mod sql;
 pub mod storage;
+pub mod stores; // EntityStore-based table stores
 pub mod system_table_registration;
 pub mod tables;
 

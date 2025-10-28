@@ -85,6 +85,72 @@ impl SystemTable {
     pub fn is_system_table(name: &str) -> bool {
         Self::from_name(name).is_ok()
     }
+
+    /// Returns a shared Partition for this system table's column family.
+    ///
+    /// Allocates each Partition once and returns a reference,
+    /// avoiding repeated String allocations across the codebase.
+    pub fn partition(&self) -> &'static crate::storage::Partition {
+        use once_cell::sync::Lazy;
+        use crate::storage::Partition;
+
+        static USERS: Lazy<Partition> = Lazy::new(|| Partition::new(SystemTable::Users.column_family_name()));
+        static NAMESPACES: Lazy<Partition> = Lazy::new(|| Partition::new(SystemTable::Namespaces.column_family_name()));
+        static TABLES: Lazy<Partition> = Lazy::new(|| Partition::new(SystemTable::Tables.column_family_name()));
+        static TABLE_SCHEMAS: Lazy<Partition> = Lazy::new(|| Partition::new(SystemTable::TableSchemas.column_family_name()));
+        static STORAGES: Lazy<Partition> = Lazy::new(|| Partition::new(SystemTable::Storages.column_family_name()));
+        static LIVE_QUERIES: Lazy<Partition> = Lazy::new(|| Partition::new(SystemTable::LiveQueries.column_family_name()));
+        static JOBS: Lazy<Partition> = Lazy::new(|| Partition::new(SystemTable::Jobs.column_family_name()));
+
+        match self {
+            SystemTable::Users => &USERS,
+            SystemTable::Namespaces => &NAMESPACES,
+            SystemTable::Tables => &TABLES,
+            SystemTable::TableSchemas => &TABLE_SCHEMAS,
+            SystemTable::Storages => &STORAGES,
+            SystemTable::LiveQueries => &LIVE_QUERIES,
+            SystemTable::Jobs => &JOBS,
+        }
+    }
+}
+
+/// Additional named partitions that are not SystemTable rows
+/// but still stored as dedicated column families.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StoragePartition {
+    /// Unified information_schema.tables storage
+    InformationSchemaTables,
+    /// Legacy system columns metadata (kept for compatibility)
+    SystemColumns,
+    /// User table flush counters
+    UserTableCounters,
+}
+
+impl StoragePartition {
+    /// Returns the partition (column family) name
+    pub fn name(&self) -> &'static str {
+        match self {
+            StoragePartition::InformationSchemaTables => "information_schema_tables",
+            StoragePartition::SystemColumns => "system_columns",
+            StoragePartition::UserTableCounters => "user_table_counters",
+        }
+    }
+
+    /// Returns a shared Partition reference for this named partition.
+    pub fn partition(&self) -> &'static crate::storage::Partition {
+        use once_cell::sync::Lazy;
+        use crate::storage::Partition;
+
+        static INFO: Lazy<Partition> = Lazy::new(|| Partition::new(StoragePartition::InformationSchemaTables.name()));
+        static COLUMNS: Lazy<Partition> = Lazy::new(|| Partition::new(StoragePartition::SystemColumns.name()));
+        static COUNTERS: Lazy<Partition> = Lazy::new(|| Partition::new(StoragePartition::UserTableCounters.name()));
+
+        match self {
+            StoragePartition::InformationSchemaTables => &INFO,
+            StoragePartition::SystemColumns => &COLUMNS,
+            StoragePartition::UserTableCounters => &COUNTERS,
+        }
+    }
 }
 
 impl std::fmt::Display for SystemTable {

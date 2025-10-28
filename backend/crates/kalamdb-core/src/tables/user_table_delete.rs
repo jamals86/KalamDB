@@ -10,7 +10,7 @@
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
-use kalamdb_store::UserTableStore;
+use crate::stores::UserTableStore;
 use std::sync::Arc;
 
 /// User table DELETE handler
@@ -237,13 +237,13 @@ impl UserTableDeleteHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::UserTableStore;
+    use kalamdb_store::test_utils::InMemoryBackend;
+    use crate::stores::UserTableStore;
     use serde_json::json;
 
     fn setup_test_handler() -> (UserTableDeleteHandler, Arc<UserTableStore>) {
-        let test_db = TestDb::single_cf("user_table:test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(test_db.db).unwrap());
+        let backend = Arc::new(InMemoryBackend::new());
+        let store = Arc::new(UserTableStore::new(backend).unwrap());
         let handler = UserTableDeleteHandler::new(store.clone());
         (handler, store)
     }

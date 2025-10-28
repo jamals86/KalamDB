@@ -9,10 +9,10 @@ use crate::middleware;
 use crate::routes;
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
-use datafusion::catalog::schema::MemorySchemaProvider;
+use datafusion::catalog::memory::MemorySchemaProvider;
 use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
-use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
+use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId, StorageBackend};
 use kalamdb_core::live_query::{LiveQueryManager, NodeId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
@@ -21,6 +21,7 @@ use kalamdb_core::services::{
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::storage::StorageRegistry;
+use kalamdb_core::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_store::RocksDbInit;
 use kalamdb_core::{
     jobs::{JobExecutor, StreamEvictionJob, StreamEvictionScheduler, TokioJobManager},
@@ -29,7 +30,6 @@ use kalamdb_core::{
 use kalamdb_sql::RocksDbAdapter;
 use kalamdb_sql::KalamSql;
 use kalamdb_store::RocksDBBackend;
-use kalamdb_store::storage_trait::StorageBackend;
 use log::info;
 use std::sync::Arc;
 use std::time::Duration;

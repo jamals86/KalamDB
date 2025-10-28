@@ -42,7 +42,7 @@ pub mod query_cache;
 pub mod statement_classifier;
 
 use kalamdb_commons::{NamespaceId, StorageId, TableName, UserId};
-use kalamdb_store::storage_trait::StorageBackend;
+use kalamdb_commons::storage::StorageBackend;
 // Re-export system models from kalamdb-commons (single source of truth)
 pub use kalamdb_commons::system::{
     InformationSchemaTable, Job, LiveQuery, Namespace, Storage, SystemTable as Table,

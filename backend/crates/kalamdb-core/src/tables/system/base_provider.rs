@@ -35,7 +35,7 @@ pub trait SystemTableProviderExt: Send + Sync {
     }
 
     /// Build an in-memory scan plan with consistent error handling.
-    fn into_memory_exec(
+    async fn into_memory_exec(
         &self,
         state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
@@ -64,6 +64,6 @@ pub trait SystemTableProviderExt: Send + Sync {
             ))
         })?;
 
-        table.scan(state, projection, &[], limit)
+        table.scan(state, projection, &[], limit).await
     }
 }

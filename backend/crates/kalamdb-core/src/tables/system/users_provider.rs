@@ -308,7 +308,7 @@ impl TableProvider for UsersTableProvider {
         let table = MemTable::try_new(schema, partitions).map_err(|e| {
             DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
         })?;
-        table.scan(_state, projection, &[], _limit)
+        table.scan(_state, projection, &[], _limit).await
     }
 }
 
@@ -322,7 +322,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
-        let backend: Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let provider = UsersTableProvider::new(kalam_sql);

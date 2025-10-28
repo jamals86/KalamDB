@@ -246,16 +246,17 @@ impl TestServer {
         }
 
         // Initialize stores (needed by some services)
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
         let user_table_store = Arc::new(
-            kalamdb_store::UserTableStore::new(db.clone())
+            kalamdb_core::stores::UserTableStore::new(backend.clone())
                 .expect("Failed to create UserTableStore"),
         );
         let shared_table_store = Arc::new(
-            kalamdb_store::SharedTableStore::new(db.clone())
+            kalamdb_core::stores::SharedTableStore::new(backend.clone())
                 .expect("Failed to create SharedTableStore"),
         );
         let stream_table_store = Arc::new(
-            kalamdb_store::StreamTableStore::new(db.clone())
+            kalamdb_core::stores::StreamTableStore::new(backend.clone())
                 .expect("Failed to create StreamTableStore"),
         );
 

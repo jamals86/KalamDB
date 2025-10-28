@@ -508,7 +508,7 @@ mod tests {
     use super::*;
     use kalamdb_sql::{LiveQuery, Namespace};
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
+    use kalamdb_store::{RocksDBBackend, kalamdb_commons::storage::StorageBackend};
 
     fn setup_test_db() -> (Arc<KalamSql>, TestDb) {
         // Create TestDb with required column families

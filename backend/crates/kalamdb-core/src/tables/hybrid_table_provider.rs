@@ -3,7 +3,8 @@
 //! This provider combines hot data from RocksDB with cold data from Parquet files.
 
 use crate::catalog::TableMetadata;
-use crate::storage::{RocksDBBackend, StorageBackend};
+use crate::storage::StorageBackend;
+use kalamdb_store::RocksDBBackend;
 use datafusion::arrow::datatypes::SchemaRef;
 use std::sync::Arc;
 

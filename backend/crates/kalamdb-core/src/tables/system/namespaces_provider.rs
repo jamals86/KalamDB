@@ -122,6 +122,6 @@ impl TableProvider for NamespacesTableProvider {
         let table = MemTable::try_new(schema, partitions).map_err(|e| {
             DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
         })?;
-        table.scan(_state, projection, &[], _limit)
+        table.scan(_state, projection, &[], _limit).await
     }
 }
