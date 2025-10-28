@@ -8,7 +8,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::storage::{ParquetWriter, StorageRegistry};
 use kalamdb_commons::system::Job;
-use kalamdb_commons::JobType;
+use kalamdb_commons::{JobStatus, JobType};
 use chrono::Utc;
 use datafusion::arrow::array::{ArrayRef, BooleanArray, Int64Array, StringArray};
 use datafusion::arrow::datatypes::{DataType, SchemaRef};
@@ -860,7 +860,7 @@ mod tests {
         );
 
         let result = job.execute().unwrap();
-        if result.job_record.status == "failed" {
+        if result.job_record.status == JobStatus::Failed {
             eprintln!(
                 "Job failed with error: {:?}",
                 result.job_record.error_message
@@ -869,8 +869,8 @@ mod tests {
         assert_eq!(result.rows_flushed, 0); // 0 rows flushed
         assert_eq!(result.users_count, 0); // 0 users
         assert_eq!(result.parquet_files.len(), 0); // 0 Parquet files
-        assert_eq!(result.job_record.status, "completed");
-        assert_eq!(result.job_record.job_type, "flush");
+        assert_eq!(result.job_record.status, JobStatus::Completed);
+        assert_eq!(result.job_record.job_type, JobType::Flush);
 
         let _ = fs::remove_dir_all(&temp_storage);
     }
@@ -913,7 +913,7 @@ mod tests {
         assert_eq!(result.rows_flushed, 2); // 2 rows flushed
         assert_eq!(result.users_count, 1); // 1 user
         assert_eq!(result.parquet_files.len(), 1); // 1 Parquet file
-        assert_eq!(result.job_record.status, "completed");
+        assert_eq!(result.job_record.status, JobStatus::Completed);
 
         // Verify rows deleted from storage
         let remaining = store.scan_all("test_ns", "test_table").unwrap();

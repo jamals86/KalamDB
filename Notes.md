@@ -34,7 +34,12 @@ Future:
 35) Add to cli/server a version which will print the commit and build date as well which is auto-increment: add prompt instead of this one: Starting KalamDB Server v0.1.0
 36) update all packages to the latest available version
 37) Make the cli connect to the root user by default
-38) Force always including namepsace to the queries alongside the tableName
+38) Force always including namespace to the queries alongside the tableName
+39) Whenever we create a table we can create it with a specific access policy: public, private, protected
+40) Add to the cli a command session which will show the current user all info, namespace, and other session related info.
+41) storing credentials in kalamdb-credentials alongside the url of the database
+42) CLI should also support a regular user as well and not only the root user
+43) Whenever a user send a query/sql statement first of all we check the role he has if he is creating create/alter tables then we first check the user role before we display an error like: namespace does not exists, maybe its better to include in these CREATE/ALTER sql also which roles can access them so we dont read data from untrusted users its a sensitive topic.
 
 
 

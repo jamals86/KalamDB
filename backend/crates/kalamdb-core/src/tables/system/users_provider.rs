@@ -58,7 +58,7 @@ impl UsersTableProvider {
     }
 
     /// Insert a new user
-    pub async fn insert_user(&self, user: CreateUserRequest) -> Result<(), KalamDbError> {
+    pub fn insert_user(&self, user: CreateUserRequest) -> Result<(), KalamDbError> {
         let kalamdb_user = User {
             id: UserId::new(&user.user_id),
             username: user.username.clone(),
@@ -317,15 +317,14 @@ mod tests {
     fn test_insert_and_get_user() {
         let (provider, _temp_dir) = create_test_provider();
 
-        let user = UserRecord {
+        let user = CreateUserRequest {
             user_id: "user1".to_string(),
             username: "testuser".to_string(),
             email: Some("test@example.com".to_string()),
             created_at: 1000,
-            updated_at: 1000,
         };
 
-        provider.insert_user(user.clone()).unwrap();
+        provider.insert_user(user).unwrap();
 
         let retrieved = provider.get_user("testuser").unwrap(); // Use username as key
         assert!(retrieved.is_some());
@@ -339,23 +338,20 @@ mod tests {
     fn test_update_user() {
         let (provider, _temp_dir) = create_test_provider();
 
-        let user = UserRecord {
+        let user = CreateUserRequest {
             user_id: "user1".to_string(),
             username: "testuser".to_string(),
             email: Some("test@example.com".to_string()),
             created_at: 1000,
-            updated_at: 1000,
         };
 
-        provider.insert_user(user.clone()).unwrap();
+        provider.insert_user(user).unwrap();
 
-        let updated_user = UserRecord {
-            user_id: "user1".to_string(),
-            username: "testuser".to_string(),
-            email: Some("updated@example.com".to_string()),
-            created_at: 1000,
-            updated_at: 2000,
-        };
+        let mut updated_user = provider
+            .get_user_by_id(&UserId::new("user1"))
+            .unwrap();
+        updated_user.email = Some("updated@example.com".to_string());
+        updated_user.updated_at = 2000;
 
         provider.update_user(updated_user).unwrap();
 
@@ -368,12 +364,20 @@ mod tests {
     fn test_update_nonexistent_user() {
         let (provider, _temp_dir) = create_test_provider();
 
-        let user = UserRecord {
-            user_id: "nonexistent".to_string(),
+        let user = kalamdb_commons::system::User {
+            id: UserId::new("nonexistent"),
             username: "nonexistentuser".to_string(),
+            password_hash: String::new(),
+            role: Role::User,
             email: None,
+            auth_type: AuthType::OAuth,
+            auth_data: None,
+            storage_mode: StorageMode::Table,
+            storage_id: None,
             created_at: 1000,
             updated_at: 1000,
+            last_seen: None,
+            deleted_at: None,
         };
 
         let result = provider.update_user(user);
@@ -385,16 +389,15 @@ mod tests {
     fn test_delete_user() {
         let (provider, _temp_dir) = create_test_provider();
 
-        let user = UserRecord {
+        let user = CreateUserRequest {
             user_id: "user1".to_string(),
             username: "testuser".to_string(),
             email: None,
             created_at: 1000,
-            updated_at: 1000,
         };
 
         provider.insert_user(user).unwrap();
-        provider.delete_user("user1").unwrap();
+        provider.delete_user(&UserId::new("user1")).unwrap();
 
         let retrieved = provider.get_user("testuser").unwrap();
         assert!(retrieved.is_none());
@@ -405,19 +408,17 @@ mod tests {
         let (provider, _temp_dir) = create_test_provider();
 
         let users = vec![
-            UserRecord {
+            CreateUserRequest {
                 user_id: "user1".to_string(),
                 username: "user1".to_string(),
                 email: Some("user1@example.com".to_string()),
                 created_at: 1000,
-                updated_at: 1000,
             },
-            UserRecord {
+            CreateUserRequest {
                 user_id: "user2".to_string(),
                 username: "user2".to_string(),
                 email: None,
                 created_at: 2000,
-                updated_at: 2000,
             },
         ];
 
@@ -427,14 +428,14 @@ mod tests {
 
         let batch = provider.scan_all_users().unwrap();
         assert_eq!(batch.num_rows(), 2);
-        assert_eq!(batch.num_columns(), 7);
+        assert_eq!(batch.num_columns(), 11);
     }
 
     #[test]
     fn test_table_provider_schema() {
         let (provider, _temp_dir) = create_test_provider();
         let schema = provider.schema();
-        assert_eq!(schema.fields().len(), 7);
+        assert_eq!(schema.fields().len(), 11);
         assert_eq!(schema.field(0).name(), "user_id");
         assert_eq!(schema.field(1).name(), "username");
     }

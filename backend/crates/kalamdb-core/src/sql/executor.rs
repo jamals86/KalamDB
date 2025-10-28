@@ -3910,12 +3910,12 @@ mod tests {
         // Create a test stream table entry in system_tables
         let table = kalamdb_sql::Table {
             table_id: "app:events".to_string(),
-            table_name: "events".to_string(),
-            namespace: "app".to_string(),
-            table_type: "Stream".to_string(),
+            table_name: "events".into(),
+            namespace: "app".into(),
+            table_type: kalamdb_commons::models::TableType::Stream,
             created_at: chrono::Utc::now().timestamp_millis(),
             storage_location: String::new(),
-            storage_id: Some("local".to_string()),
+            storage_id: Some(StorageId::new("local")),
             use_user_storage: false,
             flush_policy: String::new(),
             schema_version: 1,

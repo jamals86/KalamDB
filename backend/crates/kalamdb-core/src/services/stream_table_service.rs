@@ -317,6 +317,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: Some(300), // 5 minutes (was retention_seconds)
             if_not_exists: false,
+            access_level: None,
         };
 
         let result = service.create_table(stmt);
@@ -353,6 +354,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None, // No retention (was retention_seconds)
             if_not_exists: false,
+            access_level: None,
         };
 
         let result = service.create_table(stmt);
@@ -382,6 +384,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None,
             if_not_exists: false,
+            access_level: None,
         };
 
         // First creation should succeed
@@ -434,6 +437,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None,
             if_not_exists: false,
+            access_level: None,
         };
 
         let result = service.create_table(stmt);

@@ -8,7 +8,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::storage::ParquetWriter;
 use kalamdb_commons::system::Job;
-use kalamdb_commons::JobType;
+use kalamdb_commons::{JobStatus, JobType};
 use chrono::Utc;
 use datafusion::arrow::array::{ArrayRef, BooleanArray, Int64Array, StringArray};
 use datafusion::arrow::datatypes::{DataType, SchemaRef};
@@ -445,8 +445,8 @@ mod tests {
         let result = job.execute().unwrap();
         assert_eq!(result.rows_flushed, 0); // 0 rows flushed
         assert!(result.parquet_file.is_none()); // No Parquet file
-        assert_eq!(result.job_record.status, "completed");
-        assert_eq!(result.job_record.job_type, "flush");
+        assert_eq!(result.job_record.status, JobStatus::Completed);
+        assert_eq!(result.job_record.job_type, JobType::Flush);
 
         let _ = fs::remove_dir_all(&temp_storage);
     }
@@ -489,7 +489,7 @@ mod tests {
         let result = job.execute().unwrap();
         assert_eq!(result.rows_flushed, 3); // 3 rows flushed
         assert!(result.parquet_file.is_some()); // Parquet file created
-        assert_eq!(result.job_record.status, "completed");
+        assert_eq!(result.job_record.status, JobStatus::Completed);
 
         // Verify rows deleted from storage
         let remaining = store.scan("test_ns", "test_table").unwrap();
@@ -540,7 +540,7 @@ mod tests {
 
         let result = job.execute().unwrap();
         assert_eq!(result.rows_flushed, 1); // Only 1 row flushed (soft-deleted filtered out by scan)
-        assert_eq!(result.job_record.status, "completed");
+        assert_eq!(result.job_record.status, JobStatus::Completed);
 
         // Verify only active row was flushed and deleted
         let remaining = store.scan("test_ns", "test_table").unwrap();
@@ -576,14 +576,21 @@ mod tests {
         let result = job.execute().unwrap();
 
         // Verify job record fields
-        assert_eq!(result.job_record.job_type, "flush");
-        assert_eq!(result.job_record.status, "completed");
+        assert_eq!(result.job_record.job_type, JobType::Flush);
+        assert_eq!(result.job_record.status, JobStatus::Completed);
         assert!(result
             .job_record
             .job_id
             .starts_with("flush-shared-test_table-"));
-        assert!(result.job_record.table_name.is_some());
-        assert_eq!(result.job_record.table_name.unwrap(), "test_ns.test_table");
+        assert_eq!(
+            result
+                .job_record
+                .table_name
+                .as_ref()
+                .map(|name| name.as_str()),
+            Some("test_table")
+        );
+        assert_eq!(result.job_record.namespace_id.as_str(), "test_ns");
         assert!(result.job_record.result.is_some());
 
         // Verify result JSON contains expected fields

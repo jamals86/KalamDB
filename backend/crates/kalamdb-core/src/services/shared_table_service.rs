@@ -521,6 +521,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None,
             if_not_exists: false,
+            access_level: None,
         };
 
         let result = service.create_table(stmt);
@@ -580,6 +581,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None,
             if_not_exists: false,
+            access_level: None,
         };
 
         let result = service.create_table(stmt);
@@ -608,6 +610,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None,
             if_not_exists: false,
+            access_level: None,
         };
 
         // Currently storage locations are hardcoded to /data/shared
@@ -707,6 +710,7 @@ mod tests {
             deleted_retention_hours: None,
             ttl_seconds: None,
             if_not_exists: false,
+            access_level: None,
         };
 
         // First creation should succeed

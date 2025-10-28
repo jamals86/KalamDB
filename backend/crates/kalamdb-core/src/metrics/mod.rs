@@ -146,20 +146,7 @@ mod tests {
     fn test_column_family_type_as_str() {
         assert_eq!(ColumnFamilyType::UserTable.as_str(), "user_table");
         assert_eq!(ColumnFamilyType::SharedTable.as_str(), "shared_table");
-        assert_eq!(ColumnFamilyType::StreamTable.as_str(), "stream_table");
-        assert_eq!(ColumnFamilyType::SystemTables.as_str(), "system_tables");
-        assert_eq!(
-            ColumnFamilyType::SystemNamespaces.as_str(),
-            "system_namespaces"
-        );
-        assert_eq!(
-            ColumnFamilyType::SystemLiveQueries.as_str(),
-            "system_live_queries"
-        );
-        assert_eq!(
-            ColumnFamilyType::SystemFlushJobs.as_str(),
-            "system_flush_jobs"
-        );
+        assert_eq!(ColumnFamilyType::SystemTable.as_str(), "system_table");
     }
 
     #[test]

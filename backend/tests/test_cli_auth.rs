@@ -54,7 +54,7 @@ async fn create_system_user(kalam_sql: &KalamSql) -> Result<(), Box<dyn std::err
         role: Role::System,
         email: Some("system@kalamdb.local".to_string()),
         auth_data: None,
-        storage_mode: kalamdb_commons::StorageMode::Shared,
+        storage_mode: kalamdb_commons::StorageMode::Table,
         storage_id: None,
         created_at: now,
         updated_at: now,

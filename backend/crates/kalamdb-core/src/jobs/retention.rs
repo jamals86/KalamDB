@@ -6,7 +6,8 @@
 
 use crate::error::KalamDbError;
 use crate::tables::system::JobsTableProvider;
-use kalamdb_commons::JobStatus;
+use kalamdb_commons::{JobStatus, JobType, NamespaceId};
+use kalamdb_commons::system::Job;
 use std::sync::Arc;
 
 /// Configuration for job retention
@@ -141,9 +142,10 @@ mod tests {
 
         // Create an old completed job (60 days ago)
         let old_time = chrono::Utc::now().timestamp_millis() - (60 * 24 * 60 * 60 * 1000);
-        let mut old_job = JobRecord::new(
+        let mut old_job = Job::new(
             "old-completed".to_string(),
-            "flush".to_string(),
+            JobType::Flush,
+            NamespaceId::new("default"),
             "node-1".to_string(),
         )
         .complete(Some("Success".to_string()));
@@ -152,9 +154,10 @@ mod tests {
         old_job.completed_at = Some(old_time + 1000);
 
         // Create a recent completed job
-        let recent_job = JobRecord::new(
+        let recent_job = Job::new(
             "recent-completed".to_string(),
-            "flush".to_string(),
+            JobType::Flush,
+            NamespaceId::new("default"),
             "node-1".to_string(),
         )
         .complete(Some("Success".to_string()));
@@ -177,9 +180,10 @@ mod tests {
 
         // Create a failed job that's 60 days old (older than success retention, but within failure retention)
         let failed_time = chrono::Utc::now().timestamp_millis() - (60 * 24 * 60 * 60 * 1000);
-        let mut failed_job = JobRecord::new(
+        let mut failed_job = Job::new(
             "old-failed".to_string(),
-            "backup".to_string(),
+            JobType::Backup,
+            NamespaceId::new("default"),
             "node-1".to_string(),
         )
         .fail("Disk full".to_string());
@@ -203,9 +207,10 @@ mod tests {
 
         // Create a failed job that's 120 days old (older than failure retention)
         let very_old_time = chrono::Utc::now().timestamp_millis() - (120 * 24 * 60 * 60 * 1000);
-        let mut very_old_failed = JobRecord::new(
+        let mut very_old_failed = Job::new(
             "very-old-failed".to_string(),
-            "cleanup".to_string(),
+            JobType::Cleanup,
+            NamespaceId::new("default"),
             "node-1".to_string(),
         )
         .fail("Error".to_string());
@@ -229,9 +234,10 @@ mod tests {
 
         // Create a running job that started 120 days ago
         let old_running_time = chrono::Utc::now().timestamp_millis() - (120 * 24 * 60 * 60 * 1000);
-        let mut old_running = JobRecord::new(
+        let mut old_running = Job::new(
             "old-running".to_string(),
-            "long-task".to_string(),
+            JobType::Cleanup,
+            NamespaceId::new("default"),
             "node-1".to_string(),
         );
         old_running.created_at = old_running_time;

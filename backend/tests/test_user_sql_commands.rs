@@ -11,14 +11,14 @@ use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, UserTableService,
 };
 use kalamdb_core::storage::RocksDbInit;
-use kalamdb_sql::{KalamSql, RocksDbAdapter};
+use kalamdb_sql::KalamSql;
 use kalamdb_store::{UserTableStore, SharedTableStore, StreamTableStore};
 use kalamdb_commons::{AuthType, NamespaceId, Role, StorageMode, UserId};
 use std::sync::Arc;
 use tempfile::TempDir;
 
 /// Helper to create a test SQL executor with all dependencies
-async fn setup_test_executor() -> (SqlExecutor, TempDir, Arc<RocksDbAdapter>) {
+async fn setup_test_executor() -> (SqlExecutor, TempDir, Arc<KalamSql>) {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let db_path = temp_dir.path().to_str().unwrap();
 

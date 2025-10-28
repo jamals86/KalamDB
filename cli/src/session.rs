@@ -1023,7 +1023,7 @@ impl CLISession {
                         println!("  Credentials are stored in: {}", 
                             crate::credentials::FileCredentialStore::default_path().display().to_string().dimmed());
                         #[cfg(unix)]
-                        println!("  File permissions: 0600 (owner read/write only)".dimmed());
+                        println!("{}", "  File permissions: 0600 (owner read/write only)".dimmed());
                     }
                     Ok(None) => {
                         println!("{}", "No credentials stored for this instance".yellow());
@@ -1072,7 +1072,7 @@ impl CLISession {
                 println!("  Credentials are stored at: {}", 
                     crate::credentials::FileCredentialStore::default_path().display().to_string().dimmed());
                 #[cfg(unix)]
-                println!("  File permissions: 0600 (owner read/write only)".dimmed());
+                println!("{}", "  File permissions: 0600 (owner read/write only)".dimmed());
 
                 Ok(())
             }
