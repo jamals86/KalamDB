@@ -114,7 +114,7 @@ impl SharedTableProvider {
                 self.table_name().as_str(),
                 row_id,
                 row_data,
-                "public", // Default access level for shared tables, TODO: Use TableAccess
+                kalamdb_commons::TableAccess::Public, // Default access level for shared tables
             )
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
@@ -162,7 +162,7 @@ impl SharedTableProvider {
                 self.table_name().as_str(),
                 row_id,
                 row_data,
-                "public", // Default access level for shared tables, TODO: Use TableAccess
+                kalamdb_commons::TableAccess::Public, // Default access level for shared tables
             )
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
@@ -272,7 +272,7 @@ impl SharedTableProvider {
                 self.table_name().as_str(),
                 row_id,
                 updated_row,
-                "public", // Default access level for shared tables, TODO: Use TableAccess
+                kalamdb_commons::TableAccess::Public, // Default access level for shared tables
             )
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 

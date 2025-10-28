@@ -75,7 +75,7 @@ pub struct UserTableRow {
 pub struct SharedTableRow {
     #[serde(flatten)]
     pub fields: Map<String, Value>, // User-defined dynamic fields
-    pub access_level: String, // public, private, restricted
+    pub access_level: kalamdb_commons::TableAccess, // public, private, restricted
     pub _updated: String, // System column: ISO 8601 timestamp
     pub _deleted: bool, // System column: soft delete flag
 }

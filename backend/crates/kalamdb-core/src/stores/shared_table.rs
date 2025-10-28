@@ -17,6 +17,7 @@ use crate::models::SharedTableRow;
 use chrono::Utc;
 use kalamdb_commons::storage::{Partition, Result as StorageResult, StorageBackend, StorageError};
 use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::TableAccess;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -82,7 +83,7 @@ impl SharedTableStore {
         table_name: &str,
         row_id: &str,
         mut row_data: JsonValue,
-        access_level: &str,
+        access_level: TableAccess,
     ) -> StorageResult<()> {
         self.ensure_partition(namespace_id, table_name)?;
 
@@ -108,7 +109,7 @@ impl SharedTableStore {
             fields: row_data.as_object()
                 .ok_or_else(|| StorageError::SerializationError("Row data must be an object".to_string()))?
                 .clone(),
-            access_level: access_level.to_string(),
+            access_level,
             _updated: _updated_str,
             _deleted: false,
         };
@@ -144,7 +145,7 @@ impl SharedTableStore {
                 // Convert back to JSON value
                 let mut json_obj = JsonValue::Object(shared_table_row.fields);
                 if let Some(obj) = json_obj.as_object_mut() {
-                    obj.insert("access_level".to_string(), JsonValue::String(shared_table_row.access_level));
+                    obj.insert("access_level".to_string(), JsonValue::String(shared_table_row.access_level.as_str().to_string()));
                     obj.insert("_updated".to_string(), JsonValue::String(shared_table_row._updated));
                     obj.insert("_deleted".to_string(), JsonValue::Bool(shared_table_row._deleted));
                 }
@@ -175,7 +176,7 @@ impl SharedTableStore {
                 // Convert back to JSON value
                 let mut json_obj = JsonValue::Object(shared_table_row.fields);
                 if let Some(obj) = json_obj.as_object_mut() {
-                    obj.insert("access_level".to_string(), JsonValue::String(shared_table_row.access_level));
+                    obj.insert("access_level".to_string(), JsonValue::String(shared_table_row.access_level.as_str().to_string()));
                     obj.insert("_updated".to_string(), JsonValue::String(shared_table_row._updated));
                     obj.insert("_deleted".to_string(), JsonValue::Bool(shared_table_row._deleted));
                 }
