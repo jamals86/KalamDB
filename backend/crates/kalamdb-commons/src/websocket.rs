@@ -1,7 +1,7 @@
 //! WebSocket notification models
 //!
 //! This module defines the structure for live query change notifications sent to clients.
-//! These models are shared between kalamdb-core (for generating notifications) and 
+//! These models are shared between kalamdb-core (for generating notifications) and
 //! kalamdb-api (for sending them to WebSocket clients).
 
 use serde::{Deserialize, Serialize};

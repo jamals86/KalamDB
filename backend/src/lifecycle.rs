@@ -12,7 +12,7 @@ use anyhow::Result;
 use datafusion::catalog::memory::MemorySchemaProvider;
 use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
-use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId, StorageBackend};
+use kalamdb_commons::{AuthType, Role, StorageBackend, StorageId, StorageMode, UserId};
 use kalamdb_core::live_query::{LiveQueryManager, NodeId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
@@ -22,14 +22,14 @@ use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::storage::StorageRegistry;
 use kalamdb_core::stores::{SharedTableStore, StreamTableStore, UserTableStore};
-use kalamdb_store::RocksDbInit;
 use kalamdb_core::{
     jobs::{JobExecutor, StreamEvictionJob, StreamEvictionScheduler, TokioJobManager},
     scheduler::FlushScheduler,
 };
-use kalamdb_sql::RocksDbAdapter;
 use kalamdb_sql::KalamSql;
+use kalamdb_sql::RocksDbAdapter;
 use kalamdb_store::RocksDBBackend;
+use kalamdb_store::RocksDbInit;
 use log::info;
 use std::sync::Arc;
 use std::time::Duration;
@@ -405,7 +405,7 @@ async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
                 role,
                 email: Some(email),
                 auth_type: AuthType::Internal, // System user uses Internal auth
-                auth_data: None, // No allow_remote flag = localhost-only by default
+                auth_data: None,               // No allow_remote flag = localhost-only by default
                 storage_mode: StorageMode::Table,
                 storage_id: Some(StorageId::local()),
                 created_at,
@@ -433,10 +433,11 @@ async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
 /// - Special characters
 fn generate_random_password(length: usize) -> String {
     use rand::Rng;
-    
-    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
+
+    const CHARSET: &[u8] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
     let mut rng = rand::thread_rng();
-    
+
     (0..length)
         .map(|_| {
             let idx = rng.gen_range(0..CHARSET.len());

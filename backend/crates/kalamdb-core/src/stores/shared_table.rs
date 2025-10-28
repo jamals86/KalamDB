@@ -15,8 +15,8 @@
 
 use crate::models::SharedTableRow;
 use chrono::Utc;
-use kalamdb_commons::storage::{Partition, Result as StorageResult, StorageBackend, StorageError};
 use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::storage::{Partition, Result as StorageResult, StorageBackend, StorageError};
 use kalamdb_commons::TableAccess;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
@@ -47,7 +47,10 @@ impl SharedTableStore {
 
     /// Ensure partition exists for a table.
     fn ensure_partition(&self, namespace_id: &str, table_name: &str) -> StorageResult<()> {
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
         self.backend.create_partition(&partition)
     }
 
@@ -90,15 +93,17 @@ impl SharedTableStore {
         // Extract system columns from row_data (they should already be there from SharedTableProvider)
         let _updated_str = if let Some(obj) = row_data.as_object_mut() {
             // Extract _updated and remove from fields to avoid duplication
-            let updated = obj.remove("_updated")
+            let updated = obj
+                .remove("_updated")
                 .and_then(|v| v.as_str().map(|s| s.to_string()))
                 .unwrap_or_else(|| Utc::now().to_rfc3339());
-            
+
             // Extract _deleted and remove from fields
-            let _deleted_val = obj.remove("_deleted")
+            let _deleted_val = obj
+                .remove("_deleted")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            
+
             updated
         } else {
             Utc::now().to_rfc3339()
@@ -106,8 +111,11 @@ impl SharedTableStore {
 
         // Convert to SharedTableRow (fields no longer contain _updated/_deleted)
         let shared_table_row = SharedTableRow {
-            fields: row_data.as_object()
-                .ok_or_else(|| StorageError::SerializationError("Row data must be an object".to_string()))?
+            fields: row_data
+                .as_object()
+                .ok_or_else(|| {
+                    StorageError::SerializationError("Row data must be an object".to_string())
+                })?
                 .clone(),
             access_level,
             _updated: _updated_str,
@@ -115,7 +123,10 @@ impl SharedTableStore {
         };
 
         // Store using partition
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
         let value = serde_json::to_vec(&shared_table_row)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
         self.backend.put(&partition, row_id.as_bytes(), &value)
@@ -130,7 +141,10 @@ impl SharedTableStore {
         table_name: &str,
         row_id: &str,
     ) -> StorageResult<Option<JsonValue>> {
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
 
         match self.backend.get(&partition, row_id.as_bytes())? {
             Some(bytes) => {
@@ -145,9 +159,18 @@ impl SharedTableStore {
                 // Convert back to JSON value
                 let mut json_obj = JsonValue::Object(shared_table_row.fields);
                 if let Some(obj) = json_obj.as_object_mut() {
-                    obj.insert("access_level".to_string(), JsonValue::String(shared_table_row.access_level.as_str().to_string()));
-                    obj.insert("_updated".to_string(), JsonValue::String(shared_table_row._updated));
-                    obj.insert("_deleted".to_string(), JsonValue::Bool(shared_table_row._deleted));
+                    obj.insert(
+                        "access_level".to_string(),
+                        JsonValue::String(shared_table_row.access_level.as_str().to_string()),
+                    );
+                    obj.insert(
+                        "_updated".to_string(),
+                        JsonValue::String(shared_table_row._updated),
+                    );
+                    obj.insert(
+                        "_deleted".to_string(),
+                        JsonValue::Bool(shared_table_row._deleted),
+                    );
                 }
 
                 Ok(Some(json_obj))
@@ -166,7 +189,10 @@ impl SharedTableStore {
         table_name: &str,
         row_id: &str,
     ) -> StorageResult<Option<JsonValue>> {
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
 
         match self.backend.get(&partition, row_id.as_bytes())? {
             Some(bytes) => {
@@ -176,9 +202,18 @@ impl SharedTableStore {
                 // Convert back to JSON value
                 let mut json_obj = JsonValue::Object(shared_table_row.fields);
                 if let Some(obj) = json_obj.as_object_mut() {
-                    obj.insert("access_level".to_string(), JsonValue::String(shared_table_row.access_level.as_str().to_string()));
-                    obj.insert("_updated".to_string(), JsonValue::String(shared_table_row._updated));
-                    obj.insert("_deleted".to_string(), JsonValue::Bool(shared_table_row._deleted));
+                    obj.insert(
+                        "access_level".to_string(),
+                        JsonValue::String(shared_table_row.access_level.as_str().to_string()),
+                    );
+                    obj.insert(
+                        "_updated".to_string(),
+                        JsonValue::String(shared_table_row._updated),
+                    );
+                    obj.insert(
+                        "_deleted".to_string(),
+                        JsonValue::Bool(shared_table_row._deleted),
+                    );
                 }
 
                 Ok(Some(json_obj))
@@ -199,7 +234,10 @@ impl SharedTableStore {
         row_id: &str,
         hard: bool,
     ) -> StorageResult<()> {
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
 
         if hard {
             // Physical deletion
@@ -232,14 +270,18 @@ impl SharedTableStore {
         namespace_id: &str,
         table_name: &str,
     ) -> StorageResult<Vec<(String, JsonValue)>> {
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
 
         let iter = self.backend.scan(&partition, None, None)?;
         let mut results = Vec::new();
 
         for (key_bytes, value_bytes) in iter {
-            let key = String::from_utf8(key_bytes)
-                .map_err(|e| StorageError::SerializationError(format!("Invalid UTF-8 key: {}", e)))?;
+            let key = String::from_utf8(key_bytes).map_err(|e| {
+                StorageError::SerializationError(format!("Invalid UTF-8 key: {}", e))
+            })?;
 
             let shared_table_row: SharedTableRow = serde_json::from_slice(&value_bytes)
                 .map_err(|e| StorageError::SerializationError(e.to_string()))?;
@@ -252,9 +294,18 @@ impl SharedTableStore {
             // Convert back to JSON value
             let mut json_obj = JsonValue::Object(shared_table_row.fields);
             if let Some(obj) = json_obj.as_object_mut() {
-                obj.insert("access_level".to_string(), JsonValue::String(shared_table_row.access_level));
-                obj.insert("_updated".to_string(), JsonValue::String(shared_table_row._updated));
-                obj.insert("_deleted".to_string(), JsonValue::Bool(shared_table_row._deleted));
+                obj.insert(
+                    "access_level".to_string(),
+                    JsonValue::String(shared_table_row.access_level.as_str().to_string()),
+                );
+                obj.insert(
+                    "_updated".to_string(),
+                    JsonValue::String(shared_table_row._updated),
+                );
+                obj.insert(
+                    "_deleted".to_string(),
+                    JsonValue::Bool(shared_table_row._deleted),
+                );
             }
 
             results.push((key, json_obj));
@@ -271,7 +322,10 @@ impl SharedTableStore {
         namespace_id: &str,
         table_name: &str,
     ) -> StorageResult<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + '_>> {
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
         self.backend.scan(&partition, None, None)
     }
 
@@ -289,7 +343,10 @@ impl SharedTableStore {
         namespace_id: &str,
         table_name: &str,
     ) -> StorageResult<Vec<(Vec<u8>, JsonValue)>> {
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
 
         let iter = self.backend.scan(&partition, None, None)?;
         let mut results = Vec::new();
@@ -306,9 +363,18 @@ impl SharedTableStore {
             // Convert back to JSON value
             let mut json_obj = JsonValue::Object(shared_table_row.fields);
             if let Some(obj) = json_obj.as_object_mut() {
-                obj.insert("access_level".to_string(), JsonValue::String(shared_table_row.access_level));
-                obj.insert("_updated".to_string(), JsonValue::String(shared_table_row._updated));
-                obj.insert("_deleted".to_string(), JsonValue::Bool(shared_table_row._deleted));
+                obj.insert(
+                    "access_level".to_string(),
+                    JsonValue::String(shared_table_row.access_level.as_str().to_string()),
+                );
+                obj.insert(
+                    "_updated".to_string(),
+                    JsonValue::String(shared_table_row._updated),
+                );
+                obj.insert(
+                    "_deleted".to_string(),
+                    JsonValue::Bool(shared_table_row._deleted),
+                );
             }
 
             results.push((key_bytes.to_vec(), json_obj));
@@ -333,7 +399,10 @@ impl SharedTableStore {
         table_name: &str,
         keys: &[Vec<u8>],
     ) -> StorageResult<()> {
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
 
         for key_bytes in keys {
             self.backend.delete(&partition, key_bytes)?;
@@ -348,7 +417,10 @@ impl SharedTableStore {
     /// * `namespace_id` - The namespace identifier
     /// * `table_name` - The table name
     pub fn drop_table(&self, namespace_id: &str, table_name: &str) -> StorageResult<()> {
-        let _partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let _partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
 
         // Note: This is a simplified implementation. In a real system,
         // you might want to iterate and delete all keys, or mark the partition as dropped.
@@ -409,9 +481,7 @@ mod tests {
             .unwrap();
 
         // Soft delete
-        store
-            .delete("app", "documents", "doc001", false)
-            .unwrap();
+        store.delete("app", "documents", "doc001", false).unwrap();
 
         // Should return None because row is soft-deleted
         let retrieved = store.get("app", "documents", "doc001").unwrap();
@@ -432,9 +502,7 @@ mod tests {
             .unwrap();
 
         // Hard delete
-        store
-            .delete("app", "documents", "doc001", true)
-            .unwrap();
+        store.delete("app", "documents", "doc001", true).unwrap();
 
         // Should return None because row is physically deleted
         let retrieved = store.get("app", "documents", "doc001").unwrap();
@@ -497,9 +565,7 @@ mod tests {
             .unwrap();
 
         // Soft delete one row
-        store
-            .delete("app", "documents", "doc001", false)
-            .unwrap();
+        store.delete("app", "documents", "doc001", false).unwrap();
 
         let results = store.scan("app", "documents").unwrap();
         assert_eq!(results.len(), 1);

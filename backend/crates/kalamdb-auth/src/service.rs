@@ -71,9 +71,11 @@ impl AuthService {
     ) -> AuthResult<AuthenticatedUser> {
         // Determine auth method based on prefix
         if auth_header.starts_with("Basic ") {
-            self.authenticate_basic(auth_header, connection_info, adapter).await
+            self.authenticate_basic(auth_header, connection_info, adapter)
+                .await
         } else if auth_header.starts_with("Bearer ") {
-            self.authenticate_jwt(auth_header, connection_info, adapter).await
+            self.authenticate_jwt(auth_header, connection_info, adapter)
+                .await
         } else {
             Err(AuthError::MalformedAuthorization(
                 "Authorization header must start with 'Basic ' or 'Bearer '".to_string(),
@@ -90,7 +92,7 @@ impl AuthService {
     ///
     /// # Returns
     /// Authenticated user context
-    /// 
+    ///
     /// # System User Authentication (T103, T104, T106 - Phase 7, User Story 5)
     /// - Internal auth_type users (system users) can only authenticate from localhost by default
     /// - Global allow_remote_access flag allows remote connections for all internal users
@@ -122,11 +124,10 @@ impl AuthService {
             let per_user_allow_remote = if let Some(ref metadata) = user.auth_data {
                 // Try to parse metadata as JSON to check for allow_remote flag
                 match serde_json::from_str::<serde_json::Value>(metadata) {
-                    Ok(json) => {
-                        json.get("allow_remote")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false)
-                    }
+                    Ok(json) => json
+                        .get("allow_remote")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
                     Err(_) => false,
                 }
             } else {
@@ -165,7 +166,8 @@ impl AuthService {
             // For remote connections, password is required (enforced above)
             if !user.password_hash.is_empty() {
                 // Verify password if one is set
-                let password_match = password::verify_password(&password, &user.password_hash).await?;
+                let password_match =
+                    password::verify_password(&password, &user.password_hash).await?;
                 if !password_match {
                     warn!("Invalid password for system user: {}", username);
                     return Err(AuthError::InvalidCredentials);
@@ -214,23 +216,20 @@ impl AuthService {
         adapter: &Arc<RocksDbAdapter>,
     ) -> AuthResult<AuthenticatedUser> {
         // Extract token (remove "Bearer " prefix)
-        let token = auth_header.strip_prefix("Bearer ").ok_or_else(|| {
-            AuthError::MalformedAuthorization("Bearer token missing".to_string())
-        })?;
+        let token = auth_header
+            .strip_prefix("Bearer ")
+            .ok_or_else(|| AuthError::MalformedAuthorization("Bearer token missing".to_string()))?;
 
         // Validate token
-        let claims = jwt_auth::validate_jwt_token(
-            token,
-            &self.jwt_secret,
-            &self.trusted_jwt_issuers,
-        )?;
+        let claims =
+            jwt_auth::validate_jwt_token(token, &self.jwt_secret, &self.trusted_jwt_issuers)?;
 
         // Look up user in database using username from JWT claims
         // The JWT sub field contains the user_id, but we'll use username for lookup
         let username = claims.username.as_ref().ok_or_else(|| {
             AuthError::MissingClaim("username claim missing from JWT".to_string())
         })?;
-        
+
         let user = self.get_user_by_username(username, adapter).await?;
 
         // Check if user is deleted
@@ -268,7 +267,11 @@ impl AuthService {
     ///
     /// # Errors
     /// Returns `AuthError::UserNotFound` if user doesn't exist
-    async fn get_user_by_username(&self, username: &str, adapter: &Arc<RocksDbAdapter>) -> AuthResult<kalamdb_commons::system::User> {
+    async fn get_user_by_username(
+        &self,
+        username: &str,
+        adapter: &Arc<RocksDbAdapter>,
+    ) -> AuthResult<kalamdb_commons::system::User> {
         adapter
             .get_user(username)
             .map_err(AuthError::DatabaseError)?

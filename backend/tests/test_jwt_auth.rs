@@ -74,7 +74,7 @@ fn create_test_jwt_token(
 #[actix_web::test]
 async fn test_jwt_auth_success() {
     let server = TestServer::new().await;
-    
+
     // Create test user
     let username = "alice";
     let password = "SecurePassword123!";
@@ -111,7 +111,7 @@ async fn test_jwt_auth_success() {
 
     // Verify response
     let status = resp.status();
-    
+
     // For now, we expect either:
     // - 200 OK if JWT authentication passes
     // - 401 Unauthorized if middleware blocks the request
@@ -129,7 +129,7 @@ async fn test_jwt_auth_success() {
 #[actix_web::test]
 async fn test_jwt_auth_expired_token() {
     let server = TestServer::new().await;
-    
+
     // Create test user
     let username = "bob";
     let password = "SecurePassword123!";
@@ -178,7 +178,7 @@ async fn test_jwt_auth_expired_token() {
 #[actix_web::test]
 async fn test_jwt_auth_invalid_signature() {
     let server = TestServer::new().await;
-    
+
     // Create test user
     let username = "charlie";
     let password = "SecurePassword123!";
@@ -227,7 +227,7 @@ async fn test_jwt_auth_invalid_signature() {
 #[actix_web::test]
 async fn test_jwt_auth_untrusted_issuer() {
     let server = TestServer::new().await;
-    
+
     // Create test user
     let username = "diana";
     let password = "SecurePassword123!";
@@ -280,7 +280,7 @@ async fn test_jwt_auth_missing_sub_claim() {
     // Create JWT token WITHOUT 'sub' claim (malformed)
     let secret = "test-secret-key-for-jwt-authentication";
     let issuer = "kalamdb-test";
-    
+
     // Create claims WITHOUT sub field
     #[derive(Debug, Serialize)]
     struct MalformedClaims {
@@ -289,7 +289,7 @@ async fn test_jwt_auth_missing_sub_claim() {
         pub iat: usize,
         pub username: Option<String>,
     }
-    
+
     let now = chrono::Utc::now().timestamp() as usize;
     let claims = MalformedClaims {
         iss: issuer.to_string(),
@@ -343,11 +343,11 @@ async fn test_jwt_auth_malformed_header() {
 
     // Test various malformed Bearer headers
     let malformed_headers = vec![
-        "Bearer",                               // Missing token
-        "Bearer ",                              // Empty token
-        "BearerXYZ123",                         // Missing space after "Bearer"
-        "Basic dGVzdDp0ZXN0",                  // Wrong auth scheme
-        "Bearer invalid-token-format",          // Invalid JWT format
+        "Bearer",                      // Missing token
+        "Bearer ",                     // Empty token
+        "BearerXYZ123",                // Missing space after "Bearer"
+        "Basic dGVzdDp0ZXN0",          // Wrong auth scheme
+        "Bearer invalid-token-format", // Invalid JWT format
     ];
 
     for malformed_header in malformed_headers {

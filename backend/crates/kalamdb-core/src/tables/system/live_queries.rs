@@ -14,7 +14,7 @@ impl LiveQueriesTable {
         Arc::new(Schema::new(vec![
             Field::new("live_id", DataType::Utf8, false), // Format: {user_id}-{unique_conn_id}-{table_name}-{query_id}
             Field::new("connection_id", DataType::Utf8, false),
-             Field::new("namespace_id", DataType::Utf8, false),
+            Field::new("namespace_id", DataType::Utf8, false),
             Field::new("table_name", DataType::Utf8, false),
             Field::new("query_id", DataType::Utf8, false),
             Field::new("user_id", DataType::Utf8, false),

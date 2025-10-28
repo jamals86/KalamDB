@@ -8,15 +8,15 @@
 
 use crate::catalog::{NamespaceId, TableMetadata, TableName};
 use crate::error::KalamDbError;
+use crate::stores::SharedTableStore;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::TableProvider;
-use datafusion::logical_expr::dml::InsertOp;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::SessionState;
+use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
-use crate::stores::SharedTableStore;
 use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;
@@ -415,9 +415,8 @@ impl TableProvider for SharedTableProvider {
         // Create an in-memory table and return its scan plan
         use datafusion::datasource::MemTable;
         let partitions = vec![vec![final_batch]];
-        let table = MemTable::try_new(final_schema, partitions).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
-        })?;
+        let table = MemTable::try_new(final_schema, partitions)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
 
         table.scan(_state, projection, &[], limit).await
     }

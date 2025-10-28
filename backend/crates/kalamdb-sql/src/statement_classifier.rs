@@ -145,7 +145,10 @@ impl SqlStatement {
             ["CREATE", "SHARED", "TABLE", ..] => SqlStatement::CreateTable,
             ["CREATE", "STREAM", "TABLE", ..] => SqlStatement::CreateTable,
             ["CREATE", "TABLE", ..] => SqlStatement::CreateTable,
-            ["ALTER", "TABLE", ..] | ["ALTER", "USER", "TABLE", ..] | ["ALTER", "SHARED", "TABLE", ..] | ["ALTER", "STREAM", "TABLE", ..] => SqlStatement::AlterTable,
+            ["ALTER", "TABLE", ..]
+            | ["ALTER", "USER", "TABLE", ..]
+            | ["ALTER", "SHARED", "TABLE", ..]
+            | ["ALTER", "STREAM", "TABLE", ..] => SqlStatement::AlterTable,
             ["DROP", "USER", "TABLE", ..] => SqlStatement::DropTable,
             ["DROP", "SHARED", "TABLE", ..] => SqlStatement::DropTable,
             ["DROP", "STREAM", "TABLE", ..] => SqlStatement::DropTable,
@@ -418,7 +421,9 @@ mod tests {
             SqlStatement::CreateUser
         );
         assert_eq!(
-            SqlStatement::classify("create user bob with oauth email='bob@example.com' role readonly"),
+            SqlStatement::classify(
+                "create user bob with oauth email='bob@example.com' role readonly"
+            ),
             SqlStatement::CreateUser
         );
         assert_eq!(

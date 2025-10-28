@@ -15,11 +15,7 @@ pub struct QueryExecutor {
 }
 
 impl QueryExecutor {
-    pub(crate) fn new(
-        base_url: String,
-        http_client: reqwest::Client,
-        auth: AuthProvider,
-    ) -> Self {
+    pub(crate) fn new(base_url: String, http_client: reqwest::Client, auth: AuthProvider) -> Self {
         Self {
             base_url,
             http_client,

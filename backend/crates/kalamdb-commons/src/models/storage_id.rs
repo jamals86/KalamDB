@@ -65,4 +65,3 @@ impl Default for StorageId {
         Self::local()
     }
 }
-

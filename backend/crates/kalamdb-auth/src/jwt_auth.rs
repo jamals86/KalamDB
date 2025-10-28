@@ -128,9 +128,8 @@ pub fn extract_claims_unverified(token: &str) -> AuthResult<JwtClaims> {
     validation.validate_exp = false;
 
     let decoding_key = DecodingKey::from_secret(b""); // Empty key since we're not validating
-    let token_data = decode::<JwtClaims>(token, &decoding_key, &validation).map_err(|e| {
-        AuthError::MalformedAuthorization(format!("JWT decode error: {}", e))
-    })?;
+    let token_data = decode::<JwtClaims>(token, &decoding_key, &validation)
+        .map_err(|e| AuthError::MalformedAuthorization(format!("JWT decode error: {}", e)))?;
 
     Ok(token_data.claims)
 }

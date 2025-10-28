@@ -20,7 +20,9 @@ use kalam_link::credentials::{CredentialStore, Credentials};
 use kalam_link::AuthProvider;
 use std::path::PathBuf;
 
-use kalam_cli::{CLIConfiguration, CLIError, CLISession, FileCredentialStore, OutputFormat, Result};
+use kalam_cli::{
+    CLIConfiguration, CLIError, CLISession, FileCredentialStore, OutputFormat, Result,
+};
 
 // Build information - Create a static version string at compile time
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -139,9 +141,8 @@ async fn main() -> Result<()> {
     }
 
     // Load credential store
-    let mut credential_store = FileCredentialStore::new().map_err(|e| {
-        CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
-    })?;
+    let mut credential_store = FileCredentialStore::new()
+        .map_err(|e| CLIError::ConfigurationError(format!("Failed to load credentials: {}", e)))?;
 
     // Handle credential management commands
     if cli.list_instances {
@@ -160,9 +161,11 @@ async fn main() -> Result<()> {
     }
 
     if cli.show_credentials {
-        match credential_store.get_credentials(&cli.instance).map_err(|e| {
-            CLIError::ConfigurationError(format!("Failed to get credentials: {}", e))
-        })? {
+        match credential_store
+            .get_credentials(&cli.instance)
+            .map_err(|e| {
+                CLIError::ConfigurationError(format!("Failed to get credentials: {}", e))
+            })? {
             Some(creds) => {
                 println!("Instance: {}", creds.instance);
                 println!("Username: {}", creds.username);
@@ -179,9 +182,11 @@ async fn main() -> Result<()> {
     }
 
     if cli.delete_credentials {
-        credential_store.delete_credentials(&cli.instance).map_err(|e| {
-            CLIError::ConfigurationError(format!("Failed to delete credentials: {}", e))
-        })?;
+        credential_store
+            .delete_credentials(&cli.instance)
+            .map_err(|e| {
+                CLIError::ConfigurationError(format!("Failed to delete credentials: {}", e))
+            })?;
         println!("Deleted credentials for instance '{}'", cli.instance);
         return Ok(());
     }
@@ -210,7 +215,9 @@ async fn main() -> Result<()> {
                 .map_err(|e| CLIError::FileError(format!("Failed to read password: {}", e)))?
         };
 
-        let server_url = cli.url.or_else(|| cli.host.map(|h| format!("http://{}:{}", h, cli.port)));
+        let server_url = cli
+            .url
+            .or_else(|| cli.host.map(|h| format!("http://{}:{}", h, cli.port)));
 
         let creds = if let Some(url) = server_url {
             Credentials::with_server_url(cli.instance.clone(), username, password, url)
@@ -243,9 +250,12 @@ async fn main() -> Result<()> {
         (None, Some(host)) => format!("http://{}:{}", host, cli.port),
         (None, None) => {
             // Try to get from stored credentials first
-            if let Some(creds) = credential_store.get_credentials(&cli.instance).map_err(|e| {
-                CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
-            })? {
+            if let Some(creds) = credential_store
+                .get_credentials(&cli.instance)
+                .map_err(|e| {
+                    CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
+                })?
+            {
                 let creds_url = creds.get_server_url();
                 // If credentials have a valid URL (starts with http), use it
                 // Otherwise use default localhost:8080
@@ -267,13 +277,17 @@ async fn main() -> Result<()> {
     };
 
     // Determine authentication (priority: CLI args > stored credentials > config file)
-    let auth = if let Some(token) = cli.token.or_else(|| config.auth.as_ref().and_then(|a| a.jwt_token.clone())) {
+    let auth = if let Some(token) = cli
+        .token
+        .or_else(|| config.auth.as_ref().and_then(|a| a.jwt_token.clone()))
+    {
         AuthProvider::jwt_token(token)
     } else if let (Some(username), Some(password)) = (cli.username, cli.password) {
         AuthProvider::basic_auth(username, password)
-    } else if let Some(creds) = credential_store.get_credentials(&cli.instance).map_err(|e| {
-        CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
-    })? {
+    } else if let Some(creds) = credential_store
+        .get_credentials(&cli.instance)
+        .map_err(|e| CLIError::ConfigurationError(format!("Failed to load credentials: {}", e)))?
+    {
         // Load from stored credentials
         if cli.verbose {
             eprintln!("Using stored credentials for instance '{}'", cli.instance);

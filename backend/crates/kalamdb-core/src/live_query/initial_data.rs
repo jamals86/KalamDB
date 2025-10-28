@@ -132,7 +132,7 @@ impl InitialDataFetcher {
             options.limit,
             options.since_timestamp
         );
-        
+
         let limit = options.limit;
         if limit == 0 {
             log::debug!("Limit is 0, returning empty result");
@@ -150,26 +150,20 @@ impl InitialDataFetcher {
 
         let mut rows_with_ts: Vec<(i64, JsonValue)> = match table_type {
             TableType::User => {
-                let store = self
-                    .user_table_store
-                    .as_ref()
-                    .ok_or_else(|| {
-                        KalamDbError::InvalidOperation(
-                            "UserTableStore not configured for live query initial data".to_string(),
-                        )
-                    })?;
+                let store = self.user_table_store.as_ref().ok_or_else(|| {
+                    KalamDbError::InvalidOperation(
+                        "UserTableStore not configured for live query initial data".to_string(),
+                    )
+                })?;
 
                 let user_id = live_id.connection_id().user_id();
                 let mut rows = Vec::new();
-                for (_row_id, row) in store
-                    .scan_user(&namespace, &table, user_id)
-                    .map_err(|e| {
-                        KalamDbError::Other(format!(
-                            "Failed to scan user table {}.{}: {}",
-                            namespace, table, e
-                        ))
-                    })?
-                {
+                for (_row_id, row) in store.scan_user(&namespace, &table, user_id).map_err(|e| {
+                    KalamDbError::Other(format!(
+                        "Failed to scan user table {}.{}: {}",
+                        namespace, table, e
+                    ))
+                })? {
                     if !include_deleted && Self::is_deleted(&row) {
                         continue;
                     }
@@ -195,15 +189,11 @@ impl InitialDataFetcher {
                 rows
             }
             TableType::Stream => {
-                let store = self
-                    .stream_table_store
-                    .as_ref()
-                    .ok_or_else(|| {
-                        KalamDbError::InvalidOperation(
-                            "StreamTableStore not configured for live query initial data"
-                                .to_string(),
-                        )
-                    })?;
+                let store = self.stream_table_store.as_ref().ok_or_else(|| {
+                    KalamDbError::InvalidOperation(
+                        "StreamTableStore not configured for live query initial data".to_string(),
+                    )
+                })?;
 
                 let mut rows = Vec::new();
                 for (row_id, row) in store.scan(&namespace, &table).map_err(|e| {

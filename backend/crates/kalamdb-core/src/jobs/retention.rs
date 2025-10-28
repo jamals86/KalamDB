@@ -6,8 +6,8 @@
 
 use crate::error::KalamDbError;
 use crate::tables::system::JobsTableProvider;
-use kalamdb_commons::{JobStatus, JobType, NamespaceId};
 use kalamdb_commons::system::Job;
+use kalamdb_commons::{JobStatus, JobType, NamespaceId};
 use std::sync::Arc;
 
 /// Configuration for job retention
@@ -81,7 +81,9 @@ impl RetentionPolicy {
                 continue;
             }
 
-            let reference_time = job.completed_at.unwrap_or_else(|| job.started_at.unwrap_or(job.created_at));
+            let reference_time = job
+                .completed_at
+                .unwrap_or_else(|| job.started_at.unwrap_or(job.created_at));
             let age_ms = now - reference_time;
 
             let threshold = if job.status == JobStatus::Failed {
@@ -114,8 +116,8 @@ impl RetentionPolicy {
 mod tests {
     use super::*;
 
-    use kalamdb_store::RocksDbInit;
     use kalamdb_commons::system::Job;
+    use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
     fn setup_retention() -> (RetentionPolicy, Arc<JobsTableProvider>, TempDir) {

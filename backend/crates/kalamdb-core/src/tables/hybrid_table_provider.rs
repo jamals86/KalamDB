@@ -4,8 +4,8 @@
 
 use crate::catalog::TableMetadata;
 use crate::storage::StorageBackend;
-use kalamdb_store::RocksDBBackend;
 use datafusion::arrow::datatypes::SchemaRef;
+use kalamdb_store::RocksDBBackend;
 use std::sync::Arc;
 
 /// Hybrid table provider that queries both RocksDB and Parquet (placeholder)
@@ -67,9 +67,9 @@ mod tests {
     use super::*;
     use crate::catalog::{NamespaceId, TableName, TableType};
     use crate::flush::FlushPolicy;
-    use kalamdb_store::{RocksDbInit, RocksDBBackend};
     use chrono::Utc;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use kalamdb_store::{RocksDBBackend, RocksDbInit};
     use std::env;
     use std::fs;
 
@@ -98,8 +98,12 @@ mod tests {
         };
 
         let backend = RocksDBBackend::new(db.clone());
-        let provider =
-            HybridTableProvider::from_rocks_backend(table_metadata, schema.clone(), backend, vec![]);
+        let provider = HybridTableProvider::from_rocks_backend(
+            table_metadata,
+            schema.clone(),
+            backend,
+            vec![],
+        );
 
         assert_eq!(provider.schema(), schema);
 

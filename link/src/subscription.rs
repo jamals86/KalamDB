@@ -97,7 +97,7 @@ fn apply_ws_auth_headers(
     auth: &AuthProvider,
 ) -> Result<()> {
     use base64::{engine::general_purpose, Engine as _};
-    
+
     match auth {
         AuthProvider::BasicAuth(username, password) => {
             // Encode username:password as base64 (RFC 7617)
@@ -182,7 +182,10 @@ fn parse_message(text: &str, fallback_subscription_id: &str) -> Result<Option<Ch
                     count: _,
                 } => ChangeEvent::InitialData {
                     subscription_id,
-                    rows: rows.into_iter().map(|row| serde_json::to_value(row).unwrap_or(Value::Null)).collect(),
+                    rows: rows
+                        .into_iter()
+                        .map(|row| serde_json::to_value(row).unwrap_or(Value::Null))
+                        .collect(),
                 },
                 ServerMessage::Change {
                     subscription_id,
@@ -421,7 +424,7 @@ fn extract_subscription_id(object: &serde_json::Map<String, Value>, fallback: &s
 
 impl SubscriptionConfig {
     /// Create a new configuration with required SQL.
-    /// 
+    ///
     /// By default, fetches the last 100 rows as initial data.
     pub fn new(sql: impl Into<String>) -> Self {
         Self {

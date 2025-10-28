@@ -79,7 +79,8 @@ impl AlterTableStatement {
             .iter()
             .position(|&t| matches!(t.to_uppercase().as_str(), "ADD" | "DROP" | "MODIFY" | "SET"))
             .ok_or_else(|| {
-                "Expected ADD COLUMN, DROP COLUMN, MODIFY COLUMN, or SET ACCESS LEVEL operation".to_string()
+                "Expected ADD COLUMN, DROP COLUMN, MODIFY COLUMN, or SET ACCESS LEVEL operation"
+                    .to_string()
             })?;
 
         let operation_upper = tokens[op_pos].to_uppercase();
@@ -88,11 +89,10 @@ impl AlterTableStatement {
             "DROP" => Self::parse_drop_column_from_tokens(&tokens[op_pos..])?,
             "MODIFY" => Self::parse_modify_column_from_tokens(&tokens[op_pos..])?,
             "SET" => Self::parse_set_access_level_from_tokens(&tokens[op_pos..])?,
-            _ => {
-                return Err(
-                    "Expected ADD COLUMN, DROP COLUMN, MODIFY COLUMN, or SET ACCESS LEVEL operation".to_string(),
-                )
-            }
+            _ => return Err(
+                "Expected ADD COLUMN, DROP COLUMN, MODIFY COLUMN, or SET ACCESS LEVEL operation"
+                    .to_string(),
+            ),
         };
 
         Ok(Self {
@@ -236,9 +236,12 @@ impl AlterTableStatement {
         }
 
         let access_level_str = tokens[3].to_lowercase();
-        
+
         // Validate before converting
-        if !matches!(access_level_str.as_str(), "public" | "private" | "restricted") {
+        if !matches!(
+            access_level_str.as_str(),
+            "public" | "private" | "restricted"
+        ) {
             return Err(format!(
                 "Invalid access level: {}. Must be public, private, or restricted",
                 access_level_str
@@ -494,10 +497,8 @@ mod tests {
 
     #[test]
     fn test_parse_set_access_level_missing_keyword() {
-        let result = AlterTableStatement::parse(
-            "ALTER TABLE test SET LEVEL public",
-            &test_namespace(),
-        );
+        let result =
+            AlterTableStatement::parse("ALTER TABLE test SET LEVEL public", &test_namespace());
         assert!(result.is_err());
     }
 }

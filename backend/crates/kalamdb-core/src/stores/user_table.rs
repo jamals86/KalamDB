@@ -15,8 +15,8 @@
 
 use crate::models::UserTableRow;
 use chrono::Utc;
-use kalamdb_commons::storage::{Partition, Result as StorageResult, StorageBackend, StorageError};
 use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::storage::{Partition, Result as StorageResult, StorageBackend, StorageError};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -89,8 +89,11 @@ impl UserTableStore {
         self.ensure_partition(namespace_id, table_name)?;
 
         // Prepare dynamic fields (exclude system columns to avoid duplication with flattened struct)
-        let mut fields = row_data.as_object()
-            .ok_or_else(|| StorageError::SerializationError("Row data must be an object".to_string()))?
+        let mut fields = row_data
+            .as_object()
+            .ok_or_else(|| {
+                StorageError::SerializationError("Row data must be an object".to_string())
+            })?
             .clone();
         fields.remove(kalamdb_commons::constants::SystemColumnNames::UPDATED);
         fields.remove(kalamdb_commons::constants::SystemColumnNames::DELETED);
@@ -108,7 +111,10 @@ impl UserTableStore {
         let key = format!("{}:{}", user_id, row_id);
 
         // Store using EntityStore-like interface
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
         let value = serde_json::to_vec(&user_table_row)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
         self.backend.put(&partition, key.as_bytes(), &value)
@@ -124,7 +130,10 @@ impl UserTableStore {
         user_id: &str,
         row_id: &str,
     ) -> StorageResult<Option<JsonValue>> {
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
         let key = format!("{}:{}", user_id, row_id);
 
         match self.backend.get(&partition, key.as_bytes())? {
@@ -140,8 +149,14 @@ impl UserTableStore {
                 // Convert back to JSON value
                 let mut json_obj = JsonValue::Object(user_table_row.fields);
                 if let Some(obj) = json_obj.as_object_mut() {
-                    obj.insert("_updated".to_string(), JsonValue::String(user_table_row._updated));
-                    obj.insert("_deleted".to_string(), JsonValue::Bool(user_table_row._deleted));
+                    obj.insert(
+                        "_updated".to_string(),
+                        JsonValue::String(user_table_row._updated),
+                    );
+                    obj.insert(
+                        "_deleted".to_string(),
+                        JsonValue::Bool(user_table_row._deleted),
+                    );
                 }
 
                 Ok(Some(json_obj))
@@ -161,7 +176,10 @@ impl UserTableStore {
         user_id: &str,
         row_id: &str,
     ) -> StorageResult<Option<JsonValue>> {
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
         let key = format!("{}:{}", user_id, row_id);
 
         match self.backend.get(&partition, key.as_bytes())? {
@@ -172,8 +190,14 @@ impl UserTableStore {
                 // Convert back to JSON value
                 let mut json_obj = JsonValue::Object(user_table_row.fields);
                 if let Some(obj) = json_obj.as_object_mut() {
-                    obj.insert("_updated".to_string(), JsonValue::String(user_table_row._updated));
-                    obj.insert("_deleted".to_string(), JsonValue::Bool(user_table_row._deleted));
+                    obj.insert(
+                        "_updated".to_string(),
+                        JsonValue::String(user_table_row._updated),
+                    );
+                    obj.insert(
+                        "_deleted".to_string(),
+                        JsonValue::Bool(user_table_row._deleted),
+                    );
                 }
 
                 Ok(Some(json_obj))
@@ -195,7 +219,10 @@ impl UserTableStore {
         row_id: &str,
         hard: bool,
     ) -> StorageResult<()> {
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
         let key = format!("{}:{}", user_id, row_id);
 
         if hard {
@@ -230,15 +257,21 @@ impl UserTableStore {
         table_name: &str,
         user_id: &str,
     ) -> StorageResult<Vec<(String, JsonValue)>> {
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
         let prefix = format!("{}:", user_id);
 
-        let iter = self.backend.scan(&partition, Some(prefix.as_bytes()), None)?;
+        let iter = self
+            .backend
+            .scan(&partition, Some(prefix.as_bytes()), None)?;
         let mut results = Vec::new();
 
         for (key_bytes, value_bytes) in iter {
-            let key = String::from_utf8(key_bytes)
-                .map_err(|e| StorageError::SerializationError(format!("Invalid UTF-8 key: {}", e)))?;
+            let key = String::from_utf8(key_bytes).map_err(|e| {
+                StorageError::SerializationError(format!("Invalid UTF-8 key: {}", e))
+            })?;
 
             // Only include rows with matching user_id prefix
             if !key.starts_with(&prefix) {
@@ -256,8 +289,14 @@ impl UserTableStore {
             // Convert back to JSON value
             let mut json_obj = JsonValue::Object(user_table_row.fields);
             if let Some(obj) = json_obj.as_object_mut() {
-                obj.insert("_updated".to_string(), JsonValue::String(user_table_row._updated));
-                obj.insert("_deleted".to_string(), JsonValue::Bool(user_table_row._deleted));
+                obj.insert(
+                    "_updated".to_string(),
+                    JsonValue::String(user_table_row._updated),
+                );
+                obj.insert(
+                    "_deleted".to_string(),
+                    JsonValue::Bool(user_table_row._deleted),
+                );
             }
 
             let (_, row_id) = Self::parse_user_key(&key)?;
@@ -281,9 +320,10 @@ impl UserTableStore {
     fn parse_user_key(key: &str) -> StorageResult<(String, String)> {
         let parts: Vec<&str> = key.splitn(2, ':').collect();
         if parts.len() != 2 {
-            return Err(StorageError::SerializationError(
-                format!("Invalid user key format: {}", key)
-            ));
+            return Err(StorageError::SerializationError(format!(
+                "Invalid user key format: {}",
+                key
+            )));
         }
         Ok((parts[0].to_string(), parts[1].to_string()))
     }
@@ -304,7 +344,10 @@ impl UserTableStore {
     ) -> StorageResult<std::collections::HashMap<String, Vec<(Vec<u8>, JsonValue)>>> {
         use std::collections::HashMap;
 
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
 
         let iter = self.backend.scan(&partition, None, None)?;
         let mut rows_by_user: HashMap<String, Vec<(Vec<u8>, JsonValue)>> = HashMap::new();
@@ -319,15 +362,22 @@ impl UserTableStore {
             }
 
             // Parse key to get user_id
-            let key_str = String::from_utf8(key_bytes.to_vec())
-                .map_err(|e| StorageError::SerializationError(format!("Invalid UTF-8 key: {}", e)))?;
+            let key_str = String::from_utf8(key_bytes.to_vec()).map_err(|e| {
+                StorageError::SerializationError(format!("Invalid UTF-8 key: {}", e))
+            })?;
             let (user_id, _) = Self::parse_user_key(&key_str)?;
 
             // Convert back to JSON value
             let mut json_obj = JsonValue::Object(user_table_row.fields);
             if let Some(obj) = json_obj.as_object_mut() {
-                obj.insert("_updated".to_string(), JsonValue::String(user_table_row._updated));
-                obj.insert("_deleted".to_string(), JsonValue::Bool(user_table_row._deleted));
+                obj.insert(
+                    "_updated".to_string(),
+                    JsonValue::String(user_table_row._updated),
+                );
+                obj.insert(
+                    "_deleted".to_string(),
+                    JsonValue::Bool(user_table_row._deleted),
+                );
             }
 
             rows_by_user
@@ -355,7 +405,10 @@ impl UserTableStore {
         table_name: &str,
         keys: &[Vec<u8>],
     ) -> StorageResult<()> {
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
 
         for key_bytes in keys {
             self.backend.delete(&partition, key_bytes)?;
@@ -370,10 +423,12 @@ impl UserTableStore {
     /// * `namespace_id` - The namespace identifier
     /// * `table_name` - The table name
     pub fn drop_table(&self, namespace_id: &str, table_name: &str) -> StorageResult<()> {
-        let _partition_name = format!("{}{}:{}",
+        let _partition_name = format!(
+            "{}{}:{}",
             kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX,
             namespace_id,
-            table_name);
+            table_name
+        );
 
         // Note: This is a simplified implementation. In a real system,
         // you might want to iterate and delete all keys, or mark the partition as dropped.
@@ -390,7 +445,10 @@ impl UserTableStore {
         namespace_id: &str,
         table_name: &str,
     ) -> StorageResult<Vec<(String, JsonValue)>> {
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
 
         let iter = self.backend.scan(&partition, None, None)?;
         let mut results = Vec::new();
@@ -404,14 +462,21 @@ impl UserTableStore {
                 continue;
             }
 
-            let key_str = String::from_utf8(key_bytes)
-                .map_err(|e| StorageError::SerializationError(format!("Invalid UTF-8 key: {}", e)))?;
+            let key_str = String::from_utf8(key_bytes).map_err(|e| {
+                StorageError::SerializationError(format!("Invalid UTF-8 key: {}", e))
+            })?;
 
             // Convert back to JSON value
             let mut json_obj = JsonValue::Object(user_table_row.fields);
             if let Some(obj) = json_obj.as_object_mut() {
-                obj.insert("_updated".to_string(), JsonValue::String(user_table_row._updated));
-                obj.insert("_deleted".to_string(), JsonValue::Bool(user_table_row._deleted));
+                obj.insert(
+                    "_updated".to_string(),
+                    JsonValue::String(user_table_row._updated),
+                );
+                obj.insert(
+                    "_deleted".to_string(),
+                    JsonValue::Bool(user_table_row._deleted),
+                );
             }
 
             results.push((key_str, json_obj));
@@ -428,7 +493,10 @@ impl UserTableStore {
         namespace_id: &str,
         table_name: &str,
     ) -> StorageResult<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + '_>> {
-        let partition = Self::partition(&NamespaceId::from(namespace_id), &TableName::from(table_name));
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
         self.backend.scan(&partition, None, None)
     }
 }

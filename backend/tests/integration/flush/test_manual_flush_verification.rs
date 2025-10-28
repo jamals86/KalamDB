@@ -728,11 +728,7 @@ async fn test_09_flush_job_completes_asynchronously() {
     let start_time = flush_result.job_record.started_at.unwrap_or(0);
     let end_time = flush_result.job_record.completed_at.unwrap_or(0);
     let took_ms = end_time - start_time;
-    assert!(
-        took_ms > 0,
-        "Job took_ms should be > 0, got {}",
-        took_ms
-    );
+    assert!(took_ms > 0, "Job took_ms should be > 0, got {}", took_ms);
 
     // Verify Parquet files exist on filesystem
     for parquet_file_path in &flush_result.parquet_files {
@@ -744,8 +740,11 @@ async fn test_09_flush_job_completes_asynchronously() {
         );
     }
 
-    println!("✅ Flush job completed - verified {} Parquet file(s) with took_ms={}", 
-             flush_result.parquet_files.len(), took_ms);
+    println!(
+        "✅ Flush job completed - verified {} Parquet file(s) with took_ms={}",
+        flush_result.parquet_files.len(),
+        took_ms
+    );
 }
 
 // ============================================================================
@@ -849,17 +848,31 @@ async fn test_11_flush_job_result_includes_metrics() {
     let select_response = server
         .execute_sql_as_user("SELECT * FROM metrics_test.data", "user_001")
         .await;
-    assert_eq!(select_response.status, "success", "SELECT failed: {:?}", select_response.error);
-    let row_count = select_response.results.get(0).map(|r| r.row_count).unwrap_or(0);
-    assert!(row_count >= 5, "Expected at least 5 rows, got {}", row_count);
+    assert_eq!(
+        select_response.status, "success",
+        "SELECT failed: {:?}",
+        select_response.error
+    );
+    let row_count = select_response
+        .results
+        .get(0)
+        .map(|r| r.row_count)
+        .unwrap_or(0);
+    assert!(
+        row_count >= 5,
+        "Expected at least 5 rows, got {}",
+        row_count
+    );
 
     // Execute flush synchronously (bypasses JobManager)
     let flush_result = flush_helpers::execute_flush_synchronously(&server, "metrics_test", "data")
         .await
         .expect("Flush should execute successfully");
 
-    println!("  Flush result: {} rows flushed across {} users",
-             flush_result.rows_flushed, flush_result.users_count);
+    println!(
+        "  Flush result: {} rows flushed across {} users",
+        flush_result.rows_flushed, flush_result.users_count
+    );
     println!("  Parquet files created: {:?}", flush_result.parquet_files);
 
     // Verify metrics
@@ -886,7 +899,9 @@ async fn test_11_flush_job_result_includes_metrics() {
     assert!(
         took_ms > 0,
         "Job took_ms should be > 0, got {} (start: {}, end: {})",
-        took_ms, start_time, end_time
+        took_ms,
+        start_time,
+        end_time
     );
     println!("  ✓ Job completed in {} ms", took_ms);
 
@@ -896,7 +911,7 @@ async fn test_11_flush_job_result_includes_metrics() {
         !flush_result.parquet_files.is_empty(),
         "Should have created at least 1 Parquet file"
     );
-    
+
     for parquet_file_path in &flush_result.parquet_files {
         let file_path = PathBuf::from(parquet_file_path);
         assert!(
@@ -904,18 +919,25 @@ async fn test_11_flush_job_result_includes_metrics() {
             "Parquet file should exist: {}",
             parquet_file_path
         );
-        
+
         let metadata = std::fs::metadata(&file_path).expect("Failed to get file metadata");
         assert!(
             metadata.len() > 50,
             "Parquet file should be > 50 bytes, got {} bytes",
             metadata.len()
         );
-        println!("  ✓ Parquet file verified: {} ({} bytes)", parquet_file_path, metadata.len());
+        println!(
+            "  ✓ Parquet file verified: {} ({} bytes)",
+            parquet_file_path,
+            metadata.len()
+        );
     }
 
-    println!("✓ Test 11 passed: Flush created {} Parquet file(s) with took_ms={}", 
-             flush_result.parquet_files.len(), took_ms);
+    println!(
+        "✓ Test 11 passed: Flush created {} Parquet file(s) with took_ms={}",
+        flush_result.parquet_files.len(),
+        took_ms
+    );
 }
 
 // ============================================================================
@@ -945,9 +967,10 @@ async fn test_12_flush_empty_table() {
     );
 
     // Execute flush synchronously on empty table
-    let flush_result = flush_helpers::execute_flush_synchronously(&server, "empty_test", "empty_data")
-        .await
-        .expect("Flush should execute successfully even for empty table");
+    let flush_result =
+        flush_helpers::execute_flush_synchronously(&server, "empty_test", "empty_data")
+            .await
+            .expect("Flush should execute successfully even for empty table");
 
     // Verify result indicates empty flush
     assert_eq!(
@@ -965,10 +988,11 @@ async fn test_12_flush_empty_table() {
         "Should have 0 Parquet files for empty table, got {}",
         flush_result.parquet_files.len()
     );
-    
+
     // Verify job completed successfully (even though no data to flush)
     assert_eq!(
-        flush_result.job_record.status, JobStatus::Completed,
+        flush_result.job_record.status,
+        JobStatus::Completed,
         "Job should be completed, got: {:?}",
         flush_result.job_record.status
     );
@@ -1119,7 +1143,6 @@ async fn test_15_flush_shared_table_fails() {
     );
 }
 
-
 /// Test 10: Verify timestamp columns flush successfully
 ///
 /// This test verifies that:
@@ -1187,7 +1210,9 @@ async fn test_10_flush_with_timestamp_columns() {
 
     // Verify job timing
     let job_record = flush_result.job_record;
-    let took_ms = if let (Some(started), Some(completed)) = (job_record.started_at, job_record.completed_at) {
+    let took_ms = if let (Some(started), Some(completed)) =
+        (job_record.started_at, job_record.completed_at)
+    {
         (completed - started) as u64
     } else {
         panic!("Job should have started_at and completed_at timestamps");

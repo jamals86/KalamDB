@@ -90,7 +90,7 @@ impl OutputFormatter {
             };
 
             let terminal_width = Self::get_terminal_width();
-            
+
             // Calculate initial column widths
             let mut col_widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
             for row in rows {
@@ -328,22 +328,22 @@ mod tests {
     fn test_truncate_value() {
         // No truncation needed
         assert_eq!(OutputFormatter::truncate_value("short", 10), "short");
-        
+
         // Truncation with ellipsis
         assert_eq!(
             OutputFormatter::truncate_value("this is a very long string that needs truncation", 20),
             "this is a very lo..."
         );
-        
+
         // Edge case: max_width = 3 (can't fit ellipsis, just truncate)
         assert_eq!(OutputFormatter::truncate_value("test", 3), "tes");
-        
+
         // Edge case: max_width < 3 (just truncate)
         assert_eq!(OutputFormatter::truncate_value("test", 2), "te");
-        
+
         // Edge case: exactly at max_width = 4
         assert_eq!(OutputFormatter::truncate_value("test", 4), "test");
-        
+
         // Edge case: one over max_width with ellipsis
         assert_eq!(OutputFormatter::truncate_value("hello", 4), "h...");
     }

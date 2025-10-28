@@ -46,9 +46,12 @@
 //! };
 //! ```
 
-use crate::{AuthType, JobStatus, JobType, NamespaceId, Role, StorageId, StorageMode, TableAccess, TableName, TableType, UserId};
+use crate::{
+    AuthType, JobStatus, JobType, NamespaceId, Role, StorageId, StorageMode, TableAccess,
+    TableName, TableType, UserId,
+};
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
-use bincode::{Encode, Decode};
 
 /// User entity for system.users table.
 ///
@@ -106,10 +109,10 @@ pub struct User {
     pub auth_data: Option<String>, // JSON blob for OAuth provider/subject
     pub storage_mode: StorageMode, // Preferred storage partitioning mode
     pub storage_id: Option<StorageId>, // Optional preferred storage configuration
-    pub created_at: i64,            // Unix timestamp in milliseconds
-    pub updated_at: i64,            // Unix timestamp in milliseconds
-    pub last_seen: Option<i64>,     // Unix timestamp in milliseconds (daily granularity)
-    pub deleted_at: Option<i64>,    // Unix timestamp in milliseconds for soft delete
+    pub created_at: i64,           // Unix timestamp in milliseconds
+    pub updated_at: i64,           // Unix timestamp in milliseconds
+    pub last_seen: Option<i64>,    // Unix timestamp in milliseconds (daily granularity)
+    pub deleted_at: Option<i64>,   // Unix timestamp in milliseconds for soft delete
 }
 
 /// Job entity for system.jobs table.
@@ -171,18 +174,23 @@ pub struct Job {
     pub parameters: Option<String>, // JSON array of strings
     pub result: Option<String>,
     pub trace: Option<String>,
-    pub memory_used: Option<i64>,   // bytes
-    pub cpu_used: Option<i64>,      // microseconds
-    pub created_at: i64,            // Unix timestamp in milliseconds
-    pub started_at: Option<i64>,    // Unix timestamp in milliseconds
-    pub completed_at: Option<i64>,  // Unix timestamp in milliseconds
+    pub memory_used: Option<i64>,  // bytes
+    pub cpu_used: Option<i64>,     // microseconds
+    pub created_at: i64,           // Unix timestamp in milliseconds
+    pub started_at: Option<i64>,   // Unix timestamp in milliseconds
+    pub completed_at: Option<i64>, // Unix timestamp in milliseconds
     pub node_id: String,
     pub error_message: Option<String>,
 }
 
 impl Job {
     /// Create a new job with running status
-    pub fn new(job_id: String, job_type: JobType, namespace_id: NamespaceId, node_id: String) -> Self {
+    pub fn new(
+        job_id: String,
+        job_type: JobType,
+        namespace_id: NamespaceId,
+        node_id: String,
+    ) -> Self {
         let now = chrono::Utc::now().timestamp_millis();
         Self {
             job_id,
@@ -294,8 +302,8 @@ impl Job {
 pub struct Namespace {
     pub namespace_id: NamespaceId,
     pub name: String,
-    pub created_at: i64,           // Unix timestamp in milliseconds
-    pub options: Option<String>,   // JSON configuration
+    pub created_at: i64,         // Unix timestamp in milliseconds
+    pub options: Option<String>, // JSON configuration
     pub table_count: i32,
 }
 
@@ -562,8 +570,8 @@ pub struct InformationSchemaTable {
     pub table_name: TableName,
     pub table_type: String, // BASE TABLE, SYSTEM VIEW, STREAM TABLE
     pub table_id: String,
-    pub created_at: i64,  // Unix timestamp in milliseconds
-    pub updated_at: i64,  // Unix timestamp in milliseconds
+    pub created_at: i64, // Unix timestamp in milliseconds
+    pub updated_at: i64, // Unix timestamp in milliseconds
     pub schema_version: u32,
     pub storage_id: StorageId,
     pub use_user_storage: bool,
@@ -619,7 +627,6 @@ pub struct TableSchema {
     pub created_at: i64,
     pub changes: String, // JSON array of schema changes
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -714,7 +721,8 @@ mod tests {
         // Test bincode serialization
         let config = bincode::config::standard();
         let bytes = bincode::encode_to_vec(&table, config).unwrap();
-        let (deserialized, _): (SystemTable, _) = bincode::decode_from_slice(&bytes, config).unwrap();
+        let (deserialized, _): (SystemTable, _) =
+            bincode::decode_from_slice(&bytes, config).unwrap();
         assert_eq!(table, deserialized);
     }
 
@@ -762,7 +770,8 @@ mod tests {
         // Test bincode serialization
         let config = bincode::config::standard();
         let bytes = bincode::encode_to_vec(&table, config).unwrap();
-        let (deserialized, _): (InformationSchemaTable, _) = bincode::decode_from_slice(&bytes, config).unwrap();
+        let (deserialized, _): (InformationSchemaTable, _) =
+            bincode::decode_from_slice(&bytes, config).unwrap();
         assert_eq!(table, deserialized);
     }
 
@@ -779,7 +788,8 @@ mod tests {
         // Test bincode serialization
         let config = bincode::config::standard();
         let bytes = bincode::encode_to_vec(&counter, config).unwrap();
-        let (deserialized, _): (UserTableCounter, _) = bincode::decode_from_slice(&bytes, config).unwrap();
+        let (deserialized, _): (UserTableCounter, _) =
+            bincode::decode_from_slice(&bytes, config).unwrap();
         assert_eq!(counter, deserialized);
     }
 
@@ -816,5 +826,3 @@ mod tests {
         assert!(completed_job.completed_at.is_some());
     }
 }
-
-

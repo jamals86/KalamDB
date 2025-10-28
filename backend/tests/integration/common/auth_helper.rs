@@ -36,11 +36,11 @@ pub async fn create_test_user(
     role: Role,
 ) -> User {
     // Hash password using bcrypt
-    let password_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)
-        .expect("Failed to hash password");
+    let password_hash =
+        bcrypt::hash(password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
 
     let now = chrono::Utc::now().timestamp_millis();
-    
+
     let user = User {
         id: UserId::new(format!("test_{}", username)),
         username: username.to_string(),
@@ -156,7 +156,7 @@ pub async fn create_test_dba(server: &super::TestServer, username: &str) -> User
 /// ```
 pub async fn create_test_system_user(server: &super::TestServer, username: &str) -> User {
     let now = chrono::Utc::now().timestamp_millis();
-    
+
     let user = User {
         id: UserId::new(format!("sys_{}", username)),
         username: username.to_string(),
@@ -189,7 +189,7 @@ mod tests {
     fn test_create_basic_auth_header() {
         let header = create_basic_auth_header("alice", "password123");
         assert!(header.starts_with("Basic "));
-        
+
         // Decode and verify
         let encoded = header.strip_prefix("Basic ").unwrap();
         let decoded = String::from_utf8(BASE64.decode(encoded).unwrap()).unwrap();

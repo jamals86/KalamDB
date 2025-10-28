@@ -510,9 +510,8 @@ impl ServerConfig {
 
         // Log to console
         if let Ok(val) = env::var("KALAMDB_LOG_TO_CONSOLE") {
-            self.logging.log_to_console = val.to_lowercase() == "true" 
-                || val == "1" 
-                || val.to_lowercase() == "yes";
+            self.logging.log_to_console =
+                val.to_lowercase() == "true" || val == "1" || val.to_lowercase() == "yes";
         }
 
         // Data directory (new naming convention)

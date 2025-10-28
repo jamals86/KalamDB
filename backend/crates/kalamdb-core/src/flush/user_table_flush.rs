@@ -7,13 +7,13 @@ use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::storage::{ParquetWriter, StorageRegistry};
-use kalamdb_commons::system::Job;
-use kalamdb_commons::JobType;
+use crate::stores::UserTableStore;
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::models::StorageType;
-use crate::stores::UserTableStore;
+use kalamdb_commons::system::Job;
+use kalamdb_commons::JobType;
 use serde_json::{json, Value as JsonValue};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -224,13 +224,16 @@ impl UserTableFlushJob {
             format!("namespace={}", self.namespace_id.as_str()),
             format!("table={}", self.table_name.as_str()),
         ];
-        let params_json = serde_json::to_string(&params)
-            .unwrap_or_else(|_| "[]".to_string());
-        
-        let mut job_record =
-            Job::new(job_id.clone(), JobType::Flush, self.namespace_id.clone(), self.node_id.clone())
-                .with_table_name(self.table_name.clone())
-                .with_parameters(params_json);
+        let params_json = serde_json::to_string(&params).unwrap_or_else(|_| "[]".to_string());
+
+        let mut job_record = Job::new(
+            job_id.clone(),
+            JobType::Flush,
+            self.namespace_id.clone(),
+            self.node_id.clone(),
+        )
+        .with_table_name(self.table_name.clone())
+        .with_parameters(params_json);
 
         // T158d: Persist job state to system.jobs BEFORE starting work
         if let Some(ref jobs_provider) = self.jobs_provider {
@@ -398,18 +401,19 @@ impl UserTableFlushJob {
         let mut rows_scanned = 0;
         while let Some((key_bytes, value_bytes)) = iter.next() {
             // Decode row
-            let user_table_row: crate::models::UserTableRow = match serde_json::from_slice(&value_bytes) {
-                Ok(v) => v,
-                Err(e) => {
-                    log::warn!(
-                        "Skipping row due to deserialization error (table={}.{}): {}",
-                        self.namespace_id.as_str(),
-                        self.table_name.as_str(),
-                        e
-                    );
-                    continue;
-                }
-            };
+            let user_table_row: crate::models::UserTableRow =
+                match serde_json::from_slice(&value_bytes) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        log::warn!(
+                            "Skipping row due to deserialization error (table={}.{}): {}",
+                            self.namespace_id.as_str(),
+                            self.table_name.as_str(),
+                            e
+                        );
+                        continue;
+                    }
+                };
 
             // Skip soft-deleted rows
             if user_table_row._deleted {
@@ -419,7 +423,10 @@ impl UserTableFlushJob {
             // Convert to JSON value and inject system columns
             let mut row_data = JsonValue::Object(user_table_row.fields);
             if let Some(obj) = row_data.as_object_mut() {
-                obj.insert("_updated".to_string(), JsonValue::String(user_table_row._updated));
+                obj.insert(
+                    "_updated".to_string(),
+                    JsonValue::String(user_table_row._updated),
+                );
                 obj.insert("_deleted".to_string(), JsonValue::Bool(false));
             }
 
@@ -757,7 +764,9 @@ mod tests {
     #[test]
     fn test_user_table_flush_job_creation() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
+        let store = Arc::new(UserTableStore::new(Arc::new(
+            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
+        )));
         let schema = create_test_schema();
 
         let job = UserTableFlushJob::new(
@@ -777,7 +786,9 @@ mod tests {
     #[test]
     fn test_user_table_flush_empty_table() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
+        let store = Arc::new(UserTableStore::new(Arc::new(
+            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
+        )));
         let schema = create_test_schema();
 
         let temp_storage = env::temp_dir().join("kalamdb_flush_test_empty");
@@ -810,7 +821,9 @@ mod tests {
     #[test]
     fn test_user_table_flush_single_user() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
+        let store = Arc::new(UserTableStore::new(Arc::new(
+            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
+        )));
         let schema = create_test_schema();
 
         // Insert test data for user1
@@ -861,7 +874,9 @@ mod tests {
     #[test]
     fn test_user_table_flush_multiple_users() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
+        let store = Arc::new(UserTableStore::new(Arc::new(
+            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
+        )));
         let schema = create_test_schema();
 
         // Insert test data for user1 and user2
@@ -914,7 +929,9 @@ mod tests {
     #[test]
     fn test_user_table_flush_skips_soft_deleted() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
+        let store = Arc::new(UserTableStore::new(Arc::new(
+            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
+        )));
         let schema = create_test_schema();
 
         // Insert test data with one active and one soft-deleted row

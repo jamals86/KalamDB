@@ -27,6 +27,7 @@
 //! This architecture makes traditional SQL injection (e.g., `'; DROP TABLE users; --`)
 //! impossible because malicious input is treated as literal data values, not executable SQL.
 
+use crate::auth::rbac;
 use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
 use crate::error::KalamDbError;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
@@ -35,6 +36,7 @@ use crate::services::{
     UserTableService,
 };
 use crate::sql::datafusion_session::DataFusionSessionFactory;
+use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use crate::tables::{
     system::{
         NamespacesTableProvider, SystemTablesTableProvider,
@@ -47,11 +49,10 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::prelude::SessionContext;
-use kalamdb_commons::{JobStatus, JobType, Role, TableAccess};
-use kalamdb_commons::system::Namespace;
-use crate::auth::rbac;
 use datafusion::sql::sqlparser;
 use kalamdb_commons::models::{NamespaceId as CommonNamespaceId, StorageId};
+use kalamdb_commons::system::Namespace;
+use kalamdb_commons::{JobStatus, JobType, Role, TableAccess};
 use kalamdb_sql::ddl::{
     parse_job_command, AlterNamespaceStatement, AlterUserStatement, CreateNamespaceStatement,
     CreateTableStatement, CreateUserStatement, DescribeTableStatement, DropNamespaceStatement,
@@ -61,7 +62,6 @@ use kalamdb_sql::ddl::{
 use kalamdb_sql::statement_classifier::SqlStatement;
 use kalamdb_sql::KalamSql;
 use kalamdb_sql::RocksDbAdapter;
-use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::sync::Arc;
 
 /// SQL execution result
@@ -243,9 +243,8 @@ impl SqlExecutor {
         self.jobs_table_provider = Some(Arc::new(crate::tables::system::JobsTableProvider::new(
             kalam_sql.clone(),
         )));
-        self.users_table_provider = Some(Arc::new(SystemUsersTableProvider::new(
-            kalam_sql.clone(),
-        )));
+        self.users_table_provider =
+            Some(Arc::new(SystemUsersTableProvider::new(kalam_sql.clone())));
         self.kalam_sql = Some(kalam_sql);
         self
     }
@@ -267,22 +266,21 @@ impl SqlExecutor {
             // Phase 2b: Get schema from information_schema.tables (TableDefinition.schema_history)
             let namespace_id = NamespaceId::from(table.namespace.as_str());
             let table_name = TableName::from(table.table_name.as_str());
-            let table_def =
-                match kalam_sql.get_table_definition(&namespace_id, &table_name) {
-                    Ok(Some(def)) => def,
-                    Ok(None) => {
-                        // No TableDefinition found - skip this table (might be legacy)
-                        continue;
-                    }
-                    Err(e) => {
-                        // Log error but continue loading other tables
-                        eprintln!(
-                            "Warning: Failed to load schema for {}.{}: {:?}",
-                            table.namespace, table.table_name, e
-                        );
-                        continue;
-                    }
-                };
+            let table_def = match kalam_sql.get_table_definition(&namespace_id, &table_name) {
+                Ok(Some(def)) => def,
+                Ok(None) => {
+                    // No TableDefinition found - skip this table (might be legacy)
+                    continue;
+                }
+                Err(e) => {
+                    // Log error but continue loading other tables
+                    eprintln!(
+                        "Warning: Failed to load schema for {}.{}: {:?}",
+                        table.namespace, table.table_name, e
+                    );
+                    continue;
+                }
+            };
 
             // Get the latest schema from schema_history
             if table_def.schema_history.is_empty() {
@@ -537,7 +535,10 @@ impl SqlExecutor {
                 }
                 Ok(None) => {
                     // User not found - treat as anonymous
-                    log::warn!("User '{}' not found in database, using anonymous context", user_id.as_str());
+                    log::warn!(
+                        "User '{}' not found in database, using anonymous context",
+                        user_id.as_str()
+                    );
                     return Ok(ExecutionContext::anonymous());
                 }
                 Err(e) => {
@@ -559,11 +560,7 @@ impl SqlExecutor {
     /// - Regular users can only access their own USER tables
     /// - System tables (system.*, information_schema.*) are readable by all authenticated users
     /// - DDL operations (CREATE/ALTER/DROP NAMESPACE, STORAGE, etc.) require admin privileges
-    fn check_authorization(
-        &self,
-        ctx: &ExecutionContext,
-        sql: &str,
-    ) -> Result<(), KalamDbError> {
+    fn check_authorization(&self, ctx: &ExecutionContext, sql: &str) -> Result<(), KalamDbError> {
         // Admin users (DBA, System) can do anything
         if ctx.is_admin() {
             return Ok(());
@@ -677,12 +674,12 @@ impl SqlExecutor {
             SqlStatement::ShowStorages => self.execute_show_storages(sql, user_id).await,
             SqlStatement::CreateTable => self.execute_create_table(sql, user_id).await,
             SqlStatement::AlterTable => self.execute_alter_table(sql, user_id).await,
-            SqlStatement::DropTable => self.execute_drop_table(sql).await,
+            SqlStatement::DropTable => self.execute_drop_table(sql, user_id).await,
             SqlStatement::ShowTables => self.execute_show_tables(sql).await,
             SqlStatement::DescribeTable => self.execute_describe_table(sql).await,
             SqlStatement::ShowStats => self.execute_show_table_stats(sql).await,
-            SqlStatement::FlushTable => self.execute_flush_table(sql).await,
-            SqlStatement::FlushAllTables => self.execute_flush_all_tables(sql).await,
+            SqlStatement::FlushTable => self.execute_flush_table(sql, user_id).await,
+            SqlStatement::FlushAllTables => self.execute_flush_all_tables(sql, user_id).await,
             SqlStatement::KillJob => self.execute_kill_job(sql).await,
             SqlStatement::KillLiveQuery => self.execute_kill_live_query(sql).await,
             SqlStatement::BeginTransaction => self.execute_begin_transaction().await,
@@ -948,9 +945,7 @@ impl SqlExecutor {
 
         // Register additional system tables
         use crate::tables::system::{
-            JobsTableProvider,
-            LiveQueriesTableProvider,
-            SystemStoragesProvider,
+            JobsTableProvider, LiveQueriesTableProvider, SystemStoragesProvider,
         };
 
         system_schema
@@ -1046,11 +1041,18 @@ impl SqlExecutor {
             match kalam_sql.get_user_by_id(user_id) {
                 Ok(Some(user)) => user.role,
                 Ok(None) => {
-                    log::warn!("User '{}' not found, defaulting to User role", user_id.as_str());
+                    log::warn!(
+                        "User '{}' not found, defaulting to User role",
+                        user_id.as_str()
+                    );
                     Role::User
                 }
                 Err(e) => {
-                    log::error!("Failed to lookup user '{}': {}, defaulting to User role", user_id.as_str(), e);
+                    log::error!(
+                        "Failed to lookup user '{}': {}, defaulting to User role",
+                        user_id.as_str(),
+                        e
+                    );
                     Role::User
                 }
             }
@@ -1078,7 +1080,8 @@ impl SqlExecutor {
                     let qualified = format!("{}.{}", t.namespace, t.table_name);
                     filter.contains(&qualified)
                         || filter.contains(t.table_name.as_str())  // Also match unqualified
-                        || filter.contains(&format!("system.{}", t.table_name.as_str())) // System table reference
+                        || filter.contains(&format!("system.{}", t.table_name.as_str()))
+                    // System table reference
                 })
                 .collect()
         } else {
@@ -1106,7 +1109,10 @@ impl SqlExecutor {
         }
 
         // Register shared tables (with RBAC authorization check)
-        for table in tables_to_load.iter().filter(|t| t.table_type == TableType::Shared) {
+        for table in tables_to_load
+            .iter()
+            .filter(|t| t.table_type == TableType::Shared)
+        {
             let table_name = table.table_name.clone();
             let namespace_id = table.namespace.clone();
             let table_id = format!("{}:{}", table.namespace, table.table_name);
@@ -1116,7 +1122,7 @@ impl SqlExecutor {
             // This means Restricted tables will only be accessible to Service/Dba/System roles
             let access_level = table.access_level.unwrap_or(TableAccess::Private);
             let is_owner = false; // TODO: Implement owner tracking in system.tables
-            
+
             if !rbac::can_access_shared_table(access_level, is_owner, user_role) {
                 // Skip tables the user cannot access - don't register them
                 log::debug!(
@@ -1219,7 +1225,10 @@ impl SqlExecutor {
         }
 
         // Register user tables with the current user_id (ensures data isolation)
-        for table in tables_to_load.iter().filter(|t| t.table_type == TableType::User) {
+        for table in tables_to_load
+            .iter()
+            .filter(|t| t.table_type == TableType::User)
+        {
             let table_name = table.table_name.clone();
             let namespace_id = table.namespace.clone();
             let table_id = format!("{}:{}", table.namespace, table.table_name);
@@ -1273,6 +1282,7 @@ impl SqlExecutor {
                 schema,
                 store.clone(),
                 user_id.clone(),
+                user_role,
                 vec![], // parquet_paths - empty for now
             );
 
@@ -1327,7 +1337,10 @@ impl SqlExecutor {
 
         // Register stream tables
         // Stream tables are NOT user-specific - they are append-only event streams shared across users
-        for table in tables_to_load.iter().filter(|t| t.table_type == TableType::Stream) {
+        for table in tables_to_load
+            .iter()
+            .filter(|t| t.table_type == TableType::Stream)
+        {
             let table_name = table.table_name.clone();
             let namespace_id = table.namespace.clone();
             let table_id = format!("{}:{}", table.namespace, table.table_name);
@@ -1854,8 +1867,19 @@ impl SqlExecutor {
     ///
     /// Triggers asynchronous flush for a single table, returning job_id immediately.
     /// The flush operation runs in the background via JobManager.
-    async fn execute_flush_table(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_flush_table(
+        &self,
+        sql: &str,
+        user_id: Option<&UserId>,
+    ) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::FlushTableStatement;
+
+        let ctx = self.create_execution_context(user_id)?;
+        if !matches!(ctx.user_role, Role::System | Role::Dba | Role::Service) {
+            return Err(KalamDbError::Unauthorized(
+                "Only service, dba, or system users can flush tables".to_string(),
+            ));
+        }
 
         let stmt = FlushTableStatement::parse(sql).map_err(|e| {
             KalamDbError::InvalidOperation(format!("FLUSH TABLE parse error: {}", e))
@@ -1873,9 +1897,7 @@ impl SqlExecutor {
 
         let table = tables
             .iter()
-            .find(|t| {
-                &t.namespace == &stmt.namespace && &t.table_name == &stmt.table_name
-            })
+            .find(|t| &t.namespace == &stmt.namespace && &t.table_name == &stmt.table_name)
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table '{}.{}' does not exist",
@@ -1919,7 +1941,11 @@ impl SqlExecutor {
             for job in all_jobs {
                 if job.status == JobStatus::Running
                     && job.job_type == JobType::Flush
-                    && job.table_name.as_ref().map(|tn| format!("{}.{}", job.namespace_id.as_str(), tn.as_str())) == Some(table_full_name.clone())
+                    && job
+                        .table_name
+                        .as_ref()
+                        .map(|tn| format!("{}.{}", job.namespace_id.as_str(), tn.as_str()))
+                        == Some(table_full_name.clone())
                 {
                     return Err(KalamDbError::InvalidOperation(format!(
                         "Flush job already running for table '{}' (job_id: {}). Please wait for it to complete.",
@@ -2047,8 +2073,19 @@ impl SqlExecutor {
     ///
     /// Triggers asynchronous flush for all user tables in a namespace, returning
     /// array of job_ids (one per table).
-    async fn execute_flush_all_tables(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_flush_all_tables(
+        &self,
+        sql: &str,
+        user_id: Option<&UserId>,
+    ) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::FlushAllTablesStatement;
+
+        let ctx = self.create_execution_context(user_id)?;
+        if !matches!(ctx.user_role, Role::System | Role::Dba | Role::Service) {
+            return Err(KalamDbError::Unauthorized(
+                "Only service, dba, or system users can flush tables".to_string(),
+            ));
+        }
 
         let stmt = FlushAllTablesStatement::parse(sql).map_err(|e| {
             KalamDbError::InvalidOperation(format!("FLUSH ALL TABLES parse error: {}", e))
@@ -2112,7 +2149,11 @@ impl SqlExecutor {
                 table.namespace.clone(),
                 format!("node-{}", std::process::id()),
             )
-            .with_table_name(TableName::new(format!("{}.{}", table.namespace.as_str(), table.table_name.as_str())));
+            .with_table_name(TableName::new(format!(
+                "{}.{}",
+                table.namespace.as_str(),
+                table.table_name.as_str()
+            )));
 
             // Persist job to system.jobs
             if let Some(ref jobs_table_provider) = self.jobs_table_provider {
@@ -2246,8 +2287,8 @@ impl SqlExecutor {
         user_id: Option<&UserId>,
     ) -> Result<ExecutionResult, KalamDbError> {
         // Parse the CREATE USER statement
-        let stmt = CreateUserStatement::parse(sql)
-            .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+        let stmt =
+            CreateUserStatement::parse(sql).map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
         // Authorization check: Only DBA and System roles can create users
         if let Some(uid) = user_id {
@@ -2277,11 +2318,10 @@ impl SqlExecutor {
                 kalamdb_auth::password::validate_password(password).map_err(|e| {
                     KalamDbError::InvalidOperation(format!("Password validation failed: {}", e))
                 })?;
-                
+
                 // Use bcrypt with cost factor 12 (good balance of security and performance)
-                bcrypt::hash(password, 12).map_err(|e| {
-                    KalamDbError::Other(format!("Failed to hash password: {}", e))
-                })?
+                bcrypt::hash(password, 12)
+                    .map_err(|e| KalamDbError::Other(format!("Failed to hash password: {}", e)))?
             } else {
                 return Err(KalamDbError::InvalidSql(
                     "Password required for PASSWORD auth type".to_string(),
@@ -2339,8 +2379,8 @@ impl SqlExecutor {
         user_id: Option<&UserId>,
     ) -> Result<ExecutionResult, KalamDbError> {
         // Parse the ALTER USER statement
-        let stmt = AlterUserStatement::parse(sql)
-            .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+        let stmt =
+            AlterUserStatement::parse(sql).map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
         // Authorization check: Only DBA and System roles can alter users
         if let Some(uid) = user_id {
@@ -2376,11 +2416,10 @@ impl SqlExecutor {
                 kalamdb_auth::password::validate_password(&new_password).map_err(|e| {
                     KalamDbError::InvalidOperation(format!("Password validation failed: {}", e))
                 })?;
-                
+
                 // Hash the new password
-                let password_hash = bcrypt::hash(&new_password, 12).map_err(|e| {
-                    KalamDbError::Other(format!("Failed to hash password: {}", e))
-                })?;
+                let password_hash = bcrypt::hash(&new_password, 12)
+                    .map_err(|e| KalamDbError::Other(format!("Failed to hash password: {}", e)))?;
                 user.password_hash = password_hash;
                 user.auth_type = kalamdb_commons::AuthType::Password;
             }
@@ -2411,8 +2450,8 @@ impl SqlExecutor {
         user_id: Option<&UserId>,
     ) -> Result<ExecutionResult, KalamDbError> {
         // Parse the DROP USER statement
-        let stmt = DropUserStatement::parse(sql)
-            .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+        let stmt =
+            DropUserStatement::parse(sql).map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
         // Authorization check: Only DBA and System roles can drop users
         if let Some(uid) = user_id {
@@ -2795,11 +2834,19 @@ impl SqlExecutor {
             let storage_id = self.validate_storage_id(stmt_storage_id)?;
 
             let (metadata, was_created) = self.shared_table_service.create_table(stmt)?;
-            log::debug!("CREATE SHARED TABLE: was_created={}, table_name={}", was_created, table_name);
+            log::debug!(
+                "CREATE SHARED TABLE: was_created={}, table_name={}",
+                was_created,
+                table_name
+            );
 
             // Only insert into system.tables and register with DataFusion if table was newly created
             if was_created {
-                log::debug!("Inserting table into system.tables: {}.{}", namespace_id, table_name);
+                log::debug!(
+                    "Inserting table into system.tables: {}.{}",
+                    namespace_id,
+                    table_name
+                );
                 // Insert into system.tables via KalamSQL
                 if let Some(kalam_sql) = &self.kalam_sql {
                     let table_id = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
@@ -2962,10 +3009,7 @@ impl SqlExecutor {
         // Handle SET ACCESS LEVEL operation
         if let ColumnOperation::SetAccessLevel { access_level } = &stmt.operation {
             // Only Service/Dba/System can modify access levels
-            if !matches!(
-                ctx.user_role,
-                Role::Service | Role::Dba | Role::System
-            ) {
+            if !matches!(ctx.user_role, Role::Service | Role::Dba | Role::System) {
                 return Err(KalamDbError::Unauthorized(
                     "Only service, dba, or system users can modify table access levels".to_string(),
                 ));
@@ -2977,15 +3021,16 @@ impl SqlExecutor {
                 .as_ref()
                 .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
 
-            let table_id = format!("{}.{}", stmt.namespace_id.as_str(), stmt.table_name.as_str());
+            let table_id = format!(
+                "{}.{}",
+                stmt.namespace_id.as_str(),
+                stmt.table_name.as_str()
+            );
             let mut table = kalam_sql
                 .get_table(&table_id)
                 .map_err(|e| KalamDbError::Other(format!("Failed to get table: {}", e)))?
                 .ok_or_else(|| {
-                    KalamDbError::table_not_found(format!(
-                        "Table '{}' not found",
-                        table_id
-                    ))
+                    KalamDbError::table_not_found(format!("Table '{}' not found", table_id))
                 })?;
 
             // Verify table is SHARED type
@@ -3005,8 +3050,7 @@ impl SqlExecutor {
 
             return Ok(ExecutionResult::Success(format!(
                 "Table '{}' access level changed to '{:?}'",
-                table_id,
-                access_level
+                table_id, access_level
             )));
         }
 
@@ -3019,7 +3063,11 @@ impl SqlExecutor {
     }
 
     /// Execute DROP TABLE
-    async fn execute_drop_table(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_drop_table(
+        &self,
+        sql: &str,
+        user_id: Option<&UserId>,
+    ) -> Result<ExecutionResult, KalamDbError> {
         // Check if table deletion service is available
         let deletion_service = self.table_deletion_service.as_ref().ok_or_else(|| {
             KalamDbError::InvalidOperation(
@@ -3031,6 +3079,32 @@ impl SqlExecutor {
         let default_namespace = kalamdb_commons::NamespaceId::new("default".to_string());
         let stmt = DropTableStatement::parse(sql, &default_namespace)
             .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+
+        let ctx = self.create_execution_context(user_id)?;
+        let requested_table_type: TableType = stmt.table_type.into();
+        let table_identifier = format!(
+            "{}.{}",
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str()
+        );
+
+        let actual_table_type = if let Some(kalam_sql) = &self.kalam_sql {
+            match kalam_sql.get_table(&table_identifier) {
+                Ok(Some(table)) => table.table_type,
+                Ok(None) => requested_table_type,
+                Err(_) => requested_table_type,
+            }
+        } else {
+            requested_table_type
+        };
+
+        // TODO: Track table ownership in system tables to determine is_owner accurately (#US3 follow-up)
+        let is_owner = false;
+        if !crate::auth::rbac::can_delete_table(ctx.user_role, actual_table_type, is_owner) {
+            return Err(KalamDbError::Unauthorized(
+                "Insufficient privileges to drop this table".to_string(),
+            ));
+        }
 
         if let Some(manager) = &self.live_query_manager {
             let table_ref = format!(
@@ -3453,14 +3527,12 @@ impl SqlExecutor {
                 .collect::<Vec<_>>(),
         ));
 
-        let table_counts: ArrayRef = Arc::new(
-            datafusion::arrow::array::Int32Array::from(
-                namespaces
-                    .iter()
-                    .map(|ns| ns.table_count)
-                    .collect::<Vec<_>>(),
-            )
-        );
+        let table_counts: ArrayRef = Arc::new(datafusion::arrow::array::Int32Array::from(
+            namespaces
+                .iter()
+                .map(|ns| ns.table_count)
+                .collect::<Vec<_>>(),
+        ));
 
         let created_at: ArrayRef = Arc::new(StringArray::from(
             namespaces
@@ -3620,10 +3692,8 @@ impl SqlExecutor {
         // Check if this is a stream table to show stream-specific metadata
         let is_stream_table = table.table_type == TableType::Stream;
 
-        let schema_history_hint = format!(
-            "system.table_schemas WHERE table_id = '{}'",
-            table.table_id
-        );
+        let schema_history_hint =
+            format!("system.table_schemas WHERE table_id = '{}'", table.table_id);
 
         let (properties, values): (Vec<&str>, Vec<String>) = if is_stream_table {
             // Stream table properties (NO system columns, show stream-specific config)
@@ -3711,18 +3781,12 @@ impl SqlExecutor {
             ("table_name", table.table_name.as_str().to_string()),
             ("namespace", table.namespace.as_str().to_string()),
             ("table_type", format!("{:?}", table.table_type)),
-            (
-                "schema_version",
-                table.schema_version.to_string(),
-            ),
+            ("schema_version", table.schema_version.to_string()),
             ("storage_location", table.storage_location.clone()),
             ("created_at", created_at_str),
             ("buffered_rows", buffered_rows.to_string()),
             ("last_flush_rows", last_flush_rows.to_string()),
-            (
-                "storage_bytes",
-                storage_bytes.to_string(),
-            ),
+            ("storage_bytes", storage_bytes.to_string()),
             ("last_flush_timestamp", last_flush_ts),
         ];
 
@@ -3751,7 +3815,9 @@ impl SqlExecutor {
                     .map_err(|e| {
                         KalamDbError::Other(format!(
                             "Failed to scan user table {}.{}: {}",
-                            table.namespace.as_str(), table.table_name.as_str(), e
+                            table.namespace.as_str(),
+                            table.table_name.as_str(),
+                            e
                         ))
                     })?;
                 Ok(rows.len())
@@ -3767,7 +3833,9 @@ impl SqlExecutor {
                     .map_err(|e| {
                         KalamDbError::Other(format!(
                             "Failed to scan shared table {}.{}: {}",
-                            table.namespace.as_str(), table.table_name.as_str(), e
+                            table.namespace.as_str(),
+                            table.table_name.as_str(),
+                            e
                         ))
                     })?;
                 Ok(rows.len())
@@ -3783,7 +3851,9 @@ impl SqlExecutor {
                     .map_err(|e| {
                         KalamDbError::Other(format!(
                             "Failed to scan stream table {}.{}: {}",
-                            table.namespace.as_str(), table.table_name.as_str(), e
+                            table.namespace.as_str(),
+                            table.table_name.as_str(),
+                            e
                         ))
                     })?;
                 Ok(rows.len())
@@ -3864,7 +3934,7 @@ mod tests {
     use datafusion::prelude::SessionContext;
     use kalamdb_sql::KalamSql;
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{RocksDBBackend, kalamdb_commons::storage::StorageBackend};
+    use kalamdb_store::{kalamdb_commons::storage::StorageBackend, RocksDBBackend};
 
     fn setup_test_executor() -> SqlExecutor {
         let test_db =
@@ -3876,17 +3946,20 @@ mod tests {
         let session_context = Arc::new(SessionContext::new());
 
         // Initialize table services for tests using EntityStore implementations
-        let user_table_store = Arc::new(crate::stores::UserTableStore::new(backend.clone()).unwrap());
+        let user_table_store =
+            Arc::new(crate::stores::UserTableStore::new(backend.clone()).unwrap());
         let user_table_service = Arc::new(crate::services::UserTableService::new(
             kalam_sql.clone(),
             user_table_store,
         ));
-        let shared_table_store = Arc::new(crate::stores::SharedTableStore::new(backend.clone()).unwrap());
+        let shared_table_store =
+            Arc::new(crate::stores::SharedTableStore::new(backend.clone()).unwrap());
         let shared_table_service = Arc::new(crate::services::SharedTableService::new(
             shared_table_store,
             kalam_sql.clone(),
         ));
-        let stream_table_store = Arc::new(crate::stores::StreamTableStore::new(backend.clone()).unwrap());
+        let stream_table_store =
+            Arc::new(crate::stores::StreamTableStore::new(backend.clone()).unwrap());
         let stream_table_service = Arc::new(crate::services::StreamTableService::new(
             stream_table_store,
             kalam_sql.clone(),

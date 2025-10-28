@@ -5,8 +5,8 @@
 //! - ALTER USER: Modify user properties (password, role, email)
 //! - DROP USER: Soft delete a user account
 
-use kalamdb_commons::Role;
 use kalamdb_commons::AuthType;
+use kalamdb_commons::Role;
 use serde::{Deserialize, Serialize};
 
 /// CREATE USER command
@@ -179,8 +179,8 @@ impl AlterUserStatement {
             UserModification::SetPassword(password)
         } else if sql_upper.contains("SET ROLE") {
             // Try unquoted first (ROLE admin), then quoted (ROLE 'admin')
-            let role_str = extract_quoted_keyword_value(&normalized, "ROLE")
-                .or_else(|_| -> Result<String, String> {
+            let role_str = extract_quoted_keyword_value(&normalized, "ROLE").or_else(
+                |_| -> Result<String, String> {
                     // Extract unquoted role value manually
                     let set_role_idx = sql_upper.find("SET ROLE").ok_or("ROLE not found")?;
                     let after_role = &normalized[set_role_idx + 8..].trim();
@@ -190,7 +190,8 @@ impl AlterUserStatement {
                         .ok_or("Role value not found")?
                         .trim_end_matches(';');
                     Ok(role_value.to_string())
-                })?;
+                },
+            )?;
 
             //TODO: No need to map here we can only use Role names in the SQL commands
             // Map SQL role names to Role enum
@@ -212,7 +213,7 @@ impl AlterUserStatement {
             UserModification::SetEmail(email)
         } else {
             return Err(
-                "Must specify SET PASSWORD, SET ROLE, or SET EMAIL modification".to_string()
+                "Must specify SET PASSWORD, SET ROLE, or SET EMAIL modification".to_string(),
             );
         };
 

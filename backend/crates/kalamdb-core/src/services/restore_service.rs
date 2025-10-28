@@ -198,7 +198,9 @@ impl RestoreService {
 
             match table_type {
                 TableType::User => {
-                    let table_backup_dir = backup_dir.join("user_tables").join(table.table_name.as_str());
+                    let table_backup_dir = backup_dir
+                        .join("user_tables")
+                        .join(table.table_name.as_str());
                     if !table_backup_dir.exists() {
                         log::warn!(
                             "No Parquet files found for user table '{}' (may be empty)",
@@ -207,7 +209,9 @@ impl RestoreService {
                     }
                 }
                 TableType::Shared => {
-                    let table_backup_dir = backup_dir.join("shared_tables").join(table.table_name.as_str());
+                    let table_backup_dir = backup_dir
+                        .join("shared_tables")
+                        .join(table.table_name.as_str());
                     if !table_backup_dir.exists() {
                         log::warn!(
                             "No Parquet files found for shared table '{}' (may be empty)",
@@ -334,7 +338,9 @@ impl RestoreService {
         table: &kalamdb_sql::Table,
         backup_dir: &Path,
     ) -> Result<(usize, u64), KalamDbError> {
-        let table_backup_dir = backup_dir.join("user_tables").join(table.table_name.as_str());
+        let table_backup_dir = backup_dir
+            .join("user_tables")
+            .join(table.table_name.as_str());
 
         if !table_backup_dir.exists() {
             // No files to restore (empty table)
@@ -396,7 +402,9 @@ impl RestoreService {
         table: &kalamdb_sql::Table,
         backup_dir: &Path,
     ) -> Result<(usize, u64), KalamDbError> {
-        let table_backup_dir = backup_dir.join("shared_tables").join(table.table_name.as_str());
+        let table_backup_dir = backup_dir
+            .join("shared_tables")
+            .join(table.table_name.as_str());
 
         if !table_backup_dir.exists() {
             // No files to restore (empty table)

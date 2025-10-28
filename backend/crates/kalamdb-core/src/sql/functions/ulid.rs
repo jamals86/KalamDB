@@ -14,7 +14,9 @@
 use datafusion::arrow::array::{ArrayRef, StringArray};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion::logical_expr::{
+    ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
+};
 use std::any::Any;
 use std::sync::Arc;
 use ulid::Ulid;
@@ -201,7 +203,6 @@ mod tests {
 
     #[test]
     // Removed: direct invoke with arguments test due to DataFusion API changes
-
     #[test]
     fn test_ulid_return_type() {
         let func_impl = UlidFunction::new();

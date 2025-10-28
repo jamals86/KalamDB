@@ -358,7 +358,7 @@ impl CLISession {
             match rl.readline(&prompt) {
                 Ok(line) => {
                     let line = line.trim();
-                    
+
                     // Skip empty lines unless we're accumulating
                     if line.is_empty() && accumulated_command.is_empty() {
                         continue;
@@ -371,7 +371,7 @@ impl CLISession {
                     accumulated_command.push_str(line);
 
                     // Check if command is complete (ends with semicolon or is a backslash command)
-                    let is_complete = line.ends_with(';') 
+                    let is_complete = line.ends_with(';')
                         || accumulated_command.trim_start().starts_with('\\')
                         || (line.is_empty() && !accumulated_command.is_empty());
 
@@ -913,7 +913,10 @@ impl CLISession {
                 }
                 // Only show details in verbose mode
                 #[cfg(debug_assertions)]
-                eprintln!("  Payload: {}", serde_json::to_string(raw).unwrap_or_default());
+                eprintln!(
+                    "  Payload: {}",
+                    serde_json::to_string(raw).unwrap_or_default()
+                );
             }
         }
     }
@@ -1008,32 +1011,38 @@ impl CLISession {
         use kalam_link::credentials::CredentialStore;
 
         match (&self.instance, &self.credential_store) {
-            (Some(instance), Some(store)) => {
-                match store.get_credentials(instance) {
-                    Ok(Some(creds)) => {
-                        println!("{}", "Stored Credentials".bold().cyan());
-                        println!("  Instance: {}", creds.instance.green());
-                        println!("  Username: {}", creds.username.green());
-                        println!("  Password: {}", "****** (hidden)".dimmed());
-                        if let Some(ref server_url) = creds.server_url {
-                            println!("  Server URL: {}", server_url.green());
-                        }
-                        println!();
-                        println!("{}", "Security Note:".yellow().bold());
-                        println!("  Credentials are stored in: {}", 
-                            crate::credentials::FileCredentialStore::default_path().display().to_string().dimmed());
-                        #[cfg(unix)]
-                        println!("{}", "  File permissions: 0600 (owner read/write only)".dimmed());
+            (Some(instance), Some(store)) => match store.get_credentials(instance) {
+                Ok(Some(creds)) => {
+                    println!("{}", "Stored Credentials".bold().cyan());
+                    println!("  Instance: {}", creds.instance.green());
+                    println!("  Username: {}", creds.username.green());
+                    println!("  Password: {}", "****** (hidden)".dimmed());
+                    if let Some(ref server_url) = creds.server_url {
+                        println!("  Server URL: {}", server_url.green());
                     }
-                    Ok(None) => {
-                        println!("{}", "No credentials stored for this instance".yellow());
-                        println!("Use \\update-credentials <username> <password> to store credentials");
-                    }
-                    Err(e) => {
-                        eprintln!("{} {}", "Error loading credentials:".red(), e);
-                    }
+                    println!();
+                    println!("{}", "Security Note:".yellow().bold());
+                    println!(
+                        "  Credentials are stored in: {}",
+                        crate::credentials::FileCredentialStore::default_path()
+                            .display()
+                            .to_string()
+                            .dimmed()
+                    );
+                    #[cfg(unix)]
+                    println!(
+                        "{}",
+                        "  File permissions: 0600 (owner read/write only)".dimmed()
+                    );
                 }
-            }
+                Ok(None) => {
+                    println!("{}", "No credentials stored for this instance".yellow());
+                    println!("Use \\update-credentials <username> <password> to store credentials");
+                }
+                Err(e) => {
+                    eprintln!("{} {}", "Error loading credentials:".red(), e);
+                }
+            },
             (None, _) => {
                 println!("{}", "Credential management not available".yellow());
                 println!("Instance name not set for this session");
@@ -1050,7 +1059,7 @@ impl CLISession {
     /// **Implements T122**: Update credentials command
     fn update_credentials(&mut self, username: String, password: String) -> Result<()> {
         use colored::Colorize;
-        use kalam_link::credentials::{Credentials, CredentialStore};
+        use kalam_link::credentials::{CredentialStore, Credentials};
 
         match (&self.instance, &mut self.credential_store) {
             (Some(instance), Some(store)) => {
@@ -1069,23 +1078,27 @@ impl CLISession {
                 println!("  Server URL: {}", self.server_url.cyan());
                 println!();
                 println!("{}", "Security Reminder:".yellow().bold());
-                println!("  Credentials are stored at: {}", 
-                    crate::credentials::FileCredentialStore::default_path().display().to_string().dimmed());
+                println!(
+                    "  Credentials are stored at: {}",
+                    crate::credentials::FileCredentialStore::default_path()
+                        .display()
+                        .to_string()
+                        .dimmed()
+                );
                 #[cfg(unix)]
-                println!("{}", "  File permissions: 0600 (owner read/write only)".dimmed());
+                println!(
+                    "{}",
+                    "  File permissions: 0600 (owner read/write only)".dimmed()
+                );
 
                 Ok(())
             }
-            (None, _) => {
-                Err(CLIError::ConfigurationError(
-                    "Instance name not set for this session".to_string(),
-                ))
-            }
-            (_, None) => {
-                Err(CLIError::ConfigurationError(
-                    "Credential store not initialized for this session".to_string(),
-                ))
-            }
+            (None, _) => Err(CLIError::ConfigurationError(
+                "Instance name not set for this session".to_string(),
+            )),
+            (_, None) => Err(CLIError::ConfigurationError(
+                "Credential store not initialized for this session".to_string(),
+            )),
         }
     }
 
@@ -1103,20 +1116,18 @@ impl CLISession {
                 println!("{}", "✓ Credentials deleted successfully".green().bold());
                 println!("  Instance: {}", instance.cyan());
                 println!();
-                println!("You will need to provide authentication credentials for future connections.");
+                println!(
+                    "You will need to provide authentication credentials for future connections."
+                );
 
                 Ok(())
             }
-            (None, _) => {
-                Err(CLIError::ConfigurationError(
-                    "Instance name not set for this session".to_string(),
-                ))
-            }
-            (_, None) => {
-                Err(CLIError::ConfigurationError(
-                    "Credential store not initialized for this session".to_string(),
-                ))
-            }
+            (None, _) => Err(CLIError::ConfigurationError(
+                "Instance name not set for this session".to_string(),
+            )),
+            (_, None) => Err(CLIError::ConfigurationError(
+                "Credential store not initialized for this session".to_string(),
+            )),
         }
     }
 }

@@ -4,7 +4,9 @@ use crate::error::KalamDbError;
 use crate::tables::system::table_schemas::TableSchemasTable;
 use crate::tables::system::SystemTableProviderExt;
 use async_trait::async_trait;
-use datafusion::arrow::array::{ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray};
+use datafusion::arrow::array::{
+    ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::Result as DataFusionResult;
@@ -87,7 +89,9 @@ impl TableSchemasProvider {
                 Arc::new(arrow_schemas.finish()) as ArrayRef,
             ],
         )
-        .map_err(|e| KalamDbError::Other(format!("Failed to build system.table_schemas batch: {}", e)))?;
+        .map_err(|e| {
+            KalamDbError::Other(format!("Failed to build system.table_schemas batch: {}", e))
+        })?;
 
         Ok(batch)
     }

@@ -51,9 +51,9 @@ impl JsonBatchBuilder {
     }
 
     pub fn push_object_row(&mut self, row: &JsonValue) -> Result<(), KalamDbError> {
-        let obj = row.as_object().ok_or_else(|| {
-            KalamDbError::Other("Row is not a JSON object".to_string())
-        })?;
+        let obj = row
+            .as_object()
+            .ok_or_else(|| KalamDbError::Other("Row is not a JSON object".to_string()))?;
         for (name, builder) in &mut self.builders {
             let v = obj.get(name);
             match builder {
@@ -117,4 +117,3 @@ impl JsonBatchBuilder {
             .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
     }
 }
-

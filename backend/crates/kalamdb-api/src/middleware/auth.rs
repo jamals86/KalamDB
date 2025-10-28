@@ -36,10 +36,7 @@ use actix_web::{
 };
 use futures_util::future::LocalBoxFuture;
 use kalamdb_auth::{
-    context::AuthenticatedUser,
-    service::AuthService,
-    connection::ConnectionInfo,
-    error::AuthError,
+    connection::ConnectionInfo, context::AuthenticatedUser, error::AuthError, service::AuthService,
 };
 use kalamdb_sql::RocksDbAdapter;
 use log::{debug, warn};
@@ -121,7 +118,7 @@ where
                 let conn_info = req.connection_info();
                 conn_info.realip_remote_addr().map(|s| s.to_string())
             };
-            
+
             let connection = ConnectionInfo {
                 remote_addr: remote_addr.clone(),
             };
@@ -129,16 +126,16 @@ where
             // Check if localhost (bypass authentication for local development)
             if connection.is_localhost() {
                 debug!("Localhost request - bypassing authentication");
-                
+
                 // Create a default "localhost" user for local requests
                 let localhost_user = AuthenticatedUser::new(
                     kalamdb_commons::UserId::new("localhost"),
                     "localhost".to_string(),
                     kalamdb_commons::Role::Dba, // Grant DBA role to localhost
-                    None, // No email for localhost user
+                    None,                       // No email for localhost user
                     connection.clone(),
                 );
-                
+
                 req.extensions_mut().insert(localhost_user);
                 return service.call(req).await;
             }
@@ -169,16 +166,19 @@ where
             };
 
             // Authenticate the request
-            match auth_service.authenticate(&auth_header, &connection, &rocks_adapter).await {
+            match auth_service
+                .authenticate(&auth_header, &connection, &rocks_adapter)
+                .await
+            {
                 Ok(authenticated_user) => {
                     debug!(
                         "Authenticated user: {} (role: {:?}) from {:?}",
                         authenticated_user.username, authenticated_user.role, remote_addr
                     );
-                    
+
                     // Store authenticated user in request extensions
                     req.extensions_mut().insert(authenticated_user);
-                    
+
                     // Continue with the request
                     service.call(req).await
                 }
@@ -187,26 +187,26 @@ where
                         "Authentication failed from {:?}: {}",
                         remote_addr, auth_error
                     );
-                    
+
                     let (status_code, error_code, message) = match auth_error {
-                        AuthError::MissingAuthorization => {
-                            (401, "MISSING_AUTHORIZATION", "Authorization header is required")
-                        }
+                        AuthError::MissingAuthorization => (
+                            401,
+                            "MISSING_AUTHORIZATION",
+                            "Authorization header is required",
+                        ),
                         AuthError::InvalidCredentials => {
                             (401, "INVALID_CREDENTIALS", "Invalid username or password")
                         }
-                        AuthError::UserNotFound => {
-                            (401, "USER_NOT_FOUND", "User does not exist")
-                        }
-                        AuthError::TokenExpired => {
-                            (401, "TOKEN_EXPIRED", "JWT token has expired")
-                        }
+                        AuthError::UserNotFound => (401, "USER_NOT_FOUND", "User does not exist"),
+                        AuthError::TokenExpired => (401, "TOKEN_EXPIRED", "JWT token has expired"),
                         AuthError::InvalidSignature => {
                             (401, "INVALID_SIGNATURE", "JWT token signature is invalid")
                         }
-                        AuthError::MalformedAuthorization(_) => {
-                            (400, "MALFORMED_AUTHORIZATION", "Authorization header format is invalid")
-                        }
+                        AuthError::MalformedAuthorization(_) => (
+                            400,
+                            "MALFORMED_AUTHORIZATION",
+                            "Authorization header format is invalid",
+                        ),
                         AuthError::UntrustedIssuer(_) => {
                             (401, "UNTRUSTED_ISSUER", "JWT issuer is not trusted")
                         }
@@ -216,15 +216,18 @@ where
                         AuthError::DatabaseError(_) => {
                             (500, "DATABASE_ERROR", "Authentication service error")
                         }
-                        _ => {
-                            (500, "AUTHENTICATION_ERROR", "An unexpected authentication error occurred")
-                        }
+                        _ => (
+                            500,
+                            "AUTHENTICATION_ERROR",
+                            "An unexpected authentication error occurred",
+                        ),
                     };
-                    
+
                     let (req, _) = req.into_parts();
                     let response = HttpResponse::build(
-                        actix_web::http::StatusCode::from_u16(status_code).unwrap()
-                    ).json(json!({
+                        actix_web::http::StatusCode::from_u16(status_code).unwrap(),
+                    )
+                    .json(json!({
                         "error": error_code,
                         "message": message
                     }));
@@ -260,7 +263,7 @@ mod tests {
         let connection = ConnectionInfo {
             remote_addr: Some("127.0.0.1".to_string()),
         };
-        
+
         assert!(connection.is_localhost());
     }
 
@@ -269,9 +272,6 @@ mod tests {
         // This would require a full integration test setup
         // For now, we verify the error response structure
         let error = AuthError::MissingAuthorization;
-        assert_eq!(
-            format!("{}", error),
-            "Missing authorization header"
-        );
+        assert_eq!(format!("{}", error), "Missing authorization header");
     }
 }

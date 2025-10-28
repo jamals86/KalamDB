@@ -11,6 +11,5 @@ pub use rbac::{
 
 // Legacy string-based role functions (deprecated, use rbac module instead)
 pub use roles::{
-    can_read, can_write, is_admin, validate_role, ROLE_ADMIN, ROLE_READONLY, ROLE_USER,
-    VALID_ROLES,
+    can_read, can_write, is_admin, validate_role, ROLE_ADMIN, ROLE_READONLY, ROLE_USER, VALID_ROLES,
 };

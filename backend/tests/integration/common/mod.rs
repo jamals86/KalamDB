@@ -34,9 +34,9 @@
 //! }
 //! ```
 
-pub mod stress_utils;
-pub mod flush_helpers;
 pub mod auth_helper;
+pub mod flush_helpers;
+pub mod stress_utils;
 
 use anyhow::Result;
 use datafusion::arrow::array::{
@@ -45,6 +45,7 @@ use datafusion::arrow::array::{
 use datafusion::catalog::SchemaProvider;
 use kalamdb_api::models::{QueryResult, SqlResponse};
 use kalamdb_commons::models::{NamespaceId, StorageId, TableName};
+use kalamdb_commons::storage::StorageBackend;
 use kalamdb_core::live_query::{LiveQueryManager, NodeId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
@@ -52,10 +53,9 @@ use kalamdb_core::services::{
 };
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
+use kalamdb_store::RocksDBBackend;
 use std::sync::Arc;
 use tempfile::TempDir;
-use kalamdb_store::RocksDBBackend;
-use kalamdb_commons::storage::StorageBackend;
 
 /// HTTP test server wrapper - simplified to avoid complex type signatures
 pub struct HttpTestServer {
@@ -227,7 +227,8 @@ impl TestServer {
 
         // Initialize KalamSQL via StorageBackend abstraction
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
-        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).expect("Failed to create KalamSQL"));
+        let kalam_sql =
+            Arc::new(kalamdb_sql::KalamSql::new(backend).expect("Failed to create KalamSQL"));
 
         // Create default 'local' storage if system.storages is empty
         let storages = kalam_sql
@@ -277,8 +278,7 @@ impl TestServer {
 
         // Initialize stores (needed by some services)
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
-        let user_table_store =
-            Arc::new(kalamdb_core::stores::UserTableStore::new(backend.clone()));
+        let user_table_store = Arc::new(kalamdb_core::stores::UserTableStore::new(backend.clone()));
         let shared_table_store =
             Arc::new(kalamdb_core::stores::SharedTableStore::new(backend.clone()));
         let stream_table_store =
@@ -806,9 +806,10 @@ impl TestServer {
     /// * `table_name` - Name of the table
     pub async fn table_exists(&self, namespace: &str, table_name: &str) -> bool {
         match self.kalam_sql.scan_all_tables() {
-            Ok(tables) => tables
-                .iter()
-                .any(|t| t.namespace == NamespaceId::new(namespace) && t.table_name == TableName::new(table_name)),
+            Ok(tables) => tables.iter().any(|t| {
+                t.namespace == NamespaceId::new(namespace)
+                    && t.table_name == TableName::new(table_name)
+            }),
             Err(_) => false,
         }
     }

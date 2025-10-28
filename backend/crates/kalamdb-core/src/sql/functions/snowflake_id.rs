@@ -11,7 +11,9 @@
 use datafusion::arrow::array::{ArrayRef, Int64Array};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion::logical_expr::{
+    ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
+};
 use std::any::Any;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
@@ -220,7 +222,6 @@ mod tests {
 
     #[test]
     // Removed: direct invoke with arguments test due to DataFusion API changes
-
     #[test]
     fn test_snowflake_id_return_type() {
         let func_impl = SnowflakeIdFunction::new();

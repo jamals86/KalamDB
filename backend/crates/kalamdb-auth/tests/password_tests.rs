@@ -63,7 +63,7 @@ async fn test_verify_password_case_sensitive() {
 #[tokio::test]
 async fn test_hash_password_custom_cost() {
     let password = "TestPassword123!";
-    
+
     // Low cost (fast for testing)
     let hash_low = hash_password(password, Some(4)).await.unwrap();
     assert!(hash_low.starts_with("$2b$04$"), "Should use cost 4");
@@ -81,13 +81,7 @@ async fn test_hash_password_custom_cost() {
 #[test]
 fn test_common_password_rejected() {
     let common_passwords = vec![
-        "password",
-        "123456",
-        "12345678",
-        "qwerty",
-        "abc123",
-        "letmein",
-        "monkey",
+        "password", "123456", "12345678", "qwerty", "abc123", "letmein", "monkey",
     ];
 
     for password in common_passwords {
@@ -112,11 +106,11 @@ fn test_common_password_rejected() {
 #[test]
 fn test_password_too_short() {
     let short_passwords = vec![
-        "",           // Empty
-        "a",          // 1 char
-        "ab",         // 2 chars
-        "abc",        // 3 chars
-        "1234567",    // 7 chars (just below minimum)
+        "",        // Empty
+        "a",       // 1 char
+        "ab",      // 2 chars
+        "abc",     // 3 chars
+        "1234567", // 7 chars (just below minimum)
     ];
 
     for password in short_passwords {
@@ -150,7 +144,10 @@ fn test_password_minimum_length() {
 
     let password_unique = "Abcd1234"; // Exactly 8 chars, not common
     let result = validate_password(password_unique);
-    assert!(result.is_ok(), "8-character unique password should be valid");
+    assert!(
+        result.is_ok(),
+        "8-character unique password should be valid"
+    );
 }
 
 /// Test password too long rejection
@@ -159,7 +156,7 @@ fn test_password_too_long() {
     // Bcrypt has a 72-byte limit
     let too_long = "a".repeat(MAX_PASSWORD_LENGTH + 1);
     let result = validate_password(&too_long);
-    
+
     assert!(
         result.is_err(),
         "Password longer than {} chars should be rejected",
@@ -208,12 +205,7 @@ fn test_valid_strong_passwords() {
 /// Test password with special characters
 #[test]
 fn test_password_special_characters() {
-    let passwords_with_special = vec![
-        "Pass@123",
-        "P@ssw0rd!",
-        "MyP@ss#123",
-        "Test$ecure&2024",
-    ];
+    let passwords_with_special = vec!["Pass@123", "P@ssw0rd!", "MyP@ss#123", "Test$ecure&2024"];
 
     for password in passwords_with_special {
         let result = validate_password(password);
@@ -230,10 +222,10 @@ fn test_password_special_characters() {
 async fn test_verify_password_invalid_hash() {
     let password = "TestPassword123!";
     let invalid_hashes = vec![
-        "",                          // Empty
-        "not-a-hash",                // Plain text
-        "$2a$04$invalid",            // Incomplete hash
-        "plaintext_password",        // Not hashed
+        "",                   // Empty
+        "not-a-hash",         // Plain text
+        "$2a$04$invalid",     // Incomplete hash
+        "plaintext_password", // Not hashed
     ];
 
     for invalid_hash in invalid_hashes {
@@ -253,9 +245,7 @@ async fn test_concurrent_password_hashing() {
 
     for i in 0..10 {
         let password = format!("ConcurrentTest{}!", i);
-        let handle = tokio::spawn(async move {
-            hash_password(&password, Some(4)).await
-        });
+        let handle = tokio::spawn(async move { hash_password(&password, Some(4)).await });
         handles.push(handle);
     }
 
@@ -290,9 +280,9 @@ fn test_password_validation_edge_cases() {
 fn test_common_password_case_insensitive() {
     // Common passwords in different cases
     let _variations = vec![
-        "password",   // lowercase
-        "PASSWORD",   // uppercase (may or may not be in list)
-        "Password",   // mixed case (may or may not be in list)
+        "password", // lowercase
+        "PASSWORD", // uppercase (may or may not be in list)
+        "Password", // mixed case (may or may not be in list)
     ];
 
     // At least the lowercase version should be rejected

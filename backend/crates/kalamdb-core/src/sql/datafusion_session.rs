@@ -43,7 +43,9 @@ pub struct DataFusionSessionFactory {}
 
 impl DataFusionSessionFactory {
     /// Create a new session factory
-    pub fn new() -> DataFusionResult<Self> { Ok(Self {}) }
+    pub fn new() -> DataFusionResult<Self> {
+        Ok(Self {})
+    }
 
     /// Create a session with default configuration
     pub fn create_session(&self) -> SessionContext {

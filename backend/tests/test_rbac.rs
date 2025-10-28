@@ -5,7 +5,7 @@
 #[path = "integration/common/mod.rs"]
 mod common;
 
-use common::TestServer;
+use common::{fixtures, TestServer};
 use kalamdb_commons::{AuthType, Role, StorageMode, UserId};
 
 async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId {
@@ -40,12 +40,11 @@ async fn test_user_role_own_tables_access_and_isolation() {
 
     // Create namespace and table
     let ns_resp = server.execute_sql("CREATE NAMESPACE rbac_user").await;
-    if ns_resp.status != "success" { eprintln!("Create namespace error: {:?}", ns_resp.error); }
+    if ns_resp.status != "success" {
+        eprintln!("Create namespace error: {:?}", ns_resp.error);
+    }
     assert_eq!(ns_resp.status, "success");
-    let create = format!(
-        "CREATE USER TABLE {}.notes (id INT, content TEXT)",
-        ns
-    );
+    let create = format!("CREATE USER TABLE {}.notes (id INT, content TEXT)", ns);
     let resp = server.execute_sql_as_user(&create, u1.as_str()).await;
     println!("create user table resp = {:?}", resp);
     assert_eq!(resp.status, "success", "create user table resp: {:?}", resp);
@@ -76,6 +75,96 @@ async fn test_user_role_own_tables_access_and_isolation() {
 }
 
 #[actix_web::test]
+async fn test_service_role_cross_user_access() {
+    let server = TestServer::new().await;
+    let ns = "rbac_service";
+    let svc = insert_user(&server, "svc", Role::Service).await;
+    let alice = insert_user(&server, "svc_alice", Role::User).await;
+    let bob = insert_user(&server, "svc_bob", Role::User).await;
+
+    fixtures::create_namespace(&server, ns).await;
+
+    let create = format!("CREATE USER TABLE {}.orders (id INT, content TEXT)", ns);
+    let resp = server.execute_sql_as_user(&create, alice.as_str()).await;
+    assert_eq!(
+        resp.status, "success",
+        "user should be able to create table"
+    );
+
+    let insert_alice = format!(
+        "INSERT INTO {}.orders (id, content) VALUES (1, 'alice note')",
+        ns
+    );
+    let insert_bob = format!(
+        "INSERT INTO {}.orders (id, content) VALUES (2, 'bob note')",
+        ns
+    );
+    server
+        .execute_sql_as_user(&insert_alice, alice.as_str())
+        .await;
+    server.execute_sql_as_user(&insert_bob, bob.as_str()).await;
+
+    let select = format!("SELECT content FROM {}.orders ORDER BY content", ns);
+    let resp = server.execute_sql_as_user(&select, svc.as_str()).await;
+    assert_eq!(resp.status, "success", "service select should succeed");
+
+    let rows = resp.results[0]
+        .rows
+        .as_ref()
+        .expect("select should return rows");
+    let contents: std::collections::HashSet<_> = rows
+        .iter()
+        .filter_map(|row| row.get("content").and_then(|v| v.as_str()))
+        .collect();
+
+    assert!(contents.contains("alice note"), "should include alice data");
+    assert!(contents.contains("bob note"), "should include bob data");
+    assert_eq!(rows.len(), 2, "service should see all user rows");
+}
+
+#[actix_web::test]
+async fn test_service_role_flush_operations() {
+    let server = TestServer::new().await;
+    let ns = "rbac_flush";
+    let svc = insert_user(&server, "svc_flush", Role::Service).await;
+    let user = insert_user(&server, "flush_user", Role::User).await;
+
+    fixtures::create_namespace(&server, ns).await;
+
+    let create = format!("CREATE USER TABLE {}.events (id INT, message TEXT)", ns);
+    let resp = server.execute_sql_as_user(&create, svc.as_str()).await;
+    assert_eq!(resp.status, "success", "service should create user table");
+
+    for i in 0..3 {
+        let insert = format!(
+            "INSERT INTO {}.events (id, message) VALUES ({}, 'msg {}')",
+            ns, i, i
+        );
+        server.execute_sql_as_user(&insert, user.as_str()).await;
+    }
+
+    let flush = format!("FLUSH TABLE {}.events", ns);
+    let resp = server.execute_sql_as_user(&flush, svc.as_str()).await;
+    assert_eq!(resp.status, "success", "service flush should succeed");
+    assert!(resp
+        .results
+        .first()
+        .and_then(|r| r.message.as_ref())
+        .map(|msg| msg.contains("Flush started"))
+        .unwrap_or(true));
+}
+
+#[actix_web::test]
+async fn test_service_role_cannot_manage_users() {
+    let server = TestServer::new().await;
+    let svc = insert_user(&server, "svc_admin", Role::Service).await;
+
+    let sql = "CREATE USER 'managed' WITH PASSWORD 'StrongPass123!' ROLE user";
+    let resp = server.execute_sql_as_user(sql, svc.as_str()).await;
+    assert_eq!(resp.status, "error", "service should not manage users");
+}
+
+#[actix_web::test]
 async fn test_user_cannot_manage_users() {
     let server = TestServer::new().await;
     let user = insert_user(&server, "charlie", Role::User).await;
@@ -83,8 +172,13 @@ async fn test_user_cannot_manage_users() {
     // Regular user cannot CREATE USER
     let sql = "CREATE USER 'eve' WITH PASSWORD 'x' ROLE user";
     let resp = server.execute_sql_as_user(sql, user.as_str()).await;
-    if resp.status != "error" { eprintln!("Unexpected status for user create: {:?}", resp); }
-    assert_eq!(resp.status, "error", "user should be forbidden to manage users");
+    if resp.status != "error" {
+        eprintln!("Unexpected status for user create: {:?}", resp);
+    }
+    assert_eq!(
+        resp.status, "error",
+        "user should be forbidden to manage users"
+    );
 }
 
 #[actix_web::test]
@@ -94,7 +188,9 @@ async fn test_dba_can_manage_users() {
 
     let sql = "CREATE USER 'svc1' WITH PASSWORD 'StrongPass123!' ROLE service";
     let resp = server.execute_sql_as_user(sql, dba.as_str()).await;
-    if resp.status != "success" { eprintln!("DBA create user error: {:?}", resp.error); }
+    if resp.status != "success" {
+        eprintln!("DBA create user error: {:?}", resp.error);
+    }
     assert_eq!(resp.status, "success", "dba can create users");
 }
 
@@ -107,12 +203,18 @@ async fn test_system_role_all_access_smoke() {
     let resp = server
         .execute_sql_as_user("CREATE NAMESPACE rbac_sys_ns", sys.as_str())
         .await;
-    eprintln!("System CREATE NAMESPACE resp: status={} error={:?}", resp.status, resp.error);
+    eprintln!(
+        "System CREATE NAMESPACE resp: status={} error={:?}",
+        resp.status, resp.error
+    );
     assert_eq!(resp.status, "success");
 
     // CREATE USER should work
     let resp = server
-        .execute_sql_as_user("CREATE USER 'zzz' WITH PASSWORD 'StrongPass123!' ROLE user", sys.as_str())
+        .execute_sql_as_user(
+            "CREATE USER 'zzz' WITH PASSWORD 'StrongPass123!' ROLE user",
+            sys.as_str(),
+        )
         .await;
     assert_eq!(resp.status, "success");
 }

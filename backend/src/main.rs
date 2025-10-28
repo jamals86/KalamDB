@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
     let commit = env!("GIT_COMMIT_HASH");
     let build_date = env!("BUILD_DATE");
     let branch = env!("GIT_BRANCH");
-    
+
     info!("╔═══════════════════════════════════════════════════════════════╗");
     info!("║           KalamDB Server v{:<37} ║", version);
     info!("╠═══════════════════════════════════════════════════════════════╣");
