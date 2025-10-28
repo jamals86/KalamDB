@@ -87,7 +87,7 @@ pub fn init_logging(level: &str, file_path: &str, log_to_console: bool) -> anyho
             .chain(file_config)
             .apply()?;
 
-        log::info!(
+        log::trace!(
             "Logging initialized: level={}, console=yes, file={}",
             level,
             file_path

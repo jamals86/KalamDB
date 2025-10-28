@@ -133,6 +133,9 @@ path = "tests/test_row_count_behavior.rs"
 name = "test_basic_auth"
 path = "tests/test_basic_auth.rs"
 
+[build-dependencies]
+chrono = "0.4"
+
 [dev-dependencies]
 tempfile = "3"
 serde_json.workspace = true

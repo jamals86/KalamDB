@@ -22,11 +22,32 @@ use std::path::PathBuf;
 
 use kalam_cli::{CLIConfiguration, CLIError, CLISession, FileCredentialStore, OutputFormat, Result};
 
+// Build information - Create a static version string at compile time
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const COMMIT: &str = env!("GIT_COMMIT_HASH");
+const BUILD_DATE: &str = env!("BUILD_DATE");
+const BRANCH: &str = env!("GIT_BRANCH");
+
+// Macro to create the version string at compile time
+macro_rules! version_string {
+    () => {
+        concat!(
+            env!("CARGO_PKG_VERSION"),
+            "\nCommit: ",
+            env!("GIT_COMMIT_HASH"),
+            " (",
+            env!("GIT_BRANCH"),
+            ")\nBuilt: ",
+            env!("BUILD_DATE")
+        )
+    };
+}
+
 /// Kalam CLI - Terminal client for KalamDB
 #[derive(Parser, Debug)]
 #[command(name = "kalam")]
 #[command(author = "KalamDB Team")]
-#[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(version = version_string!())]
 #[command(about = "Interactive SQL terminal for KalamDB", long_about = None)]
 struct Cli {
     /// Server URL (e.g., http://localhost:3000)
@@ -225,18 +246,22 @@ async fn main() -> Result<()> {
             if let Some(creds) = credential_store.get_credentials(&cli.instance).map_err(|e| {
                 CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
             })? {
-                creds.get_server_url().to_string()
+                let creds_url = creds.get_server_url();
+                // If credentials have a valid URL (starts with http), use it
+                // Otherwise use default localhost:8080
+                if creds_url.starts_with("http://") || creds_url.starts_with("https://") {
+                    creds_url.to_string()
+                } else {
+                    // Default to localhost:8080
+                    "http://localhost:8080".to_string()
+                }
             } else {
-                // Fallback to config file
+                // Fallback to config file, or default to localhost:8080
                 config
                     .server
                     .as_ref()
                     .and_then(|s| s.url.clone())
-                    .ok_or_else(|| {
-                        CLIError::ConfigurationError(
-                            "Server URL not specified. Use -u or -h flag, or set in config file.".into(),
-                        )
-                    })?
+                    .unwrap_or_else(|| "http://localhost:8080".to_string())
             }
         }
     };

@@ -63,6 +63,9 @@ term_size = "0.3"
 # Date/time formatting
 chrono = "0.4"
 
+[build-dependencies]
+chrono = "0.4"
+
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.0"

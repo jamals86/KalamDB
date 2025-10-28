@@ -38,18 +38,19 @@ impl QueryExecutor {
             params,
         };
 
-        let url = format!("{}/v1/api/sql", self.base_url);
-        let mut req_builder = self.http_client.post(&url).json(&request);
-
-        // Apply authentication
-        req_builder = self.auth.apply_to_request(req_builder)?;
-
         // Send request with retry logic
         let mut retries = 0;
         let max_retries = 3;
 
         loop {
-            match req_builder.try_clone().unwrap().send().await {
+            // Build request fresh on each attempt (can't clone request builders with bodies)
+            let url = format!("{}/v1/api/sql", self.base_url);
+            let mut req_builder = self.http_client.post(&url).json(&request);
+
+            // Apply authentication
+            req_builder = self.auth.apply_to_request(req_builder)?;
+
+            match req_builder.send().await {
                 Ok(response) => {
                     if response.status().is_success() {
                         let query_response: QueryResponse = response.json().await?;

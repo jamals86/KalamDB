@@ -1,7 +1,18 @@
 # KalamDB
 
-**The SQL Database Built for Real-Time Conversations**  
-*Massively scalable chat & AI message history with per-user isolation*
+*KalamDB is built for efficiency first.
+Our goal is to store and process data using the smallest possible footprint, reducing CPU usage, memory load, storage size, and token consumption across applications.
+
+- By minimizing overhead and maximizing performance, KalamDB enables developers to:
+- ⁠Run faster data operations with lower latency
+- ⁠Reduce infrastructure and cloud compute costs
+- ⁠Use fewer tokens when working with AI/LLM pipelines
+
+Deploy in resource-constrained or edge environments easily
+Scale systems without scaling expenses
+KalamDB’s vision is simple:
+High performance, low cost, no waste.
+Software should be lightweight, fast, and responsible with the resources it consumes.*
 
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-TBD-blue.svg)](LICENSE)
