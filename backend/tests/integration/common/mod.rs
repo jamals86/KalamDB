@@ -39,6 +39,9 @@ pub mod flush_helpers;
 pub mod auth_helper;
 
 use anyhow::Result;
+use datafusion::arrow::array::{
+    BooleanArray, Float64Array, Int32Array, Int64Array, StringArray, TimestampMillisecondArray,
+};
 use datafusion::catalog::SchemaProvider;
 use kalamdb_api::models::{QueryResult, SqlResponse};
 use kalamdb_commons::models::{NamespaceId, StorageId, TableName};

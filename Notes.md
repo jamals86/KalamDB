@@ -32,6 +32,9 @@ Future:
 33) Add option for a specific usere to download all his data
 34) Add to the roadmap adding join which can join tables: shared<->shared, shared<->user, user<->user, user<->stream
 35) Add to cli/server a version which will print the commit and build date as well which is auto-increment: add prompt instead of this one: Starting KalamDB Server v0.1.0
+36) update all packages to the latest available version
+37) Make the cli connect to the root user by default
+38) Force always including namepsace to the queries alongside the tableName
 
 
 

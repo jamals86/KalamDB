@@ -283,11 +283,13 @@ async fn main() -> Result<()> {
         AuthProvider::None
     };
 
-    let mut session = CLISession::with_auth(
+    let mut session = CLISession::with_auth_and_instance(
         server_url,
         auth,
         format,
         !cli.no_color,
+        Some(cli.instance.clone()),
+        Some(credential_store),
     )
     .await?;
 
