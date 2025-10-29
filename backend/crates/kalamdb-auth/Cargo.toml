@@ -34,3 +34,6 @@ tokio = { workspace = true }
 
 # Time handling
 chrono = { workspace = true }
+
+# Caching
+moka = { workspace = true }

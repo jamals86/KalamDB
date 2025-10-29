@@ -9,6 +9,8 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use kalamdb_commons::system::User;
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use serde::{Deserialize, Serialize};
 
 /// Create a test user with password authentication
 ///
@@ -144,17 +146,51 @@ pub async fn create_test_dba(server: &super::TestServer, username: &str) -> User
     create_test_user(server, username, "AdminPass123!", Role::Dba).await
 }
 
-/// Create test system user for internal operations
+/// Create test JWT token for authentication
 ///
-/// System users have special privileges and typically authenticate via localhost.
+/// # Arguments
+///
+/// * `username` - Username to include in JWT claims
+/// * `secret` - JWT secret key for signing
+/// * `exp_seconds` - Token expiration time in seconds from now
+///
+/// # Returns
+///
+/// JWT token string
 ///
 /// # Example
 ///
 /// ```no_run
-/// let system_user = create_test_system_user(&server, "system_proc").await;
-/// assert_eq!(system_user.role, Role::System);
+/// let token = create_jwt_token("alice", "my-secret-key", 3600);
+/// let auth_header = format!("Bearer {}", token);
 /// ```
-pub async fn create_test_system_user(server: &super::TestServer, username: &str) -> User {
+pub fn create_jwt_token(username: &str, secret: &str, exp_seconds: i64) -> String {
+    #[derive(Debug, Serialize, Deserialize)]
+    struct Claims {
+        sub: String,
+        iss: String,
+        exp: usize,
+        iat: usize,
+        username: String,
+        email: Option<String>,
+        role: String,
+    }
+
+    let now = chrono::Utc::now().timestamp() as usize;
+    let claims = Claims {
+        sub: format!("user_{}", username),
+        iss: "kalamdb-test".to_string(),
+        exp: (now as i64 + exp_seconds) as usize,
+        iat: now,
+        username: username.to_string(),
+        email: Some(format!("{}@example.com", username)),
+        role: "user".to_string(),
+    };
+
+    let header = Header::new(Algorithm::HS256);
+    let encoding_key = EncodingKey::from_secret(secret.as_bytes());
+    encode(&header, &claims, &encoding_key).expect("Failed to create JWT token")
+}
     let now = chrono::Utc::now().timestamp_millis();
 
     let user = User {

@@ -10,8 +10,35 @@ use crate::password;
 use chrono::{DateTime, Utc};
 use kalamdb_sql::RocksDbAdapter;
 use log::{info, warn};
+use moka::future::Cache;
 use std::sync::Arc;
 use tokio::task;
+
+/// User cache statistics for monitoring and performance tracking
+#[derive(Debug, Clone)]
+pub struct UserCacheStats {
+    /// Number of cache hits
+    pub hits: u64,
+    /// Number of cache misses
+    pub misses: u64,
+    /// Cache hit rate (0.0 to 1.0)
+    pub hit_rate: f64,
+    /// Current number of entries in cache
+    pub entry_count: u64,
+}
+
+/// JWT cache statistics for monitoring and performance tracking
+#[derive(Debug, Clone)]
+pub struct JwtCacheStats {
+    /// Number of cache hits
+    pub hits: u64,
+    /// Number of cache misses
+    pub misses: u64,
+    /// Cache hit rate (0.0 to 1.0)
+    pub hit_rate: f64,
+    /// Current number of entries in cache
+    pub entry_count: u64,
+}
 
 /// Authentication service that orchestrates all auth methods.
 ///
@@ -32,6 +59,14 @@ pub struct AuthService {
     /// Default role for auto-provisioned OAuth users
     #[allow(dead_code)]
     oauth_default_role: kalamdb_commons::Role,
+    /// User record cache for performance optimization
+    /// Key: username, Value: User record
+    /// TTL: 5 minutes, Max capacity: 1000 users
+    user_cache: Cache<String, kalamdb_commons::system::User>,
+    /// JWT claims cache for performance optimization
+    /// Key: JWT token string, Value: Validated JWT claims
+    /// TTL: 10 minutes, Max capacity: 500 tokens
+    jwt_cache: Cache<String, crate::jwt_auth::JwtClaims>,
 }
 
 impl AuthService {
@@ -50,12 +85,26 @@ impl AuthService {
         oauth_auto_provision: bool,
         oauth_default_role: kalamdb_commons::Role,
     ) -> Self {
+        // Initialize user cache with 5-minute TTL and 1000 max entries
+        let user_cache = Cache::builder()
+            .max_capacity(1000)
+            .time_to_live(std::time::Duration::from_secs(300)) // 5 minutes
+            .build();
+
+        // Initialize JWT cache with 10-minute TTL and 500 max entries
+        let jwt_cache = Cache::builder()
+            .max_capacity(500)
+            .time_to_live(std::time::Duration::from_secs(600)) // 10 minutes
+            .build();
+
         Self {
             jwt_secret,
             trusted_jwt_issuers,
             allow_remote_access,
             oauth_auto_provision,
             oauth_default_role,
+            user_cache,
+            jwt_cache,
         }
     }
 
@@ -259,9 +308,18 @@ impl AuthService {
             .strip_prefix("Bearer ")
             .ok_or_else(|| AuthError::MalformedAuthorization("Bearer token missing".to_string()))?;
 
-        // Validate token
-        let claims =
-            jwt_auth::validate_jwt_token(token, &self.jwt_secret, &self.trusted_jwt_issuers)?;
+        // Check JWT cache first
+        let claims = if let Some(cached_claims) = self.jwt_cache.get(token).await {
+            cached_claims
+        } else {
+            // Cache miss - validate JWT
+            let validated_claims =
+                jwt_auth::validate_jwt_token(token, &self.jwt_secret, &self.trusted_jwt_issuers)?;
+
+            // Cache the validated claims
+            self.jwt_cache.insert(token.to_string(), validated_claims.clone()).await;
+            validated_claims
+        };
 
         // Look up user in database using username from JWT claims
         // The JWT sub field contains the user_id, but we'll use username for lookup
@@ -451,9 +509,86 @@ impl AuthService {
         username: &str,
         adapter: &Arc<RocksDbAdapter>,
     ) -> AuthResult<kalamdb_commons::system::User> {
-        adapter
+        // Check cache first
+        if let Some(user) = self.user_cache.get(username).await {
+            return Ok(user);
+        }
+
+        // Cache miss - fetch from database
+        let user = adapter
             .get_user(username)
             .map_err(AuthError::DatabaseError)?
-            .ok_or(AuthError::UserNotFound)
+            .ok_or(AuthError::UserNotFound)?;
+
+        // Cache the user record for future lookups
+        self.user_cache.insert(username.to_string(), user.clone()).await;
+
+        Ok(user)
+    }
+
+    /// Invalidate user cache entry for a specific username.
+    ///
+    /// This should be called whenever a user record is updated
+    /// (password change, role change, metadata change, etc.)
+    ///
+    /// # Arguments
+    /// * `username` - Username to invalidate from cache
+    pub async fn invalidate_user_cache(&self, username: &str) {
+        self.user_cache.invalidate(username).await;
+    }
+
+    /// Clear all user cache entries.
+    ///
+    /// This should be called during bulk operations or when
+    /// cache consistency needs to be guaranteed.
+    pub async fn clear_user_cache(&self) {
+        self.user_cache.invalidate_all();
+        self.user_cache.run_pending_tasks().await;
+    }
+
+    /// Get user cache statistics for monitoring.
+    ///
+    /// # Returns
+    /// Cache stats including entry count
+    pub fn get_user_cache_stats(&self) -> UserCacheStats {
+        UserCacheStats {
+            hits: 0, // TODO: Implement proper stats tracking
+            misses: 0, // TODO: Implement proper stats tracking
+            hit_rate: 0.0, // TODO: Implement proper stats tracking
+            entry_count: self.user_cache.entry_count(),
+        }
+    }
+
+    /// Invalidate JWT cache entry for a specific token.
+    ///
+    /// This should be called when a JWT token needs to be invalidated
+    /// (e.g., user logout, token revocation).
+    ///
+    /// # Arguments
+    /// * `token` - JWT token string to invalidate from cache
+    pub async fn invalidate_jwt_cache(&self, token: &str) {
+        self.jwt_cache.invalidate(token).await;
+    }
+
+    /// Clear all JWT cache entries.
+    ///
+    /// This should be called during bulk operations or when
+    /// JWT cache consistency needs to be guaranteed.
+    pub async fn clear_jwt_cache(&self) {
+        self.jwt_cache.invalidate_all();
+        self.jwt_cache.run_pending_tasks().await;
+    }
+
+    /// Get JWT cache statistics for monitoring.
+    ///
+    /// # Returns
+    /// Cache stats including entry count
+    pub fn get_jwt_cache_stats(&self) -> JwtCacheStats {
+        JwtCacheStats {
+            hits: 0, // TODO: Implement proper stats tracking
+            misses: 0, // TODO: Implement proper stats tracking
+            hit_rate: 0.0, // TODO: Implement proper stats tracking
+            entry_count: self.jwt_cache.entry_count(),
+        }
     }
 }
