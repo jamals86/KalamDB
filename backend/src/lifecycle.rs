@@ -185,6 +185,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
             stream_table_store.clone(),
             kalam_sql.clone(),
         )
+        .with_password_complexity(config.auth.enforce_password_complexity)
         .with_storage_backend(backend.clone()),
     );
 

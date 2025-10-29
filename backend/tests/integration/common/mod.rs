@@ -330,7 +330,7 @@ impl TestServer {
         // Register all system tables using centralized function
         let jobs_provider = kalamdb_core::system_table_registration::register_system_tables(
             &system_schema,
-            kalam_sql.clone(),
+            backend.clone(),
         )
         .expect("Failed to register system tables");
 
@@ -369,7 +369,8 @@ impl TestServer {
                 shared_table_store.clone(),
                 stream_table_store.clone(),
                 kalam_sql.clone(),
-            ),
+            )
+            .with_storage_backend(backend.clone()),
         );
 
         // Load existing tables from system_tables

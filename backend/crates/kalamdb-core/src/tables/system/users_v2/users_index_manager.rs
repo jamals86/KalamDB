@@ -9,6 +9,7 @@ use super::users_deleted_at_index::DeletedAtIndex;
 use super::users_role_index::RoleIndex;
 use super::users_username_index::{UsernameIndex, UsernameIndexExt};
 use crate::error::KalamDbError;
+use chrono::{DateTime, Utc};
 use kalamdb_commons::system::User;
 use kalamdb_commons::{Role, UserId};
 use kalamdb_store::StorageBackend;
@@ -75,7 +76,9 @@ impl UserIndexManager {
         // Handle username changes
         if let Some(old) = old_user {
             if old.username != new_user.username {
-                self.username_idx.remove_user(&old.username)?;
+                self
+                    .username_idx
+                    .remove_user(old.username.as_str())?;
                 self.username_idx.index_user(new_user)?;
             }
         } else {
@@ -89,14 +92,18 @@ impl UserIndexManager {
             .update_user_role(&new_user.id, old_role, &new_user.role)?;
 
         // Handle deletion status changes
-        let old_deleted_at = old_user.and_then(|u| u.deleted_at.as_ref());
-        let new_deleted_at = new_user.deleted_at.as_ref();
+        let old_deleted_at = old_user
+            .and_then(|u| u.deleted_at)
+            .and_then(|ts| DateTime::<Utc>::from_timestamp_millis(ts));
+        let new_deleted_at = new_user
+            .deleted_at
+            .and_then(|ts| DateTime::<Utc>::from_timestamp_millis(ts));
 
-        if old_deleted_at != new_deleted_at {
+        if old_deleted_at.as_ref() != new_deleted_at.as_ref() {
             self.deleted_at_idx.update_user_deletion(
                 &new_user.id,
-                old_deleted_at,
-                new_deleted_at,
+                old_deleted_at.as_ref(),
+                new_deleted_at.as_ref(),
             )?;
         }
 
@@ -112,14 +119,18 @@ impl UserIndexManager {
     /// Result indicating success or failure
     pub fn remove_user(&self, user: &User) -> Result<(), KalamDbError> {
         // Remove from username index
-        self.username_idx.remove_user(&user.username)?;
+        self
+            .username_idx
+            .remove_user(user.username.as_str())?;
 
         // Remove from role index
         self.role_idx.remove_user(&user.id, &user.role)?;
 
         // Remove from deleted_at index (if present)
-        if let Some(deleted_at) = &user.deleted_at {
-            self.deleted_at_idx.remove_user(&user.id, deleted_at)?;
+        if let Some(deleted_at_ms) = user.deleted_at {
+            if let Some(deleted_dt) = DateTime::<Utc>::from_timestamp_millis(deleted_at_ms) {
+                self.deleted_at_idx.remove_user(&user.id, &deleted_dt)?;
+            }
         }
 
         Ok(())

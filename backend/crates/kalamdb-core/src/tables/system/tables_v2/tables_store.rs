@@ -8,7 +8,7 @@ use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
 /// Type alias for the tables table store
-pub type TablesStore = SystemTableStore<String, SystemTable>;
+pub type TablesStore = SystemTableStore<String, SystemTable>; //TODO: Need to use TableId?
 
 /// Helper function to create a new tables table store
 ///

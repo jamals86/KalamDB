@@ -69,7 +69,7 @@ impl StorageBackend for InMemoryBackend {
         let mut data = self.data.write().unwrap();
         let map = data
             .entry(partition.name().to_string())
-            .or_insert_with(HashMap::new);
+            .or_default();
         map.insert(key.to_vec(), value.to_vec());
         Ok(())
     }
@@ -143,7 +143,7 @@ impl StorageBackend for InMemoryBackend {
     fn create_partition(&self, partition: &Partition) -> crate::storage_trait::Result<()> {
         let mut data = self.data.write().unwrap();
         data.entry(partition.name().to_string())
-            .or_insert_with(HashMap::new);
+            .or_default();
         Ok(())
     }
 

@@ -102,7 +102,7 @@ mod tests {
     #[tokio::test]
     async fn test_register_system_tables_validates_all_tables() {
         // This test validates that all SystemTable enum variants are registered
-        let expected_tables = vec[
+        let expected_tables = vec![
             SystemTable::Users,
             SystemTable::Namespaces,
             SystemTable::Tables,

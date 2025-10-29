@@ -47,7 +47,7 @@ impl UsernameIndexExt for UsernameIndex {
     /// # Returns
     /// Result indicating success or failure
     fn index_user(&self, user: &User) -> Result<(), KalamDbError> {
-        let username = UserName::new(&user.username);
+        let username = user.username.to_lowercase();
         self.put(&username, &user.id)?;
         Ok(())
     }
@@ -60,7 +60,7 @@ impl UsernameIndexExt for UsernameIndex {
     /// # Returns
     /// Result indicating success or failure
     fn remove_user(&self, username: &str) -> Result<(), KalamDbError> {
-        let username = UserName::new(username);
+        let username = UserName::new(username).to_lowercase();
         self.delete(&username)?;
         Ok(())
     }
@@ -73,7 +73,7 @@ impl UsernameIndexExt for UsernameIndex {
     /// # Returns
     /// Option<UserId> if found, None otherwise
     fn lookup(&self, username: &str) -> Result<Option<UserId>, KalamDbError> {
-        let username = UserName::new(username);
+        let username = UserName::new(username).to_lowercase();
         Ok(self.get(&username)?)
     }
 }
@@ -92,7 +92,7 @@ mod tests {
     fn create_test_user(id: &str, username: &str) -> User {
         User {
             id: UserId::new(id),
-            username: username.to_string(),
+            username: UserName::new(username),
             password_hash: "hashed_password".to_string(),
             role: Role::User,
             email: Some(format!("{}@example.com", username)),

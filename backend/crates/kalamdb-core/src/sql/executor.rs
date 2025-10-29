@@ -38,19 +38,20 @@ use crate::services::{
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use crate::tables::{
-    system::{NamespacesTableProvider, SystemTablesTableProvider},
+    system::{NamespacesTableProvider, TablesTableProvider},
     SharedTableProvider, StreamTableProvider, UserTableProvider,
 };
-// Phase 14: Use new EntityStore-based users provider
-use crate::tables::system::users_v2::UsersTableProvider as SystemUsersTableProvider;
+// All system tables now use EntityStore-based v2 providers
+use crate::tables::system::UsersTableProvider;
 use datafusion::arrow::array::{ArrayRef, StringArray, UInt32Array};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser;
-use kalamdb_commons::models::{NamespaceId as CommonNamespaceId, StorageId};
-use kalamdb_commons::system::Namespace;
+use kalamdb_auth::password::{self, PasswordPolicy};
+use kalamdb_commons::models::{AuditLogId, NamespaceId as CommonNamespaceId, StorageId, TableId, UserName};
+use kalamdb_commons::system::{AuditLogEntry, Namespace};
 use kalamdb_commons::{JobStatus, JobType, Role, TableAccess};
 use kalamdb_sql::ddl::{
     parse_job_command, AlterNamespaceStatement, AlterUserStatement, CreateNamespaceStatement,
@@ -61,6 +62,7 @@ use kalamdb_sql::ddl::{
 use kalamdb_sql::statement_classifier::SqlStatement;
 use kalamdb_sql::KalamSql;
 use kalamdb_sql::RocksDbAdapter;
+use serde_json::json;
 use std::sync::Arc;
 
 /// SQL execution result
@@ -115,6 +117,13 @@ impl ExecutionContext {
     }
 }
 
+/// Additional metadata for a statement execution (per request).
+#[derive(Debug, Clone, Default)]
+pub struct ExecutionMetadata {
+    /// Optional client IP address (for audit logging).
+    pub ip_address: Option<String>,
+}
+
 /// SQL executor
 ///
 /// Executes SQL statements by dispatching to appropriate handlers
@@ -136,13 +145,14 @@ pub struct SqlExecutor {
     session_factory: DataFusionSessionFactory,
     // System tables
     jobs_table_provider: Option<Arc<crate::tables::system::JobsTableProvider>>,
-    users_table_provider: Option<Arc<SystemUsersTableProvider>>,
+    users_table_provider: Option<Arc<UsersTableProvider>>,
     // Storage registry for template validation
     storage_registry: Option<Arc<crate::storage::StorageRegistry>>,
     // Job manager for flush operations
     job_manager: Option<Arc<dyn crate::jobs::JobManager>>,
     // Live query manager for subscription coordination
     live_query_manager: Option<Arc<crate::live_query::LiveQueryManager>>,
+    enforce_password_complexity: bool,
 }
 
 /// UPDATE statement parsed info
@@ -201,6 +211,7 @@ impl SqlExecutor {
             storage_registry: None,
             job_manager: None,
             live_query_manager: None,
+            enforce_password_complexity: false,
         }
     }
 
@@ -257,7 +268,13 @@ impl SqlExecutor {
     pub fn with_storage_backend(mut self, backend: Arc<dyn kalamdb_store::StorageBackend>) -> Self {
         // Phase 14: Use storage backend for new EntityStore-based providers
         self.storage_backend = Some(backend.clone());
-        self.users_table_provider = Some(Arc::new(SystemUsersTableProvider::new(backend)));
+        self.users_table_provider = Some(Arc::new(UsersTableProvider::new(backend)));
+        self
+    }
+
+    /// Enable or disable password complexity enforcement.
+    pub fn with_password_complexity(mut self, enforce: bool) -> Self {
+        self.enforce_password_complexity = enforce;
         self
     }
 
@@ -668,6 +685,16 @@ impl SqlExecutor {
         sql: &str,
         user_id: Option<&UserId>,
     ) -> Result<ExecutionResult, KalamDbError> {
+        self.execute_with_metadata(sql, user_id, None).await
+    }
+
+    /// Execute a SQL statement with additional request metadata (e.g., client IP).
+    pub async fn execute_with_metadata(
+        &self,
+        sql: &str,
+        user_id: Option<&UserId>,
+        metadata: Option<&ExecutionMetadata>,
+    ) -> Result<ExecutionResult, KalamDbError> {
         // Create execution context with user role
         let ctx = self.create_execution_context(user_id)?;
 
@@ -685,7 +712,7 @@ impl SqlExecutor {
             SqlStatement::DropStorage => self.execute_drop_storage(sql).await,
             SqlStatement::ShowStorages => self.execute_show_storages(sql, user_id).await,
             SqlStatement::CreateTable => self.execute_create_table(sql, user_id).await,
-            SqlStatement::AlterTable => self.execute_alter_table(sql, user_id).await,
+            SqlStatement::AlterTable => self.execute_alter_table(sql, user_id, metadata).await,
             SqlStatement::DropTable => self.execute_drop_table(sql, user_id).await,
             SqlStatement::ShowTables => self.execute_show_tables(sql).await,
             SqlStatement::DescribeTable => self.execute_describe_table(sql).await,
@@ -698,9 +725,9 @@ impl SqlExecutor {
             SqlStatement::CommitTransaction => self.execute_commit_transaction().await,
             SqlStatement::RollbackTransaction => self.execute_rollback_transaction().await,
             SqlStatement::Subscribe => self.execute_subscribe(sql).await,
-            SqlStatement::CreateUser => self.execute_create_user(sql, user_id).await,
-            SqlStatement::AlterUser => self.execute_alter_user(sql, user_id).await,
-            SqlStatement::DropUser => self.execute_drop_user(sql, user_id).await,
+            SqlStatement::CreateUser => self.execute_create_user(sql, user_id, metadata).await,
+            SqlStatement::AlterUser => self.execute_alter_user(sql, user_id, metadata).await,
+            SqlStatement::DropUser => self.execute_drop_user(sql, user_id, metadata).await,
             SqlStatement::Update => self.execute_update(sql, user_id).await,
             SqlStatement::Delete => self.execute_delete(sql, user_id).await,
             SqlStatement::Select | SqlStatement::Insert => {
@@ -932,10 +959,22 @@ impl SqlExecutor {
             KalamDbError::Other("System schema not found after registration".to_string())
         })?;
 
+        // Get storage backend for EntityStore-based providers
+        let backend = self.storage_backend.as_ref().ok_or_else(|| {
+            KalamDbError::InvalidOperation(
+                "Storage backend not configured for system tables".to_string(),
+            )
+        })?;
+
+        // Use EntityStore-based v2 providers for all system tables
+        use crate::tables::system::{
+            NamespacesTableProvider, TablesTableProvider, UsersTableProvider,
+        };
+
         system_schema
             .register_table(
                 "namespaces".to_string(),
-                Arc::new(NamespacesTableProvider::new(kalam_sql.clone())),
+                Arc::new(NamespacesTableProvider::new(backend.clone())),
             )
             .map_err(|e| {
                 KalamDbError::Other(format!("Failed to register system.namespaces: {}", e))
@@ -944,33 +983,26 @@ impl SqlExecutor {
         system_schema
             .register_table(
                 "tables".to_string(),
-                Arc::new(SystemTablesTableProvider::new(kalam_sql.clone())),
+                Arc::new(TablesTableProvider::new(backend.clone())),
             )
             .map_err(|e| KalamDbError::Other(format!("Failed to register system.tables: {}", e)))?;
 
-        // Phase 14: Use new EntityStore-based users provider with storage backend
-        let backend = self.storage_backend.as_ref().ok_or_else(|| {
-            KalamDbError::InvalidOperation(
-                "Storage backend not configured for users provider".to_string(),
-            )
-        })?;
         system_schema
             .register_table(
                 "users".to_string(),
-                Arc::new(SystemUsersTableProvider::new(backend.clone())),
+                Arc::new(UsersTableProvider::new(backend.clone())),
             )
             .map_err(|e| KalamDbError::Other(format!("Failed to register system.users: {}", e)))?;
 
-        // Register additional system tables (using existing providers)
+        // Register additional system tables (using EntityStore-based v2 providers)
         use crate::tables::system::{
-            JobsTableProvider, LiveQueriesTableProviderOld as LiveQueriesTableProvider,
-            SystemStoragesProvider,
+            JobsTableProvider, LiveQueriesTableProvider, StoragesTableProvider,
         };
 
         system_schema
             .register_table(
                 "storages".to_string(),
-                Arc::new(SystemStoragesProvider::new(kalam_sql.clone())),
+                Arc::new(StoragesTableProvider::new(backend.clone())),
             )
             .map_err(|e| {
                 KalamDbError::Other(format!("Failed to register system.storages: {}", e))
@@ -978,7 +1010,7 @@ impl SqlExecutor {
         system_schema
             .register_table(
                 "live_queries".to_string(),
-                Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone())),
+                Arc::new(LiveQueriesTableProvider::new(backend.clone())),
             )
             .map_err(|e| {
                 KalamDbError::Other(format!("Failed to register system.live_queries: {}", e))
@@ -987,7 +1019,7 @@ impl SqlExecutor {
         system_schema
             .register_table(
                 "jobs".to_string(),
-                Arc::new(JobsTableProvider::new(kalam_sql.clone())),
+                Arc::new(JobsTableProvider::new(backend.clone())),
             )
             .map_err(|e| KalamDbError::Other(format!("Failed to register system.jobs: {}", e)))?;
 
@@ -2304,28 +2336,18 @@ impl SqlExecutor {
         &self,
         sql: &str,
         user_id: Option<&UserId>,
+        metadata: Option<&ExecutionMetadata>,
     ) -> Result<ExecutionResult, KalamDbError> {
         // Parse the CREATE USER statement
         let stmt =
             CreateUserStatement::parse(sql).map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
         // Authorization check: Only DBA and System roles can create users
-        if let Some(uid) = user_id {
-            let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
-                KalamDbError::InvalidOperation("User management not configured".to_string())
-            })?;
-
-            let requesting_user = users_provider
-                .get_user_by_id(uid)?
-                .ok_or_else(|| KalamDbError::NotFound(format!("User not found: {}", uid)))?;
-            if !matches!(
-                requesting_user.role,
-                kalamdb_commons::Role::Dba | kalamdb_commons::Role::System
-            ) {
-                return Err(KalamDbError::PermissionDenied(
-                    "Only DBA or System users can create users".to_string(),
-                ));
-            }
+        let ctx = self.create_execution_context(user_id)?;
+        if !ctx.is_admin() {
+            return Err(KalamDbError::PermissionDenied(
+                "Only DBA or System users can create users".to_string(),
+            ));
         }
 
         // Hash password if provided (for Password auth type)
@@ -2336,7 +2358,8 @@ impl SqlExecutor {
                 // - Minimum 8 characters
                 // - Maximum 72 characters (bcrypt limit)
                 // - Not in common passwords list
-                kalamdb_auth::password::validate_password(password).map_err(|e| {
+                let policy = self.password_policy();
+                password::validate_password_with_policy(password, &policy).map_err(|e| {
                     KalamDbError::InvalidOperation(format!("Password validation failed: {}", e))
                 })?;
 
@@ -2398,7 +2421,7 @@ impl SqlExecutor {
         let now = chrono::Utc::now().timestamp_millis();
         let user = kalamdb_commons::system::User {
             id: UserId::new(&stmt.username),
-            username: stmt.username.clone(),
+            username: UserName::new(&stmt.username),
             password_hash,
             role: stmt.role,
             email: stmt.email.clone(),
@@ -2417,7 +2440,19 @@ impl SqlExecutor {
             KalamDbError::InvalidOperation("User management not configured".to_string())
         })?;
 
-        users_provider.create_user(user)?;
+        users_provider.create_user(user.clone())?;
+
+        self.log_audit_event(
+            &ctx,
+            "user.create",
+            &stmt.username,
+            json!({
+                "role": format!("{:?}", stmt.role),
+                "auth_type": format!("{:?}", stmt.auth_type),
+                "email": stmt.email,
+            }),
+            metadata,
+        );
 
         Ok(ExecutionResult::Success(format!(
             "User '{}' created successfully with role '{}'",
@@ -2431,28 +2466,18 @@ impl SqlExecutor {
         &self,
         sql: &str,
         user_id: Option<&UserId>,
+        metadata: Option<&ExecutionMetadata>,
     ) -> Result<ExecutionResult, KalamDbError> {
         // Parse the ALTER USER statement
         let stmt =
             AlterUserStatement::parse(sql).map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
         // Authorization check: Only DBA and System roles can alter users
-        if let Some(uid) = user_id {
-            let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
-                KalamDbError::InvalidOperation("User management not configured".to_string())
-            })?;
-
-            let requesting_user = users_provider
-                .get_user_by_id(uid)?
-                .ok_or_else(|| KalamDbError::NotFound(format!("User not found: {}", uid)))?;
-            if !matches!(
-                requesting_user.role,
-                kalamdb_commons::Role::Dba | kalamdb_commons::Role::System
-            ) {
-                return Err(KalamDbError::PermissionDenied(
-                    "Only DBA or System users can alter users".to_string(),
-                ));
-            }
+        let ctx = self.create_execution_context(user_id)?;
+        if !ctx.is_admin() {
+            return Err(KalamDbError::PermissionDenied(
+                "Only DBA or System users can alter users".to_string(),
+            ));
         }
 
         // Get users provider
@@ -2468,10 +2493,12 @@ impl SqlExecutor {
 
         // Apply modifications
         use kalamdb_sql::ddl::UserModification;
+        let mut change_details = serde_json::Map::new();
         match stmt.modification {
             UserModification::SetPassword(new_password) => {
                 // T129: Validate password before hashing
-                kalamdb_auth::password::validate_password(&new_password).map_err(|e| {
+                let policy = self.password_policy();
+                password::validate_password_with_policy(&new_password, &policy).map_err(|e| {
                     KalamDbError::InvalidOperation(format!("Password validation failed: {}", e))
                 })?;
 
@@ -2480,13 +2507,19 @@ impl SqlExecutor {
                     .map_err(|e| KalamDbError::Other(format!("Failed to hash password: {}", e)))?;
                 user.password_hash = password_hash;
                 user.auth_type = kalamdb_commons::AuthType::Password;
+                change_details.insert("password_changed".to_string(), json!(true));
             }
             UserModification::SetRole(new_role) => {
                 // new_role is already a Role enum from the parser
                 user.role = new_role;
+                change_details.insert("role".to_string(), json!(format!("{:?}", new_role)));
             }
             UserModification::SetEmail(new_email) => {
                 user.email = Some(new_email);
+                change_details.insert(
+                    "email".to_string(),
+                    json!(user.email.clone().unwrap_or_default()),
+                );
             }
         }
 
@@ -2494,6 +2527,14 @@ impl SqlExecutor {
 
         // Update user
         users_provider.update_user(user)?;
+
+        self.log_audit_event(
+            &ctx,
+            "user.alter",
+            &stmt.username,
+            json!({ "changes": change_details }),
+            metadata,
+        );
 
         Ok(ExecutionResult::Success(format!(
             "User '{}' updated successfully",
@@ -2506,28 +2547,18 @@ impl SqlExecutor {
         &self,
         sql: &str,
         user_id: Option<&UserId>,
+        metadata: Option<&ExecutionMetadata>,
     ) -> Result<ExecutionResult, KalamDbError> {
         // Parse the DROP USER statement
         let stmt =
             DropUserStatement::parse(sql).map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
         // Authorization check: Only DBA and System roles can drop users
-        if let Some(uid) = user_id {
-            let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
-                KalamDbError::InvalidOperation("User management not configured".to_string())
-            })?;
-
-            let requesting_user = users_provider
-                .get_user_by_id(uid)?
-                .ok_or_else(|| KalamDbError::NotFound(format!("User not found: {}", uid)))?;
-            if !matches!(
-                requesting_user.role,
-                kalamdb_commons::Role::Dba | kalamdb_commons::Role::System
-            ) {
-                return Err(KalamDbError::PermissionDenied(
-                    "Only DBA or System users can drop users".to_string(),
-                ));
-            }
+        let ctx = self.create_execution_context(user_id)?;
+        if !ctx.is_admin() {
+            return Err(KalamDbError::PermissionDenied(
+                "Only DBA or System users can drop users".to_string(),
+            ));
         }
 
         // Get users provider
@@ -2538,6 +2569,14 @@ impl SqlExecutor {
         // Soft delete the user
         let target_user_id = UserId::new(&stmt.username);
         users_provider.delete_user(&target_user_id)?;
+
+        self.log_audit_event(
+            &ctx,
+            "user.drop",
+            &stmt.username,
+            json!({ "soft_deleted": true }),
+            metadata,
+        );
 
         Ok(ExecutionResult::Success(format!(
             "User '{}' dropped successfully",
@@ -2564,7 +2603,7 @@ impl SqlExecutor {
 
         // Cancel the job
         jobs_provider
-            .cancel_job(&job_id)
+            .cancel_job_str(&job_id)
             .map_err(|e| KalamDbError::Other(format!("Failed to cancel job: {}", e)))?;
 
         Ok(ExecutionResult::Success(format!(
@@ -2750,7 +2789,7 @@ impl SqlExecutor {
             if let Some(kalam_sql) = &self.kalam_sql {
                 let table_id = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
                 let table = kalamdb_sql::Table {
-                    table_id,
+                    table_id: TableId::new(&table_id),
                     table_name: table_name.clone(),
                     namespace: namespace_id.clone(),
                     table_type: TableType::User,
@@ -3055,6 +3094,7 @@ impl SqlExecutor {
         &self,
         sql: &str,
         user_id: Option<&UserId>,
+        metadata: Option<&ExecutionMetadata>,
     ) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::ddl::{AlterTableStatement, ColumnOperation};
 
@@ -3107,6 +3147,14 @@ impl SqlExecutor {
             kalam_sql
                 .update_table(&table)
                 .map_err(|e| KalamDbError::Other(format!("Failed to update table: {}", e)))?;
+
+            self.log_audit_event(
+                &ctx,
+                "table.set_access",
+                &table_id,
+                json!({ "access_level": format!("{:?}", access_level) }),
+                metadata,
+            );
 
             return Ok(ExecutionResult::Success(format!(
                 "Table '{}' access level changed to '{:?}'",
@@ -3986,6 +4034,69 @@ impl SqlExecutor {
             Ok((0, "never".to_string(), 0))
         }
     }
+
+    /// Record an audit log entry for privileged actions.
+    fn log_audit_event(
+        &self,
+        ctx: &ExecutionContext,
+        action: &str,
+        target: &str,
+        details: serde_json::Value,
+        metadata: Option<&ExecutionMetadata>,
+    ) {
+        let kalam_sql = match &self.kalam_sql {
+            Some(k) => k,
+            None => {
+                log::debug!(
+                    "Audit logging skipped (KalamSql not configured) for action '{}'",
+                    action
+                );
+                return;
+            }
+        };
+
+        let actor_username = match kalam_sql.get_user_by_id(&ctx.user_id) {
+            Ok(Some(user)) => user.username.clone(),
+            Ok(None) => UserName::new(ctx.user_id.as_str()),
+            Err(err) => {
+                log::warn!(
+                    "Failed to resolve username for {} during audit logging: {}",
+                    ctx.user_id,
+                    err
+                );
+                UserName::new(ctx.user_id.as_str())
+            }
+        };
+
+        let entry = AuditLogEntry {
+            audit_id: AuditLogId::new(uuid::Uuid::new_v4().to_string()),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            actor_user_id: ctx.user_id.clone(),
+            actor_username,
+            action: action.to_string(),
+            target: target.to_string(),
+            details: if details.is_null() {
+                None
+            } else {
+                Some(details.to_string())
+            },
+            ip_address: metadata
+                .and_then(|m| m.ip_address.as_ref())
+                .map(|s| s.to_string()),
+        };
+
+        if let Err(err) = kalam_sql.insert_audit_log(&entry) {
+            log::warn!(
+                "Failed to persist audit log entry for action '{}': {}",
+                action,
+                err
+            );
+        }
+    }
+
+    fn password_policy(&self) -> PasswordPolicy {
+        PasswordPolicy::default().with_enforced_complexity(self.enforce_password_complexity)
+    }
 }
 
 #[cfg(test)]
@@ -3994,7 +4105,7 @@ mod tests {
     use datafusion::prelude::SessionContext;
     use kalamdb_sql::KalamSql;
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{kalamdb_commons::storage::StorageBackend, RocksDBBackend};
+    use kalamdb_store::{RocksDBBackend, StorageBackend};
 
     fn setup_test_executor() -> SqlExecutor {
         let test_db =
@@ -4006,22 +4117,19 @@ mod tests {
         let session_context = Arc::new(SessionContext::new());
 
         // Initialize table services for tests using EntityStore implementations
-        let user_table_store =
-            Arc::new(crate::stores::UserTableStore::new(backend.clone()).unwrap());
+        let user_table_store = Arc::new(crate::stores::UserTableStore::new(backend.clone()));
         let user_table_service = Arc::new(crate::services::UserTableService::new(
             kalam_sql.clone(),
-            user_table_store,
+            user_table_store.clone(),
         ));
-        let shared_table_store =
-            Arc::new(crate::stores::SharedTableStore::new(backend.clone()).unwrap());
+        let shared_table_store = Arc::new(crate::stores::SharedTableStore::new(backend.clone()));
         let shared_table_service = Arc::new(crate::services::SharedTableService::new(
-            shared_table_store,
+            shared_table_store.clone(),
             kalam_sql.clone(),
         ));
-        let stream_table_store =
-            Arc::new(crate::stores::StreamTableStore::new(backend.clone()).unwrap());
+        let stream_table_store = Arc::new(crate::stores::StreamTableStore::new(backend.clone()));
         let stream_table_service = Arc::new(crate::services::StreamTableService::new(
-            stream_table_store,
+            stream_table_store.clone(),
             kalam_sql.clone(),
         ));
 
@@ -4032,6 +4140,13 @@ mod tests {
             shared_table_service,
             stream_table_service,
         )
+        .with_stores(
+            user_table_store,
+            shared_table_store,
+            stream_table_store,
+            kalam_sql,
+        )
+        .with_storage_backend(backend)
     }
 
     #[tokio::test]
@@ -4104,24 +4219,21 @@ mod tests {
         let test_db =
             TestDb::new(&["system_namespaces", "system_tables", "system_table_schemas"]).unwrap();
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
-        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
+        let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
         let session_context = Arc::new(SessionContext::new());
 
-        let user_table_store =
-            Arc::new(kalamdb_store::UserTableStore::new(test_db.db.clone()).unwrap());
+        let user_table_store = Arc::new(crate::stores::UserTableStore::new(backend.clone()));
         let user_table_service = Arc::new(crate::services::UserTableService::new(
             kalam_sql.clone(),
             user_table_store.clone(),
         ));
-        let shared_table_store =
-            Arc::new(kalamdb_store::SharedTableStore::new(test_db.db.clone()).unwrap());
+        let shared_table_store = Arc::new(crate::stores::SharedTableStore::new(backend.clone()));
         let shared_table_service = Arc::new(crate::services::SharedTableService::new(
             shared_table_store.clone(),
             kalam_sql.clone(),
         ));
-        let stream_table_store =
-            Arc::new(kalamdb_store::StreamTableStore::new(test_db.db.clone()).unwrap());
+        let stream_table_store = Arc::new(crate::stores::StreamTableStore::new(backend.clone()));
         let stream_table_service = Arc::new(crate::services::StreamTableService::new(
             stream_table_store.clone(),
             kalam_sql.clone(),
@@ -4139,7 +4251,8 @@ mod tests {
             shared_table_store,
             stream_table_store,
             kalam_sql.clone(),
-        );
+        )
+        .with_storage_backend(backend);
 
         // Create a test stream table entry in system_tables
         let table = kalamdb_sql::Table {

@@ -7,9 +7,11 @@ use crate::error::{AuthError, AuthResult};
 use crate::jwt_auth;
 use crate::password;
 // use kalamdb_commons::{Role, UserId}; // Unused imports removed
+use chrono::{DateTime, Utc};
 use kalamdb_sql::RocksDbAdapter;
 use log::{info, warn};
 use std::sync::Arc;
+use tokio::task;
 
 /// Authentication service that orchestrates all auth methods.
 ///
@@ -186,8 +188,8 @@ impl AuthService {
             }
 
             // T106: If remote access is enabled for internal user, password MUST be set
-            if remote_allowed && !connection_info.is_localhost() {
-                if user.password_hash.is_empty() {
+            if remote_allowed && !connection_info.is_localhost()
+                && user.password_hash.is_empty() {
                     warn!(
                         "System user '{}' attempted remote authentication without password",
                         username
@@ -196,7 +198,6 @@ impl AuthService {
                         "Remote-enabled system users must have a password set".to_string(),
                     ));
                 }
-            }
 
             // For localhost connections with internal auth_type, password can be empty
             // For remote connections, password is required (enforced above)
@@ -227,11 +228,13 @@ impl AuthService {
 
         info!("User authenticated via Basic Auth: {}", username);
 
+        Self::spawn_last_seen_update(adapter.clone(), user.clone());
+
         Ok(AuthenticatedUser::new(
-            user.id,
-            user.username.into_string(),
+            user.id.clone(),
+            user.username.as_str().to_string(),
             user.role,
-            user.email,
+            user.email.clone(),
             connection_info.clone(),
         ))
     }
@@ -283,11 +286,13 @@ impl AuthService {
 
         info!("User authenticated via JWT: {}", user.username);
 
+        Self::spawn_last_seen_update(adapter.clone(), user.clone());
+
         Ok(AuthenticatedUser::new(
-            user.id,
-            user.username.into_string(),
+            user.id.clone(),
+            user.username.as_str().to_string(),
             user.role,
-            user.email,
+            user.email.clone(),
             connection_info.clone(),
         ))
     }
@@ -331,11 +336,7 @@ impl AuthService {
         // For now, we use a simple approach: validate with a generic secret
         // In production, you'd fetch the JWKS (JSON Web Key Set) from the provider
         // For HS256 (testing), we use the JWT secret
-        let claims = oauth::validate_oauth_token(token, &self.jwt_secret, "").or_else(|_| {
-            // If validation fails, try to extract claims without validation
-            // to get the issuer for better error messages
-            Err(AuthError::InvalidSignature)
-        })?;
+        let claims = oauth::validate_oauth_token(token, &self.jwt_secret, "").map_err(|_| AuthError::InvalidSignature)?;
 
         // Extract provider and subject from claims
         let identity = oauth::extract_provider_and_subject(&claims);
@@ -353,7 +354,7 @@ impl AuthService {
             .into_iter()
             .find(|u| {
                 u.auth_type == kalamdb_commons::AuthType::OAuth
-                    && u.auth_data.as_ref().map_or(false, |data| {
+                    && u.auth_data.as_ref().is_some_and(|data| {
                         // Parse stored auth_data and compare
                         if let Ok(stored_json) = serde_json::from_str::<serde_json::Value>(data) {
                             stored_json.get("provider") == auth_data.get("provider")
@@ -383,11 +384,13 @@ impl AuthService {
             identity.provider, user.username
         );
 
+        Self::spawn_last_seen_update(adapter.clone(), user.clone());
+
         Ok(AuthenticatedUser::new(
-            user.id,
-            user.username.into_string(),
+            user.id.clone(),
+            user.username.as_str().to_string(),
             user.role,
-            user.email,
+            user.email.clone(),
             connection_info.clone(),
         ))
     }
@@ -403,6 +406,46 @@ impl AuthService {
     ///
     /// # Errors
     /// Returns `AuthError::UserNotFound` if user doesn't exist
+    fn needs_last_seen_update(last_seen: Option<i64>, now: DateTime<Utc>) -> bool {
+        match last_seen.and_then(DateTime::<Utc>::from_timestamp_millis) {
+            Some(prev) => prev.date_naive() != now.date_naive(),
+            None => true,
+        }
+    }
+
+    fn spawn_last_seen_update(
+        adapter: Arc<RocksDbAdapter>,
+        mut user: kalamdb_commons::system::User,
+    ) {
+        let now = Utc::now();
+        if !Self::needs_last_seen_update(user.last_seen, now) {
+            return;
+        }
+
+        let new_timestamp = now.timestamp_millis();
+        user.last_seen = Some(new_timestamp);
+        user.updated_at = new_timestamp;
+        let user_id = user.id.clone();
+
+        tokio::spawn(async move {
+            let uid = user_id.clone();
+            let update_result = task::spawn_blocking(move || adapter.update_user(&user)).await;
+            match update_result {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => warn!(
+                    "Failed to persist last_seen for user {}: {}",
+                    uid.as_str(),
+                    err
+                ),
+                Err(join_err) => warn!(
+                    "Failed to schedule last_seen update for user {}: {}",
+                    uid.as_str(),
+                    join_err
+                ),
+            }
+        });
+    }
+
     async fn get_user_by_username(
         &self,
         username: &str,

@@ -22,6 +22,8 @@ pub enum SystemTable {
     LiveQueries,
     /// system.jobs - Background job tracking
     Jobs,
+    /// system.audit_log - Administrative audit trail
+    AuditLog,
 }
 
 impl SystemTable {
@@ -35,6 +37,7 @@ impl SystemTable {
             SystemTable::Storages => "storages",
             SystemTable::LiveQueries => "live_queries",
             SystemTable::Jobs => "jobs",
+            SystemTable::AuditLog => "audit_log",
         }
     }
 
@@ -48,6 +51,7 @@ impl SystemTable {
             SystemTable::Storages => "system_storages",
             SystemTable::LiveQueries => "system_live_queries",
             SystemTable::Jobs => "system_jobs",
+            SystemTable::AuditLog => "system_audit_log",
         }
     }
 
@@ -64,6 +68,7 @@ impl SystemTable {
             "storages" | "system_storages" => Ok(SystemTable::Storages),
             "live_queries" | "system_live_queries" => Ok(SystemTable::LiveQueries),
             "jobs" | "system_jobs" => Ok(SystemTable::Jobs),
+            "audit_log" | "system_audit_log" => Ok(SystemTable::AuditLog),
             _ => Err(format!("Unknown system table: {}", name)),
         }
     }
@@ -78,6 +83,7 @@ impl SystemTable {
             SystemTable::Storages,
             SystemTable::LiveQueries,
             SystemTable::Jobs,
+            SystemTable::AuditLog,
         ]
     }
 
@@ -108,6 +114,8 @@ impl SystemTable {
             Lazy::new(|| Partition::new(SystemTable::LiveQueries.column_family_name()));
         static JOBS: Lazy<Partition> =
             Lazy::new(|| Partition::new(SystemTable::Jobs.column_family_name()));
+        static AUDIT_LOG: Lazy<Partition> =
+            Lazy::new(|| Partition::new(SystemTable::AuditLog.column_family_name()));
 
         match self {
             SystemTable::Users => &USERS,
@@ -117,6 +125,7 @@ impl SystemTable {
             SystemTable::Storages => &STORAGES,
             SystemTable::LiveQueries => &LIVE_QUERIES,
             SystemTable::Jobs => &JOBS,
+            SystemTable::AuditLog => &AUDIT_LOG,
         }
     }
 }
@@ -178,6 +187,7 @@ mod tests {
         assert_eq!(SystemTable::Users.table_name(), "users");
         assert_eq!(SystemTable::Namespaces.table_name(), "namespaces");
         assert_eq!(SystemTable::Jobs.table_name(), "jobs");
+        assert_eq!(SystemTable::AuditLog.table_name(), "audit_log");
     }
 
     #[test]
@@ -188,6 +198,10 @@ mod tests {
             "system_namespaces"
         );
         assert_eq!(SystemTable::Jobs.column_family_name(), "system_jobs");
+        assert_eq!(
+            SystemTable::AuditLog.column_family_name(),
+            "system_audit_log"
+        );
     }
 
     #[test]
@@ -225,8 +239,9 @@ mod tests {
     #[test]
     fn test_all() {
         let all = SystemTable::all();
-        assert_eq!(all.len(), 7);
+        assert_eq!(all.len(), 8);
         assert!(all.contains(&SystemTable::Users));
         assert!(all.contains(&SystemTable::Storages));
+        assert!(all.contains(&SystemTable::AuditLog));
     }
 }

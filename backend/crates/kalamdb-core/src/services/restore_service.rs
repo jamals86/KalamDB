@@ -176,14 +176,14 @@ impl RestoreService {
 
         // Validate schema consistency: all tables have at least one schema version
         for table in &manifest.tables {
-            if !manifest.table_schemas.contains_key(&table.table_id) {
+            if !manifest.table_schemas.contains_key(table.table_id.as_str()) {
                 return Err(KalamDbError::InvalidSql(format!(
                     "Missing schema for table '{}'",
                     table.table_name
                 )));
             }
 
-            let schemas = &manifest.table_schemas[&table.table_id];
+            let schemas = &manifest.table_schemas[table.table_id.as_str()];
             if schemas.is_empty() {
                 return Err(KalamDbError::InvalidSql(format!(
                     "No schema versions for table '{}'",

@@ -109,10 +109,10 @@ impl SystemColumnNames {
 pub const SYSTEM_COLUMNS: SystemColumnNames = SystemColumnNames;
 
 /// Reserved namespace name for system tables.
-pub const SYSTEM_NAMESPACE: &'static str = "system";
+pub const SYSTEM_NAMESPACE: &str = "system";
 
 /// Default namespace name for user tables when not specified.
-pub const DEFAULT_NAMESPACE: &'static str = "default";
+pub const DEFAULT_NAMESPACE: &str = "default";
 
 /// Authentication-related constants.
 pub struct AuthConstants;

@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 /// Default: 12 (recommended for 2024)
 pub const BCRYPT_COST: u32 = DEFAULT_COST;
 
-/// Minimum password length
+/// Minimum password length (default policy)
 pub const MIN_PASSWORD_LENGTH: usize = 8;
 
 /// Maximum password length (bcrypt has a 72-byte limit)
@@ -72,47 +72,42 @@ pub async fn verify_password(password: &str, hash: &str) -> AuthResult<bool> {
     .map_err(|e| AuthError::HashingError(format!("Task join error: {}", e)))?
 }
 
+/// Password validation policy configuration.
+#[derive(Debug, Clone)]
+pub struct PasswordPolicy {
+    pub min_length: usize,
+    pub max_length: usize,
+    pub enforce_complexity: bool,
+    pub skip_common_check: bool,
+}
+
+impl Default for PasswordPolicy {
+    fn default() -> Self {
+        Self {
+            min_length: MIN_PASSWORD_LENGTH,
+            max_length: MAX_PASSWORD_LENGTH,
+            enforce_complexity: false,
+            skip_common_check: false,
+        }
+    }
+}
+
+impl PasswordPolicy {
+    pub fn with_enforced_complexity(mut self, enforce: bool) -> Self {
+        self.enforce_complexity = enforce;
+        self
+    }
+
+    pub fn skip_common_password_check(mut self, skip: bool) -> Self {
+        self.skip_common_check = skip;
+        self
+    }
+}
+
 /// Validate password meets security requirements.
-///
-/// Checks:
-/// - Minimum length (8 characters)
-/// - Maximum length (72 characters for bcrypt)
-/// - Not in common passwords list (unless disabled)
-///
-/// # Arguments
-/// * `password` - Password to validate
-/// * `skip_common_check` - If true, skip common password validation (for testing/config)
-///
-/// # Returns
-/// `Ok(())` if valid, `Err` with reason if invalid
-///
-/// # Errors
-/// Returns `AuthError::WeakPassword` with specific reason
 pub fn validate_password_with_config(password: &str, skip_common_check: bool) -> AuthResult<()> {
-    // Check minimum length
-    if password.len() < MIN_PASSWORD_LENGTH {
-        return Err(AuthError::WeakPassword(format!(
-            "Password must be at least {} characters",
-            MIN_PASSWORD_LENGTH
-        )));
-    }
-
-    // Check maximum length (bcrypt limit)
-    if password.len() > MAX_PASSWORD_LENGTH {
-        return Err(AuthError::WeakPassword(format!(
-            "Password must be at most {} characters (bcrypt limit)",
-            MAX_PASSWORD_LENGTH
-        )));
-    }
-
-    // Check against common passwords (unless disabled)
-    if !skip_common_check && is_common_password(password) {
-        return Err(AuthError::WeakPassword(
-            "Password is too common".to_string(),
-        ));
-    }
-
-    Ok(())
+    let policy = PasswordPolicy::default().skip_common_password_check(skip_common_check);
+    validate_password_with_policy(password, &policy)
 }
 
 /// Validate password meets security requirements (with common password check enabled).
@@ -128,7 +123,60 @@ pub fn validate_password_with_config(password: &str, skip_common_check: bool) ->
 /// # Errors
 /// Returns `AuthError::WeakPassword` with specific reason
 pub fn validate_password(password: &str) -> AuthResult<()> {
-    validate_password_with_config(password, false)
+    validate_password_with_policy(password, &PasswordPolicy::default())
+}
+
+/// Validate password using custom policy.
+pub fn validate_password_with_policy(password: &str, policy: &PasswordPolicy) -> AuthResult<()> {
+    if password.len() < policy.min_length {
+        return Err(AuthError::WeakPassword(format!(
+            "Password must be at least {} characters",
+            policy.min_length
+        )));
+    }
+
+    if password.len() > policy.max_length {
+        return Err(AuthError::WeakPassword(format!(
+            "Password must be at most {} characters (bcrypt limit)",
+            policy.max_length
+        )));
+    }
+
+    if !policy.skip_common_check && is_common_password(password) {
+        return Err(AuthError::WeakPassword(
+            "Password is too common".to_string(),
+        ));
+    }
+
+    if policy.enforce_complexity {
+        let has_upper = password.chars().any(|c| c.is_ascii_uppercase());
+        let has_lower = password.chars().any(|c| c.is_ascii_lowercase());
+        let has_digit = password.chars().any(|c| c.is_ascii_digit());
+        let has_special = password.chars().any(|c| !c.is_ascii_alphanumeric());
+
+        if !has_upper {
+            return Err(AuthError::WeakPassword(
+                "Password must include at least one uppercase letter".to_string(),
+            ));
+        }
+        if !has_lower {
+            return Err(AuthError::WeakPassword(
+                "Password must include at least one lowercase letter".to_string(),
+            ));
+        }
+        if !has_digit {
+            return Err(AuthError::WeakPassword(
+                "Password must include at least one digit".to_string(),
+            ));
+        }
+        if !has_special {
+            return Err(AuthError::WeakPassword(
+                "Password must include at least one special character".to_string(),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// Check if a password is in the common passwords list.
@@ -215,5 +263,16 @@ mod tests {
         assert!(is_common_password("password"));
         assert!(is_common_password("123456"));
         assert!(!is_common_password("MyUniquePassword2024!"));
+    }
+
+    #[test]
+    fn test_password_complexity_policy() {
+        let policy = PasswordPolicy::default().with_enforced_complexity(true);
+
+        assert!(validate_password_with_policy("ValidPass1!", &policy).is_ok());
+        assert!(validate_password_with_policy("noupper1!", &policy).is_err());
+        assert!(validate_password_with_policy("NOLOWER1!", &policy).is_err());
+        assert!(validate_password_with_policy("NoDigits!", &policy).is_err());
+        assert!(validate_password_with_policy("NoSpecial1", &policy).is_err());
     }
 }

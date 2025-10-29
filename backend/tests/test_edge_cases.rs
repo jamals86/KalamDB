@@ -74,7 +74,8 @@ async fn setup_test_executor() -> (SqlExecutor, TempDir, Arc<KalamSql>) {
         shared_table_store,
         stream_table_store,
         kalam_sql.clone(),
-    );
+    )
+    .with_storage_backend(backend.clone());
 
     (executor, temp_dir, kalam_sql)
 }

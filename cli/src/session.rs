@@ -355,7 +355,7 @@ impl CLISession {
                 "    -> "
             };
 
-            match rl.readline(&prompt) {
+            match rl.readline(prompt) {
                 Ok(line) => {
                     let line = line.trim();
 

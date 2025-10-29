@@ -10,7 +10,7 @@ use crate::live_query::connection_registry::{
 use crate::live_query::filter::FilterCache;
 use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
-use crate::tables::system::live_queries_provider::LiveQueriesTableProvider;
+use crate::tables::system::LiveQueriesTableProvider;
 use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_commons::LiveQueryId;
@@ -422,7 +422,7 @@ impl LiveQueryManager {
 
         // Delete from system.live_queries
         self.live_queries_provider
-            .delete_live_query(&live_id.to_string())?;
+            .delete_live_query_str(&live_id.to_string())?;
 
         Ok(())
     }

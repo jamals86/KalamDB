@@ -69,8 +69,9 @@ impl LiveQueriesTableProvider {
     }
 
     /// Alias for get_live_query_by_id (for backward compatibility)
-    pub fn get_live_query(&self, live_id: &LiveQueryId) -> Result<Option<LiveQuery>, KalamDbError> {
-        self.get_live_query_by_id(live_id)
+    pub fn get_live_query(&self, live_id: &str) -> Result<Option<LiveQuery>, KalamDbError> {
+        let live_query_id = LiveQueryId::new(live_id);
+        self.get_live_query_by_id(&live_query_id)
     }
 
     /// Update an existing live query entry
@@ -93,10 +94,59 @@ impl LiveQueriesTableProvider {
         Ok(())
     }
 
+    /// Delete a live query entry (string version for backward compatibility)
+    pub fn delete_live_query_str(&self, live_id: &str) -> Result<(), KalamDbError> {
+        let live_query_id = LiveQueryId::new(live_id);
+        self.delete_live_query(&live_query_id)
+    }
+
     /// List all live queries
     pub fn list_live_queries(&self) -> Result<Vec<LiveQuery>, KalamDbError> {
         let live_queries = self.store.scan_all()?;
         Ok(live_queries.into_iter().map(|(_, lq)| lq).collect())
+    }
+
+    /// Get live queries by user ID
+    pub fn get_by_user_id(&self, user_id: &str) -> Result<Vec<LiveQuery>, KalamDbError> {
+        let all_queries = self.list_live_queries()?;
+        Ok(all_queries
+            .into_iter()
+            .filter(|lq| lq.user_id.as_str() == user_id)
+            .collect())
+    }
+
+    /// Get live queries by table name
+    pub fn get_by_table_name(&self, table_name: &str) -> Result<Vec<LiveQuery>, KalamDbError> {
+        let all_queries = self.list_live_queries()?;
+        Ok(all_queries
+            .into_iter()
+            .filter(|lq| lq.table_name.as_str() == table_name)
+            .collect())
+    }
+
+    /// Delete live queries by connection ID
+    pub fn delete_by_connection_id(&self, connection_id: &str) -> Result<(), KalamDbError> {
+        let all_queries = self.list_live_queries()?;
+        for lq in all_queries {
+            if lq.connection_id == connection_id {
+                self.delete_live_query(&lq.live_id)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Increment the changes counter for a live query
+    pub fn increment_changes(&self, live_id: &str, timestamp: i64) -> Result<(), KalamDbError> {
+        let live_query_id = LiveQueryId::new(live_id);
+        let mut live_query = self
+            .get_live_query(&live_query_id)?
+            .ok_or_else(|| KalamDbError::NotFound(format!("Live query not found: {}", live_id)))?;
+
+        live_query.changes += 1;
+        live_query.last_update = timestamp;
+
+        self.update_live_query(live_query)?;
+        Ok(())
     }
 
     /// Scan all live queries and return as RecordBatch

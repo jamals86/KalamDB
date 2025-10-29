@@ -101,16 +101,12 @@ pub struct SubscribeStatement {
 
 /// Options for SUBSCRIBE TO command.
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Default)]
 pub struct SubscribeOptions {
     /// Number of recent rows to fetch initially (default: 0, no initial fetch)
     pub last_rows: Option<usize>,
 }
 
-impl Default for SubscribeOptions {
-    fn default() -> Self {
-        Self { last_rows: None }
-    }
-}
 
 impl SubscribeStatement {
     /// Parse SUBSCRIBE TO command from SQL string.

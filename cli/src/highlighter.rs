@@ -153,7 +153,7 @@ impl SqlHighlighter {
 
             // Handle numbers
             if ch.is_ascii_digit()
-                || (ch == '.' && chars.peek().map_or(false, |c| c.is_ascii_digit()))
+                || (ch == '.' && chars.peek().is_some_and(|c| c.is_ascii_digit()))
             {
                 if !in_number {
                     // Flush current word

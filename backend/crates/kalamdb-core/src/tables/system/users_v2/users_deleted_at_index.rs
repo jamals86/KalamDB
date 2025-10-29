@@ -7,7 +7,7 @@ use crate::error::KalamDbError;
 use chrono::{DateTime, Utc};
 use kalamdb_commons::system::User;
 use kalamdb_commons::UserId;
-use kalamdb_store::{EntityStoreV2, StorageBackend};
+use kalamdb_store::{Partition, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -20,7 +20,7 @@ pub struct DeletedAtIndexEntry {
 /// Deleted_at index implementation
 pub struct DeletedAtIndex {
     backend: Arc<dyn StorageBackend>,
-    partition: String,
+    partition: Partition,
 }
 
 impl DeletedAtIndex {
@@ -34,8 +34,13 @@ impl DeletedAtIndex {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
         Self {
             backend,
-            partition: "system_users_deleted_at_idx".to_string(),
+            partition: Partition::new("system_users_deleted_at_idx"),
         }
+    }
+
+    /// Return the partition name (for tests/diagnostics)
+    pub fn partition(&self) -> &str {
+        self.partition.name()
     }
 
     /// Index a deleted user
@@ -46,22 +51,10 @@ impl DeletedAtIndex {
     /// # Returns
     /// Result indicating success or failure
     pub fn index_user(&self, user: &User) -> Result<(), KalamDbError> {
-        if let Some(deleted_at) = &user.deleted_at {
-            let date_key = datetime_to_key(deleted_at);
-            let user_id_str = user.id.as_str().to_string();
-
-            // Get existing entry or create new
-            let mut entry = self.get_entry(&date_key)?.unwrap_or(DeletedAtIndexEntry {
-                user_ids: Vec::new(),
-            });
-
-            // Add user_id if not already present
-            if !entry.user_ids.contains(&user_id_str) {
-                entry.user_ids.push(user_id_str);
+        if let Some(deleted_at_ms) = user.deleted_at {
+            if let Some(deleted_at_dt) = DateTime::<Utc>::from_timestamp_millis(deleted_at_ms) {
+                self.add_user_entry(&deleted_at_dt, &user.id)?;
             }
-
-            // Save updated entry
-            self.put_entry(&date_key, &entry)?;
         }
         Ok(())
     }
@@ -119,23 +112,7 @@ impl DeletedAtIndex {
 
         // Add to new index if deleted
         if let Some(new_dt) = new_deleted_at {
-            // Create temporary user just for indexing
-            let user = User {
-                id: user_id.clone(),
-                username: String::new(),
-                password_hash: String::new(),
-                role: kalamdb_commons::Role::User,
-                email: None,
-                auth_type: kalamdb_commons::AuthType::Password,
-                auth_data: None,
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-                last_seen: None,
-                deleted_at: Some(new_dt.clone()),
-                storage_mode: kalamdb_commons::StorageMode::Embedded,
-                storage_id: kalamdb_commons::StorageId::new("local"),
-            };
-            self.index_user(&user)?;
+            self.add_user_entry(new_dt, user_id)?;
         }
 
         Ok(())
@@ -185,6 +162,22 @@ impl DeletedAtIndex {
         }
     }
 
+    fn add_user_entry(&self, date: &DateTime<Utc>, user_id: &UserId) -> Result<(), KalamDbError> {
+        let date_key = datetime_to_key(date);
+        let user_id_str = user_id.as_str().to_string();
+
+        let mut entry = self.get_entry(&date_key)?.unwrap_or(DeletedAtIndexEntry {
+            user_ids: Vec::new(),
+        });
+
+        if !entry.user_ids.contains(&user_id_str) {
+            entry.user_ids.push(user_id_str);
+            self.put_entry(&date_key, &entry)?;
+        }
+
+        Ok(())
+    }
+
     // Private helper methods
     fn get_entry(&self, key: &[u8]) -> Result<Option<DeletedAtIndexEntry>, KalamDbError> {
         match self.backend.get(&self.partition, key)? {
@@ -219,6 +212,7 @@ fn datetime_to_key(dt: &DateTime<Utc>) -> Vec<u8> {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use kalamdb_commons::models::UserName;
     use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
     use kalamdb_store::InMemoryBackend;
 
@@ -230,18 +224,18 @@ mod tests {
     fn create_test_user(id: &str, username: &str, deleted_at: Option<DateTime<Utc>>) -> User {
         User {
             id: UserId::new(id),
-            username: username.to_string(),
+            username: UserName::new(username),
             password_hash: "hashed_password".to_string(),
             role: Role::User,
             email: Some(format!("{}@example.com", username)),
             auth_type: AuthType::Password,
             auth_data: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            storage_mode: StorageMode::Table,
+            storage_id: Some(StorageId::new("local")),
+            created_at: Utc::now().timestamp_millis(),
+            updated_at: Utc::now().timestamp_millis(),
             last_seen: None,
-            deleted_at,
-            storage_mode: StorageMode::Embedded,
-            storage_id: StorageId::new("local"),
+            deleted_at: deleted_at.map(|dt| dt.timestamp_millis()),
         }
     }
 

@@ -4,11 +4,11 @@
 
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::basic_auth::parse_basic_auth_header;
-use kalamdb_auth::password;
+use kalamdb_auth::{context::AuthenticatedUser, password};
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::{AuthType, Role};
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
-use kalamdb_core::sql::executor::{ExecutionResult, SqlExecutor};
+use kalamdb_core::sql::executor::{ExecutionMetadata, ExecutionResult, SqlExecutor};
 use log::warn;
 use std::sync::Arc;
 use std::time::Instant;
@@ -359,12 +359,35 @@ pub async fn execute_sql_v1(
         .app_data::<web::Data<Arc<SqlExecutor>>>()
         .map(|data| data.as_ref());
 
+    let resolved_ip = http_req
+        .extensions()
+        .get::<AuthenticatedUser>()
+        .and_then(|user| user.connection_info.remote_addr.clone())
+        .or_else(|| {
+            http_req
+                .headers()
+                .get("X-Forwarded-For")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|raw| raw.split(',').next().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+        })
+        .or_else(|| {
+            http_req
+                .connection_info()
+                .realip_remote_addr()
+                .map(|s| s.to_string())
+        });
+    let execution_metadata = ExecutionMetadata {
+        ip_address: resolved_ip,
+    };
+
     for (idx, sql) in statements.iter().enumerate() {
         match execute_single_statement(
             sql,
             session_factory.get_ref(),
             sql_executor,
             user_id.as_ref(),
+            Some(&execution_metadata),
         )
         .await
         {
@@ -393,11 +416,15 @@ async fn execute_single_statement(
     session_factory: &Arc<DataFusionSessionFactory>,
     sql_executor: Option<&Arc<SqlExecutor>>,
     user_id: Option<&UserId>,
+    metadata: Option<&ExecutionMetadata>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     // If sql_executor is available, use it (production path)
     if let Some(sql_executor) = sql_executor {
         // Execute through SqlExecutor (handles both custom DDL and DataFusion)
-        match sql_executor.execute(sql, user_id).await {
+        match sql_executor
+            .execute_with_metadata(sql, user_id, metadata)
+            .await
+        {
             Ok(result) => {
                 // Convert ExecutionResult to QueryResult
                 match result {

@@ -48,7 +48,7 @@ pub struct UserTableFlushJob {
     live_query_manager: Option<Arc<LiveQueryManager>>,
 
     /// Optional JobsTableProvider for job state persistence (T158d)
-    jobs_provider: Option<Arc<crate::tables::system::jobs_provider::JobsTableProvider>>,
+    jobs_provider: Option<Arc<crate::tables::system::JobsTableProvider>>,
 }
 
 /// Result of a flush job execution
@@ -109,7 +109,7 @@ impl UserTableFlushJob {
     /// # T158d: Enable job state persistence to system.jobs table
     pub fn with_jobs_provider(
         mut self,
-        provider: Arc<crate::tables::system::jobs_provider::JobsTableProvider>,
+        provider: Arc<crate::tables::system::JobsTableProvider>,
     ) -> Self {
         self.jobs_provider = Some(provider);
         self

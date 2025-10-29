@@ -7,7 +7,7 @@ use crate::error::KalamDbError;
 use kalamdb_commons::models::Role;
 use kalamdb_commons::system::User;
 use kalamdb_commons::UserId;
-use kalamdb_store::{EntityStoreV2, StorageBackend};
+use kalamdb_store::{Partition, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -20,7 +20,7 @@ pub struct RoleIndexEntry {
 /// Role index implementation
 pub struct RoleIndex {
     backend: Arc<dyn StorageBackend>,
-    partition: String,
+    partition: Partition,
 }
 
 impl RoleIndex {
@@ -34,8 +34,13 @@ impl RoleIndex {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
         Self {
             backend,
-            partition: "system_users_role_idx".to_string(),
+            partition: Partition::new("system_users_role_idx"),
         }
+    }
+
+    /// Return the partition name (for tests/diagnostics)
+    pub fn partition(&self) -> &str {
+        self.partition.name()
     }
 
     /// Add a user to the role index
@@ -113,24 +118,17 @@ impl RoleIndex {
             }
         }
 
-        // Create temporary user just for indexing (we only need id and role)
-        let user = User {
-            id: user_id.clone(),
-            username: String::new(), // Not used for role index
-            password_hash: String::new(),
-            role: new_role.clone(),
-            email: None,
-            auth_type: kalamdb_commons::AuthType::Password,
-            auth_data: None,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            last_seen: None,
-            deleted_at: None,
-            storage_mode: kalamdb_commons::StorageMode::Embedded,
-            storage_id: kalamdb_commons::StorageId::new("local"),
-        };
+        let role_key = role_to_key(new_role);
+        let user_id_str = user_id.as_str().to_string();
 
-        self.index_user(&user)?;
+        let mut entry = self.get_entry(&role_key)?.unwrap_or(RoleIndexEntry {
+            user_ids: Vec::new(),
+        });
+
+        if !entry.user_ids.contains(&user_id_str) {
+            entry.user_ids.push(user_id_str);
+            self.put_entry(&role_key, &entry)?;
+        }
         Ok(())
     }
 
@@ -187,6 +185,7 @@ fn role_to_key(role: &Role) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::models::UserName;
     use kalamdb_commons::{AuthType, StorageId, StorageMode};
     use kalamdb_store::InMemoryBackend;
 
@@ -198,18 +197,18 @@ mod tests {
     fn create_test_user(id: &str, username: &str, role: Role) -> User {
         User {
             id: UserId::new(id),
-            username: username.to_string(),
+            username: UserName::new(username),
             password_hash: "hashed_password".to_string(),
             role,
             email: Some(format!("{}@example.com", username)),
             auth_type: AuthType::Password,
             auth_data: None,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            storage_mode: StorageMode::Table,
+            storage_id: Some(StorageId::new("local")),
+            created_at: chrono::Utc::now().timestamp_millis(),
+            updated_at: chrono::Utc::now().timestamp_millis(),
             last_seen: None,
             deleted_at: None,
-            storage_mode: StorageMode::Embedded,
-            storage_id: StorageId::new("local"),
         }
     }
 

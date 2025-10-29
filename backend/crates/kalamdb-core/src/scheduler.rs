@@ -497,7 +497,7 @@ impl FlushScheduler {
                 && job.job_type == JobType::Flush
                 && job.table_name.as_ref().map(|tn| tn.as_str()) == Some(table_name)
             {
-                return Ok(Some(job.job_id));
+                return Ok(Some(job.job_id.to_string()));
             }
         }
 

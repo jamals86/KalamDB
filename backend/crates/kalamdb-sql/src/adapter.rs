@@ -3,11 +3,11 @@
 //! Provides low-level read/write operations for system tables in RocksDB.
 
 // Import all system models from the crate root (which re-exports from commons)
-use crate::{Job, LiveQuery, Namespace, Storage, Table, TableSchema, User};
+use crate::{AuditLogEntry, Job, LiveQuery, Namespace, Storage, Table, TableSchema, User};
 // use kalamdb_commons::models::TableDefinition; // Unused
 use anyhow::{anyhow, Result};
 use kalamdb_commons::{StoragePartition, SystemTable};
-use kalamdb_store::StorageBackend;
+use kalamdb_store::{AuditLogStore, StorageBackend};
 use std::sync::Arc;
 
 /// Storage adapter for system tables (backend-agnostic)
@@ -40,6 +40,19 @@ impl StorageAdapter {
             Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
             None => Ok(None),
         }
+    }
+
+    /// Insert an audit log entry
+    pub fn insert_audit_log(&self, entry: &AuditLogEntry) -> Result<()> {
+        let store = AuditLogStore::new(self.backend.clone());
+        store.append(entry)?;
+        Ok(())
+    }
+
+    /// Scan all audit log entries
+    pub fn scan_audit_logs(&self) -> Result<Vec<AuditLogEntry>> {
+        let store = AuditLogStore::new(self.backend.clone());
+        Ok(store.scan_all()?)
     }
 
     /// Insert a new user

@@ -21,7 +21,7 @@ pub struct ServerConfig {
     pub stream: StreamSettings,
     #[serde(default)]
     pub rate_limit: RateLimitSettings,
-    #[serde(default)]
+    #[serde(default, alias = "authentication")]
     pub auth: AuthSettings,
     #[serde(default)]
     pub oauth: OAuthSettings,
@@ -237,6 +237,10 @@ pub struct AuthSettings {
     /// Bcrypt cost factor (default: 12, range: 4-31)
     #[serde(default = "default_auth_bcrypt_cost")]
     pub bcrypt_cost: u32,
+
+    /// Enforce password complexity policy (uppercase, lowercase, digit, special)
+    #[serde(default = "default_auth_enforce_password_complexity")]
+    pub enforce_password_complexity: bool,
 }
 
 /// OAuth settings (Phase 10, User Story 8)
@@ -341,6 +345,7 @@ impl Default for AuthSettings {
             min_password_length: default_auth_min_password_length(),
             max_password_length: default_auth_max_password_length(),
             bcrypt_cost: default_auth_bcrypt_cost(),
+            enforce_password_complexity: default_auth_enforce_password_complexity(),
         }
     }
 }
@@ -547,6 +552,10 @@ fn default_auth_max_password_length() -> usize {
 
 fn default_auth_bcrypt_cost() -> u32 {
     12 // Bcrypt cost factor 12 (good balance of security and performance)
+}
+
+fn default_auth_enforce_password_complexity() -> bool {
+    false
 }
 
 // OAuth defaults (Phase 10, User Story 8)

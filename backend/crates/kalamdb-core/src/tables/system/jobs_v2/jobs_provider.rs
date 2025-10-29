@@ -120,6 +120,18 @@ impl JobsTableProvider {
         Ok(())
     }
 
+    /// Cancel a running job (string version for backward compatibility)
+    pub fn cancel_job_str(&self, job_id: &str) -> Result<(), KalamDbError> {
+        let job_id_typed = JobId::new(job_id);
+        self.cancel_job(&job_id_typed)
+    }
+
+    /// Get a job by string ID (for backward compatibility)
+    pub fn get_job_str(&self, job_id: &str) -> Result<Option<Job>, KalamDbError> {
+        let job_id_typed = JobId::new(job_id);
+        self.get_job(&job_id_typed)
+    }
+
     /// Delete jobs older than retention period (in days)
     pub fn cleanup_old_jobs(&self, retention_days: i64) -> Result<usize, KalamDbError> {
         use kalamdb_commons::JobStatus;

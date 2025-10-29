@@ -27,6 +27,7 @@
 //! let owned: String = user_id.into_string();
 //! ```
 
+mod audit_log_id;
 mod namespace_id;
 mod storage_id;
 pub mod system;
@@ -41,6 +42,7 @@ mod table_id;
 mod user_name;
 mod user_row_id;
 
+pub use audit_log_id::AuditLogId;
 pub use namespace_id::NamespaceId;
 pub use storage_id::StorageId;
 pub use table_name::TableName;
