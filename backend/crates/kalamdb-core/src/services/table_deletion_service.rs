@@ -15,6 +15,7 @@
 
 use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
+use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_commons::models::{JobId, JobStatus, JobType};
 use kalamdb_sql::{Job, KalamSql};

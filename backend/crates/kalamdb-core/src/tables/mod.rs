@@ -6,6 +6,7 @@
 //! - Stream tables: Ephemeral event streaming tables (in-memory EntityStore)
 //! - System tables: Internal system metadata tables (EntityStore-based v2 providers)
 
+pub mod arrow_json_conversion;
 pub mod parquet_scan;
 pub mod system;
 pub mod user_tables;

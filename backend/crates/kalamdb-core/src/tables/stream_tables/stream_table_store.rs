@@ -2,9 +2,9 @@
 //!
 //! This module provides a SystemTableStore-based in-memory implementation for ephemeral stream tables.
 
-use crate::tables::SystemTableStore;
+use crate::stores::SystemTableStore;
 use kalamdb_commons::models::{NamespaceId, TableName};
-use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend, EntityStore};
+use kalamdb_store::{entity_store::EntityStore, test_utils::InMemoryBackend, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

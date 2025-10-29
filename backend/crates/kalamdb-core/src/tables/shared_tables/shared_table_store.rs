@@ -5,7 +5,7 @@
 use crate::stores::SystemTableStore;
 use kalamdb_commons::models::{NamespaceId, TableName};
 use kalamdb_commons::TableAccess;
-use kalamdb_store::{EntityStore, StorageBackend};
+use kalamdb_store::{entity_store::EntityStore, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -99,9 +99,8 @@ mod tests {
 
         // Put and get
         store.put(&key, &row).unwrap();
-        let retrieved = store.get(&key).unwrap();
-        assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap(), row);
+        let retrieved = store.get(&key).unwrap().unwrap();
+        assert_eq!(retrieved, row);
     }
 
     #[test]

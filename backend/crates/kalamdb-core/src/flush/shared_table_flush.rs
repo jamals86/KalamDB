@@ -8,6 +8,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::models::SharedTableRow;
 use crate::storage::ParquetWriter;
+use crate::stores::system_table::SharedTableStoreExt;
 use crate::tables::SharedTableStore;
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -231,7 +232,7 @@ impl SharedTableFlushJob {
 
         let mut rows: Vec<(Vec<u8>, JsonValue)> = Vec::new();
         let mut scanned = 0usize;
-        while let Some((key_bytes, value_bytes)) = iter.next() {
+        while let Some(Ok((key_bytes, value_bytes))) = iter.next() {
             scanned += 1;
             // decode and filter soft-deleted
             let row: SharedTableRow = match serde_json::from_slice(&value_bytes) {
@@ -378,8 +379,16 @@ impl SharedTableFlushJob {
             return Ok(());
         }
 
+        let keys_as_strings: Vec<String> = keys
+            .iter()
+            .map(|k| String::from_utf8_lossy(k).to_string())
+            .collect();
         self.store
-            .delete_batch_by_keys(self.namespace_id.as_str(), self.table_name.as_str(), &keys)
+            .delete_batch_by_keys(
+                self.namespace_id.as_str(),
+                self.table_name.as_str(),
+                &keys_as_strings,
+            )
             .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed rows: {}", e)))?;
 
         log::debug!("Deleted {} flushed rows from storage", keys.len());

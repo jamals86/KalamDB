@@ -36,6 +36,7 @@ use crate::services::{
     UserTableService,
 };
 use crate::sql::datafusion_session::DataFusionSessionFactory;
+use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use crate::tables::{
     system::{NamespacesTableProvider, TablesTableProvider},
@@ -3358,7 +3359,9 @@ impl SqlExecutor {
             .shared_table_store
             .as_ref()
             .ok_or_else(|| KalamDbError::InvalidOperation("Store not configured".to_string()))?
-            .scan(&update_info.namespace, &update_info.table)
+            let all_rows = store
+                .scan(&update_info.namespace, &update_info.table)
+                .map_err(|e| KalamDbError::Other(e.to_string()))?;
             .map_err(|e| KalamDbError::Other(format!("Scan failed: {}", e)))?;
 
         // Filter rows by WHERE clause (simple evaluation: col = 'value')

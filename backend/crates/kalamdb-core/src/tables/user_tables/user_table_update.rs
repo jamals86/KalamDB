@@ -9,7 +9,10 @@
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
+use crate::stores::system_table::SharedTableStoreExt;
+use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId};
 use crate::tables::UserTableStore;
+use kalamdb_store::EntityStoreV2 as EntityStore;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -78,9 +81,12 @@ impl UserTableUpdateHandler {
 
         // Read existing row from store
         let key = UserTableRowId::new(user_id.clone(), row_id);
-        let existing_row = self
-            .store
-            .get(&key)
+        let existing_row = SharedTableStoreExt::get(
+            &self.store,
+            namespace_id.as_str(),
+            table_name.as_str(),
+            row_id,
+        )
             .map_err(|e| KalamDbError::Other(format!("Failed to read row: {}", e)))?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
@@ -114,7 +120,12 @@ impl UserTableUpdateHandler {
 
         // Write updated row back
         self.store
-            .put(&key, &updated_row)
+            .put(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                row_id,
+                &updated_row,
+            )
             .map_err(|e| KalamDbError::Other(format!("Failed to write updated row: {}", e)))?;
 
         log::debug!(
@@ -133,14 +144,14 @@ impl UserTableUpdateHandler {
 
             // Add user_id to notification data for filter matching
             let mut notification_data = updated_row;
-            if let Some(obj) = notification_data.as_object_mut() {
+            if let Some(obj) = notification_data.fields.as_object_mut() {
                 obj.insert("user_id".to_string(), serde_json::json!(user_id.as_str()));
             }
 
             let notification = ChangeNotification::update(
                 qualified_table_name.clone(),
                 old_data,
-                notification_data,
+                serde_json::to_value(notification_data).unwrap(),
             );
 
             let mgr = Arc::clone(manager);
@@ -200,12 +211,19 @@ impl UserTableUpdateHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tables::user_tables::user_table_store::{
+        new_user_table_store, UserTableRow, UserTableRowId,
+    };
     use crate::tables::UserTableStore;
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn setup_test_handler() -> (UserTableUpdateHandler, Arc<UserTableStore>) {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = Arc::new(UserTableStore::new(backend, "user_table:app:users"));
+        let store = Arc::new(new_user_table_store(
+            backend,
+            &NamespaceId::new("test_ns"),
+            &TableName::new("test_table"),
+        ));
         let handler = UserTableUpdateHandler::new(store.clone());
         (handler, store)
     }
@@ -228,7 +246,7 @@ mod tests {
             _updated: "2025-01-01T00:00:00Z".to_string(),
             _deleted: false,
         };
-        store.put(&key, &row).unwrap();
+        store.put(&namespace_id, &table_name, row_id, &row).unwrap();
 
         // Update the row
         let updates = serde_json::json!({"age": 31, "city": "NYC"});
@@ -240,7 +258,7 @@ mod tests {
 
         // Verify the update
         let stored = store
-            .get(&key)
+            .get(&namespace_id, &table_name, row_id)
             .unwrap()
             .expect("Row should exist");
         assert_eq!(stored.fields["name"], "Alice"); // Unchanged
@@ -286,7 +304,7 @@ mod tests {
             _updated: "2025-01-01T00:00:00Z".to_string(),
             _deleted: false,
         };
-        store.put(&key1, &row1).unwrap();
+        store.put(&namespace_id, &table_name, "row1", &row1).unwrap();
 
         let key2 = UserTableRowId::new(user_id.clone(), "row2");
         let row2 = UserTableRow {
@@ -296,7 +314,7 @@ mod tests {
             _updated: "2025-01-01T00:00:00Z".to_string(),
             _deleted: false,
         };
-        store.put(&key2, &row2).unwrap();
+        store.put(&namespace_id, &table_name, "row2", &row2).unwrap();
 
         // Update batch
         let row_updates = vec![
@@ -312,13 +330,13 @@ mod tests {
 
         // Verify updates
         let stored1 = store
-            .get(&key1)
+            .get(&namespace_id, &table_name, "row1")
             .unwrap()
             .expect("Row1 should exist");
         assert_eq!(stored1.fields["age"], 31);
 
         let stored2 = store
-            .get(&key2)
+            .get(&namespace_id, &table_name, "row2")
             .unwrap()
             .expect("Row2 should exist");
         assert_eq!(stored2.fields["age"], 26);
@@ -341,7 +359,7 @@ mod tests {
             _updated: "2025-01-01T00:00:00Z".to_string(),
             _deleted: false,
         };
-        store.put(&key, &row).unwrap();
+        store.put(&namespace_id, &table_name, row_id, &row).unwrap();
 
         // Try to update system columns
         let updates = serde_json::json!({
@@ -356,7 +374,7 @@ mod tests {
 
         // Verify system columns were NOT modified by updates
         let stored = store
-            .get(&key)
+            .get(&namespace_id, &table_name, row_id)
             .unwrap()
             .expect("Row should exist");
         assert_eq!(stored.fields["name"], "Bob"); // User field updated
@@ -381,7 +399,7 @@ mod tests {
             _updated: "2025-01-01T00:00:00Z".to_string(),
             _deleted: false,
         };
-        store.put(&key1, &row1).unwrap();
+        store.put(&namespace_id, &table_name, "row1", &row1).unwrap();
 
         let key2 = UserTableRowId::new(user2.clone(), "row1");
         let row2 = UserTableRow {
@@ -391,7 +409,7 @@ mod tests {
             _updated: "2025-01-01T00:00:00Z".to_string(),
             _deleted: false,
         };
-        store.put(&key2, &row2).unwrap();
+        store.put(&namespace_id, &table_name, "row1", &row2).unwrap();
 
         // Update user1's row
         handler
@@ -406,7 +424,7 @@ mod tests {
 
         // Verify user2's row is unchanged
         let stored2 = store
-            .get(&key2)
+            .get(&namespace_id, &table_name, "row1")
             .unwrap()
             .expect("User2's row should exist");
         assert_eq!(stored2.fields["name"], "Bob"); // Unchanged
@@ -428,7 +446,7 @@ mod tests {
             _updated: "2025-01-01T00:00:00Z".to_string(),
             _deleted: false,
         };
-        store.put(&key, &row).unwrap();
+        store.put(&namespace_id, &table_name, "row1", &row).unwrap();
 
         // Try to update with non-object
         let updates = serde_json::json!(["not", "an", "object"]);

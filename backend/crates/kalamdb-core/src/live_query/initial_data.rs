@@ -7,6 +7,7 @@
 use crate::catalog::TableType;
 use crate::error::KalamDbError;
 use crate::live_query::filter::FilterPredicate;
+use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use chrono::DateTime;
 use serde_json::Value as JsonValue;
@@ -164,11 +165,11 @@ impl InitialDataFetcher {
                         namespace, table, e
                     ))
                 })? {
-                    if !include_deleted && Self::is_deleted(&row) {
+                    if !include_deleted && row._deleted {
                         continue;
                     }
 
-                    let timestamp = Self::extract_updated_timestamp(&row);
+                    let timestamp = Self::extract_updated_timestamp(&serde_json::to_value(&row).unwrap());
                     if let Some(since) = since_timestamp {
                         if timestamp < since {
                             continue;
@@ -177,14 +178,14 @@ impl InitialDataFetcher {
 
                     if let Some(predicate) = filter.as_ref() {
                         if !predicate
-                            .matches(&row)
+                            .matches(&serde_json::to_value(&row).unwrap())
                             .map_err(|e| KalamDbError::Other(e.to_string()))?
                         {
                             continue;
                         }
                     }
 
-                    rows.push((timestamp, row));
+                    rows.push((timestamp, serde_json::to_value(row).unwrap()));
                 }
                 rows
             }

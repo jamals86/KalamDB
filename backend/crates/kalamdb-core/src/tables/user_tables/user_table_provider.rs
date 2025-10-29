@@ -11,7 +11,9 @@ use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
 use crate::error::KalamDbError;
 use crate::ids::SnowflakeGenerator;
 use crate::live_query::manager::LiveQueryManager;
+use crate::stores::system_table::UserTableStoreExt;
 use crate::tables::UserTableStore;
+use crate::tables::arrow_json_conversion::{arrow_batch_to_json, json_rows_to_arrow_batch, validate_insert_rows};
 use super::{UserTableDeleteHandler, UserTableInsertHandler, UserTableUpdateHandler};
 use async_trait::async_trait;
 use chrono::Utc;
@@ -225,63 +227,7 @@ impl UserTableProvider {
     ///
     /// This validation happens BEFORE the actual insert to ensure data consistency.
     fn validate_insert_rows(&self, rows: &[JsonValue]) -> Result<(), String> {
-        for (row_idx, row) in rows.iter().enumerate() {
-            let obj = row
-                .as_object()
-                .ok_or_else(|| format!("Row {} is not a JSON object", row_idx))?;
-
-            // Check each field in the schema
-            for field in self.schema.fields() {
-                let field_name = field.name();
-
-                // Skip system columns - they're auto-populated
-                if field_name == "_updated" || field_name == "_deleted" {
-                    continue;
-                }
-
-                // Skip auto-generated columns - they're handled by prepare_insert_rows
-                if field_name == "id" || field_name == "created_at" {
-                    continue;
-                }
-
-                let value = obj.get(field_name);
-
-                // Check NOT NULL constraint
-                if !field.is_nullable() {
-                    match value {
-                        None | Some(JsonValue::Null) => {
-                            return Err(format!(
-                                "Row {}: Column '{}' is declared as non-nullable but received NULL value. Please provide a value for this column.",
-                                row_idx, field_name
-                            ));
-                        }
-                        _ => {} // Has a value, constraint satisfied
-                    }
-                }
-
-                // Optional: Basic type validation
-                if let Some(val) = value {
-                    if !val.is_null() {
-                        let type_valid = match field.data_type() {
-                            DataType::Int32 | DataType::Int64 => val.is_i64() || val.is_u64(),
-                            DataType::Float64 => val.is_f64() || val.is_i64() || val.is_u64(),
-                            DataType::Utf8 => val.is_string(),
-                            DataType::Boolean => val.is_boolean(),
-                            _ => true, // Skip validation for other types
-                        };
-
-                        if !type_valid {
-                            return Err(format!(
-                                "Row {}: Column '{}' has incompatible type. Expected {:?}, got {:?}",
-                                row_idx, field_name, field.data_type(), val
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
+        validate_insert_rows(&self.schema, rows)
     }
 
     /// Populate generated columns (id, created_at) when they are missing from the INSERT payload
@@ -492,7 +438,10 @@ impl TableProvider for UserTableProvider {
         };
 
         // Convert JSON rows to Arrow RecordBatch (includes system columns)
-        let row_values: Vec<JsonValue> = limited_rows.into_iter().map(|(_id, data)| data).collect();
+        let row_values: Vec<JsonValue> = limited_rows
+            .into_iter()
+            .map(|(_id, data)| serde_json::to_value(data).unwrap())
+            .collect();
 
         let batch = json_rows_to_arrow_batch(&full_schema, row_values).map_err(|e| {
             DataFusionError::Execution(format!("JSON to Arrow conversion failed: {}", e))
@@ -525,7 +474,7 @@ impl TableProvider for UserTableProvider {
         // Process each batch
         for batch in batches {
             // Convert Arrow RecordBatch to JSON rows
-            let mut json_rows = arrow_batch_to_json(&batch).map_err(|e| {
+            let mut json_rows = arrow_batch_to_json(&batch, true).map_err(|e| {
                 DataFusionError::Execution(format!("Arrow to JSON conversion failed: {}", e))
             })?;
 
@@ -550,280 +499,7 @@ impl TableProvider for UserTableProvider {
     }
 }
 
-/// Convert Arrow RecordBatch to Vec of JSON objects
-///
-/// This is a helper function for INSERT operations that converts Arrow columnar
-/// data to row-oriented JSON objects suitable for storage.
-///
-/// Supports common Arrow data types:
-/// - Utf8 (String)
-/// - Int32, Int64 (Integers)
-/// - Float64 (Floating point)
-/// - Boolean
-/// - Timestamp (milliseconds)
-///
-/// Handles null values correctly for all types.
-fn arrow_batch_to_json(
-    batch: &datafusion::arrow::record_batch::RecordBatch,
-) -> Result<Vec<JsonValue>, String> {
-    use datafusion::arrow::array::*;
-    use datafusion::arrow::datatypes::DataType;
 
-    let schema = batch.schema();
-    let num_rows = batch.num_rows();
-    let mut rows = Vec::with_capacity(num_rows);
-
-    for row_idx in 0..num_rows {
-        let mut row_map = serde_json::Map::new();
-
-        for (col_idx, field) in schema.fields().iter().enumerate() {
-            let column = batch.column(col_idx);
-            let field_name = field.name().clone();
-
-            // Skip system columns - they'll be added automatically by the insert handler
-            if field_name == "_updated" || field_name == "_deleted" {
-                continue;
-            }
-
-            // Extract value based on data type
-            let value = match field.data_type() {
-                DataType::Utf8 => {
-                    let array = column
-                        .as_any()
-                        .downcast_ref::<StringArray>()
-                        .ok_or_else(|| {
-                            format!("Failed to downcast column {} to StringArray", field_name)
-                        })?;
-
-                    if array.is_null(row_idx) {
-                        JsonValue::Null
-                    } else {
-                        JsonValue::String(array.value(row_idx).to_string())
-                    }
-                }
-                DataType::Int32 => {
-                    let array = column
-                        .as_any()
-                        .downcast_ref::<Int32Array>()
-                        .ok_or_else(|| {
-                            format!("Failed to downcast column {} to Int32Array", field_name)
-                        })?;
-
-                    if array.is_null(row_idx) {
-                        JsonValue::Null
-                    } else {
-                        JsonValue::Number(array.value(row_idx).into())
-                    }
-                }
-                DataType::Int64 => {
-                    let array = column
-                        .as_any()
-                        .downcast_ref::<Int64Array>()
-                        .ok_or_else(|| {
-                            format!("Failed to downcast column {} to Int64Array", field_name)
-                        })?;
-
-                    if array.is_null(row_idx) {
-                        JsonValue::Null
-                    } else {
-                        JsonValue::Number(array.value(row_idx).into())
-                    }
-                }
-                DataType::Float64 => {
-                    let array =
-                        column
-                            .as_any()
-                            .downcast_ref::<Float64Array>()
-                            .ok_or_else(|| {
-                                format!("Failed to downcast column {} to Float64Array", field_name)
-                            })?;
-
-                    if array.is_null(row_idx) {
-                        JsonValue::Null
-                    } else {
-                        let f = array.value(row_idx);
-                        JsonValue::Number(
-                            serde_json::Number::from_f64(f)
-                                .ok_or_else(|| format!("Invalid f64 value: {}", f))?,
-                        )
-                    }
-                }
-                DataType::Boolean => {
-                    let array =
-                        column
-                            .as_any()
-                            .downcast_ref::<BooleanArray>()
-                            .ok_or_else(|| {
-                                format!("Failed to downcast column {} to BooleanArray", field_name)
-                            })?;
-
-                    if array.is_null(row_idx) {
-                        JsonValue::Null
-                    } else {
-                        JsonValue::Bool(array.value(row_idx))
-                    }
-                }
-                DataType::Timestamp(_, _) => {
-                    let array = column
-                        .as_any()
-                        .downcast_ref::<TimestampMillisecondArray>()
-                        .ok_or_else(|| {
-                            format!(
-                                "Failed to downcast column {} to TimestampMillisecondArray",
-                                field_name
-                            )
-                        })?;
-
-                    if array.is_null(row_idx) {
-                        JsonValue::Null
-                    } else {
-                        JsonValue::Number(array.value(row_idx).into())
-                    }
-                }
-                _ => {
-                    return Err(format!(
-                        "Unsupported data type for column {}: {:?}",
-                        field_name,
-                        field.data_type()
-                    ));
-                }
-            };
-
-            row_map.insert(field_name, value);
-        }
-
-        rows.push(JsonValue::Object(row_map));
-    }
-
-    Ok(rows)
-}
-
-/// Convert JSON rows to Arrow RecordBatch
-///
-/// This is a helper function for SELECT operations that converts row-oriented
-/// JSON objects to Arrow columnar format.
-///
-/// Supports common Arrow data types:
-/// - Utf8 (String)
-/// - Int32, Int64 (Integers)
-/// - Float64 (Floating point)
-/// - Boolean
-/// - Timestamp (milliseconds)
-///
-/// Handles null values correctly for all types.
-fn json_rows_to_arrow_batch(
-    schema: &SchemaRef,
-    rows: Vec<JsonValue>,
-) -> Result<datafusion::arrow::record_batch::RecordBatch, String> {
-    use datafusion::arrow::array::*;
-    use datafusion::arrow::datatypes::DataType;
-
-    if rows.is_empty() {
-        // Return empty batch with correct schema
-        let empty_arrays: Vec<Arc<dyn datafusion::arrow::array::Array>> = schema
-            .fields()
-            .iter()
-            .map(|field| {
-                let array: Arc<dyn datafusion::arrow::array::Array> = match field.data_type() {
-                    DataType::Utf8 => Arc::new(StringArray::from(Vec::<Option<String>>::new())),
-                    DataType::Int32 => Arc::new(Int32Array::from(Vec::<Option<i32>>::new())),
-                    DataType::Int64 => Arc::new(Int64Array::from(Vec::<Option<i64>>::new())),
-                    DataType::Float64 => Arc::new(Float64Array::from(Vec::<Option<f64>>::new())),
-                    DataType::Boolean => Arc::new(BooleanArray::from(Vec::<Option<bool>>::new())),
-                    DataType::Timestamp(TimeUnit::Millisecond, _) => {
-                        Arc::new(TimestampMillisecondArray::from(Vec::<Option<i64>>::new()))
-                    }
-                    _ => Arc::new(StringArray::from(Vec::<Option<String>>::new())),
-                };
-                array
-            })
-            .collect();
-
-        return datafusion::arrow::record_batch::RecordBatch::try_new(schema.clone(), empty_arrays)
-            .map_err(|e| format!("Failed to create empty batch: {}", e));
-    }
-
-    // Build arrays for each column
-    let mut arrays: Vec<Arc<dyn datafusion::arrow::array::Array>> = Vec::new();
-
-    for field in schema.fields() {
-        let array: Arc<dyn datafusion::arrow::array::Array> = match field.data_type() {
-            DataType::Utf8 => {
-                let values: Vec<Option<String>> = rows
-                    .iter()
-                    .map(|row_data| {
-                        row_data
-                            .get(field.name())
-                            .and_then(|v| v.as_str().map(|s| s.to_string()))
-                    })
-                    .collect();
-                Arc::new(StringArray::from(values))
-            }
-            DataType::Int32 => {
-                let values: Vec<Option<i32>> = rows
-                    .iter()
-                    .map(|row_data| {
-                        row_data
-                            .get(field.name())
-                            .and_then(|v| v.as_i64().map(|i| i as i32))
-                    })
-                    .collect();
-                Arc::new(Int32Array::from(values))
-            }
-            DataType::Int64 => {
-                let values: Vec<Option<i64>> = rows
-                    .iter()
-                    .map(|row_data| row_data.get(field.name()).and_then(|v| v.as_i64()))
-                    .collect();
-                Arc::new(Int64Array::from(values))
-            }
-            DataType::Float64 => {
-                let values: Vec<Option<f64>> = rows
-                    .iter()
-                    .map(|row_data| row_data.get(field.name()).and_then(|v| v.as_f64()))
-                    .collect();
-                Arc::new(Float64Array::from(values))
-            }
-            DataType::Boolean => {
-                let values: Vec<Option<bool>> = rows
-                    .iter()
-                    .map(|row_data| row_data.get(field.name()).and_then(|v| v.as_bool()))
-                    .collect();
-                Arc::new(BooleanArray::from(values))
-            }
-            DataType::Timestamp(TimeUnit::Millisecond, _) => {
-                let values: Vec<Option<i64>> = rows
-                    .iter()
-                    .map(|row_data| {
-                        row_data.get(field.name()).and_then(|v| {
-                            // Try to parse as i64 timestamp or ISO string
-                            v.as_i64().or_else(|| {
-                                v.as_str().and_then(|s| {
-                                    chrono::DateTime::parse_from_rfc3339(s)
-                                        .ok()
-                                        .map(|dt| dt.timestamp_millis())
-                                })
-                            })
-                        })
-                    })
-                    .collect();
-                Arc::new(TimestampMillisecondArray::from(values))
-            }
-            _ => {
-                return Err(format!(
-                    "Unsupported data type for field {}: {:?}",
-                    field.name(),
-                    field.data_type()
-                ));
-            }
-        };
-
-        arrays.push(array);
-    }
-
-    datafusion::arrow::record_batch::RecordBatch::try_new(schema.clone(), arrays)
-        .map_err(|e| format!("Failed to create RecordBatch: {}", e))
-}
 
 #[cfg(test)]
 mod tests {

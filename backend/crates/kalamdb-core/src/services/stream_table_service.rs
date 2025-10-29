@@ -90,10 +90,15 @@ impl StreamTableService {
         // Save complete table definition to information_schema_tables (atomic write)
         self.save_table_definition(&stmt, &schema)?;
 
-        // Create column family for this stream table
-        self.stream_table_store
-            .create_column_family(stmt.namespace_id.as_str(), stmt.table_name.as_str())
-            .map_err(|e| KalamDbError::Other(format!("Failed to create column family: {}", e)))?;
+                // Create the column family in RocksDB
+        SharedTableStoreExt::create_column_family(
+            self.stream_table_store.as_ref(),
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str()
+        )
+        .map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to create column family: {}", e))
+        })?;
 
         // Create and return table metadata
         let metadata = TableMetadata {

@@ -19,6 +19,7 @@ use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 // TODO: Phase 2b - StorageLocationService deprecated (replaced by system_storages)
 // use crate::services::storage_location_service::StorageLocationService;
 use crate::storage::column_family_manager::ColumnFamilyManager;
+use crate::stores::system_table::UserTableStoreExt;
 use crate::tables::UserTableStore;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use kalamdb_commons::models::StorageId;

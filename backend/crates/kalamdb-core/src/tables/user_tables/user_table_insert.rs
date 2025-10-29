@@ -11,10 +11,13 @@
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
+use crate::stores::system_table::SharedTableStoreExt;
+use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId};
 use crate::tables::UserTableStore;
 use arrow::datatypes::Schema;
 use chrono::Utc;
 use kalamdb_commons::models::ColumnDefault;
+use kalamdb_store::EntityStoreV2 as EntityStore;
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -99,9 +102,16 @@ impl UserTableInsertHandler {
         };
 
         // Delegate to UserTableStore
-        self.store
-            .put(&key, &entity)
-            .map_err(|e| KalamDbError::Other(format!("Failed to insert row: {}", e)))?;
+        // Store the entity
+        UserTableStoreExt::put(
+            self.store.as_ref(),
+            namespace_id.as_str(),
+            table_name.as_str(),
+            user_id.as_str(),
+            &row_id,
+            &entity,
+        )
+        .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to insert row: {}", e)))?;
 
         log::debug!(
             "Inserted row into {}.{} for user {} with row_id {}",
@@ -211,7 +221,13 @@ impl UserTableInsertHandler {
 
             // Delegate to UserTableStore
             self.store
-                .put(&key, &entity)
+                SharedTableStoreExt::put(
+                    &self.store,
+                    namespace_id.as_str(),
+                    table_name.as_str(),
+                    &row_id,
+                    &entity,
+                )
                 .map_err(|e| {
                     KalamDbError::Other(format!("Failed to insert row in batch: {}", e))
                 })?;
@@ -445,12 +461,16 @@ impl UserTableInsertHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::UserTableStore;
+    use crate::tables::user_tables::user_table_store::{new_user_table_store, UserTableStore};
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn setup_test_handler() -> UserTableInsertHandler {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = Arc::new(UserTableStore::new(backend, "user_table:app:users").unwrap());
+        let store = Arc::new(new_user_table_store(
+            backend,
+            &NamespaceId::new("test_ns"),
+            &TableName::new("test_table"),
+        ));
         UserTableInsertHandler::new(store)
     }
 

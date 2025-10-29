@@ -8,6 +8,7 @@
 //! - Emits structured log messages for observability
 
 use crate::error::KalamDbError;
+use crate::stores::system_table::UserTableStoreExt;
 use crate::tables::UserTableStore;
 use kalamdb_commons::models::UserName;
 use kalamdb_commons::system::User as SystemUser;

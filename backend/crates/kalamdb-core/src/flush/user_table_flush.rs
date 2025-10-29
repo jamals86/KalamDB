@@ -7,6 +7,7 @@ use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::storage::{ParquetWriter, StorageRegistry};
+use crate::stores::system_table::UserTableStoreExt;
 use crate::tables::UserTableStore;
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -399,7 +400,7 @@ impl UserTableFlushJob {
         let mut error_messages: Vec<String> = Vec::new();
 
         let mut rows_scanned = 0;
-        while let Some((key_bytes, value_bytes)) = iter.next() {
+        while let Some(Ok((key_bytes, value_bytes))) = iter.next() {
             // Decode row
             let user_table_row: crate::models::UserTableRow =
                 match serde_json::from_slice(&value_bytes) {
@@ -708,8 +709,16 @@ impl UserTableFlushJob {
             self.table_name.as_str()
         );
 
+        let keys_as_strings: Vec<String> = keys
+            .iter()
+            .map(|k| String::from_utf8_lossy(k).to_string())
+            .collect();
         self.store
-            .delete_batch_by_keys(self.namespace_id.as_str(), self.table_name.as_str(), keys)
+            .delete_batch_by_keys(
+                self.namespace_id.as_str(),
+                self.table_name.as_str(),
+                &keys_as_strings,
+            )
             .map_err(|e| {
                 log::error!(
                     "❌ Failed to delete {} flushed rows from storage (table={}.{}): {}",

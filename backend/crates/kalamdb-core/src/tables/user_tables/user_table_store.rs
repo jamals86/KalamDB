@@ -23,6 +23,11 @@ impl UserTableRowId {
         }
     }
 
+    /// Create from an existing key string (used internally)
+    pub fn from_key_string(key: String) -> Self {
+        Self { key }
+    }
+
     /// Get the full key string
     pub fn as_str(&self) -> &str {
         &self.key

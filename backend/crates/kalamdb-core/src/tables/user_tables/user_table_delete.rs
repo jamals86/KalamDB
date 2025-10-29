@@ -10,8 +10,10 @@
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
+use crate::stores::system_table::SharedTableStoreExt;
+use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId};
 use crate::tables::UserTableStore;
-use kalamdb_store::EntityStore;
+use kalamdb_store::EntityStoreV2 as EntityStore;
 use std::sync::Arc;
 
 /// User table DELETE handler
@@ -73,20 +75,21 @@ impl UserTableDeleteHandler {
         row_id: &str,
     ) -> Result<String, KalamDbError> {
         // Fetch row data BEFORE deleting (for notification)
-        let row_data = if self.live_query_manager.is_some() {
-            let key = UserTableRowId::new(user_id.clone(), row_id.to_string());
-            self.store
-                .get(&key)
-                .map_err(|e| KalamDbError::Other(format!("Failed to read row: {}", e)))?
-                .map(|entity| entity.fields)
-        } else {
-            None
-        };
+        let row_to_delete = SharedTableStoreExt::get(
+            &self.store,
+            namespace_id.as_str(),
+            table_name.as_str(),
+            row_id,
+        )
 
         // Soft delete via store (automatically updates _deleted and _updated)
-        let key = UserTableRowId::new(user_id.clone(), row_id.to_string());
         self.store
-            .delete(&key)
+            .delete(
+                namespace_id.as_str(),
+                table_name.as_str(),
+                row_id,
+                false,
+            )
             .map_err(|e| {
                 // Check if it's a "not found" error
                 if e.to_string().contains("Column family not found") {
@@ -201,9 +204,8 @@ impl UserTableDeleteHandler {
             .delete(
                 namespace_id.as_str(),
                 table_name.as_str(),
-                user_id.as_str(),
                 row_id,
-                true, // hard delete
+                true,
             )
             .map_err(|e| {
                 if e.to_string().contains("Column family not found") {
@@ -232,13 +234,20 @@ impl UserTableDeleteHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tables::user_tables::user_table_store::{
+        new_user_table_store, UserTableRow, UserTableRowId,
+    };
     use crate::tables::UserTableStore;
     use kalamdb_store::test_utils::InMemoryBackend;
     use serde_json::json;
 
     fn setup_test_handler() -> (UserTableDeleteHandler, Arc<UserTableStore>) {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = Arc::new(UserTableStore::new(backend, "user_table:app:users").unwrap());
+        let store = Arc::new(new_user_table_store(
+            backend,
+            &NamespaceId::new("test_ns"),
+            &TableName::new("test_table"),
+        ));
         let handler = UserTableDeleteHandler::new(store.clone());
         (handler, store)
     }
@@ -252,15 +261,15 @@ mod tests {
         let row_id = "row1";
 
         // Insert initial row
-        store
-            .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                row_id,
-                json!({"name": "Alice", "age": 30}),
-            )
-            .unwrap();
+        let key = UserTableRowId::new(user_id.clone(), row_id.to_string());
+        let entity = UserTableRow {
+            row_id: row_id.to_string(),
+            user_id: user_id.as_str().to_string(),
+            fields: json!({"name": "Alice", "age": 30}),
+            _updated: chrono::Utc::now().to_rfc3339(),
+            _deleted: false,
+        };
+        store.put(&namespace_id, &table_name, row_id, &entity).unwrap();
 
         // Soft delete the row
         let deleted_row_id = handler
@@ -270,14 +279,7 @@ mod tests {
         assert_eq!(deleted_row_id, row_id);
 
         // Verify the row is marked as deleted
-        let stored = store
-            .get(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                row_id,
-            )
-            .unwrap();
+        let stored = store.get(&namespace_id, &table_name, row_id).unwrap();
 
         // Soft-deleted rows are filtered out by store.get()
         assert!(
@@ -309,31 +311,47 @@ mod tests {
         let table_name = TableName::new("test_table".to_string());
         let user_id = UserId::new("user123".to_string());
 
+        // Insert initial rows
         store
             .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
+                &namespace_id,
+                &table_name,
                 "row1",
-                serde_json::json!({"name": "Alice"}),
+                &UserTableRow {
+                    row_id: "row1".to_string(),
+                    user_id: user_id.as_str().to_string(),
+                    fields: serde_json::json!({"name": "Alice"}),
+                    _updated: chrono::Utc::now().to_rfc3339(),
+                    _deleted: false,
+                },
             )
             .unwrap();
         store
             .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
+                &namespace_id,
+                &table_name,
                 "row2",
-                serde_json::json!({"name": "Bob"}),
+                &UserTableRow {
+                    row_id: "row2".to_string(),
+                    user_id: user_id.as_str().to_string(),
+                    fields: serde_json::json!({"name": "Bob"}),
+                    _updated: chrono::Utc::now().to_rfc3339(),
+                    _deleted: false,
+                },
             )
             .unwrap();
         store
             .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
+                &namespace_id,
+                &table_name,
                 "row3",
-                serde_json::json!({"name": "Charlie"}),
+                &UserTableRow {
+                    row_id: "row3".to_string(),
+                    user_id: user_id.as_str().to_string(),
+                    fields: serde_json::json!({"name": "Charlie"}),
+                    _updated: chrono::Utc::now().to_rfc3339(),
+                    _deleted: false,
+                },
             )
             .unwrap();
 
@@ -349,12 +367,7 @@ mod tests {
         // Verify all rows are soft-deleted (not returned by get)
         for row_id in &["row1", "row2", "row3"] {
             let result = store
-                .get(
-                    namespace_id.as_str(),
-                    table_name.as_str(),
-                    user_id.as_str(),
-                    row_id,
-                )
+                .get(&namespace_id, &table_name, row_id)
                 .unwrap();
             assert!(result.is_none(), "Row {} should be soft-deleted", row_id);
         }
@@ -372,20 +385,30 @@ mod tests {
 
         store
             .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user1.as_str(),
+                &namespace_id,
+                &table_name,
                 "row1",
-                serde_json::json!({"name": "Alice"}),
+                &UserTableRow {
+                    row_id: "row1".to_string(),
+                    user_id: user1.as_str().to_string(),
+                    fields: serde_json::json!({"name": "Alice"}),
+                    _updated: chrono::Utc::now().to_rfc3339(),
+                    _deleted: false,
+                },
             )
             .unwrap();
         store
             .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user2.as_str(),
+                &namespace_id,
+                &table_name,
                 "row1",
-                serde_json::json!({"name": "Bob"}),
+                &UserTableRow {
+                    row_id: "row1".to_string(),
+                    user_id: user2.as_str().to_string(),
+                    fields: serde_json::json!({"name": "Bob"}),
+                    _updated: chrono::Utc::now().to_rfc3339(),
+                    _deleted: false,
+                },
             )
             .unwrap();
 
@@ -396,23 +419,13 @@ mod tests {
 
         // Verify user1's row is soft-deleted (not returned)
         let result1 = store
-            .get(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user1.as_str(),
-                "row1",
-            )
+            .get(&namespace_id, &table_name, "row1")
             .unwrap();
         assert!(result1.is_none(), "user1's row should be soft-deleted");
 
         // Verify user2's row is NOT deleted
         let result2 = store
-            .get(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user2.as_str(),
-                "row1",
-            )
+            .get(&namespace_id, &table_name, "row1")
             .unwrap();
         assert!(result2.is_some(), "user2's row should still exist");
         assert_eq!(result2.unwrap()["name"], "Bob");
@@ -429,11 +442,16 @@ mod tests {
 
         store
             .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
+                &namespace_id,
+                &table_name,
                 "row1",
-                serde_json::json!({"name": "Alice"}),
+                &UserTableRow {
+                    row_id: "row1".to_string(),
+                    user_id: user_id.as_str().to_string(),
+                    fields: serde_json::json!({"name": "Alice"}),
+                    _updated: chrono::Utc::now().to_rfc3339(),
+                    _deleted: false,
+                },
             )
             .unwrap();
 
@@ -444,12 +462,7 @@ mod tests {
 
         // Verify the row is completely removed
         let result = store
-            .get(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                "row1",
-            )
+            .get(&namespace_id, &table_name, "row1")
             .unwrap();
 
         assert!(result.is_none(), "Row should be completely removed");
@@ -466,11 +479,16 @@ mod tests {
 
         store
             .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
+                &namespace_id,
+                &table_name,
                 "row1",
-                serde_json::json!({"name": "Alice"}),
+                &UserTableRow {
+                    row_id: "row1".to_string(),
+                    user_id: user_id.as_str().to_string(),
+                    fields: serde_json::json!({"name": "Alice"}),
+                    _updated: chrono::Utc::now().to_rfc3339(),
+                    _deleted: false,
+                },
             )
             .unwrap();
 
@@ -486,12 +504,7 @@ mod tests {
 
         // Verify row is still soft-deleted (returns None)
         let result = store
-            .get(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                "row1",
-            )
+            .get(&namespace_id, &table_name, "row1")
             .unwrap();
         assert!(result.is_none(), "Row should remain soft-deleted");
     }

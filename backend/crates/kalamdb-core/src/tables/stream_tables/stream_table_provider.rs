@@ -12,6 +12,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::tables::StreamTableStore;
 use crate::tables::system::LiveQueriesTableProvider;
+use crate::tables::arrow_json_conversion::{arrow_batch_to_json, json_rows_to_arrow_batch};
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::TableProvider;
@@ -19,7 +20,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_store::EntityStore;
+use kalamdb_store::entity_store::EntityStore;
 use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;
@@ -213,13 +214,7 @@ impl StreamTableProvider {
 
         // Insert event into StreamTableStore
         self.store
-            .put(
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
-                row_id,
-                row_data.clone(),
-                self.retention_seconds().unwrap_or(3600u32) as u64, // Default 1 hour TTL
-            )
+            .put(&StreamTableRowId::new(row_id), &row)
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         // T154: Notify live query manager with change notification
@@ -284,11 +279,8 @@ impl StreamTableProvider {
     /// Event data if found, None otherwise
     pub fn get_event(&self, row_id: &str) -> Result<Option<JsonValue>, KalamDbError> {
         self.store
-            .get(
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
-                row_id,
-            )
+            .get(&StreamTableRowId::new(row_id))
+            .map(|opt| opt.map(|row| serde_json::to_value(row).unwrap()))
             .map_err(|e| KalamDbError::Other(e.to_string()))
     }
 
@@ -315,8 +307,11 @@ impl StreamTableProvider {
     /// # Returns
     /// Number of events deleted
     pub fn evict_expired(&self) -> Result<usize, KalamDbError> {
-        self.store
-            .cleanup_expired_rows(self.namespace_id().as_str(), self.table_name().as_str())
+        SharedTableStoreExt::cleanup_expired_rows(
+            &self.store,
+            self.namespace_id().as_str(),
+            self.table_name().as_str(),
+        )
             .map_err(|e| KalamDbError::Other(e.to_string()))
     }
 }
@@ -373,7 +368,8 @@ impl TableProvider for StreamTableProvider {
         };
 
         // Convert events to Arrow RecordBatch
-        let batch = json_events_to_arrow_batch(&events_to_process, &self.schema).map_err(|e| {
+        let row_values: Vec<JsonValue> = events_to_process.into_iter().map(|(_id, data)| data).collect();
+        let batch = json_rows_to_arrow_batch(&self.schema, row_values).map_err(|e| {
             DataFusionError::Execution(format!("Failed to convert events to Arrow: {}", e))
         })?;
 
@@ -436,7 +432,7 @@ impl TableProvider for StreamTableProvider {
         // Process each batch
         for batch in batches {
             // Convert Arrow RecordBatch to JSON rows
-            let json_rows = arrow_batch_to_json(&batch).map_err(|e| {
+            let json_rows = arrow_batch_to_json(&batch, false).map_err(|e| {
                 DataFusionError::Execution(format!("Arrow to JSON conversion failed: {}", e))
             })?;
 
@@ -478,346 +474,7 @@ impl TableProvider for StreamTableProvider {
     }
 }
 
-/// Helper function to convert Arrow RecordBatch to JSON rows
-///
-/// Converts each row in the batch to a JSON object (HashMap).
-/// Similar to user_table_provider but WITHOUT system columns.
-fn arrow_batch_to_json(
-    batch: &datafusion::arrow::record_batch::RecordBatch,
-) -> Result<Vec<JsonValue>, KalamDbError> {
-    use datafusion::arrow::array::*;
-    use datafusion::arrow::datatypes::DataType;
-    use serde_json::Map;
 
-    let schema = batch.schema();
-    let num_rows = batch.num_rows();
-    let mut rows = Vec::with_capacity(num_rows);
-
-    for row_idx in 0..num_rows {
-        let mut row_map = Map::new();
-
-        for (col_idx, field) in schema.fields().iter().enumerate() {
-            let column = batch.column(col_idx);
-            let col_name = field.name().clone();
-
-            let value = match field.data_type() {
-                DataType::Utf8 => {
-                    let array = column
-                        .as_any()
-                        .downcast_ref::<StringArray>()
-                        .ok_or_else(|| {
-                            KalamDbError::Other(format!(
-                                "Expected StringArray for column {}",
-                                col_name
-                            ))
-                        })?;
-                    if array.is_null(row_idx) {
-                        JsonValue::Null
-                    } else {
-                        JsonValue::String(array.value(row_idx).to_string())
-                    }
-                }
-                DataType::Int32 => {
-                    let array = column
-                        .as_any()
-                        .downcast_ref::<Int32Array>()
-                        .ok_or_else(|| {
-                            KalamDbError::Other(format!(
-                                "Expected Int32Array for column {}",
-                                col_name
-                            ))
-                        })?;
-                    if array.is_null(row_idx) {
-                        JsonValue::Null
-                    } else {
-                        JsonValue::Number(array.value(row_idx).into())
-                    }
-                }
-                DataType::Int64 => {
-                    let array = column
-                        .as_any()
-                        .downcast_ref::<Int64Array>()
-                        .ok_or_else(|| {
-                            KalamDbError::Other(format!(
-                                "Expected Int64Array for column {}",
-                                col_name
-                            ))
-                        })?;
-                    if array.is_null(row_idx) {
-                        JsonValue::Null
-                    } else {
-                        JsonValue::Number(array.value(row_idx).into())
-                    }
-                }
-                DataType::Float64 => {
-                    let array =
-                        column
-                            .as_any()
-                            .downcast_ref::<Float64Array>()
-                            .ok_or_else(|| {
-                                KalamDbError::Other(format!(
-                                    "Expected Float64Array for column {}",
-                                    col_name
-                                ))
-                            })?;
-                    if array.is_null(row_idx) {
-                        JsonValue::Null
-                    } else {
-                        serde_json::Number::from_f64(array.value(row_idx))
-                            .map(JsonValue::Number)
-                            .unwrap_or(JsonValue::Null)
-                    }
-                }
-                DataType::Boolean => {
-                    let array =
-                        column
-                            .as_any()
-                            .downcast_ref::<BooleanArray>()
-                            .ok_or_else(|| {
-                                KalamDbError::Other(format!(
-                                    "Expected BooleanArray for column {}",
-                                    col_name
-                                ))
-                            })?;
-                    if array.is_null(row_idx) {
-                        JsonValue::Null
-                    } else {
-                        JsonValue::Bool(array.value(row_idx))
-                    }
-                }
-                DataType::Timestamp(unit, _) => {
-                    use datafusion::arrow::datatypes::TimeUnit;
-
-                    // Handle different timestamp types
-                    let value_ms = match unit {
-                        TimeUnit::Second => {
-                            let array = column
-                                .as_any()
-                                .downcast_ref::<TimestampSecondArray>()
-                                .ok_or_else(|| {
-                                    KalamDbError::Other(format!(
-                                        "Expected TimestampSecondArray for column {}",
-                                        col_name
-                                    ))
-                                })?;
-                            if array.is_null(row_idx) {
-                                JsonValue::Null
-                            } else {
-                                JsonValue::Number((array.value(row_idx) * 1000).into())
-                            }
-                        }
-                        TimeUnit::Millisecond => {
-                            let array = column
-                                .as_any()
-                                .downcast_ref::<TimestampMillisecondArray>()
-                                .ok_or_else(|| {
-                                    KalamDbError::Other(format!(
-                                        "Expected TimestampMillisecondArray for column {}",
-                                        col_name
-                                    ))
-                                })?;
-                            if array.is_null(row_idx) {
-                                JsonValue::Null
-                            } else {
-                                JsonValue::Number(array.value(row_idx).into())
-                            }
-                        }
-                        TimeUnit::Microsecond => {
-                            let array = column
-                                .as_any()
-                                .downcast_ref::<TimestampMicrosecondArray>()
-                                .ok_or_else(|| {
-                                    KalamDbError::Other(format!(
-                                        "Expected TimestampMicrosecondArray for column {}",
-                                        col_name
-                                    ))
-                                })?;
-                            if array.is_null(row_idx) {
-                                JsonValue::Null
-                            } else {
-                                JsonValue::Number((array.value(row_idx) / 1000).into())
-                            }
-                        }
-                        TimeUnit::Nanosecond => {
-                            let array = column
-                                .as_any()
-                                .downcast_ref::<TimestampNanosecondArray>()
-                                .ok_or_else(|| {
-                                    KalamDbError::Other(format!(
-                                        "Expected TimestampNanosecondArray for column {}",
-                                        col_name
-                                    ))
-                                })?;
-                            if array.is_null(row_idx) {
-                                JsonValue::Null
-                            } else {
-                                JsonValue::Number((array.value(row_idx) / 1_000_000).into())
-                            }
-                        }
-                    };
-
-                    value_ms
-                }
-                _ => {
-                    return Err(KalamDbError::Other(format!(
-                        "Unsupported data type {:?} for column {}",
-                        field.data_type(),
-                        col_name
-                    )));
-                }
-            };
-
-            row_map.insert(col_name, value);
-        }
-
-        rows.push(JsonValue::Object(row_map));
-    }
-
-    Ok(rows)
-}
-
-/// Helper function to convert JSON events to Arrow RecordBatch
-///
-/// Converts a vector of (row_id, json_data) tuples to an Arrow RecordBatch.
-/// This is the reverse operation of arrow_batch_to_json.
-fn json_events_to_arrow_batch(
-    events: &[(String, JsonValue)],
-    schema: &SchemaRef,
-) -> Result<datafusion::arrow::record_batch::RecordBatch, KalamDbError> {
-    use datafusion::arrow::array::*;
-    use datafusion::arrow::datatypes::DataType;
-    use datafusion::arrow::record_batch::RecordBatch;
-
-    // Build arrays for each column
-    let mut arrays: Vec<ArrayRef> = Vec::new();
-
-    for field in schema.fields() {
-        let col_name = field.name();
-        let data_type = field.data_type();
-
-        match data_type {
-            DataType::Utf8 => {
-                let mut builder = StringBuilder::new();
-                for (_row_id, json_data) in events {
-                    if let Some(val) = json_data.get(col_name) {
-                        if val.is_null() {
-                            builder.append_null();
-                        } else if let Some(s) = val.as_str() {
-                            builder.append_value(s);
-                        } else {
-                            // Convert non-string to string
-                            builder.append_value(val.to_string());
-                        }
-                    } else {
-                        builder.append_null();
-                    }
-                }
-                arrays.push(Arc::new(builder.finish()) as ArrayRef);
-            }
-            DataType::Int32 => {
-                let mut builder = Int32Builder::new();
-                for (_row_id, json_data) in events {
-                    if let Some(val) = json_data.get(col_name) {
-                        if val.is_null() {
-                            builder.append_null();
-                        } else if let Some(i) = val.as_i64() {
-                            builder.append_value(i as i32);
-                        } else {
-                            builder.append_null();
-                        }
-                    } else {
-                        builder.append_null();
-                    }
-                }
-                arrays.push(Arc::new(builder.finish()) as ArrayRef);
-            }
-            DataType::Int64 => {
-                let mut builder = Int64Builder::new();
-                for (_row_id, json_data) in events {
-                    if let Some(val) = json_data.get(col_name) {
-                        if val.is_null() {
-                            builder.append_null();
-                        } else if let Some(i) = val.as_i64() {
-                            builder.append_value(i);
-                        } else {
-                            builder.append_null();
-                        }
-                    } else {
-                        builder.append_null();
-                    }
-                }
-                arrays.push(Arc::new(builder.finish()) as ArrayRef);
-            }
-            DataType::Float64 => {
-                let mut builder = Float64Builder::new();
-                for (_row_id, json_data) in events {
-                    if let Some(val) = json_data.get(col_name) {
-                        if val.is_null() {
-                            builder.append_null();
-                        } else if let Some(f) = val.as_f64() {
-                            builder.append_value(f);
-                        } else {
-                            builder.append_null();
-                        }
-                    } else {
-                        builder.append_null();
-                    }
-                }
-                arrays.push(Arc::new(builder.finish()) as ArrayRef);
-            }
-            DataType::Boolean => {
-                let mut builder = BooleanBuilder::new();
-                for (_row_id, json_data) in events {
-                    if let Some(val) = json_data.get(col_name) {
-                        if val.is_null() {
-                            builder.append_null();
-                        } else if let Some(b) = val.as_bool() {
-                            builder.append_value(b);
-                        } else {
-                            builder.append_null();
-                        }
-                    } else {
-                        builder.append_null();
-                    }
-                }
-                arrays.push(Arc::new(builder.finish()) as ArrayRef);
-            }
-            DataType::Timestamp(_, _) => {
-                let mut builder = TimestampMillisecondBuilder::new();
-                for (_row_id, json_data) in events {
-                    if let Some(val) = json_data.get(col_name) {
-                        if val.is_null() {
-                            builder.append_null();
-                        } else if let Some(i) = val.as_i64() {
-                            builder.append_value(i);
-                        } else if let Some(s) = val.as_str() {
-                            // Parse ISO 8601 timestamp
-                            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
-                                builder.append_value(dt.timestamp_millis());
-                            } else {
-                                builder.append_null();
-                            }
-                        } else {
-                            builder.append_null();
-                        }
-                    } else {
-                        builder.append_null();
-                    }
-                }
-                arrays.push(Arc::new(builder.finish()) as ArrayRef);
-            }
-            _ => {
-                return Err(KalamDbError::Other(format!(
-                    "Unsupported data type {:?} for column {}",
-                    data_type, col_name
-                )));
-            }
-        }
-    }
-
-    RecordBatch::try_new(schema.clone(), arrays)
-        .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
-}
 
 #[cfg(test)]
 mod tests {

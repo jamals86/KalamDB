@@ -11,6 +11,7 @@
 
 use crate::error::KalamDbError;
 use crate::jobs::{JobExecutor, JobResult};
+use crate::stores::system_table::SharedTableStoreExt;
 use crate::tables::StreamTableStore;
 use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use kalamdb_sql::KalamSql;
@@ -199,7 +200,7 @@ impl StreamEvictionJob {
     ) -> Result<usize, KalamDbError> {
         let namespace_id_str = namespace_id.as_str().to_string();
         let table_name_str = table_name.as_str().to_string();
-        let stream_store = Arc::clone(&self.stream_store);
+        let stream_store: Arc<StreamTableStore> = Arc::clone(&self.stream_store);
 
         // Execute eviction through job executor for monitoring
         let job_id = format!(
@@ -219,6 +220,7 @@ impl StreamEvictionJob {
                 // Get all events - the new scan method returns (row_id, row_data)
                 let mut events = stream_store
                     .scan(&namespace_id_str, &table_name_str)
+                    .map_err(|e| KalamDbError::Other(e.to_string()))?;
                     .map_err(|e| format!("Failed to scan table: {}", e))?;
 
                 let total_count = events.len();

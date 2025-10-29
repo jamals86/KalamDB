@@ -8,13 +8,16 @@
 
 use crate::catalog::{NamespaceId, TableMetadata, TableName};
 use crate::error::KalamDbError;
-use crate::tables::SharedTableStore;
+use crate::tables::arrow_json_conversion::{arrow_batch_to_json, json_rows_to_arrow_batch, validate_insert_rows};
+use crate::tables::shared_tables::shared_table_store::{
+    new_shared_table_store, SharedTableRow, SharedTableRowId, SharedTableStore,
+};
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::SessionState;
-use kalamdb_store::EntityStore;
+use kalamdb_store::EntityStoreV2 as EntityStore;
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
@@ -108,15 +111,18 @@ impl SharedTableProvider {
             obj.insert("_deleted".to_string(), serde_json::json!(false));
         }
 
+        let key = SharedTableRowId::new(row_id);
+        let entity = SharedTableRow {
+            row_id: row_id.to_string(),
+            fields: row_data,
+            _updated: now_rfc3339,
+            _deleted: false,
+            access_level: kalamdb_commons::TableAccess::Public,
+        };
+
         // Store in SharedTableStore
         self.store
-            .put(
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
-                row_id,
-                row_data,
-                kalamdb_commons::TableAccess::Public, // Default access level for shared tables
-            )
+            .put(&key, &entity)
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         Ok(())
@@ -132,39 +138,28 @@ impl SharedTableProvider {
     /// - _updated: Updated to current timestamp
     /// - _deleted: Preserved unless explicitly set
     pub fn update(&self, row_id: &str, updates: JsonValue) -> Result<(), KalamDbError> {
-        // Get existing row
+        let key = SharedTableRowId::new(row_id);
         let mut row_data = self
             .store
-            .get(
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
-                row_id,
-            )
+            .get(&key)
             .map_err(|e| KalamDbError::Other(e.to_string()))?
             .ok_or_else(|| KalamDbError::NotFound(format!("Row not found: {}", row_id)))?;
 
         // Apply updates
-        if let (Some(existing), Some(new_fields)) = (row_data.as_object_mut(), updates.as_object())
-        {
-            for (key, value) in new_fields {
-                existing.insert(key.clone(), value.clone());
+        if let Some(new_fields) = updates.as_object() {
+            if let Some(existing_fields) = row_data.fields.as_object_mut() {
+                for (k, v) in new_fields {
+                    existing_fields.insert(k.clone(), v.clone());
+                }
             }
-            // Update _updated timestamp
-            existing.insert(
-                "_updated".to_string(),
-                serde_json::json!(chrono::Utc::now().timestamp_millis()),
-            );
         }
+
+        // Update system columns
+        row_data._updated = chrono::Utc::now().to_rfc3339();
 
         // Store updated row
         self.store
-            .put(
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
-                row_id,
-                row_data,
-                kalamdb_commons::TableAccess::Public, // Default access level for shared tables
-            )
+            .put(&key, &row_data)
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         Ok(())
@@ -175,64 +170,8 @@ impl SharedTableProvider {
     /// Checks:
     /// - NOT NULL constraints (non-nullable columns must have values)
     /// - Data type compatibility (basic type checking)
-    fn validate_insert_rows(&self, rows: &[JsonValue]) -> Result<(), String> {
-        for (row_idx, row) in rows.iter().enumerate() {
-            let obj = row
-                .as_object()
-                .ok_or_else(|| format!("Row {} is not a JSON object", row_idx))?;
-
-            // Check each field in the schema
-            for field in self.schema.fields() {
-                let field_name = field.name();
-
-                // Skip system columns - they're auto-populated
-                if field_name == "_updated" || field_name == "_deleted" {
-                    continue;
-                }
-
-                // Skip auto-generated columns if any
-                if field_name == "id" || field_name == "created_at" {
-                    continue;
-                }
-
-                let value = obj.get(field_name);
-
-                // Check NOT NULL constraint
-                if !field.is_nullable() {
-                    match value {
-                        None | Some(JsonValue::Null) => {
-                            return Err(format!(
-                                "Row {}: Column '{}' is declared as non-nullable but received NULL value. Please provide a value for this column.",
-                                row_idx, field_name
-                            ));
-                        }
-                        _ => {} // Has a value, constraint satisfied
-                    }
-                }
-
-                // Optional: Basic type validation
-                if let Some(val) = value {
-                    if !val.is_null() {
-                        let type_valid = match field.data_type() {
-                            DataType::Int32 | DataType::Int64 => val.is_i64() || val.is_u64(),
-                            DataType::Float64 => val.is_f64() || val.is_i64() || val.is_u64(),
-                            DataType::Utf8 => val.is_string(),
-                            DataType::Boolean => val.is_boolean(),
-                            _ => true, // Skip validation for other types
-                        };
-
-                        if !type_valid {
-                            return Err(format!(
-                                "Row {}: Column '{}' has incompatible type. Expected {:?}, got {:?}",
-                                row_idx, field_name, field.data_type(), val
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
+    fn validate_insert_rows_local(&self, rows: &[JsonValue]) -> Result<(), String> {
+        validate_insert_rows(&self.schema, rows)
     }
 
     /// DELETE operation (soft delete)
@@ -240,41 +179,20 @@ impl SharedTableProvider {
     /// Sets _deleted=true and updates _updated timestamp.
     /// Row remains in RocksDB until flush or cleanup job removes it.
     pub fn delete_soft(&self, row_id: &str) -> Result<(), KalamDbError> {
-        // Get existing row
-        let row_data = self
+        let key = SharedTableRowId::new(row_id);
+        let mut row_data = self
             .store
-            .get(
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
-                row_id,
-            )
+            .get(&key)
             .map_err(|e| KalamDbError::Other(e.to_string()))?
             .ok_or_else(|| KalamDbError::NotFound(format!("Row not found: {}", row_id)))?;
 
-        // Create updated row with _deleted=true
-        let updated_row = if let Some(obj) = row_data.as_object() {
-            let mut new_obj = obj.clone();
-            new_obj.insert("_deleted".to_string(), serde_json::json!(true));
-            new_obj.insert(
-                "_updated".to_string(),
-                serde_json::json!(chrono::Utc::now().timestamp_millis()),
-            );
-            serde_json::json!(new_obj)
-        } else {
-            return Err(KalamDbError::InvalidOperation(
-                "Row data is not a JSON object".to_string(),
-            ));
-        };
+        // Update system columns
+        row_data._deleted = true;
+        row_data._updated = chrono::Utc::now().to_rfc3339();
 
         // Store updated row
         self.store
-            .put(
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
-                row_id,
-                updated_row,
-                kalamdb_commons::TableAccess::Public, // Default access level for shared tables
-            )
+            .put(&key, &row_data)
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         Ok(())
@@ -285,13 +203,9 @@ impl SharedTableProvider {
     /// Permanently removes row from RocksDB.
     /// Used by cleanup jobs for expired soft-deleted rows.
     pub fn delete_hard(&self, row_id: &str) -> Result<(), KalamDbError> {
+        let key = SharedTableRowId::new(row_id);
         self.store
-            .delete(
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
-                row_id,
-                true, // hard delete
-            )
+            .delete(&key)
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         Ok(())
@@ -349,11 +263,20 @@ impl TableProvider for SharedTableProvider {
         // Read all rows from the store
         let rows = self
             .store
-            .scan(self.namespace_id().as_str(), self.table_name().as_str())
+            .scan_all()
             .map_err(|e| DataFusionError::Execution(format!("Failed to scan table: {}", e)))?;
 
-        // Convert JSON rows to Arrow RecordBatch (includes system columns now)
-        let batch = json_rows_to_arrow_batch(&rows, &full_schema, limit).map_err(|e| {
+        // Convert SharedTableRow to Arrow RecordBatch (includes system columns now)
+        let rows_with_ids: Vec<(SharedTableRowId, SharedTableRow)> = rows
+            .iter()
+            .map(|(key, row)| {
+                (
+                    SharedTableRowId::new(String::from_utf8_lossy(key).to_string()),
+                    row.clone(),
+                )
+            })
+            .collect();
+        let batch = shared_rows_to_arrow_batch(&rows_with_ids, &full_schema, limit).map_err(|e| {
             DataFusionError::Execution(format!("Failed to convert rows to Arrow: {}", e))
         })?;
 
@@ -440,12 +363,12 @@ impl TableProvider for SharedTableProvider {
         // Process each batch
         for batch in batches {
             // Convert Arrow RecordBatch to JSON rows
-            let json_rows = arrow_batch_to_json(&batch).map_err(|e| {
+            let json_rows = arrow_batch_to_json(&batch, true).map_err(|e| {
                 DataFusionError::Execution(format!("Arrow to JSON conversion failed: {}", e))
             })?;
 
             // Validate schema constraints before insert
-            self.validate_insert_rows(&json_rows).map_err(|e| {
+            self.validate_insert_rows_local(&json_rows).map_err(|e| {
                 DataFusionError::Execution(format!("Schema validation failed: {}", e))
             })?;
 
@@ -465,123 +388,11 @@ impl TableProvider for SharedTableProvider {
     }
 }
 
-/// Convert Arrow RecordBatch to Vec of JSON objects
+/// Helper to convert SharedTableStore rows to JSON rows for Arrow conversion
 ///
-/// This is a helper function for INSERT operations that converts Arrow columnar
-/// data to row-oriented JSON objects suitable for storage.
-fn arrow_batch_to_json(
-    batch: &datafusion::arrow::record_batch::RecordBatch,
-) -> Result<Vec<JsonValue>, String> {
-    use datafusion::arrow::array::*;
-    use datafusion::arrow::datatypes::DataType;
-
-    let schema = batch.schema();
-    let num_rows = batch.num_rows();
-    let mut rows = Vec::with_capacity(num_rows);
-
-    for row_idx in 0..num_rows {
-        let mut row_map = serde_json::Map::new();
-
-        for (col_idx, field) in schema.fields().iter().enumerate() {
-            let column = batch.column(col_idx);
-
-            // Skip system columns if present in input (we'll inject them)
-            if field.name() == "_updated" || field.name() == "_deleted" {
-                continue;
-            }
-
-            // Convert Arrow value to JSON
-            let json_value = match field.data_type() {
-                DataType::Utf8 => {
-                    let array = column
-                        .as_any()
-                        .downcast_ref::<StringArray>()
-                        .ok_or_else(|| {
-                            format!("Failed to downcast {} to StringArray", field.name())
-                        })?;
-                    if array.is_null(row_idx) {
-                        JsonValue::Null
-                    } else {
-                        JsonValue::String(array.value(row_idx).to_string())
-                    }
-                }
-                DataType::Int32 => {
-                    let array = column
-                        .as_any()
-                        .downcast_ref::<Int32Array>()
-                        .ok_or_else(|| {
-                            format!("Failed to downcast {} to Int32Array", field.name())
-                        })?;
-                    if array.is_null(row_idx) {
-                        JsonValue::Null
-                    } else {
-                        JsonValue::Number(array.value(row_idx).into())
-                    }
-                }
-                DataType::Int64 => {
-                    let array = column
-                        .as_any()
-                        .downcast_ref::<Int64Array>()
-                        .ok_or_else(|| {
-                            format!("Failed to downcast {} to Int64Array", field.name())
-                        })?;
-                    if array.is_null(row_idx) {
-                        JsonValue::Null
-                    } else {
-                        JsonValue::Number(array.value(row_idx).into())
-                    }
-                }
-                DataType::Float64 => {
-                    let array =
-                        column
-                            .as_any()
-                            .downcast_ref::<Float64Array>()
-                            .ok_or_else(|| {
-                                format!("Failed to downcast {} to Float64Array", field.name())
-                            })?;
-                    if array.is_null(row_idx) {
-                        JsonValue::Null
-                    } else {
-                        serde_json::Number::from_f64(array.value(row_idx))
-                            .map(JsonValue::Number)
-                            .unwrap_or(JsonValue::Null)
-                    }
-                }
-                DataType::Boolean => {
-                    let array =
-                        column
-                            .as_any()
-                            .downcast_ref::<BooleanArray>()
-                            .ok_or_else(|| {
-                                format!("Failed to downcast {} to BooleanArray", field.name())
-                            })?;
-                    if array.is_null(row_idx) {
-                        JsonValue::Null
-                    } else {
-                        JsonValue::Bool(array.value(row_idx))
-                    }
-                }
-                _ => {
-                    // For unsupported types, use string representation
-                    JsonValue::String(format!("{:?}", column))
-                }
-            };
-
-            row_map.insert(field.name().clone(), json_value);
-        }
-
-        rows.push(JsonValue::Object(row_map));
-    }
-
-    Ok(rows)
-}
-
-/// Convert JSON rows (from store) to Arrow RecordBatch
-///
-/// This is the inverse of arrow_batch_to_json, used for SELECT operations.
-/// Converts row-oriented JSON data back to Arrow columnar format.
-fn json_rows_to_arrow_batch(
-    rows: &[(String, JsonValue)],
+/// Extracts the JSON fields from SharedTableRow and prepares them for Arrow batch creation
+fn shared_rows_to_arrow_batch(
+    rows: &[(SharedTableRowId, SharedTableRow)],
     schema: &datafusion::arrow::datatypes::SchemaRef,
     limit: Option<usize>,
 ) -> Result<datafusion::arrow::record_batch::RecordBatch, String> {
@@ -596,31 +407,11 @@ fn json_rows_to_arrow_batch(
     };
 
     if rows_to_process.is_empty() {
-        // Return empty batch with correct schema
-        let empty_arrays: Vec<Arc<dyn datafusion::arrow::array::Array>> = schema
-            .fields()
-            .iter()
-            .map(|field| {
-                let array: Arc<dyn datafusion::arrow::array::Array> = match field.data_type() {
-                    DataType::Utf8 => Arc::new(StringArray::from(Vec::<Option<String>>::new())),
-                    DataType::Int32 => Arc::new(Int32Array::from(Vec::<Option<i32>>::new())),
-                    DataType::Int64 => Arc::new(Int64Array::from(Vec::<Option<i64>>::new())),
-                    DataType::Float64 => Arc::new(Float64Array::from(Vec::<Option<f64>>::new())),
-                    DataType::Boolean => Arc::new(BooleanArray::from(Vec::<Option<bool>>::new())),
-                    DataType::Timestamp(TimeUnit::Millisecond, _) => {
-                        Arc::new(TimestampMillisecondArray::from(Vec::<Option<i64>>::new()))
-                    }
-                    _ => Arc::new(StringArray::from(Vec::<Option<String>>::new())),
-                };
-                array
-            })
-            .collect();
-
-        return datafusion::arrow::record_batch::RecordBatch::try_new(schema.clone(), empty_arrays)
-            .map_err(|e| format!("Failed to create empty batch: {}", e));
+        // Return empty batch with correct schema using shared utility
+        return json_rows_to_arrow_batch(schema, vec![]);
     }
 
-    // Build arrays for each column
+    // Build arrays for each column (including system columns from SharedTableRow)
     let mut arrays: Vec<Arc<dyn datafusion::arrow::array::Array>> = Vec::new();
 
     for field in schema.fields() {
@@ -630,6 +421,7 @@ fn json_rows_to_arrow_batch(
                     .iter()
                     .map(|(_, row_data)| {
                         row_data
+                            .fields
                             .get(field.name())
                             .and_then(|v| v.as_str().map(|s| s.to_string()))
                     })
@@ -641,6 +433,7 @@ fn json_rows_to_arrow_batch(
                     .iter()
                     .map(|(_, row_data)| {
                         row_data
+                            .fields
                             .get(field.name())
                             .and_then(|v| v.as_i64().map(|i| i as i32))
                     })
@@ -650,21 +443,40 @@ fn json_rows_to_arrow_batch(
             DataType::Int64 => {
                 let values: Vec<Option<i64>> = rows_to_process
                     .iter()
-                    .map(|(_, row_data)| row_data.get(field.name()).and_then(|v| v.as_i64()))
+                    .map(|(_, row_data)| {
+                        row_data
+                            .fields
+                            .get(field.name())
+                            .and_then(|v| v.as_i64())
+                    })
                     .collect();
                 Arc::new(Int64Array::from(values))
             }
             DataType::Float64 => {
                 let values: Vec<Option<f64>> = rows_to_process
                     .iter()
-                    .map(|(_, row_data)| row_data.get(field.name()).and_then(|v| v.as_f64()))
+                    .map(|(_, row_data)| {
+                        row_data
+                            .fields
+                            .get(field.name())
+                            .and_then(|v| v.as_f64())
+                    })
                     .collect();
                 Arc::new(Float64Array::from(values))
             }
             DataType::Boolean => {
                 let values: Vec<Option<bool>> = rows_to_process
                     .iter()
-                    .map(|(_, row_data)| row_data.get(field.name()).and_then(|v| v.as_bool()))
+                    .map(|(_, row_data)| {
+                        if field.name() == "_deleted" {
+                            Some(row_data._deleted)
+                        } else {
+                            row_data
+                                .fields
+                                .get(field.name())
+                                .and_then(|v| v.as_bool())
+                        }
+                    })
                     .collect();
                 Arc::new(BooleanArray::from(values))
             }
@@ -672,16 +484,24 @@ fn json_rows_to_arrow_batch(
                 let values: Vec<Option<i64>> = rows_to_process
                     .iter()
                     .map(|(_, row_data)| {
-                        row_data.get(field.name()).and_then(|v| {
-                            // Try to parse as i64 timestamp or ISO string
-                            v.as_i64().or_else(|| {
-                                v.as_str().and_then(|s| {
-                                    chrono::DateTime::parse_from_rfc3339(s)
-                                        .ok()
-                                        .map(|dt| dt.timestamp_millis())
+                        if field.name() == "_updated" {
+                            chrono::DateTime::parse_from_rfc3339(&row_data._updated)
+                                .ok()
+                                .map(|dt| dt.timestamp_millis())
+                        } else {
+                            row_data
+                                .fields
+                                .get(field.name())
+                                .and_then(|v| {
+                                    v.as_i64().or_else(|| {
+                                        v.as_str().and_then(|s| {
+                                            chrono::DateTime::parse_from_rfc3339(s)
+                                                .ok()
+                                                .map(|dt| dt.timestamp_millis())
+                                        })
+                                    })
                                 })
-                            })
-                        })
+                        }
                     })
                     .collect();
                 Arc::new(TimestampMillisecondArray::from(values))
@@ -707,7 +527,7 @@ mod tests {
     use super::*;
     use crate::catalog::TableType;
     use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-    use kalamdb_store::test_utils::TestDb;
+    use kalamdb_store::test_utils::{TestDb, InMemoryBackend};
 
     fn create_test_provider() -> (SharedTableProvider, TestDb) {
         let test_db = TestDb::new(&["shared_table:app:config"]).unwrap();
@@ -734,7 +554,11 @@ mod tests {
             deleted_retention_hours: Some(24),
         };
 
-        let store = Arc::new(SharedTableStore::new(test_db.db.clone(), "shared_table:app:config").unwrap());
+        let store = Arc::new(new_shared_table_store(
+            Arc::new(InMemoryBackend::new()),
+            &metadata.namespace,
+            &metadata.table_name,
+        ));
         let provider = SharedTableProvider::new(metadata, schema, store);
 
         (provider, test_db)
@@ -752,21 +576,14 @@ mod tests {
         let result = provider.insert("setting_1", row_data);
         assert!(result.is_ok());
 
-        // Verify row was stored
-        let stored = provider
-            .store
-            .get(
-                provider.namespace_id().as_str(),
-                provider.table_name().as_str(),
-                "setting_1",
-            )
-            .unwrap();
+        let key = SharedTableRowId::new("setting_1");
+        let stored = provider.store.get(&key).unwrap();
         assert!(stored.is_some());
 
         let stored_data = stored.unwrap();
-        assert_eq!(stored_data["setting_key"], "max_connections");
-        assert_eq!(stored_data["_deleted"], serde_json::json!(false));
-        assert!(stored_data.get("_updated").is_some());
+        assert_eq!(stored_data.fields["setting_key"], "max_connections");
+        assert_eq!(stored_data._deleted, false);
+        assert!(!stored_data._updated.is_empty());
     }
 
     #[test]
@@ -787,18 +604,10 @@ mod tests {
         let result = provider.update("setting_2", updates);
         assert!(result.is_ok());
 
-        // Verify update
-        let stored = provider
-            .store
-            .get(
-                provider.namespace_id().as_str(),
-                provider.table_name().as_str(),
-                "setting_2",
-            )
-            .unwrap()
-            .unwrap();
-        assert_eq!(stored["setting_value"], "60");
-        assert_eq!(stored["setting_key"], "timeout"); // Unchanged
+        let key = SharedTableRowId::new("setting_2");
+        let stored = provider.store.get(&key).unwrap().unwrap();
+        assert_eq!(stored.fields["setting_value"], "60");
+        assert_eq!(stored.fields["setting_key"], "timeout"); // Unchanged
     }
 
     #[test]
@@ -813,41 +622,26 @@ mod tests {
         });
         provider.insert("setting_3", row_data).unwrap();
 
-        // Verify initial state
-        let before_delete = provider
-            .store
-            .get(
-                provider.namespace_id().as_str(),
-                provider.table_name().as_str(),
-                "setting_3",
-            )
-            .unwrap()
-            .unwrap();
-        assert_eq!(before_delete["_deleted"], serde_json::json!(false));
+        let key = SharedTableRowId::new("setting_3");
+        let before_delete = provider.store.get(&key).unwrap().unwrap();
+        assert_eq!(before_delete._deleted, false);
 
         // Soft delete
         let result = provider.delete_soft("setting_3");
         assert!(result.is_ok(), "delete_soft failed: {:?}", result.err());
 
         // Verify still exists but marked deleted
-        let stored = provider
-            .store
-            .get(
-                provider.namespace_id().as_str(),
-                provider.table_name().as_str(),
-                "setting_3",
-            )
-            .unwrap();
+        let stored = provider.store.get(&key).unwrap();
 
         assert!(stored.is_some(), "Row should still exist after soft delete");
         let stored_data = stored.unwrap();
 
         // Debug: print the actual value
-        eprintln!("Stored _deleted value: {:?}", stored_data["_deleted"]);
+        eprintln!("Stored _deleted value: {:?}", stored_data._deleted);
 
         assert_eq!(
-            stored_data["_deleted"],
-            serde_json::json!(true),
+            stored_data._deleted,
+            true,
             "Row should be marked as deleted"
         );
     }
@@ -867,15 +661,8 @@ mod tests {
         let result = provider.delete_hard("setting_4");
         assert!(result.is_ok());
 
-        // Verify row is gone
-        let stored = provider
-            .store
-            .get(
-                provider.namespace_id().as_str(),
-                provider.table_name().as_str(),
-                "setting_4",
-            )
-            .unwrap();
+        let key = SharedTableRowId::new("setting_4");
+        let stored = provider.store.get(&key).unwrap();
         assert!(stored.is_none());
     }
 
