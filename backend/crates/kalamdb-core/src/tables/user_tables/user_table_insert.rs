@@ -11,7 +11,7 @@
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
-use crate::stores::UserTableStore;
+use crate::tables::UserTableStore;
 use arrow::datatypes::Schema;
 use chrono::Utc;
 use kalamdb_commons::models::ColumnDefault;
@@ -88,15 +88,19 @@ impl UserTableInsertHandler {
         // Generate row ID (using timestamp + random component for uniqueness)
         let row_id = self.generate_row_id()?;
 
-        // Delegate to UserTableStore (handles system column injection)
+        // Create the key and entity for storage
+        let key = UserTableRowId::new(user_id.clone(), row_id.clone());
+        let entity = UserTableRow {
+            row_id: row_id.clone(),
+            user_id: user_id.as_str().to_string(),
+            fields: row_data.clone(),
+            _updated: chrono::Utc::now().to_rfc3339(),
+            _deleted: false,
+        };
+
+        // Delegate to UserTableStore
         self.store
-            .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                &row_id,
-                row_data.clone(),
-            )
+            .put(&key, &entity)
             .map_err(|e| KalamDbError::Other(format!("Failed to insert row: {}", e)))?;
 
         log::debug!(
@@ -195,15 +199,19 @@ impl UserTableInsertHandler {
             // Generate row ID
             let row_id = self.generate_row_id()?;
 
+            // Create the key and entity for storage
+            let key = UserTableRowId::new(user_id.clone(), row_id.clone());
+            let entity = UserTableRow {
+                row_id: row_id.clone(),
+                user_id: user_id.as_str().to_string(),
+                fields: row_data.clone(),
+                _updated: chrono::Utc::now().to_rfc3339(),
+                _deleted: false,
+            };
+
             // Delegate to UserTableStore
             self.store
-                .put(
-                    namespace_id.as_str(),
-                    table_name.as_str(),
-                    user_id.as_str(),
-                    &row_id,
-                    row_data.clone(),
-                )
+                .put(&key, &entity)
                 .map_err(|e| {
                     KalamDbError::Other(format!("Failed to insert row in batch: {}", e))
                 })?;
@@ -437,12 +445,12 @@ impl UserTableInsertHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stores::UserTableStore;
+    use crate::tables::UserTableStore;
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn setup_test_handler() -> UserTableInsertHandler {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = Arc::new(UserTableStore::new(backend).unwrap());
+        let store = Arc::new(UserTableStore::new(backend, "user_table:app:users").unwrap());
         UserTableInsertHandler::new(store)
     }
 

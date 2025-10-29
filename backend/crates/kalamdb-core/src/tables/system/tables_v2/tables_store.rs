@@ -25,7 +25,7 @@ pub fn new_tables_store(backend: Arc<dyn StorageBackend>) -> TablesStore {
 mod tests {
     use super::*;
     use kalamdb_commons::{NamespaceId, Role, StorageId, TableAccess, TableName, TableType};
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_store() -> TablesStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

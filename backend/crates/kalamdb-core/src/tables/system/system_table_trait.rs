@@ -14,7 +14,7 @@ use arrow::record_batch::RecordBatch;
 /// - Data loading for scans
 pub trait SystemTableProviderExt: Send + Sync {
     /// Get the table name
-    fn table_name(&self) -> &'static str;
+    fn table_name(&self) -> &str;
 
     /// Get the schema reference
     fn schema_ref(&self) -> SchemaRef;

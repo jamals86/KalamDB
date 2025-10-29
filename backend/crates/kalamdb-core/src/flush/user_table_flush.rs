@@ -7,7 +7,7 @@ use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::storage::{ParquetWriter, StorageRegistry};
-use crate::stores::UserTableStore;
+use crate::tables::UserTableStore;
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -746,6 +746,7 @@ impl UserTableFlushJob {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::jobs::JobStatus;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_store::test_utils::TestDb;
     use serde_json::json;

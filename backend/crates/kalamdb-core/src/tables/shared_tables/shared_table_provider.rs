@@ -8,12 +8,13 @@
 
 use crate::catalog::{NamespaceId, TableMetadata, TableName};
 use crate::error::KalamDbError;
-use crate::stores::SharedTableStore;
+use crate::tables::SharedTableStore;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::SessionState;
+use kalamdb_store::EntityStore;
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
@@ -733,7 +734,7 @@ mod tests {
             deleted_retention_hours: Some(24),
         };
 
-        let store = Arc::new(SharedTableStore::new(test_db.db.clone()).unwrap());
+        let store = Arc::new(SharedTableStore::new(test_db.db.clone(), "shared_table:app:config").unwrap());
         let provider = SharedTableProvider::new(metadata, schema, store);
 
         (provider, test_db)

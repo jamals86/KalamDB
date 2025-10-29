@@ -180,7 +180,7 @@ impl TableProvider for StoragesTableProvider {
 }
 
 impl SystemTableProviderExt for StoragesTableProvider {
-    fn table_name(&self) -> &'static str {
+    fn table_name(&self) -> &str {
         "system.storages"
     }
 
@@ -196,7 +196,7 @@ impl SystemTableProviderExt for StoragesTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> StoragesTableProvider {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

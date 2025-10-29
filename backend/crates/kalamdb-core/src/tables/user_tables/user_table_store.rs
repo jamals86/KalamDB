@@ -88,7 +88,7 @@ pub fn new_user_table_store(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::{EntityStoreV2, InMemoryBackend};
+    use kalamdb_store::{EntityStoreV2, test_utils::InMemoryBackend};
 
     fn create_test_store() -> UserTableStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

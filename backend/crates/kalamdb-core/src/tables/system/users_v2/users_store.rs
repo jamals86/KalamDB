@@ -26,7 +26,7 @@ pub fn new_users_store(backend: Arc<dyn StorageBackend>) -> UsersStore {
 mod tests {
     use super::*;
     use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_store() -> UsersStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

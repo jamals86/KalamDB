@@ -9,7 +9,7 @@
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
-use crate::stores::UserTableStore;
+use crate::tables::UserTableStore;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -77,14 +77,10 @@ impl UserTableUpdateHandler {
         }
 
         // Read existing row from store
+        let key = UserTableRowId::new(user_id.clone(), row_id);
         let existing_row = self
             .store
-            .get(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                row_id,
-            )
+            .get(&key)
             .map_err(|e| KalamDbError::Other(format!("Failed to read row: {}", e)))?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
@@ -96,32 +92,29 @@ impl UserTableUpdateHandler {
             })?;
 
         // Clone for old_data before merging
-        let old_data = existing_row.clone();
+        let old_data = existing_row.fields.clone();
         let mut updated_row = existing_row;
 
         // Merge updates into existing row
-        if let Some(updated_obj) = updated_row.as_object_mut() {
-            if let Some(updates_obj) = updates.as_object() {
-                for (key, value) in updates_obj {
+        if let Some(updated_obj) = updates.as_object() {
+            if let Some(fields_obj) = updated_row.fields.as_object_mut() {
+                for (key, value) in updated_obj {
                     // Prevent updates to system columns
                     if key == "_updated" || key == "_deleted" {
                         log::warn!("Attempted to update system column '{}', ignored", key);
                         continue;
                     }
-                    updated_obj.insert(key.clone(), value.clone());
+                    fields_obj.insert(key.clone(), value.clone());
                 }
             }
         }
 
-        // Write updated row back (store.put automatically updates _updated timestamp)
+        // Update timestamp
+        updated_row._updated = chrono::Utc::now().to_rfc3339();
+
+        // Write updated row back
         self.store
-            .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                row_id,
-                updated_row.clone(),
-            )
+            .put(&key, &updated_row)
             .map_err(|e| KalamDbError::Other(format!("Failed to write updated row: {}", e)))?;
 
         log::debug!(
@@ -207,12 +200,12 @@ impl UserTableUpdateHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stores::UserTableStore;
+    use crate::tables::UserTableStore;
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn setup_test_handler() -> (UserTableUpdateHandler, Arc<UserTableStore>) {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = Arc::new(UserTableStore::new(backend).unwrap());
+        let store = Arc::new(UserTableStore::new(backend, "user_table:app:users"));
         let handler = UserTableUpdateHandler::new(store.clone());
         (handler, store)
     }
@@ -227,15 +220,15 @@ mod tests {
 
         // Insert initial row
         let initial_data = serde_json::json!({"name": "Alice", "age": 30});
-        store
-            .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                row_id,
-                initial_data,
-            )
-            .unwrap();
+        let key = UserTableRowId::new(user_id.clone(), row_id);
+        let row = UserTableRow {
+            row_id: row_id.to_string(),
+            user_id: user_id.as_str().to_string(),
+            fields: initial_data,
+            _updated: "2025-01-01T00:00:00Z".to_string(),
+            _deleted: false,
+        };
+        store.put(&key, &row).unwrap();
 
         // Update the row
         let updates = serde_json::json!({"age": 31, "city": "NYC"});
@@ -247,19 +240,14 @@ mod tests {
 
         // Verify the update
         let stored = store
-            .get(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                row_id,
-            )
+            .get(&key)
             .unwrap()
             .expect("Row should exist");
-        assert_eq!(stored["name"], "Alice"); // Unchanged
-        assert_eq!(stored["age"], 31); // Updated
-        assert_eq!(stored["city"], "NYC"); // New field
-        assert_eq!(stored["_deleted"], false); // Unchanged
-        assert!(stored["_updated"].as_str().is_some()); // Updated timestamp
+        assert_eq!(stored.fields["name"], "Alice"); // Unchanged
+        assert_eq!(stored.fields["age"], 31); // Updated
+        assert_eq!(stored.fields["city"], "NYC"); // New field
+        assert_eq!(stored._deleted, false); // Unchanged
+        assert!(stored._updated != "2025-01-01T00:00:00Z"); // Updated timestamp
     }
 
     #[test]
@@ -290,24 +278,25 @@ mod tests {
         let user_id = UserId::new("user123".to_string());
 
         // Insert initial rows
-        store
-            .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                "row1",
-                serde_json::json!({"name": "Alice", "age": 30}),
-            )
-            .unwrap();
-        store
-            .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                "row2",
-                serde_json::json!({"name": "Bob", "age": 25}),
-            )
-            .unwrap();
+        let key1 = UserTableRowId::new(user_id.clone(), "row1");
+        let row1 = UserTableRow {
+            row_id: "row1".to_string(),
+            user_id: user_id.as_str().to_string(),
+            fields: serde_json::json!({"name": "Alice", "age": 30}),
+            _updated: "2025-01-01T00:00:00Z".to_string(),
+            _deleted: false,
+        };
+        store.put(&key1, &row1).unwrap();
+
+        let key2 = UserTableRowId::new(user_id.clone(), "row2");
+        let row2 = UserTableRow {
+            row_id: "row2".to_string(),
+            user_id: user_id.as_str().to_string(),
+            fields: serde_json::json!({"name": "Bob", "age": 25}),
+            _updated: "2025-01-01T00:00:00Z".to_string(),
+            _deleted: false,
+        };
+        store.put(&key2, &row2).unwrap();
 
         // Update batch
         let row_updates = vec![
@@ -323,26 +312,16 @@ mod tests {
 
         // Verify updates
         let stored1 = store
-            .get(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                "row1",
-            )
+            .get(&key1)
             .unwrap()
             .expect("Row1 should exist");
-        assert_eq!(stored1["age"], 31);
+        assert_eq!(stored1.fields["age"], 31);
 
         let stored2 = store
-            .get(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                "row2",
-            )
+            .get(&key2)
             .unwrap()
             .expect("Row2 should exist");
-        assert_eq!(stored2["age"], 26);
+        assert_eq!(stored2.fields["age"], 26);
     }
 
     #[test]
@@ -354,15 +333,15 @@ mod tests {
         let row_id = "row1";
 
         // Insert initial row
-        store
-            .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                row_id,
-                serde_json::json!({"name": "Alice"}),
-            )
-            .unwrap();
+        let key = UserTableRowId::new(user_id.clone(), row_id);
+        let row = UserTableRow {
+            row_id: row_id.to_string(),
+            user_id: user_id.as_str().to_string(),
+            fields: serde_json::json!({"name": "Alice"}),
+            _updated: "2025-01-01T00:00:00Z".to_string(),
+            _deleted: false,
+        };
+        store.put(&key, &row).unwrap();
 
         // Try to update system columns
         let updates = serde_json::json!({
@@ -377,17 +356,12 @@ mod tests {
 
         // Verify system columns were NOT modified by updates
         let stored = store
-            .get(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                row_id,
-            )
+            .get(&key)
             .unwrap()
             .expect("Row should exist");
-        assert_eq!(stored["name"], "Bob"); // User field updated
-        assert_eq!(stored["_deleted"], false); // System column unchanged
-        assert!(stored["_updated"].as_str().is_some()); // Timestamp auto-updated (not 9999)
+        assert_eq!(stored.fields["name"], "Bob"); // User field updated
+        assert_eq!(stored._deleted, false); // System column unchanged
+        assert!(stored._updated != "2025-01-01T00:00:00Z"); // Timestamp auto-updated (not 9999)
     }
 
     #[test]
@@ -399,24 +373,25 @@ mod tests {
         let user2 = UserId::new("user2".to_string());
 
         // Insert rows for different users
-        store
-            .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user1.as_str(),
-                "row1",
-                serde_json::json!({"name": "Alice"}),
-            )
-            .unwrap();
-        store
-            .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user2.as_str(),
-                "row1",
-                serde_json::json!({"name": "Bob"}),
-            )
-            .unwrap();
+        let key1 = UserTableRowId::new(user1.clone(), "row1");
+        let row1 = UserTableRow {
+            row_id: "row1".to_string(),
+            user_id: user1.as_str().to_string(),
+            fields: serde_json::json!({"name": "Alice"}),
+            _updated: "2025-01-01T00:00:00Z".to_string(),
+            _deleted: false,
+        };
+        store.put(&key1, &row1).unwrap();
+
+        let key2 = UserTableRowId::new(user2.clone(), "row1");
+        let row2 = UserTableRow {
+            row_id: "row1".to_string(),
+            user_id: user2.as_str().to_string(),
+            fields: serde_json::json!({"name": "Bob"}),
+            _updated: "2025-01-01T00:00:00Z".to_string(),
+            _deleted: false,
+        };
+        store.put(&key2, &row2).unwrap();
 
         // Update user1's row
         handler
@@ -431,15 +406,10 @@ mod tests {
 
         // Verify user2's row is unchanged
         let stored2 = store
-            .get(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user2.as_str(),
-                "row1",
-            )
+            .get(&key2)
             .unwrap()
             .expect("User2's row should exist");
-        assert_eq!(stored2["name"], "Bob"); // Unchanged
+        assert_eq!(stored2.fields["name"], "Bob"); // Unchanged
     }
 
     #[test]
@@ -450,15 +420,15 @@ mod tests {
         let user_id = UserId::new("user123".to_string());
 
         // Insert initial row
-        store
-            .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                "row1",
-                serde_json::json!({"name": "Alice"}),
-            )
-            .unwrap();
+        let key = UserTableRowId::new(user_id.clone(), "row1");
+        let row = UserTableRow {
+            row_id: "row1".to_string(),
+            user_id: user_id.as_str().to_string(),
+            fields: serde_json::json!({"name": "Alice"}),
+            _updated: "2025-01-01T00:00:00Z".to_string(),
+            _deleted: false,
+        };
+        store.put(&key, &row).unwrap();
 
         // Try to update with non-object
         let updates = serde_json::json!(["not", "an", "object"]);

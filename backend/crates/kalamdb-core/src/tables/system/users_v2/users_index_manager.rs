@@ -192,7 +192,7 @@ mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
     use kalamdb_commons::{AuthType, StorageId, StorageMode};
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_manager() -> UserIndexManager {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

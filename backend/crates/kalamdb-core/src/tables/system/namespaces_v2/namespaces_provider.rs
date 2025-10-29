@@ -170,7 +170,7 @@ impl TableProvider for NamespacesTableProvider {
 }
 
 impl SystemTableProviderExt for NamespacesTableProvider {
-    fn table_name(&self) -> &'static str {
+    fn table_name(&self) -> &str {
         "system.namespaces"
     }
 
@@ -186,7 +186,7 @@ impl SystemTableProviderExt for NamespacesTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> NamespacesTableProvider {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

@@ -166,7 +166,7 @@ impl TableProvider for TablesTableProvider {
 }
 
 impl SystemTableProviderExt for TablesTableProvider {
-    fn table_name(&self) -> &'static str {
+    fn table_name(&self) -> &str {
         "system.tables"
     }
 
@@ -185,7 +185,7 @@ mod tests {
     use kalamdb_commons::{
         NamespaceId, StorageId, TableAccess, TableName, TableType as KalamTableType,
     };
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> TablesTableProvider {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

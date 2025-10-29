@@ -141,7 +141,7 @@ impl InformationSchemaTablesProvider {
 }
 
 impl SystemTableProviderExt for InformationSchemaTablesProvider {
-    fn table_name(&self) -> &'static str {
+    fn table_name(&self) -> &str {
         "information_schema.tables"
     }
 

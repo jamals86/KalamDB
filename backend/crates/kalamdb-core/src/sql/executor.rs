@@ -36,7 +36,7 @@ use crate::services::{
     UserTableService,
 };
 use crate::sql::datafusion_session::DataFusionSessionFactory;
-use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
+use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use crate::tables::{
     system::{NamespacesTableProvider, TablesTableProvider},
     SharedTableProvider, StreamTableProvider, UserTableProvider,
@@ -4108,17 +4108,17 @@ mod tests {
         let session_context = Arc::new(SessionContext::new());
 
         // Initialize table services for tests using EntityStore implementations
-        let user_table_store = Arc::new(crate::stores::UserTableStore::new(backend.clone()));
+        let user_table_store = Arc::new(crate::tables::UserTableStore::new(backend.clone()));
         let user_table_service = Arc::new(crate::services::UserTableService::new(
             kalam_sql.clone(),
             user_table_store.clone(),
         ));
-        let shared_table_store = Arc::new(crate::stores::SharedTableStore::new(backend.clone()));
+        let shared_table_store = Arc::new(crate::tables::SharedTableStore::new(backend.clone()));
         let shared_table_service = Arc::new(crate::services::SharedTableService::new(
             shared_table_store.clone(),
             kalam_sql.clone(),
         ));
-        let stream_table_store = Arc::new(crate::stores::StreamTableStore::new(backend.clone()));
+        let stream_table_store = Arc::new(crate::tables::StreamTableStore::new(backend.clone()));
         let stream_table_service = Arc::new(crate::services::StreamTableService::new(
             stream_table_store.clone(),
             kalam_sql.clone(),
@@ -4214,17 +4214,17 @@ mod tests {
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
         let session_context = Arc::new(SessionContext::new());
 
-        let user_table_store = Arc::new(crate::stores::UserTableStore::new(backend.clone()));
+        let user_table_store = Arc::new(crate::tables::UserTableStore::new(backend.clone()));
         let user_table_service = Arc::new(crate::services::UserTableService::new(
             kalam_sql.clone(),
             user_table_store.clone(),
         ));
-        let shared_table_store = Arc::new(crate::stores::SharedTableStore::new(backend.clone()));
+        let shared_table_store = Arc::new(crate::tables::SharedTableStore::new(backend.clone()));
         let shared_table_service = Arc::new(crate::services::SharedTableService::new(
             shared_table_store.clone(),
             kalam_sql.clone(),
         ));
-        let stream_table_store = Arc::new(crate::stores::StreamTableStore::new(backend.clone()));
+        let stream_table_store = Arc::new(crate::tables::StreamTableStore::new(backend.clone()));
         let stream_table_service = Arc::new(crate::services::StreamTableService::new(
             stream_table_store.clone(),
             kalam_sql.clone(),

@@ -11,7 +11,7 @@
 use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
-use crate::stores::StreamTableStore;
+use crate::tables::StreamTableStore;
 use datafusion::arrow::datatypes::Schema;
 use kalamdb_commons::models::{StorageId, TableId};
 use kalamdb_commons::system::TableSchema;
@@ -274,7 +274,7 @@ mod tests {
     use super::*;
     use datafusion::arrow::datatypes::{DataType, Field};
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{kalamdb_commons::storage::StorageBackend, RocksDBBackend};
+    use kalamdb_store::{StorageBackend, RocksDBBackend};
 
     fn create_test_service() -> (StreamTableService, TestDb) {
         let test_db = TestDb::new(&[

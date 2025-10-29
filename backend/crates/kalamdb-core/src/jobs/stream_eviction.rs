@@ -11,7 +11,7 @@
 
 use crate::error::KalamDbError;
 use crate::jobs::{JobExecutor, JobResult};
-use crate::stores::StreamTableStore;
+use crate::tables::StreamTableStore;
 use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
@@ -313,7 +313,7 @@ mod tests {
         let db = init.open().unwrap();
 
         let stream_store = Arc::new(StreamTableStore::new(db.clone()).unwrap());
-        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(Arc::clone(&kalam_sql)));
@@ -339,7 +339,7 @@ mod tests {
         let db = init.open().unwrap();
 
         let stream_store = Arc::new(StreamTableStore::new(db.clone()).unwrap());
-        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(Arc::clone(&kalam_sql)));

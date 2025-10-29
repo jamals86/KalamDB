@@ -124,7 +124,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
-        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql));
@@ -174,8 +174,8 @@ mod tests {
         assert_eq!(deleted, 1);
 
         // Verify old job is gone, recent job remains
-        assert!(provider.get_job("old-completed").unwrap().is_none());
-        assert!(provider.get_job("recent-completed").unwrap().is_some());
+        assert!(provider.get_job(&JobId::new("old-completed")).unwrap().is_none());
+        assert!(provider.get_job(&JobId::new("recent-completed")).unwrap().is_some());
     }
 
     #[test]
@@ -272,7 +272,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
-        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql));

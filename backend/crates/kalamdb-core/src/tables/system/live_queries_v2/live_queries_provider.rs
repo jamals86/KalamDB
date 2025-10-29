@@ -238,7 +238,7 @@ impl TableProvider for LiveQueriesTableProvider {
 }
 
 impl SystemTableProviderExt for LiveQueriesTableProvider {
-    fn table_name(&self) -> &'static str {
+    fn table_name(&self) -> &str {
         "system.live_queries"
     }
 
@@ -255,7 +255,7 @@ impl SystemTableProviderExt for LiveQueriesTableProvider {
 mod tests {
     use super::*;
     use kalamdb_commons::{NamespaceId, TableName, UserId};
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> LiveQueriesTableProvider {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

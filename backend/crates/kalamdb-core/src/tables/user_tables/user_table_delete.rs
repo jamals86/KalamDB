@@ -10,7 +10,8 @@
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
-use crate::stores::UserTableStore;
+use crate::tables::UserTableStore;
+use kalamdb_store::EntityStore;
 use std::sync::Arc;
 
 /// User table DELETE handler
@@ -73,27 +74,19 @@ impl UserTableDeleteHandler {
     ) -> Result<String, KalamDbError> {
         // Fetch row data BEFORE deleting (for notification)
         let row_data = if self.live_query_manager.is_some() {
+            let key = UserTableRowId::new(user_id.clone(), row_id.to_string());
             self.store
-                .get(
-                    namespace_id.as_str(),
-                    table_name.as_str(),
-                    user_id.as_str(),
-                    row_id,
-                )
+                .get(&key)
                 .map_err(|e| KalamDbError::Other(format!("Failed to read row: {}", e)))?
+                .map(|entity| entity.fields)
         } else {
             None
         };
 
         // Soft delete via store (automatically updates _deleted and _updated)
+        let key = UserTableRowId::new(user_id.clone(), row_id.to_string());
         self.store
-            .delete(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                user_id.as_str(),
-                row_id,
-                false, // soft delete
-            )
+            .delete(&key)
             .map_err(|e| {
                 // Check if it's a "not found" error
                 if e.to_string().contains("Column family not found") {
@@ -239,13 +232,13 @@ impl UserTableDeleteHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stores::UserTableStore;
+    use crate::tables::UserTableStore;
     use kalamdb_store::test_utils::InMemoryBackend;
     use serde_json::json;
 
     fn setup_test_handler() -> (UserTableDeleteHandler, Arc<UserTableStore>) {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = Arc::new(UserTableStore::new(backend).unwrap());
+        let store = Arc::new(UserTableStore::new(backend, "user_table:app:users").unwrap());
         let handler = UserTableDeleteHandler::new(store.clone());
         (handler, store)
     }

@@ -10,7 +10,7 @@
 use crate::catalog::{NamespaceId, TableMetadata, TableName};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
-use crate::stores::StreamTableStore;
+use crate::tables::StreamTableStore;
 use crate::tables::system::LiveQueriesTableProvider;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -19,6 +19,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_store::EntityStore;
 use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;
@@ -848,7 +849,7 @@ mod tests {
 
         let store = Arc::new(StreamTableStore::new(Arc::new(
             kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
-        )));
+        ), "stream_app:events"));
 
         let provider = StreamTableProvider::new(
             table_metadata,
@@ -1023,7 +1024,7 @@ mod tests {
 
         let store = Arc::new(StreamTableStore::new(Arc::new(
             kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
-        )));
+        ), "stream_app:ephemeral_events"));
 
         let provider = StreamTableProvider::new(
             table_metadata,
@@ -1071,8 +1072,8 @@ mod tests {
 
         let store = Arc::new(StreamTableStore::new(Arc::new(
             kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
-        )));
-        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        ), "stream_app:ephemeral_events2"));
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
         let live_queries = Arc::new(LiveQueriesTableProvider::new(kalam_sql.adapter().backend()));
@@ -1125,8 +1126,8 @@ mod tests {
 
         let store = Arc::new(StreamTableStore::new(Arc::new(
             kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
-        )));
-        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        ), "stream_app:persistent_events"));
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
         let live_queries = Arc::new(LiveQueriesTableProvider::new(kalam_sql.adapter().backend()));

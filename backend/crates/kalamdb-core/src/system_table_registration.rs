@@ -97,7 +97,7 @@ pub fn register_system_tables(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::catalog::schema::MemorySchemaProvider;
+    use datafusion::catalog::MemorySchemaProvider;
 
     #[tokio::test]
     async fn test_register_system_tables_validates_all_tables() {

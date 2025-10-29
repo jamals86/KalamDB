@@ -8,7 +8,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::models::SharedTableRow;
 use crate::storage::ParquetWriter;
-use crate::stores::SharedTableStore;
+use crate::tables::SharedTableStore;
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -591,6 +591,7 @@ mod tests {
         assert!(result
             .job_record
             .job_id
+            .as_str()
             .starts_with("flush-shared-test_table-"));
         assert_eq!(
             result

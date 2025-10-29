@@ -187,7 +187,7 @@ mod tests {
     use super::*;
     use kalamdb_commons::models::UserName;
     use kalamdb_commons::{AuthType, StorageId, StorageMode};
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_index() -> RoleIndex {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

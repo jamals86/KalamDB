@@ -11,7 +11,7 @@ use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
 use crate::error::KalamDbError;
 use crate::ids::SnowflakeGenerator;
 use crate::live_query::manager::LiveQueryManager;
-use crate::stores::UserTableStore;
+use crate::tables::UserTableStore;
 use super::{UserTableDeleteHandler, UserTableInsertHandler, UserTableUpdateHandler};
 use async_trait::async_trait;
 use chrono::Utc;
@@ -829,7 +829,7 @@ fn json_rows_to_arrow_batch(
 mod tests {
     use super::*;
     use crate::flush::FlushPolicy;
-    use crate::stores::UserTableStore;
+    use crate::tables::UserTableStore;
     use chrono::Utc;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_store::test_utils::TestDb;

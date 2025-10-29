@@ -7,7 +7,7 @@
 use crate::catalog::TableType;
 use crate::error::KalamDbError;
 use crate::live_query::filter::FilterPredicate;
-use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
+use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use chrono::DateTime;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;

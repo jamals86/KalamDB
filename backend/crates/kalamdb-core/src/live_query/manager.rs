@@ -9,7 +9,7 @@ use crate::live_query::connection_registry::{
 };
 use crate::live_query::filter::FilterCache;
 use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
-use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
+use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use crate::tables::system::LiveQueriesTableProvider;
 use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
@@ -829,7 +829,7 @@ pub struct RegistryStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::RocksDbInit;
+    use kalamdb_store::RocksDbInit;
     use kalamdb_commons::models::{ColumnDefinition, TableDefinition};
     use kalamdb_commons::{NamespaceId, StorageId, TableName, TableType};
     use tempfile::TempDir;
@@ -838,7 +838,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = Arc::new(init.open().unwrap());
-        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
         let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let user_table_store = Arc::new(UserTableStore::new(Arc::clone(&db)).unwrap());

@@ -5,7 +5,7 @@
 use crate::stores::SystemTableStore;
 use kalamdb_commons::models::{NamespaceId, TableName};
 use kalamdb_commons::TableAccess;
-use kalamdb_store::StorageBackend;
+use kalamdb_store::{EntityStore, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -68,7 +68,7 @@ pub fn new_shared_table_store(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::{EntityStoreV2, InMemoryBackend};
+    use kalamdb_store::{EntityStoreV2, test_utils::InMemoryBackend};
 
     fn create_test_store() -> SharedTableStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

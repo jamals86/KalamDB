@@ -147,9 +147,8 @@ mod tests {
     use super::*;
     use crate::jobs::{JobExecutor, StreamEvictionJob};
     use crate::tables::system::JobsTableProvider;
+    use crate::tables::StreamTableStore;
     use kalamdb_sql::KalamSql;
-    use kalamdb_store::RocksDbInit;
-    use kalamdb_store::StreamTableStore;
     use tempfile::TempDir;
 
     fn setup_scheduler() -> (StreamEvictionScheduler, TempDir) {
@@ -158,7 +157,7 @@ mod tests {
         let db = init.open().unwrap();
 
         let stream_store = Arc::new(StreamTableStore::new(db.clone()).unwrap());
-        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(Arc::clone(&kalam_sql)));

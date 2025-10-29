@@ -294,7 +294,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
-        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql));
@@ -323,7 +323,7 @@ mod tests {
         // Verify job record in database
         let job = executor
             .jobs_provider
-            .get_job("test-job-1")
+            .get_job(&JobId::new("test-job-1"))
             .unwrap()
             .unwrap();
         assert_eq!(job.status, JobStatus::Completed);
@@ -352,7 +352,7 @@ mod tests {
         // Verify job record in database
         let job = executor
             .jobs_provider
-            .get_job("test-job-2")
+            .get_job(&JobId::new("test-job-2"))
             .unwrap()
             .unwrap();
         assert_eq!(job.status, JobStatus::Failed);
@@ -376,7 +376,7 @@ mod tests {
 
         let job = executor
             .jobs_provider
-            .get_job("test-job-3")
+            .get_job(&JobId::new("test-job-3"))
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -403,7 +403,7 @@ mod tests {
 
         let job = executor
             .jobs_provider
-            .get_job("test-job-4")
+            .get_job(&JobId::new("test-job-4"))
             .unwrap()
             .unwrap();
         assert!(job.parameters.is_some());
@@ -431,7 +431,7 @@ mod tests {
 
         let job = executor
             .jobs_provider
-            .get_job("test-job-5")
+            .get_job(&JobId::new("test-job-5"))
             .unwrap()
             .unwrap();
         assert!(job.memory_used.is_some());
@@ -457,7 +457,7 @@ mod tests {
 
         let job = executor
             .jobs_provider
-            .get_job("test-job-6")
+            .get_job(&JobId::new("test-job-6"))
             .unwrap()
             .unwrap();
         assert_eq!(job.node_id, "test-node-1");
@@ -486,7 +486,7 @@ mod tests {
         // Verify job was updated
         let job = executor
             .jobs_provider
-            .get_job("async-job-1")
+            .get_job(&JobId::new("async-job-1"))
             .unwrap()
             .unwrap();
         assert_eq!(job.status, JobStatus::Completed);

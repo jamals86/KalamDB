@@ -45,7 +45,6 @@ pub use sharding::{
     AlphabeticSharding, ConsistentHashSharding, NumericSharding, ShardingRegistry, ShardingStrategy,
 };
 pub use storage_trait::{Operation, Partition, StorageBackend, StorageError};
-pub use traits::EntityStore; // Old EntityStore<T> trait (to be deprecated)
 
 // Phase 14: Export new type-safe EntityStore traits
 pub use entity_store::{

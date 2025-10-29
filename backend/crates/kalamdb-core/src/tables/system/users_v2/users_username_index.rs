@@ -82,7 +82,7 @@ impl UsernameIndexExt for UsernameIndex {
 mod tests {
     use super::*;
     use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_index() -> UsernameIndex {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

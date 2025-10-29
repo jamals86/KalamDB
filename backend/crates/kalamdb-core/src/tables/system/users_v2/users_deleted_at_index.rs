@@ -214,7 +214,7 @@ mod tests {
     use chrono::TimeZone;
     use kalamdb_commons::models::UserName;
     use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_index() -> DeletedAtIndex {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

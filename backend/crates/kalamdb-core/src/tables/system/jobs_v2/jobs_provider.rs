@@ -258,7 +258,7 @@ impl TableProvider for JobsTableProvider {
 }
 
 impl SystemTableProviderExt for JobsTableProvider {
-    fn table_name(&self) -> &'static str {
+    fn table_name(&self) -> &str {
         "system.jobs"
     }
 
@@ -275,7 +275,7 @@ impl SystemTableProviderExt for JobsTableProvider {
 mod tests {
     use super::*;
     use kalamdb_commons::{JobStatus, JobType, NamespaceId, TableName};
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> JobsTableProvider {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
