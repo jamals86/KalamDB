@@ -2331,11 +2331,44 @@ impl SqlExecutor {
             String::new() // Empty for OAuth/Internal auth
         };
 
-        // Prepare auth_data for OAuth
+        // Prepare auth_data for OAuth (T139 - Phase 10, User Story 8)
+        // For OAuth users, auth_data must contain provider and subject
+        // TODO: Add a common model in kalamdb-commons for OAuth credentials and use it here and in kalamdb-auth for better type safety
+        // AuthType::OAuth should have this model as associated data
+        // Format: {"provider": "google", "subject": "oauth_user_id", "email": "user@example.com"}
         let auth_data = if stmt.auth_type == kalamdb_commons::AuthType::OAuth {
-            stmt.email
-                .as_ref()
-                .map(|email| serde_json::json!({"email": email}).to_string())
+            // For OAuth, we expect the password field to contain JSON with provider and subject
+            // Example SQL: CREATE USER bob WITH OAUTH '{"provider": "google", "subject": "12345"}'
+            if let Some(oauth_json) = &stmt.password {
+                // Parse OAuth JSON from password field
+                let oauth_data: serde_json::Value = serde_json::from_str(oauth_json).map_err(
+                    |e| {
+                        KalamDbError::InvalidSql(format!(
+                            "Invalid OAuth JSON format. Expected {{\"provider\": \"...\", \"subject\": \"...\"}}: {}",
+                            e
+                        ))
+                    },
+                )?;
+
+                // Validate required fields
+                if oauth_data.get("provider").is_none() || oauth_data.get("subject").is_none() {
+                    return Err(KalamDbError::InvalidSql(
+                        "OAuth auth_data must include 'provider' and 'subject' fields".to_string(),
+                    ));
+                }
+
+                // Add email if provided
+                let mut auth_json = oauth_data;
+                if let Some(email) = &stmt.email {
+                    auth_json["email"] = serde_json::json!(email);
+                }
+
+                Some(auth_json.to_string())
+            } else {
+                return Err(KalamDbError::InvalidSql(
+                    "OAuth credentials required for OAUTH auth type. Format: WITH OAUTH '{\"provider\": \"...\", \"subject\": \"...\"}'".to_string(),
+                ));
+            }
         } else {
             None
         };

@@ -21,6 +21,7 @@
 //! - **Stream Tables**: Ephemeral events with key format `{timestamp_ms}:{row_id}`
 
 pub mod common;
+pub mod index; // Generic secondary index support
 pub mod key_encoding;
 pub mod rocksdb_impl;
 pub mod rocksdb_init;
@@ -44,13 +45,13 @@ pub use sharding::{
 pub use storage_trait::{Operation, Partition, StorageBackend, StorageError};
 pub use traits::EntityStore; // Export EntityStore trait
 
+// Export index types
+pub use index::{FunctionExtractor, IndexKeyExtractor, SecondaryIndex};
+
 // NOTE: Old RocksDB-based table stores removed - use EntityStore implementations in kalamdb-core instead
 // pub use shared_table_store::SharedTableStore;
 // pub use stream_table_store::StreamTableStore;
 // pub use user_table_store::UserTableStore;
-
-#[cfg(test)]
-mod tests;
 
 // Make test_utils available for testing in dependent crates
 pub mod test_utils;

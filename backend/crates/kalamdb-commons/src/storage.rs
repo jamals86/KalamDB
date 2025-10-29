@@ -80,6 +80,9 @@ pub enum StorageError {
     /// Operation not supported by this backend
     Unsupported(String),
 
+    /// Unique constraint violation (for indexes)
+    UniqueConstraintViolation(String),
+
     /// Other errors
     Other(String),
 }
@@ -91,6 +94,7 @@ impl fmt::Display for StorageError {
             StorageError::IoError(msg) => write!(f, "I/O error: {}", msg),
             StorageError::SerializationError(msg) => write!(f, "Serialization error: {}", msg),
             StorageError::Unsupported(msg) => write!(f, "Unsupported operation: {}", msg),
+            StorageError::UniqueConstraintViolation(msg) => write!(f, "Unique constraint violation: {}", msg),
             StorageError::Other(msg) => write!(f, "Storage error: {}", msg),
         }
     }

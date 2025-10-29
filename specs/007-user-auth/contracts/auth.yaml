@@ -1,0 +1,372 @@
+openapi: 3.0.3
+info:
+  title: KalamDB Authentication API
+  description: |
+    Authentication endpoints for KalamDB user authentication system.
+    
+    **Authentication Methods**:
+    - HTTP Basic Auth (username:password in Authorization header)
+    - JWT Bearer tokens (Authorization: Bearer <token>)
+    - OAuth 2.0 tokens (Google, GitHub, Azure)
+    
+    **Note**: User management is performed via SQL commands (CREATE USER, ALTER USER, DROP USER),
+    not REST endpoints. This API only handles authentication validation.
+  version: 1.0.0
+  contact:
+    name: KalamDB Team
+    url: https://github.com/jamals86/KalamDB
+
+servers:
+  - url: http://localhost:3000
+    description: Local development server
+  - url: https://api.kalamdb.io
+    description: Production server
+
+paths:
+  /v1/auth/login:
+    post:
+      summary: Authenticate user and obtain JWT token
+      description: |
+        Authenticates a user with username and password, returning a JWT token
+        for subsequent requests. The token includes user ID, role, and expiration.
+        
+        **Authentication Flow**:
+        1. Send username and password
+        2. Server validates credentials (bcrypt hash comparison)
+        3. Returns JWT token valid for configured duration
+        4. Client includes token in Authorization header for future requests
+        
+        **Security**:
+        - Passwords are never stored in plaintext
+        - bcrypt hashing (cost factor 12)
+        - Timing-attack resistant comparison
+        - Generic error messages to prevent username enumeration
+      operationId: login
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+              properties:
+                username:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                  example: alice
+                  description: Username (case-sensitive)
+                password:
+                  type: string
+                  minLength: 8
+                  maxLength: 72
+                  format: password
+                  example: SecureP@ssw0rd
+                  description: User password (min 8, max 72 chars, bcrypt limit)
+            examples:
+              basicUser:
+                summary: Regular user login
+                value:
+                  username: alice
+                  password: SecureP@ssw0rd
+              dbaUser:
+                summary: DBA user login
+                value:
+                  username: admin
+                  password: AdminP@ss123
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - token
+                  - user_id
+                  - username
+                  - role
+                  - expires_at
+                properties:
+                  token:
+                    type: string
+                    format: jwt
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                    description: JWT token for Authorization header
+                  user_id:
+                    type: string
+                    example: alice
+                    description: User identifier
+                  username:
+                    type: string
+                    example: alice
+                    description: Username
+                  role:
+                    type: string
+                    enum: [user, service, dba, system]
+                    example: user
+                    description: User role for RBAC
+                  expires_at:
+                    type: integer
+                    format: int64
+                    example: 1698765432000
+                    description: Token expiration timestamp (milliseconds since epoch)
+              examples:
+                regularUser:
+                  summary: Regular user authentication
+                  value:
+                    token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiYWxpY2UiLCJyb2xlIjoidXNlciIsImV4cCI6MTY5ODc2NTQzMn0.abc123
+                    user_id: alice
+                    username: alice
+                    role: user
+                    expires_at: 1698765432000
+                dbaUser:
+                  summary: DBA user authentication
+                  value:
+                    token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiYWRtaW4iLCJyb2xlIjoiZGJhIiwiZXhwIjoxNjk4NzY1NDMyfQ.def456
+                    user_id: admin
+                    username: admin
+                    role: dba
+                    expires_at: 1698765432000
+        '400':
+          description: Bad request - invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingUsername:
+                  summary: Missing username
+                  value:
+                    status: error
+                    error: Missing required field 'username'
+                emptyPassword:
+                  summary: Empty password
+                  value:
+                    status: error
+                    error: Password cannot be empty
+        '401':
+          description: Authentication failed - invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalidCredentials:
+                  summary: Wrong username or password
+                  value:
+                    status: error
+                    error: Invalid username or password
+                deletedUser:
+                  summary: User has been deleted
+                  value:
+                    status: error
+                    error: User account has been deleted
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                status: error
+                error: Internal server error
+
+  /v1/auth/validate:
+    post:
+      summary: Validate JWT token
+      description: |
+        Validates a JWT token and returns the authenticated user information.
+        Used by clients to verify token validity and retrieve user context.
+        
+        **Use Cases**:
+        - Token validation before making requests
+        - Retrieving user role for client-side authorization
+        - Checking token expiration
+        
+        **Token Types Supported**:
+        - JWT tokens issued by /v1/auth/login
+        - OAuth 2.0 tokens (Google, GitHub, Azure)
+        
+        **Security**:
+        - HS256 signature verification
+        - Expiration time validation
+        - Issuer validation (for OAuth tokens)
+      operationId: validate
+      tags:
+        - Authentication
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Token is valid
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - user_id
+                  - username
+                  - role
+                  - auth_type
+                  - exp
+                properties:
+                  user_id:
+                    type: string
+                    example: alice
+                    description: User identifier
+                  username:
+                    type: string
+                    example: alice
+                    description: Username
+                  role:
+                    type: string
+                    enum: [user, service, dba, system]
+                    example: user
+                    description: User role
+                  auth_type:
+                    type: string
+                    enum: [password, oauth, internal]
+                    example: password
+                    description: Authentication type
+                  exp:
+                    type: integer
+                    format: int64
+                    example: 1698765432
+                    description: Token expiration timestamp (seconds since epoch)
+                  email:
+                    type: string
+                    format: email
+                    example: alice@example.com
+                    description: User email (if available)
+              examples:
+                passwordUser:
+                  summary: Password-authenticated user
+                  value:
+                    user_id: alice
+                    username: alice
+                    role: user
+                    auth_type: password
+                    exp: 1698765432
+                    email: alice@example.com
+                oauthUser:
+                  summary: OAuth-authenticated user
+                  value:
+                    user_id: bob
+                    username: bob
+                    role: user
+                    auth_type: oauth
+                    exp: 1698765432
+                    email: bob@gmail.com
+        '401':
+          description: Token is invalid or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                expiredToken:
+                  summary: Token has expired
+                  value:
+                    status: error
+                    error: Token has expired
+                invalidSignature:
+                  summary: Invalid token signature
+                  value:
+                    status: error
+                    error: Invalid token signature
+                malformedToken:
+                  summary: Malformed token
+                  value:
+                    status: error
+                    error: Malformed JWT token
+                missingToken:
+                  summary: No authorization header
+                  value:
+                    status: error
+                    error: Missing Authorization header
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                status: error
+                error: Internal server error
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT token obtained from /v1/auth/login or OAuth provider.
+        
+        **Header Format**: `Authorization: Bearer <token>`
+        
+        **Example**:
+        ```
+        Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        ```
+    
+    BasicAuth:
+      type: http
+      scheme: basic
+      description: |
+        HTTP Basic Authentication with username and password.
+        
+        **Header Format**: `Authorization: Basic <base64(username:password)>`
+        
+        **Example**:
+        ```
+        Authorization: Basic YWxpY2U6U2VjdXJlUEBzc3cwcmQ=
+        ```
+        
+        **Note**: While login endpoint accepts JSON, SQL queries can use Basic Auth
+        in the Authorization header for direct authentication.
+
+  schemas:
+    Error:
+      type: object
+      required:
+        - status
+        - error
+      properties:
+        status:
+          type: string
+          enum: [error]
+          example: error
+          description: Status indicator (always 'error' for error responses)
+        error:
+          type: string
+          example: Invalid username or password
+          description: Human-readable error message
+        details:
+          type: object
+          description: Optional additional error details
+          additionalProperties: true
+
+tags:
+  - name: Authentication
+    description: |
+      User authentication endpoints for obtaining and validating JWT tokens.
+      
+      **Authentication System Overview**:
+      - **Password Authentication**: bcrypt-hashed passwords (cost 12), stored securely
+      - **OAuth 2.0**: Support for Google, GitHub, and Azure identity providers
+      - **JWT Tokens**: HS256 signed tokens with configurable expiration
+      - **Role-Based Access Control (RBAC)**: Four roles (user, service, dba, system)
+      
+      **User Management**:
+      User creation, modification, and deletion are performed via SQL commands:
+      - `CREATE USER 'username' WITH PASSWORD 'password' ROLE user`
+      - `ALTER USER 'username' SET PASSWORD 'newpassword'`
+      - `DROP USER 'username'`
+      
+      See quickstart.md for complete SQL examples and authentication workflows.

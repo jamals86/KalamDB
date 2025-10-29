@@ -23,6 +23,8 @@ pub struct ServerConfig {
     pub rate_limit: RateLimitSettings,
     #[serde(default)]
     pub auth: AuthSettings,
+    #[serde(default)]
+    pub oauth: OAuthSettings,
 }
 
 /// Server settings
@@ -223,6 +225,112 @@ pub struct AuthSettings {
     pub bcrypt_cost: u32,
 }
 
+/// OAuth settings (Phase 10, User Story 8)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthSettings {
+    /// Enable OAuth authentication (default: false)
+    #[serde(default = "default_oauth_enabled")]
+    pub enabled: bool,
+
+    /// Auto-provision users on first OAuth login (default: false)
+    #[serde(default = "default_oauth_auto_provision")]
+    pub auto_provision: bool,
+
+    /// Default role for auto-provisioned OAuth users (default: "user")
+    #[serde(default = "default_oauth_default_role")]
+    pub default_role: String,
+
+    /// OAuth providers configuration
+    #[serde(default)]
+    pub providers: OAuthProvidersSettings,
+}
+
+/// OAuth providers configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthProvidersSettings {
+    #[serde(default)]
+    pub google: OAuthProviderConfig,
+    #[serde(default)]
+    pub github: OAuthProviderConfig,
+    #[serde(default)]
+    pub azure: OAuthProviderConfig,
+}
+
+/// Individual OAuth provider configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthProviderConfig {
+    /// Enable this provider (default: false)
+    #[serde(default = "default_oauth_provider_enabled")]
+    pub enabled: bool,
+
+    /// OAuth provider's issuer URL
+    #[serde(default)]
+    pub issuer: String,
+
+    /// JSON Web Key Set endpoint for public keys
+    #[serde(default)]
+    pub jwks_uri: String,
+
+    /// OAuth application client ID (optional)
+    #[serde(default)]
+    pub client_id: Option<String>,
+
+    /// OAuth application client secret (optional, for GitHub)
+    #[serde(default)]
+    pub client_secret: Option<String>,
+
+    /// Azure tenant ID (optional, for Azure)
+    #[serde(default)]
+    pub tenant: Option<String>,
+}
+
+impl Default for OAuthSettings {
+    fn default() -> Self {
+        Self {
+            enabled: default_oauth_enabled(),
+            auto_provision: default_oauth_auto_provision(),
+            default_role: default_oauth_default_role(),
+            providers: OAuthProvidersSettings::default(),
+        }
+    }
+}
+
+impl Default for OAuthProvidersSettings {
+    fn default() -> Self {
+        Self {
+            google: OAuthProviderConfig::default(),
+            github: OAuthProviderConfig::default(),
+            azure: OAuthProviderConfig::default(),
+        }
+    }
+}
+
+impl Default for OAuthProviderConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_oauth_provider_enabled(),
+            issuer: String::new(),
+            jwks_uri: String::new(),
+            client_id: None,
+            client_secret: None,
+            tenant: None,
+        }
+    }
+}
+
+impl Default for AuthSettings {
+    fn default() -> Self {
+        Self {
+            allow_remote_access: default_auth_allow_remote_access(),
+            jwt_secret: default_auth_jwt_secret(),
+            jwt_trusted_issuers: default_auth_jwt_trusted_issuers(),
+            min_password_length: default_auth_min_password_length(),
+            max_password_length: default_auth_max_password_length(),
+            bcrypt_cost: default_auth_bcrypt_cost(),
+        }
+    }
+}
+
 impl Default for DataFusionSettings {
     fn default() -> Self {
         Self {
@@ -267,19 +375,6 @@ impl Default for RateLimitSettings {
             max_queries_per_sec: default_rate_limit_queries_per_sec(),
             max_messages_per_sec: default_rate_limit_messages_per_sec(),
             max_subscriptions_per_user: default_rate_limit_max_subscriptions(),
-        }
-    }
-}
-
-impl Default for AuthSettings {
-    fn default() -> Self {
-        Self {
-            allow_remote_access: default_auth_allow_remote_access(),
-            jwt_secret: default_auth_jwt_secret(),
-            jwt_trusted_issuers: default_auth_jwt_trusted_issuers(),
-            min_password_length: default_auth_min_password_length(),
-            max_password_length: default_auth_max_password_length(),
-            bcrypt_cost: default_auth_bcrypt_cost(),
         }
     }
 }
@@ -421,6 +516,23 @@ fn default_auth_max_password_length() -> usize {
 
 fn default_auth_bcrypt_cost() -> u32 {
     12 // Bcrypt cost factor 12 (good balance of security and performance)
+}
+
+// OAuth defaults (Phase 10, User Story 8)
+fn default_oauth_enabled() -> bool {
+    false // OAuth disabled by default
+}
+
+fn default_oauth_auto_provision() -> bool {
+    false // Auto-provisioning disabled by default
+}
+
+fn default_oauth_default_role() -> String {
+    "user".to_string() // Default role for auto-provisioned users
+}
+
+fn default_oauth_provider_enabled() -> bool {
+    false // Individual providers disabled by default
 }
 
 // RocksDB defaults
@@ -622,6 +734,7 @@ impl ServerConfig {
             stream: StreamSettings::default(),
             rate_limit: RateLimitSettings::default(),
             auth: AuthSettings::default(),
+            oauth: OAuthSettings::default(),
         }
     }
 }
