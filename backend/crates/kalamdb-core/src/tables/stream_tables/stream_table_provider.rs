@@ -10,7 +10,8 @@
 use crate::catalog::{NamespaceId, TableMetadata, TableName};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
-use crate::tables::StreamTableStore;
+use crate::stores::system_table::SharedTableStoreExt;
+use crate::tables::{StreamTableRowId, StreamTableStore};
 use crate::tables::system::LiveQueriesTableProvider;
 use crate::tables::arrow_json_conversion::{arrow_batch_to_json, json_rows_to_arrow_batch};
 use async_trait::async_trait;

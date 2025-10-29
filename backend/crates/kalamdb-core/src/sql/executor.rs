@@ -3316,7 +3316,7 @@ impl SqlExecutor {
             let mut updated_count = 0;
             for (row_id, row_data) in all_rows {
                 // Check if row matches WHERE clause
-                if let Some(obj) = row_data.as_object() {
+                if let Some(obj) = row_data.fields.as_object() {
                     if let Some(col_value) = obj.get(&where_col) {
                         if Self::value_matches(col_value, &where_val) {
                             // Build update JSON from SET clause
@@ -3354,15 +3354,13 @@ impl SqlExecutor {
                 )
             })?;
 
-        // Scan all rows from store
-        let all_rows = self
-            .shared_table_store
-            .as_ref()
-            .ok_or_else(|| KalamDbError::InvalidOperation("Store not configured".to_string()))?
-            let all_rows = store
-                .scan(&update_info.namespace, &update_info.table)
-                .map_err(|e| KalamDbError::Other(e.to_string()))?;
-            .map_err(|e| KalamDbError::Other(format!("Scan failed: {}", e)))?;
+        // Execute the update on shared table
+        let all_rows = SharedTableStoreExt::scan(
+            self.shared_table_store.as_ref().ok_or_else(|| KalamDbError::InvalidOperation("Store not configured".to_string()))?,
+            &update_info.namespace,
+            &update_info.table,
+        )
+        .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         // Filter rows by WHERE clause (simple evaluation: col = 'value')
         let (where_col, where_val) = self.parse_simple_where(&update_info.where_clause)?;
@@ -3370,7 +3368,7 @@ impl SqlExecutor {
         let mut updated_count = 0;
         for (row_id, row_data) in all_rows {
             // Check if row matches WHERE clause
-            if let Some(obj) = row_data.as_object() {
+            if let Some(obj) = row_data.fields.as_object() {
                 if let Some(col_value) = obj.get(&where_col) {
                     if Self::value_matches(col_value, &where_val) {
                         // Build update JSON from SET clause
@@ -3459,7 +3457,7 @@ impl SqlExecutor {
             let mut deleted_count = 0;
             for (row_id, row_data) in all_rows {
                 // Check if row matches WHERE clause
-                if let Some(obj) = row_data.as_object() {
+                if let Some(obj) = row_data.fields.as_object() {
                     if let Some(col_value) = obj.get(&where_col) {
                         if Self::value_matches(col_value, &where_val) {
                             // Call delete method (soft delete for user tables)
@@ -3503,7 +3501,7 @@ impl SqlExecutor {
         let mut deleted_count = 0;
         for (row_id, row_data) in all_rows {
             // Check if row matches WHERE clause
-            if let Some(obj) = row_data.as_object() {
+            if let Some(obj) = row_data.fields.as_object() {
                 if let Some(col_value) = obj.get(&where_col) {
                     if Self::value_matches(col_value, &where_val) {
                         // Call soft delete method
@@ -4111,17 +4109,17 @@ mod tests {
         let session_context = Arc::new(SessionContext::new());
 
         // Initialize table services for tests using EntityStore implementations
-        let user_table_store = Arc::new(crate::tables::UserTableStore::new(backend.clone()));
+        let user_table_store = Arc::new(crate::tables::new_user_table_store(backend.clone(), &NamespaceId::new("default"), &TableName::new("test")));
         let user_table_service = Arc::new(crate::services::UserTableService::new(
             kalam_sql.clone(),
             user_table_store.clone(),
         ));
-        let shared_table_store = Arc::new(crate::tables::SharedTableStore::new(backend.clone()));
+        let shared_table_store = Arc::new(crate::tables::new_shared_table_store(backend.clone(), &NamespaceId::new("default"), &TableName::new("test")));
         let shared_table_service = Arc::new(crate::services::SharedTableService::new(
             shared_table_store.clone(),
             kalam_sql.clone(),
         ));
-        let stream_table_store = Arc::new(crate::tables::StreamTableStore::new(backend.clone()));
+        let stream_table_store = Arc::new(crate::tables::new_stream_table_store(backend.clone(), &NamespaceId::new("default"), &TableName::new("test")));
         let stream_table_service = Arc::new(crate::services::StreamTableService::new(
             stream_table_store.clone(),
             kalam_sql.clone(),
@@ -4217,17 +4215,17 @@ mod tests {
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
         let session_context = Arc::new(SessionContext::new());
 
-        let user_table_store = Arc::new(crate::tables::UserTableStore::new(backend.clone()));
+        let user_table_store = Arc::new(crate::tables::new_user_table_store(backend.clone(), &NamespaceId::new("default"), &TableName::new("test")));
         let user_table_service = Arc::new(crate::services::UserTableService::new(
             kalam_sql.clone(),
             user_table_store.clone(),
         ));
-        let shared_table_store = Arc::new(crate::tables::SharedTableStore::new(backend.clone()));
+        let shared_table_store = Arc::new(crate::tables::new_shared_table_store(backend.clone(), &NamespaceId::new("default"), &TableName::new("test")));
         let shared_table_service = Arc::new(crate::services::SharedTableService::new(
             shared_table_store.clone(),
             kalam_sql.clone(),
         ));
-        let stream_table_store = Arc::new(crate::tables::StreamTableStore::new(backend.clone()));
+        let stream_table_store = Arc::new(crate::tables::new_stream_table_store(backend.clone(), &NamespaceId::new("default"), &TableName::new("test")));
         let stream_table_service = Arc::new(crate::services::StreamTableService::new(
             stream_table_store.clone(),
             kalam_sql.clone(),

@@ -101,14 +101,23 @@ impl UserTableChangeDetector {
             ChangeType::Insert
         };
 
-                // Step 3: Store the row (system columns injected by store)
+        // Step 3: Create UserTableRow from JsonValue (system columns will be updated by store)
+        let entity = crate::tables::user_tables::user_table_store::UserTableRow {
+            row_id: row_id.to_string(),
+            user_id: user_id.to_string(),
+            fields: row_data,
+            _updated: chrono::Utc::now().to_rfc3339(),
+            _deleted: false,
+        };
+
+                // Step 4: Store the row (system columns injected by store)
         UserTableStoreExt::put(
             self.store.as_ref(),
             namespace_id,
             table_name,
             user_id,
             row_id,
-            &row_data,
+            &entity,
         )
         .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
@@ -125,10 +134,7 @@ impl UserTableChangeDetector {
 
         // T175: Filter out _deleted=true rows from INSERT/UPDATE notifications
         // Only send DELETE notification for deleted rows
-        let is_deleted = new_value
-            .get("_deleted")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let is_deleted = new_value._deleted;
 
         if is_deleted {
             // Row is soft-deleted, skip INSERT/UPDATE notification
@@ -145,15 +151,15 @@ impl UserTableChangeDetector {
                 })?;
                 ChangeNotification::update(
                     table_name.to_string(), 
-                    serde_json::to_value(&old_data).unwrap_or(serde_json::json!({})),
-                    serde_json::to_value(&new_value).unwrap_or(serde_json::json!({}))
+                    serde_json::to_value(&old_data.fields).unwrap_or(serde_json::json!({})),
+                    serde_json::to_value(&new_value.fields).unwrap_or(serde_json::json!({}))
                 )
             }
             ChangeType::Insert => {
                 // INSERT: only new values
                 ChangeNotification::insert(
                     table_name.to_string(), 
-                    serde_json::to_value(&new_value).unwrap_or(serde_json::json!({}))
+                    serde_json::to_value(&new_value.fields).unwrap_or(serde_json::json!({}))
                 )
             }
             _ => {

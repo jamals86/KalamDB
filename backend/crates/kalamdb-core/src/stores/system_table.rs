@@ -40,6 +40,7 @@
 
 use crate::error::KalamDbError;
 use crate::tables::shared_tables::shared_table_store::{SharedTableRow, SharedTableRowId};
+use crate::tables::stream_tables::stream_table_store::{StreamTableRow, StreamTableRowId};
 use crate::tables::system::SystemTableProviderExt;
 use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId};
 use kalamdb_store::{entity_store::{CrossUserTableStore, EntityStore}, StorageBackend, storage_trait::Result};
@@ -123,14 +124,12 @@ impl<K: Send + Sync, V: Send + Sync> SystemTableProviderExt for SystemTableStore
         Arc::new(arrow::datatypes::Schema::empty())
     }
 
-    fn load_batch(&self) -> Result<arrow::record_batch::RecordBatch, KalamDbError> {
+    fn load_batch(&self) -> std::result::Result<arrow::record_batch::RecordBatch, KalamDbError> {
         // System tables are accessed via typed EntityStore operations
         // Not via SQL/RecordBatch interface
-        Err(kalamdb_store::StorageError::Other(Box::new(
-            KalamDbError::InvalidOperation(
-                "System tables do not support RecordBatch loading".to_string(),
-            ),
-        )))
+        Err(KalamDbError::InvalidOperation(
+            "System tables do not support RecordBatch loading".to_string(),
+        ))
     }
 }
 
@@ -248,8 +247,8 @@ impl UserTableStoreExt<UserTableRowId, UserTableRow> for SystemTableStore<UserTa
         // Scan with prefix "user_id:"
         let prefix_key = UserTableRowId::new(kalamdb_commons::UserId::new(user_id), "");
         let results = EntityStore::scan_prefix(self, &prefix_key)?;
-        Ok(results.into_iter().map(|(key_bytes, row)| {
-            (String::from_utf8_lossy(&key_bytes).to_string(), row)
+        Ok(results.into_iter().map(|(key, row)| {
+            (String::from_utf8_lossy(key.as_ref()).to_string(), row)
         }).collect())
     }
 
@@ -317,8 +316,8 @@ impl UserTableStoreExt<UserTableRowId, UserTableRow> for SystemTableStore<UserTa
         _table_name: &str,
     ) -> std::result::Result<Vec<(String, UserTableRow)>, KalamDbError> {
         let results = EntityStore::scan_all(self)?;
-        Ok(results.into_iter().map(|(key_bytes, row)| {
-            (String::from_utf8_lossy(&key_bytes).to_string(), row)
+        Ok(results.into_iter().map(|(key, row)| {
+            (String::from_utf8_lossy(key.as_ref()).to_string(), row)
         }).collect())
     }
 
@@ -339,7 +338,7 @@ impl UserTableStoreExt<UserTableRowId, UserTableRow> for SystemTableStore<UserTa
         // For now, just scan and delete all - in practice this should use backend drop
         let all_results = EntityStore::scan_all(self)?;
         for (key_bytes, _) in all_results {
-            let key_str = String::from_utf8_lossy(&key_bytes).to_string();
+            let key_str = String::from_utf8_lossy(key.as_ref()).to_string();
             let key = UserTableRowId::from_key_string(key_str);
             EntityStore::delete(self, &key)?;
         }
@@ -576,8 +575,8 @@ impl SharedTableStoreExt<SharedTableRowId, SharedTableRow> for SystemTableStore<
         _table_name: &str,
     ) -> std::result::Result<Vec<(String, SharedTableRow)>, KalamDbError> {
         let results = EntityStore::scan_all(self)?;
-        Ok(results.into_iter().map(|(key_bytes, row)| {
-            (String::from_utf8_lossy(&key_bytes).to_string(), row)
+        Ok(results.into_iter().map(|(key, row)| {
+            (String::from_utf8_lossy(key.as_ref()).to_string(), row)
         }).collect())
     }
 
@@ -642,7 +641,7 @@ impl SharedTableStoreExt<SharedTableRowId, SharedTableRow> for SystemTableStore<
         // For now, just scan and delete all - in practice this should use backend drop
         let all_results = EntityStore::scan_all(self)?;
         for (key_bytes, _) in all_results {
-            let key_str = String::from_utf8_lossy(&key_bytes).to_string();
+            let key_str = String::from_utf8_lossy(key.as_ref()).to_string();
             let key = SharedTableRowId::new(&key_str);
             EntityStore::delete(self, &key)?;
         }
@@ -689,7 +688,7 @@ impl SharedTableStoreExt<StreamTableRowId, StreamTableRow>
         let results = EntityStore::scan_all(self)?;
         Ok(results
             .into_iter()
-            .map(|(key_bytes, row)| (String::from_utf8_lossy(&key_bytes).to_string(), row))
+            .map(|(key, row)| (String::from_utf8_lossy(key.as_ref()).to_string(), row))
             .collect())
     }
 
@@ -753,10 +752,8 @@ impl SharedTableStoreExt<StreamTableRowId, StreamTableRow>
     ) -> std::result::Result<(), KalamDbError> {
         // For now, just scan and delete all - in practice this should use backend drop
         let all_results = EntityStore::scan_all(self)?;
-        for (key_bytes, _) in all_results {
-            let key_str = String::from_utf8_lossy(&key_bytes).to_string();
-            let key = StreamTableRowId::new(&key_str);
-            EntityStore::delete(self, &key)?;
+        for (key_id, _) in all_results {
+            EntityStore::delete(self, &key_id)?;
         }
         Ok(())
     }
@@ -791,20 +788,24 @@ impl SharedTableStoreExt<StreamTableRowId, StreamTableRow>
         }
         Ok(())
     }
+}
 
-    fn cleanup_expired_rows(
+// NOTE: cleanup_expired_rows is NOT part of SharedTableStoreExt trait
+// It's a separate method that can be called directly on StreamTableStore
+impl SystemTableStore<StreamTableRowId, StreamTableRow> {
+    pub fn cleanup_expired_rows(
         &self,
         _namespace_id: &str,
         _table_name: &str,
     ) -> std::result::Result<usize, KalamDbError> {
-        let all_rows = self.scan_all()?;
+        let all_rows = EntityStore::scan_all(self)?;
         let mut deleted_count = 0;
         for (key, row) in all_rows {
             if let Some(ttl) = row.ttl_seconds {
                 let inserted_at = chrono::DateTime::parse_from_rfc3339(&row.inserted_at)
                     .map_err(|e| KalamDbError::Other(e.to_string()))?;
                 if chrono::Utc::now().timestamp() > inserted_at.timestamp() + ttl as i64 {
-                    self.delete(&key)?;
+                    EntityStore::delete(self, &key)?;
                     deleted_count += 1;
                 }
             }

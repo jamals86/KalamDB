@@ -75,7 +75,7 @@ impl UserTableDeleteHandler {
         row_id: &str,
     ) -> Result<String, KalamDbError> {
         // Fetch row data BEFORE deleting (for notification)
-        let row_to_delete = SharedTableStoreExt::get(
+        let row_to_delete = UserTableStoreExt::get(
             &self.store,
             namespace_id.as_str(),
             table_name.as_str(),

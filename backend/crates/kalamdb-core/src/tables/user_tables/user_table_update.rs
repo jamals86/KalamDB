@@ -81,7 +81,7 @@ impl UserTableUpdateHandler {
 
         // Read existing row from store
         let key = UserTableRowId::new(user_id.clone(), row_id);
-        let existing_row = SharedTableStoreExt::get(
+        let existing_row = UserTableStoreExt::get(
             &self.store,
             namespace_id.as_str(),
             table_name.as_str(),

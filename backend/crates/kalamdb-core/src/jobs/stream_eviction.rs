@@ -220,7 +220,6 @@ impl StreamEvictionJob {
                 // Get all events - the new scan method returns (row_id, row_data)
                 let mut events = stream_store
                     .scan(&namespace_id_str, &table_name_str)
-                    .map_err(|e| KalamDbError::Other(e.to_string()))?;
                     .map_err(|e| format!("Failed to scan table: {}", e))?;
 
                 let total_count = events.len();
