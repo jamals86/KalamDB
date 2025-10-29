@@ -10,6 +10,8 @@ use crate::tables::system::{
 use crate::tables::system::users_v2::UsersTableProvider;
 use crate::tables::system::tables_v2::TablesTableProvider;
 use crate::tables::system::namespaces_v2::NamespacesTableProvider as NamespacesTableProviderV2;
+use crate::tables::system::storages_v2::StoragesTableProvider as StoragesTableProviderV2;
+use crate::tables::system::live_queries_v2::LiveQueriesTableProvider as LiveQueriesTableProviderV2;
 use datafusion::catalog::memory::MemorySchemaProvider;
 use datafusion::catalog::SchemaProvider;
 use kalamdb_commons::system_tables::SystemTable;
@@ -53,9 +55,10 @@ pub fn register_system_tables(
     let tables_provider = Arc::new(TablesTableProvider::new(storage_backend.clone()));
     let jobs_provider = Arc::new(JobsTableProvider::new(storage_backend.clone()));
     let namespaces_provider = Arc::new(NamespacesTableProviderV2::new(storage_backend.clone()));
-    // Old providers (to be migrated in Phase 14 Step 4)
-    let storages_provider = Arc::new(SystemStoragesProvider::new(kalam_sql.clone()));
-    let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone()));
+    let storages_provider = Arc::new(StoragesTableProviderV2::new(storage_backend.clone()));
+    let live_queries_provider = Arc::new(LiveQueriesTableProviderV2::new(storage_backend.clone()));
+    // Old providers (to be migrated or removed)
+    let table_schemas_provider = Arc::new(TableSchemasProvider::new(kalam_sql.clone()));
     let table_schemas_provider = Arc::new(TableSchemasProvider::new(kalam_sql.clone()));
 
     // Register each system table using the SystemTable enum
