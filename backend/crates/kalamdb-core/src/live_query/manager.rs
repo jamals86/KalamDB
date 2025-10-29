@@ -13,6 +13,7 @@ use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use crate::tables::system::live_queries_provider::LiveQueriesTableProvider;
 use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
+use kalamdb_commons::LiveQueryId;
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -174,7 +175,7 @@ impl LiveQueryManager {
 
         // Create record for system.live_queries
         let live_query_record = SystemLiveQuery {
-            live_id: live_id.to_string(),
+            live_id: LiveQueryId::new(live_id.to_string()),
             connection_id: connection_id.to_string(),
             namespace_id: NamespaceId::new(namespace.to_string()),
             table_name: TableName::new(canonical_table.clone()),

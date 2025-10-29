@@ -9,6 +9,7 @@ use crate::tables::system::{
 // Phase 14: Use new EntityStore-based providers
 use crate::tables::system::users_v2::UsersTableProvider;
 use crate::tables::system::tables_v2::TablesTableProvider;
+use crate::tables::system::namespaces_v2::NamespacesTableProvider as NamespacesTableProviderV2;
 use datafusion::catalog::memory::MemorySchemaProvider;
 use datafusion::catalog::SchemaProvider;
 use kalamdb_commons::system_tables::SystemTable;
@@ -51,8 +52,8 @@ pub fn register_system_tables(
     let users_provider = Arc::new(UsersTableProvider::new(storage_backend.clone()));
     let tables_provider = Arc::new(TablesTableProvider::new(storage_backend.clone()));
     let jobs_provider = Arc::new(JobsTableProvider::new(storage_backend.clone()));
+    let namespaces_provider = Arc::new(NamespacesTableProviderV2::new(storage_backend.clone()));
     // Old providers (to be migrated in Phase 14 Step 4)
-    let namespaces_provider = Arc::new(NamespacesTableProvider::new(kalam_sql.clone()));
     let storages_provider = Arc::new(SystemStoragesProvider::new(kalam_sql.clone()));
     let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone()));
     let table_schemas_provider = Arc::new(TableSchemasProvider::new(kalam_sql.clone()));

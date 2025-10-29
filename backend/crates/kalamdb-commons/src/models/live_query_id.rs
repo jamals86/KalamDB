@@ -9,6 +9,7 @@ use std::fmt;
 /// 
 /// Ensures live query IDs cannot be accidentally used where other identifier types
 /// are expected.
+/// TODO: Use the same LiveId type in kalamdb-core live query manager and provider.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
 pub struct LiveQueryId(String);
 

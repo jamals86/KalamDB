@@ -25,6 +25,8 @@ pub mod users_v2;
 pub mod tables_v2;
 // New EntityStore-based jobs module (Phase 14)
 pub mod jobs_v2;
+// New EntityStore-based namespaces module (Phase 14)
+pub mod namespaces_v2;
 
 pub use base_provider::SystemTableProviderExt;
 pub use information_schema_columns::InformationSchemaColumnsProvider;
@@ -35,7 +37,8 @@ pub use jobs_v2::JobsTableProvider;
 pub use live_queries::LiveQueriesTable;
 pub use live_queries_provider::LiveQueriesTableProvider;
 pub use namespaces::NamespacesTable;
-pub use namespaces_provider::NamespacesTableProvider;
+// Export the v2 provider as the main NamespacesTableProvider
+pub use namespaces_v2::NamespacesTableProvider;
 pub use storages::SystemStorages;
 pub use storages_provider::SystemStoragesProvider;
 pub use system_tables::SystemTables;
