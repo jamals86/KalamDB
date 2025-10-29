@@ -7,16 +7,18 @@ use super::super::SystemTableProviderExt;
 use super::{new_jobs_store, JobsStore, JobsTableSchema};
 use crate::error::KalamDbError;
 use async_trait::async_trait;
-use datafusion::arrow::array::{ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMillisecondArray};
+use datafusion::arrow::array::{
+    ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::Job;
 use kalamdb_commons::JobId;
 use kalamdb_store::EntityStoreV2;
+use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -260,7 +262,7 @@ impl SystemTableProviderExt for JobsTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{NamespaceId, TableName, JobType, JobStatus};
+    use kalamdb_commons::{JobStatus, JobType, NamespaceId, TableName};
     use kalamdb_store::InMemoryBackend;
 
     fn create_test_provider() -> JobsTableProvider {
@@ -325,7 +327,7 @@ mod tests {
         let job = create_test_job("job1");
 
         provider.create_job(job).unwrap();
-        
+
         let job_id = JobId::new("job1");
         provider.delete_job(&job_id).unwrap();
 

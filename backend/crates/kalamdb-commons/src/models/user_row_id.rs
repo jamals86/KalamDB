@@ -7,7 +7,7 @@ use std::fmt;
 use super::user_id::UserId;
 
 /// Composite key for user-scoped table rows: {user_id}:{row_id}
-/// 
+///
 /// This composite key ensures type safety when accessing user-isolated
 /// table rows, preventing accidental access across user boundaries.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -57,7 +57,7 @@ impl UserRowId {
         let pos = key.iter().position(|&b| b == b':')?;
         let user_id_str = std::str::from_utf8(&key[..pos]).ok()?;
         let row_id = key[pos + 1..].to_vec();
-        
+
         Some(Self {
             user_id: UserId::new(user_id_str),
             row_id,
@@ -71,7 +71,7 @@ impl AsRef<[u8]> for UserRowId {
         // use as_storage_key() directly.
         // This implementation is primarily for trait compatibility.
         // In performance-critical paths, prefer as_storage_key().
-        
+
         // For the trait, we'll create a static representation on first call
         // In practice, callers should use as_storage_key() for actual storage ops
         self.user_id.as_str().as_bytes()
@@ -102,7 +102,7 @@ mod tests {
         let user_id = UserId::new("user123");
         let row_id = vec![1, 2, 3, 4];
         let composite = UserRowId::new(user_id.clone(), row_id.clone());
-        
+
         assert_eq!(composite.user_id(), &user_id);
         assert_eq!(composite.row_id(), &row_id[..]);
     }
@@ -125,7 +125,7 @@ mod tests {
     fn test_user_row_id_from_storage_key() {
         let key = b"user123:row456";
         let composite = UserRowId::from_storage_key(key).unwrap();
-        
+
         assert_eq!(composite.user_id().as_str(), "user123");
         assert_eq!(composite.row_id(), b"row456");
     }
@@ -135,7 +135,7 @@ mod tests {
         let original = UserRowId::from_strings("user123", "row456");
         let key = original.as_storage_key();
         let parsed = UserRowId::from_storage_key(&key).unwrap();
-        
+
         assert_eq!(original, parsed);
     }
 
@@ -158,10 +158,10 @@ mod tests {
         let user_id = UserId::new("user123");
         let row_id = vec![0xFF, 0xFE, 0xFD];
         let composite = UserRowId::new(user_id, row_id);
-        
+
         let key = composite.as_storage_key();
         let parsed = UserRowId::from_storage_key(&key).unwrap();
-        
+
         assert_eq!(composite, parsed);
     }
 }

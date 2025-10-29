@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Type-safe wrapper for job identifiers in system.jobs table.
-/// 
+///
 /// Ensures job IDs cannot be accidentally used where other identifier types
 /// are expected.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]

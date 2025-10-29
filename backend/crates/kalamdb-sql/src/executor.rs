@@ -11,6 +11,7 @@ use anyhow::{bail, Result};
 
 /// SQL executor
 pub struct SqlExecutor {
+    #[allow(dead_code)]
     adapter: RocksDbAdapter,
 }
 

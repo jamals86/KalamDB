@@ -39,8 +39,22 @@ impl LiveQueriesTableSchema {
                     Field::new("user_id", DataType::Utf8, false),
                     Field::new("query", DataType::Utf8, false),
                     Field::new("options", DataType::Utf8, true),
-                    Field::new("created_at", DataType::Timestamp(datafusion::arrow::datatypes::TimeUnit::Millisecond, None), false),
-                    Field::new("last_update", DataType::Timestamp(datafusion::arrow::datatypes::TimeUnit::Millisecond, None), false),
+                    Field::new(
+                        "created_at",
+                        DataType::Timestamp(
+                            datafusion::arrow::datatypes::TimeUnit::Millisecond,
+                            None,
+                        ),
+                        false,
+                    ),
+                    Field::new(
+                        "last_update",
+                        DataType::Timestamp(
+                            datafusion::arrow::datatypes::TimeUnit::Millisecond,
+                            None,
+                        ),
+                        false,
+                    ),
                     Field::new("changes", DataType::Int64, false),
                     Field::new("node", DataType::Utf8, false),
                 ]))

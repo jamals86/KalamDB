@@ -38,9 +38,7 @@ use crate::services::{
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use crate::tables::{
-    system::{
-        NamespacesTableProvider, SystemTablesTableProvider,
-    },
+    system::{NamespacesTableProvider, SystemTablesTableProvider},
     SharedTableProvider, StreamTableProvider, UserTableProvider,
 };
 // Phase 14: Use new EntityStore-based users provider
@@ -952,7 +950,9 @@ impl SqlExecutor {
 
         // Phase 14: Use new EntityStore-based users provider with storage backend
         let backend = self.storage_backend.as_ref().ok_or_else(|| {
-            KalamDbError::InvalidOperation("Storage backend not configured for users provider".to_string())
+            KalamDbError::InvalidOperation(
+                "Storage backend not configured for users provider".to_string(),
+            )
         })?;
         system_schema
             .register_table(
@@ -961,9 +961,10 @@ impl SqlExecutor {
             )
             .map_err(|e| KalamDbError::Other(format!("Failed to register system.users: {}", e)))?;
 
-        // Register additional system tables
+        // Register additional system tables (using existing providers)
         use crate::tables::system::{
-            JobsTableProvider, LiveQueriesTableProvider, SystemStoragesProvider,
+            JobsTableProvider, LiveQueriesTableProviderOld as LiveQueriesTableProvider,
+            SystemStoragesProvider,
         };
 
         system_schema
@@ -2314,7 +2315,8 @@ impl SqlExecutor {
                 KalamDbError::InvalidOperation("User management not configured".to_string())
             })?;
 
-            let requesting_user = users_provider.get_user_by_id(uid)?
+            let requesting_user = users_provider
+                .get_user_by_id(uid)?
                 .ok_or_else(|| KalamDbError::NotFound(format!("User not found: {}", uid)))?;
             if !matches!(
                 requesting_user.role,
@@ -2440,7 +2442,8 @@ impl SqlExecutor {
                 KalamDbError::InvalidOperation("User management not configured".to_string())
             })?;
 
-            let requesting_user = users_provider.get_user_by_id(uid)?
+            let requesting_user = users_provider
+                .get_user_by_id(uid)?
                 .ok_or_else(|| KalamDbError::NotFound(format!("User not found: {}", uid)))?;
             if !matches!(
                 requesting_user.role,
@@ -2459,7 +2462,8 @@ impl SqlExecutor {
 
         // Get existing user
         let target_user_id = UserId::new(&stmt.username);
-        let mut user = users_provider.get_user_by_id(&target_user_id)?
+        let mut user = users_provider
+            .get_user_by_id(&target_user_id)?
             .ok_or_else(|| KalamDbError::NotFound(format!("User not found: {}", stmt.username)))?;
 
         // Apply modifications
@@ -2513,7 +2517,8 @@ impl SqlExecutor {
                 KalamDbError::InvalidOperation("User management not configured".to_string())
             })?;
 
-            let requesting_user = users_provider.get_user_by_id(uid)?
+            let requesting_user = users_provider
+                .get_user_by_id(uid)?
                 .ok_or_else(|| KalamDbError::NotFound(format!("User not found: {}", uid)))?;
             if !matches!(
                 requesting_user.role,

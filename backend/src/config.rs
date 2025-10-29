@@ -25,6 +25,8 @@ pub struct ServerConfig {
     pub auth: AuthSettings,
     #[serde(default)]
     pub oauth: OAuthSettings,
+    #[serde(default)]
+    pub user_management: UserManagementSettings,
 }
 
 /// Server settings
@@ -177,6 +179,18 @@ pub struct StreamSettings {
     /// How often to check and evict expired events from stream tables
     #[serde(default = "default_stream_eviction_interval")]
     pub eviction_interval_seconds: u64,
+}
+
+/// User management cleanup settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserManagementSettings {
+    /// Grace period (in days) before soft-deleted users are purged
+    #[serde(default = "default_user_deletion_grace_period")]
+    pub deletion_grace_period_days: i64,
+
+    /// Cron expression for scheduling the cleanup job
+    #[serde(default = "default_cleanup_job_schedule")]
+    pub cleanup_job_schedule: String,
 }
 
 /// Rate limiter settings
@@ -379,6 +393,15 @@ impl Default for RateLimitSettings {
     }
 }
 
+impl Default for UserManagementSettings {
+    fn default() -> Self {
+        Self {
+            deletion_grace_period_days: default_user_deletion_grace_period(),
+            cleanup_job_schedule: default_cleanup_job_schedule(),
+        }
+    }
+}
+
 // Default value functions
 fn default_workers() -> usize {
     0
@@ -478,6 +501,14 @@ fn default_stream_max_buffer() -> usize {
 
 fn default_stream_eviction_interval() -> u64 {
     60 // 60 seconds = 1 minute
+}
+
+fn default_user_deletion_grace_period() -> i64 {
+    30 // 30 days
+}
+
+fn default_cleanup_job_schedule() -> String {
+    "0 2 * * *".to_string()
 }
 
 // Rate limiter defaults
@@ -692,6 +723,16 @@ impl ServerConfig {
             ));
         }
 
+        if self.user_management.deletion_grace_period_days < 0 {
+            return Err(anyhow::anyhow!(
+                "deletion_grace_period_days cannot be negative"
+            ));
+        }
+
+        if self.user_management.cleanup_job_schedule.trim().is_empty() {
+            return Err(anyhow::anyhow!("cleanup_job_schedule cannot be empty"));
+        }
+
         Ok(())
     }
 
@@ -735,6 +776,7 @@ impl ServerConfig {
             rate_limit: RateLimitSettings::default(),
             auth: AuthSettings::default(),
             oauth: OAuthSettings::default(),
+            user_management: UserManagementSettings::default(),
         }
     }
 }

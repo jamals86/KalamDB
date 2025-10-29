@@ -98,8 +98,7 @@ where
     /// }
     /// ```
     fn serialize(&self, entity: &T) -> Result<Vec<u8>> {
-        serde_json::to_vec(entity)
-            .map_err(|e| StorageError::SerializationError(e.to_string()))
+        serde_json::to_vec(entity).map_err(|e| StorageError::SerializationError(e.to_string()))
     }
 
     /// Deserializes bytes to an entity.
@@ -107,8 +106,7 @@ where
     /// Default implementation uses JSON. Override this method to use
     /// bincode or other serialization formats.
     fn deserialize(&self, bytes: &[u8]) -> Result<T> {
-        serde_json::from_slice(bytes)
-            .map_err(|e| StorageError::SerializationError(e.to_string()))
+        serde_json::from_slice(bytes).map_err(|e| StorageError::SerializationError(e.to_string()))
     }
 
     /// Stores an entity with the given key.
@@ -150,8 +148,9 @@ where
 
         let mut results = Vec::new();
         for (key_bytes, value_bytes) in iter {
-            let key = String::from_utf8(key_bytes)
-                .map_err(|e| StorageError::SerializationError(format!("Invalid UTF-8 key: {}", e)))?;
+            let key = String::from_utf8(key_bytes).map_err(|e| {
+                StorageError::SerializationError(format!("Invalid UTF-8 key: {}", e))
+            })?;
             let entity = self.deserialize(&value_bytes)?;
             results.push((key, entity));
         }

@@ -591,4 +591,3 @@ mod tests {
         assert_eq!(retrieved["access_level"], "private");
     }
 }
-

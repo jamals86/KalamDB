@@ -3,8 +3,8 @@
 //! This module provides a SystemTableStore<String, SystemTable> wrapper for the system.tables table.
 
 use crate::stores::SystemTableStore;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::SystemTable;
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
 /// Type alias for the tables table store
@@ -18,13 +18,13 @@ pub type TablesStore = SystemTableStore<String, SystemTable>;
 /// # Returns
 /// A new SystemTableStore instance configured for the tables table
 pub fn new_tables_store(backend: Arc<dyn StorageBackend>) -> TablesStore {
-    SystemTableStore::new(backend, "system_tables")//TODO: user the enum partition name
+    SystemTableStore::new(backend, "system_tables") //TODO: user the enum partition name
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{TableName, NamespaceId, TableType, StorageId, Role, TableAccess};
+    use kalamdb_commons::{NamespaceId, Role, StorageId, TableAccess, TableName, TableType};
     use kalamdb_store::InMemoryBackend;
 
     fn create_test_store() -> TablesStore {

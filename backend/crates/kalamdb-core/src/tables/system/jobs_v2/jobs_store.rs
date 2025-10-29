@@ -3,9 +3,9 @@
 //! This module provides a SystemTableStore<JobId, Job> wrapper for the system.jobs table.
 
 use crate::stores::SystemTableStore;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::Job;
 use kalamdb_commons::JobId;
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
 /// Type alias for the jobs table store
@@ -25,7 +25,7 @@ pub fn new_jobs_store(backend: Arc<dyn StorageBackend>) -> JobsStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{NamespaceId, TableName, JobType, JobStatus, Role};
+    use kalamdb_commons::{JobStatus, JobType, NamespaceId, Role, TableName};
     use kalamdb_store::InMemoryBackend;
 
     fn create_test_store() -> JobsStore {

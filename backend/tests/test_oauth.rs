@@ -7,7 +7,6 @@
 //! - OAuth subject matching
 //! - Auto-provisioning disabled by default
 
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::{AuthType, Role, StorageMode, UserId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, UserTableService,
@@ -17,6 +16,7 @@ use kalamdb_core::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_sql::KalamSql;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -112,19 +112,24 @@ async fn test_oauth_google_success() {
     "#;
 
     let result = executor.execute(create_sql, Some(&admin_id)).await;
-    assert!(result.is_ok(), "OAuth user creation failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "OAuth user creation failed: {:?}",
+        result.err()
+    );
 
     // Verify user was created with correct auth_type and auth_data
     let user = kalam_sql.get_user("alice").expect("User not found");
     assert!(user.is_some(), "User should exist");
-    
+
     let user = user.unwrap();
     assert_eq!(user.auth_type, AuthType::OAuth);
     assert_eq!(user.email, Some("alice@gmail.com".to_string()));
-    
+
     // Verify auth_data contains provider and subject
     assert!(user.auth_data.is_some(), "auth_data should be set");
-    let auth_data: serde_json::Value = serde_json::from_str(user.auth_data.as_ref().unwrap()).unwrap();
+    let auth_data: serde_json::Value =
+        serde_json::from_str(user.auth_data.as_ref().unwrap()).unwrap();
     assert_eq!(auth_data["provider"], "google");
     assert_eq!(auth_data["subject"], "google_123456");
 }
@@ -132,8 +137,8 @@ async fn test_oauth_google_success() {
 /// T133: Test OAuth user cannot authenticate with password
 #[tokio::test]
 async fn test_oauth_user_password_rejected() {
-    use kalamdb_auth::{AuthService, basic_auth};
     use kalamdb_auth::connection::ConnectionInfo;
+    use kalamdb_auth::{basic_auth, AuthService};
 
     let (executor, _temp_dir, kalam_sql) = setup_test_executor().await;
     let admin_id = create_system_user(&kalam_sql).await;
@@ -152,26 +157,34 @@ async fn test_oauth_user_password_rejected() {
     let auth_service = AuthService::new(
         "test-secret".to_string(),
         vec![],
-        true, // allow_remote_access
-        false, // oauth_auto_provision
+        true,       // allow_remote_access
+        false,      // oauth_auto_provision
         Role::User, // oauth_default_role
     );
 
     let connection_info = ConnectionInfo::new("127.0.0.1:8080");
-    
+
     // Create Basic Auth header
     let credentials = base64::encode(format!("{}:{}", "bob", "somepassword"));
     let auth_header = format!("Basic {}", credentials);
 
-    let result = auth_service.authenticate(&auth_header, &connection_info, &adapter).await;
-    
-    assert!(result.is_err(), "OAuth user should not be able to authenticate with password");
-    
+    let result = auth_service
+        .authenticate(&auth_header, &connection_info, &adapter)
+        .await;
+
+    assert!(
+        result.is_err(),
+        "OAuth user should not be able to authenticate with password"
+    );
+
     // Verify the error message mentions OAuth
     let err = result.err().unwrap();
     let err_msg = format!("{:?}", err);
-    assert!(err_msg.contains("OAuth") || err_msg.contains("password"), 
-           "Error should mention OAuth or password restriction: {}", err_msg);
+    assert!(
+        err_msg.contains("OAuth") || err_msg.contains("password"),
+        "Error should mention OAuth or password restriction: {}",
+        err_msg
+    );
 }
 
 /// T134: Test OAuth token subject matching
@@ -190,19 +203,27 @@ async fn test_oauth_subject_matching() {
         ROLE user
     "#;
 
-    executor.execute(create_sql1, Some(&admin_id)).await.unwrap();
-    executor.execute(create_sql2, Some(&admin_id)).await.unwrap();
+    executor
+        .execute(create_sql1, Some(&admin_id))
+        .await
+        .unwrap();
+    executor
+        .execute(create_sql2, Some(&admin_id))
+        .await
+        .unwrap();
 
     // Verify both users exist with different subjects
     let user1 = kalam_sql.get_user("user1").unwrap().unwrap();
     let user2 = kalam_sql.get_user("user2").unwrap().unwrap();
 
-    let auth_data1: serde_json::Value = serde_json::from_str(user1.auth_data.as_ref().unwrap()).unwrap();
-    let auth_data2: serde_json::Value = serde_json::from_str(user2.auth_data.as_ref().unwrap()).unwrap();
+    let auth_data1: serde_json::Value =
+        serde_json::from_str(user1.auth_data.as_ref().unwrap()).unwrap();
+    let auth_data2: serde_json::Value =
+        serde_json::from_str(user2.auth_data.as_ref().unwrap()).unwrap();
 
     assert_eq!(auth_data1["subject"], "google_111");
     assert_eq!(auth_data2["subject"], "google_222");
-    
+
     // Both should have same provider
     assert_eq!(auth_data1["provider"], "google");
     assert_eq!(auth_data2["provider"], "google");
@@ -212,20 +233,20 @@ async fn test_oauth_subject_matching() {
 #[tokio::test]
 async fn test_oauth_auto_provision_disabled_by_default() {
     use kalamdb_auth::AuthService;
-    
+
     // Create AuthService with default settings
     let auth_service = AuthService::new(
         "test-secret".to_string(),
         vec![],
-        true, // allow_remote_access
-        false, // oauth_auto_provision - DISABLED
+        true,       // allow_remote_access
+        false,      // oauth_auto_provision - DISABLED
         Role::User, // oauth_default_role
     );
 
     // Verify auto-provisioning is disabled
     // (This is a configuration test - the actual auto-provisioning logic
     // would be implemented in middleware/route handlers, not in AuthService)
-    
+
     // The test passes if AuthService can be created with auto_provision=false
     assert!(true, "AuthService created with auto-provisioning disabled");
 }
@@ -243,7 +264,10 @@ async fn test_oauth_user_missing_fields() {
     "#;
 
     let result = executor.execute(create_sql, Some(&admin_id)).await;
-    assert!(result.is_err(), "OAuth user creation should fail without subject");
+    assert!(
+        result.is_err(),
+        "OAuth user creation should fail without subject"
+    );
 
     // Try to create OAuth user without provider (should fail)
     let create_sql2 = r#"
@@ -252,7 +276,10 @@ async fn test_oauth_user_missing_fields() {
     "#;
 
     let result2 = executor.execute(create_sql2, Some(&admin_id)).await;
-    assert!(result2.is_err(), "OAuth user creation should fail without provider");
+    assert!(
+        result2.is_err(),
+        "OAuth user creation should fail without provider"
+    );
 }
 
 /// Additional test: Verify OAuth user with Azure provider
@@ -268,14 +295,17 @@ async fn test_oauth_azure_provider() {
     "#;
 
     let result = executor.execute(create_sql, Some(&admin_id)).await;
-    assert!(result.is_ok(), "OAuth user creation with Azure provider failed");
+    assert!(
+        result.is_ok(),
+        "OAuth user creation with Azure provider failed"
+    );
 
     // Verify user was created with Azure provider
     let user = kalam_sql.get_user("charlie").unwrap().unwrap();
-    let auth_data: serde_json::Value = serde_json::from_str(user.auth_data.as_ref().unwrap()).unwrap();
-    
+    let auth_data: serde_json::Value =
+        serde_json::from_str(user.auth_data.as_ref().unwrap()).unwrap();
+
     assert_eq!(auth_data["provider"], "azure");
     assert_eq!(auth_data["subject"], "azure_tenant_user");
     assert_eq!(user.role, Role::Service);
 }
-

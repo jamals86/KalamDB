@@ -3,9 +3,9 @@
 //! This module provides a SystemTableStore<UserId, User> wrapper for the system.users table.
 
 use crate::stores::SystemTableStore;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::User;
 use kalamdb_commons::UserId;
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
 /// Type alias for the users table store
@@ -19,13 +19,13 @@ pub type UsersStore = SystemTableStore<UserId, User>;
 /// # Returns
 /// A new SystemTableStore instance configured for the users table
 pub fn new_users_store(backend: Arc<dyn StorageBackend>) -> UsersStore {
-    SystemTableStore::new(backend, "system_users")//TODO: user the enum partition name
+    SystemTableStore::new(backend, "system_users") //TODO: user the enum partition name
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{AuthType, Role, StorageMode, StorageId};
+    use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
     use kalamdb_store::InMemoryBackend;
 
     fn create_test_store() -> UsersStore {

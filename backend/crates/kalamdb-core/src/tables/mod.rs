@@ -4,9 +4,8 @@
 //! - User tables: Per-user isolated tables
 //! - Shared tables: Global tables accessible to all users
 //! - Stream tables: Ephemeral event streaming tables
-//! - System tables: Internal system metadata tables
+//! - System tables: Internal system metadata tables (using EntityStore-based v2 providers)
 
-pub mod hybrid_table_provider;
 pub mod parquet_scan;
 pub mod shared_table_provider;
 pub mod stream_table_provider;
@@ -16,7 +15,6 @@ pub mod user_table_insert;
 pub mod user_table_provider;
 pub mod user_table_update;
 
-pub use hybrid_table_provider::HybridTableProvider;
 pub use shared_table_provider::SharedTableProvider;
 pub use stream_table_provider::StreamTableProvider;
 pub use user_table_delete::UserTableDeleteHandler;

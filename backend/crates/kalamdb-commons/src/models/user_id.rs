@@ -60,4 +60,3 @@ impl AsRef<[u8]> for UserId {
         self.0.as_bytes()
     }
 }
-

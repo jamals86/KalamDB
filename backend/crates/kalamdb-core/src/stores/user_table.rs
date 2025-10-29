@@ -307,6 +307,33 @@ impl UserTableStore {
         Ok(results)
     }
 
+    /// Delete all rows belonging to a user and return number of rows removed.
+    pub fn delete_all_for_user(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        user_id: &str,
+    ) -> StorageResult<usize> {
+        let partition = Self::partition(
+            &NamespaceId::from(namespace_id),
+            &TableName::from(table_name),
+        );
+        let prefix = format!("{}:", user_id);
+        let prefix_bytes = prefix.as_bytes();
+
+        let iter = self.backend.scan(&partition, Some(prefix_bytes), None)?;
+        let mut deleted = 0;
+
+        for (key_bytes, _) in iter {
+            if key_bytes.starts_with(prefix_bytes) {
+                self.backend.delete(&partition, &key_bytes)?;
+                deleted += 1;
+            }
+        }
+
+        Ok(deleted)
+    }
+
     /// Scan all rows for a specific user (alias for scan_user).
     pub fn scan(
         &self,
@@ -626,6 +653,50 @@ mod tests {
     }
 
     #[test]
+    fn test_delete_all_for_user() {
+        let store = create_test_store();
+
+        store
+            .put(
+                "app",
+                "messages",
+                "user123",
+                "msg001",
+                json!({"content": "Message 1"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "messages",
+                "user123",
+                "msg002",
+                json!({"content": "Message 2"}),
+            )
+            .unwrap();
+        store
+            .put(
+                "app",
+                "messages",
+                "user456",
+                "msg003",
+                json!({"content": "Message 3"}),
+            )
+            .unwrap();
+
+        let deleted = store
+            .delete_all_for_user("app", "messages", "user123")
+            .unwrap();
+        assert_eq!(deleted, 2);
+
+        let remaining_user123 = store.get("app", "messages", "user123", "msg001").unwrap();
+        assert!(remaining_user123.is_none());
+
+        let remaining_user456 = store.get("app", "messages", "user456", "msg003").unwrap();
+        assert!(remaining_user456.is_some());
+    }
+
+    #[test]
     fn test_scan_user_filters_soft_deleted() {
         let store = create_test_store();
 
@@ -697,4 +768,3 @@ mod tests {
         assert_eq!(results[0].0, "msg001");
     }
 }
-

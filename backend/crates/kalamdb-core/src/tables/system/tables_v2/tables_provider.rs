@@ -7,15 +7,17 @@ use super::super::SystemTableProviderExt;
 use super::{new_tables_store, TablesStore, TablesTableSchema};
 use crate::error::KalamDbError;
 use async_trait::async_trait;
-use datafusion::arrow::array::{ArrayRef, BooleanArray, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray};
+use datafusion::arrow::array::{
+    ArrayRef, BooleanArray, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::SystemTable;
 use kalamdb_store::EntityStoreV2;
+use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -182,7 +184,9 @@ impl SystemTableProviderExt for TablesTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{TableName, NamespaceId, TableType as KalamTableType, StorageId, TableAccess};
+    use kalamdb_commons::{
+        NamespaceId, StorageId, TableAccess, TableName, TableType as KalamTableType,
+    };
     use kalamdb_store::InMemoryBackend;
 
     fn create_test_provider() -> TablesTableProvider {

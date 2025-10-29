@@ -60,4 +60,3 @@ impl AsRef<[u8]> for NamespaceId {
         self.0.as_bytes()
     }
 }
-

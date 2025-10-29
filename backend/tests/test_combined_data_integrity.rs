@@ -836,4 +836,3 @@ async fn test_06_soft_delete_operations() {
 
     println!("✅ Test 06 passed: Soft delete operations work correctly");
 }
-

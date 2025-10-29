@@ -13,7 +13,6 @@ use datafusion::catalog::memory::MemorySchemaProvider;
 use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
-use kalamdb_store::StorageBackend;
 use kalamdb_core::live_query::{LiveQueryManager, NodeId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
@@ -24,13 +23,17 @@ use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::storage::StorageRegistry;
 use kalamdb_core::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_core::{
-    jobs::{JobExecutor, StreamEvictionJob, StreamEvictionScheduler, TokioJobManager},
+    jobs::{
+        JobCleanupTask, JobExecutor, JobResult, StreamEvictionJob, StreamEvictionScheduler,
+        TokioJobManager, UserCleanupConfig, UserCleanupJob,
+    },
     scheduler::FlushScheduler,
 };
 use kalamdb_sql::KalamSql;
 use kalamdb_sql::RocksDbAdapter;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
+use kalamdb_store::StorageBackend;
 use log::info;
 use std::sync::Arc;
 use std::time::Duration;
@@ -60,7 +63,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
 
     // Initialize RocksDB backend for all components (single StorageBackend trait)
     let backend = Arc::new(RocksDBBackend::new(db.clone()));
-    
+
     // Initialize KalamSQL for system table access
     let kalam_sql = Arc::new(KalamSql::new(backend.clone())?);
     info!("KalamSQL initialized");
@@ -135,10 +138,9 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         .register_schema("system", system_schema.clone())
         .expect("Failed to register system schema");
 
-    // Register all system tables using centralized function
+    // Register all system tables using centralized function (EntityStore-based v2 providers)
     let jobs_provider = kalamdb_core::system_table_registration::register_system_tables(
         &system_schema,
-        kalam_sql.clone(),
         backend.clone(),
     )
     .expect("Failed to register system tables");
@@ -242,6 +244,69 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     info!(
         "Stream eviction scheduler initialized (interval: {} seconds)",
         config.stream.eviction_interval_seconds
+    );
+
+    // User cleanup job (scheduled background task)
+    let user_cleanup_job = Arc::new(UserCleanupJob::new(
+        kalam_sql.clone(),
+        user_table_store.clone(),
+        UserCleanupConfig {
+            grace_period_days: config.user_management.deletion_grace_period_days,
+        },
+    ));
+
+    let cleanup_interval =
+        JobCleanupTask::parse_cron_schedule(&config.user_management.cleanup_job_schedule);
+    let cleanup_job_manager = job_manager.clone();
+    let cleanup_job_executor = job_executor.clone();
+    let scheduled_cleanup_job = Arc::clone(&user_cleanup_job);
+
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(cleanup_interval);
+
+        loop {
+            ticker.tick().await;
+
+            let job_id = format!("user-cleanup-{}", chrono::Utc::now().timestamp_millis());
+            let job_executor = Arc::clone(&cleanup_job_executor);
+            let job_instance = Arc::clone(&scheduled_cleanup_job);
+            let grace_period = job_instance.config().grace_period_days;
+
+            let job_future = Box::pin(async move {
+                let executor_job_id = job_id.clone();
+                let cleanup_job = Arc::clone(&job_instance);
+                let result = job_executor.execute_job(
+                    executor_job_id,
+                    "user_cleanup".to_string(),
+                    None,
+                    vec![format!("grace_period_days={}", grace_period)],
+                    move || {
+                        cleanup_job
+                            .enforce()
+                            .map(|count| format!("Deleted {} expired users", count))
+                            .map_err(|err| err.to_string())
+                    },
+                );
+
+                match result {
+                    Ok(JobResult::Success(msg)) => Ok(msg),
+                    Ok(JobResult::Failure(msg)) => Err(msg),
+                    Err(err) => Err(err.to_string()),
+                }
+            });
+
+            if let Err(e) = cleanup_job_manager
+                .start_job(job_id, "user_cleanup".to_string(), job_future)
+                .await
+            {
+                log::error!("Failed to start user cleanup job: {}", e);
+            }
+        }
+    });
+    info!(
+        "User cleanup job scheduled (grace period: {} days, schedule: {})",
+        config.user_management.deletion_grace_period_days,
+        config.user_management.cleanup_job_schedule
     );
 
     // Resume crash recovery jobs

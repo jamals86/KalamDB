@@ -25,8 +25,10 @@ pub struct AuthService {
     /// Whether to allow remote (non-localhost) access
     allow_remote_access: bool,
     /// OAuth auto-provisioning enabled (Phase 10, User Story 8)
+    #[allow(dead_code)]
     oauth_auto_provision: bool,
     /// Default role for auto-provisioned OAuth users
+    #[allow(dead_code)]
     oauth_default_role: kalamdb_commons::Role,
 }
 
@@ -87,11 +89,15 @@ impl AuthService {
         } else if auth_header.starts_with("Bearer ") {
             // Try JWT first, then OAuth if JWT fails
             // This allows for fallback when JWT validation fails
-            match self.authenticate_jwt(auth_header, connection_info, adapter).await {
+            match self
+                .authenticate_jwt(auth_header, connection_info, adapter)
+                .await
+            {
                 Ok(user) => Ok(user),
                 Err(_) => {
                     // JWT failed, try OAuth
-                    self.authenticate_oauth(auth_header, connection_info, adapter).await
+                    self.authenticate_oauth(auth_header, connection_info, adapter)
+                        .await
                 }
             }
         } else {
@@ -136,9 +142,13 @@ impl AuthService {
 
         // T140 (Phase 10, User Story 8): Prevent OAuth users from password authentication
         if user.auth_type == kalamdb_commons::AuthType::OAuth {
-            warn!("OAuth user '{}' attempted password authentication", username);
+            warn!(
+                "OAuth user '{}' attempted password authentication",
+                username
+            );
             return Err(AuthError::AuthenticationFailed(
-                "OAuth users cannot authenticate with password. Use OAuth token instead.".to_string(),
+                "OAuth users cannot authenticate with password. Use OAuth token instead."
+                    .to_string(),
             ));
         }
 
@@ -314,18 +324,18 @@ impl AuthService {
 
         // Try to extract provider info without full validation first
         // (we'll validate once we know which provider to check against)
-        let _header = jsonwebtoken::decode_header(token)
-            .map_err(|e| AuthError::MalformedAuthorization(format!("Invalid token header: {}", e)))?;
-        
+        let _header = jsonwebtoken::decode_header(token).map_err(|e| {
+            AuthError::MalformedAuthorization(format!("Invalid token header: {}", e))
+        })?;
+
         // For now, we use a simple approach: validate with a generic secret
         // In production, you'd fetch the JWKS (JSON Web Key Set) from the provider
         // For HS256 (testing), we use the JWT secret
-        let claims = oauth::validate_oauth_token(token, &self.jwt_secret, "")
-            .or_else(|_| {
-                // If validation fails, try to extract claims without validation
-                // to get the issuer for better error messages
-                Err(AuthError::InvalidSignature)
-            })?;
+        let claims = oauth::validate_oauth_token(token, &self.jwt_secret, "").or_else(|_| {
+            // If validation fails, try to extract claims without validation
+            // to get the issuer for better error messages
+            Err(AuthError::InvalidSignature)
+        })?;
 
         // Extract provider and subject from claims
         let identity = oauth::extract_provider_and_subject(&claims);
@@ -337,10 +347,8 @@ impl AuthService {
             "subject": identity.subject
         });
 
-        let users = adapter
-            .scan_all_users()
-            .map_err(AuthError::DatabaseError)?;
-        
+        let users = adapter.scan_all_users().map_err(AuthError::DatabaseError)?;
+
         let user = users
             .into_iter()
             .find(|u| {
@@ -370,7 +378,10 @@ impl AuthService {
             ));
         }
 
-        info!("User authenticated via OAuth ({}): {}", identity.provider, user.username);
+        info!(
+            "User authenticated via OAuth ({}): {}",
+            identity.provider, user.username
+        );
 
         Ok(AuthenticatedUser::new(
             user.id,

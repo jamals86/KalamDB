@@ -13,10 +13,10 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::Storage;
 use kalamdb_commons::StorageId;
 use kalamdb_store::EntityStoreV2;
+use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -59,7 +59,10 @@ impl StoragesTableProvider {
     }
 
     /// Get a storage by ID
-    pub fn get_storage_by_id(&self, storage_id: &StorageId) -> Result<Option<Storage>, KalamDbError> {
+    pub fn get_storage_by_id(
+        &self,
+        storage_id: &StorageId,
+    ) -> Result<Option<Storage>, KalamDbError> {
         Ok(self.store.get(storage_id)?)
     }
 
@@ -243,7 +246,10 @@ mod tests {
         // Verify
         let storage_id = StorageId::new("local");
         let retrieved = provider.get_storage(&storage_id).unwrap().unwrap();
-        assert_eq!(retrieved.description, Some("Updated description".to_string()));
+        assert_eq!(
+            retrieved.description,
+            Some("Updated description".to_string())
+        );
     }
 
     #[test]
@@ -252,7 +258,7 @@ mod tests {
         let storage = create_test_storage("local", "Local Storage");
 
         provider.create_storage(storage).unwrap();
-        
+
         let storage_id = StorageId::new("local");
         provider.delete_storage(&storage_id).unwrap();
 

@@ -7,16 +7,18 @@ use super::super::SystemTableProviderExt;
 use super::{new_namespaces_store, NamespacesStore, NamespacesTableSchema};
 use crate::error::KalamDbError;
 use async_trait::async_trait;
-use datafusion::arrow::array::{ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray};
+use datafusion::arrow::array::{
+    ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::Namespace;
 use kalamdb_commons::NamespaceId;
 use kalamdb_store::EntityStoreV2;
+use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -59,12 +61,18 @@ impl NamespacesTableProvider {
     }
 
     /// Get a namespace by ID
-    pub fn get_namespace_by_id(&self, namespace_id: &NamespaceId) -> Result<Option<Namespace>, KalamDbError> {
+    pub fn get_namespace_by_id(
+        &self,
+        namespace_id: &NamespaceId,
+    ) -> Result<Option<Namespace>, KalamDbError> {
         Ok(self.store.get(namespace_id)?)
     }
 
     /// Alias for get_namespace_by_id (for backward compatibility)
-    pub fn get_namespace(&self, namespace_id: &NamespaceId) -> Result<Option<Namespace>, KalamDbError> {
+    pub fn get_namespace(
+        &self,
+        namespace_id: &NamespaceId,
+    ) -> Result<Option<Namespace>, KalamDbError> {
         self.get_namespace_by_id(namespace_id)
     }
 
@@ -232,7 +240,7 @@ mod tests {
         let namespace = create_test_namespace("app", "app");
 
         provider.create_namespace(namespace).unwrap();
-        
+
         let namespace_id = NamespaceId::new("app");
         provider.delete_namespace(&namespace_id).unwrap();
 

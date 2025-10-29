@@ -14,7 +14,7 @@ pub struct TablesTableSchema;
 
 impl TablesTableSchema {
     /// Get the cached schema for the system.tables table
-    /// 
+    ///
     /// Uses OnceLock to ensure the schema is created exactly once and reused
     /// across all providers without synchronization overhead.
     pub fn schema() -> SchemaRef {

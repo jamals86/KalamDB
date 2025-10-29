@@ -39,8 +39,8 @@
 //! - `system.storages`: `SystemTableStore<StorageId, Storage>`
 //! - `system.live_queries`: `SystemTableStore<LiveQueryId, LiveQuery>`
 
-use kalamdb_store::{EntityStoreV2, CrossUserTableStore, StorageBackend};
 use kalamdb_commons::models::TableAccess;
+use kalamdb_store::{CrossUserTableStore, EntityStoreV2, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -91,10 +91,10 @@ where
 {
     /// Storage backend for persistence
     backend: Arc<dyn StorageBackend>,
-    
+
     /// Partition name (e.g., "system_users", "system_jobs")
     partition: String,
-    
+
     /// Phantom data for key and value types
     _marker: std::marker::PhantomData<(K, V)>,
 }
@@ -170,7 +170,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::models::{UserId, Role};
+    use kalamdb_commons::models::{Role, UserId};
     use kalamdb_store::test_utils::InMemoryBackend;
     use serde::{Deserialize, Serialize};
 
@@ -183,10 +183,7 @@ mod tests {
     #[test]
     fn test_system_table_store_new() {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = SystemTableStore::<UserId, TestEntity>::new(
-            backend,
-            "test_partition"
-        );
+        let store = SystemTableStore::<UserId, TestEntity>::new(backend, "test_partition");
 
         assert_eq!(store.partition_name(), "test_partition");
     }
@@ -194,10 +191,7 @@ mod tests {
     #[test]
     fn test_system_table_store_put_get() {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = SystemTableStore::<UserId, TestEntity>::new(
-            backend,
-            "test_partition"
-        );
+        let store = SystemTableStore::<UserId, TestEntity>::new(backend, "test_partition");
 
         let key = UserId::new("test_key");
         let entity = TestEntity {
@@ -216,10 +210,7 @@ mod tests {
     #[test]
     fn test_system_table_store_delete() {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = SystemTableStore::<UserId, TestEntity>::new(
-            backend,
-            "test_partition"
-        );
+        let store = SystemTableStore::<UserId, TestEntity>::new(backend, "test_partition");
 
         let key = UserId::new("test_key");
         let entity = TestEntity {
@@ -239,10 +230,7 @@ mod tests {
     #[test]
     fn test_system_table_store_scan_all() {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = SystemTableStore::<UserId, TestEntity>::new(
-            backend,
-            "test_partition"
-        );
+        let store = SystemTableStore::<UserId, TestEntity>::new(backend, "test_partition");
 
         // Insert multiple entities
         for i in 0..5 {
@@ -262,10 +250,7 @@ mod tests {
     #[test]
     fn test_system_table_store_access_control() {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = SystemTableStore::<UserId, TestEntity>::new(
-            backend,
-            "test_partition"
-        );
+        let store = SystemTableStore::<UserId, TestEntity>::new(backend, "test_partition");
 
         // System tables return None for table_access
         assert_eq!(store.table_access(), None);
@@ -281,10 +266,7 @@ mod tests {
     fn test_system_table_store_type_safety() {
         // This test verifies compile-time type safety
         let backend = Arc::new(InMemoryBackend::new());
-        let store = SystemTableStore::<UserId, TestEntity>::new(
-            backend,
-            "test_partition"
-        );
+        let store = SystemTableStore::<UserId, TestEntity>::new(backend, "test_partition");
 
         let user_id = UserId::new("test");
         let entity = TestEntity {
@@ -304,10 +286,7 @@ mod tests {
     #[test]
     fn test_system_table_store_get_nonexistent() {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = SystemTableStore::<UserId, TestEntity>::new(
-            backend,
-            "test_partition"
-        );
+        let store = SystemTableStore::<UserId, TestEntity>::new(backend, "test_partition");
 
         let key = UserId::new("nonexistent");
         let result = store.get(&key).unwrap();
@@ -317,10 +296,7 @@ mod tests {
     #[test]
     fn test_system_table_store_update() {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = SystemTableStore::<UserId, TestEntity>::new(
-            backend,
-            "test_partition"
-        );
+        let store = SystemTableStore::<UserId, TestEntity>::new(backend, "test_partition");
 
         let key = UserId::new("test_key");
         let entity1 = TestEntity {

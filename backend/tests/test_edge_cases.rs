@@ -9,11 +9,10 @@
 //! - Maximum password length
 //! - Shared table default access levels
 
-use kalamdb_auth::AuthService;
+use base64::{engine::general_purpose, Engine as _};
 use kalamdb_auth::connection::ConnectionInfo;
-use base64::{Engine as _, engine::general_purpose};
-use kalamdb_store::StorageBackend;
-use kalamdb_commons::{AuthType, Role, StorageMode, UserId, TableAccess};
+use kalamdb_auth::AuthService;
+use kalamdb_commons::{AuthType, Role, StorageMode, TableAccess, UserId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, UserTableService,
 };
@@ -22,6 +21,7 @@ use kalamdb_core::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_sql::KalamSql;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -83,7 +83,7 @@ async fn setup_test_executor() -> (SqlExecutor, TempDir, Arc<KalamSql>) {
 async fn create_test_user(kalam_sql: &Arc<KalamSql>, username: &str, password: &str) -> UserId {
     let user_id = UserId::new(username);
     let password_hash = bcrypt::hash(password, 12).expect("Failed to hash password");
-    
+
     let user = kalamdb_commons::system::User {
         id: user_id.clone(),
         username: username.to_string(),
@@ -110,14 +110,8 @@ async fn create_test_user(kalam_sql: &Arc<KalamSql>, username: &str, password: &
 #[tokio::test]
 async fn test_empty_credentials_401() {
     let (_executor, _temp_dir, kalam_sql) = setup_test_executor().await;
-    
-    let auth_service = AuthService::new(
-        "test-secret".to_string(),
-        vec![],
-        true,
-        false,
-        Role::User,
-    );
+
+    let auth_service = AuthService::new("test-secret".to_string(), vec![], true, false, Role::User);
 
     let adapter = Arc::new(kalam_sql.adapter().clone());
     let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
@@ -125,13 +119,17 @@ async fn test_empty_credentials_401() {
     // Test empty username
     let credentials = general_purpose::STANDARD.encode(":");
     let auth_header = format!("Basic {}", credentials);
-    let result = auth_service.authenticate(&auth_header, &connection_info, &adapter).await;
+    let result = auth_service
+        .authenticate(&auth_header, &connection_info, &adapter)
+        .await;
     assert!(result.is_err(), "Empty credentials should fail");
 
     // Test only username, no password
     let credentials = general_purpose::STANDARD.encode("user:");
     let auth_header = format!("Basic {}", credentials);
-    let result = auth_service.authenticate(&auth_header, &connection_info, &adapter).await;
+    let result = auth_service
+        .authenticate(&auth_header, &connection_info, &adapter)
+        .await;
     assert!(result.is_err(), "Username without password should fail");
 }
 
@@ -139,31 +137,31 @@ async fn test_empty_credentials_401() {
 #[tokio::test]
 async fn test_malformed_basic_auth_400() {
     let (_executor, _temp_dir, kalam_sql) = setup_test_executor().await;
-    
-    let auth_service = AuthService::new(
-        "test-secret".to_string(),
-        vec![],
-        true,
-        false,
-        Role::User,
-    );
+
+    let auth_service = AuthService::new("test-secret".to_string(), vec![], true, false, Role::User);
 
     let adapter = Arc::new(kalam_sql.adapter().clone());
     let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
 
     // Test invalid base64
     let auth_header = "Basic INVALID_BASE64!!!";
-    let result = auth_service.authenticate(auth_header, &connection_info, &adapter).await;
+    let result = auth_service
+        .authenticate(auth_header, &connection_info, &adapter)
+        .await;
     assert!(result.is_err(), "Malformed base64 should fail");
 
     // Test missing "Basic " prefix
     let credentials = general_purpose::STANDARD.encode("user:pass");
-    let result = auth_service.authenticate(&credentials, &connection_info, &adapter).await;
+    let result = auth_service
+        .authenticate(&credentials, &connection_info, &adapter)
+        .await;
     assert!(result.is_err(), "Missing Basic prefix should fail");
 
     // Test Bearer without JWT/OAuth token
     let auth_header = "Bearer";
-    let result = auth_service.authenticate(auth_header, &connection_info, &adapter).await;
+    let result = auth_service
+        .authenticate(auth_header, &connection_info, &adapter)
+        .await;
     assert!(result.is_err(), "Bearer without token should fail");
 }
 
@@ -171,7 +169,7 @@ async fn test_malformed_basic_auth_400() {
 #[tokio::test]
 async fn test_concurrent_auth_no_race_conditions() {
     let (_executor, _temp_dir, kalam_sql) = setup_test_executor().await;
-    
+
     // Create test user
     create_test_user(&kalam_sql, "concurrent_user", "TestPass123").await;
 
@@ -190,14 +188,16 @@ async fn test_concurrent_auth_no_race_conditions() {
     for i in 0..10 {
         let auth_service = auth_service.clone();
         let adapter = adapter.clone();
-        
+
         let handle = tokio::spawn(async move {
             let connection_info = ConnectionInfo::new(Some(format!("127.0.0.1:{}", 8080 + i)));
             let credentials = general_purpose::STANDARD.encode("concurrent_user:TestPass123");
             let auth_header = format!("Basic {}", credentials);
-            auth_service.authenticate(&auth_header, &connection_info, &adapter).await
+            auth_service
+                .authenticate(&auth_header, &connection_info, &adapter)
+                .await
         });
-        
+
         handles.push(handle);
     }
 
@@ -212,29 +212,26 @@ async fn test_concurrent_auth_no_race_conditions() {
         }
     }
 
-    assert_eq!(success_count, 10, "All concurrent auth requests should succeed");
+    assert_eq!(
+        success_count, 10,
+        "All concurrent auth requests should succeed"
+    );
 }
 
 /// T143D: Test deleted user authentication is denied
 #[tokio::test]
 async fn test_deleted_user_denied() {
     let (_executor, _temp_dir, kalam_sql) = setup_test_executor().await;
-    
+
     // Create and then soft-delete a user
     let _user_id = create_test_user(&kalam_sql, "deleted_user", "TestPass123").await;
-    
+
     // Soft delete the user
     let mut user = kalam_sql.get_user("deleted_user").unwrap().unwrap();
     user.deleted_at = Some(chrono::Utc::now().timestamp_millis());
     kalam_sql.insert_user(&user).expect("Failed to update user");
 
-    let auth_service = AuthService::new(
-        "test-secret".to_string(),
-        vec![],
-        true,
-        false,
-        Role::User,
-    );
+    let auth_service = AuthService::new("test-secret".to_string(), vec![], true, false, Role::User);
 
     let adapter = Arc::new(kalam_sql.adapter().clone());
     let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
@@ -242,30 +239,29 @@ async fn test_deleted_user_denied() {
     // Try to authenticate with deleted user
     let credentials = general_purpose::STANDARD.encode("deleted_user:TestPass123");
     let auth_header = format!("Basic {}", credentials);
-    let result = auth_service.authenticate(&auth_header, &connection_info, &adapter).await;
+    let result = auth_service
+        .authenticate(&auth_header, &connection_info, &adapter)
+        .await;
 
     assert!(result.is_err(), "Deleted user authentication should fail");
     let err = result.err().unwrap();
     let err_msg = format!("{:?}", err);
-    assert!(err_msg.contains("UserDeleted") || err_msg.contains("deleted"), 
-           "Error should indicate user is deleted: {}", err_msg);
+    assert!(
+        err_msg.contains("UserDeleted") || err_msg.contains("deleted"),
+        "Error should indicate user is deleted: {}",
+        err_msg
+    );
 }
 
 /// T143E: Test role change applies to next request (not during session)
 #[tokio::test]
 async fn test_role_change_applies_next_request() {
     let (_executor, _temp_dir, kalam_sql) = setup_test_executor().await;
-    
+
     // Create user with User role
     create_test_user(&kalam_sql, "role_change_user", "TestPass123").await;
 
-    let auth_service = AuthService::new(
-        "test-secret".to_string(),
-        vec![],
-        true,
-        false,
-        Role::User,
-    );
+    let auth_service = AuthService::new("test-secret".to_string(), vec![], true, false, Role::User);
 
     let adapter = Arc::new(kalam_sql.adapter().clone());
     let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
@@ -273,7 +269,9 @@ async fn test_role_change_applies_next_request() {
     // First authentication
     let credentials = general_purpose::STANDARD.encode("role_change_user:TestPass123");
     let auth_header = format!("Basic {}", credentials);
-    let result1 = auth_service.authenticate(&auth_header, &connection_info, &adapter).await;
+    let result1 = auth_service
+        .authenticate(&auth_header, &connection_info, &adapter)
+        .await;
     assert!(result1.is_ok());
     let user1 = result1.unwrap();
     assert_eq!(user1.role, Role::User);
@@ -284,17 +282,23 @@ async fn test_role_change_applies_next_request() {
     kalam_sql.insert_user(&user).expect("Failed to update user");
 
     // Second authentication should reflect new role
-    let result2 = auth_service.authenticate(&auth_header, &connection_info, &adapter).await;
+    let result2 = auth_service
+        .authenticate(&auth_header, &connection_info, &adapter)
+        .await;
     assert!(result2.is_ok());
     let user2 = result2.unwrap();
-    assert_eq!(user2.role, Role::Dba, "Role change should apply to next authentication");
+    assert_eq!(
+        user2.role,
+        Role::Dba,
+        "Role change should apply to next authentication"
+    );
 }
 
 /// T143F: Test maximum password length is rejected
 #[tokio::test]
 async fn test_max_password_10mb_rejected() {
     let (executor, _temp_dir, kalam_sql) = setup_test_executor().await;
-    
+
     // Create system user for authorization
     let admin_id = UserId::new("test_admin");
     let admin = kalamdb_commons::system::User {
@@ -312,7 +316,9 @@ async fn test_max_password_10mb_rejected() {
         last_seen: None,
         deleted_at: None,
     };
-    kalam_sql.insert_user(&admin).expect("Failed to create admin");
+    kalam_sql
+        .insert_user(&admin)
+        .expect("Failed to create admin");
 
     // Try to create user with very long password (> 72 characters, bcrypt limit)
     let long_password = "a".repeat(1000);
@@ -322,9 +328,12 @@ async fn test_max_password_10mb_rejected() {
     );
 
     let result = executor.execute(&sql, Some(&admin_id)).await;
-    
+
     // Should fail due to password length validation
-    assert!(result.is_err(), "Creating user with very long password should fail");
+    assert!(
+        result.is_err(),
+        "Creating user with very long password should fail"
+    );
     let err = result.err().unwrap();
     let err_msg = format!("{:?}", err);
     assert!(
@@ -352,4 +361,3 @@ async fn test_shared_table_defaults_private() {
         "TableAccess::Private should be available for shared tables"
     );
 }
-

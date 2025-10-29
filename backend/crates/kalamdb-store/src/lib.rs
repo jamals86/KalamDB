@@ -48,8 +48,8 @@ pub use traits::EntityStore; // Old EntityStore<T> trait (to be deprecated)
 
 // Phase 14: Export new type-safe EntityStore traits
 pub use entity_store::{
-    EntityStore as EntityStoreV2,      // Alias to avoid conflict during migration
     CrossUserTableStore,
+    EntityStore as EntityStoreV2, // Alias to avoid conflict during migration
 };
 
 // Export index types

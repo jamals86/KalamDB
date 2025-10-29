@@ -39,12 +39,18 @@ impl StoragesTableSchema {
                     Field::new("user_tables_template", DataType::Utf8, false),
                     Field::new(
                         "created_at",
-                        DataType::Timestamp(datafusion::arrow::datatypes::TimeUnit::Millisecond, None),
+                        DataType::Timestamp(
+                            datafusion::arrow::datatypes::TimeUnit::Millisecond,
+                            None,
+                        ),
                         false,
                     ),
                     Field::new(
                         "updated_at",
-                        DataType::Timestamp(datafusion::arrow::datatypes::TimeUnit::Millisecond, None),
+                        DataType::Timestamp(
+                            datafusion::arrow::datatypes::TimeUnit::Millisecond,
+                            None,
+                        ),
                         false,
                     ),
                 ]))

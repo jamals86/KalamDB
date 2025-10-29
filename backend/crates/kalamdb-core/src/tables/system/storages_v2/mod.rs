@@ -2,10 +2,10 @@
 //!
 //! This module provides the new EntityStore-based implementation for system.storages table.
 
-mod storages_table;
-mod storages_store;
 mod storages_provider;
+mod storages_store;
+mod storages_table;
 
-pub use storages_table::StoragesTableSchema;
-pub use storages_store::{new_storages_store, StoragesStore};
 pub use storages_provider::StoragesTableProvider;
+pub use storages_store::{new_storages_store, StoragesStore};
+pub use storages_table::StoragesTableSchema;

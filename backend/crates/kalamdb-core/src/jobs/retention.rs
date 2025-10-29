@@ -202,7 +202,10 @@ mod tests {
 
         // Failed job should still exist due to extended retention
         assert_eq!(deleted, 0);
-        assert!(provider.get_job(&JobId::new("old-failed")).unwrap().is_some());
+        assert!(provider
+            .get_job(&JobId::new("old-failed"))
+            .unwrap()
+            .is_some());
     }
 
     #[test]
@@ -229,7 +232,10 @@ mod tests {
 
         // Very old failed job should be deleted
         assert_eq!(deleted, 1);
-        assert!(provider.get_job(&JobId::new("very-old-failed")).unwrap().is_none());
+        assert!(provider
+            .get_job(&JobId::new("very-old-failed"))
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -255,7 +261,10 @@ mod tests {
 
         // Running job should never be deleted
         assert_eq!(deleted, 0);
-        assert!(provider.get_job(&JobId::new("old-running")).unwrap().is_some());
+        assert!(provider
+            .get_job(&JobId::new("old-running"))
+            .unwrap()
+            .is_some());
     }
 
     #[test]

@@ -47,8 +47,9 @@
 //! ```
 
 use crate::{
+    models::{JobId, LiveQueryId, TableId, UserName},
     AuthType, JobStatus, JobType, NamespaceId, Role, StorageId, StorageMode, TableAccess,
-    TableName, TableType, UserId, models::{JobId, LiveQueryId, TableId, UserName},
+    TableName, TableType, UserId,
 };
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};

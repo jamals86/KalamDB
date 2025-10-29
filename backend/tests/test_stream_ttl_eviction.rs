@@ -240,4 +240,3 @@ async fn test_stream_table_select_with_limit() {
 
     println!("✅ SELECT with LIMIT works");
 }
-

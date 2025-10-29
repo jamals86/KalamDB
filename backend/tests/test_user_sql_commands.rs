@@ -6,7 +6,6 @@
 //! - Authorization checks (DBA/System only)
 //! - Soft deletion
 
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::{AuthType, NamespaceId, Role, StorageMode, UserId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, UserTableService,
@@ -16,6 +15,7 @@ use kalamdb_core::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_sql::KalamSql;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -559,4 +559,3 @@ async fn test_alter_user_weak_password_rejected() {
         "Error should mention weak/common password"
     );
 }
-

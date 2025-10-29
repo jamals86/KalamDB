@@ -28,7 +28,10 @@ impl NamespacesTableSchema {
                     Field::new("name", DataType::Utf8, false),
                     Field::new(
                         "created_at",
-                        DataType::Timestamp(datafusion::arrow::datatypes::TimeUnit::Millisecond, None),
+                        DataType::Timestamp(
+                            datafusion::arrow::datatypes::TimeUnit::Millisecond,
+                            None,
+                        ),
                         false,
                     ),
                     Field::new("options", DataType::Utf8, true),

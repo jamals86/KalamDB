@@ -9,7 +9,7 @@ use super::namespace_id::NamespaceId;
 use super::table_name::TableName;
 
 /// Composite key for system.tables entries: {namespace_id}:{table_name}
-/// 
+///
 /// This composite key provides type-safe access to table metadata,
 /// ensuring namespace and table name are always paired correctly.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
@@ -60,7 +60,7 @@ impl TableId {
         let pos = key_str.find(':')?;
         let namespace_id = &key_str[..pos];
         let table_name = &key_str[pos + 1..];
-        
+
         Some(Self {
             namespace_id: NamespaceId::new(namespace_id),
             table_name: TableName::new(table_name),
@@ -102,7 +102,7 @@ mod tests {
         let namespace_id = NamespaceId::new("ns1");
         let table_name = TableName::new("users");
         let table_id = TableId::new(namespace_id.clone(), table_name.clone());
-        
+
         assert_eq!(table_id.namespace_id(), &namespace_id);
         assert_eq!(table_id.table_name(), &table_name);
     }
@@ -125,7 +125,7 @@ mod tests {
     fn test_table_id_from_storage_key() {
         let key = b"ns1:users";
         let table_id = TableId::from_storage_key(key).unwrap();
-        
+
         assert_eq!(table_id.namespace_id().as_str(), "ns1");
         assert_eq!(table_id.table_name().as_str(), "users");
     }
@@ -135,7 +135,7 @@ mod tests {
         let original = TableId::from_strings("ns1", "users");
         let key = original.as_storage_key();
         let parsed = TableId::from_storage_key(&key).unwrap();
-        
+
         assert_eq!(original, parsed);
     }
 
@@ -157,7 +157,7 @@ mod tests {
     fn test_table_id_into_parts() {
         let table_id = TableId::from_strings("ns1", "users");
         let (namespace_id, table_name) = table_id.into_parts();
-        
+
         assert_eq!(namespace_id.as_str(), "ns1");
         assert_eq!(table_name.as_str(), "users");
     }
@@ -167,7 +167,7 @@ mod tests {
         let table_id = TableId::from_strings("my-namespace", "table_name");
         let key = table_id.as_storage_key();
         let parsed = TableId::from_storage_key(&key).unwrap();
-        
+
         assert_eq!(table_id, parsed);
     }
 }

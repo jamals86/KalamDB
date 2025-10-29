@@ -156,6 +156,20 @@ cargo test -p kalamdb-sql
 - **Storage Abstraction**: Use `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>` (except in kalamdb-store)
 
 ## Recent Changes
+- 2025-10-29: **Phase 13 & 14: Index Infrastructure & EntityStore Foundation** - Completed foundational work:
+  - **Phase 13 Index Infrastructure**: Created generic SecondaryIndex<T,K> infrastructure (kalamdb-store/src/index/mod.rs)
+    - User indexes: username (unique), role (non-unique), deleted_at (non-unique)
+    - UserIndexManager: Unified API for all 3 indexes
+    - Total: ~980 lines of code, 26 comprehensive tests
+  - **Phase 14 Foundation (Steps 1-3)**: Type-safe entity storage infrastructure
+    - Type-safe key models: RowId, UserRowId, TableId, JobId, LiveQueryId, UserName (6 models, 62 tests)
+    - EntityStore<K,V> and CrossUserTableStore<K,V> traits (350+ lines, 4 tests)
+    - SystemTableStore<K,V> generic implementation (400+ lines, 9 tests)
+    - Total: ~1,640 lines of foundational code, 75+ unit tests
+  - **Phase 14 Migration (Steps 4-12)**: DEFERRED - Can be adopted incrementally
+    - Foundation is production-ready for NEW features
+    - Existing tables can be migrated one at a time as needed
+    - See PHASE_14_MIGRATION_ROADMAP.md for strategy
 - 2025-10-28: **Dependency Management** - Migrated all dependencies to workspace dependencies pattern
 - 2025-10-28: **User Authentication & Authorization** - Implemented comprehensive auth system:
   - HTTP Basic Auth and JWT token authentication

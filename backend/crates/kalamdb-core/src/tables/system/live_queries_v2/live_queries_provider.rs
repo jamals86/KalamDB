@@ -7,16 +7,18 @@ use super::super::SystemTableProviderExt;
 use super::{new_live_queries_store, LiveQueriesStore, LiveQueriesTableSchema};
 use crate::error::KalamDbError;
 use async_trait::async_trait;
-use datafusion::arrow::array::{ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMillisecondArray};
+use datafusion::arrow::array::{
+    ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::LiveQueryId;
 use kalamdb_store::EntityStoreV2;
+use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -59,7 +61,10 @@ impl LiveQueriesTableProvider {
     }
 
     /// Get a live query by ID
-    pub fn get_live_query_by_id(&self, live_id: &LiveQueryId) -> Result<Option<LiveQuery>, KalamDbError> {
+    pub fn get_live_query_by_id(
+        &self,
+        live_id: &LiveQueryId,
+    ) -> Result<Option<LiveQuery>, KalamDbError> {
         Ok(self.store.get(live_id)?)
     }
 
@@ -199,8 +204,8 @@ impl SystemTableProviderExt for LiveQueriesTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::{NamespaceId, TableName, UserId};
     use kalamdb_store::InMemoryBackend;
-    use kalamdb_commons::{UserId, NamespaceId, TableName};
 
     fn create_test_provider() -> LiveQueriesTableProvider {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -249,7 +254,10 @@ mod tests {
         provider.update_live_query(live_query.clone()).unwrap();
 
         // Verify
-        let retrieved = provider.get_live_query(&live_query.live_id).unwrap().unwrap();
+        let retrieved = provider
+            .get_live_query(&live_query.live_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(retrieved.changes, 5);
     }
 
@@ -271,11 +279,8 @@ mod tests {
 
         // Insert multiple live queries
         for i in 1..=3 {
-            let lq = create_test_live_query(
-                &format!("user1-conn{}-test-q{}", i, i),
-                "user1",
-                "test"
-            );
+            let lq =
+                create_test_live_query(&format!("user1-conn{}-test-q{}", i, i), "user1", "test");
             provider.create_live_query(lq).unwrap();
         }
 

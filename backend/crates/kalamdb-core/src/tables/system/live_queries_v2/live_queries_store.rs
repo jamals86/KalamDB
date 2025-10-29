@@ -2,9 +2,10 @@
 //!
 //! Provides typed storage for LiveQuery entities using SystemTableStore.
 
-use kalamdb_store::{EntityStoreV2, SystemTableStore, StorageBackend};
+use crate::stores::SystemTableStore;
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::LiveQueryId;
+use kalamdb_store::{EntityStoreV2, StorageBackend};
 use std::sync::Arc;
 
 /// Type alias for the live queries store
@@ -24,8 +25,8 @@ pub fn new_live_queries_store(backend: Arc<dyn StorageBackend>) -> LiveQueriesSt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::{NamespaceId, TableName, UserId};
     use kalamdb_store::InMemoryBackend;
-    use kalamdb_commons::{UserId, NamespaceId, TableName};
 
     fn create_test_store() -> LiveQueriesStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -88,11 +89,8 @@ mod tests {
 
         // Insert multiple live queries
         for i in 1..=3 {
-            let live_query = create_test_live_query(
-                &format!("user1-conn{}-test-q{}", i, i),
-                "user1",
-                "test"
-            );
+            let live_query =
+                create_test_live_query(&format!("user1-conn{}-test-q{}", i, i), "user1", "test");
             store.put(&live_query.live_id, &live_query).unwrap();
         }
 

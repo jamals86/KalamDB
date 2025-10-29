@@ -6,10 +6,10 @@
 use crate::error::KalamDbError;
 use crate::stores::SystemTableStore;
 use kalamdb_commons::models::UserName;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::User;
 use kalamdb_commons::UserId;
 use kalamdb_store::EntityStoreV2;
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
 /// Secondary index for username -> user_id lookups
@@ -30,16 +30,15 @@ pub fn new_username_index(backend: Arc<dyn StorageBackend>) -> UsernameIndex {
 pub trait UsernameIndexExt {
     /// Index a user (add username -> user_id mapping)
     fn index_user(&self, user: &User) -> Result<(), KalamDbError>;
-    
+
     /// Remove a user from the index
     fn remove_user(&self, username: &str) -> Result<(), KalamDbError>;
-    
+
     /// Lookup a user by username
     fn lookup(&self, username: &str) -> Result<Option<UserId>, KalamDbError>;
 }
 
 impl UsernameIndexExt for UsernameIndex {
-
     /// Index a user (add username -> user_id mapping)
     ///
     /// # Arguments
@@ -82,7 +81,7 @@ impl UsernameIndexExt for UsernameIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{AuthType, Role, StorageMode, StorageId};
+    use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
     use kalamdb_store::InMemoryBackend;
 
     fn create_test_index() -> UsernameIndex {

@@ -14,12 +14,12 @@
 //! called during server startup.
 
 use kalamdb_commons::constants::AuthConstants;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::User;
 use kalamdb_commons::{AuthType, Role, UserId};
 use kalamdb_sql::KalamSql;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -240,4 +240,3 @@ async fn test_system_user_has_metadata() {
     println!("  Updated at: {}", user.updated_at);
     println!("  Email: {:?}", user.email);
 }
-

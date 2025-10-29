@@ -3,12 +3,12 @@
 /// Tests that the database creates a default system user on first startup
 /// with appropriate credentials and security settings.
 use kalamdb_commons::constants::AuthConstants;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::User;
 use kalamdb_commons::{AuthType, Role, UserId};
 use kalamdb_sql::KalamSql;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
 /// Helper to create fresh KalamSql instance for testing
@@ -254,4 +254,3 @@ fn generate_random_password_for_test(length: usize) -> String {
         })
         .collect()
 }
-

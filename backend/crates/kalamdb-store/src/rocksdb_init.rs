@@ -4,10 +4,10 @@
 //! system column families present.
 
 use anyhow::Result;
+use kalamdb_commons::{StoragePartition, SystemTable};
 use rocksdb::{ColumnFamilyDescriptor, Options, DB};
 use std::path::Path;
 use std::sync::Arc;
-use kalamdb_commons::{SystemTable, StoragePartition};
 
 /// RocksDB initializer for creating/opening a database with system CFs.
 pub struct RocksDbInit {
@@ -17,7 +17,9 @@ pub struct RocksDbInit {
 impl RocksDbInit {
     /// Create a new initializer for the given path.
     pub fn new(db_path: impl Into<String>) -> Self {
-        Self { db_path: db_path.into() }
+        Self {
+            db_path: db_path.into(),
+        }
     }
 
     /// Open or create the RocksDB database and ensure system CFs exist.

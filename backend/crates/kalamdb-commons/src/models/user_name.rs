@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Type-safe wrapper for usernames used as secondary index keys.
-/// 
+///
 /// This newtype ensures usernames cannot be confused with user IDs
 /// or other string identifiers, providing compile-time safety for
 /// username-to-UserId lookups in the secondary index.
