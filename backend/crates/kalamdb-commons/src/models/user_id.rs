@@ -54,3 +54,10 @@ impl AsRef<str> for UserId {
         &self.0
     }
 }
+
+impl AsRef<[u8]> for UserId {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+

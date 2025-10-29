@@ -242,3 +242,4 @@ async fn test_basic_auth_nonexistent_user() {
 
     println!("✓ Nonexistent user correctly rejected with 401");
 }
+

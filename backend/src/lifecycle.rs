@@ -12,7 +12,8 @@ use anyhow::Result;
 use datafusion::catalog::memory::MemorySchemaProvider;
 use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
-use kalamdb_commons::{AuthType, Role, StorageBackend, StorageId, StorageMode, UserId};
+use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
+use kalamdb_store::StorageBackend;
 use kalamdb_core::live_query::{LiveQueryManager, NodeId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
@@ -57,9 +58,11 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     let db = db_init.open()?;
     info!("RocksDB initialized at {}", db_path.display());
 
-    // Initialize KalamSQL for system table access (via StorageBackend abstraction)
-    let storage_backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
-    let kalam_sql = Arc::new(KalamSql::new(storage_backend.clone())?);
+    // Initialize RocksDB backend for all components (single StorageBackend trait)
+    let backend = Arc::new(RocksDBBackend::new(db.clone()));
+    
+    // Initialize KalamSQL for system table access
+    let kalam_sql = Arc::new(KalamSql::new(backend.clone())?);
     info!("KalamSQL initialized");
 
     // Extract RocksDbAdapter for API key authentication
@@ -88,8 +91,8 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         info!("Found {} existing storage(s)", storages.len());
     }
 
-    // Initialize core stores from generic backend
-    let core = kalamdb_core::kalam_core::KalamCore::new(storage_backend.clone())?;
+    // Initialize core stores from generic backend (uses kalamdb_store::StorageBackend)
+    let core = kalamdb_core::kalam_core::KalamCore::new(backend.clone())?;
     let user_table_store = core.user_table_store.clone();
     let shared_table_store = core.shared_table_store.clone();
     let stream_table_store = core.stream_table_store.clone();
@@ -136,6 +139,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     let jobs_provider = kalamdb_core::system_table_registration::register_system_tables(
         &system_schema,
         kalam_sql.clone(),
+        backend.clone(),
     )
     .expect("Failed to register system tables");
 
@@ -178,7 +182,8 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
             shared_table_store.clone(),
             stream_table_store.clone(),
             kalam_sql.clone(),
-        ),
+        )
+        .with_storage_backend(backend.clone()),
     );
 
     info!(

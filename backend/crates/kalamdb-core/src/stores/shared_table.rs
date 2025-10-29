@@ -16,7 +16,8 @@
 use crate::models::SharedTableRow;
 use chrono::Utc;
 use kalamdb_commons::models::{NamespaceId, TableName};
-use kalamdb_commons::storage::{Partition, Result as StorageResult, StorageBackend, StorageError};
+use kalamdb_store::{Partition, StorageBackend, StorageError};
+type StorageResult<T> = Result<T, StorageError>;
 use kalamdb_commons::TableAccess;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
@@ -590,3 +591,4 @@ mod tests {
         assert_eq!(retrieved["access_level"], "private");
     }
 }
+

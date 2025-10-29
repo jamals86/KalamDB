@@ -133,7 +133,7 @@ impl Actor for WebSocketSession {
         if let Some(ref user_id) = self.user_id {
             let manager = self.live_query_manager.clone();
             let unique_conn_id = self.connection_id.clone();
-            let user_string = user_id.as_ref().to_string();
+            let user_string = user_id.as_str().to_string();
 
             ctx.wait(
                 fut::wrap_future(async move {
@@ -288,7 +288,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                                 if !limiter.check_subscription_limit(&user_id) {
                                     warn!(
                                         "Subscription limit exceeded: user_id={}, subscription_id={}",
-                                        user_id.as_ref(),
+                                        user_id.as_str(),
                                         subscription.id
                                     );
                                     let error_msg = Notification::error(
@@ -370,7 +370,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                                             info!(
                                                 "Subscription registered: id={}, user_id={}",
                                                 sub_id,
-                                                user_clone.as_ref()
+                                                user_clone.as_str()
                                             );
                                             act.subscriptions.push(sub_id.clone());
 

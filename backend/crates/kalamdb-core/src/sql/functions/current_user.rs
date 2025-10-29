@@ -33,7 +33,7 @@ impl CurrentUserFunction {
     /// Create a CURRENT_USER function that uses a specific session state
     pub fn with_session_state(session_state: &KalamSessionState) -> Self {
         Self {
-            user_id: session_state.user_id.as_ref().to_string(),
+            user_id: session_state.user_id.as_str().to_string(),
         }
     }
 }

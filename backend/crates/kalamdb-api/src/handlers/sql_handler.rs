@@ -322,7 +322,7 @@ pub async fn execute_sql_v1(
             let took_ms = start_time.elapsed().as_millis() as u64;
             warn!(
                 "Rate limit exceeded for user: {} (queries per second)",
-                uid.as_ref()
+                uid.as_str()
             );
             return HttpResponse::TooManyRequests().json(SqlResponse::error(
                 "RATE_LIMIT_EXCEEDED",
@@ -486,7 +486,7 @@ fn record_batch_to_query_result(
 fn is_admin(user_id: Option<&UserId>) -> bool {
     match user_id {
         Some(id) => {
-            let lower = id.as_ref().to_lowercase();
+            let lower = id.as_str().to_lowercase();
             lower == "admin" || lower == "system"
         }
         None => false,

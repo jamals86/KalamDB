@@ -145,6 +145,18 @@ impl From<&str> for Partition {
     }
 }
 
+impl From<kalamdb_commons::storage::Partition> for Partition {
+    fn from(p: kalamdb_commons::storage::Partition) -> Self {
+        Self::new(p.name().to_owned())
+    }
+}
+
+impl From<&kalamdb_commons::storage::Partition> for Partition {
+    fn from(p: &kalamdb_commons::storage::Partition) -> Self {
+        Self::new(p.name())
+    }
+}
+
 /// Represents a single operation in a batch transaction.
 ///
 /// Used with `StorageBackend::batch()` for atomic multi-operation transactions.

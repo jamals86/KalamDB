@@ -127,7 +127,7 @@ impl SystemTable {
 pub enum StoragePartition {
     /// Unified information_schema.tables storage
     InformationSchemaTables,
-    /// Legacy system columns metadata (kept for compatibility)
+    /// Legacy system columns metadata (kept for compatibility) TODO: Remove
     SystemColumns,
     /// User table flush counters
     UserTableCounters,

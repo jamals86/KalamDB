@@ -17,6 +17,7 @@ use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
 use kalamdb_commons::system::LiveQuery;
+use kalamdb_commons::LiveQueryId;
 use kalamdb_sql::KalamSql;
 use std::any::Any;
 use std::sync::Arc;
@@ -53,7 +54,7 @@ impl LiveQueriesTableProvider {
     /// Update an existing live query subscription
     pub fn update_live_query(&self, live_query: LiveQuery) -> Result<(), KalamDbError> {
         // Check if live query exists
-        let existing = self.get_live_query(&live_query.live_id)?;
+        let existing = self.get_live_query(&live_query.live_id.as_str())?;
         if existing.is_none() {
             return Err(KalamDbError::NotFound(format!(
                 "Live query not found: {}",
@@ -97,9 +98,9 @@ impl LiveQueriesTableProvider {
             .filter(|lq| lq.connection_id == connection_id)
         {
             self.kalam_sql
-                .delete_live_query(&lq.live_id)
+                .delete_live_query(lq.live_id.as_str())
                 .map_err(|e| KalamDbError::Other(format!("Failed to delete live query: {}", e)))?;
-            deleted_ids.push(lq.live_id);
+            deleted_ids.push(lq.live_id.into_string());
         }
 
         Ok(deleted_ids)

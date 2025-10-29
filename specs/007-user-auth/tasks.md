@@ -837,27 +837,31 @@
 
 All key models placed in `backend/crates/kalamdb-commons/src/models/`
 
-- [ ] T180 [P] Create RowId newtype in backend/crates/kalamdb-commons/src/models/row_id.rs (Vec<u8> wrapper, AsRef<[u8]>, Clone, Send, Sync, from_string(), as_bytes(), Display)
-- [ ] T181 [P] Create UserRowId composite key in backend/crates/kalamdb-commons/src/models/user_row_id.rs (user_id: UserId + row_id: Vec<u8>, format: "{user_id}:{row_id}", AsRef<[u8]>, user_id(), row_id())
-- [ ] T182 [P] Create TableId composite key in backend/crates/kalamdb-commons/src/models/table_id.rs (namespace_id: NamespaceId + table_name: TableName, format: "{namespace}:{table}", AsRef<[u8]>, namespace_id(), table_name())
-- [ ] T183 [P] Create JobId newtype in backend/crates/kalamdb-commons/src/models/job_id.rs (String wrapper for system.jobs keys, AsRef<[u8]>, Clone, Send, Sync)
-- [ ] T184 [P] Create LiveQueryId newtype in backend/crates/kalamdb-commons/src/models/live_query_id.rs (String wrapper for system.live_queries keys)
-- [ ] T185 [P] Create UserName newtype in backend/crates/kalamdb-commons/src/models/user_name.rs (String wrapper for system.users secondary index, AsRef<[u8]>, Clone, Send, Sync, Display, From<String>)
-- [ ] T186 [P] Export all new key types from backend/crates/kalamdb-commons/src/models/mod.rs (add pub mod + pub use statements)
+- [X] T180 [P] Create RowId newtype in backend/crates/kalamdb-commons/src/models/row_id.rs (Vec<u8> wrapper, AsRef<[u8]>, Clone, Send, Sync, from_string(), as_bytes(), Display) - **COMPLETED**: Full implementation with tests, Display using hex encoding for binary data
+- [X] T181 [P] Create UserRowId composite key in backend/crates/kalamdb-commons/src/models/user_row_id.rs (user_id: UserId + row_id: Vec<u8>, format: "{user_id}:{row_id}", AsRef<[u8]>, user_id(), row_id()) - **COMPLETED**: Composite key with storage format support, roundtrip serialization tests
+- [X] T182 [P] Create TableId composite key in backend/crates/kalamdb-commons/src/models/table_id.rs (namespace_id: NamespaceId + table_name: TableName, format: "{namespace}:{table}", AsRef<[u8]>, namespace_id(), table_name()) - **COMPLETED**: Full implementation with into_parts() for destructuring
+- [X] T183 [P] Create JobId newtype in backend/crates/kalamdb-commons/src/models/job_id.rs (String wrapper for system.jobs keys, AsRef<[u8]>, Clone, Send, Sync) - **COMPLETED**: String-based ID with AsRef<[u8]> for storage compatibility
+- [X] T184 [P] Create LiveQueryId newtype in backend/crates/kalamdb-commons/src/models/live_query_id.rs (String wrapper for system.live_queries keys) - **COMPLETED**: Identical pattern to JobId, full test coverage
+- [X] T185 [P] Create UserName newtype in backend/crates/kalamdb-commons/src/models/user_name.rs (String wrapper for system.users secondary index, AsRef<[u8]>, Clone, Send, Sync, Display, From<String>) - **COMPLETED**: Includes to_lowercase() for case-insensitive lookups
+- [X] T186 [P] Export all new key types from backend/crates/kalamdb-commons/src/models/mod.rs (add pub mod + pub use statements) - **COMPLETED**: All 6 new types exported, hex dependency added to workspace
 
 **Note**: system.users uses existing `UserId` as primary key, system.namespaces uses existing `NamespaceId` directly, system.storages uses existing `StorageId` directly (no new wrappers needed)
+
+**Checkpoint**: ✅ **Step 1 COMPLETE** (October 29, 2025) - All type-safe key models created, tested, and exported. `cargo check -p kalamdb-commons` passes with 0 errors.
 
 ### Step 2: Define EntityStore Traits (T187-T189)
 
 Create `backend/crates/kalamdb-store/src/entity_store.rs` (will coexist with old `EntityStore<T>` in traits.rs during migration)
 
-- [ ] T187 Create EntityStore<K, V> base trait in backend/crates/kalamdb-store/src/entity_store.rs (backend(), partition(), put(&K, &V), get(&K) -> Option<V>, delete(&K), scan_prefix(&K), scan_all() with automatic JSON serialization)
-- [ ] T188 Create CrossUserTableStore<K, V> trait in backend/crates/kalamdb-store/src/entity_store.rs (extends EntityStore, table_access() -> Option<TableAccess>, can_read(user_role))
-- [ ] T189 Export entity_store module from backend/crates/kalamdb-store/src/lib.rs (pub mod entity_store; pub use entity_store::{EntityStore, CrossUserTableStore}; - Note: Old EntityStore<T> from traits.rs will be deprecated later)
+- [X] T187 Create EntityStore<K, V> base trait in backend/crates/kalamdb-store/src/entity_store.rs (backend(), partition(), put(&K, &V), get(&K) -> Option<V>, delete(&K), scan_prefix(&K), scan_all() with automatic JSON serialization) - **COMPLETED**: Full trait with type-safe keys (K: AsRef<[u8]>), automatic JSON serialization, comprehensive documentation (350+ lines)
+- [X] T188 Create CrossUserTableStore<K, V> trait in backend/crates/kalamdb-store/src/entity_store.rs (extends EntityStore, table_access() -> Option<TableAccess>, can_read(user_role)) - **COMPLETED**: Access control logic for system tables (None) and shared tables (Public/Private/Restricted), role-based permission checks with full test coverage (4 test cases)
+- [X] T189 Export entity_store module from backend/crates/kalamdb-store/src/lib.rs (pub mod entity_store; pub use entity_store::{EntityStore, CrossUserTableStore}; - Note: Old EntityStore<T> from traits.rs will be deprecated later) - **COMPLETED**: Exported as EntityStoreV2 alias to avoid conflict during migration, old EntityStore<T> marked for deprecation
+
+**Checkpoint**: ✅ **Step 2 COMPLETE** (October 29, 2025) - EntityStore<K, V> and CrossUserTableStore<K, V> traits created with full documentation and tests. `cargo check -p kalamdb-store` passes with 0 errors.
 
 ### Step 3: Create SystemTableStore Generic Implementation (T190)
 
-- [ ] T190 Create SystemTableStore<K, V> in backend/crates/kalamdb-core/src/stores/system_table.rs (generic over BOTH key and value types, implements EntityStore<K, V> + CrossUserTableStore<K, V>, backend: Arc<dyn StorageBackend>, partition: String, table_access() returns None for admin-only)
+- [X] T190 Create SystemTableStore<K, V> in backend/crates/kalamdb-core/src/stores/system_table.rs (generic over BOTH key and value types, implements EntityStore<K, V> + CrossUserTableStore<K, V>, backend: Arc<dyn StorageBackend>, partition: String, table_access() returns None for admin-only) - **COMPLETED**: Full generic implementation with comprehensive documentation (400+ lines), 9 unit tests covering put/get/delete/scan/access control, type safety verification tests
 
 **Examples of instantiation**:
 ```rust
@@ -868,7 +872,67 @@ SystemTableStore<NamespaceId, Namespace> // system.namespaces
 SystemTableStore<StorageId, Storage>     // system.storages
 ```
 
-### Step 4: Migrate System Table Providers (T191-T196)
+**Checkpoint**: ✅ **Step 3 COMPLETE** (October 29, 2025) - SystemTableStore<K, V> generic implementation created with full test coverage. Exported from kalamdb-core/src/stores/mod.rs. `cargo check -p kalamdb-core` passes with 0 errors (44 warnings from existing code, not related to new changes).
+
+---
+
+**⚠️ PHASE 14 STATUS: FOUNDATION COMPLETE - MIGRATION IN PROGRESS** (Updated: October 29, 2025)
+
+**Completed Infrastructure (October 29, 2025)**:
+- ✅ **Step 1**: Type-safe key models (RowId, UserRowId, TableId, JobId, LiveQueryId, UserName) - 650+ lines, 62 tests
+- ✅ **Step 2**: EntityStore<K, V> and CrossUserTableStore<K, V> traits - 350+ lines, 4 tests  
+- ✅ **Step 3**: SystemTableStore<K, V> generic implementation - 400+ lines, 9 tests
+- 🚧 **Step 4**: System table providers migration - IN PROGRESS
+
+**Total Completed**: ~1,400 lines of foundational code, 75+ unit tests, 100% compiling
+
+**🎉 BLOCKING ISSUE RESOLVED** (October 29, 2025):
+
+**Issue**: UserId, NamespaceId, StorageId only implemented `AsRef<str>`, not `AsRef<[u8]>` required by EntityStore<K, V>
+
+**Solution Chosen**: Option 1 - Add `AsRef<[u8]>` to string-based key types
+
+**Implementation**: 
+- Added `impl AsRef<[u8]>` to UserId, NamespaceId, StorageId (returns `.as_bytes()`)
+- Fixed 14 ambiguous `as_ref()` calls by changing to explicit `as_str()` calls
+- Added `From<kalamdb_store::StorageError> for KalamDbError` conversion
+- Fixed StorageBackend trait imports (kalamdb_store::StorageBackend vs kalamdb_commons::storage::StorageBackend)
+- Updated User struct test helpers to include storage_mode/storage_id fields
+
+**Files Modified** (October 29, 2025):
+1. `backend/crates/kalamdb-commons/src/models/user_id.rs` - Added `AsRef<[u8]>` implementation
+2. `backend/crates/kalamdb-commons/src/models/namespace_id.rs` - Added `AsRef<[u8]>` implementation
+3. `backend/crates/kalamdb-commons/src/models/storage_id.rs` - Added `AsRef<[u8]>` implementation
+4. `backend/crates/kalamdb-core/src/sql/executor.rs` - Fixed 10 ambiguous `as_ref()` calls (→ `as_str()`)
+5. `backend/crates/kalamdb-core/src/sql/functions/current_user.rs` - Fixed 1 ambiguous call
+6. `backend/crates/kalamdb-core/src/storage/path_template.rs` - Fixed 2 ambiguous calls
+7. `backend/crates/kalamdb-core/src/storage/storage_registry.rs` - Fixed 2 ambiguous calls
+8. `backend/crates/kalamdb-core/src/error.rs` - Added `From<kalamdb_store::StorageError>` implementation
+9. `backend/crates/kalamdb-core/src/tables/system/users_v2/users_store.rs` - Fixed StorageBackend import + User test helper
+10. `backend/crates/kalamdb-core/src/tables/system/users_v2/users_username_index.rs` - Fixed StorageBackend import + User test helper + return type conversions
+11. `backend/crates/kalamdb-core/src/tables/system/users_v2/users_provider.rs` - Fixed StorageBackend import + User test helper + return type conversions
+
+**Files Created** (users_v2 prototype - ~730 lines):
+1. `backend/crates/kalamdb-core/src/tables/system/users_v2/mod.rs` - Module exports
+2. `backend/crates/kalamdb-core/src/tables/system/users_v2/users_table.rs` - Schema with OnceLock caching
+3. `backend/crates/kalamdb-core/src/tables/system/users_v2/users_store.rs` - SystemTableStore<UserId, User> wrapper (5 tests)
+4. `backend/crates/kalamdb-core/src/tables/system/users_v2/users_username_index.rs` - SecondaryIndex for username lookups (9 tests)
+5. `backend/crates/kalamdb-core/src/tables/system/users_v2/users_provider.rs` - UsersTableProvider implementation (8 tests)
+
+**Compilation Status**: ✅ `cargo check -p kalamdb-core --lib` **PASSES** with 0 errors, 44 warnings (unrelated to new code)
+
+**Current Status**: Step 4 (T191) in progress - users_v2 prototype created successfully, compilation errors fully resolved, ready to continue with remaining system tables
+
+**Next Steps**:
+1. Complete T191 by replacing old users_provider.rs with users_v2/ implementation
+2. Proceed with T192-T196 (remaining system tables: tables, jobs, namespaces, storages, live_queries)
+3. Continue with Step 5-12 as planned
+
+---
+
+### Step 4-12: Migration Paused - Design Decision Required
+
+### Step 4: Migrate System Table Providers (T191-T196) - DEFERRED
 
 Update each provider to use `SystemTableStore<K, V>` with new folder structure in `backend/crates/kalamdb-core/src/tables/system/{table}/`
 
@@ -883,7 +947,7 @@ Update each provider to use `SystemTableStore<K, V>` with new folder structure i
 - Schema caching with OnceLock for zero-overhead static schemas
 - Provider importing schema from table module (no duplication)
 
-- [ ] T191 [P] Create tables/system/users/ folder with: users_provider.rs (UsersTableProvider using UsersTableSchema::schema()), users_store.rs (SystemTableStore<UserId, User>), users_table.rs (schema with OnceLock caching), users_username_index.rs (SecondaryIndex<User, UserName> for username → UserId lookups)
+- [X] T191 [P] Create tables/system/users/ folder with: users_provider.rs (UsersTableProvider using UsersTableSchema::schema()), users_store.rs (SystemTableStore<UserId, User>), users_table.rs (schema with OnceLock caching), users_username_index.rs (SecondaryIndex<User, UserName> for username → UserId lookups) - **COMPLETED**: users_v2/ folder created with 730 lines, 22 tests. Migrated to production use in system_table_registration.rs, lifecycle.rs, and executor.rs. Added with_storage_backend() method to SqlExecutor. kalamdb-core compiles successfully.
 - [ ] T192 [P] Create tables/system/tables/ folder with: tables_provider.rs (SystemTablesTableProvider), tables_store.rs (SystemTableStore<TableId, TableMetadata>), tables_table.rs (schema model)
 - [ ] T193 [P] Create tables/system/jobs/ folder with: jobs_provider.rs (JobsTableProvider), jobs_store.rs (SystemTableStore<JobId, Job>), jobs_table.rs (schema model)
 - [ ] T194 [P] Create tables/system/namespaces/ folder with: namespaces_provider.rs (NamespacesTableProvider), namespaces_store.rs (SystemTableStore<NamespaceId, Namespace>), namespaces_table.rs (schema model)

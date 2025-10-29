@@ -165,3 +165,4 @@ async fn test_password_never_logged() {
     println!("  Sensitive fields: password, secret, token, api_key, auth_data, credentials");
     println!("  All log messages are filtered before output");
 }
+

@@ -385,3 +385,4 @@ async fn test_jwt_auth_malformed_header() {
         println!("✓ Malformed Bearer header rejected: {}", malformed_header);
     }
 }
+

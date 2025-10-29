@@ -56,7 +56,7 @@ impl PathTemplate {
     /// Substitute user_id in a path template
     pub fn substitute_user_id(template: &str, user_id: &UserId) -> Result<String, KalamDbError> {
         let mut vars = HashMap::new();
-        vars.insert("user_id".to_string(), user_id.as_ref().to_string());
+        vars.insert("user_id".to_string(), user_id.as_str().to_string());
         Self::substitute(template, &vars)
     }
 
@@ -70,7 +70,7 @@ impl PathTemplate {
         let mut vars = HashMap::new();
 
         if let Some(uid) = user_id {
-            vars.insert("user_id".to_string(), uid.as_ref().to_string());
+            vars.insert("user_id".to_string(), uid.as_str().to_string());
         }
 
         vars.insert("namespace".to_string(), namespace.to_string());

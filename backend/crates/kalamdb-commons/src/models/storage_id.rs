@@ -34,6 +34,11 @@ impl StorageId {
     pub fn local() -> Self {
         Self("local".to_string())
     }
+
+    /// Is this storage ID the local storage?
+    pub fn is_local(&self) -> bool {
+        self.0 == "local"
+    }
 }
 
 impl fmt::Display for StorageId {
@@ -57,6 +62,12 @@ impl From<&str> for StorageId {
 impl AsRef<str> for StorageId {
     fn as_ref(&self) -> &str {
         &self.0
+    }
+}
+
+impl AsRef<[u8]> for StorageId {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_bytes()
     }
 }
 

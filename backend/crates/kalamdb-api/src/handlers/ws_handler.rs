@@ -149,7 +149,7 @@ pub async fn websocket_handler_v1(
                         info!(
                             "WebSocket connection using X-USER-ID header: connection_id={}, user_id={}",
                             connection_id,
-                            user_id.as_ref()
+                            user_id.as_str()
                         );
                         Some(user_id)
                     }

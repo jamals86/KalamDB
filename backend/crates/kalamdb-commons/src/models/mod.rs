@@ -33,10 +33,26 @@ pub mod system;
 mod table_name;
 mod user_id;
 
+// Phase 14: Type-safe key models for EntityStore architecture
+mod row_id;
+mod user_row_id;
+mod table_id;
+mod job_id;
+mod live_query_id;
+mod user_name;
+
 pub use namespace_id::NamespaceId;
 pub use storage_id::StorageId;
 pub use table_name::TableName;
 pub use user_id::UserId;
+
+// Phase 14: Export new key types
+pub use row_id::RowId;
+pub use user_row_id::UserRowId;
+pub use table_id::TableId;
+pub use job_id::JobId;
+pub use live_query_id::LiveQueryId;
+pub use user_name::UserName;
 
 // Re-export everything else from the old models.rs file
 // TODO: Split these into separate files as well

@@ -12,6 +12,7 @@ categories = ["database"]
 [dependencies]
 # workspace deps
 once_cell = { workspace = true }
+hex = { workspace = true }
 # Optional dependencies - only enabled via features
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }

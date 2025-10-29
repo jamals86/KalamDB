@@ -4,8 +4,11 @@
 
 use crate::tables::system::{
     JobsTableProvider, LiveQueriesTableProvider, NamespacesTableProvider, SystemStoragesProvider,
-    SystemTablesTableProvider, TableSchemasProvider, UsersTableProvider,
+    SystemTablesTableProvider, TableSchemasProvider,
 };
+// Phase 14: Use new EntityStore-based providers
+use crate::tables::system::users_v2::UsersTableProvider;
+use crate::tables::system::tables_v2::TablesTableProvider;
 use datafusion::catalog::memory::MemorySchemaProvider;
 use datafusion::catalog::SchemaProvider;
 use kalamdb_commons::system_tables::SystemTable;
@@ -19,6 +22,7 @@ use std::sync::Arc;
 /// # Arguments
 /// * `system_schema` - The DataFusion schema provider to register tables with
 /// * `kalam_sql` - The KalamSql adapter for accessing RocksDB
+/// * `storage_backend` - The storage backend for EntityStore-based providers (Phase 14)
 ///
 /// # Returns
 /// * `jobs_provider` - The jobs table provider (needed for job management)
@@ -29,26 +33,28 @@ use std::sync::Arc;
 /// use std::sync::Arc;
 /// use kalamdb_core::system_table_registration::register_system_tables;
 /// use kalamdb_sql::KalamSql;
-/// use kalamdb_commons::storage::StorageBackend;
+/// use kalamdb_store::StorageBackend;
 ///
-/// # // In real code, construct a concrete backend (e.g., RocksDBBackend) in kalamdb-store.
-/// # let backend: Arc<dyn StorageBackend> = unimplemented!("provide a StorageBackend");
-/// # let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
+/// # let backend: Arc<dyn kalamdb_store::StorageBackend> = unimplemented!("provide a StorageBackend");
+/// # let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
 /// let system_schema = Arc::new(MemorySchemaProvider::new());
-/// let jobs_provider = register_system_tables(&system_schema, kalam_sql)
+/// let jobs_provider = register_system_tables(&system_schema, kalam_sql, backend)
 ///     .expect("Failed to register system tables");
 /// ```
 pub fn register_system_tables(
     system_schema: &Arc<MemorySchemaProvider>,
     kalam_sql: Arc<kalamdb_sql::KalamSql>,
+    storage_backend: Arc<dyn kalamdb_store::StorageBackend>,
 ) -> Result<Arc<JobsTableProvider>, String> {
     // Create all system table providers
-    let users_provider = Arc::new(UsersTableProvider::new(kalam_sql.clone()));
+    // Phase 14: New EntityStore-based providers
+    let users_provider = Arc::new(UsersTableProvider::new(storage_backend.clone()));
+    let tables_provider = Arc::new(TablesTableProvider::new(storage_backend.clone()));
+    let jobs_provider = Arc::new(JobsTableProvider::new(storage_backend.clone()));
+    // Old providers (to be migrated in Phase 14 Step 4)
     let namespaces_provider = Arc::new(NamespacesTableProvider::new(kalam_sql.clone()));
-    let tables_provider = Arc::new(SystemTablesTableProvider::new(kalam_sql.clone()));
     let storages_provider = Arc::new(SystemStoragesProvider::new(kalam_sql.clone()));
     let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone()));
-    let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.clone()));
     let table_schemas_provider = Arc::new(TableSchemasProvider::new(kalam_sql.clone()));
 
     // Register each system table using the SystemTable enum

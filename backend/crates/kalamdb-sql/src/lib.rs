@@ -41,7 +41,7 @@ pub mod parser;
 pub mod query_cache;
 pub mod statement_classifier;
 
-use kalamdb_commons::storage::StorageBackend;
+use kalamdb_store::StorageBackend;
 use kalamdb_commons::{NamespaceId, StorageId, TableName, UserId};
 // Re-export system models from kalamdb-commons (single source of truth)
 pub use kalamdb_commons::system::{

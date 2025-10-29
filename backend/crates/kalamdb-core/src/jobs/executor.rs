@@ -10,7 +10,7 @@
 use crate::error::KalamDbError;
 use crate::tables::system::JobsTableProvider;
 use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobStatus, JobType, NamespaceId, TableName};
+use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, TableName};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -88,7 +88,7 @@ impl JobExecutor {
         // T101: Register job with status='running'
         let namespace_id = NamespaceId::new("default".to_string()); // TODO: Get from context
         let mut job = Job::new(
-            job_id.clone(),
+            JobId::new(job_id.clone()),
             job_type_enum,
             namespace_id,
             self.node_id.clone(),

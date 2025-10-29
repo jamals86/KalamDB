@@ -51,7 +51,11 @@ Future:
 52)         namespace_id: &str, table_name: &str, to NamespaceId, TableName
 53) IMPORTANT: Add a story about the need for giving ability to subscribe for: * which means all users tables at once, this is done by the ai agent which listen to all the user messages at once, add also ability to listen per storageId, for this we need to add to the user message key a userId:rowId:storageId
 54) Mention in the README.md that instead of using redis/messaging system/database you can use one for all of these, and subscribing directly to where your messages are stored in an easy way
-
+55) Check the queries coming and scan for vulnerability limit the string content length
+56) Add to README.md
+    - Vector database
+    - Vector Search
+    - 
 
 
 Key Findings

@@ -219,7 +219,7 @@ impl AuthService {
 
         Ok(AuthenticatedUser::new(
             user.id,
-            user.username,
+            user.username.into_string(),
             user.role,
             user.email,
             connection_info.clone(),
@@ -275,7 +275,7 @@ impl AuthService {
 
         Ok(AuthenticatedUser::new(
             user.id,
-            user.username,
+            user.username.into_string(),
             user.role,
             user.email,
             connection_info.clone(),
@@ -374,7 +374,7 @@ impl AuthService {
 
         Ok(AuthenticatedUser::new(
             user.id,
-            user.username,
+            user.username.into_string(),
             user.role,
             user.email,
             connection_info.clone(),

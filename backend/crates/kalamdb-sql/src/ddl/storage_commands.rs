@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CreateStorageStatement {
     /// Unique storage identifier
-    pub storage_id: String,
+    pub storage_id: String, //TODO: use StorageId type
 
     /// Storage type: 'filesystem' or 's3'
     pub storage_type: String,
@@ -163,7 +163,7 @@ impl CreateStorageStatement {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AlterStorageStatement {
     /// Storage identifier to alter
-    pub storage_id: String,
+    pub storage_id: String, //TODO: use StorageId type
 
     /// New storage name (if updating)
     pub storage_name: Option<String>,
@@ -242,7 +242,7 @@ impl AlterStorageStatement {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DropStorageStatement {
     /// Storage identifier to drop
-    pub storage_id: String,
+    pub storage_id: String, //TODO: use StorageId type
 }
 
 impl DropStorageStatement {

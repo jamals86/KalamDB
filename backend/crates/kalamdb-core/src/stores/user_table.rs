@@ -16,7 +16,8 @@
 use crate::models::UserTableRow;
 use chrono::Utc;
 use kalamdb_commons::models::{NamespaceId, TableName};
-use kalamdb_commons::storage::{Partition, Result as StorageResult, StorageBackend, StorageError};
+use kalamdb_store::{Partition, StorageBackend, StorageError};
+type StorageResult<T> = Result<T, StorageError>;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -696,3 +697,4 @@ mod tests {
         assert_eq!(results[0].0, "msg001");
     }
 }
+

@@ -45,7 +45,7 @@ use datafusion::arrow::array::{
 use datafusion::catalog::SchemaProvider;
 use kalamdb_api::models::{QueryResult, SqlResponse};
 use kalamdb_commons::models::{NamespaceId, StorageId, TableName};
-use kalamdb_commons::storage::StorageBackend;
+use kalamdb_store::StorageBackend;
 use kalamdb_core::live_query::{LiveQueryManager, NodeId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,

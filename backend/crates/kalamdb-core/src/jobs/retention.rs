@@ -7,7 +7,7 @@
 use crate::error::KalamDbError;
 use crate::tables::system::JobsTableProvider;
 use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobStatus, JobType, NamespaceId};
+use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId};
 use std::sync::Arc;
 
 /// Configuration for job retention
@@ -147,7 +147,7 @@ mod tests {
         // Create an old completed job (60 days ago)
         let old_time = chrono::Utc::now().timestamp_millis() - (60 * 24 * 60 * 60 * 1000);
         let mut old_job = Job::new(
-            "old-completed".to_string(),
+            JobId::new("old-completed"),
             JobType::Flush,
             NamespaceId::new("default"),
             "node-1".to_string(),
@@ -159,7 +159,7 @@ mod tests {
 
         // Create a recent completed job
         let recent_job = Job::new(
-            "recent-completed".to_string(),
+            JobId::new("recent-completed"),
             JobType::Flush,
             NamespaceId::new("default"),
             "node-1".to_string(),
@@ -185,7 +185,7 @@ mod tests {
         // Create a failed job that's 60 days old (older than success retention, but within failure retention)
         let failed_time = chrono::Utc::now().timestamp_millis() - (60 * 24 * 60 * 60 * 1000);
         let mut failed_job = Job::new(
-            "old-failed".to_string(),
+            JobId::new("old-failed"),
             JobType::Backup,
             NamespaceId::new("default"),
             "node-1".to_string(),
@@ -202,7 +202,7 @@ mod tests {
 
         // Failed job should still exist due to extended retention
         assert_eq!(deleted, 0);
-        assert!(provider.get_job("old-failed").unwrap().is_some());
+        assert!(provider.get_job(&JobId::new("old-failed")).unwrap().is_some());
     }
 
     #[test]
@@ -212,7 +212,7 @@ mod tests {
         // Create a failed job that's 120 days old (older than failure retention)
         let very_old_time = chrono::Utc::now().timestamp_millis() - (120 * 24 * 60 * 60 * 1000);
         let mut very_old_failed = Job::new(
-            "very-old-failed".to_string(),
+            JobId::new("very-old-failed"),
             JobType::Cleanup,
             NamespaceId::new("default"),
             "node-1".to_string(),
@@ -229,7 +229,7 @@ mod tests {
 
         // Very old failed job should be deleted
         assert_eq!(deleted, 1);
-        assert!(provider.get_job("very-old-failed").unwrap().is_none());
+        assert!(provider.get_job(&JobId::new("very-old-failed")).unwrap().is_none());
     }
 
     #[test]
@@ -239,7 +239,7 @@ mod tests {
         // Create a running job that started 120 days ago
         let old_running_time = chrono::Utc::now().timestamp_millis() - (120 * 24 * 60 * 60 * 1000);
         let mut old_running = Job::new(
-            "old-running".to_string(),
+            JobId::new("old-running"),
             JobType::Cleanup,
             NamespaceId::new("default"),
             "node-1".to_string(),
@@ -255,7 +255,7 @@ mod tests {
 
         // Running job should never be deleted
         assert_eq!(deleted, 0);
-        assert!(provider.get_job("old-running").unwrap().is_some());
+        assert!(provider.get_job(&JobId::new("old-running")).unwrap().is_some());
     }
 
     #[test]

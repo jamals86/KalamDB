@@ -7,7 +7,7 @@
 //! - OAuth subject matching
 //! - Auto-provisioning disabled by default
 
-use kalamdb_commons::storage::StorageBackend;
+use kalamdb_store::StorageBackend;
 use kalamdb_commons::{AuthType, Role, StorageMode, UserId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, UserTableService,
@@ -278,3 +278,4 @@ async fn test_oauth_azure_provider() {
     assert_eq!(auth_data["subject"], "azure_tenant_user");
     assert_eq!(user.role, Role::Service);
 }
+

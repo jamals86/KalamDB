@@ -12,7 +12,7 @@
 use kalamdb_auth::AuthService;
 use kalamdb_auth::connection::ConnectionInfo;
 use base64::{Engine as _, engine::general_purpose};
-use kalamdb_commons::storage::StorageBackend;
+use kalamdb_store::StorageBackend;
 use kalamdb_commons::{AuthType, Role, StorageMode, UserId, TableAccess};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, UserTableService,
@@ -352,3 +352,4 @@ async fn test_shared_table_defaults_private() {
         "TableAccess::Private should be available for shared tables"
     );
 }
+

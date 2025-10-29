@@ -853,7 +853,7 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             schema_version: 1,
-            storage_id: StorageId::new("local"),
+            storage_id: StorageId::local(),
             use_user_storage: false,
             flush_policy: None,
             deleted_retention_hours: None,

@@ -40,10 +40,11 @@ use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use crate::tables::{
     system::{
         NamespacesTableProvider, SystemTablesTableProvider,
-        UsersTableProvider as SystemUsersTableProvider,
     },
     SharedTableProvider, StreamTableProvider, UserTableProvider,
 };
+// Phase 14: Use new EntityStore-based users provider
+use crate::tables::system::users_v2::UsersTableProvider as SystemUsersTableProvider;
 use datafusion::arrow::array::{ArrayRef, StringArray, UInt32Array};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
@@ -131,6 +132,8 @@ pub struct SqlExecutor {
     shared_table_store: Option<Arc<SharedTableStore>>,
     stream_table_store: Option<Arc<StreamTableStore>>,
     kalam_sql: Option<Arc<KalamSql>>,
+    // Phase 14: Storage backend for EntityStore-based providers
+    storage_backend: Option<Arc<dyn kalamdb_store::StorageBackend>>,
     // Session factory for creating per-user sessions
     session_factory: DataFusionSessionFactory,
     // System tables
@@ -193,6 +196,7 @@ impl SqlExecutor {
             shared_table_store: None,
             stream_table_store: None,
             kalam_sql: None,
+            storage_backend: None, // Phase 14: Initialize storage backend
             session_factory,
             jobs_table_provider: None,
             users_table_provider: None,
@@ -243,9 +247,19 @@ impl SqlExecutor {
         self.jobs_table_provider = Some(Arc::new(crate::tables::system::JobsTableProvider::new(
             kalam_sql.clone(),
         )));
-        self.users_table_provider =
-            Some(Arc::new(SystemUsersTableProvider::new(kalam_sql.clone())));
+        // Phase 14: Note - we can't get kalamdb_store::StorageBackend from KalamSql yet
+        // because it uses kalamdb_commons::StorageBackend. This will be fixed when
+        // kalamdb-sql is migrated to use kalamdb_store::StorageBackend.
+        // For now, storage_backend must be set separately via with_storage_backend()
         self.kalam_sql = Some(kalam_sql);
+        self
+    }
+
+    /// Phase 14: Set the storage backend for EntityStore-based providers
+    pub fn with_storage_backend(mut self, backend: Arc<dyn kalamdb_store::StorageBackend>) -> Self {
+        // Phase 14: Use storage backend for new EntityStore-based providers
+        self.storage_backend = Some(backend.clone());
+        self.users_table_provider = Some(Arc::new(SystemUsersTableProvider::new(backend)));
         self
     }
 
@@ -936,10 +950,14 @@ impl SqlExecutor {
             )
             .map_err(|e| KalamDbError::Other(format!("Failed to register system.tables: {}", e)))?;
 
+        // Phase 14: Use new EntityStore-based users provider with storage backend
+        let backend = self.storage_backend.as_ref().ok_or_else(|| {
+            KalamDbError::InvalidOperation("Storage backend not configured for users provider".to_string())
+        })?;
         system_schema
             .register_table(
                 "users".to_string(),
-                Arc::new(SystemUsersTableProvider::new(kalam_sql.clone())),
+                Arc::new(SystemUsersTableProvider::new(backend.clone())),
             )
             .map_err(|e| KalamDbError::Other(format!("Failed to register system.users: {}", e)))?;
 
@@ -1622,12 +1640,12 @@ impl SqlExecutor {
         // Sort: 'local' first, then alphabetically
         let mut sorted_storages = storages;
         sorted_storages.sort_by(|a, b| {
-            if a.storage_id.as_ref() == "local" {
+            if a.storage_id.as_str() == "local" {
                 std::cmp::Ordering::Less
-            } else if b.storage_id.as_ref() == "local" {
+            } else if b.storage_id.as_str() == "local" {
                 std::cmp::Ordering::Greater
             } else {
-                a.storage_id.as_ref().cmp(b.storage_id.as_ref())
+                a.storage_id.as_str().cmp(b.storage_id.as_str())
             }
         });
 
@@ -1901,8 +1919,8 @@ impl SqlExecutor {
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table '{}.{}' does not exist",
-                    stmt.namespace.as_ref(),
-                    stmt.table_name.as_ref()
+                    stmt.namespace.as_str(),
+                    stmt.table_name.as_str()
                 ))
             })?;
 
@@ -1911,8 +1929,8 @@ impl SqlExecutor {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Cannot flush {} table '{}.{}'. Only user tables can be flushed.",
                 table.table_type,
-                stmt.namespace.as_ref(),
-                stmt.table_name.as_ref()
+                stmt.namespace.as_str(),
+                stmt.table_name.as_str()
             )));
         }
 
@@ -1957,14 +1975,14 @@ impl SqlExecutor {
 
         // Phase 2b: Get schema from information_schema.tables (TableDefinition.schema_history)
         let namespace_id = NamespaceId::from(stmt.namespace.as_ref());
-        let table_name = TableName::from(stmt.table_name.as_ref());
+        let table_name = TableName::from(stmt.table_name.as_str());
         let table_def = kalam_sql
             .get_table_definition(&namespace_id, &table_name)?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table definition not found for '{}.{}'",
-                    stmt.namespace.as_ref(),
-                    stmt.table_name.as_ref()
+                    stmt.namespace.as_str(),
+                    stmt.table_name.as_str()
                 ))
             })?;
 
@@ -1972,8 +1990,8 @@ impl SqlExecutor {
         if table_def.schema_history.is_empty() {
             return Err(KalamDbError::Other(format!(
                 "No schema history found for table '{}.{}'",
-                stmt.namespace.as_ref(),
-                stmt.table_name.as_ref()
+                stmt.namespace.as_str(),
+                stmt.table_name.as_str()
             )));
         }
 
@@ -2097,13 +2115,13 @@ impl SqlExecutor {
             .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
 
         // Verify namespace exists
-        let namespace_id = NamespaceId::from(stmt.namespace.as_ref());
+        let namespace_id = NamespaceId::from(stmt.namespace.as_str());
         match kalam_sql.get_namespace(&namespace_id) {
             Ok(Some(_)) => { /* namespace exists */ }
             Ok(None) => {
                 return Err(KalamDbError::NotFound(format!(
                     "Namespace '{}' does not exist",
-                    stmt.namespace.as_ref()
+                    stmt.namespace.as_str()
                 )));
             }
             Err(e) => {
@@ -2127,7 +2145,7 @@ impl SqlExecutor {
         if user_tables.is_empty() {
             return Ok(ExecutionResult::Success(format!(
                 "No user tables found in namespace '{}' to flush",
-                stmt.namespace.as_ref()
+                stmt.namespace.as_str()
             )));
         }
 
@@ -2142,9 +2160,9 @@ impl SqlExecutor {
             );
 
             // Create job record
-            use kalamdb_commons::{JobType, NamespaceId, TableName};
+            use kalamdb_commons::{JobId, JobType, NamespaceId, TableName};
             let job_record = kalamdb_commons::system::Job::new(
-                job_id.clone(),
+                JobId::new(job_id.clone()),
                 JobType::Flush,
                 table.namespace.clone(),
                 format!("node-{}", std::process::id()),
@@ -2296,7 +2314,8 @@ impl SqlExecutor {
                 KalamDbError::InvalidOperation("User management not configured".to_string())
             })?;
 
-            let requesting_user = users_provider.get_user_by_id(uid)?;
+            let requesting_user = users_provider.get_user_by_id(uid)?
+                .ok_or_else(|| KalamDbError::NotFound(format!("User not found: {}", uid)))?;
             if !matches!(
                 requesting_user.role,
                 kalamdb_commons::Role::Dba | kalamdb_commons::Role::System
@@ -2421,7 +2440,8 @@ impl SqlExecutor {
                 KalamDbError::InvalidOperation("User management not configured".to_string())
             })?;
 
-            let requesting_user = users_provider.get_user_by_id(uid)?;
+            let requesting_user = users_provider.get_user_by_id(uid)?
+                .ok_or_else(|| KalamDbError::NotFound(format!("User not found: {}", uid)))?;
             if !matches!(
                 requesting_user.role,
                 kalamdb_commons::Role::Dba | kalamdb_commons::Role::System
@@ -2439,7 +2459,8 @@ impl SqlExecutor {
 
         // Get existing user
         let target_user_id = UserId::new(&stmt.username);
-        let mut user = users_provider.get_user_by_id(&target_user_id)?;
+        let mut user = users_provider.get_user_by_id(&target_user_id)?
+            .ok_or_else(|| KalamDbError::NotFound(format!("User not found: {}", stmt.username)))?;
 
         // Apply modifications
         use kalamdb_sql::ddl::UserModification;
@@ -2492,7 +2513,8 @@ impl SqlExecutor {
                 KalamDbError::InvalidOperation("User management not configured".to_string())
             })?;
 
-            let requesting_user = users_provider.get_user_by_id(uid)?;
+            let requesting_user = users_provider.get_user_by_id(uid)?
+                .ok_or_else(|| KalamDbError::NotFound(format!("User not found: {}", uid)))?;
             if !matches!(
                 requesting_user.role,
                 kalamdb_commons::Role::Dba | kalamdb_commons::Role::System
@@ -3699,7 +3721,7 @@ impl SqlExecutor {
     fn is_admin(user_id: Option<&UserId>) -> bool {
         match user_id {
             Some(id) => {
-                let id_str = id.as_ref().to_lowercase();
+                let id_str = id.as_str().to_lowercase();
                 id_str == "admin" || id_str == "system"
             }
             None => false,

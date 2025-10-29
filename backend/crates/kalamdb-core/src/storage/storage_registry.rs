@@ -100,12 +100,12 @@ impl StorageRegistry {
 
         // Sort: 'local' first, then alphabetically
         storages.sort_by(|a, b| {
-            if a.storage_id.as_ref() == "local" {
+            if a.storage_id.is_local() {
                 std::cmp::Ordering::Less
-            } else if b.storage_id.as_ref() == "local" {
+            } else if b.storage_id.is_local() {
                 std::cmp::Ordering::Greater
             } else {
-                a.storage_id.as_ref().cmp(b.storage_id.as_ref())
+                a.storage_id.as_str().cmp(b.storage_id.as_str())
             }
         });
 

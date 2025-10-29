@@ -48,7 +48,7 @@
 
 use crate::{
     AuthType, JobStatus, JobType, NamespaceId, Role, StorageId, StorageMode, TableAccess,
-    TableName, TableType, UserId,
+    TableName, TableType, UserId, models::{JobId, LiveQueryId, TableId, UserName},
 };
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
@@ -101,7 +101,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct User {
     pub id: UserId,
-    pub username: String,
+    pub username: UserName,
     pub password_hash: String,
     pub role: Role,
     pub email: Option<String>,
@@ -166,7 +166,7 @@ pub struct User {
 /// ```
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct Job {
-    pub job_id: String,
+    pub job_id: JobId,
     pub job_type: JobType,
     pub namespace_id: NamespaceId,
     pub table_name: Option<TableName>,
@@ -186,7 +186,7 @@ pub struct Job {
 impl Job {
     /// Create a new job with running status
     pub fn new(
-        job_id: String,
+        job_id: JobId,
         job_type: JobType,
         namespace_id: NamespaceId,
         node_id: String,
@@ -429,7 +429,7 @@ impl Namespace {
 /// ```
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct SystemTable {
-    pub table_id: String,
+    pub table_id: TableId,
     pub table_name: TableName,
     pub namespace: NamespaceId,
     pub table_type: TableType,
@@ -506,7 +506,7 @@ pub struct Storage {
 /// ```
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct LiveQuery {
-    pub live_id: String, // Format: {user_id}-{unique_conn_id}-{table_name}-{query_id}
+    pub live_id: LiveQueryId, // Format: {user_id}-{unique_conn_id}-{table_name}-{query_id}
     pub connection_id: String,
     pub namespace_id: NamespaceId,
     pub table_name: TableName,
@@ -569,7 +569,7 @@ pub struct InformationSchemaTable {
     pub table_schema: NamespaceId,
     pub table_name: TableName,
     pub table_type: String, // BASE TABLE, SYSTEM VIEW, STREAM TABLE
-    pub table_id: String,
+    pub table_id: TableId,
     pub created_at: i64, // Unix timestamp in milliseconds
     pub updated_at: i64, // Unix timestamp in milliseconds
     pub schema_version: u32,
