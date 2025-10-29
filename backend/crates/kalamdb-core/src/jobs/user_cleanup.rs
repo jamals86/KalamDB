@@ -9,6 +9,7 @@
 
 use crate::error::KalamDbError;
 use crate::stores::UserTableStore;
+use kalamdb_commons::models::UserName;
 use kalamdb_commons::system::User as SystemUser;
 use kalamdb_commons::TableType;
 use kalamdb_sql::{KalamSql, Table};
@@ -97,7 +98,7 @@ impl UserCleanupJob {
                 Err(err) => {
                     log::error!(
                         "User cleanup failed for {}: {}",
-                        user.username.as_ref(),
+                        <UserName as AsRef<str>>::as_ref(&user.username),
                         err
                     );
                 }
@@ -131,24 +132,24 @@ impl UserCleanupJob {
                     removed_rows,
                     namespace,
                     table_name,
-                    user.username.as_ref()
+                    <UserName as AsRef<str>>::as_ref(&user.username)
                 );
             }
         }
 
         self.kalam_sql
-            .delete_user(user.username.as_ref())
+            .delete_user(<UserName as AsRef<str>>::as_ref(&user.username))
             .map_err(|e| {
                 KalamDbError::Other(format!(
                     "Failed to permanently delete user {}: {}",
-                    user.username.as_ref(),
+                    <UserName as AsRef<str>>::as_ref(&user.username),
                     e
                 ))
             })?;
 
         log::info!(
             "Permanently deleted user {} ({})",
-            user.username.as_ref(),
+            <UserName as AsRef<str>>::as_ref(&user.username),
             user_id
         );
 

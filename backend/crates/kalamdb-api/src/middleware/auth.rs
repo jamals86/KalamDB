@@ -69,6 +69,16 @@ impl AuthMiddleware {
     }
 }
 
+/// Generate a unique request ID for this request
+fn generate_request_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("req_{}", timestamp)
+}
+
 impl<S> Transform<S, ServiceRequest> for AuthMiddleware
 where
     S: Service<ServiceRequest, Response = ServiceResponse, Error = Error> + 'static,
@@ -145,21 +155,25 @@ where
                 Some(header) => match header.to_str() {
                     Ok(s) => s.to_string(),
                     Err(_) => {
-                        warn!("Invalid Authorization header format from {:?}", remote_addr);
+                        let request_id = generate_request_id();
+                        warn!("Invalid Authorization header format from {:?}, request_id={}", remote_addr, request_id);
                         let (req, _) = req.into_parts();
                         let response = HttpResponse::Unauthorized().json(json!({
                             "error": "INVALID_AUTHORIZATION_HEADER",
-                            "message": "Authorization header contains invalid characters"
+                            "message": "Authorization header contains invalid characters",
+                            "request_id": request_id
                         }));
                         return Ok(ServiceResponse::new(req, response));
                     }
                 },
                 None => {
-                    warn!("Missing Authorization header from {:?}", remote_addr);
+                    let request_id = generate_request_id();
+                    warn!("Missing Authorization header from {:?}, request_id={}", remote_addr, request_id);
                     let (req, _) = req.into_parts();
                     let response = HttpResponse::Unauthorized().json(json!({
                         "error": "MISSING_AUTHORIZATION",
-                        "message": "Authorization header is required. Use 'Authorization: Basic <credentials>' or 'Authorization: Bearer <token>'"
+                        "message": "Authorization header is required. Use 'Authorization: Basic <credentials>' or 'Authorization: Bearer <token>'",
+                        "request_id": request_id
                     }));
                     return Ok(ServiceResponse::new(req, response));
                 }
@@ -183,9 +197,10 @@ where
                     service.call(req).await
                 }
                 Err(auth_error) => {
+                    let request_id = generate_request_id();
                     warn!(
-                        "Authentication failed from {:?}: {}",
-                        remote_addr, auth_error
+                        "Authentication failed from {:?}: {}, request_id={}",
+                        remote_addr, auth_error, request_id
                     );
 
                     let (status_code, error_code, message) = match auth_error {
@@ -229,7 +244,8 @@ where
                     )
                     .json(json!({
                         "error": error_code,
-                        "message": message
+                        "message": message,
+                        "request_id": request_id
                     }));
                     Ok(ServiceResponse::new(req, response))
                 }

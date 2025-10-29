@@ -16,7 +16,7 @@
 use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
-use kalamdb_commons::models::{JobStatus, JobType};
+use kalamdb_commons::models::{JobId, JobStatus, JobType};
 use kalamdb_sql::{Job, KalamSql};
 use std::fs;
 use std::path::Path;
@@ -422,7 +422,7 @@ impl TableDeletionService {
         table_name: &TableName,
         table_type: &TableType,
     ) -> Result<String, KalamDbError> {
-        let job_id = format!("drop_table:{}", table_id);
+        let job_id = format!("drop_table:{}", table_id); //TODO: Use a function inside JobId to construct this
         let now_ms = chrono::Utc::now().timestamp_millis();
 
         let parameters = vec![
@@ -432,7 +432,7 @@ impl TableDeletionService {
         ];
 
         let job: Job = Job {
-            job_id: job_id.clone(),
+            job_id: JobId::new(job_id.clone()),
             job_type: JobType::Cleanup,
             status: JobStatus::Running,
             namespace_id: namespace_id.clone(),

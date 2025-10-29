@@ -55,7 +55,9 @@ Future:
 56) Add to README.md
     - Vector database
     - Vector Search
-    - 
+57) AuditLogStore shoud be similar to how the other system tables are located and designed
+@PHASE_14_ENTITYSTORE_REFACTORING.md
+hAS A DEEP DESIGN FOR HOW THEY SHOULD BE AND ALSO UPDATE TASKS.MD AND THE DESIGN HERE
 
 
 Key Findings

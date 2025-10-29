@@ -13,7 +13,7 @@
 
 use crate::catalog::{NamespaceId, TableType};
 use crate::error::KalamDbError;
-use kalamdb_commons::models::{JobStatus, JobType};
+use kalamdb_commons::models::{JobId, JobStatus, JobType};
 use kalamdb_sql::{Job, KalamSql, Namespace, Table, TableSchema};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -456,7 +456,7 @@ impl BackupService {
 
         let now_ms = chrono::Utc::now().timestamp_millis();
         let job = Job {
-            job_id: job_id.clone(),
+            job_id: JobId::new(job_id.clone()),
             job_type: JobType::Backup,
             status: JobStatus::Running,
             namespace_id: namespace_id.clone(),

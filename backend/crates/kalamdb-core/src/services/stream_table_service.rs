@@ -13,7 +13,7 @@ use crate::error::KalamDbError;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 use crate::stores::StreamTableStore;
 use datafusion::arrow::datatypes::Schema;
-use kalamdb_commons::models::StorageId;
+use kalamdb_commons::models::{StorageId, TableId};
 use kalamdb_commons::system::TableSchema;
 use kalamdb_sql::ddl::CreateTableStatement;
 use kalamdb_sql::KalamSql;
@@ -230,7 +230,7 @@ impl StreamTableService {
 
         // Create Table record in system_tables
         let table = kalamdb_sql::Table {
-            table_id: table_id.clone(),
+            table_id: TableId::from_strings(namespace_id.as_str(), table_name.as_str()),
             table_name: table_name.clone(),
             namespace: namespace_id.clone(),
             table_type: TableType::Stream,

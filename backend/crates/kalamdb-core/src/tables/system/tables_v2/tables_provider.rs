@@ -48,23 +48,21 @@ impl TablesTableProvider {
         }
     }
 
-    /// Create a new table entry
     pub fn create_table(&self, table: SystemTable) -> Result<(), KalamDbError> {
-        self.store.put(&table.table_id, &table)?;
+        self.store.put(&table.table_id.to_string(), &table)?;
         Ok(())
     }
 
-    /// Update an existing table entry
     pub fn update_table(&self, table: SystemTable) -> Result<(), KalamDbError> {
         // Check if table exists
-        if self.store.get(&table.table_id)?.is_none() {
+        if self.store.get(&table.table_id.to_string())?.is_none() {
             return Err(KalamDbError::NotFound(format!(
                 "Table not found: {}",
                 table.table_id
             )));
         }
 
-        self.store.put(&table.table_id, &table)?;
+        self.store.put(&table.table_id.to_string(), &table)?;
         Ok(())
     }
 
@@ -97,7 +95,7 @@ impl TablesTableProvider {
         let mut access_levels = StringBuilder::new();
 
         for (_key, table) in tables {
-            table_ids.append_value(&table.table_id);
+            table_ids.append_value(&table.table_id.to_string());
             table_names.append_value(table.table_name.as_str());
             namespaces.append_value(table.namespace.as_str());
             table_types.append_value(table.table_type.as_str());

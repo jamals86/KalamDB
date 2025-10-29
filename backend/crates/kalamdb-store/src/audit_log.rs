@@ -57,7 +57,7 @@ mod tests {
     use super::*;
     use kalamdb_commons::models::{UserId, UserName};
     use kalamdb_commons::system::AuditLogEntry;
-    use kalamdb_store::test_utils::InMemoryBackend;
+    use crate::test_utils::InMemoryBackend;
     use serde_json::json;
 
     fn sample_entry(action: &str) -> AuditLogEntry {

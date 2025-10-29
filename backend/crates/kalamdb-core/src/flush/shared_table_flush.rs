@@ -14,6 +14,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::system::Job;
 use kalamdb_commons::JobType;
+use kalamdb_commons::{JobId, JobStatus};
 use serde_json::{json, Value as JsonValue};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -111,7 +112,7 @@ impl SharedTableFlushJob {
         let params_json = serde_json::to_string(&params).unwrap_or_else(|_| "[]".to_string());
 
         let mut job_record = Job::new(
-            job_id.clone(),
+            JobId::new(job_id.clone()),
             JobType::Flush,
             self.namespace_id.clone(),
             self.node_id.clone(),

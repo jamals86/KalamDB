@@ -139,7 +139,7 @@ impl LiveQueriesTableProvider {
     pub fn increment_changes(&self, live_id: &str, timestamp: i64) -> Result<(), KalamDbError> {
         let live_query_id = LiveQueryId::new(live_id);
         let mut live_query = self
-            .get_live_query(&live_query_id)?
+            .get_live_query(live_id)?
             .ok_or_else(|| KalamDbError::NotFound(format!("Live query not found: {}", live_id)))?;
 
         live_query.changes += 1;

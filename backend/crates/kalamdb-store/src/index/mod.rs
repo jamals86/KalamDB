@@ -94,7 +94,7 @@
 //! let admin_ids = index_manager.get_by_role("admin")?;
 //! ```
 
-use kalamdb_commons::storage::{Partition, Result, StorageBackend, StorageError};
+use crate::storage_trait::{Partition, Result, StorageBackend, StorageError};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

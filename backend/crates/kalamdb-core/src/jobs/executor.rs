@@ -194,7 +194,7 @@ impl JobExecutor {
         // Register job immediately
         let namespace_id = NamespaceId::new("default".to_string()); // TODO: Get from context
         let mut job = Job::new(
-            job_id.clone(),
+            JobId::new(job_id.clone()),
             job_type_enum,
             namespace_id,
             self.node_id.clone(),
@@ -235,7 +235,7 @@ impl JobExecutor {
             );
 
             // Fetch current job state and update
-            if let Ok(Some(mut job)) = jobs_provider.get_job(&job_id) {
+            if let Ok(Some(mut job)) = jobs_provider.get_job(&JobId::new(job_id.clone())) {
                 let final_job = match result {
                     Ok(success_message) => {
                         job.memory_used = Some(memory_used_bytes);

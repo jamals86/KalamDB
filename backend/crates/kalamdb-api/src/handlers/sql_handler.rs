@@ -2,7 +2,7 @@
 //!
 //! This module provides HTTP handlers for executing SQL statements via the REST API.
 
-use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
+use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::basic_auth::parse_basic_auth_header;
 use kalamdb_auth::{context::AuthenticatedUser, password};
 use kalamdb_commons::models::UserId;

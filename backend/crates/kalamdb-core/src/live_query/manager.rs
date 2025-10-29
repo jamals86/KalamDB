@@ -40,7 +40,7 @@ impl LiveQueryManager {
         let registry = Arc::new(tokio::sync::RwLock::new(LiveQueryRegistry::new(
             node_id.clone(),
         )));
-        let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone()));
+        let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.adapter().backend()));
         let filter_cache = Arc::new(tokio::sync::RwLock::new(FilterCache::new()));
         let initial_data_fetcher = Arc::new(InitialDataFetcher::new(
             user_table_store.clone(),

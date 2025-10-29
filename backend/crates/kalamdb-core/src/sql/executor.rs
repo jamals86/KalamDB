@@ -43,6 +43,7 @@ use crate::tables::{
 };
 // All system tables now use EntityStore-based v2 providers
 use crate::tables::system::UsersTableProvider;
+use crate::tables::system::JobsTableProvider;
 use datafusion::arrow::array::{ArrayRef, StringArray, UInt32Array};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
@@ -253,9 +254,6 @@ impl SqlExecutor {
         self.user_table_store = Some(user_table_store);
         self.shared_table_store = Some(shared_table_store);
         self.stream_table_store = Some(stream_table_store);
-        self.jobs_table_provider = Some(Arc::new(crate::tables::system::JobsTableProvider::new(
-            kalam_sql.clone(),
-        )));
         // Phase 14: Note - we can't get kalamdb_store::StorageBackend from KalamSql yet
         // because it uses kalamdb_commons::StorageBackend. This will be fixed when
         // kalamdb-sql is migrated to use kalamdb_store::StorageBackend.
@@ -268,7 +266,8 @@ impl SqlExecutor {
     pub fn with_storage_backend(mut self, backend: Arc<dyn kalamdb_store::StorageBackend>) -> Self {
         // Phase 14: Use storage backend for new EntityStore-based providers
         self.storage_backend = Some(backend.clone());
-        self.users_table_provider = Some(Arc::new(UsersTableProvider::new(backend)));
+        self.users_table_provider = Some(Arc::new(UsersTableProvider::new(backend.clone())));
+        self.jobs_table_provider = Some(Arc::new(JobsTableProvider::new(backend)));
         self
     }
 
@@ -2787,9 +2786,8 @@ impl SqlExecutor {
 
             // Insert into system.tables via KalamSQL
             if let Some(kalam_sql) = &self.kalam_sql {
-                let table_id = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
                 let table = kalamdb_sql::Table {
-                    table_id: TableId::new(&table_id),
+                    table_id: TableId::from_strings(&namespace_id.as_str(), &table_name.as_str()),
                     table_name: table_name.clone(),
                     namespace: namespace_id.clone(),
                     table_type: TableType::User,
@@ -2858,9 +2856,8 @@ impl SqlExecutor {
 
             // Insert into system.tables via KalamSQL
             if let Some(kalam_sql) = &self.kalam_sql {
-                let table_id = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
                 let table = kalamdb_sql::Table {
-                    table_id,
+                    table_id: TableId::from_strings(&namespace_id.as_str(), &table_name.as_str()),
                     table_name: table_name.clone(),
                     namespace: namespace_id.clone(),
                     table_type: TableType::Stream,
@@ -2948,15 +2945,13 @@ impl SqlExecutor {
                 );
                 // Insert into system.tables via KalamSQL
                 if let Some(kalam_sql) = &self.kalam_sql {
-                    let table_id = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
-
                     // Serialize flush policy for storage
                     let flush_policy_json =
                         serde_json::to_string(&flush_policy.unwrap_or_default())
                             .unwrap_or_else(|_| "{}".to_string());
 
                     let table = kalamdb_sql::Table {
-                        table_id,
+                        table_id: TableId::from_strings(&namespace_id.as_str(), &table_name.as_str()),
                         table_name: table_name.clone(),
                         namespace: namespace_id.clone(),
                         table_type: TableType::Shared,
@@ -3033,15 +3028,13 @@ impl SqlExecutor {
 
             if was_created {
                 if let Some(kalam_sql) = &self.kalam_sql {
-                    let table_id = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
-
                     // Serialize flush policy for storage
                     let flush_policy_json =
                         serde_json::to_string(&flush_policy.unwrap_or_default())
                             .unwrap_or_else(|_| "{}".to_string());
 
                     let table = kalamdb_sql::Table {
-                        table_id,
+                        table_id: TableId::from_strings(&namespace_id.as_str(), &table_name.as_str()),
                         table_name: table_name.clone(),
                         namespace: namespace_id.clone(),
                         table_type: TableType::Shared,
@@ -3121,16 +3114,15 @@ impl SqlExecutor {
                 .as_ref()
                 .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
 
-            let table_id = format!(
-                "{}.{}",
+            let table_id = TableId::from_strings(
                 stmt.namespace_id.as_str(),
                 stmt.table_name.as_str()
             );
             let mut table = kalam_sql
-                .get_table(&table_id)
+                .get_table(&table_id.to_string())
                 .map_err(|e| KalamDbError::Other(format!("Failed to get table: {}", e)))?
                 .ok_or_else(|| {
-                    KalamDbError::table_not_found(format!("Table '{}' not found", table_id))
+                    KalamDbError::table_not_found(format!("Table '{}' not found", table_id.to_string()))
                 })?;
 
             // Verify table is SHARED type
@@ -3151,7 +3143,7 @@ impl SqlExecutor {
             self.log_audit_event(
                 &ctx,
                 "table.set_access",
-                &table_id,
+                &table_id.to_string(),
                 json!({ "access_level": format!("{:?}", access_level) }),
                 metadata,
             );
@@ -3190,14 +3182,13 @@ impl SqlExecutor {
 
         let ctx = self.create_execution_context(user_id)?;
         let requested_table_type: TableType = stmt.table_type.into();
-        let table_identifier = format!(
-            "{}.{}",
+        let table_identifier = TableId::from_strings(
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str()
         );
 
         let actual_table_type = if let Some(kalam_sql) = &self.kalam_sql {
-            match kalam_sql.get_table(&table_identifier) {
+            match kalam_sql.get_table(&table_identifier.to_string()) {
                 Ok(Some(table)) => table.table_type,
                 Ok(None) => requested_table_type,
                 Err(_) => requested_table_type,

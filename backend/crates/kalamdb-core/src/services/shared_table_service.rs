@@ -13,7 +13,7 @@ use crate::flush::FlushPolicy;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 use crate::stores::SharedTableStore;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use kalamdb_commons::models::StorageId;
+use kalamdb_commons::models::{StorageId, TableId};
 use kalamdb_commons::system::TableSchema;
 use kalamdb_sql::ddl::{CreateTableStatement, FlushPolicy as DdlFlushPolicy};
 use kalamdb_sql::KalamSql;
@@ -439,7 +439,7 @@ impl SharedTableService {
         };
 
         let _table = kalamdb_sql::Table {
-            table_id: table_id.clone(),
+            table_id: TableId::from_strings(namespace_id.as_str(), table_name.as_str()),
             table_name: TableName::new(table_name.as_str()),
             namespace: NamespaceId::new(namespace_id.as_str()),
             table_type: TableType::Shared,

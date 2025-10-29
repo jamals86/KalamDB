@@ -4,9 +4,10 @@
 //! in `main.rs`: bootstrapping databases and services, wiring the HTTP
 //! server, and coordinating graceful shutdown.
 
-use crate::config::ServerConfig;
+use kalamdb_core::jobs::JobManager;
 use crate::middleware;
 use crate::routes;
+use crate::ServerConfig;
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
 use datafusion::catalog::memory::MemorySchemaProvider;
@@ -234,7 +235,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     let stream_eviction_job = Arc::new(StreamEvictionJob::with_defaults(
         stream_table_store.clone(),
         kalam_sql.clone(),
-        job_executor,
+        job_executor.clone(),
     ));
 
     let eviction_interval = Duration::from_secs(config.stream.eviction_interval_seconds);
@@ -269,12 +270,13 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
             ticker.tick().await;
 
             let job_id = format!("user-cleanup-{}", chrono::Utc::now().timestamp_millis());
+            let job_id_clone = job_id.clone();
             let job_executor = Arc::clone(&cleanup_job_executor);
             let job_instance = Arc::clone(&scheduled_cleanup_job);
             let grace_period = job_instance.config().grace_period_days;
 
             let job_future = Box::pin(async move {
-                let executor_job_id = job_id.clone();
+                let executor_job_id = job_id;
                 let cleanup_job = Arc::clone(&job_instance);
                 let result = job_executor.execute_job(
                     executor_job_id,
@@ -297,7 +299,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
             });
 
             if let Err(e) = cleanup_job_manager
-                .start_job(job_id, "user_cleanup".to_string(), job_future)
+                .start_job(job_id_clone, "user_cleanup".to_string(), job_future)
                 .await
             {
                 log::error!("Failed to start user cleanup job: {}", e);
@@ -471,7 +473,7 @@ async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
 
             let user = User {
                 id: user_id,
-                username: username.clone(),
+                username: username.clone().into(),
                 password_hash,
                 role,
                 email: Some(email),

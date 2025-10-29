@@ -73,13 +73,13 @@ impl TableId {
     }
 }
 
-impl AsRef<[u8]> for TableId {
-    fn as_ref(&self) -> &[u8] {
-        // Note: This creates a temporary allocation. For zero-copy access,
+impl AsRef<str> for TableId {
+    fn as_ref(&self) -> &str {
+        // This creates a temporary allocation. For zero-copy access,
         // use as_storage_key() directly.
         // This implementation is primarily for trait compatibility.
         // In performance-critical paths, prefer as_storage_key().
-        self.namespace_id.as_str().as_bytes()
+        self.namespace_id.as_str()
     }
 }
 
