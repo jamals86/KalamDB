@@ -19,10 +19,10 @@ use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 // TODO: Phase 2b - StorageLocationService deprecated (replaced by system_storages)
 // use crate::services::storage_location_service::StorageLocationService;
 use crate::storage::column_family_manager::ColumnFamilyManager;
+use crate::stores::UserTableStore;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use kalamdb_commons::models::StorageId;
 use kalamdb_sql::ddl::{CreateTableStatement, FlushPolicy as DdlFlushPolicy};
-use crate::stores::UserTableStore;
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
 
@@ -406,7 +406,7 @@ impl UserTableService {
 mod tests {
     use super::*;
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{RocksDBBackend, kalamdb_commons::storage::StorageBackend};
+    use kalamdb_store::{kalamdb_commons::storage::StorageBackend, RocksDBBackend};
 
     fn setup_test_service() -> UserTableService {
         let test_db =

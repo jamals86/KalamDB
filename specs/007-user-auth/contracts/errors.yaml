@@ -1,0 +1,448 @@
+openapi: 3.0.3
+info:
+  title: KalamDB Error Response Schemas
+  description: |
+    Standardized error response schemas for KalamDB authentication and authorization.
+    
+    **Error Philosophy**:
+    - Security-first: Generic messages to prevent information leakage
+    - Consistent structure across all endpoints
+    - HTTP status codes aligned with RFC 7231
+    - No stack traces or internal details in production
+    
+    **Error Categories**:
+    - **4xx Client Errors**: Invalid requests, authentication, authorization
+    - **5xx Server Errors**: Internal failures, service unavailability
+  version: 1.0.0
+
+paths: {}
+
+components:
+  schemas:
+    BaseError:
+      type: object
+      required:
+        - status
+        - error
+      properties:
+        status:
+          type: string
+          enum: [error]
+          example: error
+          description: Status indicator (always 'error' for failures)
+        error:
+          type: string
+          example: Authentication failed
+          description: Human-readable error message (generic for security)
+        details:
+          type: object
+          description: Optional structured error details (development only)
+          additionalProperties: true
+        request_id:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+          description: Request identifier for troubleshooting (if enabled)
+        timestamp:
+          type: integer
+          format: int64
+          example: 1698765432000
+          description: Error timestamp (milliseconds since epoch)
+
+    Error400BadRequest:
+      allOf:
+        - $ref: '#/components/schemas/BaseError'
+      description: |
+        **400 Bad Request** - Client sent invalid or malformed request
+        
+        **Common Causes**:
+        - Missing required fields
+        - Invalid JSON syntax
+        - Invalid data types or formats
+        - Field validation failures (e.g., password too short)
+        
+        **Security Note**: Error messages are generic to avoid information leakage.
+        Field-specific validation errors are intentionally vague.
+      example:
+        status: error
+        error: Invalid request format
+        timestamp: 1698765432000
+
+    Error401Unauthorized:
+      allOf:
+        - $ref: '#/components/schemas/BaseError'
+      description: |
+        **401 Unauthorized** - Authentication required or failed
+        
+        **Common Causes**:
+        - Missing Authorization header
+        - Invalid credentials (wrong username/password)
+        - Expired JWT token
+        - Invalid JWT signature
+        - Malformed Bearer token
+        - User account deleted or disabled
+        - OAuth token validation failure
+        
+        **Security Implementation**:
+        - Generic error messages prevent username enumeration
+        - Timing-attack resistant password comparison (bcrypt)
+        - No distinction between "user not found" and "wrong password"
+        - Deleted users return same error as invalid credentials
+        
+        **Response Examples by Scenario**:
+        ```json
+        {
+          "status": "error",
+          "error": "Invalid username or password",
+          "timestamp": 1698765432000
+        }
+        ```
+        
+        ```json
+        {
+          "status": "error",
+          "error": "Token has expired",
+          "timestamp": 1698765432000
+        }
+        ```
+        
+        ```json
+        {
+          "status": "error",
+          "error": "Invalid token signature",
+          "timestamp": 1698765432000
+        }
+        ```
+        
+        ```json
+        {
+          "status": "error",
+          "error": "Missing Authorization header",
+          "timestamp": 1698765432000
+        }
+        ```
+      examples:
+        invalidCredentials:
+          summary: Invalid username or password
+          value:
+            status: error
+            error: Invalid username or password
+            timestamp: 1698765432000
+        expiredToken:
+          summary: JWT token expired
+          value:
+            status: error
+            error: Token has expired
+            timestamp: 1698765432000
+        invalidSignature:
+          summary: Invalid JWT signature
+          value:
+            status: error
+            error: Invalid token signature
+            timestamp: 1698765432000
+        missingAuth:
+          summary: No authorization header
+          value:
+            status: error
+            error: Missing Authorization header
+            timestamp: 1698765432000
+        malformedToken:
+          summary: Malformed Bearer token
+          value:
+            status: error
+            error: Malformed JWT token
+            timestamp: 1698765432000
+        deletedUser:
+          summary: User account deleted (same as invalid credentials)
+          value:
+            status: error
+            error: Invalid username or password
+            timestamp: 1698765432000
+        oauthFailure:
+          summary: OAuth token validation failed
+          value:
+            status: error
+            error: Invalid OAuth token
+            timestamp: 1698765432000
+
+    Error403Forbidden:
+      allOf:
+        - $ref: '#/components/schemas/BaseError'
+      description: |
+        **403 Forbidden** - Authenticated but not authorized
+        
+        **Common Causes**:
+        - Insufficient role permissions (RBAC)
+        - Attempting admin operation as regular user
+        - Accessing another user's private tables
+        - Modifying shared table access level without DBA role
+        - Service/DBA operations attempted by regular user
+        
+        **RBAC Hierarchy** (from lowest to highest privilege):
+        1. **user**: Own tables, public shared tables (read-only)
+        2. **service**: All shared tables, create/manage shared tables
+        3. **dba**: User management, table management, shared table access control
+        4. **system**: Full system access, internal operations only
+        
+        **Authorization Rules**:
+        - User tables: Only owner can access (RBAC enforced)
+        - Shared tables (public): All authenticated users can read
+        - Shared tables (private): Only service/dba/system can access
+        - User management: Only dba/system roles
+        - Table access control: Only service/dba/system roles
+        
+        **Response Examples by Scenario**:
+        ```json
+        {
+          "status": "error",
+          "error": "Insufficient permissions",
+          "timestamp": 1698765432000
+        }
+        ```
+        
+        ```json
+        {
+          "status": "error",
+          "error": "Access denied to private shared table",
+          "timestamp": 1698765432000
+        }
+        ```
+        
+        ```json
+        {
+          "status": "error",
+          "error": "DBA or system role required for user management",
+          "timestamp": 1698765432000
+        }
+        ```
+        
+        ```json
+        {
+          "status": "error",
+          "error": "Cannot access another user's table",
+          "timestamp": 1698765432000
+        }
+        ```
+      examples:
+        insufficientRole:
+          summary: User role attempting DBA operation
+          value:
+            status: error
+            error: Insufficient permissions
+            timestamp: 1698765432000
+        privateTableAccess:
+          summary: User accessing private shared table
+          value:
+            status: error
+            error: Access denied to private shared table
+            timestamp: 1698765432000
+        userManagement:
+          summary: Non-DBA attempting user creation
+          value:
+            status: error
+            error: DBA or system role required for user management
+            timestamp: 1698765432000
+        otherUserTable:
+          summary: Accessing another user's table
+          value:
+            status: error
+            error: Cannot access another user's table
+            timestamp: 1698765432000
+        accessLevelModification:
+          summary: Non-service role trying to modify access level
+          value:
+            status: error
+            error: Service, DBA, or system role required to modify table access
+            timestamp: 1698765432000
+
+    Error404NotFound:
+      allOf:
+        - $ref: '#/components/schemas/BaseError'
+      description: |
+        **404 Not Found** - Resource does not exist
+        
+        **Common Causes**:
+        - Table does not exist
+        - Namespace does not exist
+        - User not found (for GET operations, not authentication)
+        
+        **Security Note**: For authentication, user-not-found returns 401 with
+        generic "invalid credentials" message to prevent username enumeration.
+        404 is only used for explicit resource lookup operations.
+      example:
+        status: error
+        error: Resource not found
+        timestamp: 1698765432000
+
+    Error409Conflict:
+      allOf:
+        - $ref: '#/components/schemas/BaseError'
+      description: |
+        **409 Conflict** - Resource already exists or constraint violation
+        
+        **Common Causes**:
+        - Duplicate username during user creation
+        - Table already exists
+        - Namespace already exists
+        
+        **Note**: Only used when operation would violate uniqueness constraints.
+      examples:
+        duplicateUsername:
+          summary: Username already taken
+          value:
+            status: error
+            error: Username already exists
+            timestamp: 1698765432000
+        duplicateTable:
+          summary: Table already exists
+          value:
+            status: error
+            error: Table already exists
+            timestamp: 1698765432000
+
+    Error500InternalServerError:
+      allOf:
+        - $ref: '#/components/schemas/BaseError'
+      description: |
+        **500 Internal Server Error** - Unexpected server-side failure
+        
+        **Common Causes**:
+        - Database connection failure
+        - Unhandled exception
+        - Configuration error
+        - Storage system failure
+        
+        **Production Behavior**:
+        - No stack traces exposed
+        - Generic error message
+        - Logged with full context for debugging
+        - Includes request_id for correlation
+        
+        **Development Behavior**:
+        - May include additional details in `details` field
+        - Stack traces logged to stderr
+      examples:
+        generic:
+          summary: Generic internal error
+          value:
+            status: error
+            error: Internal server error
+            request_id: 550e8400-e29b-41d4-a716-446655440000
+            timestamp: 1698765432000
+        database:
+          summary: Database connection failure
+          value:
+            status: error
+            error: Internal server error
+            request_id: 550e8400-e29b-41d4-a716-446655440000
+            timestamp: 1698765432000
+
+    Error503ServiceUnavailable:
+      allOf:
+        - $ref: '#/components/schemas/BaseError'
+      description: |
+        **503 Service Unavailable** - Service temporarily unavailable
+        
+        **Common Causes**:
+        - System maintenance
+        - Database not ready
+        - Resource exhaustion
+        
+        **Retry Behavior**:
+        - Client should retry with exponential backoff
+        - May include Retry-After header
+      example:
+        status: error
+        error: Service temporarily unavailable
+        timestamp: 1698765432000
+
+  responses:
+    BadRequest:
+      description: Bad Request - Invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error400BadRequest'
+
+    Unauthorized:
+      description: Unauthorized - Authentication failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error401Unauthorized'
+
+    Forbidden:
+      description: Forbidden - Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error403Forbidden'
+
+    NotFound:
+      description: Not Found - Resource does not exist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error404NotFound'
+
+    Conflict:
+      description: Conflict - Resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error409Conflict'
+
+    InternalServerError:
+      description: Internal Server Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error500InternalServerError'
+
+    ServiceUnavailable:
+      description: Service Unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error503ServiceUnavailable'
+
+tags:
+  - name: Error Responses
+    description: |
+      **Error Response Standards**
+      
+      All error responses follow a consistent structure with security-first design principles:
+      
+      **1. Consistent Schema**:
+      - `status`: Always "error" for failures
+      - `error`: Human-readable message (intentionally generic)
+      - `timestamp`: Error occurrence time
+      - `request_id`: Optional request correlation ID
+      
+      **2. Security Guidelines**:
+      - Generic messages prevent information leakage
+      - No distinction between "user not found" vs "wrong password"
+      - No stack traces or internal details in production
+      - Timing-attack resistant authentication
+      - No field-specific validation details
+      
+      **3. HTTP Status Code Usage**:
+      - **400**: Client error (bad input, validation failure)
+      - **401**: Authentication required or failed
+      - **403**: Authenticated but unauthorized (RBAC)
+      - **404**: Resource not found (explicit lookups only)
+      - **409**: Conflict (duplicate resource)
+      - **500**: Internal server error
+      - **503**: Service unavailable
+      
+      **4. Logging vs Response**:
+      - **Client Response**: Generic, security-conscious message
+      - **Server Logs**: Full context, stack traces, user IDs, request details
+      - **Correlation**: request_id links client errors to server logs
+      
+      **5. Error Handling Best Practices**:
+      - Always check HTTP status code first
+      - Parse JSON error response for human-readable message
+      - Use request_id for support requests
+      - Implement exponential backoff for 503 errors
+      - Never display internal error details to end users

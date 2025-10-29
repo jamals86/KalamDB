@@ -100,12 +100,12 @@ impl StorageRegistry {
 
         // Sort: 'local' first, then alphabetically
         storages.sort_by(|a, b| {
-            if a.storage_id.as_ref() == "local" {
+            if a.storage_id.is_local() {
                 std::cmp::Ordering::Less
-            } else if b.storage_id.as_ref() == "local" {
+            } else if b.storage_id.is_local() {
                 std::cmp::Ordering::Greater
             } else {
-                a.storage_id.as_ref().cmp(b.storage_id.as_ref())
+                a.storage_id.as_str().cmp(b.storage_id.as_str())
             }
         });
 
@@ -427,8 +427,7 @@ mod tests {
         let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(
-            KalamSql::new(backend)
-                .expect("Failed to create KalamSQL for storage registry tests"),
+            KalamSql::new(backend).expect("Failed to create KalamSQL for storage registry tests"),
         );
 
         StorageRegistry::new(kalam_sql)

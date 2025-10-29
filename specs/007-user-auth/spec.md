@@ -133,6 +133,86 @@ Authentication/authorization errors **MUST**:
 - Return structured JSON errors with `error`, `message`, `request_id` fields
 - Use `anyhow::Context` for error context propagation
 
+### 7. EntityStore Pattern (FR-ARCH-007) **NEW - Phase 14**
+
+All table storage implementations **MUST** follow the unified `EntityStore<K, V>` pattern:
+
+**Trait Definition** (`backend/crates/kalamdb-store/src/entity_store.rs`):
+```rust
+/// Generic entity storage with type-safe keys
+pub trait EntityStore<K, V> 
+where
+    K: AsRef<[u8]> + Clone + Send + Sync,
+    V: Serialize + Deserialize + Send + Sync
+{
+    fn backend(&self) -> &Arc<dyn StorageBackend>;
+    fn partition(&self) -> &str;
+    
+    // Provided methods (automatic serialization)
+    fn put(&self, key: &K, value: &V) -> Result<()>;
+    fn get(&self, key: &K) -> Result<Option<V>>;
+    fn delete(&self, key: &K) -> Result<()>;
+    fn scan_prefix(&self, prefix: &K) -> Result<Vec<(K, V)>>;
+}
+
+/// Cross-user table storage (system tables + shared tables)
+pub trait CrossUserTableStore<K, V>: EntityStore<K, V> {
+    fn table_access(&self) -> Option<TableAccess>;
+}
+```
+
+**Type-Safe Key Models** (`backend/crates/kalamdb-commons/src/models/`):
+- All key types MUST be newtype wrappers (like `UserId`)
+- All key types MUST implement `AsRef<[u8]>` for storage compatibility
+- All key types MUST implement `Clone + Send + Sync` for thread safety
+- System table keys: 
+  - `TableId` (composite: NamespaceId + TableName) - for system.tables
+  - `JobId` - for system.jobs
+  - `LiveQueryId` - for system.live_queries
+  - `UserName` - secondary index key for system.users (username → UserId lookup)
+  - Reuses existing: `UserId` (system.users primary key), `NamespaceId` (system.namespaces), `StorageId` (system.storages)
+- User table keys: `UserRowId` (composite: UserId + row_id)
+- Shared/Stream table keys: `RowId`
+
+**Implementation Pattern**:
+```rust
+// System tables use generic SystemTableStore (generic over BOTH key and value)
+pub struct SystemTableStore<K, V> {
+    backend: Arc<dyn StorageBackend>,
+    partition: String,
+    _phantom: PhantomData<(K, V)>,
+}
+
+impl<K, V> EntityStore<K, V> for SystemTableStore<K, V> 
+where
+    K: AsRef<[u8]> + Clone + Send + Sync,
+    V: Serialize + DeserializeOwned + Send + Sync
+{ ... }
+
+// Examples:
+// SystemTableStore<UserId, User>           - system.users (UserId primary key, UserName secondary index)
+// SystemTableStore<TableId, TableMetadata> - system.tables (composite key)
+// SystemTableStore<JobId, Job>             - system.jobs
+// SystemTableStore<NamespaceId, Namespace> - system.namespaces
+// SystemTableStore<StorageId, Storage>     - system.storages
+impl<K, V> CrossUserTableStore<K, V> for SystemTableStore<K, V> { ... }
+
+// Shared tables use EntityStore with RowId keys
+impl EntityStore<RowId, SharedTableRow> for SharedTableStore { ... }
+impl CrossUserTableStore<RowId, SharedTableRow> for SharedTableStore { ... }
+
+// User tables use EntityStore with composite keys
+impl EntityStore<UserRowId, UserTableRow> for UserTableStore { ... }
+```
+
+**Benefits**:
+- Eliminates 400+ lines of duplicated CRUD code
+- Type-safe keys prevent passing wrong parameters
+- Consistent API across all table types
+- Seamless integration with SecondaryIndex<T, K>
+
+**Migration**: See [PHASE_14_ENTITYSTORE_REFACTORING.md](./PHASE_14_ENTITYSTORE_REFACTORING.md) for detailed migration plan.
+
 **Validation**: All new code must be reviewed against existing patterns before PR submission.
 
 ## User Scenarios & Testing *(mandatory)*

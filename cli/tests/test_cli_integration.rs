@@ -66,7 +66,7 @@ async fn execute_sql(sql: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     let body = response.text().await?;
     let parsed: serde_json::Value = serde_json::from_str(&body)?;
-    
+
     if parsed["status"] != "success" {
         return Err(format!("SQL failed: {}", body).into());
     }
@@ -78,10 +78,10 @@ async fn setup_test_data(test_name: &str) -> Result<String, Box<dyn std::error::
     // Use test-specific table name to avoid conflicts
     let table_name = format!("messages_{}", test_name);
     let namespace = "test_cli";
-    
+
     // Longer delay to avoid race conditions between tests
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    
+
     // Try to drop table first if it exists
     let drop_sql = format!("DROP TABLE IF EXISTS {}.{}", namespace, table_name);
     let _ = execute_sql(&drop_sql).await;
@@ -109,7 +109,7 @@ async fn setup_test_data(test_name: &str) -> Result<String, Box<dyn std::error::
         ) FLUSH ROWS 10"#,
         namespace, table_name
     );
-    
+
     match execute_sql(&create_sql).await {
         Ok(_) => {}
         Err(e) if e.to_string().contains("already exists") => {
@@ -152,9 +152,7 @@ async fn test_cli_connection_and_prompt() {
     }
 
     let mut cmd = Command::cargo_bin("kalam").unwrap();
-    cmd.arg("-u")
-        .arg(SERVER_URL)
-        .arg("--help");
+    cmd.arg("-u").arg(SERVER_URL).arg("--help");
 
     cmd.assert()
         .success()
@@ -174,9 +172,12 @@ async fn test_cli_basic_query_execution() {
     let table = setup_test_data("basic_query").await.unwrap();
 
     // Insert test data
-    execute_sql(&format!("INSERT INTO {} (content) VALUES ('Test Message')", table))
-        .await
-        .unwrap();
+    execute_sql(&format!(
+        "INSERT INTO {} (content) VALUES ('Test Message')",
+        table
+    ))
+    .await
+    .unwrap();
 
     // Execute query via CLI
     let mut cmd = create_cli_command();
@@ -191,7 +192,8 @@ async fn test_cli_basic_query_execution() {
 
     // Verify output contains the inserted data and row count (PostgreSQL style: "(1 row)")
     assert!(
-        stdout.contains("Test Message") && (stdout.contains("row)") || stdout.contains("row in set")),
+        stdout.contains("Test Message")
+            && (stdout.contains("row)") || stdout.contains("row in set")),
         "Output should contain query results and row count: {}",
         stdout
     );
@@ -211,9 +213,12 @@ async fn test_cli_table_output_formatting() {
     let table = setup_test_data("table_output").await.unwrap();
 
     // Insert test data
-    execute_sql(&format!("INSERT INTO {} (content) VALUES ('Hello World'), ('Test Message')", table))
-        .await
-        .unwrap();
+    execute_sql(&format!(
+        "INSERT INTO {} (content) VALUES ('Hello World'), ('Test Message')",
+        table
+    ))
+    .await
+    .unwrap();
 
     // Query with table format (default)
     let mut cmd = Command::cargo_bin("kalam").unwrap();
@@ -248,19 +253,24 @@ async fn test_cli_json_output_format() {
 
     let table = setup_test_data("json_output").await.unwrap();
 
-    execute_sql(&format!("INSERT INTO {} (content) VALUES ('JSON Test')", table))
-        .await
-        .unwrap();
+    execute_sql(&format!(
+        "INSERT INTO {} (content) VALUES ('JSON Test')",
+        table
+    ))
+    .await
+    .unwrap();
 
     // Query with JSON format
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--json")
         .arg("--command")
-        .arg(&format!("SELECT * FROM {} WHERE content = 'JSON Test'", table))
+        .arg(&format!(
+            "SELECT * FROM {} WHERE content = 'JSON Test'",
+            table
+        ))
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
@@ -286,19 +296,24 @@ async fn test_cli_csv_output_format() {
 
     let table = setup_test_data("csv_output").await.unwrap();
 
-    execute_sql(&format!("INSERT INTO {} (content) VALUES ('CSV,Test')", table))
-        .await
-        .unwrap();
+    execute_sql(&format!(
+        "INSERT INTO {} (content) VALUES ('CSV,Test')",
+        table
+    ))
+    .await
+    .unwrap();
 
     // Query with CSV format
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--csv")
         .arg("--command")
-        .arg(&format!("SELECT content FROM {} WHERE content LIKE 'CSV%'", table))
+        .arg(&format!(
+            "SELECT content FROM {} WHERE content LIKE 'CSV%'",
+            table
+        ))
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
@@ -345,7 +360,6 @@ SELECT * FROM batch_test.items;"#,
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--file")
         .arg(sql_file.to_str().unwrap())
@@ -377,7 +391,6 @@ async fn test_cli_syntax_error_handling() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--command")
         .arg("INVALID SQL SYNTAX HERE")
@@ -496,7 +509,6 @@ async fn test_cli_list_tables() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--command")
         .arg("SELECT table_name FROM system.tables WHERE namespace = 'test_cli'")
@@ -529,7 +541,6 @@ async fn test_cli_describe_table() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--command")
         .arg(&format!("SELECT '{}' as table_info", table))
@@ -559,9 +570,12 @@ async fn test_cli_live_query_basic() {
     let table = setup_test_data("live_query_basic").await.unwrap();
 
     // Insert initial data
-    execute_sql(&format!("INSERT INTO {} (content) VALUES ('Initial Message')", table))
-        .await
-        .unwrap();
+    execute_sql(&format!(
+        "INSERT INTO {} (content) VALUES ('Initial Message')",
+        table
+    ))
+    .await
+    .unwrap();
 
     // Test SUBSCRIBE TO command returns subscription info (not unsupported error)
     let client = reqwest::Client::new();
@@ -579,17 +593,19 @@ async fn test_cli_live_query_basic() {
     );
 
     let body = response.text().await.unwrap();
-    
+
     // Should contain subscription metadata (not error)
     assert!(
         body.contains("subscription") && body.contains("ws_url"),
         "SUBSCRIBE TO should return subscription metadata, got: {}",
         body
     );
-    
+
     // Should NOT contain error messages
     assert!(
-        !body.contains("Unsupported SQL") && !body.contains("not supported") && !body.contains("error"),
+        !body.contains("Unsupported SQL")
+            && !body.contains("not supported")
+            && !body.contains("error"),
         "SUBSCRIBE TO should not return error, got: {}",
         body
     );
@@ -625,14 +641,14 @@ async fn test_cli_live_query_with_filter() {
     );
 
     let body = response.text().await.unwrap();
-    
+
     // Should contain subscription metadata
     assert!(
         body.contains("subscription") && body.contains("ws_url"),
         "SUBSCRIBE TO with WHERE should return subscription metadata, got: {}",
         body
     );
-    
+
     // Should NOT be unsupported
     assert!(
         !body.contains("Unsupported SQL") && !body.contains("not supported"),
@@ -682,12 +698,9 @@ async fn test_cli_unsubscribe() {
     cmd.arg("--version");
 
     let output = cmd.output().unwrap();
-    
+
     // Should execute successfully
-    assert!(
-        output.status.success(),
-        "CLI should execute successfully"
-    );
+    assert!(output.status.success(), "CLI should execute successfully");
 
     cleanup_test_data(&table).await.unwrap();
 }
@@ -829,7 +842,6 @@ async fn test_cli_jwt_authentication() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--command")
         .arg("SELECT 1 as auth_test")
@@ -855,7 +867,6 @@ async fn test_cli_invalid_token() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--token")
         .arg("invalid.jwt.token")
@@ -887,7 +898,6 @@ async fn test_cli_localhost_auth_bypass() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--command")
         .arg("SELECT 'localhost' as test")
@@ -947,14 +957,16 @@ async fn test_cli_explicit_flush() {
     let table = setup_test_data("explicit_flush").await.unwrap();
 
     // Insert some data first
-    execute_sql(&format!("INSERT INTO {} (content) VALUES ('Flush Test')", table))
-        .await
-        .unwrap();
+    execute_sql(&format!(
+        "INSERT INTO {} (content) VALUES ('Flush Test')",
+        table
+    ))
+    .await
+    .unwrap();
 
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--command")
         .arg(&format!("FLUSH TABLE {}", table))
@@ -971,10 +983,12 @@ async fn test_cli_explicit_flush() {
         stdout,
         stderr
     );
-    
+
     // Should NOT contain errors
     assert!(
-        !stderr.contains("ERROR") && !stderr.contains("not supported") && !stderr.contains("Unsupported"),
+        !stderr.contains("ERROR")
+            && !stderr.contains("not supported")
+            && !stderr.contains("Unsupported"),
         "FLUSH TABLE should not error. stderr: {}",
         stderr
     );
@@ -996,20 +1010,21 @@ async fn test_cli_color_output() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--command")
         .arg("SELECT 'color' as test")
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
-    assert!(output.status.success(), "Color command (default) should succeed");
+    assert!(
+        output.status.success(),
+        "Color command (default) should succeed"
+    );
 
     // Test with color disabled
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--no-color")
         .arg("--command")
@@ -1034,14 +1049,16 @@ async fn test_cli_session_timeout() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--command")
         .arg("SELECT 1")
         .timeout(TEST_TIMEOUT);
 
     let output = cmd.output().unwrap();
-    assert!(output.status.success(), "Should execute command successfully");
+    assert!(
+        output.status.success(),
+        "Should execute command successfully"
+    );
 }
 
 /// T062: Test command history (up/down arrows)
@@ -1094,7 +1111,6 @@ async fn test_cli_multiline_query() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--command")
         .arg(&multi_line_query)
@@ -1121,7 +1137,6 @@ async fn test_cli_query_with_comments() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--command")
         .arg(query_simple)
@@ -1146,7 +1161,6 @@ async fn test_cli_empty_query() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--command")
         .arg("   ")
@@ -1184,7 +1198,6 @@ async fn test_cli_result_pagination() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--command")
         .arg(&format!("SELECT * FROM {}", table))
@@ -1213,7 +1226,6 @@ async fn test_cli_verbose_output() {
     let mut cmd = Command::cargo_bin("kalam").unwrap();
     cmd.arg("-u")
         .arg(SERVER_URL)
-
         .arg("test_user")
         .arg("--verbose")
         .arg("--command")

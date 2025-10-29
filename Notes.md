@@ -43,6 +43,20 @@ Future:
 44) Remove all X-USER-ID header we will be using oauth/basic auth or incase of system user we will add it to the auth basic auth with empty password and only from localhost only
 45) "system_users" is repeated so many times in the code base we should use a column family enum for all of them, and making all of them as Partition::new("system_users") instead of hardcoding the string multiple times, we already have SystemTable enum we can add ColumnFamily as well
 46) nodeId should be unique and used from the config file and use NodeId enum
+47) No need to map developer to service role we need to use only Role's values
+48) make sure we use TableAccess
+49) execute_create_table need to take namespaceId currently it creates inside default namespace only, no need to have default namespaceid any place
+50) anonymous user shouldnt be allowed to create tables or do anything except select from public tables
+51) Combine all providers into one commong code: backend/crates/kalamdb-core/src/tables/shared_table_provider.rs, backend/crates/kalamdb-core/src/tables/user_table_provider.rs, backend/crates/kalamdb-core/src/tables/stream_table_provider.rs,system_table_provider.rs
+52)         namespace_id: &str, table_name: &str, to NamespaceId, TableName
+53) IMPORTANT: Add a story about the need for giving ability to subscribe for: * which means all users tables at once, this is done by the ai agent which listen to all the user messages at once, add also ability to listen per storageId, for this we need to add to the user message key a userId:rowId:storageId
+54) Mention in the README.md that instead of using redis/messaging system/database you can use one for all of these, and subscribing directly to where your messages are stored in an easy way
+55) Check the queries coming and scan for vulnerability limit the string content length
+56) Add to README.md
+    - Vector database
+    - Vector Search
+    - 
+
 
 Key Findings
 Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB column families yet, resulting in 0 rows flushed

@@ -71,12 +71,7 @@ impl KalamLinkClient {
         &self,
         config: SubscriptionConfig,
     ) -> Result<SubscriptionManager> {
-        SubscriptionManager::new(
-            &self.base_url,
-            config,
-            &self.auth,
-        )
-        .await
+        SubscriptionManager::new(&self.base_url, config, &self.auth).await
     }
 
     /// Check server health and get server information
@@ -165,11 +160,8 @@ impl KalamLinkClientBuilder {
             .build()
             .map_err(|e| KalamLinkError::ConfigurationError(e.to_string()))?;
 
-        let query_executor = QueryExecutor::new(
-            base_url.clone(),
-            http_client.clone(),
-            self.auth.clone(),
-        );
+        let query_executor =
+            QueryExecutor::new(base_url.clone(), http_client.clone(), self.auth.clone());
 
         Ok(KalamLinkClient {
             base_url,

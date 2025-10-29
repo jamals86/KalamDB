@@ -67,7 +67,10 @@ impl FileCredentialStore {
         if let Some(config_dir) = dirs::config_dir() {
             config_dir.join("kalamdb").join("credentials.toml")
         } else if let Some(home_dir) = dirs::home_dir() {
-            home_dir.join(".config").join("kalamdb").join("credentials.toml")
+            home_dir
+                .join(".config")
+                .join("kalamdb")
+                .join("credentials.toml")
         } else {
             PathBuf::from(".kalamdb").join("credentials.toml")
         }
@@ -139,7 +142,10 @@ impl FileCredentialStore {
 
         // Write file with secure permissions
         fs::write(&self.file_path, contents).map_err(|e| {
-            kalam_link::KalamLinkError::ConfigurationError(format!("Failed to write credentials file: {}", e))
+            kalam_link::KalamLinkError::ConfigurationError(format!(
+                "Failed to write credentials file: {}",
+                e
+            ))
         })?;
 
         // Set file permissions to 0600 (owner read/write only) on Unix
@@ -191,8 +197,7 @@ impl CredentialStore for FileCredentialStore {
             server_url: credentials.server_url.clone(),
         };
 
-        self.cache
-            .insert(credentials.instance.clone(), stored);
+        self.cache.insert(credentials.instance.clone(), stored);
         self.save_to_disk()?;
         Ok(())
     }
@@ -362,11 +367,7 @@ mod tests {
             "pass1".to_string(),
             "http://localhost:3000".to_string(),
         );
-        let creds2 = Credentials::new(
-            "prod".to_string(),
-            "bob".to_string(),
-            "pass2".to_string(),
-        );
+        let creds2 = Credentials::new("prod".to_string(), "bob".to_string(), "pass2".to_string());
 
         store.set_credentials(&creds1).unwrap();
         store.set_credentials(&creds2).unwrap();

@@ -14,11 +14,12 @@
 //! called during server startup.
 
 use kalamdb_commons::constants::AuthConstants;
-use kalamdb_commons::{AuthType, Role, UserId};
+use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::User;
-use kalamdb_store::RocksDbInit;
+use kalamdb_commons::{AuthType, Role, UserId};
 use kalamdb_sql::KalamSql;
-use kalamdb_store::{RocksDBBackend, storage_trait::StorageBackend};
+use kalamdb_store::RocksDBBackend;
+use kalamdb_store::RocksDbInit;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -26,7 +27,7 @@ use tempfile::TempDir;
 async fn create_test_db() -> (Arc<KalamSql>, TempDir) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let db_path = temp_dir.path().join("test_db");
-    
+
     let db_init = RocksDbInit::new(db_path.to_str().unwrap());
     let db = db_init.open().expect("Failed to open DB");
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
@@ -46,7 +47,7 @@ async fn create_system_user(kalam_sql: &KalamSql) -> Result<(), Box<dyn std::err
     // Create system user
     let now = chrono::Utc::now().timestamp_millis();
     let password_hash = bcrypt::hash("test_password_123", bcrypt::DEFAULT_COST)?;
-    
+
     let user = User {
         id: system_user_id,
         username: AuthConstants::DEFAULT_SYSTEM_USERNAME.to_string(),
@@ -72,9 +73,11 @@ async fn test_init_creates_system_user() {
     // **T109**: Test that database initialization creates system user
 
     let (kalam_sql, _temp_dir) = create_test_db().await;
-    
+
     // Create system user (simulates bootstrap)
-    create_system_user(&kalam_sql).await.expect("Failed to create system user");
+    create_system_user(&kalam_sql)
+        .await
+        .expect("Failed to create system user");
 
     // Verify system user exists
     let system_user_id = UserId::new(AuthConstants::DEFAULT_SYSTEM_USER_ID);
@@ -84,7 +87,10 @@ async fn test_init_creates_system_user() {
         .expect("System user should exist");
 
     // Verify user properties
-    assert_eq!(user.username.as_str(), AuthConstants::DEFAULT_SYSTEM_USERNAME);
+    assert_eq!(
+        user.username.as_str(),
+        AuthConstants::DEFAULT_SYSTEM_USERNAME
+    );
     assert_eq!(
         user.auth_type.as_str(),
         "internal",
@@ -103,7 +109,10 @@ async fn test_init_creates_system_user() {
     );
 
     // Verify user is not deleted
-    assert!(user.deleted_at.is_none(), "System user should not be deleted");
+    assert!(
+        user.deleted_at.is_none(),
+        "System user should not be deleted"
+    );
 
     println!("✓ System user created successfully on bootstrap");
     println!("  Username: {}", user.username);
@@ -116,8 +125,10 @@ async fn test_system_user_password_is_hashed() {
     // Verify that system user password is bcrypt hashed, not plaintext
 
     let (kalam_sql, _temp_dir) = create_test_db().await;
-    create_system_user(&kalam_sql).await.expect("Failed to create system user");
-    
+    create_system_user(&kalam_sql)
+        .await
+        .expect("Failed to create system user");
+
     let system_user_id = UserId::new(AuthConstants::DEFAULT_SYSTEM_USER_ID);
     let user = kalam_sql
         .get_user_by_id(&system_user_id)
@@ -154,7 +165,9 @@ async fn test_system_user_not_duplicated_on_restart() {
         let db = db_init.open().expect("Failed to open DB");
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
         let kalam_sql = KalamSql::new(backend).expect("Failed to create KalamSQL");
-        create_system_user(&kalam_sql).await.expect("Failed to create system user");
+        create_system_user(&kalam_sql)
+            .await
+            .expect("Failed to create system user");
 
         let system_user_id = UserId::new(AuthConstants::DEFAULT_SYSTEM_USER_ID);
         let user1 = kalam_sql
@@ -162,7 +175,10 @@ async fn test_system_user_not_duplicated_on_restart() {
             .expect("Failed to get user")
             .expect("System user should exist");
 
-        assert_eq!(user1.username.as_str(), AuthConstants::DEFAULT_SYSTEM_USERNAME);
+        assert_eq!(
+            user1.username.as_str(),
+            AuthConstants::DEFAULT_SYSTEM_USERNAME
+        );
     }
 
     // Second initialization (simulating restart)
@@ -171,7 +187,9 @@ async fn test_system_user_not_duplicated_on_restart() {
         let db = db_init.open().expect("Failed to open DB on restart");
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
         let kalam_sql = KalamSql::new(backend).expect("Failed to create KalamSQL on restart");
-        create_system_user(&kalam_sql).await.expect("Failed to create system user on restart");
+        create_system_user(&kalam_sql)
+            .await
+            .expect("Failed to create system user on restart");
 
         let system_user_id = UserId::new(AuthConstants::DEFAULT_SYSTEM_USER_ID);
         let user2 = kalam_sql
@@ -180,7 +198,10 @@ async fn test_system_user_not_duplicated_on_restart() {
             .expect("System user should still exist");
 
         // Should be the same user (not duplicated)
-        assert_eq!(user2.username.as_str(), AuthConstants::DEFAULT_SYSTEM_USERNAME);
+        assert_eq!(
+            user2.username.as_str(),
+            AuthConstants::DEFAULT_SYSTEM_USERNAME
+        );
         assert_eq!(user2.id.as_str(), AuthConstants::DEFAULT_SYSTEM_USER_ID);
     }
 
@@ -192,8 +213,10 @@ async fn test_system_user_has_metadata() {
     // Verify system user has proper metadata (created_at, updated_at)
 
     let (kalam_sql, _temp_dir) = create_test_db().await;
-    create_system_user(&kalam_sql).await.expect("Failed to create system user");
-    
+    create_system_user(&kalam_sql)
+        .await
+        .expect("Failed to create system user");
+
     let system_user_id = UserId::new(AuthConstants::DEFAULT_SYSTEM_USER_ID);
     let user = kalam_sql
         .get_user_by_id(&system_user_id)
@@ -217,3 +240,4 @@ async fn test_system_user_has_metadata() {
     println!("  Updated at: {}", user.updated_at);
     println!("  Email: {:?}", user.email);
 }
+

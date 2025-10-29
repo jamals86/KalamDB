@@ -9,11 +9,11 @@ use crate::live_query::connection_registry::{
 };
 use crate::live_query::filter::FilterCache;
 use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
+use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use crate::tables::system::live_queries_provider::LiveQueriesTableProvider;
 use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_sql::KalamSql;
-use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -272,7 +272,7 @@ impl LiveQueryManager {
                 })?;
 
             let canonical_table = format!("{}.{}", namespace, table);
-            
+
             let live_id_string = live_id.to_string();
             let filter_predicate = {
                 let cache = self.filter_cache.read().await;
@@ -536,8 +536,12 @@ impl LiveQueryManager {
         table_name: &str,
         change_notification: ChangeNotification,
     ) -> Result<usize, KalamDbError> {
-        log::info!("📢 notify_table_change called for table: '{}', change_type: {:?}", table_name, change_notification.change_type);
-        
+        log::info!(
+            "📢 notify_table_change called for table: '{}', change_type: {:?}",
+            table_name,
+            change_notification.change_type
+        );
+
         // Get filter cache for matching
         let filter_cache = self.filter_cache.read().await;
 
@@ -549,16 +553,31 @@ impl LiveQueryManager {
 
             // Iterate through all users
             for (user_id, user_connections) in registry.users.iter() {
-                log::info!("📢 User {} has {} connections", user_id.as_str(), user_connections.sockets.len());
+                log::info!(
+                    "📢 User {} has {} connections",
+                    user_id.as_str(),
+                    user_connections.sockets.len()
+                );
                 // Iterate through all connections for this user
                 for (conn_id, socket) in user_connections.sockets.iter() {
-                    log::info!("📢 Connection {} has {} live queries", conn_id, socket.live_queries.len());
+                    log::info!(
+                        "📢 Connection {} has {} live queries",
+                        conn_id,
+                        socket.live_queries.len()
+                    );
                     // Iterate through all live queries on this connection
                     for (live_id, _live_query) in socket.live_queries.iter() {
-                        log::info!("📢 Checking live_id.table_name='{}' against target table='{}'", live_id.table_name(), table_name);
+                        log::info!(
+                            "📢 Checking live_id.table_name='{}' against target table='{}'",
+                            live_id.table_name(),
+                            table_name
+                        );
                         // Check if this subscription is for the changed table
                         if live_id.table_name() == table_name {
-                            log::info!("📢 ✓ Table name MATCHED for live_id={}", live_id.to_string());
+                            log::info!(
+                                "📢 ✓ Table name MATCHED for live_id={}",
+                                live_id.to_string()
+                            );
                             // Check filter if one exists
                             if let Some(filter) = filter_cache.get(&live_id.to_string()) {
                                 // Apply filter to row data
@@ -573,16 +592,27 @@ impl LiveQueryManager {
                                     }
                                     Err(e) => {
                                         // Filter evaluation error, log and skip
-                                        log::error!("Filter evaluation error for live_id={}: {}", live_id.to_string(), e);
+                                        log::error!(
+                                            "Filter evaluation error for live_id={}: {}",
+                                            live_id.to_string(),
+                                            e
+                                        );
                                     }
                                 }
                             } else {
                                 // No filter, notify all subscribers
-                                log::info!("📢 No filter - adding subscriber live_id={}", live_id.to_string());
+                                log::info!(
+                                    "📢 No filter - adding subscriber live_id={}",
+                                    live_id.to_string()
+                                );
                                 ids.push(live_id.clone());
                             }
                         } else {
-                            log::info!("📢 ✗ Table name MISMATCH: live_id.table='{}' != target='{}'", live_id.table_name(), table_name);
+                            log::info!(
+                                "📢 ✗ Table name MISMATCH: live_id.table='{}' != target='{}'",
+                                live_id.table_name(),
+                                table_name
+                            );
                         }
                     }
                 }
@@ -591,8 +621,11 @@ impl LiveQueryManager {
             ids
         }; // registry read lock is dropped here
 
-        log::debug!("📢 Found {} subscribers to notify", live_ids_to_notify.len());
-        
+        log::debug!(
+            "📢 Found {} subscribers to notify",
+            live_ids_to_notify.len()
+        );
+
         // Drop filter cache read lock before acquiring write locks
         drop(filter_cache);
 
@@ -603,9 +636,7 @@ impl LiveQueryManager {
             if let Some(tx) = self.get_notification_sender(live_id).await {
                 // Convert row data from serde_json::Value to HashMap
                 let row_map = if let Some(obj) = change_notification.row_data.as_object() {
-                    obj.iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect()
+                    obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
                 } else {
                     std::collections::HashMap::new()
                 };
@@ -613,17 +644,12 @@ impl LiveQueryManager {
                 // Build the typed notification
                 let notification = match change_notification.change_type {
                     ChangeType::Insert => {
-                        kalamdb_commons::Notification::insert(
-                            live_id.to_string(),
-                            vec![row_map],
-                        )
+                        kalamdb_commons::Notification::insert(live_id.to_string(), vec![row_map])
                     }
                     ChangeType::Update => {
                         let old_map = if let Some(old_data) = &change_notification.old_data {
                             if let Some(obj) = old_data.as_object() {
-                                obj.iter()
-                                    .map(|(k, v)| (k.clone(), v.clone()))
-                                    .collect()
+                                obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
                             } else {
                                 std::collections::HashMap::new()
                             }
@@ -637,30 +663,34 @@ impl LiveQueryManager {
                         )
                     }
                     ChangeType::Delete => {
-                        kalamdb_commons::Notification::delete(
-                            live_id.to_string(),
-                            vec![row_map],
-                        )
+                        kalamdb_commons::Notification::delete(live_id.to_string(), vec![row_map])
                     }
                     ChangeType::Flush => {
                         // For flush, we use insert type with flush metadata
-                        kalamdb_commons::Notification::insert(
-                            live_id.to_string(),
-                            vec![row_map],
-                        )
+                        kalamdb_commons::Notification::insert(live_id.to_string(), vec![row_map])
                     }
                 };
 
                 // Send notification through channel (non-blocking)
                 if let Err(e) = tx.send((live_id.clone(), notification)) {
-                    log::error!("Failed to send notification to WebSocket client for live_id={}: {}", live_id.to_string(), e);
+                    log::error!(
+                        "Failed to send notification to WebSocket client for live_id={}: {}",
+                        live_id.to_string(),
+                        e
+                    );
                 } else {
-                    log::debug!("Notification sent to WebSocket client for live_id={}", live_id.to_string());
+                    log::debug!(
+                        "Notification sent to WebSocket client for live_id={}",
+                        live_id.to_string()
+                    );
                 }
             } else {
-                log::warn!("No notification sender found for live_id={}", live_id.to_string());
+                log::warn!(
+                    "No notification sender found for live_id={}",
+                    live_id.to_string()
+                );
             }
-            
+
             self.increment_changes(live_id).await?;
 
             // Log notification (in production, use proper logging)
@@ -676,16 +706,19 @@ impl LiveQueryManager {
     }
 
     /// Get the notification sender for a specific live query
-    async fn get_notification_sender(&self, live_id: &LiveId) -> Option<crate::live_query::connection_registry::NotificationSender> {
+    async fn get_notification_sender(
+        &self,
+        live_id: &LiveId,
+    ) -> Option<crate::live_query::connection_registry::NotificationSender> {
         let registry = self.registry.read().await;
         let user_id = UserId::new(live_id.user_id().to_string());
-        
+
         if let Some(user_connections) = registry.users.get(&user_id) {
             if let Some(socket) = user_connections.get_socket(&live_id.connection_id) {
                 return socket.notification_tx.clone();
             }
         }
-        
+
         None
     }
 }
@@ -796,8 +829,8 @@ pub struct RegistryStats {
 mod tests {
     use super::*;
     use crate::storage::RocksDbInit;
-    use kalamdb_commons::models::{TableDefinition, ColumnDefinition};
-    use kalamdb_commons::{TableName, NamespaceId, TableType, StorageId};
+    use kalamdb_commons::models::{ColumnDefinition, TableDefinition};
+    use kalamdb_commons::{NamespaceId, StorageId, TableName, TableType};
     use tempfile::TempDir;
 
     async fn create_test_manager() -> (LiveQueryManager, TempDir) {
@@ -810,7 +843,7 @@ mod tests {
         let user_table_store = Arc::new(UserTableStore::new(Arc::clone(&db)).unwrap());
         let shared_table_store = Arc::new(SharedTableStore::new(Arc::clone(&db)).unwrap());
         let stream_table_store = Arc::new(StreamTableStore::new(Arc::clone(&db)).unwrap());
-        
+
         // Create test tables in information_schema_tables
         let messages_table = TableDefinition {
             table_id: "user1:messages".to_string(),
@@ -820,7 +853,7 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             schema_version: 1,
-            storage_id: StorageId::new("local"),
+            storage_id: StorageId::local(),
             use_user_storage: false,
             flush_policy: None,
             deleted_retention_hours: None,
@@ -846,7 +879,7 @@ mod tests {
             schema_history: vec![],
         };
         kalam_sql.upsert_table_definition(&messages_table).unwrap();
-        
+
         let notifications_table = TableDefinition {
             table_id: "user1:notifications".to_string(),
             table_name: TableName::new("notifications"),
@@ -880,8 +913,10 @@ mod tests {
             ],
             schema_history: vec![],
         };
-        kalam_sql.upsert_table_definition(&notifications_table).unwrap();
-        
+        kalam_sql
+            .upsert_table_definition(&notifications_table)
+            .unwrap();
+
         let node_id = NodeId::new("test_node".to_string());
         let manager = LiveQueryManager::new(
             kalam_sql,
@@ -1198,7 +1233,10 @@ mod tests {
 
         // Verify filter SQL is correct (includes auto-injected user_id filter for USER tables)
         let filter = filter.unwrap();
-        assert_eq!(filter.sql(), "user_id = 'user1' AND user_id = 'user1' AND read = false");
+        assert_eq!(
+            filter.sql(),
+            "user_id = 'user1' AND user_id = 'user1' AND read = false"
+        );
     }
 
     #[tokio::test]

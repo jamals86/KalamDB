@@ -178,9 +178,17 @@ max_password_length = 72
 # WARNING: Only disable for testing/development environments!
 disable_common_password_check = false
 
-# JWT configuration (if using JWT authentication)
-# jwt_secret = "your-secret-key-at-least-32-chars"
-# jwt_trusted_issuers = ["https://kalamdb.io"]
+# JWT configuration (for JWT Bearer token authentication)
+# Secret key for JWT signature validation (minimum 32 characters recommended)
+# IMPORTANT: Change this in production! Use a strong, random secret.
+jwt_secret = "your-secret-key-at-least-32-chars-change-me-in-production"
+
+# List of trusted JWT issuers (leave empty to accept any issuer)
+# Add your OAuth provider domains here (e.g., "https://accounts.google.com", "https://github.com")
+# Example for Google OAuth: ["https://accounts.google.com"]
+# Example for GitHub OAuth: ["https://github.com"]
+# Multiple issuers: ["https://accounts.google.com", "https://github.com", "https://kalamdb.io"]
+jwt_trusted_issuers = []
 
 # Allow remote access for system users (default: false)
 # If true, system users can authenticate remotely (requires password)

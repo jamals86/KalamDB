@@ -302,38 +302,70 @@ SELECT * FROM system.users WHERE role = 'dba';
 
 ---
 
-## 🌟 Core Features Summary
+## 🌟 **KalamDB Core Features & Roadmap**
 
 ### ✅ **Implemented**
-- ✅ Three table types (USER, SHARED, STREAM) with isolated storage
-- ✅ DataFusion SQL engine with full DDL/DML support
-- ✅ Sub-millisecond writes (RocksDB hot tier + Parquet cold tier)
-- ✅ WebSocket live query subscriptions with change tracking
-- ✅ Schema evolution (ALTER TABLE with backward compatibility)
-- ✅ Multi-storage backends (local, S3, Azure Blob, GCS)
-- ✅ Role-based access control (user, service, dba, system)
-- ✅ Backup/restore with Parquet file verification
-- ✅ Catalog browsing (SHOW/DESCRIBE/STATS commands)
-- ✅ HTTP Basic Auth and JWT authentication with soft delete
-- ✅ Docker deployment with environment variable config
-- ✅ TypeScript SDK (WASM) with React example app
-- ✅ Custom SQL functions (SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER)
 
-### � **In Progress**
-- 🔄 Enhanced error handling (types added, integration pending)
-- 🔄 Structured logging for all operations
-- 🔄 Request/response logging (REST + WebSocket)
-- � Performance optimizations (connection pooling, caching)
-- 🔄 Metrics collection (latency, throughput, storage)
-- 🔄 WebSocket authentication and rate limiting
-- 🔄 Comprehensive documentation (API docs, ADRs)
+* Three table types (**USER**, **SHARED**, **STREAM**) with isolated storage
+* DataFusion SQL engine with full DDL/DML support
+* Sub-millisecond writes (RocksDB hot tier + Parquet cold tier)
+* WebSocket live query subscriptions with change tracking
+* Schema evolution (**ALTER TABLE** with backward compatibility)
+* Multi-storage backends (Local, S3, Azure Blob, GCS)
+* Role-based access control (user, service, dba, system)
+* Backup/restore with Parquet file verification
+* Catalog browsing (**SHOW**, **DESCRIBE**, **STATS** commands)
+* HTTP Basic Auth and JWT authentication (with soft delete)
+* Docker deployment with environment variable configuration
+* TypeScript SDK (WASM) with React example app
+* Custom SQL functions: `SNOWFLAKE_ID`, `UUID_V7`, `ULID`, `CURRENT_USER`
+* RocksDB storage with column family architecture
+* Namespace and table registry stored in RocksDB system tables
+* Configurable flush policies (row-based, time-based, or both)
+* Parquet consolidation (hot → cold storage)
+* System tables (`namespaces`, `tables`, `schemas`, `storage_locations`, `live_queries`, `jobs`, `users`)
+* Integration tests and quickstart script (32+ automated tests)
+* **Kalam CLI** — interactive command-line client similar to MySQL/psql
+  * Supports SQL execution, autocomplete, and table rendering
+  * Live query subscriptions via WebSocket
+  * JSON/CSV/table output modes
+  * Config file (`~/.kalam/config.toml`) and history persistence
+  * JWT and API key authentication
+  * Built on top of `kalam-link` library (also available as WASM SDK)
 
-### � **Planned**
-- 📋 Distributed replication with tag-based routing
-- 📋 Incremental backups
-- 📋 Admin web UI
-- 📋 Kubernetes deployment
-- 📋 Cloud storage optimizations
+---
+
+### 🚧 **In Progress**
+
+* Enhanced error handling (error types integrated with REST and SQL engine)
+* Structured logging for all operations
+* Request/response logging (REST + WebSocket)
+* Performance optimizations (connection pooling, schema/query caching)
+* Parquet bloom filters on `_updated` column
+* Metrics collection (latency, throughput, flush duration, WebSocket stats)
+* WebSocket authentication and authorization
+* Rate limiting (per user, per connection)
+* Configuration improvements (RocksDB tuning, env vars)
+* Comprehensive documentation (README, SQL syntax, API docs, ADRs)
+
+---
+
+### 📋 **Planned / Future**
+
+* Distributed replication (via `system.nodes` table with tag-based routing)
+* Incremental backups and recovery jobs
+* Admin web UI dashboard
+* Multiple indexes on shared/user tables
+* Full-text search integration
+* Vector search (hybrid semantic + relational queries)
+* Query result caching with TTL
+* Transactions (`BEGIN`, `COMMIT`, `ROLLBACK`)
+* Foreign key constraints
+* Materialized views
+* Automatic table flushing with job tracking
+* Kubernetes deployment (Helm charts, operator support)
+* Cloud storage optimizations (S3 multipart, Azure blob tiers)
+* Raft-based distributed metadata replication (future `kalamdb-raft` crate)
 
 ---
 
@@ -400,48 +432,6 @@ KalamDB follows a clean **three-layer architecture** that ensures maintainabilit
     ├── batch-20251020-001.parquet      # Flushed shared data
     └── batch-20251020-002.parquet
 ```
-
-### Data Flow
-
-```
-┌─────────────┐
-│   Client    │
-│  (Alice)    │
-└──────┬──────┘
-       │ POST /api/v1/query
-       │ SQL: INSERT INTO conversations ...
-       ▼
-┌─────────────────────────────────────┐
-│         KalamDB Server              │
-│  ┌────────────┐    ┌─────────────┐  │
-│  │ DataFusion │    │  RocksDB    │  │ ◀── Hot storage (<1ms)
-│  │ SQL Engine │    │  (Hot)      │  │
-│  └────────────┘    └─────────────┘  │
-│         │                           │
-│         │ Consolidate (periodic)    │
-│         ▼                           │
-│  ┌─────────────┐                    │
-│  │  Parquet    │                    │ ◀── Cold storage (optimized)
-│  │  (Cold)     │                    │
-│  └─────────────┘                    │
-│         │                           │
-│         │ Notify via WebSocket      │
-│         ▼                           │
-│  ┌─────────────┐                    │
-│  │ Real-time   │                    │
-│  │ Subscriber  │                    │
-│  └─────────────┘                    │
-└──────────┬──────────────────────────┘
-           │
-           │ WS: New message notification
-           ▼
-    ┌─────────────┐
-    │   Client    │
-    │   (Alice)   │
-    └─────────────┘
-```
-
----
 
 ## 🚀 Quick Start
 
@@ -961,58 +951,6 @@ Features:
 
 ---
 
-## 🎯 Roadmap
-
-### ✅ **Completed** (Phases 1-16 + 006)
-- [x] Complete specification design (002-simple-kalamdb)
-- [x] Three-layer architecture (kalamdb-core → kalamdb-sql + kalamdb-store → RocksDB)
-- [x] RocksDB storage implementation with column family architecture
-- [x] DataFusion SQL engine integration
-- [x] Three table types (User, Shared, Stream)
-- [x] Schema evolution (ALTER TABLE with versioning)
-- [x] Configurable flush policies (row-based, time-based, combined)
-- [x] Parquet consolidation (hot → cold storage)
-- [x] WebSocket live query subscriptions with change tracking
-- [x] System tables (namespaces, tables, schemas, storage_locations, live_queries, jobs, users)
-- [x] Backup and restore (namespace-level with Parquet file copy)
-- [x] Catalog browsing (SHOW TABLES, DESCRIBE TABLE, SHOW STATS)
-- [x] Integration tests and quickstart script (32 automated tests)
-- [x] **Multi-storage backends** (local, S3, Azure Blob, GCS) (Phase 006)
-- [x] **User management with RBAC** (CREATE/ALTER/DROP USER, 4 roles) (Phase 007)
-- [x] **HTTP Basic Auth and JWT authentication** (Phase 007)
-- [x] **Soft delete for user tables** (Phase 006)
-- [x] **Docker deployment with environment variable config** (Phase 006)
-- [x] **WASM client compilation for TypeScript/JavaScript** (Phase 006)
-- [x] **React TODO example app with real-time sync** (Phase 006)
-- [x] **Custom SQL functions** (SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER) (Phase 007)
-- [x] **PostgreSQL/MySQL compatibility layer** (Phase 007)
-
-### 🚧 **In Progress** (Phase 17 - Polish & Production Readiness)
-- [ ] Enhanced error handling (✅ error types added, integration pending)
-- [ ] Configuration improvements (✅ RocksDB settings, ✅ environment variables)
-- [ ] Structured logging for all operations
-- [ ] Request/response logging (REST API + WebSocket)
-- [ ] Performance optimizations (connection pooling, schema cache, query cache)
-- [ ] Parquet bloom filters on _updated column
-- [ ] Metrics collection (query latency, flush duration, WebSocket throughput)
-- [ ] WebSocket authentication and authorization
-- [ ] Rate limiting (per user, per connection)
-- [ ] Comprehensive documentation (✅ README updated, ✅ SQL syntax, API docs pending, ADRs pending)
-
-### 📅 **Future** (Post Phase 17)
-- [ ] Distributed replication (system.nodes table, tag-based routing)
-- [ ] Incremental backups
-- [ ] Admin web UI dashboard
-- [ ] Kubernetes deployment (Helm charts, operators)
-- [ ] Cloud storage optimizations (S3 multipart uploads, Azure blob tiers)
-- [ ] Query result caching with TTL
-- [ ] Transactions (BEGIN/COMMIT/ROLLBACK)
-- [ ] Foreign key constraints
-- [ ] Materialized views
-- [ ] Full-text search integration
-
----
-
 ## 🤝 Contributing
 
 KalamDB is in active development. See [`specs/001-build-a-rust/plan.md`](specs/001-build-a-rust/plan.md) for implementation plan.
@@ -1021,7 +959,7 @@ KalamDB is in active development. See [`specs/001-build-a-rust/plan.md`](specs/0
 
 ## 📄 License
 
-Apache License
+Apache 2.0 License
 
 ---
 

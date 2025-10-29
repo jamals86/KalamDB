@@ -11,9 +11,9 @@ pub mod path_template;
 pub mod storage_registry;
 
 // Re-export generic backend traits from kalamdb-store
-pub use kalamdb_commons::storage::StorageBackend;
 pub use column_family_manager::ColumnFamilyManager;
 pub use filesystem_backend::FilesystemBackend;
+pub use kalamdb_store::StorageBackend;
 pub use parquet_writer::ParquetWriter;
 pub use path_template::PathTemplate;
 pub use storage_registry::StorageRegistry;

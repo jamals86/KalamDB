@@ -9,15 +9,16 @@ use std::collections::HashMap;
 use std::fmt;
 
 // Re-export from kalamdb-commons
-pub use kalamdb_commons::models::{ConnectionId, LiveId};
 pub use kalamdb_commons::models::UserId;
+pub use kalamdb_commons::models::{ConnectionId, LiveId};
 
 /// Type alias for sending live query notifications to WebSocket clients
-/// 
+///
 /// The tuple contains:
 /// - LiveId: The subscription identifier
 /// - Notification: The typed notification message (from kalamdb-commons)
-pub type NotificationSender = tokio::sync::mpsc::UnboundedSender<(LiveId, kalamdb_commons::Notification)>;
+pub type NotificationSender =
+    tokio::sync::mpsc::UnboundedSender<(LiveId, kalamdb_commons::Notification)>;
 
 // Extension traits to add KalamDbError-based parsing to commons types
 pub trait ConnectionIdExt {
@@ -104,7 +105,10 @@ impl UserConnectionSocket {
     }
 
     /// Create a new user connection socket with notification sender
-    pub fn with_notification_sender(connection_id: ConnectionId, notification_tx: NotificationSender) -> Self {
+    pub fn with_notification_sender(
+        connection_id: ConnectionId,
+        notification_tx: NotificationSender,
+    ) -> Self {
         Self {
             connection_id,
             notification_tx: Some(notification_tx),
@@ -201,7 +205,12 @@ impl LiveQueryRegistry {
     }
 
     /// Register a new WebSocket connection
-    pub fn register_connection(&mut self, user_id: UserId, connection_id: ConnectionId, notification_tx: Option<NotificationSender>) {
+    pub fn register_connection(
+        &mut self,
+        user_id: UserId,
+        connection_id: ConnectionId,
+        notification_tx: Option<NotificationSender>,
+    ) {
         let socket = if let Some(tx) = notification_tx {
             UserConnectionSocket::with_notification_sender(connection_id, tx)
         } else {

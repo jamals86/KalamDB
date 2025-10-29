@@ -77,6 +77,20 @@ pub enum KalamDbError {
     Other(String),
 }
 
+// Convert kalamdb_store::StorageError to KalamDbError
+impl From<kalamdb_store::StorageError> for KalamDbError {
+    fn from(err: kalamdb_store::StorageError) -> Self {
+        match err {
+            kalamdb_store::StorageError::PartitionNotFound(msg) => KalamDbError::NotFound(msg),
+            kalamdb_store::StorageError::IoError(msg) => KalamDbError::IoError(msg),
+            kalamdb_store::StorageError::SerializationError(msg) => KalamDbError::SerializationError(msg),
+            kalamdb_store::StorageError::Unsupported(msg) => KalamDbError::InvalidOperation(msg),
+            kalamdb_store::StorageError::UniqueConstraintViolation(msg) => KalamDbError::AlreadyExists(msg),
+            kalamdb_store::StorageError::Other(msg) => KalamDbError::Other(msg),
+        }
+    }
+}
+
 /// Storage-related errors
 #[derive(Error, Debug)]
 pub enum StorageError {

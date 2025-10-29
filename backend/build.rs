@@ -21,7 +21,9 @@ fn main() {
         .to_string();
 
     // Capture build date/time in ISO 8601 format
-    let build_date = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+    let build_date = chrono::Utc::now()
+        .format("%Y-%m-%d %H:%M:%S UTC")
+        .to_string();
 
     // Capture Git branch name
     let branch = Command::new("git")

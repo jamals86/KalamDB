@@ -63,14 +63,24 @@ impl AlterTableStatement {
         }
 
         // Extract table name (handles ALTER TABLE, ALTER USER TABLE, ALTER SHARED TABLE)
-        let table_name = Self::extract_table_name_from_tokens(&tokens)?;
+        let table_name_raw = Self::extract_table_name_from_tokens(&tokens)?;
+
+        // Parse qualified table name (namespace.table or just table)
+        let (namespace, table_name) = if let Some(dot_pos) = table_name_raw.find('.') {
+            let ns = &table_name_raw[..dot_pos];
+            let tbl = &table_name_raw[dot_pos + 1..];
+            (NamespaceId::new(ns), tbl.to_string())
+        } else {
+            (current_namespace.clone(), table_name_raw)
+        };
 
         // Find operation keyword position
         let op_pos = tokens
             .iter()
             .position(|&t| matches!(t.to_uppercase().as_str(), "ADD" | "DROP" | "MODIFY" | "SET"))
             .ok_or_else(|| {
-                "Expected ADD COLUMN, DROP COLUMN, MODIFY COLUMN, or SET ACCESS LEVEL operation".to_string()
+                "Expected ADD COLUMN, DROP COLUMN, MODIFY COLUMN, or SET ACCESS LEVEL operation"
+                    .to_string()
             })?;
 
         let operation_upper = tokens[op_pos].to_uppercase();
@@ -79,16 +89,15 @@ impl AlterTableStatement {
             "DROP" => Self::parse_drop_column_from_tokens(&tokens[op_pos..])?,
             "MODIFY" => Self::parse_modify_column_from_tokens(&tokens[op_pos..])?,
             "SET" => Self::parse_set_access_level_from_tokens(&tokens[op_pos..])?,
-            _ => {
-                return Err(
-                    "Expected ADD COLUMN, DROP COLUMN, MODIFY COLUMN, or SET ACCESS LEVEL operation".to_string(),
-                )
-            }
+            _ => return Err(
+                "Expected ADD COLUMN, DROP COLUMN, MODIFY COLUMN, or SET ACCESS LEVEL operation"
+                    .to_string(),
+            ),
         };
 
         Ok(Self {
             table_name: TableName::new(&table_name),
-            namespace_id: current_namespace.clone(),
+            namespace_id: namespace,
             operation,
         })
     }
@@ -227,9 +236,12 @@ impl AlterTableStatement {
         }
 
         let access_level_str = tokens[3].to_lowercase();
-        
+
         // Validate before converting
-        if !matches!(access_level_str.as_str(), "public" | "private" | "restricted") {
+        if !matches!(
+            access_level_str.as_str(),
+            "public" | "private" | "restricted"
+        ) {
             return Err(format!(
                 "Invalid access level: {}. Must be public, private, or restricted",
                 access_level_str
@@ -485,10 +497,8 @@ mod tests {
 
     #[test]
     fn test_parse_set_access_level_missing_keyword() {
-        let result = AlterTableStatement::parse(
-            "ALTER TABLE test SET LEVEL public",
-            &test_namespace(),
-        );
+        let result =
+            AlterTableStatement::parse("ALTER TABLE test SET LEVEL public", &test_namespace());
         assert!(result.is_err());
     }
 }

@@ -123,7 +123,7 @@ async fn test_soft_delete_preserves_data() {
         .await;
 
     assert_eq!(response.status, "success");
-    
+
     // Note: The soft delete filter is applied before projection, so deleted rows won't appear
     // This is the expected behavior - soft deleted rows are hidden even when selecting _deleted
     if let Some(rows) = &response.results[0].rows {
@@ -170,7 +170,7 @@ async fn test_deleted_field_default_false() {
     assert_eq!(response.status, "success");
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 1);
-        
+
         let deleted_value = rows[0].get("_deleted").unwrap().as_bool();
         assert_eq!(
             deleted_value,
@@ -228,12 +228,12 @@ async fn test_multiple_deletes() {
     assert_eq!(response.status, "success");
     if let Some(rows) = &response.results[0].rows {
         assert_eq!(rows.len(), 3, "Should have 3 tasks after deleting 2");
-        
+
         let ids: Vec<&str> = rows
             .iter()
             .map(|r| r.get("id").unwrap().as_str().unwrap())
             .collect();
-        
+
         assert_eq!(ids, vec!["task1", "task3", "task5"]);
     }
 
@@ -323,7 +323,10 @@ async fn test_count_excludes_deleted_rows() {
     for i in 1..=5 {
         server
             .execute_sql_as_user(
-                &format!("INSERT INTO test_ns.tasks (id, title) VALUES ('task{}', 'Task {}')", i, i),
+                &format!(
+                    "INSERT INTO test_ns.tasks (id, title) VALUES ('task{}', 'Task {}')",
+                    i, i
+                ),
                 "user1",
             )
             .await;
@@ -342,7 +345,10 @@ async fn test_count_excludes_deleted_rows() {
 
     // Delete 2 tasks
     server
-        .execute_sql_as_user("DELETE FROM test_ns.tasks WHERE id IN ('task1', 'task3')", "user1")
+        .execute_sql_as_user(
+            "DELETE FROM test_ns.tasks WHERE id IN ('task1', 'task3')",
+            "user1",
+        )
         .await;
 
     // Count after delete
@@ -358,3 +364,4 @@ async fn test_count_excludes_deleted_rows() {
 
     println!("✅ COUNT excludes soft deleted rows");
 }
+

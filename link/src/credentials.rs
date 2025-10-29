@@ -18,14 +18,14 @@ use serde::{Deserialize, Serialize};
 pub struct Credentials {
     /// Database instance identifier (e.g., "local", "production", URL)
     pub instance: String,
-    
+
     /// Username for authentication
     pub username: String,
-    
+
     /// Password or token for authentication
     /// Note: Stored credentials should be protected with appropriate file permissions
     pub password: String,
-    
+
     /// Optional: Server URL if different from instance name
     pub server_url: Option<String>,
 }
@@ -40,7 +40,7 @@ impl Credentials {
             server_url: None,
         }
     }
-    
+
     /// Create new credentials with server URL
     pub fn with_server_url(
         instance: String,
@@ -55,7 +55,7 @@ impl Credentials {
             server_url: Some(server_url),
         }
     }
-    
+
     /// Get the server URL, defaulting to instance name if not set
     pub fn get_server_url(&self) -> &str {
         self.server_url.as_deref().unwrap_or(&self.instance)
@@ -111,7 +111,7 @@ pub trait CredentialStore {
     /// # Arguments
     /// * `instance` - Instance identifier (e.g., "local", "production")
     fn get_credentials(&self, instance: &str) -> Result<Option<Credentials>>;
-    
+
     /// Store credentials for a database instance
     ///
     /// Overwrites existing credentials for the same instance.
@@ -119,7 +119,7 @@ pub trait CredentialStore {
     /// # Arguments
     /// * `credentials` - Credentials to store
     fn set_credentials(&mut self, credentials: &Credentials) -> Result<()>;
-    
+
     /// Delete stored credentials for an instance
     ///
     /// Returns `Ok(())` even if no credentials were stored.
@@ -127,12 +127,12 @@ pub trait CredentialStore {
     /// # Arguments
     /// * `instance` - Instance identifier to delete
     fn delete_credentials(&mut self, instance: &str) -> Result<()>;
-    
+
     /// List all stored instance identifiers
     ///
     /// Returns a vector of instance names that have stored credentials.
     fn list_instances(&self) -> Result<Vec<String>>;
-    
+
     /// Check if credentials exist for an instance
     ///
     /// Default implementation calls `get_credentials()` and checks for Some.
@@ -182,17 +182,18 @@ impl CredentialStore for MemoryCredentialStore {
     fn get_credentials(&self, instance: &str) -> Result<Option<Credentials>> {
         Ok(self.credentials.get(instance).cloned())
     }
-    
+
     fn set_credentials(&mut self, credentials: &Credentials) -> Result<()> {
-        self.credentials.insert(credentials.instance.clone(), credentials.clone());
+        self.credentials
+            .insert(credentials.instance.clone(), credentials.clone());
         Ok(())
     }
-    
+
     fn delete_credentials(&mut self, instance: &str) -> Result<()> {
         self.credentials.remove(instance);
         Ok(())
     }
-    
+
     fn list_instances(&self) -> Result<Vec<String>> {
         Ok(self.credentials.keys().cloned().collect())
     }
@@ -209,7 +210,7 @@ mod tests {
             "alice".to_string(),
             "secret".to_string(),
         );
-        
+
         assert_eq!(creds.instance, "local");
         assert_eq!(creds.username, "alice");
         assert_eq!(creds.password, "secret");
@@ -225,7 +226,7 @@ mod tests {
             "pass123".to_string(),
             "https://db.example.com".to_string(),
         );
-        
+
         assert_eq!(creds.server_url, Some("https://db.example.com".to_string()));
         assert_eq!(creds.get_server_url(), "https://db.example.com");
     }
@@ -233,11 +234,11 @@ mod tests {
     #[test]
     fn test_memory_store_basic_operations() {
         let mut store = MemoryCredentialStore::new();
-        
+
         // Initially empty
         assert_eq!(store.get_credentials("local").unwrap(), None);
         assert!(!store.has_credentials("local").unwrap());
-        
+
         // Store credentials
         let creds = Credentials::new(
             "local".to_string(),
@@ -245,12 +246,12 @@ mod tests {
             "secret".to_string(),
         );
         store.set_credentials(&creds).unwrap();
-        
+
         // Retrieve credentials
         let retrieved = store.get_credentials("local").unwrap();
         assert_eq!(retrieved, Some(creds.clone()));
         assert!(store.has_credentials("local").unwrap());
-        
+
         // Delete credentials
         store.delete_credentials("local").unwrap();
         assert_eq!(store.get_credentials("local").unwrap(), None);
@@ -259,38 +260,59 @@ mod tests {
     #[test]
     fn test_memory_store_multiple_instances() {
         let mut store = MemoryCredentialStore::new();
-        
-        let creds1 = Credentials::new("local".to_string(), "alice".to_string(), "pass1".to_string());
+
+        let creds1 = Credentials::new(
+            "local".to_string(),
+            "alice".to_string(),
+            "pass1".to_string(),
+        );
         let creds2 = Credentials::new("prod".to_string(), "bob".to_string(), "pass2".to_string());
         let creds3 = Credentials::new("dev".to_string(), "carol".to_string(), "pass3".to_string());
-        
+
         store.set_credentials(&creds1).unwrap();
         store.set_credentials(&creds2).unwrap();
         store.set_credentials(&creds3).unwrap();
-        
+
         // List instances
         let instances = store.list_instances().unwrap();
         assert_eq!(instances.len(), 3);
         assert!(instances.contains(&"local".to_string()));
         assert!(instances.contains(&"prod".to_string()));
         assert!(instances.contains(&"dev".to_string()));
-        
+
         // Retrieve specific instances
-        assert_eq!(store.get_credentials("local").unwrap().unwrap().username, "alice");
-        assert_eq!(store.get_credentials("prod").unwrap().unwrap().username, "bob");
-        assert_eq!(store.get_credentials("dev").unwrap().unwrap().username, "carol");
+        assert_eq!(
+            store.get_credentials("local").unwrap().unwrap().username,
+            "alice"
+        );
+        assert_eq!(
+            store.get_credentials("prod").unwrap().unwrap().username,
+            "bob"
+        );
+        assert_eq!(
+            store.get_credentials("dev").unwrap().unwrap().username,
+            "carol"
+        );
     }
 
     #[test]
     fn test_memory_store_overwrite() {
         let mut store = MemoryCredentialStore::new();
-        
-        let creds1 = Credentials::new("local".to_string(), "alice".to_string(), "old_pass".to_string());
-        let creds2 = Credentials::new("local".to_string(), "alice".to_string(), "new_pass".to_string());
-        
+
+        let creds1 = Credentials::new(
+            "local".to_string(),
+            "alice".to_string(),
+            "old_pass".to_string(),
+        );
+        let creds2 = Credentials::new(
+            "local".to_string(),
+            "alice".to_string(),
+            "new_pass".to_string(),
+        );
+
         store.set_credentials(&creds1).unwrap();
         store.set_credentials(&creds2).unwrap();
-        
+
         let retrieved = store.get_credentials("local").unwrap().unwrap();
         assert_eq!(retrieved.password, "new_pass");
     }
@@ -303,13 +325,13 @@ mod tests {
             "secret123".to_string(),
             "https://db.example.com".to_string(),
         );
-        
+
         // Serialize to JSON
         let json = serde_json::to_string(&creds).unwrap();
-        
+
         // Deserialize back
         let deserialized: Credentials = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(deserialized, creds);
     }
 }

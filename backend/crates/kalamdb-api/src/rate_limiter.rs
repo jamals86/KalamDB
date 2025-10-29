@@ -126,7 +126,7 @@ impl RateLimiter {
     /// Check if a user can execute a query
     /// Returns true if allowed, false if rate limit exceeded
     pub fn check_query_rate(&self, user_id: &UserId) -> bool {
-        let user_key = user_id.as_ref().to_string();
+        let user_key = user_id.as_str().to_string();
         let mut buckets = self.user_query_buckets.write().unwrap();
 
         let bucket = buckets.entry(user_key.clone()).or_insert_with(|| {
@@ -143,7 +143,7 @@ impl RateLimiter {
     /// Check if a user can create a new subscription
     /// Returns true if allowed, false if limit exceeded
     pub fn check_subscription_limit(&self, user_id: &UserId) -> bool {
-        let user_key = user_id.as_ref().to_string();
+        let user_key = user_id.as_str().to_string();
         let counts = self.user_subscription_counts.read().unwrap();
 
         match counts.get(&user_key) {
@@ -154,14 +154,14 @@ impl RateLimiter {
 
     /// Increment user subscription count
     pub fn increment_subscription(&self, user_id: &UserId) {
-        let user_key = user_id.as_ref().to_string();
+        let user_key = user_id.as_str().to_string();
         let mut counts = self.user_subscription_counts.write().unwrap();
         *counts.entry(user_key).or_insert(0) += 1;
     }
 
     /// Decrement user subscription count
     pub fn decrement_subscription(&self, user_id: &UserId) {
-        let user_key = user_id.as_ref().to_string();
+        let user_key = user_id.as_str().to_string();
         let mut counts = self.user_subscription_counts.write().unwrap();
         if let Some(count) = counts.get_mut(&user_key) {
             *count = count.saturating_sub(1);
@@ -192,7 +192,7 @@ impl RateLimiter {
 
     /// Get current rate limit stats for a user
     pub fn get_user_stats(&self, user_id: &UserId) -> (u32, u32) {
-        let user_key = user_id.as_ref().to_string();
+        let user_key = user_id.as_str().to_string();
 
         let available_queries = {
             let mut buckets = self.user_query_buckets.write().unwrap();

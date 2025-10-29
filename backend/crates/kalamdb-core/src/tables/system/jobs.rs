@@ -20,7 +20,7 @@ impl JobsTable {
             Field::new("result", DataType::Utf8, true),
             Field::new("trace", DataType::Utf8, true),
             Field::new("memory_used", DataType::Int64, true), // bytes
-            Field::new("cpu_used", DataType::Int64, true),     // microseconds
+            Field::new("cpu_used", DataType::Int64, true),    // microseconds
             Field::new(
                 "created_at",
                 DataType::Timestamp(TimeUnit::Millisecond, None),

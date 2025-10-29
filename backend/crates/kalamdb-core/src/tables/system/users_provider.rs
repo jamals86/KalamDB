@@ -25,7 +25,7 @@ use std::sync::Arc;
 /// User data structure stored in RocksDB
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserRecord {
-    pub user_id: String,  //TODO: Use UserId type?
+    pub user_id: String, //TODO: Use UserId type?
     pub username: String,
     pub email: Option<String>,
     pub created_at: i64, // timestamp in milliseconds
@@ -73,7 +73,7 @@ impl UsersTableProvider {
             auth_type: AuthType::OAuth,
             auth_data: None,
             storage_mode: StorageMode::Table, // Default to table-based storage
-            storage_id: None, // No specific storage preference
+            storage_id: None,                 // No specific storage preference
             created_at: user.created_at,
             updated_at: user.created_at,
             last_seen: None,
@@ -109,10 +109,10 @@ impl UsersTableProvider {
             password_hash: existing_user.password_hash.clone(), // Preserve password
             role: existing_user.role.clone(),                   // Preserve role
             email: Some(user.email.clone().unwrap_or_default()),
-            auth_type: existing_user.auth_type.clone(),         // Preserve auth type
+            auth_type: existing_user.auth_type.clone(), // Preserve auth type
             auth_data: existing_user.auth_data.clone(),
-            storage_mode: existing_user.storage_mode.clone(),   // Preserve storage mode
-            storage_id: existing_user.storage_id.clone(),       // Preserve storage ID
+            storage_mode: existing_user.storage_mode.clone(), // Preserve storage mode
+            storage_id: existing_user.storage_id.clone(),     // Preserve storage ID
             created_at: user.created_at,
             updated_at: chrono::Utc::now().timestamp_millis(),
             last_seen: existing_user.last_seen,
@@ -177,7 +177,10 @@ impl UsersTableProvider {
     }
 
     /// Get a user by ID
-    pub fn get_user_by_id(&self, user_id: &UserId) -> Result<kalamdb_commons::system::User, KalamDbError> {
+    pub fn get_user_by_id(
+        &self,
+        user_id: &UserId,
+    ) -> Result<kalamdb_commons::system::User, KalamDbError> {
         let username = user_id.to_string();
         self.kalam_sql
             .get_user(&username)
@@ -305,9 +308,8 @@ impl TableProvider for UsersTableProvider {
             DataFusionError::Execution(format!("Failed to build users batch: {}", e))
         })?;
         let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
-        })?;
+        let table = MemTable::try_new(schema, partitions)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
         table.scan(_state, projection, &[], _limit).await
     }
 }
@@ -363,9 +365,7 @@ mod tests {
 
         provider.insert_user(user).unwrap();
 
-        let mut updated_user = provider
-            .get_user_by_id(&UserId::new("user1"))
-            .unwrap();
+        let mut updated_user = provider.get_user_by_id(&UserId::new("user1")).unwrap();
         updated_user.email = Some("updated@example.com".to_string());
         updated_user.updated_at = 2000;
 

@@ -8,15 +8,15 @@
 
 use crate::catalog::{NamespaceId, TableMetadata, TableName};
 use crate::error::KalamDbError;
+use crate::stores::SharedTableStore;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::TableProvider;
-use datafusion::logical_expr::dml::InsertOp;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::context::SessionState;
+use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
-use crate::stores::SharedTableStore;
 use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;
@@ -99,10 +99,11 @@ impl SharedTableProvider {
     /// - _updated: Current timestamp (milliseconds)
     /// - _deleted: false
     pub fn insert(&self, row_id: &str, mut row_data: JsonValue) -> Result<(), KalamDbError> {
-        // Inject system columns
-        let now_ms = chrono::Utc::now().timestamp_millis();
+        // Inject system columns (as RFC3339 string for _updated to match SharedTableRow format)
+        let now_rfc3339 = chrono::Utc::now().to_rfc3339();
         if let Some(obj) = row_data.as_object_mut() {
-            obj.insert("_updated".to_string(), serde_json::json!(now_ms));
+            // Use insert() which overwrites existing keys
+            obj.insert("_updated".to_string(), serde_json::json!(now_rfc3339));
             obj.insert("_deleted".to_string(), serde_json::json!(false));
         }
 
@@ -113,7 +114,7 @@ impl SharedTableProvider {
                 self.table_name().as_str(),
                 row_id,
                 row_data,
-                "public", // Default access level for shared tables
+                kalamdb_commons::TableAccess::Public, // Default access level for shared tables
             )
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
@@ -161,7 +162,7 @@ impl SharedTableProvider {
                 self.table_name().as_str(),
                 row_id,
                 row_data,
-                "public", // Default access level for shared tables
+                kalamdb_commons::TableAccess::Public, // Default access level for shared tables
             )
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
@@ -271,7 +272,7 @@ impl SharedTableProvider {
                 self.table_name().as_str(),
                 row_id,
                 updated_row,
-                "public", // Default access level for shared tables
+                kalamdb_commons::TableAccess::Public, // Default access level for shared tables
             )
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
@@ -304,22 +305,28 @@ impl TableProvider for SharedTableProvider {
     }
 
     fn schema(&self) -> SchemaRef {
-        // Add system columns to the schema
+        // Add system columns to the schema if they don't already exist
         let mut fields = self.schema.fields().to_vec();
 
-        // Add _updated (timestamp in milliseconds)
-        fields.push(Arc::new(Field::new(
-            "_updated",
-            DataType::Timestamp(TimeUnit::Millisecond, None),
-            false, // NOT NULL
-        )));
+        // Check if _updated already exists
+        if !fields.iter().any(|f| f.name() == "_updated") {
+            // Add _updated (timestamp in milliseconds)
+            fields.push(Arc::new(Field::new(
+                "_updated",
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                false, // NOT NULL
+            )));
+        }
 
-        // Add _deleted (boolean)
-        fields.push(Arc::new(Field::new(
-            "_deleted",
-            DataType::Boolean,
-            false, // NOT NULL
-        )));
+        // Check if _deleted already exists
+        if !fields.iter().any(|f| f.name() == "_deleted") {
+            // Add _deleted (boolean)
+            fields.push(Arc::new(Field::new(
+                "_deleted",
+                DataType::Boolean,
+                false, // NOT NULL
+            )));
+        }
 
         Arc::new(Schema::new(fields))
     }
@@ -358,6 +365,7 @@ impl TableProvider for SharedTableProvider {
                 use datafusion::arrow::array::new_null_array;
                 use datafusion::arrow::datatypes::DataType;
 
+                //TODO: What is thus dummy column for?
                 // RecordBatch with 0 columns but preserving row count
                 // We need at least one column to preserve row count, so add a dummy null column
                 let dummy_field = Arc::new(Field::new("__dummy", DataType::Null, true));
@@ -407,9 +415,8 @@ impl TableProvider for SharedTableProvider {
         // Create an in-memory table and return its scan plan
         use datafusion::datasource::MemTable;
         let partitions = vec![vec![final_batch]];
-        let table = MemTable::try_new(final_schema, partitions).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
-        })?;
+        let table = MemTable::try_new(final_schema, partitions)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
 
         table.scan(_state, projection, &[], limit).await
     }

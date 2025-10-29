@@ -41,12 +41,12 @@ pub mod parser;
 pub mod query_cache;
 pub mod statement_classifier;
 
+use kalamdb_store::StorageBackend;
 use kalamdb_commons::{NamespaceId, StorageId, TableName, UserId};
-use kalamdb_commons::storage::StorageBackend;
 // Re-export system models from kalamdb-commons (single source of truth)
 pub use kalamdb_commons::system::{
-    InformationSchemaTable, Job, LiveQuery, Namespace, Storage, SystemTable as Table,
-    TableSchema, User, UserTableCounter,
+    InformationSchemaTable, Job, LiveQuery, Namespace, Storage, SystemTable as Table, TableSchema,
+    User, UserTableCounter,
 };
 
 pub use adapter::StorageAdapter;
@@ -330,7 +330,7 @@ impl KalamSql {
     }
 
     /// Get a table by table_id
-    /// TODO: 
+    /// TODO:
     /// Fetches table metadata from system_tables.
     pub fn get_table(&self, table_id: &str) -> Result<Option<Table>> {
         self.adapter.get_table(table_id)
@@ -369,7 +369,8 @@ impl KalamSql {
         namespace_id: &NamespaceId,
         table_name: &TableName,
     ) -> Result<Option<kalamdb_commons::models::TableDefinition>> {
-        self.adapter.get_table_definition(namespace_id.as_str(), table_name.as_str())
+        self.adapter
+            .get_table_definition(namespace_id.as_str(), table_name.as_str())
     }
 
     /// Scan all table definitions in a namespace from information_schema_tables.

@@ -15,14 +15,23 @@ pub mod system_tables;
 pub mod system_tables_provider;
 pub mod table_schemas;
 pub mod table_schemas_provider;
+// Old users module (to be deprecated)
 pub mod users;
 pub mod users_provider;
+// New EntityStore-based users module (Phase 14)
+// Note: Temporarily using 'users_v2' name to avoid conflict during migration
+pub mod users_v2;
+// New EntityStore-based tables module (Phase 14)
+pub mod tables_v2;
+// New EntityStore-based jobs module (Phase 14)
+pub mod jobs_v2;
 
 pub use base_provider::SystemTableProviderExt;
 pub use information_schema_columns::InformationSchemaColumnsProvider;
 pub use information_schema_tables::InformationSchemaTablesProvider;
 pub use jobs::JobsTable;
-pub use jobs_provider::JobsTableProvider;
+// Export the v2 provider as the main JobsTableProvider
+pub use jobs_v2::JobsTableProvider;
 pub use live_queries::LiveQueriesTable;
 pub use live_queries_provider::LiveQueriesTableProvider;
 pub use namespaces::NamespacesTable;

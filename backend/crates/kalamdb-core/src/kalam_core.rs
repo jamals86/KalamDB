@@ -1,7 +1,7 @@
 //! KalamCore facade for initializing core stores from a generic StorageBackend.
 //!
 //! This provides a minimal, forward-compatible constructor that accepts
-//! `Arc<dyn kalamdb_commons::storage::StorageBackend>` and wires up the
+//! `Arc<dyn kalamdb_store::StorageBackend>` and wires up the
 //! table stores used by services.
 
 use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
@@ -18,9 +18,7 @@ impl KalamCore {
     /// Build table stores from a generic `StorageBackend`.
     ///
     /// Creates EntityStore-based table stores that work with any StorageBackend.
-    pub fn new(
-        backend: Arc<dyn kalamdb_commons::storage::StorageBackend>,
-    ) -> anyhow::Result<Self> {
+    pub fn new(backend: Arc<dyn kalamdb_store::StorageBackend>) -> anyhow::Result<Self> {
         let user_table_store = Arc::new(UserTableStore::new(backend.clone()));
         let shared_table_store = Arc::new(SharedTableStore::new(backend.clone()));
         let stream_table_store = Arc::new(StreamTableStore::new(backend));

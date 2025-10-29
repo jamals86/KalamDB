@@ -46,6 +46,16 @@ tokio = { version = "1.48.0", features = ["full"] }
 - TypeScript/JavaScript ES2020+ (frontend SDKs)
 - WASM for browser-based client library
 
+**Authentication & Authorization**:
+- **bcrypt 0.15**: Password hashing (cost factor 12, min 8 chars, max 72 chars)
+- **jsonwebtoken 9.2**: JWT token generation and validation (HS256 algorithm)
+- **HTTP Basic Auth**: Base64-encoded username:password (Authorization: Basic header)
+- **JWT Bearer Tokens**: Stateless authentication (Authorization: Bearer header)
+- **OAuth 2.0 Integration**: Google Workspace, GitHub, Microsoft Azure AD
+- **RBAC (Role-Based Access Control)**: Four roles (user, service, dba, system)
+- **Actix-Web Middleware**: Custom authentication extractors and guards
+- **StorageBackend Abstraction**: `Arc<dyn StorageBackend>` isolates RocksDB dependencies
+
 ## Project Structure
 ```
 backend/                         # Server binary and core crates
@@ -129,14 +139,34 @@ cargo test -p kalamdb-sql
 ## Code Style
 
 - **Rust 2021 edition**: Follow standard Rust conventions
-- **Type-safe wrappers**: Use `NamespaceId`, `TableName`, `UserId`, `StorageId`, `TableType`` enum instead of raw strings
+- **Type-safe wrappers**: Use `NamespaceId`, `TableName`, `UserId`, `StorageId`, `TableType` enum, `UserRole` enum, `TableAccessLevel` enum instead of raw strings
 - **Error handling**: Use `Result<T, KalamDbError>` for all fallible operations
 - **Async**: Use `tokio` runtime, prefer `async/await` over raw futures
 - **Logging**: Use `log` macros (`info!`, `debug!`, `warn!`, `error!`)
 - **Serialization**: Use `serde` with `#[derive(Serialize, Deserialize)]`
 
+**Authentication Patterns**:
+- **Password Security**: ALWAYS use `bcrypt::hash()` for password storage, NEVER store plaintext
+- **Timing-Safe Comparisons**: Use `bcrypt::verify()` for constant-time password verification
+- **JWT Claims**: Include `user_id`, `role`, `exp` (expiration) in token payload
+- **Role Hierarchy**: system > dba > service > user (enforced in authorization middleware)
+- **Generic Error Messages**: Use "Invalid username or password" (NEVER "user not found" vs "wrong password")
+- **Soft Deletes**: Set `deleted_at` timestamp, return same error as invalid credentials
+- **Authorization Checks**: Verify role permissions BEFORE executing database operations
+- **Storage Abstraction**: Use `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>` (except in kalamdb-store)
+
 ## Recent Changes
 - 2025-10-28: **Dependency Management** - Migrated all dependencies to workspace dependencies pattern
+- 2025-10-28: **User Authentication & Authorization** - Implemented comprehensive auth system:
+  - HTTP Basic Auth and JWT token authentication
+  - RBAC with 4 roles (user, service, dba, system)
+  - SQL-based user management (CREATE USER, ALTER USER, DROP USER)
+  - bcrypt password hashing (cost 12)
+  - OAuth 2.0 integration (Google, GitHub, Azure AD)
+  - Shared table access control (public, private, restricted)
+  - System user isolation (localhost-only default)
+  - New kalamdb-auth crate for authentication/authorization logic
+  - StorageBackend abstraction pattern (Arc<dyn StorageBackend>)
 
 
 <!-- MANUAL ADDITIONS START -->

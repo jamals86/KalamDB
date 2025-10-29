@@ -10,7 +10,7 @@
 use crate::error::KalamDbError;
 use crate::tables::system::JobsTableProvider;
 use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobStatus, JobType, NamespaceId, TableName};
+use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, TableName};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -78,13 +78,21 @@ impl JobExecutor {
             "backup" => JobType::Backup,
             "restore" => JobType::Restore,
             _ => {
-                return Err(KalamDbError::InvalidOperation(format!("Unknown job type: {}", job_type)));
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Unknown job type: {}",
+                    job_type
+                )));
             }
         };
 
         // T101: Register job with status='running'
         let namespace_id = NamespaceId::new("default".to_string()); // TODO: Get from context
-        let mut job = Job::new(job_id.clone(), job_type_enum, namespace_id, self.node_id.clone());
+        let mut job = Job::new(
+            JobId::new(job_id.clone()),
+            job_type_enum,
+            namespace_id,
+            self.node_id.clone(),
+        );
 
         if let Some(tn) = table_name {
             job = job.with_table_name(TableName::new(tn));
@@ -92,8 +100,8 @@ impl JobExecutor {
 
         // T104: Store parameters as JSON array
         if !parameters.is_empty() {
-            let params_json = serde_json::to_string(&parameters)
-                .unwrap_or_else(|_| "[]".to_string());
+            let params_json =
+                serde_json::to_string(&parameters).unwrap_or_else(|_| "[]".to_string());
             job = job.with_parameters(params_json);
         }
 
@@ -176,21 +184,29 @@ impl JobExecutor {
             "backup" => JobType::Backup,
             "restore" => JobType::Restore,
             _ => {
-                return Err(KalamDbError::InvalidOperation(format!("Unknown job type: {}", job_type)));
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Unknown job type: {}",
+                    job_type
+                )));
             }
         };
 
         // Register job immediately
         let namespace_id = NamespaceId::new("default".to_string()); // TODO: Get from context
-        let mut job = Job::new(job_id.clone(), job_type_enum, namespace_id, self.node_id.clone());
+        let mut job = Job::new(
+            job_id.clone(),
+            job_type_enum,
+            namespace_id,
+            self.node_id.clone(),
+        );
 
         if let Some(tn) = table_name {
             job = job.with_table_name(TableName::new(tn));
         }
 
         if !parameters.is_empty() {
-            let params_json = serde_json::to_string(&parameters)
-                .unwrap_or_else(|_| "[]".to_string());
+            let params_json =
+                serde_json::to_string(&parameters).unwrap_or_else(|_| "[]".to_string());
             job = job.with_parameters(params_json);
         }
 
@@ -269,8 +285,8 @@ impl JobExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::RocksDbInit;
     use kalamdb_sql::KalamSql;
+    use kalamdb_store::RocksDbInit;
     use std::sync::Arc;
     use tempfile::TempDir;
 

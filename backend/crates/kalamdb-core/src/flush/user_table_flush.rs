@@ -7,14 +7,13 @@ use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::storage::{ParquetWriter, StorageRegistry};
-use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobStatus, JobType};
+use crate::stores::UserTableStore;
 use chrono::Utc;
-use datafusion::arrow::array::{ArrayRef, BooleanArray, Int64Array, StringArray};
-use datafusion::arrow::datatypes::{DataType, SchemaRef};
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::models::StorageType;
-use crate::stores::UserTableStore;
+use kalamdb_commons::system::Job;
+use kalamdb_commons::{JobId, JobType};
 use serde_json::{json, Value as JsonValue};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -225,13 +224,16 @@ impl UserTableFlushJob {
             format!("namespace={}", self.namespace_id.as_str()),
             format!("table={}", self.table_name.as_str()),
         ];
-        let params_json = serde_json::to_string(&params)
-            .unwrap_or_else(|_| "[]".to_string());
-        
-        let mut job_record =
-            Job::new(job_id.clone(), JobType::Flush, self.namespace_id.clone(), self.node_id.clone())
-                .with_table_name(self.table_name.clone())
-                .with_parameters(params_json);
+        let params_json = serde_json::to_string(&params).unwrap_or_else(|_| "[]".to_string());
+
+        let mut job_record = Job::new(
+            JobId::new(job_id.clone()),
+            JobType::Flush,
+            self.namespace_id.clone(),
+            self.node_id.clone(),
+        )
+        .with_table_name(self.table_name.clone())
+        .with_parameters(params_json);
 
         // T158d: Persist job state to system.jobs BEFORE starting work
         if let Some(ref jobs_provider) = self.jobs_provider {
@@ -374,10 +376,10 @@ impl UserTableFlushJob {
             self.table_name.as_str()
         );
 
-        // T151b: Scan table column family sequentially
-        let all_rows = self
+        // T151b: Stream table column family sequentially (snapshot-backed)
+        let mut iter = self
             .store
-            .scan_all(self.namespace_id.as_str(), self.table_name.as_str())
+            .scan_iter(self.namespace_id.as_str(), self.table_name.as_str())
             .map_err(|e| {
                 log::error!(
                     "❌ Failed to scan table={}.{}: {}",
@@ -388,13 +390,6 @@ impl UserTableFlushJob {
                 KalamDbError::Other(format!("Failed to scan table: {}", e))
             })?;
 
-        log::debug!(
-            "🔍 Scanned {} rows for table={}.{}",
-            all_rows.len(),
-            self.namespace_id.as_str(),
-            self.table_name.as_str()
-        );
-
         // Initialize variables for per-user batching
         let mut current_user_id: Option<String> = None;
         let mut current_user_rows: Vec<(Vec<u8>, JsonValue)> = Vec::new();
@@ -404,7 +399,49 @@ impl UserTableFlushJob {
         let mut error_messages: Vec<String> = Vec::new();
 
         let mut rows_scanned = 0;
-        for (key_str, row_data) in all_rows {
+        while let Some((key_bytes, value_bytes)) = iter.next() {
+            // Decode row
+            let user_table_row: crate::models::UserTableRow =
+                match serde_json::from_slice(&value_bytes) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        log::warn!(
+                            "Skipping row due to deserialization error (table={}.{}): {}",
+                            self.namespace_id.as_str(),
+                            self.table_name.as_str(),
+                            e
+                        );
+                        continue;
+                    }
+                };
+
+            // Skip soft-deleted rows
+            if user_table_row._deleted {
+                continue;
+            }
+
+            // Convert to JSON value and inject system columns
+            let mut row_data = JsonValue::Object(user_table_row.fields);
+            if let Some(obj) = row_data.as_object_mut() {
+                obj.insert(
+                    "_updated".to_string(),
+                    JsonValue::String(user_table_row._updated),
+                );
+                obj.insert("_deleted".to_string(), JsonValue::Bool(false));
+            }
+
+            let key_str = match String::from_utf8(key_bytes.clone()) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::warn!(
+                        "Skipping row due to invalid UTF-8 key (table={}.{}): {}",
+                        self.namespace_id.as_str(),
+                        self.table_name.as_str(),
+                        e
+                    );
+                    continue;
+                }
+            };
             rows_scanned += 1;
             if rows_scanned % 1000 == 0 {
                 log::debug!(
@@ -413,15 +450,6 @@ impl UserTableFlushJob {
                     self.namespace_id.as_str(),
                     self.table_name.as_str()
                 );
-            }
-
-            // Skip soft-deleted rows (don't flush them)
-            if let Some(obj) = row_data.as_object() {
-                if let Some(deleted) = obj.get("_deleted") {
-                    if deleted.as_bool() == Some(true) {
-                        continue;
-                    }
-                }
             }
 
             // Parse key to get user_id
@@ -478,7 +506,7 @@ impl UserTableFlushJob {
 
             // Accumulate row for current user
             current_user_id = Some(user_id.clone());
-            current_user_rows.push((key_str.as_bytes().to_vec(), row_data));
+            current_user_rows.push((key_str.into_bytes(), row_data));
         }
 
         // Flush final user's data (if any)
@@ -707,86 +735,11 @@ impl UserTableFlushJob {
         &self,
         rows: &[(Vec<u8>, JsonValue)],
     ) -> Result<RecordBatch, KalamDbError> {
-        // Build arrays for each column based on schema
-        let mut arrays: Vec<ArrayRef> = Vec::new();
-
-        for field in self.schema.fields() {
-            let field_name = field.name();
-            let array: ArrayRef = match field.data_type() {
-                DataType::Utf8 => {
-                    let values: Vec<Option<String>> = rows
-                        .iter()
-                        .map(|(_, row)| {
-                            row.get(field_name)
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                        })
-                        .collect();
-                    Arc::new(StringArray::from(values))
-                }
-                DataType::Int64 => {
-                    let values: Vec<Option<i64>> = rows
-                        .iter()
-                        .map(|(_, row)| row.get(field_name).and_then(|v| v.as_i64()))
-                        .collect();
-                    Arc::new(Int64Array::from(values))
-                }
-                DataType::Boolean => {
-                    let values: Vec<Option<bool>> = rows
-                        .iter()
-                        .map(|(_, row)| row.get(field_name).and_then(|v| v.as_bool()))
-                        .collect();
-                    Arc::new(BooleanArray::from(values))
-                }
-                DataType::Timestamp(unit, timezone) => {
-                    // System columns like _updated are stored as RFC3339 strings or millisecond timestamps
-                    let values: Vec<Option<i64>> = rows
-                        .iter()
-                        .map(|(_, row)| {
-                            row.get(field_name).and_then(|v| {
-                                // Try to parse as i64 (milliseconds since epoch)
-                                if let Some(ts_ms) = v.as_i64() {
-                                    return Some(ts_ms);
-                                }
-                                
-                                // Try to parse as RFC3339 string
-                                if let Some(ts_str) = v.as_str() {
-                                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts_str) {
-                                        return Some(dt.timestamp_millis());
-                                    }
-                                }
-                                
-                                None
-                            })
-                        })
-                        .collect();
-                    
-                    use datafusion::arrow::array::TimestampMillisecondArray;
-                    match (unit, timezone) {
-                        (datafusion::arrow::datatypes::TimeUnit::Millisecond, None) => {
-                            Arc::new(TimestampMillisecondArray::from(values))
-                        }
-                        _ => {
-                            return Err(KalamDbError::Other(format!(
-                                "Unsupported timestamp configuration: unit={:?}, timezone={:?}",
-                                unit, timezone
-                            )))
-                        }
-                    }
-                }
-                _ => {
-                    return Err(KalamDbError::Other(format!(
-                        "Unsupported data type for flush: {:?}",
-                        field.data_type()
-                    )))
-                }
-            };
-
-            arrays.push(array);
+        let mut builder = crate::flush::util::JsonBatchBuilder::new(self.schema.clone())?;
+        for (_, row) in rows {
+            builder.push_object_row(row)?;
         }
-
-        RecordBatch::try_new(self.schema.clone(), arrays)
-            .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
+        builder.finish()
     }
 }
 
@@ -811,7 +764,9 @@ mod tests {
     #[test]
     fn test_user_table_flush_job_creation() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
+        let store = Arc::new(UserTableStore::new(Arc::new(
+            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
+        )));
         let schema = create_test_schema();
 
         let job = UserTableFlushJob::new(
@@ -831,7 +786,9 @@ mod tests {
     #[test]
     fn test_user_table_flush_empty_table() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
+        let store = Arc::new(UserTableStore::new(Arc::new(
+            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
+        )));
         let schema = create_test_schema();
 
         let temp_storage = env::temp_dir().join("kalamdb_flush_test_empty");
@@ -864,7 +821,9 @@ mod tests {
     #[test]
     fn test_user_table_flush_single_user() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
+        let store = Arc::new(UserTableStore::new(Arc::new(
+            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
+        )));
         let schema = create_test_schema();
 
         // Insert test data for user1
@@ -915,7 +874,9 @@ mod tests {
     #[test]
     fn test_user_table_flush_multiple_users() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
+        let store = Arc::new(UserTableStore::new(Arc::new(
+            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
+        )));
         let schema = create_test_schema();
 
         // Insert test data for user1 and user2
@@ -968,7 +929,9 @@ mod tests {
     #[test]
     fn test_user_table_flush_skips_soft_deleted() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
+        let store = Arc::new(UserTableStore::new(Arc::new(
+            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
+        )));
         let schema = create_test_schema();
 
         // Insert test data with one active and one soft-deleted row

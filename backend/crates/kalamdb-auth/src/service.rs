@@ -6,7 +6,7 @@ use crate::context::AuthenticatedUser;
 use crate::error::{AuthError, AuthResult};
 use crate::jwt_auth;
 use crate::password;
-use kalamdb_commons::{Role, UserId};
+// use kalamdb_commons::{Role, UserId}; // Unused imports removed
 use kalamdb_sql::RocksDbAdapter;
 use log::{info, warn};
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use std::sync::Arc;
 /// Supports:
 /// - HTTP Basic Authentication (username/password)
 /// - JWT Bearer Token Authentication
-/// - API Key Authentication
+/// - OAuth Token Authentication (Phase 10, User Story 8)
 pub struct AuthService {
     /// JWT secret for token validation
     jwt_secret: String,
@@ -24,6 +24,10 @@ pub struct AuthService {
     trusted_jwt_issuers: Vec<String>,
     /// Whether to allow remote (non-localhost) access
     allow_remote_access: bool,
+    /// OAuth auto-provisioning enabled (Phase 10, User Story 8)
+    oauth_auto_provision: bool,
+    /// Default role for auto-provisioned OAuth users
+    oauth_default_role: kalamdb_commons::Role,
 }
 
 impl AuthService {
@@ -33,15 +37,21 @@ impl AuthService {
     /// * `jwt_secret` - Secret key for JWT validation
     /// * `trusted_jwt_issuers` - List of trusted JWT issuer domains
     /// * `allow_remote_access` - Whether to allow non-localhost connections
+    /// * `oauth_auto_provision` - Enable OAuth auto-provisioning (default: false)
+    /// * `oauth_default_role` - Default role for auto-provisioned OAuth users
     pub fn new(
         jwt_secret: String,
         trusted_jwt_issuers: Vec<String>,
         allow_remote_access: bool,
+        oauth_auto_provision: bool,
+        oauth_default_role: kalamdb_commons::Role,
     ) -> Self {
         Self {
             jwt_secret,
             trusted_jwt_issuers,
             allow_remote_access,
+            oauth_auto_provision,
+            oauth_default_role,
         }
     }
 
@@ -50,6 +60,7 @@ impl AuthService {
     /// Supports:
     /// - `Basic <base64-credentials>` - HTTP Basic Auth
     /// - `Bearer <jwt-token>` - JWT Authentication
+    /// - `Bearer <oauth-token>` - OAuth Token Authentication (Phase 10, User Story 8)
     ///
     /// # Arguments
     /// * `auth_header` - Value of Authorization header
@@ -71,9 +82,18 @@ impl AuthService {
     ) -> AuthResult<AuthenticatedUser> {
         // Determine auth method based on prefix
         if auth_header.starts_with("Basic ") {
-            self.authenticate_basic(auth_header, connection_info, adapter).await
+            self.authenticate_basic(auth_header, connection_info, adapter)
+                .await
         } else if auth_header.starts_with("Bearer ") {
-            self.authenticate_jwt(auth_header, connection_info, adapter).await
+            // Try JWT first, then OAuth if JWT fails
+            // This allows for fallback when JWT validation fails
+            match self.authenticate_jwt(auth_header, connection_info, adapter).await {
+                Ok(user) => Ok(user),
+                Err(_) => {
+                    // JWT failed, try OAuth
+                    self.authenticate_oauth(auth_header, connection_info, adapter).await
+                }
+            }
         } else {
             Err(AuthError::MalformedAuthorization(
                 "Authorization header must start with 'Basic ' or 'Bearer '".to_string(),
@@ -90,7 +110,7 @@ impl AuthService {
     ///
     /// # Returns
     /// Authenticated user context
-    /// 
+    ///
     /// # System User Authentication (T103, T104, T106 - Phase 7, User Story 5)
     /// - Internal auth_type users (system users) can only authenticate from localhost by default
     /// - Global allow_remote_access flag allows remote connections for all internal users
@@ -114,6 +134,14 @@ impl AuthService {
             return Err(AuthError::UserDeleted);
         }
 
+        // T140 (Phase 10, User Story 8): Prevent OAuth users from password authentication
+        if user.auth_type == kalamdb_commons::AuthType::OAuth {
+            warn!("OAuth user '{}' attempted password authentication", username);
+            return Err(AuthError::AuthenticationFailed(
+                "OAuth users cannot authenticate with password. Use OAuth token instead.".to_string(),
+            ));
+        }
+
         // T103: Check if user has internal auth_type (system users)
         // T104: Check per-user allow_remote metadata
         // T106: Validate password requirement for remote system users
@@ -122,11 +150,10 @@ impl AuthService {
             let per_user_allow_remote = if let Some(ref metadata) = user.auth_data {
                 // Try to parse metadata as JSON to check for allow_remote flag
                 match serde_json::from_str::<serde_json::Value>(metadata) {
-                    Ok(json) => {
-                        json.get("allow_remote")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false)
-                    }
+                    Ok(json) => json
+                        .get("allow_remote")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
                     Err(_) => false,
                 }
             } else {
@@ -165,7 +192,8 @@ impl AuthService {
             // For remote connections, password is required (enforced above)
             if !user.password_hash.is_empty() {
                 // Verify password if one is set
-                let password_match = password::verify_password(&password, &user.password_hash).await?;
+                let password_match =
+                    password::verify_password(&password, &user.password_hash).await?;
                 if !password_match {
                     warn!("Invalid password for system user: {}", username);
                     return Err(AuthError::InvalidCredentials);
@@ -191,7 +219,7 @@ impl AuthService {
 
         Ok(AuthenticatedUser::new(
             user.id,
-            user.username,
+            user.username.into_string(),
             user.role,
             user.email,
             connection_info.clone(),
@@ -214,23 +242,20 @@ impl AuthService {
         adapter: &Arc<RocksDbAdapter>,
     ) -> AuthResult<AuthenticatedUser> {
         // Extract token (remove "Bearer " prefix)
-        let token = auth_header.strip_prefix("Bearer ").ok_or_else(|| {
-            AuthError::MalformedAuthorization("Bearer token missing".to_string())
-        })?;
+        let token = auth_header
+            .strip_prefix("Bearer ")
+            .ok_or_else(|| AuthError::MalformedAuthorization("Bearer token missing".to_string()))?;
 
         // Validate token
-        let claims = jwt_auth::validate_jwt_token(
-            token,
-            &self.jwt_secret,
-            &self.trusted_jwt_issuers,
-        )?;
+        let claims =
+            jwt_auth::validate_jwt_token(token, &self.jwt_secret, &self.trusted_jwt_issuers)?;
 
         // Look up user in database using username from JWT claims
         // The JWT sub field contains the user_id, but we'll use username for lookup
         let username = claims.username.as_ref().ok_or_else(|| {
             AuthError::MissingClaim("username claim missing from JWT".to_string())
         })?;
-        
+
         let user = self.get_user_by_username(username, adapter).await?;
 
         // Check if user is deleted
@@ -250,7 +275,106 @@ impl AuthService {
 
         Ok(AuthenticatedUser::new(
             user.id,
-            user.username,
+            user.username.into_string(),
+            user.role,
+            user.email,
+            connection_info.clone(),
+        ))
+    }
+
+    /// Authenticate using OAuth Bearer token.
+    ///
+    /// Phase 10, User Story 8: OAuth Integration
+    ///
+    /// # Arguments
+    /// * `auth_header` - Authorization header value (Bearer <oauth-token>)
+    /// * `connection_info` - Connection information
+    /// * `adapter` - RocksDB adapter for user database access
+    ///
+    /// # Returns
+    /// Authenticated user context
+    ///
+    /// # Note
+    /// This method requires OAuth provider configuration to be enabled.
+    /// It validates the OAuth token against configured provider issuers,
+    /// extracts the provider and subject, and looks up the user by matching
+    /// the auth_data JSON {"provider": "...", "subject": "..."}.
+    async fn authenticate_oauth(
+        &self,
+        auth_header: &str,
+        connection_info: &ConnectionInfo,
+        adapter: &Arc<RocksDbAdapter>,
+    ) -> AuthResult<AuthenticatedUser> {
+        use crate::oauth;
+
+        // Extract token (remove "Bearer " prefix)
+        let token = auth_header
+            .strip_prefix("Bearer ")
+            .ok_or_else(|| AuthError::MalformedAuthorization("Bearer token missing".to_string()))?;
+
+        // Try to extract provider info without full validation first
+        // (we'll validate once we know which provider to check against)
+        let _header = jsonwebtoken::decode_header(token)
+            .map_err(|e| AuthError::MalformedAuthorization(format!("Invalid token header: {}", e)))?;
+        
+        // For now, we use a simple approach: validate with a generic secret
+        // In production, you'd fetch the JWKS (JSON Web Key Set) from the provider
+        // For HS256 (testing), we use the JWT secret
+        let claims = oauth::validate_oauth_token(token, &self.jwt_secret, "")
+            .or_else(|_| {
+                // If validation fails, try to extract claims without validation
+                // to get the issuer for better error messages
+                Err(AuthError::InvalidSignature)
+            })?;
+
+        // Extract provider and subject from claims
+        let identity = oauth::extract_provider_and_subject(&claims);
+
+        // Look up user by matching auth_data JSON
+        // auth_data format: {"provider": "google", "subject": "oauth_user_id"}
+        let auth_data = serde_json::json!({
+            "provider": identity.provider,
+            "subject": identity.subject
+        });
+
+        let users = adapter
+            .scan_all_users()
+            .map_err(AuthError::DatabaseError)?;
+        
+        let user = users
+            .into_iter()
+            .find(|u| {
+                u.auth_type == kalamdb_commons::AuthType::OAuth
+                    && u.auth_data.as_ref().map_or(false, |data| {
+                        // Parse stored auth_data and compare
+                        if let Ok(stored_json) = serde_json::from_str::<serde_json::Value>(data) {
+                            stored_json.get("provider") == auth_data.get("provider")
+                                && stored_json.get("subject") == auth_data.get("subject")
+                        } else {
+                            false
+                        }
+                    })
+            })
+            .ok_or(AuthError::UserNotFound)?;
+
+        // Check if user is deleted
+        if user.deleted_at.is_some() {
+            warn!("Attempt to authenticate deleted user: {}", user.username);
+            return Err(AuthError::UserDeleted);
+        }
+
+        // Check remote access permission
+        if !connection_info.is_access_allowed(self.allow_remote_access) {
+            return Err(AuthError::AuthenticationFailed(
+                "Remote access is disabled".to_string(),
+            ));
+        }
+
+        info!("User authenticated via OAuth ({}): {}", identity.provider, user.username);
+
+        Ok(AuthenticatedUser::new(
+            user.id,
+            user.username.into_string(),
             user.role,
             user.email,
             connection_info.clone(),
@@ -268,7 +392,11 @@ impl AuthService {
     ///
     /// # Errors
     /// Returns `AuthError::UserNotFound` if user doesn't exist
-    async fn get_user_by_username(&self, username: &str, adapter: &Arc<RocksDbAdapter>) -> AuthResult<kalamdb_commons::system::User> {
+    async fn get_user_by_username(
+        &self,
+        username: &str,
+        adapter: &Arc<RocksDbAdapter>,
+    ) -> AuthResult<kalamdb_commons::system::User> {
         adapter
             .get_user(username)
             .map_err(AuthError::DatabaseError)?

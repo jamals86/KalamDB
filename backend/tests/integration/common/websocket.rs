@@ -201,9 +201,7 @@ impl WebSocketClient {
         };
 
         let json_str = serde_json::to_string(&message)?;
-        self.ws_stream
-            .send(Message::Text(json_str.into()))
-            .await?;
+        self.ws_stream.send(Message::Text(json_str.into())).await?;
 
         Ok(())
     }
@@ -234,9 +232,7 @@ impl WebSocketClient {
         };
 
         let json_str = serde_json::to_string(&message)?;
-        self.ws_stream
-            .send(Message::Text(json_str.into()))
-            .await?;
+        self.ws_stream.send(Message::Text(json_str.into())).await?;
 
         Ok(())
     }

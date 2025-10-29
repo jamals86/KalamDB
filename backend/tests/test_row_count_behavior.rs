@@ -54,7 +54,12 @@ async fn test_update_returns_correct_row_count() {
 
     assert_eq!(response.status, "success");
     assert!(
-        !response.results.is_empty() && response.results[0].message.as_ref().unwrap().contains("Updated 1 row(s)"),
+        !response.results.is_empty()
+            && response.results[0]
+                .message
+                .as_ref()
+                .unwrap()
+                .contains("Updated 1 row(s)"),
         "UPDATE should return 'Updated 1 row(s)', got: {:?}",
         response.results.get(0).and_then(|r| r.message.as_ref())
     );
@@ -69,7 +74,12 @@ async fn test_update_returns_correct_row_count() {
 
     assert_eq!(response.status, "success");
     assert!(
-        !response.results.is_empty() && response.results[0].message.as_ref().unwrap().contains("Updated 0 row(s)"),
+        !response.results.is_empty()
+            && response.results[0]
+                .message
+                .as_ref()
+                .unwrap()
+                .contains("Updated 0 row(s)"),
         "UPDATE on non-existent row should return 'Updated 0 row(s)', got: {:?}",
         response.results.get(0).and_then(|r| r.message.as_ref())
     );
@@ -164,7 +174,12 @@ async fn test_delete_returns_correct_row_count() {
 
     assert_eq!(response.status, "success");
     assert!(
-        !response.results.is_empty() && response.results[0].message.as_ref().unwrap().contains("Deleted 1 row(s)"),
+        !response.results.is_empty()
+            && response.results[0]
+                .message
+                .as_ref()
+                .unwrap()
+                .contains("Deleted 1 row(s)"),
         "DELETE should return 'Deleted 1 row(s)', got: {:?}",
         response.results.get(0).and_then(|r| r.message.as_ref())
     );
@@ -176,7 +191,12 @@ async fn test_delete_returns_correct_row_count() {
 
     assert_eq!(response.status, "success");
     assert!(
-        !response.results.is_empty() && response.results[0].message.as_ref().unwrap().contains("Deleted 0 row(s)"),
+        !response.results.is_empty()
+            && response.results[0]
+                .message
+                .as_ref()
+                .unwrap()
+                .contains("Deleted 0 row(s)"),
         "DELETE on non-existent row should return 'Deleted 0 row(s)', got: {:?}",
         response.results.get(0).and_then(|r| r.message.as_ref())
     );
@@ -216,7 +236,12 @@ async fn test_delete_already_deleted_returns_zero() {
 
     assert_eq!(response.status, "success");
     assert!(
-        !response.results.is_empty() && response.results[0].message.as_ref().unwrap().contains("Deleted 1 row(s)"),
+        !response.results.is_empty()
+            && response.results[0]
+                .message
+                .as_ref()
+                .unwrap()
+                .contains("Deleted 1 row(s)"),
         "First DELETE should return 'Deleted 1 row(s)'"
     );
 
@@ -227,7 +252,12 @@ async fn test_delete_already_deleted_returns_zero() {
 
     assert_eq!(response.status, "success");
     assert!(
-        !response.results.is_empty() && response.results[0].message.as_ref().unwrap().contains("Deleted 0 row(s)"),
+        !response.results.is_empty()
+            && response.results[0]
+                .message
+                .as_ref()
+                .unwrap()
+                .contains("Deleted 0 row(s)"),
         "Second DELETE should return 'Deleted 0 row(s)' (row already soft-deleted), got: {:?}",
         response.results.get(0).and_then(|r| r.message.as_ref())
     );
@@ -292,3 +322,4 @@ async fn test_delete_multiple_rows_count() {
 
     println!("✅ DELETE multiple rows test completed");
 }
+

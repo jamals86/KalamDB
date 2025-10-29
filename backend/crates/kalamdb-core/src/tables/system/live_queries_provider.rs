@@ -17,6 +17,7 @@ use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
 use kalamdb_commons::system::LiveQuery;
+use kalamdb_commons::LiveQueryId;
 use kalamdb_sql::KalamSql;
 use std::any::Any;
 use std::sync::Arc;
@@ -53,7 +54,7 @@ impl LiveQueriesTableProvider {
     /// Update an existing live query subscription
     pub fn update_live_query(&self, live_query: LiveQuery) -> Result<(), KalamDbError> {
         // Check if live query exists
-        let existing = self.get_live_query(&live_query.live_id)?;
+        let existing = self.get_live_query(&live_query.live_id.as_str())?;
         if existing.is_none() {
             return Err(KalamDbError::NotFound(format!(
                 "Live query not found: {}",
@@ -76,8 +77,7 @@ impl LiveQueriesTableProvider {
 
     /// Get a live query by ID
     pub fn get_live_query(&self, live_id: &str) -> Result<Option<LiveQuery>, KalamDbError> {
-        self
-            .kalam_sql
+        self.kalam_sql
             .get_live_query(live_id)
             .map_err(|e| KalamDbError::Other(format!("Failed to get live query: {}", e)))
     }
@@ -98,9 +98,9 @@ impl LiveQueriesTableProvider {
             .filter(|lq| lq.connection_id == connection_id)
         {
             self.kalam_sql
-                .delete_live_query(&lq.live_id)
+                .delete_live_query(lq.live_id.as_str())
                 .map_err(|e| KalamDbError::Other(format!("Failed to delete live query: {}", e)))?;
-            deleted_ids.push(lq.live_id);
+            deleted_ids.push(lq.live_id.into_string());
         }
 
         Ok(deleted_ids)
@@ -122,10 +122,7 @@ impl LiveQueriesTableProvider {
     }
 
     /// Get all live queries for a table_name
-    pub fn get_by_table_name(
-        &self,
-        table_name: &str,
-    ) -> Result<Vec<LiveQuery>, KalamDbError> {
+    pub fn get_by_table_name(&self, table_name: &str) -> Result<Vec<LiveQuery>, KalamDbError> {
         let live_queries = self
             .kalam_sql
             .scan_all_live_queries()
@@ -256,9 +253,8 @@ impl TableProvider for LiveQueriesTableProvider {
             DataFusionError::Execution(format!("Failed to build live_queries batch: {}", e))
         })?;
         let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
-        })?;
+        let table = MemTable::try_new(schema, partitions)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
         table.scan(_state, projection, &[], _limit).await
     }
 }

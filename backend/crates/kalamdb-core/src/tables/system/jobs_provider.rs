@@ -108,7 +108,7 @@ impl JobsTableProvider {
     /// - Job is already completed/failed/cancelled
     pub fn cancel_job(&self, job_id: &str) -> Result<(), KalamDbError> {
         use kalamdb_commons::JobStatus;
-        
+
         // Get current job
         let job = self
             .get_job(job_id)?
@@ -132,7 +132,7 @@ impl JobsTableProvider {
     /// Delete jobs older than retention period (in days)
     pub fn cleanup_old_jobs(&self, retention_days: i64) -> Result<usize, KalamDbError> {
         use kalamdb_commons::JobStatus;
-        
+
         let now = chrono::Utc::now().timestamp_millis();
         let retention_ms = retention_days * 24 * 60 * 60 * 1000;
 
@@ -286,9 +286,8 @@ impl TableProvider for JobsTableProvider {
             DataFusionError::Execution(format!("Failed to build jobs batch: {}", e))
         })?;
         let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
-        })?;
+        let table = MemTable::try_new(schema, partitions)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
         table.scan(_state, projection, &[], _limit).await
     }
 }
@@ -313,7 +312,7 @@ mod tests {
     #[test]
     fn test_insert_job() {
         use kalamdb_commons::{JobType, NamespaceId};
-        
+
         let (provider, _temp_dir) = setup_test_provider();
 
         let job = Job::new(
@@ -333,8 +332,8 @@ mod tests {
 
     #[test]
     fn test_job_completion() {
-        use kalamdb_commons::{JobType, JobStatus, NamespaceId};
-        
+        use kalamdb_commons::{JobStatus, JobType, NamespaceId};
+
         let (provider, _temp_dir) = setup_test_provider();
 
         let job = Job::new(
@@ -355,8 +354,8 @@ mod tests {
 
     #[test]
     fn test_job_failure() {
-        use kalamdb_commons::{JobType, JobStatus, NamespaceId};
-        
+        use kalamdb_commons::{JobStatus, JobType, NamespaceId};
+
         let (provider, _temp_dir) = setup_test_provider();
 
         let job = Job::new(
@@ -378,7 +377,7 @@ mod tests {
     #[test]
     fn test_job_with_table_name() {
         use kalamdb_commons::{JobType, NamespaceId, TableName};
-        
+
         let (provider, _temp_dir) = setup_test_provider();
 
         let job = Job::new(
@@ -398,7 +397,7 @@ mod tests {
     #[test]
     fn test_job_with_parameters() {
         use kalamdb_commons::{JobType, NamespaceId};
-        
+
         let (provider, _temp_dir) = setup_test_provider();
 
         let params = vec!["param1".to_string(), "param2".to_string()];
@@ -422,7 +421,7 @@ mod tests {
     #[test]
     fn test_job_with_metrics() {
         use kalamdb_commons::{JobType, NamespaceId};
-        
+
         let (provider, _temp_dir) = setup_test_provider();
 
         let mut job = Job::new(
@@ -445,7 +444,7 @@ mod tests {
     #[ignore] // Delete not yet implemented in kalamdb-sql adapter
     fn test_delete_job() {
         use kalamdb_commons::{JobType, NamespaceId};
-        
+
         let (provider, _temp_dir) = setup_test_provider();
 
         let job = Job::new(
@@ -465,8 +464,8 @@ mod tests {
     #[test]
     #[ignore] // Delete not yet implemented in kalamdb-sql adapter
     fn test_cleanup_old_jobs() {
-        use kalamdb_commons::{JobType, JobStatus, NamespaceId};
-        
+        use kalamdb_commons::{JobStatus, JobType, NamespaceId};
+
         let (provider, _temp_dir) = setup_test_provider();
 
         // Create an old completed job (90 days ago)
@@ -513,7 +512,7 @@ mod tests {
     #[test]
     fn test_scan_all_jobs() {
         use kalamdb_commons::{JobType, NamespaceId};
-        
+
         let (provider, _temp_dir) = setup_test_provider();
 
         let job1 = Job::new(
