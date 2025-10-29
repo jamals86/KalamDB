@@ -59,8 +59,8 @@
 //! }
 //! ```
 
-use std::fmt;
 use std::any::Any;
+use std::fmt;
 
 /// Result type for storage operations.
 pub type Result<T> = std::result::Result<T, StorageError>;

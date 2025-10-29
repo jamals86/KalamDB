@@ -54,4 +54,3 @@ impl AsRef<str> for TableName {
         &self.0
     }
 }
-

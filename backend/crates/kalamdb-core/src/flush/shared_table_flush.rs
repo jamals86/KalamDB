@@ -6,14 +6,14 @@
 use crate::catalog::{NamespaceId, TableName};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
+use crate::models::SharedTableRow;
 use crate::storage::ParquetWriter;
-use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobStatus, JobType};
-use chrono::Utc;
-use datafusion::arrow::array::{ArrayRef, BooleanArray, Int64Array, StringArray};
-use datafusion::arrow::datatypes::{DataType, SchemaRef};
-use datafusion::arrow::record_batch::RecordBatch;
 use crate::stores::SharedTableStore;
+use chrono::Utc;
+use datafusion::arrow::datatypes::SchemaRef;
+use datafusion::arrow::record_batch::RecordBatch;
+use kalamdb_commons::system::Job;
+use kalamdb_commons::JobType;
 use serde_json::{json, Value as JsonValue};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -108,13 +108,16 @@ impl SharedTableFlushJob {
             format!("namespace={}", self.namespace_id.as_str()),
             format!("table={}", self.table_name.as_str()),
         ];
-        let params_json = serde_json::to_string(&params)
-            .unwrap_or_else(|_| "[]".to_string());
-        
-        let mut job_record =
-            Job::new(job_id.clone(), JobType::Flush, self.namespace_id.clone(), self.node_id.clone())
-                .with_table_name(self.table_name.clone())
-                .with_parameters(params_json);
+        let params_json = serde_json::to_string(&params).unwrap_or_else(|_| "[]".to_string());
+
+        let mut job_record = Job::new(
+            job_id.clone(),
+            JobType::Flush,
+            self.namespace_id.clone(),
+            self.node_id.clone(),
+        )
+        .with_table_name(self.table_name.clone())
+        .with_parameters(params_json);
 
         log::info!(
             "🚀 Shared table flush job started: job_id={}, table={}.{}, timestamp={}",
@@ -211,10 +214,10 @@ impl SharedTableFlushJob {
             self.table_name.as_str()
         );
 
-        // Scan all rows (scan already filters out soft-deleted rows)
-        let rows = self
+        // Stream snapshot-backed scan and collect active rows
+        let mut iter = self
             .store
-            .get_rows_for_flush(self.namespace_id.as_str(), self.table_name.as_str())
+            .scan_iter(self.namespace_id.as_str(), self.table_name.as_str())
             .map_err(|e| {
                 log::error!(
                     "❌ Failed to scan rows for shared table={}.{}: {}",
@@ -225,11 +228,46 @@ impl SharedTableFlushJob {
                 KalamDbError::Other(format!("Failed to scan rows: {}", e))
             })?;
 
+        let mut rows: Vec<(Vec<u8>, JsonValue)> = Vec::new();
+        let mut scanned = 0usize;
+        while let Some((key_bytes, value_bytes)) = iter.next() {
+            scanned += 1;
+            // decode and filter soft-deleted
+            let row: SharedTableRow = match serde_json::from_slice(&value_bytes) {
+                Ok(r) => r,
+                Err(e) => {
+                    log::warn!(
+                        "Skipping row due to deserialization error (table={}.{}): {}",
+                        self.namespace_id.as_str(),
+                        self.table_name.as_str(),
+                        e
+                    );
+                    continue;
+                }
+            };
+            if row._deleted {
+                continue;
+            }
+
+            let mut json_obj = JsonValue::Object(row.fields);
+            if let Some(obj) = json_obj.as_object_mut() {
+                obj.insert(
+                    "access_level".to_string(),
+                    JsonValue::String(row.access_level.as_str().to_string()),
+                );
+                obj.insert("_updated".to_string(), JsonValue::String(row._updated));
+                obj.insert("_deleted".to_string(), JsonValue::Bool(false));
+            }
+
+            rows.push((key_bytes, json_obj));
+        }
+
         log::debug!(
-            "📊 Scanned {} rows from shared table={}.{}",
-            rows.len(),
+            "📊 Scanned {} rows from shared table={}.{} ({} active)",
+            scanned,
             self.namespace_id.as_str(),
-            self.table_name.as_str()
+            self.table_name.as_str(),
+            rows.len()
         );
 
         // If no rows to flush, return early
@@ -320,67 +358,27 @@ impl SharedTableFlushJob {
         &self,
         rows: &[(Vec<u8>, JsonValue)],
     ) -> Result<RecordBatch, KalamDbError> {
-        // Build arrays for each column based on schema
-        let mut arrays: Vec<ArrayRef> = Vec::new();
-
-        for field in self.schema.fields() {
-            let field_name = field.name();
-            let array: ArrayRef = match field.data_type() {
-                DataType::Utf8 => {
-                    let values: Vec<Option<String>> = rows
-                        .iter()
-                        .map(|(_, row)| {
-                            row.get(field_name)
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                        })
-                        .collect();
-                    Arc::new(StringArray::from(values))
-                }
-                DataType::Int64 => {
-                    let values: Vec<Option<i64>> = rows
-                        .iter()
-                        .map(|(_, row)| row.get(field_name).and_then(|v| v.as_i64()))
-                        .collect();
-                    Arc::new(Int64Array::from(values))
-                }
-                DataType::Boolean => {
-                    let values: Vec<Option<bool>> = rows
-                        .iter()
-                        .map(|(_, row)| row.get(field_name).and_then(|v| v.as_bool()))
-                        .collect();
-                    Arc::new(BooleanArray::from(values))
-                }
-                _ => {
-                    return Err(KalamDbError::Other(format!(
-                        "Unsupported data type for flush: {:?}",
-                        field.data_type()
-                    )))
-                }
-            };
-
-            arrays.push(array);
+        let mut builder = crate::flush::util::JsonBatchBuilder::new(self.schema.clone())?;
+        for (_, row) in rows {
+            builder.push_object_row(row)?;
         }
-
-        RecordBatch::try_new(self.schema.clone(), arrays)
-            .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
+        builder.finish()
     }
 
     /// Delete flushed rows from RocksDB
     fn delete_flushed_rows(&self, rows: &[(Vec<u8>, JsonValue)]) -> Result<(), KalamDbError> {
         // Collect all raw key bytes for batch deletion
-        let keys: Vec<Vec<u8>> = rows.iter().map(|(key_bytes, _)| key_bytes.clone()).collect();
+        let keys: Vec<Vec<u8>> = rows
+            .iter()
+            .map(|(key_bytes, _)| key_bytes.clone())
+            .collect();
 
         if keys.is_empty() {
             return Ok(());
         }
 
         self.store
-            .delete_batch_by_keys(
-                self.namespace_id.as_str(),
-                self.table_name.as_str(),
-                &keys,
-            )
+            .delete_batch_by_keys(self.namespace_id.as_str(), self.table_name.as_str(), &keys)
             .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed rows: {}", e)))?;
 
         log::debug!("Deleted {} flushed rows from storage", keys.len());
@@ -470,9 +468,15 @@ mod tests {
             "content": "Shared Message 3"
         });
 
-        store.put("test_ns", "test_table", "row1", row1, "public").unwrap();
-        store.put("test_ns", "test_table", "row2", row2, "public").unwrap();
-        store.put("test_ns", "test_table", "row3", row3, "public").unwrap();
+        store
+            .put("test_ns", "test_table", "row1", row1, "public")
+            .unwrap();
+        store
+            .put("test_ns", "test_table", "row2", row2, "public")
+            .unwrap();
+        store
+            .put("test_ns", "test_table", "row3", row3, "public")
+            .unwrap();
 
         let temp_storage = env::temp_dir().join("kalamdb_shared_flush_test_with_rows");
         let _ = fs::remove_dir_all(&temp_storage);
@@ -518,8 +522,12 @@ mod tests {
             "content": "Deleted Message"
         });
 
-        store.put("test_ns", "test_table", "row1", row1, "public").unwrap();
-        store.put("test_ns", "test_table", "row2", row2, "public").unwrap();
+        store
+            .put("test_ns", "test_table", "row1", row1, "public")
+            .unwrap();
+        store
+            .put("test_ns", "test_table", "row2", row2, "public")
+            .unwrap();
 
         // Soft-delete row2
         store
@@ -559,7 +567,9 @@ mod tests {
             "id": "row1",
             "content": "Test Message"
         });
-        store.put("test_ns", "test_table", "row1", row1, "public").unwrap();
+        store
+            .put("test_ns", "test_table", "row1", row1, "public")
+            .unwrap();
 
         let temp_storage = env::temp_dir().join("kalamdb_shared_flush_test_job_record");
         let _ = fs::remove_dir_all(&temp_storage);

@@ -7,7 +7,7 @@ use crate::{Job, LiveQuery, Namespace, Storage, Table, TableSchema, User};
 // use kalamdb_commons::models::TableDefinition; // Unused
 use anyhow::{anyhow, Result};
 use kalamdb_commons::storage::StorageBackend;
-use kalamdb_commons::{SystemTable, StoragePartition};
+use kalamdb_commons::{StoragePartition, SystemTable};
 use std::sync::Arc;
 
 /// Storage adapter for system tables (backend-agnostic)

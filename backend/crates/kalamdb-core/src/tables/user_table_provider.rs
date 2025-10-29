@@ -11,6 +11,7 @@ use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
 use crate::error::KalamDbError;
 use crate::ids::SnowflakeGenerator;
 use crate::live_query::manager::LiveQueryManager;
+use crate::stores::UserTableStore;
 use crate::tables::user_table_delete::UserTableDeleteHandler;
 use crate::tables::user_table_insert::UserTableInsertHandler;
 use crate::tables::user_table_update::UserTableUpdateHandler;
@@ -18,11 +19,11 @@ use async_trait::async_trait;
 use chrono::Utc;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::TableProvider;
-use datafusion::logical_expr::dml::InsertOp;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use crate::stores::UserTableStore;
+use kalamdb_commons::Role;
 use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
 use std::any::Any;
@@ -51,6 +52,9 @@ pub struct UserTableProvider {
     /// Current user ID for data isolation
     current_user_id: UserId,
 
+    /// Role associated with the current session (determines access scope)
+    access_role: Role,
+
     /// INSERT handler
     insert_handler: Arc<UserTableInsertHandler>,
 
@@ -73,6 +77,7 @@ impl std::fmt::Debug for UserTableProvider {
             .field("table_metadata", &self.table_metadata)
             .field("schema", &self.schema)
             .field("current_user_id", &self.current_user_id)
+            .field("access_role", &self.access_role)
             .field("parquet_paths", &self.parquet_paths)
             .finish()
     }
@@ -86,12 +91,14 @@ impl UserTableProvider {
     /// * `schema` - Arrow schema for the table
     /// * `store` - UserTableStore for DML operations
     /// * `current_user_id` - Current user ID for data isolation
+    /// * `access_role` - Role of the caller (determines access scope)
     /// * `parquet_paths` - Optional list of Parquet file paths for cold data
     pub fn new(
         table_metadata: TableMetadata,
         schema: SchemaRef,
         store: Arc<UserTableStore>,
         current_user_id: UserId,
+        access_role: Role,
         parquet_paths: Vec<String>,
     ) -> Self {
         let insert_handler = Arc::new(UserTableInsertHandler::new(store.clone()));
@@ -103,6 +110,7 @@ impl UserTableProvider {
             schema,
             store,
             current_user_id,
+            access_role,
             insert_handler,
             update_handler,
             delete_handler,
@@ -119,17 +127,17 @@ impl UserTableProvider {
         // Wire through to all handlers
         self.insert_handler = Arc::new(
             UserTableInsertHandler::new(self.store.clone())
-                .with_live_query_manager(Arc::clone(&manager))
+                .with_live_query_manager(Arc::clone(&manager)),
         );
         self.update_handler = Arc::new(
             UserTableUpdateHandler::new(self.store.clone())
-                .with_live_query_manager(Arc::clone(&manager))
+                .with_live_query_manager(Arc::clone(&manager)),
         );
         self.delete_handler = Arc::new(
             UserTableDeleteHandler::new(self.store.clone())
-                .with_live_query_manager(Arc::clone(&manager))
+                .with_live_query_manager(Arc::clone(&manager)),
         );
-        
+
         self.live_query_manager = Some(manager);
         self
     }
@@ -447,22 +455,29 @@ impl TableProvider for UserTableProvider {
 
         let full_schema = Arc::new(Schema::new(fields));
 
-        // Read rows for this user only (using user_id prefix)
-        // This enforces data isolation at the storage layer
-        let all_rows = self
-            .store
-            .scan_user(
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
-                self.current_user_id.as_str(),
-            )
-            .map_err(|e| DataFusionError::Execution(format!("Failed to scan user table: {}", e)))?;
+        // Determine scan scope based on role (service/dba/system can see all users)
+        let raw_rows = if matches!(self.access_role, Role::Service | Role::Dba | Role::System) {
+            self.store
+                .scan_all(self.namespace_id().as_str(), self.table_name().as_str())
+                .map_err(|e| {
+                    DataFusionError::Execution(format!("Failed to scan user table: {}", e))
+                })?
+        } else {
+            self.store
+                .scan_user(
+                    self.namespace_id().as_str(),
+                    self.table_name().as_str(),
+                    self.current_user_id.as_str(),
+                )
+                .map_err(|e| {
+                    DataFusionError::Execution(format!("Failed to scan user table: {}", e))
+                })?
+        };
 
         // Filter out soft-deleted rows (_deleted=true)
-        let rows: Vec<_> = all_rows
+        let filtered_rows: Vec<_> = raw_rows
             .into_iter()
             .filter(|(_row_id, row_data)| {
-                // Check if _deleted is false or missing (default to false)
                 row_data
                     .get("_deleted")
                     .and_then(|v| v.as_bool())
@@ -472,79 +487,24 @@ impl TableProvider for UserTableProvider {
             .collect();
 
         // Apply limit if specified
-        let rows = if let Some(limit_value) = limit {
-            rows.into_iter().take(limit_value).collect()
+        let limited_rows = if let Some(limit_value) = limit {
+            filtered_rows.into_iter().take(limit_value).collect()
         } else {
-            rows
+            filtered_rows
         };
 
         // Convert JSON rows to Arrow RecordBatch (includes system columns)
-        let row_values: Vec<JsonValue> = rows.into_iter().map(|(_id, data)| data).collect();
+        let row_values: Vec<JsonValue> = limited_rows.into_iter().map(|(_id, data)| data).collect();
 
         let batch = json_rows_to_arrow_batch(&full_schema, row_values).map_err(|e| {
             DataFusionError::Execution(format!("JSON to Arrow conversion failed: {}", e))
         })?;
 
-        // Apply projection if specified
-        let (final_batch, final_schema) = if let Some(proj_indices) = projection {
-            // Handle empty projection (e.g., for COUNT(*))
-            if proj_indices.is_empty() {
-                // For COUNT(*), we need a batch with correct row count but no columns
-                // Use RecordBatch with a dummy null column to preserve row count
-                use datafusion::arrow::array::new_null_array;
-                use datafusion::arrow::datatypes::DataType;
-
-                // RecordBatch with 0 columns but preserving row count
-                // We need at least one column to preserve row count, so add a dummy null column
-                let dummy_field = Arc::new(Field::new("__dummy", DataType::Null, true));
-                let projected_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(vec![
-                    dummy_field.clone(),
-                ]));
-                let null_array = new_null_array(&DataType::Null, batch.num_rows());
-
-                let projected_batch = datafusion::arrow::record_batch::RecordBatch::try_new(
-                    projected_schema.clone(),
-                    vec![null_array],
-                )
-                .map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to create temp batch: {}", e))
-                })?;
-
-                (projected_batch, projected_schema)
-            } else {
-                let projected_columns: Vec<_> = proj_indices
-                    .iter()
-                    .map(|&i| batch.column(i).clone())
-                    .collect();
-
-                let projected_fields: Vec<_> = proj_indices
-                    .iter()
-                    .map(|&i| full_schema.field(i).clone())
-                    .collect();
-
-                let projected_schema =
-                    Arc::new(datafusion::arrow::datatypes::Schema::new(projected_fields));
-
-                let projected_batch = datafusion::arrow::record_batch::RecordBatch::try_new(
-                    projected_schema.clone(),
-                    projected_columns,
-                )
-                .map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to project batch: {}", e))
-                })?;
-
-                (projected_batch, projected_schema)
-            }
-        } else {
-            (batch, full_schema)
-        };
-
-        // Create an in-memory table and return its scan plan
+        // Create an in-memory table over the full schema and let DataFusion handle projection
         use datafusion::datasource::MemTable;
-        let partitions = vec![vec![final_batch]];
-        let table = MemTable::try_new(final_schema, partitions).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
-        })?;
+        let partitions = vec![vec![batch]];
+        let table = MemTable::try_new(full_schema, partitions)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
 
         table.scan(_state, projection, &[], limit).await
     }
@@ -871,10 +831,10 @@ fn json_rows_to_arrow_batch(
 mod tests {
     use super::*;
     use crate::flush::FlushPolicy;
+    use crate::stores::UserTableStore;
     use chrono::Utc;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_store::test_utils::TestDb;
-    use crate::stores::UserTableStore;
     use serde_json::json;
 
     fn create_test_db() -> Arc<UserTableStore> {
@@ -916,6 +876,7 @@ mod tests {
             schema.clone(),
             store.clone(),
             user_id.clone(),
+            Role::User,
             vec![],
         );
 
@@ -934,7 +895,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(metadata, schema, store, user_id, vec![]);
+        let provider = UserTableProvider::new(metadata, schema, store, user_id, Role::User, vec![]);
 
         // Test ${user_id} substitution
         assert_eq!(
@@ -962,7 +923,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(metadata, schema, store, user_id, vec![]);
+        let provider = UserTableProvider::new(metadata, schema, store, user_id, Role::User, vec![]);
 
         let prefix = provider.user_key_prefix();
         let expected = b"user123:".to_vec();
@@ -977,7 +938,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(metadata, schema, store, user_id, vec![]);
+        let provider = UserTableProvider::new(metadata, schema, store, user_id, Role::User, vec![]);
 
         let row_data = json!({
             "content": "Hello, World!"
@@ -997,7 +958,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(metadata, schema, store, user_id, vec![]);
+        let provider = UserTableProvider::new(metadata, schema, store, user_id, Role::User, vec![]);
 
         let rows = vec![
             json!({"content": "Message 1"}),
@@ -1019,7 +980,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(metadata, schema, store, user_id, vec![]);
+        let provider = UserTableProvider::new(metadata, schema, store, user_id, Role::User, vec![]);
 
         // Insert a row first
         let row_data = json!({"content": "Original"});
@@ -1039,7 +1000,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(metadata, schema, store, user_id, vec![]);
+        let provider = UserTableProvider::new(metadata, schema, store, user_id, Role::User, vec![]);
 
         // Insert a row first
         let row_data = json!({"content": "To be deleted"});
@@ -1065,10 +1026,18 @@ mod tests {
             schema.clone(),
             store.clone(),
             user1_id.clone(),
+            Role::User,
             vec![],
         );
 
-        let provider2 = UserTableProvider::new(metadata, schema, store, user2_id.clone(), vec![]);
+        let provider2 = UserTableProvider::new(
+            metadata,
+            schema,
+            store,
+            user2_id.clone(),
+            Role::User,
+            vec![],
+        );
 
         // Insert data for user1
         let row_data_1 = json!({"content": "User1 message"});

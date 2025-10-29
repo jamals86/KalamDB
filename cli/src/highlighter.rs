@@ -4,7 +4,7 @@
 //! with color-coded keywords, strings, numbers, and operators.
 
 use colored::*;
-use rustyline::highlight::{Highlighter as RustylineHighlighter, CmdKind};
+use rustyline::highlight::{CmdKind, Highlighter as RustylineHighlighter};
 use std::borrow::Cow;
 
 /// SQL syntax highlighter

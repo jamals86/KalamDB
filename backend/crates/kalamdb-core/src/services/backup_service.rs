@@ -320,7 +320,9 @@ impl BackupService {
         };
 
         // Create backup destination for this user table
-        let table_backup_dir = backup_dir.join("user_tables").join(table.table_name.as_str());
+        let table_backup_dir = backup_dir
+            .join("user_tables")
+            .join(table.table_name.as_str());
 
         // Find all user directories (pattern: ${base_path}/*/batch-*.parquet)
         let base_dir = Path::new(base_path);
@@ -379,7 +381,9 @@ impl BackupService {
         };
 
         // Shared table path format: ${storage_path}/shared/{table_name}/batch-*.parquet
-        let shared_dir = Path::new(base_path).join("shared").join(table.table_name.as_str());
+        let shared_dir = Path::new(base_path)
+            .join("shared")
+            .join(table.table_name.as_str());
 
         if !shared_dir.exists() {
             // No data files yet
@@ -387,7 +391,9 @@ impl BackupService {
         }
 
         // Create backup destination
-        let table_backup_dir = backup_dir.join("shared_tables").join(table.table_name.as_str());
+        let table_backup_dir = backup_dir
+            .join("shared_tables")
+            .join(table.table_name.as_str());
 
         // Copy all Parquet files
         self.copy_parquet_files(&shared_dir, &table_backup_dir)

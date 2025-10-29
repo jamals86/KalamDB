@@ -31,7 +31,7 @@ impl UserTableDeleteHandler {
     /// # Arguments
     /// * `store` - UserTableStore instance
     pub fn new(store: Arc<UserTableStore>) -> Self {
-        Self { 
+        Self {
             store,
             live_query_manager: None,
         }
@@ -120,22 +120,24 @@ impl UserTableDeleteHandler {
         if let Some(manager) = &self.live_query_manager {
             if let Some(mut data) = row_data {
                 // CRITICAL: Use fully qualified table name (namespace.table_name) for notification matching
-                let qualified_table_name = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
-                
+                let qualified_table_name =
+                    format!("{}.{}", namespace_id.as_str(), table_name.as_str());
+
                 // Add user_id to notification data for filter matching
                 if let Some(obj) = data.as_object_mut() {
                     obj.insert("user_id".to_string(), serde_json::json!(user_id.as_str()));
                 }
-                
-                let notification = ChangeNotification::delete_soft(
-                    qualified_table_name.clone(),
-                    data,
-                );
-                
+
+                let notification =
+                    ChangeNotification::delete_soft(qualified_table_name.clone(), data);
+
                 let mgr = Arc::clone(manager);
                 tokio::spawn(async move {
                     // ✅ REQUIREMENT 2: Log errors, don't propagate
-                    if let Err(e) = mgr.notify_table_change(&qualified_table_name, notification).await {
+                    if let Err(e) = mgr
+                        .notify_table_change(&qualified_table_name, notification)
+                        .await
+                    {
                         log::warn!("Failed to notify subscribers for DELETE: {}", e);
                     }
                 });
@@ -237,8 +239,8 @@ impl UserTableDeleteHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::test_utils::InMemoryBackend;
     use crate::stores::UserTableStore;
+    use kalamdb_store::test_utils::InMemoryBackend;
     use serde_json::json;
 
     fn setup_test_handler() -> (UserTableDeleteHandler, Arc<UserTableStore>) {

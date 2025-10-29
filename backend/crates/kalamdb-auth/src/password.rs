@@ -195,16 +195,19 @@ mod tests {
         let result = validate_password("MySecurePassword123!");
         assert!(result.is_ok());
     }
-    
+
     #[test]
     fn test_validate_password_skip_common_check() {
         // Common password should fail with check enabled
         let result = validate_password("password");
         assert!(matches!(result, Err(AuthError::WeakPassword(_))));
-        
+
         // Same password should pass with check disabled
         let result = validate_password_with_config("password", true);
-        assert!(result.is_ok(), "Password should be accepted when common check disabled");
+        assert!(
+            result.is_ok(),
+            "Password should be accepted when common check disabled"
+        );
     }
 
     #[test]

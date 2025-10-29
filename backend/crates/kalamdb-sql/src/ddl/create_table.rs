@@ -6,7 +6,9 @@
 use crate::compatibility::map_sql_type_to_arrow;
 use crate::ddl::DdlResult;
 use arrow::datatypes::{Field, Schema};
-use kalamdb_commons::models::{ColumnDefault, NamespaceId, StorageId, TableAccess, TableName, TableType};
+use kalamdb_commons::models::{
+    ColumnDefault, NamespaceId, StorageId, TableAccess, TableName, TableType,
+};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -62,9 +64,8 @@ static USE_USER_STORAGE_MATCH_RE: Lazy<Regex> =
 
 static TTL_MATCH_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)TTL\s+(\d+)").unwrap());
 
-static ACCESS_LEVEL_MATCH_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(?i)ACCESS\s+LEVEL\s+(?:'([^']+)'|"([^"]+)"|([a-z]+))"#).unwrap()
-});
+static ACCESS_LEVEL_MATCH_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)ACCESS\s+LEVEL\s+(?:'([^']+)'|"([^"]+)"|([a-z]+))"#).unwrap());
 
 /// Common flush policy for all table types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,7 +191,9 @@ impl CreateTableStatement {
             .replace_all(&normalized_sql, "")
             .into_owned();
         normalized_sql = TTL_RE.replace_all(&normalized_sql, "").into_owned();
-        normalized_sql = ACCESS_LEVEL_RE.replace_all(&normalized_sql, "").into_owned();
+        normalized_sql = ACCESS_LEVEL_RE
+            .replace_all(&normalized_sql, "")
+            .into_owned();
         // Strip non-Postgres AUTO_INCREMENT for compatibility
         normalized_sql = AUTO_INCREMENT_RE
             .replace_all(&normalized_sql, "")
@@ -242,7 +245,7 @@ impl CreateTableStatement {
                 let name = &create_table.name;
                 let columns = &create_table.columns;
                 let if_not_exists = create_table.if_not_exists;
-                
+
                 // Extract table name
                 let table_name = Self::extract_table_name(name)?;
 
@@ -395,7 +398,12 @@ impl CreateTableStatement {
                     sqlparser::ast::Value::Number(n, _) => n.clone(),
                     sqlparser::ast::Value::Boolean(b) => b.to_string(),
                     sqlparser::ast::Value::Null => return Ok(ColumnDefault::None),
-                    _ => return Err(format!("Unsupported DEFAULT literal: {:?}", value_with_span)),
+                    _ => {
+                        return Err(format!(
+                            "Unsupported DEFAULT literal: {:?}",
+                            value_with_span
+                        ))
+                    }
                 };
                 Ok(ColumnDefault::Literal(literal_str))
             }

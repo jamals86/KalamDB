@@ -10,15 +10,15 @@
 use crate::catalog::{NamespaceId, TableMetadata, TableName};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
+use crate::stores::StreamTableStore;
 use crate::tables::system::LiveQueriesTableProvider;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::TableProvider;
-use datafusion::logical_expr::dml::InsertOp;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
-use crate::stores::StreamTableStore;
 use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;
@@ -231,16 +231,27 @@ impl StreamTableProvider {
             // Deliver notification asynchronously (spawn task to avoid blocking)
             let manager = Arc::clone(live_query_manager);
             // Use fully qualified table name (namespace.table)
-            let table_name = format!("{}.{}", 
+            let table_name = format!(
+                "{}.{}",
                 self.namespace_id().as_str(),
                 self.table_name().as_str()
             );
-            log::info!("📤 StreamTable INSERT: Notifying subscribers for table '{}'", table_name);
+            log::info!(
+                "📤 StreamTable INSERT: Notifying subscribers for table '{}'",
+                table_name
+            );
             tokio::spawn(async move {
                 if let Err(e) = manager.notify_table_change(&table_name, notification).await {
-                    log::error!("Failed to notify subscribers for table '{}': {}", table_name, e);
+                    log::error!(
+                        "Failed to notify subscribers for table '{}': {}",
+                        table_name,
+                        e
+                    );
                 } else {
-                    log::info!("📤 Successfully notified subscribers for table '{}'", table_name);
+                    log::info!(
+                        "📤 Successfully notified subscribers for table '{}'",
+                        table_name
+                    );
                 }
             });
         }
@@ -304,10 +315,7 @@ impl StreamTableProvider {
     /// Number of events deleted
     pub fn evict_expired(&self) -> Result<usize, KalamDbError> {
         self.store
-            .cleanup_expired_rows(
-                self.namespace_id().as_str(),
-                self.table_name().as_str(),
-            )
+            .cleanup_expired_rows(self.namespace_id().as_str(), self.table_name().as_str())
             .map_err(|e| KalamDbError::Other(e.to_string()))
     }
 }
@@ -379,10 +387,11 @@ impl TableProvider for StreamTableProvider {
                 DataFusionError::Execution(format!("Failed to project schema: {}", e))
             })?);
 
-            let projected_batch = RecordBatch::try_new(projected_schema.clone(), projected_columns).map_err(|e| {
-                DataFusionError::Execution(format!("Failed to create projected batch: {}", e))
-            })?;
-            
+            let projected_batch = RecordBatch::try_new(projected_schema.clone(), projected_columns)
+                .map_err(|e| {
+                    DataFusionError::Execution(format!("Failed to create projected batch: {}", e))
+                })?;
+
             (projected_batch, projected_schema)
         } else {
             (batch, self.schema.clone())
@@ -391,9 +400,8 @@ impl TableProvider for StreamTableProvider {
         // Return a MemTable scan with the result
         use datafusion::datasource::MemTable;
         let partitions = vec![vec![final_batch]];
-        let table = MemTable::try_new(final_schema, partitions).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
-        })?;
+        let table = MemTable::try_new(final_schema, partitions)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
         table.scan(_state, projection, &[], limit).await
     }
 
@@ -463,9 +471,8 @@ impl TableProvider for StreamTableProvider {
         // Return a MemTable scan with the result
         use datafusion::datasource::MemTable;
         let partitions = vec![vec![result_batch]];
-        let table = MemTable::try_new(schema, partitions).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
-        })?;
+        let table = MemTable::try_new(schema, partitions)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
         table.scan(_state, None, &[], None).await
     }
 }
@@ -807,9 +814,8 @@ fn json_events_to_arrow_batch(
         }
     }
 
-    RecordBatch::try_new(schema.clone(), arrays).map_err(|e| {
-        KalamDbError::Other(format!("Failed to create RecordBatch: {}", e))
-    })
+    RecordBatch::try_new(schema.clone(), arrays)
+        .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
 }
 
 #[cfg(test)]
@@ -840,7 +846,9 @@ mod tests {
             deleted_retention_hours: None,
         };
 
-        let store = Arc::new(StreamTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
+        let store = Arc::new(StreamTableStore::new(Arc::new(
+            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
+        )));
 
         let provider = StreamTableProvider::new(
             table_metadata,
@@ -1013,7 +1021,9 @@ mod tests {
             deleted_retention_hours: None,
         };
 
-        let store = Arc::new(StreamTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
+        let store = Arc::new(StreamTableStore::new(Arc::new(
+            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
+        )));
 
         let provider = StreamTableProvider::new(
             table_metadata,
@@ -1059,7 +1069,9 @@ mod tests {
             deleted_retention_hours: None,
         };
 
-        let store = Arc::new(StreamTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
+        let store = Arc::new(StreamTableStore::new(Arc::new(
+            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
+        )));
         let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
@@ -1111,7 +1123,9 @@ mod tests {
             deleted_retention_hours: None,
         };
 
-        let store = Arc::new(StreamTableStore::new(Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()))));
+        let store = Arc::new(StreamTableStore::new(Arc::new(
+            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
+        )));
         let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());

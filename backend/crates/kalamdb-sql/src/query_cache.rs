@@ -71,12 +71,12 @@ pub struct QueryCacheTtlConfig {
 impl Default for QueryCacheTtlConfig {
     fn default() -> Self {
         Self {
-            tables: Duration::from_secs(60),             // 60s for tables list
-            namespaces: Duration::from_secs(60),         // 60s for namespaces list
-            live_queries: Duration::from_secs(10),       // 10s for live queries (more dynamic)
-            storages: Duration::from_secs(300), // 5min for storages (rarely change)
-            jobs: Duration::from_secs(30),               // 30s for jobs list
-            single_entity: Duration::from_secs(120),     // 2min for individual entities
+            tables: Duration::from_secs(60),         // 60s for tables list
+            namespaces: Duration::from_secs(60),     // 60s for namespaces list
+            live_queries: Duration::from_secs(10),   // 10s for live queries (more dynamic)
+            storages: Duration::from_secs(300),      // 5min for storages (rarely change)
+            jobs: Duration::from_secs(30),           // 30s for jobs list
+            single_entity: Duration::from_secs(120), // 2min for individual entities
         }
     }
 }

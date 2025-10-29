@@ -11,11 +11,11 @@
 use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
+use crate::stores::StreamTableStore;
 use datafusion::arrow::datatypes::Schema;
 use kalamdb_commons::models::StorageId;
 use kalamdb_commons::system::TableSchema;
 use kalamdb_sql::ddl::CreateTableStatement;
-use crate::stores::StreamTableStore;
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
 
@@ -241,7 +241,7 @@ impl StreamTableService {
             flush_policy: String::new(), // Stream tables don't flush to Parquet
             schema_version: 1,
             deleted_retention_hours: 0, // Stream tables don't have soft deletes
-            access_level: None, // STREAM tables don't use access_level
+            access_level: None,         // STREAM tables don't use access_level
         };
 
         // TODO: Add insert_table method to kalamdb-sql
@@ -274,7 +274,7 @@ mod tests {
     use super::*;
     use datafusion::arrow::datatypes::{DataType, Field};
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{RocksDBBackend, kalamdb_commons::storage::StorageBackend};
+    use kalamdb_store::{kalamdb_commons::storage::StorageBackend, RocksDBBackend};
 
     fn create_test_service() -> (StreamTableService, TestDb) {
         let test_db = TestDb::new(&[

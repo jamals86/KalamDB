@@ -131,12 +131,12 @@ mod tests {
     #[test]
     fn test_basic_auth_encoding() {
         let auth = AuthProvider::basic_auth("alice".to_string(), "secret123".to_string());
-        
+
         // Create a dummy request to test header application
         let client = reqwest::Client::new();
         let request = client.get("http://localhost:8080");
         let result = auth.apply_to_request(request);
-        
+
         assert!(result.is_ok());
         // Note: reqwest::RequestBuilder doesn't expose headers for inspection,
         // so we can only verify it doesn't error
@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn test_system_user_auth_uses_root() {
         let auth = AuthProvider::system_user_auth("test_password".to_string());
-        
+
         match auth {
             AuthProvider::BasicAuth(username, password) => {
                 assert_eq!(username, "root");
@@ -162,7 +162,7 @@ mod tests {
         let password = "secret123";
         let credentials = format!("{}:{}", username, password);
         let encoded = general_purpose::STANDARD.encode(credentials.as_bytes());
-        
+
         // Expected: "YWxpY2U6c2VjcmV0MTIz" (base64 of "alice:secret123")
         assert_eq!(encoded, "YWxpY2U6c2VjcmV0MTIz");
     }

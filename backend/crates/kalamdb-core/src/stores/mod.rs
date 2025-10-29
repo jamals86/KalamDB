@@ -17,10 +17,10 @@
 //! - `SharedTableStore`: Storage for cross-user shared tables with access control
 //! - `StreamTableStore`: Storage for ephemeral stream tables with TTL
 
-pub mod user_table;
 pub mod shared_table;
 pub mod stream_table;
+pub mod user_table;
 
-pub use user_table::UserTableStore;
 pub use shared_table::SharedTableStore;
 pub use stream_table::StreamTableStore;
+pub use user_table::UserTableStore;

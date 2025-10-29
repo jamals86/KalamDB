@@ -54,9 +54,9 @@ pub mod websocket;
 pub use constants::{COLUMN_FAMILIES, SYSTEM_TABLES};
 pub use errors::{CommonError, Result};
 pub use models::{
-    system, AuthType, JobStatus, JobType, NamespaceId, Role, StorageId, StorageMode, TableAccess, TableName,
-    TableType, UserId,
+    system, AuthType, JobStatus, JobType, NamespaceId, Role, StorageId, StorageMode, TableAccess,
+    TableName, TableType, UserId,
 };
 pub use storage::{Operation, Partition, StorageBackend, StorageError};
-pub use system_tables::{SystemTable, StoragePartition};
+pub use system_tables::{StoragePartition, SystemTable};
 pub use websocket::{ChangeType as WsChangeType, Notification, WebSocketMessage};

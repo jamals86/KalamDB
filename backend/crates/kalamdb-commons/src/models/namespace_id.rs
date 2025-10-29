@@ -54,4 +54,3 @@ impl AsRef<str> for NamespaceId {
         &self.0
     }
 }
-

@@ -259,7 +259,13 @@ impl SharedTableChangeDetector {
 
         // Store the row
         self.store
-            .put(namespace_id, table_name, row_id, row_data.clone(), "public")
+            .put(
+                namespace_id,
+                table_name,
+                row_id,
+                row_data.clone(),
+                kalamdb_commons::TableAccess::Public,
+            )
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         // Get stored value with system columns
@@ -375,8 +381,8 @@ impl SharedTableChangeDetector {
 mod tests {
     use super::*;
     use crate::live_query::connection_registry::NodeId;
-    use kalamdb_store::RocksDbInit;
     use kalamdb_sql::KalamSql;
+    use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
     async fn create_test_detector() -> (UserTableChangeDetector, TempDir) {

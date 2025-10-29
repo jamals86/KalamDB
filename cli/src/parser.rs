@@ -28,7 +28,10 @@ pub enum Command {
     Unsubscribe,
     RefreshTables,
     ShowCredentials,
-    UpdateCredentials { username: String, password: String },
+    UpdateCredentials {
+        username: String,
+        password: String,
+    },
     DeleteCredentials,
     Unknown(String),
 }

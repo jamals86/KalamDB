@@ -20,7 +20,7 @@ use kalamdb_commons::Role;
 #[actix_web::test]
 async fn test_basic_auth_success() {
     let server = TestServer::new().await;
-    
+
     // Create test user with password
     let username = "alice";
     let password = "SecurePassword123!";
@@ -35,7 +35,7 @@ async fn test_basic_auth_success() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("Content-Type", "application/json"))
         .set_json(serde_json::json!({
-            "sql": "CREATE NAMESPACE test_ns"
+            "sql": "SELECT 1"
         }))
         .to_request();
 
@@ -54,7 +54,7 @@ async fn test_basic_auth_success() {
 
     // Verify success (or 401 if auth middleware is working but not fully integrated)
     let status = resp.status();
-    
+
     // For now, we expect either:
     // - 200 OK if authentication passes
     // - 401 Unauthorized if middleware blocks unauthenticated requests
@@ -72,7 +72,7 @@ async fn test_basic_auth_success() {
 #[actix_web::test]
 async fn test_basic_auth_invalid_credentials() {
     let server = TestServer::new().await;
-    
+
     // Create test user
     let username = "bob";
     let correct_password = "CorrectPassword123!";
@@ -88,7 +88,7 @@ async fn test_basic_auth_invalid_credentials() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("Content-Type", "application/json"))
         .set_json(serde_json::json!({
-            "sql": "CREATE NAMESPACE test_ns"
+            "sql": "SELECT 1"
         }))
         .to_request();
 
@@ -125,7 +125,7 @@ async fn test_basic_auth_missing_header() {
         .uri("/v1/api/sql")
         .insert_header(("Content-Type", "application/json"))
         .set_json(serde_json::json!({
-            "sql": "CREATE NAMESPACE test_ns"
+            "sql": "SELECT 1"
         }))
         .to_request();
 
@@ -159,11 +159,11 @@ async fn test_basic_auth_malformed_header() {
 
     // Test various malformed headers
     let malformed_headers = vec![
-        "Basic",                           // Missing credentials
-        "Basic notbase64!@#",              // Invalid base64
-        "Bearer token123",                 // Wrong auth scheme
-        "Basic YWxpY2U=",                  // Valid base64 but missing colon
-        "BasicYWxpY2U6cGFzcw==",           // Missing space after "Basic"
+        "Basic",                 // Missing credentials
+        "Basic notbase64!@#",    // Invalid base64
+        "Bearer token123",       // Wrong auth scheme
+        "Basic YWxpY2U=",        // Valid base64 but missing colon
+        "BasicYWxpY2U6cGFzcw==", // Missing space after "Basic"
     ];
 
     for malformed_header in malformed_headers {

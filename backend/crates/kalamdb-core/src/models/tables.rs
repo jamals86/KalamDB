@@ -41,7 +41,7 @@ pub struct UserTableRow {
     #[serde(flatten)]
     pub fields: Map<String, Value>, // User-defined dynamic fields
     pub _updated: String, // System column: ISO 8601 timestamp
-    pub _deleted: bool, // System column: soft delete flag
+    pub _deleted: bool,   // System column: soft delete flag
 }
 
 /// Row in a shared table (cross-user data with access control).
@@ -75,9 +75,9 @@ pub struct UserTableRow {
 pub struct SharedTableRow {
     #[serde(flatten)]
     pub fields: Map<String, Value>, // User-defined dynamic fields
-    pub access_level: String, // public, private, restricted
-    pub _updated: String, // System column: ISO 8601 timestamp
-    pub _deleted: bool, // System column: soft delete flag
+    pub access_level: kalamdb_commons::TableAccess, // public, private, restricted
+    pub _updated: String,                           // System column: ISO 8601 timestamp
+    pub _deleted: bool,                             // System column: soft delete flag
 }
 
 /// Row in a stream table (ephemeral time-series data).
@@ -114,10 +114,10 @@ pub struct SharedTableRow {
 pub struct StreamTableRow {
     #[serde(flatten)]
     pub fields: Map<String, Value>, // User-defined dynamic fields
-    pub ttl_seconds: u64, // Time-to-live in seconds
+    pub ttl_seconds: u64,    // Time-to-live in seconds
     pub inserted_at: String, // ISO 8601 timestamp
-    pub _updated: String, // System column: ISO 8601 timestamp
-    pub _deleted: bool, // System column: soft delete flag
+    pub _updated: String,    // System column: ISO 8601 timestamp
+    pub _deleted: bool,      // System column: soft delete flag
 }
 
 #[cfg(test)]
@@ -162,7 +162,7 @@ mod tests {
             .as_object()
             .unwrap()
             .clone(),
-            access_level: "public".to_string(),
+            access_level: kalamdb_commons::TableAccess::Public,
             _updated: "2025-10-27T10:00:00Z".to_string(),
             _deleted: false,
         };

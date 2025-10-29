@@ -91,16 +91,23 @@ impl SystemTable {
     /// Allocates each Partition once and returns a reference,
     /// avoiding repeated String allocations across the codebase.
     pub fn partition(&self) -> &'static crate::storage::Partition {
-        use once_cell::sync::Lazy;
         use crate::storage::Partition;
+        use once_cell::sync::Lazy;
 
-        static USERS: Lazy<Partition> = Lazy::new(|| Partition::new(SystemTable::Users.column_family_name()));
-        static NAMESPACES: Lazy<Partition> = Lazy::new(|| Partition::new(SystemTable::Namespaces.column_family_name()));
-        static TABLES: Lazy<Partition> = Lazy::new(|| Partition::new(SystemTable::Tables.column_family_name()));
-        static TABLE_SCHEMAS: Lazy<Partition> = Lazy::new(|| Partition::new(SystemTable::TableSchemas.column_family_name()));
-        static STORAGES: Lazy<Partition> = Lazy::new(|| Partition::new(SystemTable::Storages.column_family_name()));
-        static LIVE_QUERIES: Lazy<Partition> = Lazy::new(|| Partition::new(SystemTable::LiveQueries.column_family_name()));
-        static JOBS: Lazy<Partition> = Lazy::new(|| Partition::new(SystemTable::Jobs.column_family_name()));
+        static USERS: Lazy<Partition> =
+            Lazy::new(|| Partition::new(SystemTable::Users.column_family_name()));
+        static NAMESPACES: Lazy<Partition> =
+            Lazy::new(|| Partition::new(SystemTable::Namespaces.column_family_name()));
+        static TABLES: Lazy<Partition> =
+            Lazy::new(|| Partition::new(SystemTable::Tables.column_family_name()));
+        static TABLE_SCHEMAS: Lazy<Partition> =
+            Lazy::new(|| Partition::new(SystemTable::TableSchemas.column_family_name()));
+        static STORAGES: Lazy<Partition> =
+            Lazy::new(|| Partition::new(SystemTable::Storages.column_family_name()));
+        static LIVE_QUERIES: Lazy<Partition> =
+            Lazy::new(|| Partition::new(SystemTable::LiveQueries.column_family_name()));
+        static JOBS: Lazy<Partition> =
+            Lazy::new(|| Partition::new(SystemTable::Jobs.column_family_name()));
 
         match self {
             SystemTable::Users => &USERS,
@@ -138,12 +145,15 @@ impl StoragePartition {
 
     /// Returns a shared Partition reference for this named partition.
     pub fn partition(&self) -> &'static crate::storage::Partition {
-        use once_cell::sync::Lazy;
         use crate::storage::Partition;
+        use once_cell::sync::Lazy;
 
-        static INFO: Lazy<Partition> = Lazy::new(|| Partition::new(StoragePartition::InformationSchemaTables.name()));
-        static COLUMNS: Lazy<Partition> = Lazy::new(|| Partition::new(StoragePartition::SystemColumns.name()));
-        static COUNTERS: Lazy<Partition> = Lazy::new(|| Partition::new(StoragePartition::UserTableCounters.name()));
+        static INFO: Lazy<Partition> =
+            Lazy::new(|| Partition::new(StoragePartition::InformationSchemaTables.name()));
+        static COLUMNS: Lazy<Partition> =
+            Lazy::new(|| Partition::new(StoragePartition::SystemColumns.name()));
+        static COUNTERS: Lazy<Partition> =
+            Lazy::new(|| Partition::new(StoragePartition::UserTableCounters.name()));
 
         match self {
             StoragePartition::InformationSchemaTables => &INFO,

@@ -2,7 +2,9 @@
 //!
 //! This module provides an Actix actor for managing WebSocket connections and live query subscriptions.
 
-use actix::{fut, Actor, ActorContext, ActorFutureExt, AsyncContext, Handler, Message, StreamHandler};
+use actix::{
+    fut, Actor, ActorContext, ActorFutureExt, AsyncContext, Handler, Message, StreamHandler,
+};
 use actix_web_actors::ws;
 use kalamdb_commons::models::UserId;
 use kalamdb_commons::WebSocketMessage;
@@ -117,7 +119,7 @@ impl Actor for WebSocketSession {
 
         // Create notification channel for live query updates
         let (notification_tx, mut notification_rx) = tokio::sync::mpsc::unbounded_channel();
-        
+
         // Spawn task to listen for notifications and send to WebSocket
         let addr = ctx.address();
         actix::spawn(async move {
@@ -137,7 +139,11 @@ impl Actor for WebSocketSession {
                 fut::wrap_future(async move {
                     let live_user = LiveUserId::new(user_string);
                     let conn_id = manager
-                        .register_connection(live_user.clone(), unique_conn_id, Some(notification_tx))
+                        .register_connection(
+                            live_user.clone(),
+                            unique_conn_id,
+                            Some(notification_tx),
+                        )
                         .await;
                     (conn_id, live_user)
                 })
@@ -320,8 +326,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
 
                             debug!(
                                 "Subscription options: last_rows_u32={:?}, raw last_rows={:?}",
-                                last_rows_u32,
-                                subscription.options.last_rows
+                                last_rows_u32, subscription.options.last_rows
                             );
 
                             let initial_data_options = last_rows_u32
@@ -519,12 +524,8 @@ mod tests {
             None,
         ));
 
-        let session = WebSocketSession::new(
-            "test-conn-123".to_string(),
-            user_id.clone(),
-            None,
-            manager,
-        );
+        let session =
+            WebSocketSession::new("test-conn-123".to_string(), user_id.clone(), None, manager);
         assert_eq!(session.connection_id, "test-conn-123");
         assert_eq!(session.user_id, user_id);
         assert_eq!(session.subscriptions.len(), 0);

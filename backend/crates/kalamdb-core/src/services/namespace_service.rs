@@ -132,10 +132,10 @@ impl NamespaceService {
             existing_options.insert(key, value);
         }
 
-        namespace.options = Some(
-            serde_json::to_string(&existing_options)
-                .map_err(|e| KalamDbError::IoError(format!("Failed to serialize options: {}", e)))?,
-        );
+        namespace.options =
+            Some(serde_json::to_string(&existing_options).map_err(|e| {
+                KalamDbError::IoError(format!("Failed to serialize options: {}", e))
+            })?);
 
         self.kalam_sql
             .insert_namespace_struct(&namespace)
@@ -236,7 +236,7 @@ impl NamespaceService {
 mod tests {
     use super::*;
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{RocksDBBackend, kalamdb_commons::storage::StorageBackend};
+    use kalamdb_store::{kalamdb_commons::storage::StorageBackend, RocksDBBackend};
 
     fn setup_test_service() -> NamespaceService {
         let test_db = TestDb::new(&["system_namespaces"]).unwrap();
@@ -319,7 +319,7 @@ mod tests {
         service.update_options("app", options).unwrap();
 
         let namespace = service.get("app").unwrap().unwrap();
-        let parsed_options: HashMap<String, JsonValue> = 
+        let parsed_options: HashMap<String, JsonValue> =
             serde_json::from_str(namespace.options.as_ref().unwrap()).unwrap();
         assert_eq!(parsed_options.len(), 2);
         assert_eq!(

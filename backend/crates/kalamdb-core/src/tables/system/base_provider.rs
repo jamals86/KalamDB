@@ -9,9 +9,9 @@
 use crate::error::KalamDbError;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::datasource::{MemTable, TableProvider};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::physical_plan::ExecutionPlan;
-use datafusion::datasource::{MemTable, TableProvider};
 use std::sync::Arc;
 
 /// Shared behaviour for memory-backed system table providers.

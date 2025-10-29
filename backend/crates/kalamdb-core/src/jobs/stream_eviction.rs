@@ -11,9 +11,9 @@
 
 use crate::error::KalamDbError;
 use crate::jobs::{JobExecutor, JobResult};
+use crate::stores::StreamTableStore;
 use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use kalamdb_sql::KalamSql;
-use crate::stores::StreamTableStore;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -84,9 +84,10 @@ impl StreamEvictionJob {
         let mut total_evicted = 0;
 
         // Get all tables from system.tables
-        let all_tables = self.kalam_sql.scan_all_tables().map_err(|e| {
-            KalamDbError::Other(format!("Failed to scan tables: {}", e))
-        })?;
+        let all_tables = self
+            .kalam_sql
+            .scan_all_tables()
+            .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
 
         // Filter for stream tables only
         let stream_tables: Vec<_> = all_tables
@@ -99,12 +100,15 @@ impl StreamEvictionJob {
             // Get full table definition to access ttl_seconds
             let namespace_id = NamespaceId::from(table_meta.namespace.as_str());
             let table_name = TableName::from(table_meta.table_name.as_str());
-            let table_def = self.kalam_sql
+            let table_def = self
+                .kalam_sql
                 .get_table_definition(&namespace_id, &table_name)
                 .map_err(|e| {
                     KalamDbError::Other(format!(
                         "Failed to get table definition for {}.{}: {}",
-                        table_meta.namespace.as_str(), table_meta.table_name.as_str(), e
+                        table_meta.namespace.as_str(),
+                        table_meta.table_name.as_str(),
+                        e
                     ))
                 })?;
 
@@ -167,7 +171,8 @@ impl StreamEvictionJob {
         let namespace_id_str = namespace_id.as_str().to_string();
         let table_name_str = table_name.as_str().to_string();
 
-        let deleted_count = self.stream_store
+        let deleted_count = self
+            .stream_store
             .cleanup_expired_rows(&namespace_id_str, &table_name_str)
             .map_err(|e| KalamDbError::Other(format!("Failed to cleanup expired rows: {}", e)))?;
 
@@ -229,10 +234,12 @@ impl StreamEvictionJob {
                 // Sort by inserted_at timestamp from the row data
                 // The row_data contains "inserted_at" field
                 events.sort_by(|(_, a), (_, b)| {
-                    let a_time = a.get("inserted_at")
+                    let a_time = a
+                        .get("inserted_at")
                         .and_then(|v| v.as_str())
                         .unwrap_or("1970-01-01T00:00:00Z");
-                    let b_time = b.get("inserted_at")
+                    let b_time = b
+                        .get("inserted_at")
                         .and_then(|v| v.as_str())
                         .unwrap_or("1970-01-01T00:00:00Z");
                     a_time.cmp(b_time)
@@ -296,8 +303,8 @@ impl StreamEvictionJob {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::RocksDbInit;
     use crate::tables::system::JobsTableProvider;
+    use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
     fn setup_eviction_job() -> (StreamEvictionJob, Arc<StreamTableStore>, TempDir) {

@@ -120,9 +120,8 @@ impl TableProvider for SystemStoragesProvider {
             DataFusionError::Execution(format!("Failed to build system.storages batch: {}", e))
         })?;
         let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create MemTable: {}", e))
-        })?;
+        let table = MemTable::try_new(schema, partitions)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
         table.scan(_state, projection, &[], _limit).await
     }
 

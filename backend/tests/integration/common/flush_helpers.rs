@@ -56,19 +56,16 @@ pub async fn execute_flush_synchronously(
     let latest_schema_version = &table_def.schema_history[table_def.schema_history.len() - 1];
 
     // Convert to Arrow schema
-    let arrow_schema = kalamdb_core::schema::arrow_schema::ArrowSchemaWithOptions::from_json_string(
-        &latest_schema_version.arrow_schema_json,
-    )
-    .map_err(|e| format!("Failed to parse Arrow schema: {}", e))?;
+    let arrow_schema =
+        kalamdb_core::schema::arrow_schema::ArrowSchemaWithOptions::from_json_string(
+            &latest_schema_version.arrow_schema_json,
+        )
+        .map_err(|e| format!("Failed to parse Arrow schema: {}", e))?;
 
-    // Use DB from TestServer
-    let db = server.db.clone();
-    
-    // Create user table store
-    let user_table_store = Arc::new(
-        kalamdb_store::UserTableStore::new(db.clone())
-            .map_err(|e| format!("Failed to create UserTableStore: {}", e))?,
-    );
+    // Create storage backend and user table store
+    let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        Arc::new(kalamdb_store::RocksDBBackend::new(server.db.clone()));
+    let user_table_store = Arc::new(kalamdb_core::stores::UserTableStore::new(backend));
 
     // Get storage_id from table definition and convert to String
     let storage_id = table_def.storage_id.to_string();
@@ -76,12 +73,12 @@ pub async fn execute_flush_synchronously(
     // Create flush job
     let namespace_id = NamespaceId::from(namespace);
     let table_name_id = TableName::from(table_name);
-    
+
     // Create storage registry (needed for path resolution)
     let storage_registry = Arc::new(kalamdb_core::storage::StorageRegistry::new(
         server.kalam_sql.clone(),
     ));
-    
+
     let flush_job = UserTableFlushJob::new(
         user_table_store.clone(),
         namespace_id,
@@ -220,11 +217,7 @@ pub async fn wait_for_flush_job_completion(
 /// # Returns
 ///
 /// Vector of Parquet file paths found
-pub fn check_user_parquet_files(
-    namespace: &str,
-    table_name: &str,
-    user_id: &str,
-) -> Vec<PathBuf> {
+pub fn check_user_parquet_files(namespace: &str, table_name: &str, user_id: &str) -> Vec<PathBuf> {
     let storage_path = PathBuf::from("./data")
         .join(user_id)
         .join("tables")
@@ -397,12 +390,7 @@ pub fn extract_job_id(message: &str) -> Result<String, String> {
             // Multiple job IDs (FLUSH ALL TABLES)
             let end = rest.find(']').unwrap_or(rest.len());
             let ids_str = &rest[1..end];
-            let first_id = ids_str
-                .split(',')
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
+            let first_id = ids_str.split(',').next().unwrap_or("").trim().to_string();
             if first_id.is_empty() {
                 return Err("No job ID found in array".to_string());
             }

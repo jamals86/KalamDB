@@ -30,7 +30,7 @@ impl UserTableUpdateHandler {
     /// # Arguments
     /// * `store` - UserTableStore instance for RocksDB operations
     pub fn new(store: Arc<UserTableStore>) -> Self {
-        Self { 
+        Self {
             store,
             live_query_manager: None,
         }
@@ -137,23 +137,26 @@ impl UserTableUpdateHandler {
         if let Some(manager) = &self.live_query_manager {
             // CRITICAL: Use fully qualified table name (namespace.table_name) for notification matching
             let qualified_table_name = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
-            
+
             // Add user_id to notification data for filter matching
             let mut notification_data = updated_row;
             if let Some(obj) = notification_data.as_object_mut() {
                 obj.insert("user_id".to_string(), serde_json::json!(user_id.as_str()));
             }
-            
+
             let notification = ChangeNotification::update(
                 qualified_table_name.clone(),
                 old_data,
                 notification_data,
             );
-            
+
             let mgr = Arc::clone(manager);
             tokio::spawn(async move {
                 // ✅ REQUIREMENT 2: Log errors, don't propagate
-                if let Err(e) = mgr.notify_table_change(&qualified_table_name, notification).await {
+                if let Err(e) = mgr
+                    .notify_table_change(&qualified_table_name, notification)
+                    .await
+                {
                     log::warn!("Failed to notify subscribers for UPDATE: {}", e);
                 }
             });
@@ -204,8 +207,8 @@ impl UserTableUpdateHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::test_utils::InMemoryBackend;
     use crate::stores::UserTableStore;
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn setup_test_handler() -> (UserTableUpdateHandler, Arc<UserTableStore>) {
         let backend = Arc::new(InMemoryBackend::new());

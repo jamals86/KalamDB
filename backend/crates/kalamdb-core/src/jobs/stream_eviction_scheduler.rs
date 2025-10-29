@@ -138,10 +138,7 @@ impl StreamEvictionScheduler {
 
     /// Check if the scheduler is running
     pub fn is_running(&self) -> bool {
-        matches!(
-            *self.state.read().unwrap(),
-            SchedulerState::Running(_)
-        )
+        matches!(*self.state.read().unwrap(), SchedulerState::Running(_))
     }
 }
 
@@ -149,9 +146,9 @@ impl StreamEvictionScheduler {
 mod tests {
     use super::*;
     use crate::jobs::{JobExecutor, StreamEvictionJob};
-    use kalamdb_store::RocksDbInit;
     use crate::tables::system::JobsTableProvider;
     use kalamdb_sql::KalamSql;
+    use kalamdb_store::RocksDbInit;
     use kalamdb_store::StreamTableStore;
     use tempfile::TempDir;
 

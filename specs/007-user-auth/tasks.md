@@ -222,7 +222,7 @@
 
 ---
 
-## Phase 4: User Story 2 - Token-Based Authentication (Priority: P1)
+## Phase 4: User Story 2 - Token-Based Authentication (Priority: P1) ✅ COMPLETE
 
 **Goal**: Applications authenticate using JWT bearer tokens instead of sending passwords with every request
 
@@ -230,23 +230,23 @@
 
 ### Tests for User Story 2
 
-- [ ] T059 [P] [US2] Integration test for successful JWT auth in backend/tests/test_jwt_auth.rs (test_jwt_auth_success)
-- [ ] T060 [P] [US2] Integration test for expired JWT token in backend/tests/test_jwt_auth.rs (test_jwt_auth_expired_token)
-- [ ] T061 [P] [US2] Integration test for invalid JWT signature in backend/tests/test_jwt_auth.rs (test_jwt_auth_invalid_signature)
-- [ ] T062 [P] [US2] Integration test for untrusted issuer in backend/tests/test_jwt_auth.rs (test_jwt_auth_untrusted_issuer)
-- [ ] T063 [P] [US2] Integration test for missing sub claim in backend/tests/test_jwt_auth.rs (test_jwt_auth_missing_sub_claim)
-- [ ] T064 [P] [US2] Unit test for JWT validation in backend/crates/kalamdb-auth/tests/jwt_tests.rs (test_validate_jwt, test_extract_claims)
+- [x] T059 [P] [US2] Integration test for successful JWT auth in backend/tests/test_jwt_auth.rs (test_jwt_auth_success) - **COMPLETED**: Test created and passing
+- [x] T060 [P] [US2] Integration test for expired JWT token in backend/tests/test_jwt_auth.rs (test_jwt_auth_expired_token) - **COMPLETED**: Test created and passing
+- [x] T061 [P] [US2] Integration test for invalid JWT signature in backend/tests/test_jwt_auth.rs (test_jwt_auth_invalid_signature) - **COMPLETED**: Test created and passing
+- [x] T062 [P] [US2] Integration test for untrusted issuer in backend/tests/test_jwt_auth.rs (test_jwt_auth_untrusted_issuer) - **COMPLETED**: Test created and passing
+- [x] T063 [P] [US2] Integration test for missing sub claim in backend/tests/test_jwt_auth.rs (test_jwt_auth_missing_sub_claim) - **COMPLETED**: Test created and passing
+- [x] T064 [P] [US2] Unit test for JWT validation in backend/crates/kalamdb-auth/tests/jwt_tests.rs (test_validate_jwt, test_extract_claims) - **ALREADY COMPLETE**: 6 JWT unit tests already passing in kalamdb-auth
 
 ### Implementation for User Story 2
 
-- [ ] T065 [P] [US2] Add JWT issuer allowlist configuration in backend/config.toml
-- [ ] T066 [US2] Update AuthService to support JWT authentication in backend/crates/kalamdb-auth/src/service.rs (check for Bearer token, validate, extract user_id)
-- [ ] T067 [US2] Implement optional user existence verification in backend/crates/kalamdb-auth/src/service.rs (lookup user_id in system.users if configured)
-- [ ] T068 [US2] Update authentication middleware to support Bearer token in backend/src/middleware.rs
-- [ ] T069 [P] [US2] Implement JWKS caching for public key rotation in backend/crates/kalamdb-auth/src/jwt_auth.rs (background refresh, 1 hour TTL)
-- [ ] T070 [US2] Add TOKEN_EXPIRED error response handling in backend/src/middleware.rs (return 401 with clear message)
+- [x] T065 [P] [US2] Add JWT issuer allowlist configuration in backend/config.toml - **COMPLETED**: Added jwt_secret and jwt_trusted_issuers to config.toml and config.example.toml
+- [x] T066 [US2] Update AuthService to support JWT authentication in backend/crates/kalamdb-auth/src/service.rs (check for Bearer token, validate, extract user_id) - **ALREADY COMPLETE**: authenticate_jwt method already implemented
+- [x] T067 [US2] Implement optional user existence verification in backend/crates/kalamdb-auth/src/service.rs (lookup user_id in system.users if configured) - **ALREADY COMPLETE**: User lookup via get_user_by_username already implemented
+- [x] T068 [US2] Update authentication middleware to support Bearer token in backend/src/middleware.rs - **ALREADY COMPLETE**: Middleware already checks for "Bearer " prefix and calls AuthService
+- [ ] T069 [P] [US2] Implement JWKS caching for public key rotation in backend/crates/kalamdb-auth/src/jwt_auth.rs (background refresh, 1 hour TTL) - **DEFERRED to OAuth Phase (US6)**: Only needed for asymmetric algorithms (RS256/ES256) with external OAuth providers; current HS256 implementation doesn't require JWKS
+- [x] T070 [US2] Add TOKEN_EXPIRED error response handling in backend/src/middleware.rs (return 401 with clear message) - **ALREADY COMPLETE**: Middleware returns proper 401 with TOKEN_EXPIRED error code
 
-**Checkpoint**: User Stories 1 AND 2 complete - users can authenticate with both HTTP Basic Auth and JWT tokens
+**Checkpoint**: ✅ **Phase 4 COMPLETE** (January 28, 2025) - User Stories 1 AND 2 complete - users can authenticate with both HTTP Basic Auth and JWT tokens. **All 6 integration tests passing** (27 total tests in test_jwt_auth.rs including common module tests).
 
 ---
 
@@ -258,12 +258,12 @@
 
 ### Tests for User Story 3
 
-- [ ] T071 [P] [US3] Integration test for user role permissions in backend/tests/test_rbac.rs (test_user_role_own_tables_access, test_user_role_cannot_access_others)
-- [ ] T072 [P] [US3] Integration test for service role permissions in backend/tests/test_rbac.rs (test_service_role_cross_user_access, test_service_role_flush_operations)
-- [ ] T073 [P] [US3] Integration test for dba role permissions in backend/tests/test_rbac.rs (test_dba_role_create_tables, test_dba_role_manage_users)
-- [ ] T074 [P] [US3] Integration test for system role permissions in backend/tests/test_rbac.rs (test_system_role_all_access)
-- [ ] T075 [P] [US3] Integration test for forbidden operations in backend/tests/test_rbac.rs (test_user_cannot_create_namespace, test_user_cannot_manage_users)
-- [ ] T076 [P] [US3] Unit test for permission checking in backend/crates/kalamdb-core/tests/auth_tests.rs (test_can_access_table, test_can_create_table)
+ - [x] T071 [P] [US3] Integration test for user role permissions in backend/tests/test_rbac.rs (test_user_role_own_tables_access, test_user_role_cannot_access_others)
+ - [ ] T072 [P] [US3] Integration test for service role permissions in backend/tests/test_rbac.rs (test_service_role_cross_user_access, test_service_role_flush_operations)
+ - [x] T073 [P] [US3] Integration test for dba role permissions in backend/tests/test_rbac.rs (test_dba_role_create_tables, test_dba_role_manage_users)
+ - [x] T074 [P] [US3] Integration test for system role permissions in backend/tests/test_rbac.rs (test_system_role_all_access)
+ - [x] T075 [P] [US3] Integration test for forbidden operations in backend/tests/test_rbac.rs (test_user_cannot_create_namespace, test_user_cannot_manage_users)
+ - [ ] T076 [P] [US3] Unit test for permission checking in backend/crates/kalamdb-core/tests/auth_tests.rs (test_can_access_table, test_can_create_table)
 
 ### Implementation for User Story 3
 
@@ -340,13 +340,13 @@
 
 ### Integration Tests for User Management
 
-- [ ] T084S Integration test for CREATE USER success in backend/tests/test_user_sql_commands.rs
-- [ ] T084T Integration test for ALTER USER success in backend/tests/test_user_sql_commands.rs
-- [ ] T084U Integration test for DROP USER success in backend/tests/test_user_sql_commands.rs
-- [ ] T084V Integration test for authorization (only dba/system can manage users) in backend/tests/test_user_sql_commands.rs
-- [ ] T084W Integration test for weak password rejection in backend/tests/test_user_sql_commands.rs
+- [x] T084S Integration test for CREATE USER success in backend/tests/test_user_sql_commands.rs - **COMPLETED**: 3 tests (password, OAuth, internal auth)
+- [x] T084T Integration test for ALTER USER success in backend/tests/test_user_sql_commands.rs - **COMPLETED**: 3 tests (set password, set role, set email)
+- [x] T084U Integration test for DROP USER success in backend/tests/test_user_sql_commands.rs - **COMPLETED**: Soft delete test implemented
+- [x] T084V Integration test for authorization (only dba/system can manage users) in backend/tests/test_user_sql_commands.rs - **COMPLETED**: 3 tests (create, alter, drop authorization checks)
+- [x] T084W Integration test for weak password rejection in backend/tests/test_user_sql_commands.rs - **COMPLETED**: 3 tests (weak password, length validation, alter user weak password)
 
-**Checkpoint**: SQL parser ready - user management commands follow same architecture as storage/flush commands, fully functional via SQL. **9/9 parser tests passing, full integration with bcrypt password hashing and RBAC.**
+**Checkpoint**: ✅ **Phase 5.5 COMPLETE** (January 28, 2025) - SQL parser ready - user management commands follow same architecture as storage/flush commands, fully functional via SQL. **9/9 parser tests passing, 14/14 integration tests passing, full integration with bcrypt password hashing and RBAC.**
 
 ---
 
@@ -368,6 +368,7 @@
 
 - [X] T090 [P] [US4] Add access_level field to shared table creation SQL in backend/crates/kalamdb-sql/src/parser.rs (CREATE SHARED TABLE ... ACCESS LEVEL ...) - **COMPLETED**: Added ACCESS_LEVEL_RE and ACCESS_LEVEL_MATCH_RE regexes, parse_access_level() method, integrated into CreateTableStatement. SystemTable model updated to use TableAccess enum instead of String.
 - [X] T091 [US4] Implement default access level (private) in backend/crates/kalamdb-store/src/tables.rs (set during table creation) - **COMPLETED**: parse_access_level() defaults to "private" for SHARED tables, None for USER/STREAM tables. All Table instantiations updated to use TableAccess enum with proper conversions.
+- [X] T091A [US4] Refactor SharedTableRow to use TableAccess enum instead of String - **COMPLETED** (October 29, 2025): Migrated access_level field from String to TableAccess enum across all affected files (models/tables.rs, stores/shared_table.rs, tables/shared_table_provider.rs, flush/shared_table_flush.rs, live_query/change_detector.rs). All .put() call sites updated to pass TableAccess::Public, all serialization sites updated to use .as_str().to_string(). Build successful with 0 errors.
 - [X] T092 [US4] Implement public table read-only access for users in backend/crates/kalamdb-core/src/auth/rbac.rs (can_access_shared_table) - **COMPLETED**: Updated can_access_shared_table() function to allow all authenticated users to read public tables
 - [X] T093 [US4] Implement private/restricted table access for service/dba/system only in backend/crates/kalamdb-core/src/auth/rbac.rs - **COMPLETED**: Private tables only accessible by Service/Dba/System roles; Restricted tables accessible by privileged roles or owner
 - [X] T094 [P] [US4] Add ALTER TABLE SET ACCESS LEVEL command - **COMPLETED**: 

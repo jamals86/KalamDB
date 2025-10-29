@@ -3,13 +3,8 @@
 //! Provides centralized registration of all system tables to avoid code duplication.
 
 use crate::tables::system::{
-    JobsTableProvider,
-    LiveQueriesTableProvider,
-    NamespacesTableProvider,
-    SystemStoragesProvider,
-    SystemTablesTableProvider,
-    TableSchemasProvider,
-    UsersTableProvider,
+    JobsTableProvider, LiveQueriesTableProvider, NamespacesTableProvider, SystemStoragesProvider,
+    SystemTablesTableProvider, TableSchemasProvider, UsersTableProvider,
 };
 use datafusion::catalog::memory::MemorySchemaProvider;
 use datafusion::catalog::SchemaProvider;

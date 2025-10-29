@@ -29,7 +29,7 @@ async fn create_system_user(
     allow_remote: bool,
 ) -> User {
     let now = chrono::Utc::now().timestamp_millis();
-    
+
     // Create metadata JSON with allow_remote flag if needed
     let auth_data = if allow_remote {
         Some(serde_json::json!({"allow_remote": true}).to_string())
@@ -65,7 +65,7 @@ async fn create_system_user(
 #[actix_web::test]
 async fn test_system_user_localhost_no_password() {
     let server = TestServer::new().await;
-    
+
     // Create system user WITHOUT password (empty password_hash)
     let username = "sysuser_local";
     create_system_user(&server, username, String::new(), false).await;
@@ -97,7 +97,7 @@ async fn test_system_user_localhost_no_password() {
     // Execute request
     let resp = test::call_service(&app, req).await;
     let status = resp.status();
-    
+
     // Should succeed - localhost system users don't need password
     assert!(
         status.is_success() || status == 200,
@@ -105,14 +105,17 @@ async fn test_system_user_localhost_no_password() {
         status
     );
 
-    println!("✓ T097: System user localhost authentication without password - Status: {}", status);
+    println!(
+        "✓ T097: System user localhost authentication without password - Status: {}",
+        status
+    );
 }
 
 /// T098: System user remote access denied by default
 #[actix_web::test]
 async fn test_system_user_remote_denied_by_default() {
     let server = TestServer::new().await;
-    
+
     // Create system user WITHOUT allow_remote flag
     let username = "sysuser_remote_denied";
     let password = "SysPassword123!";
@@ -146,7 +149,7 @@ async fn test_system_user_remote_denied_by_default() {
     // Execute request
     let resp = test::call_service(&app, req).await;
     let status = resp.status();
-    
+
     // Should fail with 401 Unauthorized - remote access not allowed for system users by default
     assert_eq!(
         status, 401,
@@ -154,14 +157,17 @@ async fn test_system_user_remote_denied_by_default() {
         status
     );
 
-    println!("✓ T098: System user remote access denied by default - Status: {}", status);
+    println!(
+        "✓ T098: System user remote access denied by default - Status: {}",
+        status
+    );
 }
 
 /// T099: System user remote access WITH password when allow_remote=true
 #[actix_web::test]
 async fn test_system_user_remote_with_password() {
     let server = TestServer::new().await;
-    
+
     // Create system user WITH allow_remote flag AND password
     let username = "sysuser_remote_allowed";
     let password = "RemotePassword123!";
@@ -195,7 +201,7 @@ async fn test_system_user_remote_with_password() {
     // Execute request
     let resp = test::call_service(&app, req).await;
     let status = resp.status();
-    
+
     // Should succeed - remote access allowed with password
     assert!(
         status.is_success() || status == 200,
@@ -203,14 +209,17 @@ async fn test_system_user_remote_with_password() {
         status
     );
 
-    println!("✓ T099: System user remote access with password and allow_remote=true - Status: {}", status);
+    println!(
+        "✓ T099: System user remote access with password and allow_remote=true - Status: {}",
+        status
+    );
 }
 
 /// T100: System user remote access WITHOUT password denied even if allow_remote=true
 #[actix_web::test]
 async fn test_system_user_remote_no_password_denied() {
     let server = TestServer::new().await;
-    
+
     // Create system user WITH allow_remote flag but WITHOUT password (security violation)
     let username = "sysuser_remote_nopass";
     create_system_user(&server, username, String::new(), true).await; // allow_remote=true, empty password
@@ -242,7 +251,7 @@ async fn test_system_user_remote_no_password_denied() {
     // Execute request
     let resp = test::call_service(&app, req).await;
     let status = resp.status();
-    
+
     // Should fail with 401 - password required for remote system users
     assert_eq!(
         status, 401,
@@ -250,7 +259,10 @@ async fn test_system_user_remote_no_password_denied() {
         status
     );
 
-    println!("✓ T100: System user remote access without password denied - Status: {}", status);
+    println!(
+        "✓ T100: System user remote access without password denied - Status: {}",
+        status
+    );
 }
 
 /// T101: Global allow_remote_access config flag
@@ -258,20 +270,20 @@ async fn test_system_user_remote_no_password_denied() {
 async fn test_global_remote_access_flag() {
     // NOTE: This test verifies that the global config.auth.allow_remote_access flag
     // controls remote access for ALL internal users
-    
+
     // This test would require:
     // 1. Creating a server with allow_remote_access = true in config
     // 2. Creating a system user WITHOUT per-user allow_remote metadata
     // 3. Verifying remote authentication succeeds due to global flag
-    
+
     // For now, we verify the config exists and defaults to false
     let server = TestServer::new().await;
-    
+
     // The global flag is checked in AuthService::new()
     // Default should be false (localhost-only)
-    
+
     println!("✓ T101: Global allow_remote_access config flag test - Configuration verified");
-    
+
     // In a real implementation, we'd test:
     // - Server with allow_remote_access=true allows remote system users
     // - Server with allow_remote_access=false blocks remote system users

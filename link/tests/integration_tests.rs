@@ -13,9 +13,7 @@
 //! cd cli/kalam-link && cargo test --test integration_tests
 //! ```
 
-use kalam_link::{
-    AuthProvider, ChangeEvent, KalamLinkClient, KalamLinkError, SubscriptionConfig,
-};
+use kalam_link::{AuthProvider, ChangeEvent, KalamLinkClient, KalamLinkError, SubscriptionConfig};
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 
@@ -52,7 +50,6 @@ async fn ensure_server_running() {
 fn create_client() -> Result<KalamLinkClient, KalamLinkError> {
     KalamLinkClient::builder()
         .base_url(SERVER_URL)
-
         .timeout(Duration::from_secs(10))
         .build()
 }
@@ -82,10 +79,7 @@ async fn cleanup_namespace(ns: &str) {
 
 #[tokio::test]
 async fn test_client_builder_basic() {
-    let client = KalamLinkClient::builder()
-        .base_url(SERVER_URL)
-
-        .build();
+    let client = KalamLinkClient::builder().base_url(SERVER_URL).build();
 
     assert!(client.is_ok(), "Client builder should succeed");
 }
@@ -94,7 +88,6 @@ async fn test_client_builder_basic() {
 async fn test_client_builder_with_timeout() {
     let client = KalamLinkClient::builder()
         .base_url(SERVER_URL)
-
         .timeout(Duration::from_secs(5))
         .build();
 
@@ -105,7 +98,6 @@ async fn test_client_builder_with_timeout() {
 async fn test_client_builder_with_jwt() {
     let client = KalamLinkClient::builder()
         .base_url(SERVER_URL)
-
         .jwt_token("test.jwt.token")
         .build();
 
@@ -149,9 +141,7 @@ async fn test_execute_query_with_results() {
 
     // Create table and insert data
     client
-        .execute_query(
-            "CREATE USER TABLE link_test.items (id INT, name VARCHAR) FLUSH ROWS 10",
-        )
+        .execute_query("CREATE USER TABLE link_test.items (id INT, name VARCHAR) FLUSH ROWS 10")
         .await
         .ok();
 
@@ -161,9 +151,7 @@ async fn test_execute_query_with_results() {
         .ok();
 
     // Query
-    let result = client
-        .execute_query("SELECT * FROM link_test.items")
-        .await;
+    let result = client.execute_query("SELECT * FROM link_test.items").await;
 
     assert!(result.is_ok());
     let response = result.unwrap();
@@ -220,7 +208,6 @@ fn test_auth_provider_jwt() {
     assert!(auth.is_authenticated(), "JWT should be authenticated");
 }
 
-
 // =============================================================================
 // WebSocket Subscription Tests
 // =============================================================================
@@ -241,9 +228,7 @@ async fn test_subscription_basic() {
 
     // Create table
     client
-        .execute_query(
-            "CREATE USER TABLE ws_link_test.events (id INT, data VARCHAR) FLUSH ROWS 10",
-        )
+        .execute_query("CREATE USER TABLE ws_link_test.events (id INT, data VARCHAR) FLUSH ROWS 10")
         .await
         .ok();
     sleep(Duration::from_millis(100)).await;
@@ -260,7 +245,10 @@ async fn test_subscription_basic() {
             // Success - WebSocket is working
         }
         Ok(Err(e)) => {
-            eprintln!("⚠️  Subscription failed (may not be fully implemented): {}", e);
+            eprintln!(
+                "⚠️  Subscription failed (may not be fully implemented): {}",
+                e
+            );
         }
         Err(_) => {
             eprintln!("⚠️  Subscription timed out");
@@ -279,9 +267,7 @@ async fn test_subscription_with_custom_config() {
 
     // Create table
     client
-        .execute_query(
-            "CREATE USER TABLE ws_link_config.data (id INT, val VARCHAR) FLUSH ROWS 10",
-        )
+        .execute_query("CREATE USER TABLE ws_link_config.data (id INT, val VARCHAR) FLUSH ROWS 10")
         .await
         .ok();
     sleep(Duration::from_millis(100)).await;
@@ -289,11 +275,7 @@ async fn test_subscription_with_custom_config() {
     // Create subscription with custom config
     let config = SubscriptionConfig::new("SELECT * FROM ws_link_config.data");
 
-    let sub_result = timeout(
-        Duration::from_secs(5),
-        client.subscribe_with_config(config),
-    )
-    .await;
+    let sub_result = timeout(Duration::from_secs(5), client.subscribe_with_config(config)).await;
 
     match sub_result {
         Ok(Ok(_subscription)) => {
@@ -405,16 +387,12 @@ async fn test_create_and_drop_table() {
 
     // Create table
     let create = client
-        .execute_query(
-            "CREATE USER TABLE crud_test.test (id INT, name VARCHAR) FLUSH ROWS 10",
-        )
+        .execute_query("CREATE USER TABLE crud_test.test (id INT, name VARCHAR) FLUSH ROWS 10")
         .await;
     assert!(create.is_ok(), "CREATE TABLE should succeed");
 
     // Drop table
-    let drop = client
-        .execute_query("DROP TABLE crud_test.test")
-        .await;
+    let drop = client.execute_query("DROP TABLE crud_test.test").await;
     assert!(drop.is_ok(), "DROP TABLE should succeed");
 
     cleanup_namespace("crud_test").await;
@@ -429,9 +407,7 @@ async fn test_insert_and_select() {
 
     // Create table
     client
-        .execute_query(
-            "CREATE USER TABLE insert_test.data (id INT, value VARCHAR) FLUSH ROWS 10",
-        )
+        .execute_query("CREATE USER TABLE insert_test.data (id INT, value VARCHAR) FLUSH ROWS 10")
         .await
         .ok();
 
@@ -465,9 +441,7 @@ async fn test_update_operation() {
 
     // Setup
     client
-        .execute_query(
-            "CREATE USER TABLE update_test.items (id INT, status VARCHAR) FLUSH ROWS 10",
-        )
+        .execute_query("CREATE USER TABLE update_test.items (id INT, status VARCHAR) FLUSH ROWS 10")
         .await
         .ok();
     client
@@ -493,9 +467,7 @@ async fn test_delete_operation() {
 
     // Setup
     client
-        .execute_query(
-            "CREATE USER TABLE delete_test.records (id INT, data VARCHAR) FLUSH ROWS 10",
-        )
+        .execute_query("CREATE USER TABLE delete_test.records (id INT, data VARCHAR) FLUSH ROWS 10")
         .await
         .ok();
     client
@@ -563,9 +535,7 @@ async fn test_where_clause_operators() {
 
     // Setup
     client
-        .execute_query(
-            "CREATE USER TABLE where_test.data (id INT, val VARCHAR) FLUSH ROWS 10",
-        )
+        .execute_query("CREATE USER TABLE where_test.data (id INT, val VARCHAR) FLUSH ROWS 10")
         .await
         .ok();
 
@@ -603,9 +573,7 @@ async fn test_limit_clause() {
 
     // Setup
     client
-        .execute_query(
-            "CREATE USER TABLE limit_test.items (id INT) FLUSH ROWS 10",
-        )
+        .execute_query("CREATE USER TABLE limit_test.items (id INT) FLUSH ROWS 10")
         .await
         .ok();
 
@@ -639,9 +607,7 @@ async fn test_order_by_clause() {
 
     // Setup
     client
-        .execute_query(
-            "CREATE USER TABLE order_test.data (val VARCHAR) FLUSH ROWS 10",
-        )
+        .execute_query("CREATE USER TABLE order_test.data (val VARCHAR) FLUSH ROWS 10")
         .await
         .ok();
 
@@ -673,9 +639,7 @@ async fn test_concurrent_queries() {
 
     // Setup table
     client
-        .execute_query(
-            "CREATE USER TABLE concurrent_test.data (id INT) FLUSH ROWS 10",
-        )
+        .execute_query("CREATE USER TABLE concurrent_test.data (id INT) FLUSH ROWS 10")
         .await
         .ok();
 
@@ -713,7 +677,6 @@ async fn test_custom_timeout() {
 
     let client = KalamLinkClient::builder()
         .base_url(SERVER_URL)
-
         .timeout(Duration::from_millis(100)) // Very short timeout
         .build()
         .unwrap();
@@ -726,7 +689,6 @@ async fn test_custom_timeout() {
 async fn test_connection_to_invalid_server() {
     let client = KalamLinkClient::builder()
         .base_url("http://localhost:9999") // Invalid port
-
         .timeout(Duration::from_secs(1))
         .build()
         .unwrap();
