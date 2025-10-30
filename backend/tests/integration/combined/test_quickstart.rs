@@ -42,6 +42,8 @@ async fn test_02_create_user_table() {
     server.execute_sql("CREATE NAMESPACE app").await;
 
     // Create user table with flush policy (requires authentication)
+    // NOTE: USER tables are multi-tenant - they store data for ALL users.
+    // The user_id here is ONLY for authentication, NOT table ownership.
     let response = server
         .execute_sql_with_user(
             r#"CREATE USER TABLE app.messages (
@@ -50,7 +52,7 @@ async fn test_02_create_user_table() {
             content VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) FLUSH ROWS 100"#,
-            Some("user123"), // Pass user_id for USER table creation
+            Some("user123"), // Authenticate as user123 (required for RBAC check)
         )
         .await;
 

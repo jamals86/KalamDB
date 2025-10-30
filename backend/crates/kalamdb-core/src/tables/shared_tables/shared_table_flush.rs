@@ -335,17 +335,18 @@ impl TableFlush for SharedTableFlushJob {
 mod tests {
     use super::*;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use kalamdb_store::{RocksDBBackend, test_utils::TestDb};
 
     #[test]
     fn test_generate_batch_filename() {
+        let test_db = TestDb::new(&["shared_table:test:test_table"]).unwrap();
+        let backend = Arc::new(RocksDBBackend::new(test_db.db.clone()));
         let namespace_id = NamespaceId::new("test".to_string());
         let table_name = TableName::new("test_table".to_string());
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
         let job = SharedTableFlushJob::new(
-            Arc::new(SharedTableStore::new(Arc::new(
-                kalamdb_store::RocksDbBackend::new_temp().unwrap(),
-            ))),
+            Arc::new(SharedTableStore::new(backend, "shared_table:test:test_table")),
             namespace_id,
             table_name,
             schema,
@@ -359,14 +360,14 @@ mod tests {
 
     #[test]
     fn test_table_identifier() {
+        let test_db = TestDb::new(&["shared_table:test_ns:test_table"]).unwrap();
+        let backend = Arc::new(RocksDBBackend::new(test_db.db.clone()));
         let namespace_id = NamespaceId::new("test_ns".to_string());
         let table_name = TableName::new("test_table".to_string());
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
         let job = SharedTableFlushJob::new(
-            Arc::new(SharedTableStore::new(Arc::new(
-                kalamdb_store::RocksDbBackend::new_temp().unwrap(),
-            ))),
+            Arc::new(SharedTableStore::new(backend, "shared_table:test_ns:test_table")),
             namespace_id,
             table_name,
             schema,

@@ -2733,29 +2733,12 @@ impl SqlExecutor {
                     "Insufficient privileges to create USER tables".to_string(),
                 ));
             }
-            // User table - requires user_id (from header or OWNER_ID clause)
-            // Try to extract OWNER_ID from SQL if user_id header is not provided
-            let extracted_owner_id: Option<crate::catalog::UserId> = if user_id.is_none() {
-                // Extract OWNER_ID from SQL using regex
-                use regex::Regex;
-                let owner_id_re = Regex::new(r#"(?i)OWNER_ID\s+['"]([^'"]+)['"]"#).unwrap();
-                owner_id_re
-                    .captures(sql)
-                    .map(|caps| crate::catalog::UserId::from(caps[1].to_string().as_str()))
-            } else {
-                None
-            };
-
-            let actual_user_id = if let Some(uid) = user_id {
-                uid
-            } else if let Some(ref extracted_uid) = extracted_owner_id {
-                extracted_uid
-            } else {
-                return Err(KalamDbError::InvalidOperation(
-                    "CREATE USER TABLE requires authenticated user or OWNER_ID clause".to_string(),
-                ));
-            };
-
+            
+            // NOTE: USER tables are multi-tenant tables that store data for ALL users.
+            // The user_id parameter here is ONLY for authentication/authorization (RBAC).
+            // It does NOT determine table ownership - the table is accessible to all authenticated users.
+            // Data isolation is handled at query time by automatically filtering rows by user_id.
+            
             let namespace_id_for_parse =
                 kalamdb_commons::models::NamespaceId::new(namespace_id.as_str());
 
@@ -2812,13 +2795,17 @@ impl SqlExecutor {
             }
 
             // Register with DataFusion if stores are configured
+            // NOTE: For USER tables, this registration is skipped (returns Ok immediately)
+            // because user tables are registered dynamically at query time per user.
+            // The user_id parameter is ignored for USER table type.
             if self.user_table_store.is_some() {
+                let dummy_user_id = crate::catalog::UserId::from("system");
                 self.register_table_with_datafusion(
                     &namespace_id,
                     &table_name,
                     crate::catalog::TableType::User,
                     schema,
-                    actual_user_id.clone(),
+                    dummy_user_id,
                 )
                 .await?;
             }

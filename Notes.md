@@ -55,31 +55,17 @@ Future:
 56) Add to README.md
     - Vector database
     - Vector Search
-57) AuditLogStore shoud be similar to how the other system tables are located and designed
-@PHASE_14_ENTITYSTORE_REFACTORING.md
-hAS A DEEP DESIGN FOR HOW THEY SHOULD BE AND ALSO UPDATE TASKS.MD AND THE DESIGN HERE
-58) move the auth checking logic to kalamdb-auth crate instead of execute_sql_v1 method
-59) We still looking at X-USER-ID header in kalamdb-api/src/handlers/sql_handler.rs remove it completely from all the code!! even from tests
+    - Has a deep design for how they should be and also update TASKS.MD and the design here
 
-60) No need for OWNER_ID clause anywhere since we have authenticated users now and we must check always the userId which is running the query
-            let actual_user_id = if let Some(uid) = user_id {
-                uid
-            } else if let Some(ref extracted_uid) = extracted_owner_id {
-                extracted_uid
-            } else {
-                return Err(KalamDbError::InvalidOperation(
-                    "CREATE USER TABLE requires authenticated user or OWNER_ID clause".to_string(),
-                ));
-            };
+60) ✅ DONE (2025-10-30) - No need for OWNER_ID clause anywhere since we have authenticated users now and we must check always the userId which is running the query. Removed OWNER_ID extraction logic from executor.rs. CREATE USER TABLE no longer extracts or uses OWNER_ID - authentication user_id is only for RBAC, not table ownership.
 
-            static OWNER_ID_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?i)\s+OWNER_ID\s+['\"][^'\"]+['\"]"#).unwrap());
-
-
-61) Making this clear create user table doesn't need a userId to be passed since the user table is created for all users, this is not needed:
+61) ✅ DONE (2025-10-30) - Making this clear create user table doesn't need a userId to be passed since the user table is created for all users, this is not needed:
 Some("user123"), // Pass user_id for USER table creation
+- Clarified that user_id is ONLY for authentication/RBAC, not table ownership
+- USER tables are multi-tenant and store data for ALL users
+- Updated comments in test_quickstart.rs to reflect this
+- Removed confusing OWNER_ID extraction logic from executor.rs
 
-62) websocket_handler_v1 should use the same authentication method as in extract_auth
 
 
 Key Findings
