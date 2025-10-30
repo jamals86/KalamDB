@@ -305,6 +305,10 @@ pub struct HealthCheckResponse {
 
     /// API version (e.g., "v1")
     pub api_version: String,
+
+    /// Server build date
+    #[serde(default)]
+    pub build_date: Option<String>,
 }
 
 #[cfg(test)]

@@ -113,18 +113,22 @@ pub async fn execute_sql_v1(
                         if let Some(adapter) = exec.get_rocks_adapter() {
                             match adapter.get_user(&username) {
                                 Ok(Some(user)) => {
-                                    // Determine client IP (prefer X-Forwarded-For)
+                                    // Determine client IP (prefer X-Forwarded-For, fallback to peer address)
                                     let client_ip = http_req
                                         .headers()
                                         .get("X-Forwarded-For")
                                         .and_then(|h| h.to_str().ok())
                                         .map(|s| {
                                             s.split(',').next().unwrap_or("").trim().to_string()
+                                        })
+                                        .or_else(|| {
+                                            // Fallback to peer address from connection info
+                                            http_req.peer_addr().map(|addr| addr.ip().to_string())
                                         });
 
                                     let is_localhost = client_ip
                                         .as_deref()
-                                        .map(|ip| ip == "127.0.0.1" || ip == "::1")
+                                        .map(|ip| ip == "127.0.0.1" || ip == "::1" || ip.starts_with("127."))
                                         .unwrap_or(false);
 
                                     let is_system_internal = user.role == Role::System
@@ -173,7 +177,21 @@ pub async fn execute_sql_v1(
                                                 }
                                             }
                                         } else {
-                                            // Remote system user: require allow_remote=true AND a non-empty password that verifies
+                                            // Remote system user: ALWAYS require a password (security enforcement)
+                                            // Even if allow_remote=true, empty passwords are NEVER allowed remotely
+                                            if user.password_hash.is_empty() {
+                                                let took_ms =
+                                                    start_time.elapsed().as_millis() as u64;
+                                                return HttpResponse::Unauthorized().json(
+                                                    SqlResponse::error(
+                                                        "REMOTE_AUTH_FORBIDDEN",
+                                                        "System users with empty passwords cannot authenticate remotely. Set a password with: ALTER USER root SET PASSWORD '...'",
+                                                        took_ms,
+                                                    ),
+                                                );
+                                            }
+                                            
+                                            // Check if remote access is allowed for this user
                                             if !allow_remote {
                                                 let took_ms =
                                                     start_time.elapsed().as_millis() as u64;
@@ -184,17 +202,8 @@ pub async fn execute_sql_v1(
                                                     took_ms,
                                                 ));
                                             }
-                                            if user.password_hash.is_empty() {
-                                                let took_ms =
-                                                    start_time.elapsed().as_millis() as u64;
-                                                return HttpResponse::Unauthorized().json(
-                                                    SqlResponse::error(
-                                                        "PASSWORD_REQUIRED",
-                                                        "Password is required for remote access",
-                                                        took_ms,
-                                                    ),
-                                                );
-                                            }
+                                            
+                                            // Verify password
                                             match password::verify_password(
                                                 &password_plain,
                                                 &user.password_hash,

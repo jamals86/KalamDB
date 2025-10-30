@@ -33,6 +33,7 @@ pub enum Command {
         password: String,
     },
     DeleteCredentials,
+    Info,
     Unknown(String),
 }
 
@@ -133,6 +134,7 @@ impl CommandParser {
                 }
             }
             "\\delete-credentials" => Ok(Command::DeleteCredentials),
+            "\\info" | "\\session" => Ok(Command::Info),
             _ => Ok(Command::Unknown(command.to_string())),
         }
     }

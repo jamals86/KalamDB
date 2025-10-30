@@ -29,6 +29,7 @@ async fn healthcheck_handler() -> HttpResponse {
     HttpResponse::Ok().json(json!({
         "status": "healthy",
         "version": env!("CARGO_PKG_VERSION"),
-        "api_version": "v1"
+        "api_version": "v1",
+        "build_date": env!("BUILD_DATE")
     }))
 }

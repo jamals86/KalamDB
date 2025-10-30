@@ -276,13 +276,21 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Determine authentication (priority: CLI args > stored credentials > config file)
+    // Helper function to check if URL is localhost
+    fn is_localhost_url(url: &str) -> bool {
+        url.contains("localhost") 
+            || url.contains("127.0.0.1") 
+            || url.contains("::1")
+            || url.contains("0.0.0.0")
+    }
+
+    // Determine authentication (priority: CLI args > stored credentials > localhost auto-auth)
     let auth = if let Some(token) = cli
         .token
         .or_else(|| config.auth.as_ref().and_then(|a| a.jwt_token.clone()))
     {
         AuthProvider::jwt_token(token)
-    } else if let (Some(username), Some(password)) = (cli.username, cli.password) {
+    } else if let (Some(username), Some(password)) = (cli.username.clone(), cli.password.clone()) {
         AuthProvider::basic_auth(username, password)
     } else if let Some(creds) = credential_store
         .get_credentials(&cli.instance)
@@ -293,6 +301,12 @@ async fn main() -> Result<()> {
             eprintln!("Using stored credentials for instance '{}'", cli.instance);
         }
         AuthProvider::basic_auth(creds.username, creds.password)
+    } else if is_localhost_url(&server_url) {
+        // Auto-authenticate with root user for localhost connections (no password needed from localhost)
+        if cli.verbose {
+            eprintln!("Auto-authenticating with root user for localhost connection");
+        }
+        AuthProvider::basic_auth("root".to_string(), String::new())
     } else {
         AuthProvider::None
     };

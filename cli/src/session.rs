@@ -69,11 +69,23 @@ pub struct CLISession {
     /// Current user ID
     user_id: String,
 
+    /// Authenticated username
+    username: String,
+
+    /// Session start time
+    connected_at: Instant,
+
+    /// Number of queries executed in this session
+    queries_executed: u64,
+
     /// Server version
     server_version: Option<String>,
 
     /// Server API version
     server_api_version: Option<String>,
+
+    /// Server build date
+    server_build_date: Option<String>,
 
     /// Instance name for credential management
     instance: Option<String>,
@@ -111,13 +123,25 @@ impl CLISession {
             .base_url(&server_url)
             .timeout(std::time::Duration::from_secs(30))
             .max_retries(3)
-            .auth(auth)
+            .auth(auth.clone())
             .build()?;
 
         // Try to fetch server info from health check
-        let (server_version, server_api_version) = match client.health_check().await {
-            Ok(health) => (Some(health.version), Some(health.api_version)),
-            Err(_) => (None, None),
+        let (server_version, server_api_version, server_build_date, connected) = match client.health_check().await {
+            Ok(health) => (
+                Some(health.version), 
+                Some(health.api_version), 
+                health.build_date,
+                true
+            ),
+            Err(_) => (None, None, None, false),
+        };
+
+        // Extract username from auth provider
+        let username = match &auth {
+            AuthProvider::BasicAuth(username, _) => username.clone(),
+            AuthProvider::JwtToken(_) => "jwt-user".to_string(),
+            AuthProvider::None => "anonymous".to_string(),
         };
 
         Ok(Self {
@@ -127,12 +151,16 @@ impl CLISession {
             server_url,
             format,
             color,
-            connected: true,
+            connected,
             subscription_paused: false,
             loading_threshold_ms: 200, // Default: 200ms
-            user_id: "cli".to_string(),
+            user_id: username.clone(),
+            username,
+            connected_at: Instant::now(),
+            queries_executed: 0,
             server_version,
             server_api_version,
+            server_build_date,
             instance,
             credential_store,
         })
@@ -145,6 +173,9 @@ impl CLISession {
     /// **Enhanced**: Colored output and styled timing
     pub async fn execute(&mut self, sql: &str) -> Result<()> {
         let start = Instant::now();
+
+        // Increment query counter
+        self.queries_executed += 1;
 
         // Create a loading indicator with proper cleanup
         let spinner = Arc::new(Mutex::new(None::<ProgressBar>));
@@ -308,19 +339,35 @@ impl CLISession {
     /// **Implements T114b**: Enhanced autocomplete with table names
     /// **Enhanced**: Simple, fast UI without performance issues
     pub async fn run_interactive(&mut self) -> Result<()> {
-        // Print welcome banner
-        self.print_banner();
-
-        // Create autocompleter and fetch initial table names
+        // Create autocompleter and verify connection by fetching tables
+        // This also verifies authentication works
         let mut completer = AutoCompleter::new();
-        print!("{}", "Fetching tables... ".dimmed());
+        print!("{}", "Connecting and authenticating... ".dimmed());
         std::io::Write::flush(&mut std::io::stdout()).ok();
 
+        // Try to fetch tables - this verifies both connection and authentication
         if let Err(e) = self.refresh_tables(&mut completer).await {
-            println!("{}", format!("⚠ {}", e).yellow());
-        } else {
-            println!("{}", "✓".green());
+            println!("{}", "✗".red());
+            eprintln!();
+            eprintln!("{} {}", "Connection failed:".red().bold(), e);
+            eprintln!();
+            eprintln!("{}", "Possible issues:".yellow().bold());
+            eprintln!("  • Server is not running on {}", self.server_url);
+            eprintln!("  • Authentication failed (check credentials)");
+            eprintln!("  • Network connectivity issue");
+            eprintln!();
+            eprintln!("{}", "Try:".cyan().bold());
+            eprintln!("  • Check if server is running: curl {}/v1/api/healthcheck", self.server_url);
+            eprintln!("  • Verify credentials with: kalam --username <user> --password <pass>");
+            eprintln!("  • Use \\show-credentials to see stored credentials");
+            eprintln!();
+            return Err(e);
         }
+        
+        println!("{}", "✓".green());
+        
+        // Connection and auth successful - print welcome banner
+        self.print_banner();
 
         // Create rustyline helper with autocomplete only (no highlighting for performance)
         let helper = CLIHelper { completer };
@@ -488,8 +535,8 @@ impl CLISession {
         );
         println!(
             "  {}  {}",
-            "�".dimmed(),
-            format!("User: {}", self.user_id).cyan()
+            "👤".dimmed(),
+            format!("User: {}", self.username).cyan()
         );
 
         if let Some(ref version) = self.server_version {
@@ -500,15 +547,23 @@ impl CLISession {
             );
         }
 
+        // Show CLI version with build info
         println!(
             "  {}  {}",
-            "�📚".dimmed(),
-            format!("CLI version: {}", env!("CARGO_PKG_VERSION")).dimmed()
+            "📚".dimmed(),
+            format!(
+                "CLI version: {} (built: {})",
+                env!("CARGO_PKG_VERSION"),
+                env!("BUILD_DATE")
+            )
+            .dimmed()
         );
+        
         println!(
-            "  {}  Type {} for help, {} to exit",
+            "  {}  Type {} for help, {} for session info, {} to exit",
             "💡".dimmed(),
             "\\help".cyan().bold(),
+            "\\info".cyan().bold(),
             "\\quit".cyan().bold()
         );
         println!();
@@ -638,6 +693,9 @@ impl CLISession {
             }
             Command::DeleteCredentials => {
                 self.delete_credentials()?;
+            }
+            Command::Info => {
+                self.show_session_info();
             }
             Command::Unknown(cmd) => {
                 eprintln!("Unknown command: {}. Type \\help for help.", cmd);
@@ -942,6 +1000,7 @@ impl CLISession {
         println!("  Meta-commands:");
         println!("    \\quit, \\q              Exit the CLI");
         println!("    \\help, \\?              Show this help message");
+        println!("    \\info, \\session         Show current session information");
         println!("    \\connect <url>         Connect to a different server");
         println!("    \\config                Show current configuration");
         println!("    \\flush                 Flush all data to disk");
@@ -971,6 +1030,84 @@ impl CLISession {
         println!("    \\d users");
         println!("    \\subscribe SELECT * FROM messages");
         println!("    \\show-credentials");
+        println!();
+    }
+
+    /// Show current session information
+    ///
+    /// Displays detailed information about the current CLI session
+    fn show_session_info(&self) {
+        use colored::Colorize;
+        
+        println!();
+        println!("{}", "═══════════════════════════════════════".cyan().bold());
+        println!("{}", "    Session Information".white().bold());
+        println!("{}", "═══════════════════════════════════════".cyan().bold());
+        println!();
+        
+        // Connection info
+        println!("{}", "Connection:".yellow().bold());
+        println!("  Server URL:     {}", self.server_url.green());
+        println!("  Username:       {}", self.username.green());
+        println!("  Connected:      {}", if self.connected { "Yes".green() } else { "No".red() });
+        
+        // Session timing
+        let uptime = self.connected_at.elapsed();
+        let hours = uptime.as_secs() / 3600;
+        let minutes = (uptime.as_secs() % 3600) / 60;
+        let seconds = uptime.as_secs() % 60;
+        let uptime_str = if hours > 0 {
+            format!("{}h {}m {}s", hours, minutes, seconds)
+        } else if minutes > 0 {
+            format!("{}m {}s", minutes, seconds)
+        } else {
+            format!("{}s", seconds)
+        };
+        println!("  Session time:   {}", uptime_str.green());
+        println!();
+        
+        // Server info
+        println!("{}", "Server:".yellow().bold());
+        if let Some(ref version) = self.server_version {
+            println!("  Version:        {}", version.green());
+        } else {
+            println!("  Version:        {}", "Unknown".dimmed());
+        }
+        if let Some(ref api_version) = self.server_api_version {
+            println!("  API Version:    {}", api_version.green());
+        } else {
+            println!("  API Version:    {}", "Unknown".dimmed());
+        }
+        if let Some(ref build_date) = self.server_build_date {
+            println!("  Build Date:     {}", build_date.green());
+        } else {
+            println!("  Build Date:     {}", "Unknown".dimmed());
+        }
+        println!();
+        
+        // Client info
+        println!("{}", "Client:".yellow().bold());
+        println!("  CLI Version:    {}", env!("CARGO_PKG_VERSION").green());
+        println!("  Build Date:     {}", env!("BUILD_DATE").green());
+        println!("  Git Branch:     {}", env!("GIT_BRANCH").green());
+        println!("  Git Commit:     {}", env!("GIT_COMMIT_HASH").green());
+        println!();
+        
+        // Session statistics
+        println!("{}", "Statistics:".yellow().bold());
+        println!("  Queries:        {}", self.queries_executed.to_string().green());
+        println!("  Format:         {}", format!("{:?}", self.format).green());
+        println!("  Colors:         {}", if self.color { "Enabled".green() } else { "Disabled".red() });
+        println!();
+        
+        // Instance info
+        if let Some(ref instance) = self.instance {
+            println!("{}", "Credentials:".yellow().bold());
+            println!("  Instance:       {}", instance.green());
+            println!();
+        }
+        
+        println!("{}", "═══════════════════════════════════════".cyan().bold());
         println!();
     }
 

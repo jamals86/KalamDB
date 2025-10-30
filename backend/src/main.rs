@@ -23,8 +23,9 @@ async fn main() -> Result<()> {
     // Load configuration (fallback to defaults when config file missing)
     let config = match ServerConfig::from_file("config.toml") {
         Ok(cfg) => cfg,
-        Err(_) => {
-            eprintln!("Warning: config.toml not found, using defaults");
+        Err(e) => {
+            eprintln!("Warning: Failed to load config.toml: {}", e);
+            eprintln!("Using defaults");
             ServerConfig::default()
         }
     };

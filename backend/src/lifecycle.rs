@@ -33,7 +33,7 @@ use kalamdb_sql::KalamSql;
 use kalamdb_sql::RocksDbAdapter;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
-use log::info;
+use log::{info, warn};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -337,6 +337,9 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     // T125-T127: Create default system user on first startup
     create_default_system_user(kalam_sql.clone()).await?;
 
+    // Security warning: Check if remote access is enabled with empty root password
+    check_remote_access_security(&config, kalam_sql.clone()).await?;
+
     Ok(ApplicationComponents {
         session_factory,
         sql_executor,
@@ -465,9 +468,10 @@ async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
             let role = Role::System; // Highest privilege level
             let created_at = chrono::Utc::now().timestamp_millis();
 
-            // T126: Generate random password for emergency remote access
-            let password = generate_random_password(24);
-            let password_hash = bcrypt::hash(&password, bcrypt::DEFAULT_COST)?;
+            // T126: Create with EMPTY password hash for localhost-only access
+            // This allows passwordless authentication from localhost (127.0.0.1, ::1)
+            // For remote access, set a password using: ALTER USER root SET PASSWORD '...'
+            let password_hash = String::new(); // Empty = localhost-only, no password required
 
             let user = User {
                 id: user_id,
@@ -487,61 +491,56 @@ async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
 
             kalam_sql.insert_user(&user)?;
 
-            // T127: Log system user credentials to stdout
-            log_system_user_credentials(&username, &password);
+            // T127: Log system user information to stdout
+            info!(
+                "✓ Created system user '{}' (localhost-only access, no password required)",
+                username
+            );
+            info!(
+                "  To enable remote access, set a password: ALTER USER root SET PASSWORD '...'",
+            );
 
             Ok(())
         }
     }
 }
 
-/// Generate a random password for system user
+/// Check for security issues with remote access configuration
 ///
-/// Creates a cryptographically secure random password with:
-/// - Uppercase letters
-/// - Lowercase letters  
-/// - Numbers
-/// - Special characters
-fn generate_random_password(length: usize) -> String {
-    use rand::Rng;
+/// Informs users about password requirements for remote access
+async fn check_remote_access_security(
+    config: &ServerConfig,
+    kalam_sql: Arc<KalamSql>,
+) -> Result<()> {
+    use kalamdb_commons::constants::AuthConstants;
 
-    const CHARSET: &[u8] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
-    let mut rng = rand::thread_rng();
+    // Check if root user exists and has empty password
+    // Always show this info if root has no password, regardless of allow_remote_access setting
+    if let Ok(Some(user)) = kalam_sql.get_user(AuthConstants::DEFAULT_SYSTEM_USERNAME) {
+        if user.password_hash.is_empty() {
+            // Root user has no password - this is secure for localhost-only but warn about limitations
+            warn!("╔═══════════════════════════════════════════════════════════════════╗");
+            warn!("║                    ⚠️  SECURITY NOTICE ⚠️                           ║");
+            warn!("╠═══════════════════════════════════════════════════════════════════╣");
+            warn!("║                                                                   ║");
+            warn!("║  Root user has NO PASSWORD (localhost-only access enabled)       ║");
+            warn!("║                                                                   ║");
+            warn!("║  SECURITY ENFORCEMENT:                                           ║");
+            warn!("║  • Remote authentication is BLOCKED for users with no password   ║");
+            warn!("║  • Root can only connect from localhost (127.0.0.1)              ║");
+            warn!("║  • This configuration is secure by design                        ║");
+            warn!("║                                                                   ║");
+            warn!("║  TO ENABLE REMOTE ACCESS:                                        ║");
+            warn!("║  Set a strong password for the root user:                        ║");
+            warn!("║     ALTER USER root SET PASSWORD 'strong-password-here';         ║");
+            warn!("║                                                                   ║");
+            warn!("║  Note: allow_remote_access config is currently: {}               ║", 
+                  if config.auth.allow_remote_access { "ENABLED " } else { "DISABLED" });
+            warn!("║  (Remote access still requires password for system users)        ║");
+            warn!("║                                                                   ║");
+            warn!("╚═══════════════════════════════════════════════════════════════════╝");
+        }
+    }
 
-    (0..length)
-        .map(|_| {
-            let idx = rng.gen_range(0..CHARSET.len());
-            CHARSET[idx] as char
-        })
-        .collect()
-}
-
-/// T127: Log system user credentials to stdout on first initialization
-///
-/// Displays credentials in a clear, formatted box for the administrator to save.
-/// Includes security warnings about saving credentials securely.
-fn log_system_user_credentials(username: &str, password: &str) {
-    println!("\n");
-    println!("╔═══════════════════════════════════════════════════════════════════╗");
-    println!("║                  KALAMDB SYSTEM USER CREATED                      ║");
-    println!("╠═══════════════════════════════════════════════════════════════════╣");
-    println!("║                                                                   ║");
-    println!("║  Username: {:<54} ║", username);
-    println!("║  Password: {:<54} ║", password);
-    println!("║                                                                   ║");
-    println!("║  ⚠️  IMPORTANT: Save these credentials securely!                   ║");
-    println!("║                                                                   ║");
-    println!("║  Default Access: Localhost only (127.0.0.1, ::1)                   ║");
-    println!("║  Remote Access:  Disabled by default for security                 ║");
-    println!("║                                                                   ║");
-    println!("║  To enable remote access:                                        ║");
-    println!("║  1. Set allow_remote_access=true in config.toml [auth] section    ║");
-    println!("║  2. OR add {{\"allow_remote\": true}} to user metadata via SQL        ║");
-    println!("║                                                                   ║");
-    println!("║  This password is for emergency remote access only.              ║");
-    println!("║  For localhost connections, password is optional.                ║");
-    println!("║                                                                   ║");
-    println!("╚═══════════════════════════════════════════════════════════════════╝");
-    println!("\n");
+    Ok(())
 }
