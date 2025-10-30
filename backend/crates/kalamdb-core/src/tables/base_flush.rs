@@ -28,8 +28,6 @@
 use crate::error::KalamDbError;
 use crate::live_query::manager::LiveQueryManager;
 use chrono::Utc;
-use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::system::Job;
 use kalamdb_commons::{JobId, JobType};
 use serde::{Deserialize, Serialize};
@@ -168,7 +166,7 @@ pub trait TableFlush: Send + Sync {
     ///
     /// Implement table-specific logic:
     /// - Scan rows from RocksDB (use `scan_iter()` for snapshot consistency)
-    /// - Build RecordBatch (use `build_record_batch()` helper)
+    /// - Convert rows to Arrow RecordBatch (implementations handle this directly)
     /// - Write Parquet file(s) (use `ParquetWriter`)
     ///
     /// # Returns
@@ -256,42 +254,6 @@ pub trait TableFlush: Send + Sync {
     fn notify_flush(&self, _rows_flushed: usize, _parquet_files: &[String]) {
         // Default: no notifications
     }
-
-    /// Build Arrow RecordBatch from JSON rows
-    ///
-    /// Helper method for converting table rows to Arrow format.
-    /// Delegates to table-specific batch builder logic.
-    ///
-    /// # Arguments
-    ///
-    /// - `schema`: Arrow schema for the table
-    /// - `rows`: Iterator of JSON rows (must match schema)
-    ///
-    /// # Returns
-    ///
-    /// RecordBatch ready for Parquet writing
-    ///
-    /// # Errors
-    ///
-    /// Returns error if:
-    /// - Row doesn't match schema
-    /// - Type conversion fails
-    /// - Arrow builder error
-    ///
-    /// # Future
-    ///
-    /// Will use optimized `rows_to_batch_optimized()` from T224
-    /// (single-pass O(rows) instead of O(rows × cols))
-    fn build_record_batch(
-        &self,
-        schema: &SchemaRef,
-        rows: Vec<JsonValue>,
-    ) -> Result<RecordBatch, KalamDbError> {
-        // TODO: Use optimized batch builder from T224 when available
-        // For now, delegate to existing implementation
-        crate::tables::arrow_json_conversion::json_rows_to_arrow_batch(schema, rows)
-            .map_err(|e| KalamDbError::SchemaError(format!("Failed to build RecordBatch: {}", e)))
-    }
 }
 
 /// Template method executor for flush jobs
@@ -369,7 +331,7 @@ impl FlushExecutor {
 
                 // Serialize metadata to JSON for job result
                 let metadata_json = serde_json::to_value(&result.metadata)
-                    .map_err(|e| KalamDbError::Internal(format!("Failed to serialize metadata: {}", e)))?;
+                    .map_err(|e| KalamDbError::Other(format!("Failed to serialize metadata: {}", e)))?;
 
                 // Update job record with success
                 let completed_job = job_record.complete(Some(
@@ -412,8 +374,6 @@ impl FlushExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::datatypes::{DataType, Field, Schema};
-    use std::sync::Arc;
     use kalamdb_commons::NamespaceId;
 
     struct MockFlushJob {
@@ -425,7 +385,7 @@ mod tests {
     impl TableFlush for MockFlushJob {
         fn execute(&self) -> Result<FlushJobResult, KalamDbError> {
             if self.should_fail {
-                return Err(KalamDbError::Internal("Mock failure".to_string()));
+                return Err(KalamDbError::Other("Mock failure".to_string()));
             }
 
             Ok(FlushJobResult {
@@ -499,38 +459,11 @@ mod tests {
         assert!(result.is_err());
 
         match result {
-            Err(KalamDbError::Internal(msg)) => {
+            Err(KalamDbError::Other(msg)) => {
                 assert_eq!(msg, "Mock failure");
             }
-            _ => panic!("Expected Internal error"),
+            _ => panic!("Expected Other error"),
         }
-    }
-
-    #[test]
-    fn test_build_record_batch() {
-        let namespace_id = NamespaceId::new("test".to_string());
-        let job = MockFlushJob {
-            should_fail: false,
-            rows_count: 0,
-            namespace_id,
-        };
-
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-            Field::new("name", DataType::Utf8, true),
-        ]));
-
-        let rows = vec![
-            json!({"id": 1, "name": "Alice"}),
-            json!({"id": 2, "name": "Bob"}),
-        ];
-
-        let result = job.build_record_batch(&schema, rows);
-        assert!(result.is_ok());
-
-        let batch = result.unwrap();
-        assert_eq!(batch.num_rows(), 2);
-        assert_eq!(batch.num_columns(), 2);
     }
 
     #[test]
