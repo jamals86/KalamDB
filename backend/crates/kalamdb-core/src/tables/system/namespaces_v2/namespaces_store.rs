@@ -3,6 +3,7 @@
 //! This module provides a SystemTableStore<NamespaceId, Namespace> wrapper for the system.namespaces table.
 
 use crate::stores::SystemTableStore;
+use kalamdb_store::EntityStoreV2 as EntityStore;
 use kalamdb_commons::system::Namespace;
 use kalamdb_commons::NamespaceId;
 use kalamdb_store::StorageBackend;
@@ -56,10 +57,10 @@ mod tests {
         let namespace = create_test_namespace("app", "app");
 
         // Put namespace
-        store.put(&namespace_id, &namespace).unwrap();
+        EntityStore::put(&store, &namespace_id, &namespace).unwrap();
 
         // Get namespace
-        let retrieved = store.get(&namespace_id).unwrap();
+        let retrieved = EntityStore::get(&store, &namespace_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.namespace_id, namespace_id);
@@ -73,11 +74,11 @@ mod tests {
         let namespace = create_test_namespace("app", "app");
 
         // Put then delete
-        store.put(&namespace_id, &namespace).unwrap();
-        store.delete(&namespace_id).unwrap();
+        EntityStore::put(&store, &namespace_id, &namespace).unwrap();
+        EntityStore::delete(&store, &namespace_id).unwrap();
 
         // Verify deleted
-        let retrieved = store.get(&namespace_id).unwrap();
+        let retrieved = EntityStore::get(&store, &namespace_id).unwrap();
         assert!(retrieved.is_none());
     }
 
@@ -89,11 +90,11 @@ mod tests {
         for i in 1..=3 {
             let namespace_id = NamespaceId::new(&format!("ns{}", i));
             let namespace = create_test_namespace(&format!("ns{}", i), &format!("namespace{}", i));
-            store.put(&namespace_id, &namespace).unwrap();
+            EntityStore::put(&store, &namespace_id, &namespace).unwrap();
         }
 
         // Scan all
-        let namespaces = store.scan_all().unwrap();
+        let namespaces = EntityStore::scan_all(&store).unwrap();
         assert_eq!(namespaces.len(), 3);
     }
 

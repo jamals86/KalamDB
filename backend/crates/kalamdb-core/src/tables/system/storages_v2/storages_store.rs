@@ -3,6 +3,7 @@
 //! This module provides a SystemTableStore<StorageId, Storage> wrapper for the system.storages table.
 
 use crate::stores::SystemTableStore;
+use kalamdb_store::EntityStoreV2 as EntityStore;
 use kalamdb_commons::system::Storage;
 use kalamdb_commons::StorageId;
 use kalamdb_store::StorageBackend;
@@ -61,10 +62,10 @@ mod tests {
         let storage = create_test_storage("local", "Local Storage");
 
         // Put storage
-        store.put(&storage_id, &storage).unwrap();
+        EntityStore::put(&store, &storage_id, &storage).unwrap();
 
         // Get storage
-        let retrieved = store.get(&storage_id).unwrap();
+        let retrieved = EntityStore::get(&store, &storage_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.storage_id, storage_id);
@@ -78,11 +79,11 @@ mod tests {
         let storage = create_test_storage("local", "Local Storage");
 
         // Put then delete
-        store.put(&storage_id, &storage).unwrap();
-        store.delete(&storage_id).unwrap();
+        EntityStore::put(&store, &storage_id, &storage).unwrap();
+        EntityStore::delete(&store, &storage_id).unwrap();
 
         // Verify deleted
-        let retrieved = store.get(&storage_id).unwrap();
+        let retrieved = EntityStore::get(&store, &storage_id).unwrap();
         assert!(retrieved.is_none());
     }
 
@@ -94,11 +95,11 @@ mod tests {
         for i in 1..=3 {
             let storage_id = StorageId::new(&format!("storage{}", i));
             let storage = create_test_storage(&format!("storage{}", i), &format!("Storage {}", i));
-            store.put(&storage_id, &storage).unwrap();
+            EntityStore::put(&store, &storage_id, &storage).unwrap();
         }
 
         // Scan all
-        let storages = store.scan_all().unwrap();
+        let storages = EntityStore::scan_all(&store).unwrap();
         assert_eq!(storages.len(), 3);
     }
 

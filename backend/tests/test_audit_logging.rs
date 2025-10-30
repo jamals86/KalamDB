@@ -7,7 +7,7 @@ use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, UserTableService,
 };
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_core::stores::{SharedTableStore, StreamTableStore, UserTableStore};
+use kalamdb_core::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_sql::KalamSql;
 use kalamdb_store::{RocksDBBackend, RocksDbInit, StorageBackend};
 use serde_json::Value as JsonValue;
@@ -24,9 +24,9 @@ async fn setup_test_executor() -> (SqlExecutor, TempDir, Arc<KalamSql>) {
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
     let kalam_sql = Arc::new(KalamSql::new(backend.clone()).expect("Failed to create KalamSQL"));
 
-    let user_table_store = Arc::new(UserTableStore::new(backend.clone()));
-    let shared_table_store = Arc::new(SharedTableStore::new(backend.clone()));
-    let stream_table_store = Arc::new(StreamTableStore::new(backend.clone()));
+    let user_table_store = Arc::new(kalamdb_core::tables::new_user_table_store(backend.clone(), &kalamdb_commons::NamespaceId::new("test_ns"), &kalamdb_commons::TableName::new("test_table")));
+    let shared_table_store = Arc::new(kalamdb_core::tables::new_shared_table_store(backend.clone(), &kalamdb_commons::NamespaceId::new("test_ns"), &kalamdb_commons::TableName::new("test_table")));
+    let stream_table_store = Arc::new(kalamdb_core::tables::new_stream_table_store(&kalamdb_commons::NamespaceId::new("test_ns"), &kalamdb_commons::TableName::new("test_table")));
 
     let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
     let user_table_service = Arc::new(UserTableService::new(

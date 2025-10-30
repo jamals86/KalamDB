@@ -3,6 +3,7 @@
 //! This module provides a SystemTableStore<UserId, User> wrapper for the system.users table.
 
 use crate::stores::SystemTableStore;
+use kalamdb_store::EntityStoreV2 as EntityStore;
 use kalamdb_commons::system::User;
 use kalamdb_commons::UserId;
 use kalamdb_store::StorageBackend;
@@ -64,10 +65,10 @@ mod tests {
         let user = create_test_user("user1", "alice");
 
         // Put user
-        store.put(&user_id, &user).unwrap();
+        EntityStore::put(&store, &user_id, &user).unwrap();
 
         // Get user
-        let retrieved = store.get(&user_id).unwrap();
+        let retrieved = EntityStore::get(&store, &user_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.id, user_id);
@@ -82,11 +83,11 @@ mod tests {
         let user = create_test_user("user1", "alice");
 
         // Put then delete
-        store.put(&user_id, &user).unwrap();
-        store.delete(&user_id).unwrap();
+        EntityStore::put(&store, &user_id, &user).unwrap();
+        EntityStore::delete(&store, &user_id).unwrap();
 
         // Verify deleted
-        let retrieved = store.get(&user_id).unwrap();
+        let retrieved = EntityStore::get(&store, &user_id).unwrap();
         assert!(retrieved.is_none());
     }
 
@@ -98,11 +99,11 @@ mod tests {
         for i in 1..=3 {
             let user_id = UserId::new(&format!("user{}", i));
             let user = create_test_user(&format!("user{}", i), &format!("user{}", i));
-            store.put(&user_id, &user).unwrap();
+            EntityStore::put(&store, &user_id, &user).unwrap();
         }
 
         // Scan all
-        let users = store.scan_all().unwrap();
+        let users = EntityStore::scan_all(&store).unwrap();
         assert_eq!(users.len(), 3);
     }
 

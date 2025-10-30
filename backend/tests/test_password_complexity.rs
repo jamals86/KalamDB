@@ -1,12 +1,12 @@
 //! Tests for password complexity enforcement.
 
-use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
+use kalamdb_commons::{models::UserName, AuthType, Role, StorageId, StorageMode, UserId};
 use kalamdb_core::error::KalamDbError;
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, UserTableService,
 };
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_core::stores::{SharedTableStore, StreamTableStore, UserTableStore};
+use kalamdb_core::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_sql::KalamSql;
 use kalamdb_store::{RocksDBBackend, RocksDbInit, StorageBackend};
 use std::sync::Arc;
@@ -22,9 +22,9 @@ async fn setup_executor(enforce_complexity: bool) -> (SqlExecutor, TempDir, Arc<
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
     let kalam_sql = Arc::new(KalamSql::new(backend.clone()).expect("Failed to create KalamSQL"));
 
-    let user_table_store = Arc::new(UserTableStore::new(backend.clone()));
-    let shared_table_store = Arc::new(SharedTableStore::new(backend.clone()));
-    let stream_table_store = Arc::new(StreamTableStore::new(backend.clone()));
+    let user_table_store = Arc::new(kalamdb_core::tables::new_user_table_store(backend.clone(), &kalamdb_commons::NamespaceId::new("test_ns"), &kalamdb_commons::TableName::new("test_table")));
+    let shared_table_store = Arc::new(kalamdb_core::tables::new_shared_table_store(backend.clone(), &kalamdb_commons::NamespaceId::new("test_ns"), &kalamdb_commons::TableName::new("test_table")));
+    let stream_table_store = Arc::new(kalamdb_core::tables::new_stream_table_store(&kalamdb_commons::NamespaceId::new("test_ns"), &kalamdb_commons::TableName::new("test_table")));
 
     let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
     let user_table_service = Arc::new(UserTableService::new(
@@ -67,7 +67,7 @@ async fn create_admin_user(kalam_sql: &Arc<KalamSql>) -> UserId {
 
     let user = kalamdb_commons::system::User {
         id: user_id.clone(),
-        username: "complexity_admin".to_string(),
+        username: UserName::new("complexity_admin"),
         password_hash: "hashed".to_string(),
         role: Role::System,
         email: Some("complexity@kalamdb.local".to_string()),

@@ -3,6 +3,7 @@
 //! Provides typed storage for LiveQuery entities using SystemTableStore.
 
 use crate::stores::SystemTableStore;
+use kalamdb_store::EntityStoreV2 as EntityStore;
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::LiveQueryId;
 use kalamdb_store::{EntityStoreV2, StorageBackend};
@@ -53,7 +54,7 @@ mod tests {
     #[test]
     fn test_create_store() {
         let store = create_test_store();
-        assert!(store.scan_all().unwrap().is_empty());
+        assert!(EntityStore::scan_all(&store).unwrap().is_empty());
     }
 
     #[test]
@@ -61,9 +62,9 @@ mod tests {
         let store = create_test_store();
         let live_query = create_test_live_query("user1-conn1-test-q1", "user1", "test");
 
-        store.put(&live_query.live_id, &live_query).unwrap();
+        EntityStore::put(&store, &live_query.live_id, &live_query).unwrap();
 
-        let retrieved = store.get(&live_query.live_id).unwrap();
+        let retrieved = EntityStore::get(&store, &live_query.live_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.live_id, live_query.live_id);
@@ -76,10 +77,10 @@ mod tests {
         let store = create_test_store();
         let live_query = create_test_live_query("user1-conn1-test-q1", "user1", "test");
 
-        store.put(&live_query.live_id, &live_query).unwrap();
-        store.delete(&live_query.live_id).unwrap();
+        EntityStore::put(&store, &live_query.live_id, &live_query).unwrap();
+        EntityStore::delete(&store, &live_query.live_id).unwrap();
 
-        let retrieved = store.get(&live_query.live_id).unwrap();
+        let retrieved = EntityStore::get(&store, &live_query.live_id).unwrap();
         assert!(retrieved.is_none());
     }
 
@@ -91,10 +92,10 @@ mod tests {
         for i in 1..=3 {
             let live_query =
                 create_test_live_query(&format!("user1-conn{}-test-q{}", i, i), "user1", "test");
-            store.put(&live_query.live_id, &live_query).unwrap();
+            EntityStore::put(&store, &live_query.live_id, &live_query).unwrap();
         }
 
-        let all = store.scan_all().unwrap();
+        let all = EntityStore::scan_all(&store).unwrap();
         assert_eq!(all.len(), 3);
     }
 
@@ -104,15 +105,15 @@ mod tests {
         let live_query = create_test_live_query("user1-conn1-test-q1", "user1", "test");
 
         // Admin can write
-        store.put(&live_query.live_id, &live_query).unwrap();
+        EntityStore::put(&store, &live_query.live_id, &live_query).unwrap();
 
         // Admin can read
-        let retrieved = store.get(&live_query.live_id).unwrap();
+        let retrieved = EntityStore::get(&store, &live_query.live_id).unwrap();
         assert!(retrieved.is_some());
 
         // Admin can delete
-        store.delete(&live_query.live_id).unwrap();
-        let deleted = store.get(&live_query.live_id).unwrap();
+        EntityStore::delete(&store, &live_query.live_id).unwrap();
+        let deleted = EntityStore::get(&store, &live_query.live_id).unwrap();
         assert!(deleted.is_none());
     }
 }
