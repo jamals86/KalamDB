@@ -87,7 +87,7 @@ async fn create_test_user(kalam_sql: &Arc<KalamSql>, username: &str, password: &
 
     let user = kalamdb_commons::system::User {
         id: user_id.clone(),
-        username: username.to_string(),
+        username: username.into(),
         password_hash,
         role: Role::User,
         email: Some(format!("{}@test.com", username)),
@@ -304,7 +304,7 @@ async fn test_max_password_10mb_rejected() {
     let admin_id = UserId::new("test_admin");
     let admin = kalamdb_commons::system::User {
         id: admin_id.clone(),
-        username: "test_admin".to_string(),
+        username: "test_admin".into(),
         password_hash: "hashed".to_string(),
         role: Role::System,
         email: Some("admin@test.com".to_string()),

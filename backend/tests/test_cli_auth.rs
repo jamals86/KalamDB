@@ -50,7 +50,7 @@ async fn create_system_user(kalam_sql: &KalamSql) -> Result<(), Box<dyn std::err
 
     let user = User {
         id: system_user_id,
-        username: AuthConstants::DEFAULT_SYSTEM_USERNAME.to_string(),
+        username: AuthConstants::DEFAULT_SYSTEM_USERNAME.into(),
         auth_type: AuthType::Internal,
         password_hash,
         role: Role::System,

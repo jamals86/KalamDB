@@ -47,7 +47,7 @@ async fn insert_password_user(
 
     let user = kalamdb_commons::system::User {
         id: user_id.clone(),
-        username: username.to_string(),
+        username: username.into(),
         password_hash,
         role: Role::User,
         email: Some(format!("{}@example.com", username)),

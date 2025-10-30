@@ -34,6 +34,8 @@ pub async fn execute_flush_synchronously(
 ) -> Result<kalamdb_core::flush::FlushJobResult, String> {
     use kalamdb_core::catalog::{NamespaceId, TableName};
     use kalamdb_core::flush::UserTableFlushJob;
+    use kalamdb_core::tables::UserTableStore;
+    use kalamdb_store::StorageBackend;
 
     // Get table definition from kalam_sql
     let kalam_sql = &server.kalam_sql;
@@ -63,9 +65,9 @@ pub async fn execute_flush_synchronously(
         .map_err(|e| format!("Failed to parse Arrow schema: {}", e))?;
 
     // Create storage backend and user table store
-    let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+    let backend: Arc<dyn StorageBackend> =
         Arc::new(kalamdb_store::RocksDBBackend::new(server.db.clone()));
-    let user_table_store = Arc::new(kalamdb_core::stores::UserTableStore::new(backend));
+    let user_table_store = Arc::new(UserTableStore::new(backend, "user_tables"));
 
     // Get storage_id from table definition and convert to String
     let storage_id = table_def.storage_id.to_string();

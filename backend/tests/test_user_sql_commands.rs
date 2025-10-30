@@ -115,7 +115,7 @@ async fn test_create_user_with_password_success() {
     assert!(user.is_some(), "User should exist");
 
     let user = user.unwrap();
-    assert_eq!(user.username, "alice");
+    assert_eq!(user.username, "alice".into());
     assert_eq!(user.auth_type, AuthType::Password);
     assert_eq!(user.role, Role::Service); // developer maps to Service
     assert_eq!(user.email, Some("alice@example.com".to_string()));
@@ -140,7 +140,7 @@ async fn test_create_user_with_oauth_success() {
         .get_user("bob")
         .expect("Failed to get user")
         .unwrap();
-    assert_eq!(user.username, "bob");
+    assert_eq!(user.username, "bob".into());
     assert_eq!(user.auth_type, AuthType::OAuth);
     assert_eq!(user.role, Role::User); // viewer maps to User
 }
@@ -153,7 +153,7 @@ async fn test_create_user_without_authorization_fails() {
     let regular_user_id = UserId::new("regular_user");
     let regular_user = kalamdb_commons::system::User {
         id: regular_user_id.clone(),
-        username: "regular_user".to_string(),
+        username: "regular_user".into(),
         password_hash: "hashed".to_string(),
         role: Role::User, // Regular user role
         email: Some("user@test.com".to_string()),
@@ -325,7 +325,7 @@ async fn test_create_user_with_internal_auth() {
         .get_user("system_user")
         .expect("Failed to get user")
         .unwrap();
-    assert_eq!(user.username, "system_user");
+    assert_eq!(user.username, "system_user".into());
     assert_eq!(user.auth_type, AuthType::Internal);
     assert_eq!(user.role, Role::System);
     assert!(
@@ -375,7 +375,7 @@ async fn test_alter_user_without_authorization_fails() {
     let regular_user_id = UserId::new("regular_user2");
     let regular_user = kalamdb_commons::system::User {
         id: regular_user_id.clone(),
-        username: "regular_user2".to_string(),
+        username: "regular_user2".into(),
         password_hash: "hashed".to_string(),
         role: Role::User,
         email: Some("user2@test.com".to_string()),
@@ -429,7 +429,7 @@ async fn test_drop_user_without_authorization_fails() {
     let regular_user_id = UserId::new("regular_user3");
     let regular_user = kalamdb_commons::system::User {
         id: regular_user_id.clone(),
-        username: "regular_user3".to_string(),
+        username: "regular_user3".into(),
         password_hash: "hashed".to_string(),
         role: Role::User,
         email: Some("user3@test.com".to_string()),

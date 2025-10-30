@@ -45,7 +45,7 @@ pub async fn create_test_user(
 
     let user = User {
         id: UserId::new(format!("test_{}", username)),
-        username: username.to_string(),
+        username: username.into(),
         password_hash,
         role,
         email: Some(format!("{}@example.com", username)),
@@ -191,11 +191,19 @@ pub fn create_jwt_token(username: &str, secret: &str, exp_seconds: i64) -> Strin
     let encoding_key = EncodingKey::from_secret(secret.as_bytes());
     encode(&header, &claims, &encoding_key).expect("Failed to create JWT token")
 }
+///
+/// # Example
+///
+/// ```no_run
+/// let system_user = create_system_user(&server, "system").await;
+/// assert_eq!(system_user.role, Role::System);
+/// ```
+pub async fn create_system_user(server: &super::TestServer, username: &str) -> User {
     let now = chrono::Utc::now().timestamp_millis();
 
     let user = User {
         id: UserId::new(format!("sys_{}", username)),
-        username: username.to_string(),
+        username: username.into(),
         password_hash: String::new(), // No password for system users (localhost-only)
         role: Role::System,
         email: None,

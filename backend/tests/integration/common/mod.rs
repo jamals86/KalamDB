@@ -50,6 +50,9 @@ use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
     UserTableService,
 };
+use kalamdb_core::tables::{
+    SharedTableStore, StreamTableStore, UserTableStore,
+};
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_store::RocksDBBackend;
@@ -260,7 +263,7 @@ impl TestServer {
             let now = chrono::Utc::now().timestamp_millis();
             let sys_user = kalamdb_commons::system::User {
                 id: sys_id.clone(),
-                username: "system".to_string(),
+                username: "system".into(),
                 password_hash: String::new(),
                 role: Role::System,
                 email: Some("system@localhost".to_string()),
@@ -278,11 +281,11 @@ impl TestServer {
 
         // Initialize stores (needed by some services)
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
-        let user_table_store = Arc::new(kalamdb_core::stores::UserTableStore::new(backend.clone()));
+        let user_table_store = Arc::new(UserTableStore::new(backend.clone(), "user_tables"));
         let shared_table_store =
-            Arc::new(kalamdb_core::stores::SharedTableStore::new(backend.clone()));
+            Arc::new(SharedTableStore::new(backend.clone(), "shared_tables"));
         let stream_table_store =
-            Arc::new(kalamdb_core::stores::StreamTableStore::new(backend.clone()));
+            Arc::new(StreamTableStore::new(backend.clone(), "stream_tables"));
 
         // Initialize services
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
@@ -476,13 +479,13 @@ impl TestServer {
             }
         }
 
-        let is_admin = user_id_obj
-            .as_ref()
-            .map(|id| {
-                let lower = id.as_ref().to_lowercase();
+        let is_admin: bool = match user_id_obj.as_ref() {
+            Some(id) => {
+                let lower = id.as_str().to_lowercase();
                 lower == "admin" || lower == "system"
-            })
-            .unwrap_or(false);
+            }
+            None => false,
+        };
         let mask_credentials = !is_admin;
 
         // Try custom DDL/DML execution first (same as REST API)

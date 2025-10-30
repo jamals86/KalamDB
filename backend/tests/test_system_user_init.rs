@@ -40,7 +40,7 @@ async fn test_system_user_created_on_init() {
         .expect("Failed to query user")
         .expect("System user should exist");
 
-    assert_eq!(user.username, AuthConstants::DEFAULT_SYSTEM_USERNAME);
+    assert_eq!(user.username, AuthConstants::DEFAULT_SYSTEM_USERNAME.into());
     assert_eq!(user.role, Role::System);
     assert_eq!(user.auth_type, AuthType::Internal);
     assert!(
@@ -218,7 +218,7 @@ async fn create_default_system_user_for_test(kalam_sql: Arc<KalamSql>) -> anyhow
 
             let user = User {
                 id: user_id,
-                username: username.clone(),
+                username: username.clone().into(),
                 password_hash,
                 role,
                 email: Some(email),

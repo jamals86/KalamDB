@@ -68,7 +68,7 @@ async fn create_system_user(kalam_sql: &Arc<KalamSql>) -> UserId {
 
     let user = kalamdb_commons::system::User {
         id: user_id.clone(),
-        username: "audit_admin".to_string(),
+        username: "audit_admin".into(),
         password_hash: "hashed".to_string(),
         role: Role::System,
         email: Some("audit@kalamdb.local".to_string()),

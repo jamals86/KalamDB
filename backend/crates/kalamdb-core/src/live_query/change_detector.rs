@@ -38,6 +38,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, ChangeType, LiveQueryManager};
 use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::{SharedTableRow, SharedTableStore, StreamTableStore, UserTableStore};
+use kalamdb_commons::{NamespaceId, TableName};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -446,13 +447,23 @@ mod tests {
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
 
-        let user_table_store =
-            Arc::new(new_user_table_store(Arc::clone(&db), "default", "test"));
-        let shared_table_store =
-            Arc::new(new_shared_table_store(Arc::clone(&db), "default", "test"));
-        let stream_table_store = Arc::new(StreamTableStore::new(Arc::clone(&db)).unwrap());
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
+
+        let user_table_store = Arc::new(new_user_table_store(
+            backend.clone(),
+            &NamespaceId::new("default"),
+            &TableName::new("test"),
+        ));
+        let shared_table_store = Arc::new(new_shared_table_store(
+            backend.clone(),
+            &NamespaceId::new("default"),
+            &TableName::new("test"),
+        ));
+        let stream_table_store = Arc::new(new_stream_table_store(
+            &NamespaceId::new("default"),
+            &TableName::new("test"),
+        ));
         let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let live_query_manager = Arc::new(LiveQueryManager::new(
             kalam_sql,

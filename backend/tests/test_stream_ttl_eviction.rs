@@ -11,9 +11,9 @@ use datafusion::datasource::TableProvider;
 use datafusion::execution::context::SessionState;
 use datafusion::prelude::*;
 use kalamdb_core::catalog::{NamespaceId, TableName, TableType};
-use kalamdb_core::tables::{StreamTableStore, stream_table_provider::StreamTableProvider};
+use kalamdb_core::tables::{StreamTableStore, StreamTableProvider};
 use kalamdb_store::test_utils::TestDb;
-use kalamdb_store::RocksDBBackend;
+use kalamdb_store::{RocksDBBackend, StorageBackend};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -21,7 +21,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 async fn test_stream_table_ttl_eviction_with_select() {
     // Create test database
     let test_db = TestDb::new(&["test:test_events"]).expect("Failed to create test DB");
-    let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+    let backend: Arc<dyn StorageBackend> =
         Arc::new(RocksDBBackend::new(test_db.db.clone()));
     let stream_store = Arc::new(kalamdb_core::tables::new_stream_table_store(&NamespaceId::new("test"), &TableName::new("test_events")));
 
@@ -121,7 +121,7 @@ async fn test_stream_table_ttl_eviction_with_select() {
 async fn test_stream_table_select_with_projection() {
     // Create test database
     let test_db = TestDb::new(&["test:events"]).expect("Failed to create test DB");
-    let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+    let backend: Arc<dyn StorageBackend> =
         Arc::new(RocksDBBackend::new(test_db.db.clone()));
     let stream_store = Arc::new(kalamdb_core::tables::new_stream_table_store(&NamespaceId::new("test"), &TableName::new("events")));
 
@@ -184,7 +184,7 @@ async fn test_stream_table_select_with_projection() {
 async fn test_stream_table_select_with_limit() {
     // Create test database
     let test_db = TestDb::new(&["test:events"]).expect("Failed to create test DB");
-    let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+    let backend: Arc<dyn StorageBackend> =
         Arc::new(RocksDBBackend::new(test_db.db.clone()));
     let stream_store = Arc::new(kalamdb_core::tables::new_stream_table_store(&NamespaceId::new("test"), &TableName::new("events")));
 

@@ -18,19 +18,21 @@ mod common;
 
 use actix_web::{test, web, App};
 use common::{auth_helper, TestServer};
+use kalamdb_commons::models::UserName;
 use kalamdb_commons::system::User;
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
 
 /// Helper function to create a system user with specific settings
 async fn create_system_user(
     server: &TestServer,
-    username: &str,
+    username: &str, //TODO: Use UserName type
     password_hash: String,
     allow_remote: bool,
 ) -> User {
     let now = chrono::Utc::now().timestamp_millis();
 
     // Create metadata JSON with allow_remote flag if needed
+    //TODO: This is a security risk we shall remove it
     let auth_data = if allow_remote {
         Some(serde_json::json!({"allow_remote": true}).to_string())
     } else {
@@ -39,7 +41,7 @@ async fn create_system_user(
 
     let user = User {
         id: UserId::new(format!("sys_{}", username)),
-        username: username.to_string(),
+        username: UserName::new(username),
         password_hash,
         role: Role::System,
         email: Some(format!("{}@system.local", username)),

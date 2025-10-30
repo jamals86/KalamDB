@@ -11,7 +11,7 @@ use super::users_username_index::{UsernameIndex, UsernameIndexExt};
 use crate::error::KalamDbError;
 use chrono::{DateTime, Utc};
 use kalamdb_commons::system::User;
-use kalamdb_commons::{Role, UserId};
+use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId, UserName};
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
@@ -205,20 +205,23 @@ mod tests {
         role: Role,
         deleted_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> User {
+        let now_ms = Utc::now().timestamp_millis();
+        let deleted_at_ms = deleted_at.map(|dt| dt.timestamp_millis());
+        
         User {
             id: UserId::new(id),
-            username: username.to_string(),
+            username: UserName::new(username),
             password_hash: "hashed_password".to_string(),
             role,
             email: Some(format!("{}@example.com", username)),
             auth_type: AuthType::Password,
             auth_data: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: now_ms,
+            updated_at: now_ms,
             last_seen: None,
-            deleted_at,
-            storage_mode: StorageMode::Embedded,
-            storage_id: StorageId::new("local"),
+            deleted_at: deleted_at_ms,
+            storage_mode: StorageMode::Table,
+            storage_id: Some(StorageId::new("local")),
         }
     }
 

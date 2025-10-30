@@ -3,9 +3,9 @@
 //! This module provides a SystemTableStore<UserId, User> wrapper for the system.users table.
 
 use crate::stores::SystemTableStore;
-use kalamdb_store::EntityStoreV2 as EntityStore;
+use kalamdb_store::{CrossUserTableStore, EntityStore, EntityStoreV2};
 use kalamdb_commons::system::User;
-use kalamdb_commons::UserId;
+use kalamdb_commons::{AuthType, StorageId, StorageMode, UserId, UserName};
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
@@ -26,7 +26,7 @@ pub fn new_users_store(backend: Arc<dyn StorageBackend>) -> UsersStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
+    use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserName};
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_store() -> UsersStore {
@@ -37,7 +37,7 @@ mod tests {
     fn create_test_user(id_str: &str, username: &str) -> User {
         User {
             id: UserId::new(id_str),
-            username: username.to_string(),
+            username: UserName::new(username),
             password_hash: "hashed_password".to_string(),
             role: Role::User,
             email: Some(format!("{}@example.com", username)),

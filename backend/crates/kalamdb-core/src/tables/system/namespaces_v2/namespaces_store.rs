@@ -3,7 +3,7 @@
 //! This module provides a SystemTableStore<NamespaceId, Namespace> wrapper for the system.namespaces table.
 
 use crate::stores::SystemTableStore;
-use kalamdb_store::EntityStoreV2 as EntityStore;
+use kalamdb_store::{CrossUserTableStore, EntityStore, EntityStoreV2};
 use kalamdb_commons::system::Namespace;
 use kalamdb_commons::NamespaceId;
 use kalamdb_store::StorageBackend;

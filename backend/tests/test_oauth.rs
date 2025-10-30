@@ -152,7 +152,7 @@ async fn test_oauth_user_password_rejected() {
     executor.execute(create_sql, Some(&admin_id)).await.unwrap();
 
     // Create RocksDbAdapter for authentication
-    let adapter = Arc::new(kalam_sql.get_adapter());
+    let adapter = Arc::new(kalam_sql.adapter().clone());
 
     // Try to authenticate with password (should fail)
     let auth_service = AuthService::new(
@@ -163,7 +163,7 @@ async fn test_oauth_user_password_rejected() {
         Role::User, // oauth_default_role
     );
 
-    let connection_info = ConnectionInfo::new("127.0.0.1:8080");
+    let connection_info = ConnectionInfo::new(Some("127.0.0.1:8080".to_string()));
 
     // Create Basic Auth header
     let credentials = base64::encode(format!("{}:{}", "bob", "somepassword"));
