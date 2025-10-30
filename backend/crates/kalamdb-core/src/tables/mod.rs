@@ -7,11 +7,17 @@
 //! - System tables: Internal system metadata tables (EntityStore-based v2 providers)
 
 pub mod arrow_json_conversion;
+pub mod base_flush;
 pub mod parquet_scan;
 pub mod system;
 pub mod user_tables;
 pub mod shared_tables;
 pub mod stream_tables;
+
+// Re-export flush types
+pub use base_flush::{
+    FlushJobResult, FlushMetadata, UserTableFlushMetadata, SharedTableFlushMetadata, TableFlush,
+};
 
 // Re-export from consolidated modules
 pub use user_tables::{

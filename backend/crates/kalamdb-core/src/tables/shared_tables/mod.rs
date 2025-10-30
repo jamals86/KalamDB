@@ -7,6 +7,8 @@
 
 pub mod shared_table_store;
 pub mod shared_table_provider;
+pub mod shared_table_flush;
 
 pub use shared_table_store::{SharedTableRow, SharedTableRowId, SharedTableStore, new_shared_table_store};
 pub use shared_table_provider::SharedTableProvider;
+pub use shared_table_flush::SharedTableFlushJob;

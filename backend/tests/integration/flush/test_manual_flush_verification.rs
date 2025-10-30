@@ -709,15 +709,16 @@ async fn test_09_flush_job_completes_asynchronously() {
         .expect("Flush should execute successfully");
 
     // Verify metrics
+    let users_count = flush_result.metadata.users_count().unwrap_or(0);
     assert!(
         flush_result.rows_flushed >= 1,
         "Should have flushed at least 1 row, got {}",
         flush_result.rows_flushed
     );
     assert!(
-        flush_result.users_count >= 1,
+        users_count >= 1,
         "Should have at least 1 user, got {}",
-        flush_result.users_count
+        users_count
     );
     assert!(
         !flush_result.parquet_files.is_empty(),
@@ -869,9 +870,10 @@ async fn test_11_flush_job_result_includes_metrics() {
         .await
         .expect("Flush should execute successfully");
 
+    let users_count = flush_result.metadata.users_count().unwrap_or(0);
     println!(
         "  Flush result: {} rows flushed across {} users",
-        flush_result.rows_flushed, flush_result.users_count
+        flush_result.rows_flushed, users_count
     );
     println!("  Parquet files created: {:?}", flush_result.parquet_files);
 
@@ -882,9 +884,9 @@ async fn test_11_flush_job_result_includes_metrics() {
         flush_result.rows_flushed
     );
     assert!(
-        flush_result.users_count >= 1,
+        users_count >= 1,
         "Should have at least 1 user, got {}",
-        flush_result.users_count
+        users_count
     );
     assert!(
         !flush_result.parquet_files.is_empty(),
@@ -973,15 +975,16 @@ async fn test_12_flush_empty_table() {
             .expect("Flush should execute successfully even for empty table");
 
     // Verify result indicates empty flush
+    let users_count = flush_result.metadata.users_count().unwrap_or(0);
     assert_eq!(
         flush_result.rows_flushed, 0,
         "Should have flushed 0 rows for empty table, got {}",
         flush_result.rows_flushed
     );
     assert_eq!(
-        flush_result.users_count, 0,
+        users_count, 0,
         "Should have 0 users for empty table, got {}",
-        flush_result.users_count
+        users_count
     );
     assert!(
         flush_result.parquet_files.is_empty(),

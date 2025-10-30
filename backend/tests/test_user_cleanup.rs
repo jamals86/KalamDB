@@ -12,7 +12,7 @@ use chrono::Utc;
 use common::{fixtures, TestServer};
 use kalamdb_commons::{JobStatus, JobType};
 use kalamdb_core::jobs::{JobExecutor, JobResult, UserCleanupConfig, UserCleanupJob};
-use kalamdb_core::stores::UserTableStore;
+use kalamdb_core::tables::UserTableStore;
 use kalamdb_core::tables::system::JobsTableProvider;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
 use std::sync::Arc;

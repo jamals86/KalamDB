@@ -14,9 +14,8 @@ use tokio::time::sleep;
 
 /// Execute a flush job synchronously for testing
 ///
-/// This bypasses the JobManager and directly calls flush_job.execute(),
-/// which is useful in test environments where background tokio tasks
-/// may not execute properly.
+/// Uses execute_tracked() which handles job tracking via FlushExecutor.
+/// This is useful in test environments for direct flush execution.
 ///
 /// # Arguments
 ///
@@ -31,9 +30,9 @@ pub async fn execute_flush_synchronously(
     server: &TestServer,
     namespace: &str,
     table_name: &str,
-) -> Result<kalamdb_core::flush::FlushJobResult, String> {
+) -> Result<kalamdb_core::tables::base_flush::FlushJobResult, String> {
     use kalamdb_core::catalog::{NamespaceId, TableName};
-    use kalamdb_core::flush::UserTableFlushJob;
+    use kalamdb_core::tables::user_tables::UserTableFlushJob;
     use kalamdb_core::tables::UserTableStore;
     use kalamdb_store::StorageBackend;
 
@@ -90,9 +89,9 @@ pub async fn execute_flush_synchronously(
     )
     .with_storage_registry(storage_registry);
 
-    // Execute flush synchronously
+    // Execute flush with tracking (new architecture)
     let result = flush_job
-        .execute()
+        .execute_tracked()
         .map_err(|e| format!("Flush execution failed: {}", e))?;
 
     Ok(result)

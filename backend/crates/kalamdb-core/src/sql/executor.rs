@@ -2057,13 +2057,6 @@ impl SqlExecutor {
         )
         .with_storage_registry(storage_registry.clone());
 
-        // Add jobs_provider if available
-        let flush_job = if let Some(ref provider) = jobs_provider {
-            flush_job.with_jobs_provider(provider.clone())
-        } else {
-            flush_job
-        };
-
         // Clone necessary data for the async task
         let namespace_str = stmt.namespace.clone();
         let table_name_str = stmt.table_name.clone();
@@ -2078,19 +2071,20 @@ impl SqlExecutor {
                 table_name_str
             );
 
-            match flush_job.execute() {
+            match flush_job.execute_tracked() {
                 Ok(result) => {
+                    let users_count = result.metadata.users_count().unwrap_or(0);
                     log::info!(
                         "Flush job completed successfully: job_id={}, rows_flushed={}, users_count={}, parquet_files={}",
                         job_id_clone,
                         result.rows_flushed,
-                        result.users_count,
+                        users_count,
                         result.parquet_files.len()
                     );
                     Ok(format!(
                         "Flushed {} rows for {} users. Storage location: {}. Parquet files: {}",
                         result.rows_flushed,
-                        result.users_count,
+                        users_count,
                         storage_location_clone,
                         result.parquet_files.len()
                     ))
