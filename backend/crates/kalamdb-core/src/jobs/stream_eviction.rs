@@ -306,7 +306,7 @@ impl StreamEvictionJob {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::system::JobsTableProvider;
+    use crate::tables::{new_stream_table_store, system::JobsTableProvider};
     use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 

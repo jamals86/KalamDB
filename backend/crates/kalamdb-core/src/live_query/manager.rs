@@ -829,6 +829,7 @@ pub struct RegistryStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tables::{new_user_table_store, new_shared_table_store, new_stream_table_store};
     use kalamdb_store::RocksDbInit;
     use kalamdb_commons::models::{ColumnDefinition, TableDefinition};
     use kalamdb_commons::{NamespaceId, StorageId, TableName, TableType};
