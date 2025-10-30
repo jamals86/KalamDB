@@ -9,7 +9,7 @@
 //! **REFACTORED**: Now uses kalamdb-sql crate for RocksDB persistence instead of JSON config files
 
 use crate::error::KalamDbError;
-use kalamdb_commons::models::{NamespaceId, UserId};
+use kalamdb_commons::models::NamespaceId;
 use kalamdb_commons::system::Namespace;
 use kalamdb_sql::KalamSql;
 use serde_json::Value as JsonValue;

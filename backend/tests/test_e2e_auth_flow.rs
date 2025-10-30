@@ -35,7 +35,7 @@ async fn test_e2e_auth_flow() {
     // Phase 1: User Creation
     println!("📝 Phase 1: Creating test user");
     let user = auth_helper::create_test_user(&server, username, password, Role::User).await;
-    assert_eq!(user.username, username);
+    assert_eq!(user.username.as_str(), username);
     assert_eq!(user.role, Role::User);
     println!("✅ User '{}' created successfully", username);
 

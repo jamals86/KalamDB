@@ -12,11 +12,11 @@
 use crate::error::KalamDbError;
 use crate::jobs::{JobExecutor, JobResult};
 use crate::stores::system_table::SharedTableStoreExt;
-use crate::tables::{StreamTableStore, new_stream_table_store};
+use crate::tables::StreamTableStore;
 use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 /// Configuration for stream table eviction
 #[derive(Debug, Clone)]
@@ -165,7 +165,7 @@ impl StreamEvictionJob {
         &self,
         namespace_id: NamespaceId,
         table_name: TableName,
-        retention_period_ms: i64,
+        _retention_period_ms: i64,
     ) -> Result<usize, KalamDbError> {
         // For the new StreamTableStore, we use cleanup_expired_rows
         // which handles TTL-based eviction automatically

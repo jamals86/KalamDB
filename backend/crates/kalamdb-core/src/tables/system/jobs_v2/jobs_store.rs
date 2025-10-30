@@ -5,7 +5,7 @@
 use crate::stores::SystemTableStore;
 use kalamdb_commons::system::Job;
 use kalamdb_commons::JobId;
-use kalamdb_store::{CrossUserTableStore, EntityStoreV2, StorageBackend};
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
 /// Type alias for the jobs table store

@@ -57,4 +57,19 @@ impl StoragesTableSchema {
             })
             .clone()
     }
+
+    /// Get the table name
+    pub fn table_name() -> &'static str {
+        kalamdb_commons::SystemTable::Storages.table_name()
+    }
+
+    /// Get the column family name in RocksDB
+    pub fn column_family_name() -> &'static str {
+        kalamdb_commons::SystemTable::Storages.column_family_name()
+    }
+
+    /// Get the partition key for storage
+    pub fn partition() -> &'static str {
+        kalamdb_commons::SystemTable::Storages.column_family_name()
+    }
 }

@@ -9,13 +9,13 @@ use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::storage::ParquetWriter;
 use crate::stores::system_table::SharedTableStoreExt;
 use crate::tables::shared_tables::shared_table_store::SharedTableRow;
-use crate::tables::{SharedTableStore, new_shared_table_store};
+use crate::tables::SharedTableStore;
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use kalamdb_commons::system::Job;
 use kalamdb_commons::JobType;
-use kalamdb_commons::{JobId, JobStatus};
+use kalamdb_commons::JobId;
 use serde_json::{json, Value as JsonValue};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -400,6 +400,7 @@ impl SharedTableFlushJob {
 mod tests {
     use super::*;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use kalamdb_commons::JobStatus;
     use serde_json::json;
     use std::env;
     use std::fs;

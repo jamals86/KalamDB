@@ -6,8 +6,7 @@
 
 use crate::error::KalamDbError;
 use crate::tables::system::JobsTableProvider;
-use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId};
+use kalamdb_commons::JobStatus;
 use std::sync::Arc;
 
 /// Configuration for job retention
@@ -116,7 +115,9 @@ impl RetentionPolicy {
 mod tests {
     use super::*;
 
+    use crate::catalog::NamespaceId;
     use kalamdb_commons::system::Job;
+    use kalamdb_commons::{JobType, JobId};
     use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 

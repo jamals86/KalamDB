@@ -388,7 +388,7 @@ impl TableDeletionService {
     }
 
     /// Decrement storage location usage count (T172)
-    fn decrement_storage_usage(&self, location_name: &str) -> Result<(), KalamDbError> {
+    fn decrement_storage_usage(&self, _location_name: &str) -> Result<(), KalamDbError> {
         // TODO: Phase 2b - system_storages no longer tracks usage_count, validation happens differently
         // Storage location usage tracking will be reimplemented when needed
         log::warn!(

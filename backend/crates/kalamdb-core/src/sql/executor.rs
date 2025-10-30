@@ -39,13 +39,12 @@ use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use crate::tables::{
-    system::{NamespacesTableProvider, TablesTableProvider},
     SharedTableProvider, StreamTableProvider, UserTableProvider,
 };
 // All system tables now use EntityStore-based v2 providers
 use crate::tables::system::UsersTableProvider;
 use crate::tables::system::JobsTableProvider;
-use datafusion::arrow::array::{ArrayRef, StringArray, UInt32Array};
+use datafusion::arrow::array::{ArrayRef, StringArray};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -279,7 +278,7 @@ impl SqlExecutor {
     }
 
     /// Load and register existing tables from system_tables on initialization
-    pub async fn load_existing_tables(&self, default_user_id: UserId) -> Result<(), KalamDbError> {
+    pub async fn load_existing_tables(&self, _default_user_id: UserId) -> Result<(), KalamDbError> {
         let kalam_sql = self.kalam_sql.as_ref().ok_or_else(|| {
             KalamDbError::InvalidOperation(
                 "Cannot load tables - KalamSQL not configured".to_string(),
@@ -331,7 +330,7 @@ impl SqlExecutor {
                             table.namespace, table.table_name, e
                         ))
                     })?;
-            let schema = schema_with_opts.schema;
+            let _schema = schema_with_opts.schema;
 
             // Parse namespace and table_name
             // let namespace_id = NamespaceId::from(table.namespace.as_str());
@@ -361,7 +360,7 @@ impl SqlExecutor {
         table_name: &TableName,
         table_type: TableType,
         schema: SchemaRef,
-        default_user_id: UserId,
+        _default_user_id: UserId,
     ) -> Result<(), KalamDbError> {
         use datafusion::catalog::memory::MemorySchemaProvider;
 
@@ -2193,7 +2192,7 @@ impl SqlExecutor {
             );
 
             // Create job record
-            use kalamdb_commons::{JobId, JobType, NamespaceId, TableName};
+            use kalamdb_commons::{JobId, JobType, TableName};
             let job_record = kalamdb_commons::system::Job::new(
                 JobId::new(job_id.clone()),
                 JobType::Flush,

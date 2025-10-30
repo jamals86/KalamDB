@@ -30,7 +30,6 @@
 //! ```
 
 use actix_web::{
-    body::BoxBody,
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     Error, HttpMessage, HttpResponse,
 };
@@ -257,20 +256,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::{test, web, App, HttpResponse};
-    use kalamdb_commons::Role;
-
-    async fn test_endpoint(req: actix_web::HttpRequest) -> HttpResponse {
-        let user = req.extensions().get::<AuthenticatedUser>().cloned();
-        match user {
-            Some(u) => HttpResponse::Ok().json(json!({
-                "user_id": u.user_id.to_string(),
-                "username": u.username,
-                "role": format!("{:?}", u.role),
-            })),
-            None => HttpResponse::Unauthorized().json(json!({"error": "Not authenticated"})),
-        }
-    }
 
     #[actix_web::test]
     async fn test_localhost_bypass() {

@@ -4,7 +4,7 @@
 
 use crate::stores::SystemTableStore;
 use kalamdb_commons::models::{NamespaceId, TableName};
-use kalamdb_store::{EntityStoreV2 as EntityStore, test_utils::InMemoryBackend, StorageBackend};
+use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

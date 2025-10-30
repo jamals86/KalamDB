@@ -18,7 +18,7 @@
 //! Tests will be skipped if the server is not running.
 
 use kalam_link::{
-    ChangeEvent, KalamLinkClient, QueryResponse, SubscriptionConfig, SubscriptionManager,
+    ChangeEvent, KalamLinkClient, QueryResponse, SubscriptionConfig,
 };
 use std::time::Duration;
 use tokio::time::{sleep, timeout};

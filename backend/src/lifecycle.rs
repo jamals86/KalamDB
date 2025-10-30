@@ -22,7 +22,6 @@ use kalamdb_core::services::{
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::storage::StorageRegistry;
-use kalamdb_core::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_core::{
     jobs::{
         JobCleanupTask, JobExecutor, JobResult, StreamEvictionJob, StreamEvictionScheduler,
@@ -34,7 +33,6 @@ use kalamdb_sql::KalamSql;
 use kalamdb_sql::RocksDbAdapter;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
-use kalamdb_store::StorageBackend;
 use log::info;
 use std::sync::Arc;
 use std::time::Duration;
@@ -445,7 +443,7 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
 async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
     use kalamdb_commons::constants::AuthConstants;
     use kalamdb_commons::system::User;
-    use rand::Rng;
+    
 
     // Check if root user already exists
     let existing_user = kalam_sql.get_user(AuthConstants::DEFAULT_SYSTEM_USERNAME);

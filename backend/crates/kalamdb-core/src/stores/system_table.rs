@@ -43,7 +43,7 @@ use crate::tables::shared_tables::shared_table_store::{SharedTableRow, SharedTab
 use crate::tables::stream_tables::stream_table_store::{StreamTableRow, StreamTableRowId};
 use crate::tables::system::SystemTableProviderExt;
 use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId};
-use kalamdb_store::{entity_store::{CrossUserTableStore, EntityStore}, StorageBackend, storage_trait::Result};
+use kalamdb_store::{entity_store::{CrossUserTableStore, EntityStore}, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -485,7 +485,7 @@ impl SharedTableStoreExt<UserTableRowId, UserTableRow> for SystemTableStore<User
     fn put(
         &self,
         namespace_id: &str,
-        table_name: &str,
+        _table_name: &str,
         row_id: &str,
         row: &UserTableRow,
     ) -> std::result::Result<(), KalamDbError> {
@@ -498,7 +498,7 @@ impl SharedTableStoreExt<UserTableRowId, UserTableRow> for SystemTableStore<User
     fn delete(
         &self,
         namespace_id: &str,
-        table_name: &str,
+        _table_name: &str,
         row_id: &str,
         hard: bool,
     ) -> std::result::Result<(), KalamDbError> {
@@ -509,7 +509,7 @@ impl SharedTableStoreExt<UserTableRowId, UserTableRow> for SystemTableStore<User
         } else {
             // Soft delete: just remove from the main table, keep in the history
             let row = EntityStore::get(self, &key)?;
-            if let Some(existing_row) = row {
+            if let Some(_existing_row) = row {
                 // Insert into history table (not shown here)
                 // self.insert_history(existing_row)?;
                 // Now delete from main table

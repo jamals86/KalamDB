@@ -15,9 +15,10 @@ mod common;
 use actix_web::{test, web, App};
 use common::{auth_helper, TestServer};
 use kalamdb_commons::Role;
+use std::sync::Arc;
 
 /// Test successful Basic Auth with valid credentials
-#[actix_web::test]
+#[tokio::test]
 async fn test_basic_auth_success() {
     let server = TestServer::new().await;
 
@@ -26,50 +27,41 @@ async fn test_basic_auth_success() {
     let password = "SecurePassword123!";
     auth_helper::create_test_user(&server, username, password, Role::User).await;
 
-    // Create auth header
-    let auth_header = auth_helper::create_basic_auth_header(username, password);
+    // Test authentication directly using AuthService (no HTTP layer needed)
+    use kalamdb_auth::service::AuthService;
+    use kalamdb_auth::connection::ConnectionInfo;
+    use base64::engine::general_purpose;
+    use base64::Engine;
 
-    // Create test request with authentication
-    let req = test::TestRequest::post()
-        .uri("/v1/api/sql")
-        .insert_header(("Authorization", auth_header.as_str()))
-        .insert_header(("Content-Type", "application/json"))
-        .set_json(serde_json::json!({
-            "sql": "SELECT 1"
-        }))
-        .to_request();
-
-    // Initialize app with authentication middleware
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(server.session_factory.clone()))
-            .app_data(web::Data::new(server.sql_executor.clone()))
-            .app_data(web::Data::new(server.live_query_manager.clone()))
-            .configure(kalamdb_api::routes::configure_routes),
-    )
-    .await;
-
-    // Execute request
-    let resp = test::call_service(&app, req).await;
-
-    // Verify success (or 401 if auth middleware is working but not fully integrated)
-    let status = resp.status();
-
-    // For now, we expect either:
-    // - 200 OK if authentication passes
-    // - 401 Unauthorized if middleware blocks unauthenticated requests
-    // - 500 if there's an implementation issue to fix
-    assert!(
-        status.is_success() || status == 401,
-        "Expected 200 OK or 401 Unauthorized, got {}",
-        status
+    let auth_service = AuthService::new(
+        "test-secret".to_string(),
+        vec!["kalamdb-test".to_string()],
+        false,
+        false,
+        Role::User,
     );
+    let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
+    
+    // Create Basic Auth header
+    let credentials = general_purpose::STANDARD.encode(format!("{}:{}", username, password));
+    let auth_header = format!("Basic {}", credentials);
 
-    println!("✓ Basic Auth test executed - Status: {}", status);
+    // Authenticate
+    let result = auth_service
+        .authenticate(&auth_header, &connection_info, &Arc::new(server.kalam_sql.adapter().clone()))
+        .await;
+
+    // Verify success
+    assert!(result.is_ok(), "Authentication should succeed with valid credentials");
+    let authenticated_user = result.unwrap();
+    assert_eq!(authenticated_user.username, username);
+    assert_eq!(authenticated_user.role, Role::User);
+
+    println!("✓ Basic Auth test passed - User authenticated successfully");
 }
 
 /// Test authentication failure with invalid password
-#[actix_web::test]
+#[tokio::test]
 async fn test_basic_auth_invalid_credentials() {
     let server = TestServer::new().await;
 
@@ -79,122 +71,96 @@ async fn test_basic_auth_invalid_credentials() {
     let wrong_password = "WrongPassword456!";
     auth_helper::create_test_user(&server, username, correct_password, Role::User).await;
 
-    // Create auth header with WRONG password
-    let auth_header = auth_helper::create_basic_auth_header(username, wrong_password);
+    // Test authentication with wrong password
+    use kalamdb_auth::service::AuthService;
+    use kalamdb_auth::connection::ConnectionInfo;
+    use base64::engine::general_purpose;
+    use base64::Engine;
 
-    // Create test request
-    let req = test::TestRequest::post()
-        .uri("/v1/api/sql")
-        .insert_header(("Authorization", auth_header.as_str()))
-        .insert_header(("Content-Type", "application/json"))
-        .set_json(serde_json::json!({
-            "sql": "SELECT 1"
-        }))
-        .to_request();
-
-    // Initialize app
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(server.session_factory.clone()))
-            .app_data(web::Data::new(server.sql_executor.clone()))
-            .app_data(web::Data::new(server.live_query_manager.clone()))
-            .configure(kalamdb_api::routes::configure_routes),
-    )
-    .await;
-
-    // Execute request
-    let resp = test::call_service(&app, req).await;
-
-    // Should be 401 Unauthorized
-    assert_eq!(
-        resp.status(),
-        401,
-        "Expected 401 Unauthorized for invalid credentials"
+    let auth_service = AuthService::new(
+        "test-secret".to_string(),
+        vec!["kalamdb-test".to_string()],
+        false,
+        false,
+        Role::User,
     );
+    let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
+    
+    // Create Basic Auth header with WRONG password
+    let credentials = general_purpose::STANDARD.encode(format!("{}:{}", username, wrong_password));
+    let auth_header = format!("Basic {}", credentials);
 
-    println!("✓ Invalid credentials correctly rejected with 401");
+    // Authenticate
+    let result = auth_service
+        .authenticate(&auth_header, &connection_info, &Arc::new(server.kalam_sql.adapter().clone()))
+        .await;
+
+    // Verify failure
+    assert!(result.is_err(), "Authentication should fail with invalid password");
+    
+    println!("✓ Invalid credentials correctly rejected");
 }
 
 /// Test authentication failure with missing Authorization header
-#[actix_web::test]
+#[tokio::test]
 async fn test_basic_auth_missing_header() {
+    use kalamdb_auth::service::AuthService;
+    use kalamdb_auth::connection::ConnectionInfo;
+
     let server = TestServer::new().await;
-
-    // Create test request WITHOUT Authorization header
-    let req = test::TestRequest::post()
-        .uri("/v1/api/sql")
-        .insert_header(("Content-Type", "application/json"))
-        .set_json(serde_json::json!({
-            "sql": "SELECT 1"
-        }))
-        .to_request();
-
-    // Initialize app
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(server.session_factory.clone()))
-            .app_data(web::Data::new(server.sql_executor.clone()))
-            .app_data(web::Data::new(server.live_query_manager.clone()))
-            .configure(kalamdb_api::routes::configure_routes),
-    )
-    .await;
-
-    // Execute request
-    let resp = test::call_service(&app, req).await;
-
-    // Should be 401 Unauthorized
-    assert_eq!(
-        resp.status(),
-        401,
-        "Expected 401 Unauthorized for missing auth header"
+    let auth_service = AuthService::new(
+        "test-secret".to_string(),
+        vec!["kalamdb-test".to_string()],
+        false,
+        false,
+        Role::User,
     );
+    let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
+    
+    // Empty authorization header
+    let result = auth_service
+        .authenticate("", &connection_info, &Arc::new(server.kalam_sql.adapter().clone()))
+        .await;
 
-    println!("✓ Missing Authorization header correctly rejected with 401");
+    // Verify failure
+    assert!(result.is_err(), "Authentication should fail with missing header");
+    
+    println!("✓ Missing Authorization header correctly rejected");
 }
 
 /// Test authentication failure with malformed Authorization header
-#[actix_web::test]
+#[tokio::test]
 async fn test_basic_auth_malformed_header() {
+    use kalamdb_auth::service::AuthService;
+    use kalamdb_auth::connection::ConnectionInfo;
+
     let server = TestServer::new().await;
+    let auth_service = AuthService::new(
+        "test-secret".to_string(),
+        vec!["kalamdb-test".to_string()],
+        false,
+        false,
+        Role::User,
+    );
+    let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
     // Test various malformed headers
     let malformed_headers = vec![
         "Basic",                 // Missing credentials
         "Basic notbase64!@#",    // Invalid base64
-        "Bearer token123",       // Wrong auth scheme
+        "Bearer token123",       // Wrong auth scheme for basic
         "Basic YWxpY2U=",        // Valid base64 but missing colon
         "BasicYWxpY2U6cGFzcw==", // Missing space after "Basic"
     ];
 
     for malformed_header in malformed_headers {
-        // Create test request with malformed header
-        let req = test::TestRequest::post()
-            .uri("/v1/api/sql")
-            .insert_header(("Authorization", malformed_header))
-            .insert_header(("Content-Type", "application/json"))
-            .set_json(serde_json::json!({
-                "sql": "CREATE NAMESPACE test_ns"
-            }))
-            .to_request();
+        let result = auth_service
+            .authenticate(malformed_header, &connection_info, &Arc::new(server.kalam_sql.adapter().clone()))
+            .await;
 
-        // Initialize app
-        let app = test::init_service(
-            App::new()
-                .app_data(web::Data::new(server.session_factory.clone()))
-                .app_data(web::Data::new(server.sql_executor.clone()))
-                .app_data(web::Data::new(server.live_query_manager.clone()))
-                .configure(kalamdb_api::routes::configure_routes),
-        )
-        .await;
-
-        // Execute request
-        let resp = test::call_service(&app, req).await;
-
-        // Should be 401 Unauthorized
-        assert_eq!(
-            resp.status(),
-            401,
-            "Expected 401 Unauthorized for malformed header: {}",
+        assert!(
+            result.is_err(),
+            "Authentication should fail for malformed header: {}",
             malformed_header
         );
 
@@ -203,42 +169,33 @@ async fn test_basic_auth_malformed_header() {
 }
 
 /// Test authentication with non-existent user
-#[actix_web::test]
+#[tokio::test]
 async fn test_basic_auth_nonexistent_user() {
+    use kalamdb_auth::service::AuthService;
+    use kalamdb_auth::connection::ConnectionInfo;
+    use base64::engine::general_purpose;
+    use base64::Engine;
+
     let server = TestServer::new().await;
-
-    // Create auth header for user that doesn't exist
-    let auth_header = auth_helper::create_basic_auth_header("nonexistent", "password123");
-
-    // Create test request
-    let req = test::TestRequest::post()
-        .uri("/v1/api/sql")
-        .insert_header(("Authorization", auth_header.as_str()))
-        .insert_header(("Content-Type", "application/json"))
-        .set_json(serde_json::json!({
-            "sql": "CREATE NAMESPACE test_ns"
-        }))
-        .to_request();
-
-    // Initialize app
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(server.session_factory.clone()))
-            .app_data(web::Data::new(server.sql_executor.clone()))
-            .app_data(web::Data::new(server.live_query_manager.clone()))
-            .configure(kalamdb_api::routes::configure_routes),
-    )
-    .await;
-
-    // Execute request
-    let resp = test::call_service(&app, req).await;
-
-    // Should be 401 Unauthorized
-    assert_eq!(
-        resp.status(),
-        401,
-        "Expected 401 Unauthorized for nonexistent user"
+    let auth_service = AuthService::new(
+        "test-secret".to_string(),
+        vec!["kalamdb-test".to_string()],
+        false,
+        false,
+        Role::User,
     );
+    let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
+    
+    // Create auth header for user that doesn't exist
+    let credentials = general_purpose::STANDARD.encode("nonexistent:password123");
+    let auth_header = format!("Basic {}", credentials);
 
-    println!("✓ Nonexistent user correctly rejected with 401");
+    let result = auth_service
+        .authenticate(&auth_header, &connection_info, &Arc::new(server.kalam_sql.adapter().clone()))
+        .await;
+
+    // Verify failure
+    assert!(result.is_err(), "Authentication should fail for non-existent user");
+    
+    println!("✓ Nonexistent user correctly rejected");
 }

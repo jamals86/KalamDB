@@ -197,7 +197,7 @@ impl InitialDataFetcher {
                 })?;
 
                 let mut rows = Vec::new();
-                for (row_id, row) in store.scan(&namespace, &table).map_err(|e| {
+                for (_row_id, row) in store.scan(&namespace, &table).map_err(|e| {
                     KalamDbError::Other(format!(
                         "Failed to scan stream table {}.{}: {}",
                         namespace, table, e

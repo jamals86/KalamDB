@@ -140,6 +140,12 @@ pub enum StoragePartition {
     SystemColumns,
     /// User table flush counters
     UserTableCounters,
+    /// Username index for system.users (unique index)
+    SystemUsersUsernameIdx,
+    /// Role index for system.users (non-unique index)
+    SystemUsersRoleIdx,
+    /// Deleted_at index for system.users (non-unique index)
+    SystemUsersDeletedAtIdx,
 }
 
 impl StoragePartition {
@@ -149,6 +155,9 @@ impl StoragePartition {
             StoragePartition::InformationSchemaTables => "information_schema_tables",
             StoragePartition::SystemColumns => "system_columns",
             StoragePartition::UserTableCounters => "user_table_counters",
+            StoragePartition::SystemUsersUsernameIdx => "system_users_username_idx",
+            StoragePartition::SystemUsersRoleIdx => "system_users_role_idx",
+            StoragePartition::SystemUsersDeletedAtIdx => "system_users_deleted_at_idx",
         }
     }
 
@@ -163,11 +172,20 @@ impl StoragePartition {
             Lazy::new(|| Partition::new(StoragePartition::SystemColumns.name()));
         static COUNTERS: Lazy<Partition> =
             Lazy::new(|| Partition::new(StoragePartition::UserTableCounters.name()));
+        static USERNAME_IDX: Lazy<Partition> =
+            Lazy::new(|| Partition::new(StoragePartition::SystemUsersUsernameIdx.name()));
+        static ROLE_IDX: Lazy<Partition> =
+            Lazy::new(|| Partition::new(StoragePartition::SystemUsersRoleIdx.name()));
+        static DELETED_AT_IDX: Lazy<Partition> =
+            Lazy::new(|| Partition::new(StoragePartition::SystemUsersDeletedAtIdx.name()));
 
         match self {
             StoragePartition::InformationSchemaTables => &INFO,
             StoragePartition::SystemColumns => &COLUMNS,
             StoragePartition::UserTableCounters => &COUNTERS,
+            StoragePartition::SystemUsersUsernameIdx => &USERNAME_IDX,
+            StoragePartition::SystemUsersRoleIdx => &ROLE_IDX,
+            StoragePartition::SystemUsersDeletedAtIdx => &DELETED_AT_IDX,
         }
     }
 }

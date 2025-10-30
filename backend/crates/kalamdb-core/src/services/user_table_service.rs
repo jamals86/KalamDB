@@ -236,9 +236,9 @@ impl UserTableService {
         schema: &Arc<Schema>,
     ) -> Result<(), KalamDbError> {
         use kalamdb_commons::models::{
-            ColumnDefinition, FlushPolicyDef, SchemaVersion, TableDefinition,
+            FlushPolicyDef, SchemaVersion, TableDefinition,
         };
-        use std::collections::HashMap;
+        
 
         // Extract columns from schema with ordinal positions
         let columns = TableDefinition::extract_columns_from_schema(

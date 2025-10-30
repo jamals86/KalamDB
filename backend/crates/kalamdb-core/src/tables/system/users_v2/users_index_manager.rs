@@ -11,7 +11,7 @@ use super::users_username_index::{UsernameIndex, UsernameIndexExt};
 use crate::error::KalamDbError;
 use chrono::{DateTime, Utc};
 use kalamdb_commons::system::User;
-use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId, UserName};
+use kalamdb_commons::{Role, UserId};
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 

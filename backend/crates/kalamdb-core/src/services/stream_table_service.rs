@@ -218,7 +218,7 @@ impl StreamTableService {
         let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
 
         // Create TableSchema record for version 1
-        let table_schema = TableSchema {
+        let _table_schema = TableSchema {
             schema_id: format!("{}:1", table_id),
             table_id: table_id.clone(),
             version: 1,
@@ -235,7 +235,7 @@ impl StreamTableService {
         // self.kalam_sql.insert_table_schema(&table_schema)?;
 
         // Create Table record in system_tables
-        let table = kalamdb_sql::Table {
+        let _table = kalamdb_sql::Table {
             table_id: TableId::from_strings(namespace_id.as_str(), table_name.as_str()),
             table_name: table_name.clone(),
             namespace: namespace_id.clone(),

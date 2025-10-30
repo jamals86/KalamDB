@@ -55,17 +55,17 @@ impl JobsTableSchema {
 
     /// Get the table name
     pub fn table_name() -> &'static str {
-        "jobs"
+        kalamdb_commons::SystemTable::Jobs.table_name()
     }
 
     /// Get the column family name in RocksDB
     pub fn column_family_name() -> &'static str {
-        "system_jobs"
+        kalamdb_commons::SystemTable::Jobs.column_family_name()
     }
 
     /// Get the partition key for storage
     pub fn partition() -> &'static str {
-        "system_jobs"
+        kalamdb_commons::SystemTable::Jobs.column_family_name()
     }
 }
 

@@ -135,7 +135,7 @@ impl SharedTableService {
         let schema = stmt.schema.clone();
 
         // Resolve storage location from storage_id (defaulting to 'local')
-        let storage_id = stmt
+        let _storage_id = stmt
             .storage_id
             .as_ref()
             .cloned()
@@ -412,7 +412,7 @@ impl SharedTableService {
         let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
 
         // Create TableSchema record for version 1
-        let table_schema = TableSchema {
+        let _table_schema = TableSchema {
             schema_id: format!("{}:1", table_id),
             table_id: table_id.clone(),
             version: 1,

@@ -4,8 +4,7 @@
 
 use crate::stores::SystemTableStore;
 use kalamdb_commons::system::SystemTable;
-use kalamdb_commons::{NamespaceId, TableName};
-use kalamdb_store::{CrossUserTableStore, EntityStoreV2, StorageBackend};
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
 /// Type alias for the tables table store

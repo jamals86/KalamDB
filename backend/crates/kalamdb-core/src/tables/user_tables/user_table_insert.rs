@@ -11,13 +11,12 @@
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
-use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
+use crate::stores::system_table::UserTableStoreExt;
 use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId};
 use crate::tables::UserTableStore;
 use arrow::datatypes::Schema;
 use chrono::Utc;
 use kalamdb_commons::models::ColumnDefault;
-use kalamdb_store::EntityStoreV2 as EntityStore;
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -92,7 +91,7 @@ impl UserTableInsertHandler {
         let row_id = self.generate_row_id()?;
 
         // Create the key and entity for storage
-        let key = UserTableRowId::new(user_id.clone(), row_id.clone());
+        let _key = UserTableRowId::new(user_id.clone(), row_id.clone());
         let entity = UserTableRow {
             row_id: row_id.clone(),
             user_id: user_id.as_str().to_string(),

@@ -55,17 +55,17 @@ impl UsersTableSchema {
 
     /// Get the table name
     pub fn table_name() -> &'static str {
-        "users"
+        kalamdb_commons::SystemTable::Users.table_name()
     }
 
     /// Get the column family name in RocksDB
     pub fn column_family_name() -> &'static str {
-        "system_users"
+        kalamdb_commons::SystemTable::Users.column_family_name()
     }
 
     /// Get the partition key for storage
     pub fn partition() -> &'static str {
-        "system_users"
+        kalamdb_commons::SystemTable::Users.column_family_name()
     }
 }
 

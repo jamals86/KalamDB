@@ -10,7 +10,7 @@ use crate::error::KalamDbError;
 use crate::tables::system::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    ArrayRef, BooleanArray, Int32Array, Int64Array, RecordBatch, StringBuilder,
+    ArrayRef, BooleanArray, RecordBatch, StringBuilder,
     TimestampMillisecondArray, UInt32Array, UInt64Array,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};

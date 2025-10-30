@@ -14,7 +14,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::User;
-use kalamdb_commons::{UserId, UserName};
+use kalamdb_commons::UserId;
 use kalamdb_store::EntityStoreV2;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
@@ -59,6 +59,14 @@ impl UsersTableProvider {
     /// # Returns
     /// Result indicating success or failure
     pub fn create_user(&self, user: User) -> Result<(), KalamDbError> {
+        // Check if username already exists (duplicate check via unique index)
+        if let Some(_existing_id) = self.username_index.lookup(user.username.as_str())? {
+            return Err(KalamDbError::AlreadyExists(format!(
+                "User with username '{}' already exists",
+                user.username.as_str()
+            )));
+        }
+
         // Store user by ID
         self.store.put(&user.id, &user)?;
 

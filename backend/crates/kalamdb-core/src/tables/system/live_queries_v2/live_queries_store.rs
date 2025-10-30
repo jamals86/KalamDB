@@ -3,10 +3,9 @@
 //! Provides typed storage for LiveQuery entities using SystemTableStore.
 
 use crate::stores::SystemTableStore;
-use kalamdb_store::EntityStoreV2 as EntityStore;
 use kalamdb_commons::system::LiveQuery;
 use kalamdb_commons::LiveQueryId;
-use kalamdb_store::{EntityStoreV2, StorageBackend};
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
 /// Type alias for the live queries store

@@ -65,11 +65,11 @@ use kalamdb_sql::RocksDbAdapter;
 pub async fn websocket_handler_v1(
     req: HttpRequest,
     stream: web::Payload,
-    query: web::Query<std::collections::HashMap<String, String>>,
+    _query: web::Query<std::collections::HashMap<String, String>>, //TODO: Is this needed?
     jwt_auth: web::Data<Arc<JwtAuth>>,
     rate_limiter: web::Data<Arc<RateLimiter>>,
     live_query_manager: web::Data<Arc<LiveQueryManager>>,
-    sql_adapter: web::Data<Arc<RocksDbAdapter>>,
+    _sql_adapter: web::Data<Arc<RocksDbAdapter>>,
 ) -> Result<HttpResponse, Error> {
     // Generate unique connection ID
     let connection_id = Uuid::new_v4().to_string();

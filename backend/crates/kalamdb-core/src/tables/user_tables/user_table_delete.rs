@@ -10,10 +10,8 @@
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
-use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
-use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId};
+use crate::stores::system_table::UserTableStoreExt;
 use crate::tables::UserTableStore;
-use kalamdb_store::EntityStoreV2 as EntityStore;
 use std::sync::Arc;
 
 /// User table DELETE handler

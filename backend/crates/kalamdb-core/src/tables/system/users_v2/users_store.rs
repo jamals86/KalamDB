@@ -3,9 +3,8 @@
 //! This module provides a SystemTableStore<UserId, User> wrapper for the system.users table.
 
 use crate::stores::SystemTableStore;
-use kalamdb_store::{CrossUserTableStore, EntityStoreV2};
 use kalamdb_commons::system::User;
-use kalamdb_commons::{AuthType, StorageId, StorageMode, UserId, UserName};
+use kalamdb_commons::UserId;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 

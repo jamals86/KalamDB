@@ -10,13 +10,12 @@ use crate::catalog::{NamespaceId, TableMetadata, TableName};
 use crate::error::KalamDbError;
 use crate::tables::arrow_json_conversion::{arrow_batch_to_json, json_rows_to_arrow_batch, validate_insert_rows};
 use crate::tables::shared_tables::shared_table_store::{
-    new_shared_table_store, SharedTableRow, SharedTableRowId, SharedTableStore,
+    SharedTableRow, SharedTableRowId, SharedTableStore,
 };
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::execution::context::SessionState;
 use kalamdb_store::EntityStoreV2 as EntityStore;
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};

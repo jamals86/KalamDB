@@ -20,7 +20,6 @@
 //! - **Shared Tables**: Global data with key format `{row_id}`
 //! - **Stream Tables**: Ephemeral events with key format `{timestamp_ms}:{row_id}`
 
-pub mod audit_log;
 pub mod common;
 pub mod entity_store; // Phase 14: Type-safe EntityStore<K, V> with generic keys
 pub mod index; // Generic secondary index support
@@ -53,7 +52,6 @@ pub use entity_store::{
 };
 
 // Export index types
-pub use audit_log::AuditLogStore;
 pub use index::{FunctionExtractor, IndexKeyExtractor, SecondaryIndex};
 
 // NOTE: Old RocksDB-based table stores removed - use EntityStore implementations in kalamdb-core instead

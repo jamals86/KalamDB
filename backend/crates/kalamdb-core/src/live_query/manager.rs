@@ -10,7 +10,6 @@ use crate::live_query::connection_registry::{
 use crate::live_query::filter::FilterCache;
 use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
-use crate::tables::{new_user_table_store, new_shared_table_store, new_stream_table_store};
 use crate::tables::system::LiveQueriesTableProvider;
 use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;

@@ -697,9 +697,9 @@
 
 - [ ] T144 [P] Update ALL existing integration tests to use auth helper in backend/tests/ (scan for all test files, add authenticate() calls)
 - [x] ~~T145 Implement backward compatibility for X-API-KEY header in backend/src/middleware.rs (support old and new auth simultaneously)~~ - **OBSOLETE: API key authentication removed in US1**
-- [ ] T146 Implement backward compatibility for X-USER-ID header in backend/src/middleware.rs (honor if present)
+- [x] ~~T146 Implement backward compatibility for X-USER-ID header in backend/crates/kalamdb-api/src/middleware/auth.rs (honor if present)~~ - **REMOVED** (October 30, 2025): Backward compatibility not needed, clean migration path only
 - [x] ~~T147 Add deprecation warnings for old auth headers in backend/src/logging.rs (log warning when X-API-KEY used)~~ - **OBSOLETE: API key authentication removed in US1**
-- [ ] T148 Create migration documentation in docs/migration/OLD_AUTH_TO_NEW_AUTH.md (timeline, steps, examples)
+- [x] ~~T148 Create migration documentation in docs/migration/OLD_AUTH_TO_NEW_AUTH.md (timeline, steps, examples)~~ - **REMOVED** (October 30, 2025): No backward compatibility support needed
 
 ### ~~User Management Endpoints~~ - **REMOVED: User management via SQL only (CREATE USER, ALTER USER, DROP USER in Phase 5.5)**
 
@@ -725,8 +725,8 @@
 - [x] T161 [P] Security audit of authentication code (password handling, timing attacks, error messages)
 - [ ] T162 Implement user record caching for performance (moka cache, 99%+ hit rate, saves 1-5ms RocksDB lookup)
 - [ ] T163 Implement JWT token claim caching for performance (moka cache, 5-10x speedup, <1ms p95 latency)
-- [ ] T164 [P] Add request_id to all authentication error responses in backend/src/middleware.rs (for troubleshooting)
-- [ ] T165 Final end-to-end test in backend/tests/test_e2e_auth_flow.rs (create user → authenticate → execute query → soft delete → restore)
+- [x] T164 [P] Add request_id to all authentication error responses in backend/crates/kalamdb-api/src/middleware/auth.rs (for troubleshooting) ✅ **COMPLETED** (Already implemented): generate_request_id() function creates unique IDs, all error responses include request_id field
+- [x] T165 Final end-to-end test in backend/tests/test_e2e_auth_flow.rs (create user → authenticate → execute query → soft delete → restore) ✅ **COMPLETED** (Already implemented): Comprehensive E2E tests with 3 test functions (test_e2e_auth_flow, test_role_based_auth_e2e, test_password_security_e2e)
 
 ---
 
@@ -771,28 +771,33 @@
 - [x] T181 [P] Implement audit logging for DROP USER in backend/crates/kalamdb-core/src/sql/executor.rs **COMPLETED**: log_audit_event integrated
 - [x] T182 [P] Implement audit logging for ALTER TABLE SET ACCESS in backend/crates/kalamdb-core/src/sql/executor.rs **COMPLETED**: log_audit_event integrated
 
-**Note**: AuditLogStore currently exists in backend/crates/kalamdb-store/src/audit_log.rs but uses custom implementation. Should be migrated to EntityStore pattern following system.users_v2 structure (see Phase 14 Additional Task below).
+**Note**: ✅ COMPLETED 2025-01-XX - Migrated to EntityStore pattern in kalamdb-core/src/tables/system/audit_logs/
 
-### Audit Log Migration to EntityStore Pattern (Phase 14 Extension)
+### Audit Log Migration to EntityStore Pattern (Phase 14 Extension) ✅ COMPLETED
 
-**Current State**: 
-- ✅ AuditLogEntry model exists in kalamdb-commons/src/models/system.rs
-- ✅ AuditLogId key type exists in kalamdb-commons/src/models/audit_log_id.rs
-- ✅ AuditLogStore exists in kalamdb-store/src/audit_log.rs (custom implementation)
-- ❌ Not using EntityStore<K,V> pattern (should follow users_v2 structure)
+**Migration Summary (2025-01-XX)**:
+- ✅ Migrated AuditLogStore from custom implementation to EntityStore pattern
+- ✅ Created audit_logs module in kalamdb-core/src/tables/system/audit_logs/ (649 lines, 21 tests)
+- ✅ Followed users_v2 reference pattern: schema caching, SystemTableStore wrapper, TableProvider
+- ✅ Updated kalamdb-sql/src/adapter.rs to use inline EntityStoreV2 implementation (avoids circular dependency)
+- ✅ Deleted old kalamdb-store/src/audit_log.rs (115 lines removed)
 
-**Target**: Migrate to backend/crates/kalamdb-core/src/tables/system/audit_logs/ following EntityStore pattern
+**Files Created**:
+- backend/crates/kalamdb-core/src/tables/system/audit_logs/mod.rs (18 lines)
+- backend/crates/kalamdb-core/src/tables/system/audit_logs/audit_logs_table.rs (131 lines, 6 tests)
+- backend/crates/kalamdb-core/src/tables/system/audit_logs/audit_logs_store.rs (177 lines, 7 tests)
+- backend/crates/kalamdb-core/src/tables/system/audit_logs/audit_logs_provider.rs (323 lines, 8 tests)
 
-- [ ] T178A [P] [Phase14] Create backend/crates/kalamdb-core/src/tables/system/audit_logs/mod.rs - module structure following users_v2
-- [ ] T178B [P] [Phase14] Create audit_logs_table.rs in audit_logs/ folder (define schema with OnceLock<Arc<Schema>> caching, SINGLE SOURCE OF TRUTH for schema)
-- [ ] T178C [P] [Phase14] Create audit_logs_store.rs in audit_logs/ folder (SystemTableStore<AuditLogId, AuditLogEntry> wrapper following users_v2/users_store.rs pattern)
-- [ ] T178D [P] [Phase14] Create audit_logs_provider.rs in audit_logs/ folder (AuditLogsTableProvider implementing TableProvider, imports schema from audit_logs_table.rs)
-- [ ] T178E [Phase14] Update backend/crates/kalamdb-core/src/tables/system/mod.rs to export audit_logs module
-- [ ] T178F [Phase14] Update backend/crates/kalamdb-core/src/sql/executor.rs to use new AuditLogsTableProvider from kalamdb_core::tables::system::audit_logs
-- [ ] T178G [P] [Phase14] Update log_audit_event() helper to use SystemTableStore<AuditLogId, AuditLogEntry>.put() instead of custom AuditLogStore
-- [ ] T178H [P] [Phase14] Delete old backend/crates/kalamdb-store/src/audit_log.rs after migration complete
-- [ ] T178I [Phase14] Add tests to audit_logs_store.rs (5 tests: create, append, scan_all, timestamp ordering, concurrent writes)
-- [ ] T178J [Phase14] Add tests to audit_logs_provider.rs (8 tests: scan, filter, projection, batch operations)
+- [x] T178A [P] [Phase14] ✅ 2025-01-XX - Create backend/crates/kalamdb-core/src/tables/system/audit_logs/mod.rs - module structure following users_v2
+- [x] T178B [P] [Phase14] ✅ 2025-01-XX - Create audit_logs_table.rs in audit_logs/ folder (define schema with OnceLock<Arc<Schema>> caching, SINGLE SOURCE OF TRUTH for schema)
+- [x] T178C [P] [Phase14] ✅ 2025-01-XX - Create audit_logs_store.rs in audit_logs/ folder (SystemTableStore<AuditLogId, AuditLogEntry> wrapper following users_v2/users_store.rs pattern)
+- [x] T178D [P] [Phase14] ✅ 2025-01-XX - Create audit_logs_provider.rs in audit_logs/ folder (AuditLogsTableProvider implementing TableProvider, imports schema from audit_logs_table.rs)
+- [x] T178E [Phase14] ✅ 2025-01-XX - Update backend/crates/kalamdb-core/src/tables/system/mod.rs to export audit_logs module
+- [x] T178F [Phase14] ✅ 2025-01-XX - Update backend/crates/kalamdb-sql/src/adapter.rs to use EntityStoreV2 pattern (inline implementation avoids circular dependency)
+- [x] T178G [P] [Phase14] ✅ 2025-01-XX - Update log_audit_event() helper to use SystemTableStore<AuditLogId, AuditLogEntry>.put() via inline EntityStoreV2 (in adapter.rs)
+- [x] T178H [P] [Phase14] ✅ 2025-01-XX - Delete old backend/crates/kalamdb-store/src/audit_log.rs after migration complete (115 lines removed)
+- [x] T178I [Phase14] ✅ 2025-01-XX - Add tests to audit_logs_store.rs (7 tests: create, append, scan_all, timestamp ordering, concurrent writes, admin-only access, error handling)
+- [x] T178J [Phase14] ✅ 2025-01-XX - Add tests to audit_logs_provider.rs (8 tests: append, scan, filter, projection, batch operations, nullable fields, timestamp ordering, trait compliance)
 
 **Benefits**: Consistency with other system tables, type-safe keys, reusable EntityStore infrastructure, same co-location pattern as users_v2
 
@@ -804,26 +809,26 @@
 
 ### Integration Tests for SQL Commands (from User-Management.md)
 
-- [ ] T190 [P] Integration test for CREATE USER WITH PASSWORD in backend/tests/test_user_sql.rs
-- [ ] T191 [P] Integration test for CREATE USER WITH OAUTH in backend/tests/test_user_sql.rs
-- [ ] T192 [P] Integration test for CREATE USER WITH INTERNAL in backend/tests/test_user_sql.rs
-- [ ] T193 [P] Integration test for CREATE USER duplicate error in backend/tests/test_user_sql.rs
-- [ ] T194 [P] Integration test for ALTER USER SET PASSWORD in backend/tests/test_user_sql.rs
-- [ ] T195 [P] Integration test for ALTER USER SET ROLE in backend/tests/test_user_sql.rs
-- [ ] T196 [P] Integration test for ALTER USER SET EMAIL in backend/tests/test_user_sql.rs
-- [ ] T197 [P] Integration test for ALTER USER not found error in backend/tests/test_user_sql.rs
-- [ ] T198 [P] Integration test for DROP USER soft delete in backend/tests/test_user_sql.rs
-- [ ] T199 [P] Integration test for DROP USER IF EXISTS in backend/tests/test_user_sql.rs
-- [ ] T200 [P] Integration test for restore deleted user (UPDATE deleted_at = NULL) in backend/tests/test_user_sql.rs
-- [ ] T201 [P] Integration test for SELECT users excludes deleted in backend/tests/test_user_sql.rs
-- [ ] T202 [P] Integration test for SELECT deleted users explicit in backend/tests/test_user_sql.rs
+- [x] T190 [P] ✅ 2025-10-30 - Integration test for CREATE USER WITH PASSWORD in backend/tests/test_user_sql_commands.rs (test_create_user_with_password_success)
+- [x] T191 [P] ✅ 2025-10-30 - Integration test for CREATE USER WITH OAUTH in backend/tests/test_user_sql_commands.rs (test_create_user_with_oauth_success)
+- [x] T192 [P] ✅ 2025-10-30 - Integration test for CREATE USER WITH INTERNAL in backend/tests/test_user_sql_commands.rs (test_create_user_with_internal_auth)
+- [x] T193 [P] ✅ 2025-10-30 - Integration test for CREATE USER duplicate error in backend/tests/test_user_sql_commands.rs (test_create_user_duplicate_error)
+- [x] T194 [P] ✅ 2025-10-30 - Integration test for ALTER USER SET PASSWORD in backend/tests/test_user_sql_commands.rs (test_alter_user_set_password)
+- [x] T195 [P] ✅ 2025-10-30 - Integration test for ALTER USER SET ROLE in backend/tests/test_user_sql_commands.rs (test_alter_user_set_role)
+- [x] T196 [P] ✅ 2025-10-30 - Integration test for ALTER USER SET EMAIL in backend/tests/test_user_sql_commands.rs (test_alter_user_set_email)
+- [x] T197 [P] ✅ 2025-10-30 - Integration test for ALTER USER not found error in backend/tests/test_user_sql_commands.rs (test_alter_user_not_found)
+- [x] T198 [P] ✅ 2025-10-30 - Integration test for DROP USER soft delete in backend/tests/test_user_sql_commands.rs (test_drop_user_soft_delete)
+- [x] T199 [P] ✅ 2025-10-30 - Integration test for DROP USER IF EXISTS in backend/tests/test_user_sql_commands.rs (test_drop_user_if_exists)
+- [x] T200 [P] ✅ 2025-10-30 - Integration test for restore deleted user (UPDATE deleted_at = NULL) in backend/tests/test_user_sql_commands.rs (test_restore_deleted_user)
+- [x] T201 [P] ✅ 2025-10-30 - Integration test for SELECT users excludes deleted in backend/tests/test_user_sql_commands.rs (test_select_users_excludes_deleted)
+- [x] T202 [P] ✅ 2025-10-30 - Integration test for SELECT deleted users explicit in backend/tests/test_user_sql_commands.rs (test_select_deleted_users_explicit)
 
 ### System User Tests
 
-- [ ] T203 [P] Integration test for system user localhost access without password in backend/tests/test_system_user.rs
-- [ ] T204 [P] Integration test for system user remote access blocked by default in backend/tests/test_system_user.rs
-- [ ] T205 [P] Integration test for system user remote access with password in backend/tests/test_system_user.rs
-- [ ] T206 [P] Integration test for system user remote access without password rejected in backend/tests/test_system_user.rs
+- [x] T203 [P] ✅ 2025-10-30 - Integration test for system user localhost access without password in backend/tests/test_system_users.rs (test_system_user_localhost_no_password)
+- [x] T204 [P] ✅ 2025-10-30 - Integration test for system user remote access blocked by default in backend/tests/test_system_users.rs (test_system_user_remote_denied_by_default)
+- [x] T205 [P] ✅ 2025-10-30 - Integration test for system user remote access with password in backend/tests/test_system_users.rs (test_system_user_remote_with_password)
+- [x] T206 [P] ✅ 2025-10-30 - Integration test for system user remote access without password rejected in backend/tests/test_system_users.rs (test_system_user_remote_no_password_denied)
 
 ### Last Seen Tracking
 

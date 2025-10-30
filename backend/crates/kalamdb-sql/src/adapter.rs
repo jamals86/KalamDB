@@ -6,8 +6,9 @@
 use crate::{AuditLogEntry, Job, LiveQuery, Namespace, Storage, Table, TableSchema, User};
 // use kalamdb_commons::models::TableDefinition; // Unused
 use anyhow::{anyhow, Result};
+use kalamdb_commons::models::AuditLogId;
 use kalamdb_commons::{StoragePartition, SystemTable};
-use kalamdb_store::{AuditLogStore, StorageBackend};
+use kalamdb_store::{EntityStoreV2, StorageBackend};
 use std::sync::Arc;
 
 /// Storage adapter for system tables (backend-agnostic)
@@ -44,15 +45,50 @@ impl StorageAdapter {
 
     /// Insert an audit log entry
     pub fn insert_audit_log(&self, entry: &AuditLogEntry) -> Result<()> {
-        let store = AuditLogStore::new(self.backend.clone());
-        store.append(entry)?;
+        // Create an entity store for audit logs using the entity_store module
+        struct AuditLogEntityStore {
+            backend: Arc<dyn StorageBackend>,
+        }
+
+        impl EntityStoreV2<AuditLogId, AuditLogEntry> for AuditLogEntityStore {
+            fn backend(&self) -> &Arc<dyn StorageBackend> {
+                &self.backend
+            }
+
+            fn partition(&self) -> &str {
+                "system_audit_log"
+            }
+        }
+
+        let store = AuditLogEntityStore {
+            backend: self.backend.clone(),
+        };
+        EntityStoreV2::put(&store, &entry.audit_id, entry)?;
         Ok(())
     }
 
     /// Scan all audit log entries
     pub fn scan_audit_logs(&self) -> Result<Vec<AuditLogEntry>> {
-        let store = AuditLogStore::new(self.backend.clone());
-        Ok(store.scan_all()?)
+        // Create an entity store for audit logs using the entity_store module
+        struct AuditLogEntityStore {
+            backend: Arc<dyn StorageBackend>,
+        }
+
+        impl EntityStoreV2<AuditLogId, AuditLogEntry> for AuditLogEntityStore {
+            fn backend(&self) -> &Arc<dyn StorageBackend> {
+                &self.backend
+            }
+
+            fn partition(&self) -> &str {
+                "system_audit_log"
+            }
+        }
+
+        let store = AuditLogEntityStore {
+            backend: self.backend.clone(),
+        };
+        let entries: Vec<(Vec<u8>, AuditLogEntry)> = EntityStoreV2::scan_all(&store)?;
+        Ok(entries.into_iter().map(|(_, entry)| entry).collect())
     }
 
     /// Insert a new user

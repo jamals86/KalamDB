@@ -18,9 +18,6 @@ use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::schema::ArrowSchemaWithOptions;
 use arrow::datatypes::{DataType, Field, Schema};
-use kalamdb_commons::models::{StorageId, UserId};
-use kalamdb_commons::system::{LiveQuery, Namespace};
-use kalamdb_commons::{TableId, LiveQueryId};
 use kalamdb_sql::ddl::ColumnOperation;
 use kalamdb_sql::{KalamSql, Table, TableSchema};
 use std::sync::Arc;
@@ -180,7 +177,7 @@ impl SchemaEvolutionService {
         };
 
         // Create and insert new schema version
-        let new_schema = TableSchema {
+        let _new_schema = TableSchema {
             schema_id: format!("{}:v{}", table_id, new_version),
             table_id: table_id.clone(),
             version: new_version,
