@@ -269,7 +269,7 @@ mod tests {
     fn create_test_user(id: &str, username: &str) -> User {
         User {
             id: UserId::new(id),
-            username: username.to_string(),
+            username: UserName::new(username),
             password_hash: "hashed_password".to_string(),
             role: Role::User,
             email: Some(format!("{}@example.com", username)),
@@ -296,7 +296,7 @@ mod tests {
         let retrieved = provider.get_user_by_id(&UserId::new("user1")).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
-        assert_eq!(retrieved.username, "alice");
+        assert_eq!(retrieved.username.as_str(), "alice");
         assert_eq!(retrieved.email, Some("alice@example.com".to_string()));
     }
 
@@ -352,7 +352,7 @@ mod tests {
             .get_user_by_id(&UserId::new("user1"))
             .unwrap()
             .unwrap();
-        updated.username = "bob".to_string();
+        updated.username = UserName::new("bob");
 
         provider.update_user(updated).unwrap();
 

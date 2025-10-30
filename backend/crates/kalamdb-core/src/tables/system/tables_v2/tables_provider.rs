@@ -194,7 +194,7 @@ mod tests {
 
     fn create_test_table(table_id: &str, table_name: &str) -> SystemTable {
         SystemTable {
-            table_id: table_id.to_string(),
+            table_id: TableId::new(NamespaceId::new("default"), TableName::new(table_name)),
             table_name: TableName::new(table_name),
             namespace: NamespaceId::new("default"),
             table_type: KalamTableType::User,
@@ -219,7 +219,7 @@ mod tests {
         let retrieved = provider.get_table_by_id("table1").unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
-        assert_eq!(retrieved.table_id, "table1");
+        assert_eq!(retrieved.table_id.as_str(), "default:conversations");
         assert_eq!(retrieved.table_name.as_str(), "conversations");
     }
 

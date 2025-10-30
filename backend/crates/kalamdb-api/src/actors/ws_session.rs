@@ -504,7 +504,7 @@ impl Handler<SendNotification> for WebSocketSession {
 mod tests {
     use super::*;
     use kalamdb_core::live_query::{LiveQueryManager, NodeId};
-    use kalamdb_core::storage::RocksDbInit;
+    use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
     #[test]
@@ -513,7 +513,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_init = kalamdb_store::RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = db_init.open().unwrap();
-        let backend: Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
         let manager = Arc::new(LiveQueryManager::new(

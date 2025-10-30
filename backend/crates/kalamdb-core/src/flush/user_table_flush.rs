@@ -8,7 +8,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::storage::{ParquetWriter, StorageRegistry};
 use crate::stores::system_table::UserTableStoreExt;
-use crate::tables::UserTableStore;
+use crate::tables::{UserTableStore, new_user_table_store};
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -755,7 +755,8 @@ impl UserTableFlushJob {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::jobs::JobStatus;
+    use crate::models::UserTableRow;
+    use kalamdb_commons::JobStatus;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_store::test_utils::TestDb;
     use serde_json::json;
@@ -774,15 +775,16 @@ mod tests {
     #[test]
     fn test_user_table_flush_job_creation() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(Arc::new(
-            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
-        )));
+        let backend = Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
+        let namespace_id = NamespaceId::new("test_ns");
+        let table_name = TableName::new("test_table");
+        let store = Arc::new(new_user_table_store(backend, &namespace_id, &table_name));
         let schema = create_test_schema();
 
         let job = UserTableFlushJob::new(
             store,
-            NamespaceId::new("test_ns"),
-            TableName::new("test_table"),
+            namespace_id.clone(),
+            table_name.clone(),
             schema,
             "/data/${user_id}/tables/".to_string(),
         );
@@ -796,9 +798,10 @@ mod tests {
     #[test]
     fn test_user_table_flush_empty_table() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(Arc::new(
-            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
-        )));
+        let backend = Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
+        let namespace_id = NamespaceId::new("test_ns");
+        let table_name = TableName::new("test_table");
+        let store = Arc::new(new_user_table_store(backend, &namespace_id, &table_name));
         let schema = create_test_schema();
 
         let temp_storage = env::temp_dir().join("kalamdb_flush_test_empty");
@@ -806,8 +809,8 @@ mod tests {
 
         let job = UserTableFlushJob::new(
             store,
-            NamespaceId::new("test_ns"),
-            TableName::new("test_table"),
+            namespace_id.clone(),
+            table_name.clone(),
             schema,
             temp_storage.to_str().unwrap().to_string() + "/${user_id}/",
         );
@@ -831,26 +834,35 @@ mod tests {
     #[test]
     fn test_user_table_flush_single_user() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(Arc::new(
-            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
-        )));
+        let backend = Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
+        let namespace_id = NamespaceId::new("test_ns");
+        let table_name = TableName::new("test_table");
+        let store = Arc::new(new_user_table_store(backend, &namespace_id, &table_name));
         let schema = create_test_schema();
 
         // Insert test data for user1
-        let row1 = json!({
-            "id": "row1",
-            "content": "Message 1"
-        });
-        let row2 = json!({
-            "id": "row2",
-            "content": "Message 2"
-        });
+        let row1 = UserTableRow {
+            fields: serde_json::from_value(json!({
+                "id": "row1",
+                "content": "Message 1"
+            })).unwrap(),
+            _updated: Utc::now().to_rfc3339(),
+            _deleted: false,
+        };
+        let row2 = UserTableRow {
+            fields: serde_json::from_value(json!({
+                "id": "row2",
+                "content": "Message 2"
+            })).unwrap(),
+            _updated: Utc::now().to_rfc3339(),
+            _deleted: false,
+        };
 
         store
-            .put("test_ns", "test_table", "user1", "row1", row1)
+            .put("test_ns", "test_table", "user1", "row1", &row1)
             .unwrap();
         store
-            .put("test_ns", "test_table", "user1", "row2", row2)
+            .put("test_ns", "test_table", "user1", "row2", &row2)
             .unwrap();
 
         let temp_storage = env::temp_dir().join("kalamdb_flush_test_single");
@@ -884,33 +896,46 @@ mod tests {
     #[test]
     fn test_user_table_flush_multiple_users() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(Arc::new(
-            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
-        )));
+        let backend = Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
+        let namespace_id = NamespaceId::new("test_ns");
+        let table_name = TableName::new("test_table");
+        let store = Arc::new(new_user_table_store(backend, &namespace_id, &table_name));
         let schema = create_test_schema();
 
         // Insert test data for user1 and user2
-        let row1 = json!({
-            "id": "row1",
-            "content": "User1 Message 1"
-        });
-        let row2 = json!({
-            "id": "row2",
-            "content": "User2 Message 1"
-        });
-        let row3 = json!({
-            "id": "row3",
-            "content": "User1 Message 2"
-        });
+        let row1 = UserTableRow {
+            fields: serde_json::from_value(json!({
+                "id": "row1",
+                "content": "User1 Message 1"
+            })).unwrap(),
+            _updated: Utc::now().to_rfc3339(),
+            _deleted: false,
+        };
+        let row2 = UserTableRow {
+            fields: serde_json::from_value(json!({
+                "id": "row2",
+                "content": "User2 Message 1"
+            })).unwrap(),
+            _updated: Utc::now().to_rfc3339(),
+            _deleted: false,
+        };
+        let row3 = UserTableRow {
+            fields: serde_json::from_value(json!({
+                "id": "row3",
+                "content": "User1 Message 2"
+            })).unwrap(),
+            _updated: Utc::now().to_rfc3339(),
+            _deleted: false,
+        };
 
         store
-            .put("test_ns", "test_table", "user1", "row1", row1)
+            .put("test_ns", "test_table", "user1", "row1", &row1)
             .unwrap();
         store
-            .put("test_ns", "test_table", "user2", "row2", row2)
+            .put("test_ns", "test_table", "user2", "row2", &row2)
             .unwrap();
         store
-            .put("test_ns", "test_table", "user1", "row3", row3)
+            .put("test_ns", "test_table", "user1", "row3", &row3)
             .unwrap();
 
         let temp_storage = env::temp_dir().join("kalamdb_flush_test_multiple");
@@ -939,26 +964,35 @@ mod tests {
     #[test]
     fn test_user_table_flush_skips_soft_deleted() {
         let test_db = TestDb::single_cf("user_test_ns:test_table").unwrap();
-        let store = Arc::new(UserTableStore::new(Arc::new(
-            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
-        )));
+        let backend = Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
+        let namespace_id = NamespaceId::new("test_ns");
+        let table_name = TableName::new("test_table");
+        let store = Arc::new(new_user_table_store(backend, &namespace_id, &table_name));
         let schema = create_test_schema();
 
         // Insert test data with one active and one soft-deleted row
-        let row1 = json!({
-            "id": "row1",
-            "content": "Active Message"
-        });
-        let row2_active = json!({
-            "id": "row2",
-            "content": "Deleted Message"
-        });
+        let row1 = UserTableRow {
+            fields: serde_json::from_value(json!({
+                "id": "row1",
+                "content": "Active Message"
+            })).unwrap(),
+            _updated: Utc::now().to_rfc3339(),
+            _deleted: false,
+        };
+        let row2_active = UserTableRow {
+            fields: serde_json::from_value(json!({
+                "id": "row2",
+                "content": "Deleted Message"
+            })).unwrap(),
+            _updated: Utc::now().to_rfc3339(),
+            _deleted: false,
+        };
 
         store
-            .put("test_ns", "test_table", "user1", "row1", row1)
+            .put("test_ns", "test_table", "user1", "row1", &row1)
             .unwrap();
         store
-            .put("test_ns", "test_table", "user1", "row2", row2_active)
+            .put("test_ns", "test_table", "user1", "row2", &row2_active)
             .unwrap();
 
         // Soft-delete row2

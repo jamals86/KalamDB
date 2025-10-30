@@ -9,7 +9,7 @@ use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::models::SharedTableRow;
 use crate::storage::ParquetWriter;
 use crate::stores::system_table::SharedTableStoreExt;
-use crate::tables::SharedTableStore;
+use crate::tables::{SharedTableStore, new_shared_table_store};
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -416,13 +416,15 @@ mod tests {
     #[test]
     fn test_shared_table_flush_job_creation() {
         let backend = Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
-        let store = Arc::new(SharedTableStore::new(backend));
+        let namespace_id = NamespaceId::new("test_ns");
+        let table_name = TableName::new("test_table");
+        let store = Arc::new(new_shared_table_store(backend, &namespace_id, &table_name));
         let schema = create_test_schema();
 
         let job = SharedTableFlushJob::new(
             store,
-            NamespaceId::new("test_ns"),
-            TableName::new("test_table"),
+            namespace_id.clone(),
+            table_name.clone(),
             schema,
             "/data/shared".to_string(),
         );
@@ -435,7 +437,9 @@ mod tests {
     #[test]
     fn test_shared_table_flush_empty_table() {
         let backend = Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
-        let store = Arc::new(SharedTableStore::new(backend));
+        let namespace_id = NamespaceId::new("test_ns");
+        let table_name = TableName::new("test_table");
+        let store = Arc::new(new_shared_table_store(backend, &namespace_id, &table_name));
         let schema = create_test_schema();
 
         let temp_storage = env::temp_dir().join("kalamdb_shared_flush_test_empty");
@@ -443,8 +447,8 @@ mod tests {
 
         let job = SharedTableFlushJob::new(
             store,
-            NamespaceId::new("test_ns"),
-            TableName::new("test_table"),
+            namespace_id.clone(),
+            table_name.clone(),
             schema,
             temp_storage.to_str().unwrap().to_string(),
         );
@@ -461,31 +465,48 @@ mod tests {
     #[test]
     fn test_shared_table_flush_with_rows() {
         let backend = Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
-        let store = Arc::new(SharedTableStore::new(backend));
+        let namespace_id = NamespaceId::new("test_ns");
+        let table_name = TableName::new("test_table");
+        let store = Arc::new(new_shared_table_store(backend, &namespace_id, &table_name));
         let schema = create_test_schema();
 
         // Insert test data
-        let row1 = json!({
-            "id": "row1",
-            "content": "Shared Message 1"
-        });
-        let row2 = json!({
-            "id": "row2",
-            "content": "Shared Message 2"
-        });
-        let row3 = json!({
-            "id": "row3",
-            "content": "Shared Message 3"
-        });
+        let row1 = SharedTableRow {
+            fields: serde_json::from_value(json!({
+                "id": "row1",
+                "content": "Shared Message 1"
+            })).unwrap(),
+            _updated: Utc::now().to_rfc3339(),
+            _deleted: false,
+            access_level: kalamdb_commons::TableAccess::Public,
+        };
+        let row2 = SharedTableRow {
+            fields: serde_json::from_value(json!({
+                "id": "row2",
+                "content": "Shared Message 2"
+            })).unwrap(),
+            _updated: Utc::now().to_rfc3339(),
+            _deleted: false,
+            access_level: kalamdb_commons::TableAccess::Public,
+        };
+        let row3 = SharedTableRow {
+            fields: serde_json::from_value(json!({
+                "id": "row3",
+                "content": "Shared Message 3"
+            })).unwrap(),
+            _updated: Utc::now().to_rfc3339(),
+            _deleted: false,
+            access_level: kalamdb_commons::TableAccess::Public,
+        };
 
         store
-            .put("test_ns", "test_table", "row1", row1, "public")
+            .put("test_ns", "test_table", "row1", &row1)
             .unwrap();
         store
-            .put("test_ns", "test_table", "row2", row2, "public")
+            .put("test_ns", "test_table", "row2", &row2)
             .unwrap();
         store
-            .put("test_ns", "test_table", "row3", row3, "public")
+            .put("test_ns", "test_table", "row3", &row3)
             .unwrap();
 
         let temp_storage = env::temp_dir().join("kalamdb_shared_flush_test_with_rows");
@@ -519,24 +540,36 @@ mod tests {
     #[test]
     fn test_shared_table_flush_filters_soft_deleted() {
         let backend = Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
-        let store = Arc::new(SharedTableStore::new(backend));
+        let namespace_id = NamespaceId::new("test_ns");
+        let table_name = TableName::new("test_table");
+        let store = Arc::new(new_shared_table_store(backend, &namespace_id, &table_name));
         let schema = create_test_schema();
 
         // Insert test data with one active and one soft-deleted row
-        let row1 = json!({
-            "id": "row1",
-            "content": "Active Message"
-        });
-        let row2 = json!({
-            "id": "row2",
-            "content": "Deleted Message"
-        });
+        let row1 = SharedTableRow {
+            fields: serde_json::from_value(json!({
+                "id": "row1",
+                "content": "Active Message"
+            })).unwrap(),
+            _updated: Utc::now().to_rfc3339(),
+            _deleted: false,
+            access_level: kalamdb_commons::TableAccess::Public,
+        };
+        let row2 = SharedTableRow {
+            fields: serde_json::from_value(json!({
+                "id": "row2",
+                "content": "Deleted Message"
+            })).unwrap(),
+            _updated: Utc::now().to_rfc3339(),
+            _deleted: false,
+            access_level: kalamdb_commons::TableAccess::Public,
+        };
 
         store
-            .put("test_ns", "test_table", "row1", row1, "public")
+            .put("test_ns", "test_table", "row1", &row1)
             .unwrap();
         store
-            .put("test_ns", "test_table", "row2", row2, "public")
+            .put("test_ns", "test_table", "row2", &row2)
             .unwrap();
 
         // Soft-delete row2
@@ -569,16 +602,23 @@ mod tests {
     #[test]
     fn test_shared_table_flush_job_record() {
         let backend = Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
-        let store = Arc::new(SharedTableStore::new(backend));
+        let namespace_id = NamespaceId::new("test_ns");
+        let table_name = TableName::new("test_table");
+        let store = Arc::new(new_shared_table_store(backend, &namespace_id, &table_name));
         let schema = create_test_schema();
 
         // Insert test data
-        let row1 = json!({
-            "id": "row1",
-            "content": "Test Message"
-        });
+        let row1 = SharedTableRow {
+            fields: serde_json::from_value(json!({
+                "id": "row1",
+                "content": "Test Message"
+            })).unwrap(),
+            _updated: Utc::now().to_rfc3339(),
+            _deleted: false,
+            access_level: kalamdb_commons::TableAccess::Public,
+        };
         store
-            .put("test_ns", "test_table", "row1", row1, "public")
+            .put("test_ns", "test_table", "row1", &row1)
             .unwrap();
 
         let temp_storage = env::temp_dir().join("kalamdb_shared_flush_test_job_record");

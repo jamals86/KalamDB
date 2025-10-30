@@ -286,7 +286,7 @@ mod tests {
 
         provider.create_live_query(live_query.clone()).unwrap();
 
-        let retrieved = provider.get_live_query(&live_query.live_id).unwrap();
+        let retrieved = provider.get_live_query(live_query.live_id.as_str()).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.live_id, live_query.live_id);
@@ -305,7 +305,7 @@ mod tests {
 
         // Verify
         let retrieved = provider
-            .get_live_query(&live_query.live_id)
+            .get_live_query(live_query.live_id.as_str())
             .unwrap()
             .unwrap();
         assert_eq!(retrieved.changes, 5);
@@ -317,9 +317,9 @@ mod tests {
         let live_query = create_test_live_query("user1-conn1-test-q1", "user1", "test");
 
         provider.create_live_query(live_query.clone()).unwrap();
-        provider.delete_live_query(&live_query.live_id).unwrap();
+        provider.delete_live_query(live_query.live_id.as_str()).unwrap();
 
-        let retrieved = provider.get_live_query(&live_query.live_id).unwrap();
+        let retrieved = provider.get_live_query(live_query.live_id.as_str()).unwrap();
         assert!(retrieved.is_none());
     }
 

@@ -528,7 +528,8 @@ mod tests {
     }
 
     fn create_test_table(kalam_sql: &KalamSql, table_type: &str) -> String {
-        let table_id = "test_ns:test_table".to_string();
+        let table_id_str = "test_ns:test_table".to_string();
+        let table_id = TableId::new(&table_id_str);
 
         // Create namespace
         let namespace = Namespace {
@@ -567,7 +568,7 @@ mod tests {
         let schema_with_opts = ArrowSchemaWithOptions::new(Arc::new(schema));
         let schema_json = schema_with_opts.to_json_string().unwrap();
         let _table_schema = TableSchema {
-            schema_id: format!("{}:v1", table_id),
+            schema_id: format!("{}:v1", table_id.as_str()),
             table_id: table_id.clone(),
             version: 1,
             arrow_schema: schema_json,
@@ -577,7 +578,7 @@ mod tests {
         // TODO: Replace with information_schema_tables storage (Phase 2b)
         // kalam_sql.insert_table_schema(&table_schema).unwrap();
 
-        table_id
+        table_id_str
     }
 
     #[test]
@@ -717,7 +718,7 @@ mod tests {
 
         // Create active live query
         let live_query = LiveQuery {
-            live_id: "lq123".to_string(),
+            live_id: LiveQueryId::new("lq123"),
             connection_id: "conn1".to_string(),
             namespace_id: NamespaceId::new("test_ns"),
             table_name: TableName::new("test_table"),

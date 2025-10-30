@@ -201,7 +201,7 @@ mod tests {
         let db_path = temp_dir.path().to_str().unwrap().to_string();
         let db_init = RocksDbInit::new(&db_path);
         let db = db_init.open().expect("open RocksDB");
-        let backend: Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).expect("kalam sql"));
         let live_query_manager = Arc::new(LiveQueryManager::new(

@@ -4121,7 +4121,7 @@ mod tests {
             shared_table_store.clone(),
             kalam_sql.clone(),
         ));
-        let stream_table_store = Arc::new(crate::tables::new_stream_table_store(backend.clone(), &NamespaceId::new("default"), &TableName::new("test")));
+        let stream_table_store = Arc::new(crate::tables::new_stream_table_store(&NamespaceId::new("default"), &TableName::new("test")));
         let stream_table_service = Arc::new(crate::services::StreamTableService::new(
             stream_table_store.clone(),
             kalam_sql.clone(),
@@ -4227,7 +4227,7 @@ mod tests {
             shared_table_store.clone(),
             kalam_sql.clone(),
         ));
-        let stream_table_store = Arc::new(crate::tables::new_stream_table_store(backend.clone(), &NamespaceId::new("default"), &TableName::new("test")));
+        let stream_table_store = Arc::new(crate::tables::new_stream_table_store(&NamespaceId::new("default"), &TableName::new("test")));
         let stream_table_service = Arc::new(crate::services::StreamTableService::new(
             stream_table_store.clone(),
             kalam_sql.clone(),
@@ -4250,7 +4250,7 @@ mod tests {
 
         // Create a test stream table entry in system_tables
         let table = kalamdb_sql::Table {
-            table_id: "app:events".to_string(),
+            table_id: TableId::new(NamespaceId::new("app"), TableName::new("events")),
             table_name: "events".into(),
             namespace: "app".into(),
             table_type: kalamdb_commons::models::TableType::Stream,

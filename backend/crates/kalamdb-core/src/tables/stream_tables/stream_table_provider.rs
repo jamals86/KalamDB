@@ -21,7 +21,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_store::entity_store::EntityStore;
+use kalamdb_store::EntityStoreV2 as EntityStore;
 use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;

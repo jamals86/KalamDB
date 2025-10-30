@@ -147,8 +147,10 @@ mod tests {
     use super::*;
     use crate::jobs::{JobExecutor, StreamEvictionJob};
     use crate::tables::system::JobsTableProvider;
-    use crate::tables::StreamTableStore;
+    use crate::tables::{StreamTableStore, new_stream_table_store};
+    use kalamdb_commons::models::{NamespaceId, TableName};
     use kalamdb_sql::KalamSql;
+    use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
     fn setup_scheduler() -> (StreamEvictionScheduler, TempDir) {
@@ -156,11 +158,13 @@ mod tests {
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
 
-        let stream_store = Arc::new(StreamTableStore::new(db.clone()).unwrap());
+        let test_namespace = NamespaceId::new("test");
+        let test_table = TableName::new("events");
+        let stream_store = Arc::new(new_stream_table_store(&test_namespace, &test_table));
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
-        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
-        let jobs_provider = Arc::new(JobsTableProvider::new(Arc::clone(&kalam_sql)));
+        let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
+        let jobs_provider = Arc::new(JobsTableProvider::new(Arc::clone(&backend)));
         let job_executor = Arc::new(JobExecutor::new(jobs_provider, "test-node".to_string()));
 
         let eviction_job = Arc::new(StreamEvictionJob::with_defaults(

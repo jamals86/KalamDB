@@ -3,7 +3,7 @@
 //! This module provides a SystemTableStore<NamespaceId, Namespace> wrapper for the system.namespaces table.
 
 use crate::stores::SystemTableStore;
-use kalamdb_store::{CrossUserTableStore, EntityStore, EntityStoreV2};
+use kalamdb_store::{CrossUserTableStore, EntityStoreV2};
 use kalamdb_commons::system::Namespace;
 use kalamdb_commons::NamespaceId;
 use kalamdb_store::StorageBackend;
@@ -28,6 +28,7 @@ mod tests {
     use super::*;
     use kalamdb_commons::Role;
     use kalamdb_store::test_utils::InMemoryBackend;
+    use kalamdb_store::EntityStoreV2 as EntityStore;
 
     fn create_test_store() -> NamespacesStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -106,9 +107,9 @@ mod tests {
         assert!(store.table_access().is_none());
 
         // Only Service, Dba, System roles can read
-        assert!(!store.can_read(Role::User));
-        assert!(store.can_read(Role::Service));
-        assert!(store.can_read(Role::Dba));
-        assert!(store.can_read(Role::System));
+        assert!(!store.can_read(&Role::User));
+        assert!(store.can_read(&Role::Service));
+        assert!(store.can_read(&Role::Dba));
+        assert!(store.can_read(&Role::System));
     }
 }

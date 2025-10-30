@@ -10,6 +10,7 @@ use crate::live_query::connection_registry::{
 use crate::live_query::filter::FilterCache;
 use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
+use crate::tables::{new_user_table_store, new_shared_table_store, new_stream_table_store};
 use crate::tables::system::LiveQueriesTableProvider;
 use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
@@ -840,10 +841,14 @@ mod tests {
         let db = Arc::new(init.open().unwrap());
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
-        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
-        let user_table_store = Arc::new(UserTableStore::new(Arc::clone(&db)).unwrap());
-        let shared_table_store = Arc::new(SharedTableStore::new(Arc::clone(&db)).unwrap());
-        let stream_table_store = Arc::new(StreamTableStore::new(Arc::clone(&db)).unwrap());
+        let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
+        
+        // Create table stores for testing (using default namespace and table)
+        let test_namespace = NamespaceId::new("user1");
+        let test_table = TableName::new("messages");
+        let user_table_store = Arc::new(new_user_table_store(backend.clone(), &test_namespace, &test_table));
+        let shared_table_store = Arc::new(new_shared_table_store(backend.clone(), &test_namespace, &test_table));
+        let stream_table_store = Arc::new(new_stream_table_store(&test_namespace, &test_table));
 
         // Create test tables in information_schema_tables
         let messages_table = TableDefinition {

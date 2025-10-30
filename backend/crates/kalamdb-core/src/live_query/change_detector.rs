@@ -38,6 +38,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, ChangeType, LiveQueryManager};
 use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::{SharedTableRow, SharedTableStore, StreamTableStore, UserTableStore};
+use crate::tables::{new_user_table_store, new_shared_table_store, new_stream_table_store};
 use kalamdb_commons::{NamespaceId, TableName};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;

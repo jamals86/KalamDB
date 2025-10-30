@@ -839,14 +839,16 @@ mod tests {
         };
 
         // Put entity
-        store.put("e1", &entity).unwrap();
+        let key_e1 = "e1".to_string();
+        store.put(&key_e1, &entity).unwrap();
 
         // Get entity
-        let retrieved = store.get("e1").unwrap().unwrap();
+        let retrieved = store.get(&key_e1).unwrap().unwrap();
         assert_eq!(retrieved, entity);
 
         // Get non-existent entity
-        let missing = store.get("e999").unwrap();
+        let key_e999 = "e999".to_string();
+        let missing = store.get(&key_e999).unwrap();
         assert!(missing.is_none());
     }
 
