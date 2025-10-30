@@ -87,12 +87,18 @@ pub fn new_user_table_store(
     namespace_id: &NamespaceId,
     table_name: &TableName,
 ) -> UserTableStore {
+    //TODO: Use a template function inside: kalamdb_store::Partition::new_user_table_partition
     let partition_name = format!(
         "{}{}:{}",
         kalamdb_commons::constants::ColumnFamilyNames::USER_TABLE_PREFIX,
         namespace_id.as_str(),
         table_name.as_str()
     );
+    
+    // Ensure the partition exists in RocksDB
+    let partition = kalamdb_store::Partition::new(partition_name.clone());
+    let _ = backend.create_partition(&partition); // Ignore error if already exists
+    
     SystemTableStore::new(backend, partition_name)
 }
 

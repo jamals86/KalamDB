@@ -607,7 +607,7 @@ async fn test_08_flush_table_returns_job_id() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "flush_sql_test").await;
 
-    // Create user table (requires X-USER-ID header)
+    // Create user table (requires authentication)
     let create_table = r#"
         CREATE USER TABLE flush_sql_test.events (
             event_id BIGINT PRIMARY KEY,

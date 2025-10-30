@@ -1,7 +1,6 @@
 //! CLI integration tests for authentication and admin operations
 //!
-//! Tests proper authentication flow and admin-level SQL commands using real credentials
-//! instead of development X-USER-ID headers.
+//! Tests proper authentication flow and admin-level SQL commands using real credentials.
 //!
 //! # Running Tests
 //!

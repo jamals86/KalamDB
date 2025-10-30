@@ -326,7 +326,12 @@ impl UserTableStoreExt<UserTableRowId, UserTableRow> for SystemTableStore<UserTa
         _namespace_id: &str,
         _table_name: &str,
     ) -> std::result::Result<(), KalamDbError> {
-        // Column family creation is handled by the backend
+        // Create the column family/partition in RocksDB
+        // The partition name is already set in self.partition (e.g., "user_app:test_conversations")
+        let partition = kalamdb_store::Partition::new(self.partition.clone());
+        self.backend
+            .create_partition(&partition)
+            .map_err(|e| KalamDbError::Other(format!("Failed to create partition: {}", e)))?;
         Ok(())
     }
 

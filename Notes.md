@@ -61,6 +61,27 @@ hAS A DEEP DESIGN FOR HOW THEY SHOULD BE AND ALSO UPDATE TASKS.MD AND THE DESIGN
 58) move the auth checking logic to kalamdb-auth crate instead of execute_sql_v1 method
 59) We still looking at X-USER-ID header in kalamdb-api/src/handlers/sql_handler.rs remove it completely from all the code!! even from tests
 
+60) No need for OWNER_ID clause anywhere since we have authenticated users now and we must check always the userId which is running the query
+            let actual_user_id = if let Some(uid) = user_id {
+                uid
+            } else if let Some(ref extracted_uid) = extracted_owner_id {
+                extracted_uid
+            } else {
+                return Err(KalamDbError::InvalidOperation(
+                    "CREATE USER TABLE requires authenticated user or OWNER_ID clause".to_string(),
+                ));
+            };
+
+            static OWNER_ID_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)\s+OWNER_ID\s+['\"][^'\"]+['\"]"#).unwrap());
+
+
+61) Making this clear create user table doesn't need a userId to be passed since the user table is created for all users, this is not needed:
+Some("user123"), // Pass user_id for USER table creation
+
+62) websocket_handler_v1 should use the same authentication method as in extract_auth
+
+
 Key Findings
 Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB column families yet, resulting in 0 rows flushed
 Parquet Querying Limitation: After flush, data is removed from RocksDB but queries don't yet retrieve from Parquet files - this is a known gap

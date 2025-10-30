@@ -4,7 +4,6 @@
 //! supporting Basic Auth and JWT Bearer tokens.
 
 use crate::basic_auth::parse_basic_auth_header;
-use crate::connection::ConnectionInfo;
 use crate::error::{AuthError, AuthResult};
 use crate::password;
 use actix_web::HttpRequest;

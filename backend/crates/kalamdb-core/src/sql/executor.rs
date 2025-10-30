@@ -2752,7 +2752,7 @@ impl SqlExecutor {
                 extracted_uid
             } else {
                 return Err(KalamDbError::InvalidOperation(
-                    "CREATE USER TABLE requires X-USER-ID header or OWNER_ID clause".to_string(),
+                    "CREATE USER TABLE requires authenticated user or OWNER_ID clause".to_string(),
                 ));
             };
 

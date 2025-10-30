@@ -25,7 +25,7 @@ async fn execute_sql_request(server: &common::HttpTestServer, sql: &str) -> Valu
     let request = test::TestRequest::post()
         .uri("/v1/api/sql")
         .insert_header(("content-type", "application/json"))
-        .insert_header(("X-USER-ID", "test_user"))
+        .insert_header(("Authorization", "Basic cm9vdDo=")) // root: (empty password)
         .set_json(&json!({ "sql": sql }));
 
     let response = server.execute_request(request).await;
@@ -105,7 +105,7 @@ async fn test_batch_sql_partial_failure_commits_previous() {
     let request = test::TestRequest::post()
         .uri("/v1/api/sql")
         .insert_header(("content-type", "application/json"))
-        .insert_header(("X-USER-ID", "test_user"))
+        .insert_header(("Authorization", "Basic cm9vdDo=")) // root: (empty password)
         .set_json(&json!({ "sql": failing_sql }));
 
     let response = server.execute_request(request).await;

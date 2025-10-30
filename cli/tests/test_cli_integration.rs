@@ -59,7 +59,7 @@ async fn execute_sql(sql: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     let response = client
         .post(format!("{}/v1/api/sql", SERVER_URL))
-        .header("X-USER-ID", "test_user")
+        .basic_auth("root", Some(""))
         .json(&json!({ "sql": sql }))
         .send()
         .await?;
@@ -581,7 +581,7 @@ async fn test_cli_live_query_basic() {
     let client = reqwest::Client::new();
     let response = client
         .post(format!("{}/v1/api/sql", SERVER_URL))
-        .header("X-USER-ID", "test_user")
+        .basic_auth("root", Some(""))
         .json(&serde_json::json!({ "sql": format!("SUBSCRIBE TO {}", table) }))
         .send()
         .await
@@ -627,7 +627,7 @@ async fn test_cli_live_query_with_filter() {
     let client = reqwest::Client::new();
     let response = client
         .post(format!("{}/v1/api/sql", SERVER_URL))
-        .header("X-USER-ID", "test_user")
+        .basic_auth("root", Some(""))
         .json(&serde_json::json!({
             "sql": format!("SUBSCRIBE TO {} WHERE id > 10", table)
         }))

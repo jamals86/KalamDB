@@ -41,7 +41,7 @@ async fn test_02_create_user_table() {
     // Create namespace first
     server.execute_sql("CREATE NAMESPACE app").await;
 
-    // Create user table with flush policy (requires X-USER-ID header)
+    // Create user table with flush policy (requires authentication)
     let response = server
         .execute_sql_with_user(
             r#"CREATE USER TABLE app.messages (
