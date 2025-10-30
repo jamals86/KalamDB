@@ -28,6 +28,12 @@ impl UserTableRowId {
         Self { key }
     }
 
+    /// Create from raw bytes
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        let key = String::from_utf8_lossy(bytes).to_string();
+        Self { key }
+    }
+
     /// Get the full key string
     pub fn as_str(&self) -> &str {
         &self.key

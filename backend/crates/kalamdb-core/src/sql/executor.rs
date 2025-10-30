@@ -3355,8 +3355,10 @@ impl SqlExecutor {
             })?;
 
         // Execute the update on shared table
+        let store = self.shared_table_store.as_ref()
+            .ok_or_else(|| KalamDbError::InvalidOperation("Store not configured".to_string()))?;
         let all_rows = SharedTableStoreExt::scan(
-            self.shared_table_store.as_ref().ok_or_else(|| KalamDbError::InvalidOperation("Store not configured".to_string()))?,
+            store.as_ref(),
             &update_info.namespace,
             &update_info.table,
         )

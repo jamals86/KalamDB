@@ -11,7 +11,7 @@ use crate::catalog::{NamespaceId, TableMetadata, TableName};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::stores::system_table::SharedTableStoreExt;
-use crate::tables::{StreamTableRowId, StreamTableStore};
+use crate::tables::{StreamTableRowId, StreamTableStore, StreamTableRow};
 use crate::tables::system::LiveQueriesTableProvider;
 use crate::tables::arrow_json_conversion::{arrow_batch_to_json, json_rows_to_arrow_batch};
 use async_trait::async_trait;
@@ -212,10 +212,20 @@ impl StreamTableProvider {
 
         // Generate timestamp for the event
         let timestamp_ms = chrono::Utc::now().timestamp_millis();
+        let timestamp_str = chrono::Utc::now().to_rfc3339();
+
+        // Create StreamTableRow with event data
+        let row = StreamTableRow {
+            row_id: row_id.to_string(),
+            fields: row_data.clone(),
+            inserted_at: timestamp_str.clone(),
+            _updated: timestamp_str,
+            _deleted: false,
+            ttl_seconds: None, // TTL is managed separately via table metadata
+        };
 
         // Insert event into StreamTableStore
-        self.store
-            .put(&StreamTableRowId::new(row_id), &row)
+        EntityStore::put(self.store.as_ref(), &StreamTableRowId::new(row_id), &row)
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         // T154: Notify live query manager with change notification
@@ -271,7 +281,7 @@ impl StreamTableProvider {
         Ok(())
     }
 
-    /// Get an event by row ID
+    /// Get a specific event from the stream table
     ///
     /// # Arguments
     /// * `row_id` - Event identifier
@@ -279,8 +289,7 @@ impl StreamTableProvider {
     /// # Returns
     /// Event data if found, None otherwise
     pub fn get_event(&self, row_id: &str) -> Result<Option<JsonValue>, KalamDbError> {
-        self.store
-            .get(&StreamTableRowId::new(row_id))
+        EntityStore::get(self.store.as_ref(), &StreamTableRowId::new(row_id))
             .map(|opt| opt.map(|row| serde_json::to_value(row).unwrap()))
             .map_err(|e| KalamDbError::Other(e.to_string()))
     }
@@ -290,9 +299,11 @@ impl StreamTableProvider {
     /// # Returns
     /// Vector of (row_id, row_data) tuples
     pub fn scan_events(&self) -> Result<Vec<(String, JsonValue)>, KalamDbError> {
-        self.store
+        let rows = self.store
             .scan(self.namespace_id().as_str(), self.table_name().as_str())
-            .map_err(|e| KalamDbError::Other(e.to_string()))
+            .map_err(|e| KalamDbError::Other(e.to_string()))?;
+        
+        Ok(rows.into_iter().map(|(row_id, row)| (row_id, row.fields)).collect())
     }
 
     /// Count events in the stream table
@@ -308,8 +319,7 @@ impl StreamTableProvider {
     /// # Returns
     /// Number of events deleted
     pub fn evict_expired(&self) -> Result<usize, KalamDbError> {
-        SharedTableStoreExt::cleanup_expired_rows(
-            &self.store,
+        self.store.cleanup_expired_rows(
             self.namespace_id().as_str(),
             self.table_name().as_str(),
         )
@@ -368,8 +378,8 @@ impl TableProvider for StreamTableProvider {
             events
         };
 
-        // Convert events to Arrow RecordBatch
-        let row_values: Vec<JsonValue> = events_to_process.into_iter().map(|(_id, data)| data).collect();
+        // Convert events to Arrow RecordBatch (extract .fields from StreamTableRow)
+        let row_values: Vec<JsonValue> = events_to_process.into_iter().map(|(_id, row)| row.fields).collect();
         let batch = json_rows_to_arrow_batch(&self.schema, row_values).map_err(|e| {
             DataFusionError::Execution(format!("Failed to convert events to Arrow: {}", e))
         })?;

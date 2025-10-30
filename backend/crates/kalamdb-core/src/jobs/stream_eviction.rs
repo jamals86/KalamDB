@@ -236,10 +236,12 @@ impl StreamEvictionJob {
                 // The row_data contains "inserted_at" field
                 events.sort_by(|(_, a), (_, b)| {
                     let a_time = a
+                        .fields
                         .get("inserted_at")
                         .and_then(|v| v.as_str())
                         .unwrap_or("1970-01-01T00:00:00Z");
                     let b_time = b
+                        .fields
                         .get("inserted_at")
                         .and_then(|v| v.as_str())
                         .unwrap_or("1970-01-01T00:00:00Z");

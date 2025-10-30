@@ -17,6 +17,10 @@ impl StreamTableRowId {
         Self(id.into())
     }
 
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self(String::from_utf8_lossy(bytes).to_string())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

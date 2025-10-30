@@ -10,7 +10,7 @@
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
-use crate::stores::system_table::SharedTableStoreExt;
+use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId};
 use crate::tables::UserTableStore;
 use kalamdb_store::EntityStoreV2 as EntityStore;
@@ -76,20 +76,22 @@ impl UserTableDeleteHandler {
     ) -> Result<String, KalamDbError> {
         // Fetch row data BEFORE deleting (for notification)
         let row_to_delete = UserTableStoreExt::get(
-            &self.store,
+            self.store.as_ref(),
             namespace_id.as_str(),
             table_name.as_str(),
+            user_id.as_str(),
             row_id,
-        )
+        )?;
 
         // Soft delete via store (automatically updates _deleted and _updated)
-        self.store
-            .delete(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                row_id,
-                false,
-            )
+        UserTableStoreExt::delete(
+            self.store.as_ref(),
+            namespace_id.as_str(),
+            table_name.as_str(),
+            user_id.as_str(),
+            row_id,
+            false,
+        )
             .map_err(|e| {
                 // Check if it's a "not found" error
                 if e.to_string().contains("Column family not found") {
@@ -114,7 +116,11 @@ impl UserTableDeleteHandler {
         // ✅ REQUIREMENT 2: Notification AFTER storage success
         // ✅ REQUIREMENT 1 & 3: Async fire-and-forget pattern
         if let Some(manager) = &self.live_query_manager {
-            if let Some(mut data) = row_data {
+            if let Some(row_data) = row_to_delete {
+                // Convert UserTableRow to JsonValue for notification
+                let mut data = serde_json::to_value(&row_data.fields)
+                    .unwrap_or(serde_json::json!({}));
+                
                 // CRITICAL: Use fully qualified table name (namespace.table_name) for notification matching
                 let qualified_table_name =
                     format!("{}.{}", namespace_id.as_str(), table_name.as_str());
@@ -200,13 +206,14 @@ impl UserTableDeleteHandler {
         row_id: &str,
     ) -> Result<String, KalamDbError> {
         // Hard delete via store
-        self.store
-            .delete(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                row_id,
-                true,
-            )
+        UserTableStoreExt::delete(
+            self.store.as_ref(),
+            namespace_id.as_str(),
+            table_name.as_str(),
+            user_id.as_str(),
+            row_id,
+            true,
+        )
             .map_err(|e| {
                 if e.to_string().contains("Column family not found") {
                     KalamDbError::NotFound(format!(

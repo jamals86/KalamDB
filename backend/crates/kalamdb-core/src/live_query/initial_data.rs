@@ -203,7 +203,7 @@ impl InitialDataFetcher {
                         namespace, table, e
                     ))
                 })? {
-                    let timestamp = Self::extract_updated_timestamp(&row);
+                    let timestamp = Self::extract_updated_timestamp(&row.fields);
 
                     if let Some(since) = since_timestamp {
                         if timestamp < since {
@@ -213,14 +213,14 @@ impl InitialDataFetcher {
 
                     if let Some(predicate) = filter.as_ref() {
                         if !predicate
-                            .matches(&row)
+                            .matches(&row.fields)
                             .map_err(|e| KalamDbError::Other(e.to_string()))?
                         {
                             continue;
                         }
                     }
 
-                    rows.push((timestamp, row));
+                    rows.push((timestamp, row.fields.clone()));
                 }
                 rows
             }

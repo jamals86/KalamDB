@@ -9,7 +9,7 @@
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
-use crate::stores::system_table::SharedTableStoreExt;
+use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId};
 use crate::tables::UserTableStore;
 use kalamdb_store::EntityStoreV2 as EntityStore;
@@ -82,9 +82,10 @@ impl UserTableUpdateHandler {
         // Read existing row from store
         let key = UserTableRowId::new(user_id.clone(), row_id);
         let existing_row = UserTableStoreExt::get(
-            &self.store,
+            self.store.as_ref(),
             namespace_id.as_str(),
             table_name.as_str(),
+            user_id.as_str(),
             row_id,
         )
             .map_err(|e| KalamDbError::Other(format!("Failed to read row: {}", e)))?
@@ -119,14 +120,15 @@ impl UserTableUpdateHandler {
         updated_row._updated = chrono::Utc::now().to_rfc3339();
 
         // Write updated row back
-        self.store
-            .put(
-                namespace_id.as_str(),
-                table_name.as_str(),
-                row_id,
-                &updated_row,
-            )
-            .map_err(|e| KalamDbError::Other(format!("Failed to write updated row: {}", e)))?;
+        UserTableStoreExt::put(
+            self.store.as_ref(),
+            namespace_id.as_str(),
+            table_name.as_str(),
+            user_id.as_str(),
+            row_id,
+            &updated_row,
+        )
+        .map_err(|e| KalamDbError::Other(format!("Failed to write updated row: {}", e)))?;
 
         log::debug!(
             "Updated row {} in {}.{} for user {}",

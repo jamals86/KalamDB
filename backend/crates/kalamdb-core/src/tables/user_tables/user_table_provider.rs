@@ -422,11 +422,7 @@ impl TableProvider for UserTableProvider {
         let filtered_rows: Vec<_> = raw_rows
             .into_iter()
             .filter(|(_row_id, row_data)| {
-                row_data
-                    .get("_deleted")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-                    == false
+                !row_data._deleted
             })
             .collect();
 

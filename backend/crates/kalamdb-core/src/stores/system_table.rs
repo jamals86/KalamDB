@@ -338,8 +338,7 @@ impl UserTableStoreExt<UserTableRowId, UserTableRow> for SystemTableStore<UserTa
         // For now, just scan and delete all - in practice this should use backend drop
         let all_results = EntityStore::scan_all(self)?;
         for (key_bytes, _) in all_results {
-            let key_str = String::from_utf8_lossy(key.as_ref()).to_string();
-            let key = UserTableRowId::from_key_string(key_str);
+            let key = UserTableRowId::from_bytes(&key_bytes);
             EntityStore::delete(self, &key)?;
         }
         Ok(())
@@ -641,8 +640,7 @@ impl SharedTableStoreExt<SharedTableRowId, SharedTableRow> for SystemTableStore<
         // For now, just scan and delete all - in practice this should use backend drop
         let all_results = EntityStore::scan_all(self)?;
         for (key_bytes, _) in all_results {
-            let key_str = String::from_utf8_lossy(key.as_ref()).to_string();
-            let key = SharedTableRowId::new(&key_str);
+            let key = SharedTableRowId::from_bytes(&key_bytes);
             EntityStore::delete(self, &key)?;
         }
         Ok(())
@@ -752,8 +750,9 @@ impl SharedTableStoreExt<StreamTableRowId, StreamTableRow>
     ) -> std::result::Result<(), KalamDbError> {
         // For now, just scan and delete all - in practice this should use backend drop
         let all_results = EntityStore::scan_all(self)?;
-        for (key_id, _) in all_results {
-            EntityStore::delete(self, &key_id)?;
+        for (key_bytes, _) in all_results {
+            let key = StreamTableRowId::from_bytes(&key_bytes);
+            EntityStore::delete(self, &key)?;
         }
         Ok(())
     }
@@ -800,11 +799,12 @@ impl SystemTableStore<StreamTableRowId, StreamTableRow> {
     ) -> std::result::Result<usize, KalamDbError> {
         let all_rows = EntityStore::scan_all(self)?;
         let mut deleted_count = 0;
-        for (key, row) in all_rows {
+        for (key_bytes, row) in all_rows {
             if let Some(ttl) = row.ttl_seconds {
                 let inserted_at = chrono::DateTime::parse_from_rfc3339(&row.inserted_at)
                     .map_err(|e| KalamDbError::Other(e.to_string()))?;
                 if chrono::Utc::now().timestamp() > inserted_at.timestamp() + ttl as i64 {
+                    let key = StreamTableRowId::from_bytes(&key_bytes);
                     EntityStore::delete(self, &key)?;
                     deleted_count += 1;
                 }

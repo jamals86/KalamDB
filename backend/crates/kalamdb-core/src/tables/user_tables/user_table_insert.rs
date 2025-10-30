@@ -220,17 +220,16 @@ impl UserTableInsertHandler {
             };
 
             // Delegate to UserTableStore
-            self.store
-                SharedTableStoreExt::put(
-                    &self.store,
-                    namespace_id.as_str(),
-                    table_name.as_str(),
-                    &row_id,
-                    &entity,
-                )
-                .map_err(|e| {
-                    KalamDbError::Other(format!("Failed to insert row in batch: {}", e))
-                })?;
+            UserTableStoreExt::put(self.store.as_ref(),
+                namespace_id.as_str(),
+                table_name.as_str(),
+                user_id.as_str(),
+                &row_id,
+                &entity,
+            )
+            .map_err(|e| {
+                KalamDbError::Other(format!("Failed to insert row in batch: {}", e))
+            })?;
 
             // ✅ REQUIREMENT 6: Notify for EACH row in batch (no message loss)
             // ✅ REQUIREMENT 1 & 3: Async fire-and-forget pattern

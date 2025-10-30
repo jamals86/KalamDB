@@ -199,15 +199,25 @@ impl UserTableChangeDetector {
         hard: bool,
     ) -> Result<(), KalamDbError> {
         // Step 1: Get existing row data (for notification)
-        let old_value = self
-            .store
-            .get(namespace_id, table_name, user_id, row_id)
-            .map_err(|e| KalamDbError::Other(e.to_string()))?;
+        let old_value = UserTableStoreExt::get(
+            self.store.as_ref(),
+            namespace_id,
+            table_name,
+            user_id,
+            row_id,
+        )
+        .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         // Step 2: Perform deletion
-        self.store
-            .delete(namespace_id, table_name, user_id, row_id, hard)
-            .map_err(|e| KalamDbError::Other(e.to_string()))?;
+        UserTableStoreExt::delete(
+            self.store.as_ref(),
+            namespace_id,
+            table_name,
+            user_id,
+            row_id,
+            hard,
+        )
+        .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         // Step 3: Create appropriate notification based on delete type
         let notification = if hard {
@@ -217,12 +227,13 @@ impl UserTableChangeDetector {
             // Soft delete: get updated row with _deleted=true
             let deleted_row = UserTableStoreExt::get_include_deleted(self.store.as_ref(), namespace_id, table_name, user_id, row_id)
                 .map_err(|e| KalamDbError::Other(e.to_string()))?
-                .unwrap_or_else(|| old_value.clone().unwrap_or_default());
+                .or_else(|| old_value.clone())
+                .ok_or_else(|| KalamDbError::Other("Row not found after soft delete".to_string()))?;
 
             // Soft delete sends the row with _deleted=true
             ChangeNotification::delete_soft(
                 table_name.to_string(), 
-                serde_json::to_value(&deleted_row).unwrap_or(serde_json::json!({}))
+                serde_json::to_value(&deleted_row.fields).unwrap_or(serde_json::json!({}))
             )
         };
 
@@ -307,10 +318,7 @@ impl SharedTableChangeDetector {
 
         // T175: Filter out _deleted=true rows from INSERT/UPDATE notifications
         // Only send DELETE notification for deleted rows
-        let is_deleted = new_value
-            .get("_deleted")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let is_deleted = new_value._deleted;
 
         if is_deleted {
             // Row is soft-deleted, skip INSERT/UPDATE notification
@@ -324,9 +332,16 @@ impl SharedTableChangeDetector {
                 let old_data = old_value.ok_or_else(|| {
                     KalamDbError::Other("UPDATE detected but old value is None".to_string())
                 })?;
-                ChangeNotification::update(table_name.to_string(), old_data, new_value)
+                ChangeNotification::update(
+                    table_name.to_string(),
+                    serde_json::to_value(&old_data.fields).unwrap_or(serde_json::json!({})),
+                    serde_json::to_value(&new_value.fields).unwrap_or(serde_json::json!({})),
+                )
             }
-            ChangeType::Insert => ChangeNotification::insert(table_name.to_string(), new_value),
+            ChangeType::Insert => ChangeNotification::insert(
+                table_name.to_string(),
+                serde_json::to_value(&new_value.fields).unwrap_or(serde_json::json!({})),
+            ),
             _ => {
                 return Err(KalamDbError::Other("Invalid change type".to_string()));
             }

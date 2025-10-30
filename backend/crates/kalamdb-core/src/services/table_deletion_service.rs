@@ -209,15 +209,19 @@ impl TableDeletionService {
         table_type: &TableType,
     ) -> Result<(), KalamDbError> {
         match table_type {
-            TableType::User => self
-                .user_table_store
-                .drop_table(namespace_id.as_str(), table_name.as_str())
+            TableType::User => UserTableStoreExt::drop_table(
+                self.user_table_store.as_ref(),
+                namespace_id.as_str(),
+                table_name.as_str()
+            )
                 .map_err(|e| {
                     KalamDbError::IoError(format!("Failed to drop user table data: {}", e))
                 }),
-            TableType::Shared => self
-                .shared_table_store
-                .drop_table(namespace_id.as_str(), table_name.as_str())
+            TableType::Shared => SharedTableStoreExt::drop_table(
+                self.shared_table_store.as_ref(),
+                namespace_id.as_str(),
+                table_name.as_str()
+            )
                 .map_err(|e| {
                     KalamDbError::IoError(format!("Failed to drop shared table data: {}", e))
                 }),

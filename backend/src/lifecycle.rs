@@ -22,7 +22,7 @@ use kalamdb_core::services::{
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::storage::StorageRegistry;
-use kalamdb_core::stores::{SharedTableStore, StreamTableStore, UserTableStore};
+use kalamdb_core::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_core::{
     jobs::{
         JobCleanupTask, JobExecutor, JobResult, StreamEvictionJob, StreamEvictionScheduler,
