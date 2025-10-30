@@ -2052,6 +2052,25 @@ impl SqlExecutor {
         );
         let job_id_clone = job_id.clone();
 
+        // Create and persist job record to system.jobs
+        use kalamdb_commons::{JobId, JobType};
+        let job_record = kalamdb_commons::system::Job::new(
+            JobId::new(job_id.clone()),
+            JobType::Flush,
+            stmt.namespace.clone(),
+            format!("node-{}", std::process::id()),
+        )
+        .with_table_name(kalamdb_commons::TableName::new(format!(
+            "{}.{}",
+            stmt.namespace.as_str(),
+            stmt.table_name.as_str()
+        )));
+
+        // Persist job to system.jobs
+        if let Some(ref jobs_table_provider) = self.jobs_table_provider {
+            jobs_table_provider.insert_job(job_record)?;
+        }
+
         // Create flush job
         let namespace_id = stmt.namespace.clone();
         let table_name = stmt.table_name.clone();

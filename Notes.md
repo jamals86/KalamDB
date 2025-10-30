@@ -40,7 +40,6 @@ Future:
 41) storing credentials in kalamdb-credentials alongside the url of the database
 42) CLI should also support a regular user as well and not only the root user
 43) Whenever a user send a query/sql statement first of all we check the role he has if he is creating create/alter tables then we first check the user role before we display an error like: namespace does not exists, maybe its better to include in these CREATE/ALTER sql also which roles can access them so we dont read data from untrusted users its a sensitive topic.
-44) Remove all X-USER-ID header we will be using oauth/basic auth or incase of system user we will add it to the auth basic auth with empty password and only from localhost only
 45) "system_users" is repeated so many times in the code base we should use a column family enum for all of them, and making all of them as Partition::new("system_users") instead of hardcoding the string multiple times, we already have SystemTable enum we can add ColumnFamily as well
 46) nodeId should be unique and used from the config file and use NodeId enum
 47) No need to map developer to service role we need to use only Role's values
@@ -57,14 +56,16 @@ Future:
     - Vector Search
     - Has a deep design for how they should be and also update TASKS.MD and the design here
 
-60) ✅ DONE (2025-10-30) - No need for OWNER_ID clause anywhere since we have authenticated users now and we must check always the userId which is running the query. Removed OWNER_ID extraction logic from executor.rs. CREATE USER TABLE no longer extracts or uses OWNER_ID - authentication user_id is only for RBAC, not table ownership.
 
-61) ✅ DONE (2025-10-30) - Making this clear create user table doesn't need a userId to be passed since the user table is created for all users, this is not needed:
-Some("user123"), // Pass user_id for USER table creation
-- Clarified that user_id is ONLY for authentication/RBAC, not table ownership
-- USER tables are multi-tenant and store data for ALL users
-- Updated comments in test_quickstart.rs to reflect this
-- Removed confusing OWNER_ID extraction logic from executor.rs
+62) Add test to flush table and check if the job persisted and completed with results correctly
+63) check for each system table if the results returned cover all the columns defined in the TableSchema
+64) Add test to flush all and check if the job persisted and completed with results correctly
+65) Add tests to cover the droping table and cleanup inside jobs table as well
+66) Make sure actions like: drop/export/import/flush is having jobs rows when they finishes (TODO: Also check what kind of jobs we have)
+67) test each role the actions he can do and cannot do, to cover the rbac system well, this should be done from the cli
+68) A service user can also create other regular users
+69) Server click ctrl+z two times will force kill even if it's still flushing or doing some job
+
 
 
 
