@@ -495,10 +495,14 @@ mod tests {
             .unwrap();
 
         // Verify row exists
-        let retrieved = detector
-            .store()
-            .get(namespace_id, table_name, user_id, row_id)
-            .unwrap();
+        let retrieved = UserTableStoreExt::get(
+            detector.store(),
+            namespace_id,
+            table_name,
+            user_id,
+            row_id,
+        )
+        .unwrap();
         assert!(retrieved.is_some());
     }
 
@@ -526,12 +530,16 @@ mod tests {
             .unwrap();
 
         // Verify updated value
-        let retrieved = detector
-            .store()
-            .get(namespace_id, table_name, user_id, row_id)
-            .unwrap()
-            .unwrap();
-        assert_eq!(retrieved["text"], "Hello World");
+        let retrieved = UserTableStoreExt::get(
+            detector.store(),
+            namespace_id,
+            table_name,
+            user_id,
+            row_id,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(retrieved.fields["text"], "Hello World");
     }
 
     #[tokio::test]
@@ -557,10 +565,14 @@ mod tests {
             .unwrap();
 
         // Verify soft deleted (get returns None)
-        let retrieved = detector
-            .store()
-            .get(namespace_id, table_name, user_id, row_id)
-            .unwrap();
+        let retrieved = UserTableStoreExt::get(
+            detector.store(),
+            namespace_id,
+            table_name,
+            user_id,
+            row_id,
+        )
+        .unwrap();
         assert!(retrieved.is_none());
     }
 }

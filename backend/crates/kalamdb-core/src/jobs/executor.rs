@@ -297,7 +297,7 @@ mod tests {
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
-        let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql));
+        let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.adapter().backend()));
         let executor = JobExecutor::new(jobs_provider, "test-node-1".to_string());
         (executor, temp_dir)
     }

@@ -20,6 +20,7 @@ use crate::schema::ArrowSchemaWithOptions;
 use arrow::datatypes::{DataType, Field, Schema};
 use kalamdb_commons::models::{StorageId, UserId};
 use kalamdb_commons::system::{LiveQuery, Namespace};
+use kalamdb_commons::{TableId, LiveQueryId};
 use kalamdb_sql::ddl::ColumnOperation;
 use kalamdb_sql::{KalamSql, Table, TableSchema};
 use std::sync::Arc;
@@ -529,7 +530,11 @@ mod tests {
 
     fn create_test_table(kalam_sql: &KalamSql, table_type: &str) -> String {
         let table_id_str = "test_ns:test_table".to_string();
-        let table_id = TableId::new(&table_id_str);
+        let parts: Vec<&str> = table_id_str.split(':').collect();
+        let table_id = TableId::new(
+            NamespaceId::new(parts[0]),
+            TableName::new(parts[1]),
+        );
 
         // Create namespace
         let namespace = Namespace {
@@ -568,8 +573,8 @@ mod tests {
         let schema_with_opts = ArrowSchemaWithOptions::new(Arc::new(schema));
         let schema_json = schema_with_opts.to_json_string().unwrap();
         let _table_schema = TableSchema {
-            schema_id: format!("{}:v1", table_id.as_str()),
-            table_id: table_id.clone(),
+            schema_id: format!("{}:v1", table_id.to_string()),
+            table_id: table_id.to_string(),
             version: 1,
             arrow_schema: schema_json,
             created_at: chrono::Utc::now().timestamp(),

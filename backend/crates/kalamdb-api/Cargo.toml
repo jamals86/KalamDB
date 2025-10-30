@@ -46,3 +46,4 @@ futures-util = { workspace = true }
 # Testing utilities
 actix-rt = { workspace = true }
 tempfile = { workspace = true }
+kalamdb-store = { path = "../kalamdb-store" }

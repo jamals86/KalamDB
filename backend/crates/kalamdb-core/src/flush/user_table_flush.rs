@@ -755,7 +755,7 @@ impl UserTableFlushJob {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::UserTableRow;
+    use crate::tables::user_tables::user_table_store::UserTableRow;
     use kalamdb_commons::JobStatus;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_store::test_utils::TestDb;
@@ -842,18 +842,22 @@ mod tests {
 
         // Insert test data for user1
         let row1 = UserTableRow {
-            fields: serde_json::from_value(json!({
+            row_id: "row1".to_string(),
+            user_id: "user1".to_string(),
+            fields: json!({
                 "id": "row1",
                 "content": "Message 1"
-            })).unwrap(),
+            }),
             _updated: Utc::now().to_rfc3339(),
             _deleted: false,
         };
         let row2 = UserTableRow {
-            fields: serde_json::from_value(json!({
+            row_id: "row2".to_string(),
+            user_id: "user1".to_string(),
+            fields: json!({
                 "id": "row2",
                 "content": "Message 2"
-            })).unwrap(),
+            }),
             _updated: Utc::now().to_rfc3339(),
             _deleted: false,
         };
@@ -904,26 +908,32 @@ mod tests {
 
         // Insert test data for user1 and user2
         let row1 = UserTableRow {
-            fields: serde_json::from_value(json!({
+            row_id: "row1".to_string(),
+            user_id: "user1".to_string(),
+            fields: json!({
                 "id": "row1",
                 "content": "User1 Message 1"
-            })).unwrap(),
+            }),
             _updated: Utc::now().to_rfc3339(),
             _deleted: false,
         };
         let row2 = UserTableRow {
-            fields: serde_json::from_value(json!({
+            row_id: "row2".to_string(),
+            user_id: "user2".to_string(),
+            fields: json!({
                 "id": "row2",
                 "content": "User2 Message 1"
-            })).unwrap(),
+            }),
             _updated: Utc::now().to_rfc3339(),
             _deleted: false,
         };
         let row3 = UserTableRow {
-            fields: serde_json::from_value(json!({
+            row_id: "row3".to_string(),
+            user_id: "user1".to_string(),
+            fields: json!({
                 "id": "row3",
                 "content": "User1 Message 2"
-            })).unwrap(),
+            }),
             _updated: Utc::now().to_rfc3339(),
             _deleted: false,
         };
@@ -972,18 +982,22 @@ mod tests {
 
         // Insert test data with one active and one soft-deleted row
         let row1 = UserTableRow {
-            fields: serde_json::from_value(json!({
+            row_id: "row1".to_string(),
+            user_id: "user1".to_string(),
+            fields: json!({
                 "id": "row1",
                 "content": "Active Message"
-            })).unwrap(),
+            }),
             _updated: Utc::now().to_rfc3339(),
             _deleted: false,
         };
         let row2_active = UserTableRow {
-            fields: serde_json::from_value(json!({
+            row_id: "row2".to_string(),
+            user_id: "user1".to_string(),
+            fields: json!({
                 "id": "row2",
                 "content": "Deleted Message"
-            })).unwrap(),
+            }),
             _updated: Utc::now().to_rfc3339(),
             _deleted: false,
         };

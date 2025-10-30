@@ -14,7 +14,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::User;
-use kalamdb_commons::UserId;
+use kalamdb_commons::{UserId, UserName};
 use kalamdb_store::EntityStoreV2;
 use kalamdb_store::StorageBackend;
 use std::any::Any;

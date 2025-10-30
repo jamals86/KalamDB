@@ -6,9 +6,9 @@
 use crate::catalog::{NamespaceId, TableName};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
-use crate::models::SharedTableRow;
 use crate::storage::ParquetWriter;
 use crate::stores::system_table::SharedTableStoreExt;
+use crate::tables::shared_tables::shared_table_store::SharedTableRow;
 use crate::tables::{SharedTableStore, new_shared_table_store};
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -251,7 +251,7 @@ impl SharedTableFlushJob {
                 continue;
             }
 
-            let mut json_obj = JsonValue::Object(row.fields);
+            let mut json_obj = row.fields.clone();
             if let Some(obj) = json_obj.as_object_mut() {
                 obj.insert(
                     "access_level".to_string(),
@@ -472,28 +472,31 @@ mod tests {
 
         // Insert test data
         let row1 = SharedTableRow {
-            fields: serde_json::from_value(json!({
+            row_id: "row1".to_string(),
+            fields: json!({
                 "id": "row1",
                 "content": "Shared Message 1"
-            })).unwrap(),
+            }),
             _updated: Utc::now().to_rfc3339(),
             _deleted: false,
             access_level: kalamdb_commons::TableAccess::Public,
         };
         let row2 = SharedTableRow {
-            fields: serde_json::from_value(json!({
+            row_id: "row2".to_string(),
+            fields: json!({
                 "id": "row2",
                 "content": "Shared Message 2"
-            })).unwrap(),
+            }),
             _updated: Utc::now().to_rfc3339(),
             _deleted: false,
             access_level: kalamdb_commons::TableAccess::Public,
         };
         let row3 = SharedTableRow {
-            fields: serde_json::from_value(json!({
+            row_id: "row3".to_string(),
+            fields: json!({
                 "id": "row3",
                 "content": "Shared Message 3"
-            })).unwrap(),
+            }),
             _updated: Utc::now().to_rfc3339(),
             _deleted: false,
             access_level: kalamdb_commons::TableAccess::Public,
@@ -547,19 +550,21 @@ mod tests {
 
         // Insert test data with one active and one soft-deleted row
         let row1 = SharedTableRow {
-            fields: serde_json::from_value(json!({
+            row_id: "row1".to_string(),
+            fields: json!({
                 "id": "row1",
                 "content": "Active Message"
-            })).unwrap(),
+            }),
             _updated: Utc::now().to_rfc3339(),
             _deleted: false,
             access_level: kalamdb_commons::TableAccess::Public,
         };
         let row2 = SharedTableRow {
-            fields: serde_json::from_value(json!({
+            row_id: "row2".to_string(),
+            fields: json!({
                 "id": "row2",
                 "content": "Deleted Message"
-            })).unwrap(),
+            }),
             _updated: Utc::now().to_rfc3339(),
             _deleted: false,
             access_level: kalamdb_commons::TableAccess::Public,
@@ -609,10 +614,11 @@ mod tests {
 
         // Insert test data
         let row1 = SharedTableRow {
-            fields: serde_json::from_value(json!({
+            row_id: "row1".to_string(),
+            fields: json!({
                 "id": "row1",
                 "content": "Test Message"
-            })).unwrap(),
+            }),
             _updated: Utc::now().to_rfc3339(),
             _deleted: false,
             access_level: kalamdb_commons::TableAccess::Public,

@@ -290,8 +290,8 @@ mod tests {
         ])
         .unwrap();
 
-        let stream_table_store = Arc::new(StreamTableStore::new(test_db.db.clone()).unwrap());
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let stream_table_store = Arc::new(StreamTableStore::new(backend.clone(), "stream_tables"));
         let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
 
         let service = StreamTableService::new(stream_table_store, kalam_sql);

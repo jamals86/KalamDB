@@ -317,7 +317,7 @@ mod tests {
         let live_query = create_test_live_query("user1-conn1-test-q1", "user1", "test");
 
         provider.create_live_query(live_query.clone()).unwrap();
-        provider.delete_live_query(live_query.live_id.as_str()).unwrap();
+        provider.delete_live_query_str(live_query.live_id.as_str()).unwrap();
 
         let retrieved = provider.get_live_query(live_query.live_id.as_str()).unwrap();
         assert!(retrieved.is_none());

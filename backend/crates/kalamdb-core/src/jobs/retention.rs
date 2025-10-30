@@ -127,7 +127,7 @@ mod tests {
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
-        let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql));
+        let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.adapter().backend()));
         let retention = RetentionPolicy::with_defaults(Arc::clone(&jobs_provider));
         (retention, jobs_provider, temp_dir)
     }
@@ -275,7 +275,7 @@ mod tests {
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
-        let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql));
+        let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.storage()));
 
         let custom_config = RetentionConfig {
             retention_days: 7,

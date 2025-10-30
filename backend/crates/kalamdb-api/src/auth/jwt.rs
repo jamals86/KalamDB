@@ -260,6 +260,6 @@ mod tests {
         };
 
         let user_id = claims.user_id();
-        assert_eq!(user_id.as_ref(), "user-123");
+        assert_eq!(user_id.as_ref() as &str, "user-123");
     }
 }

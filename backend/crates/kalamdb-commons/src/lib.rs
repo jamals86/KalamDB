@@ -55,7 +55,7 @@ pub use constants::{COLUMN_FAMILIES, SYSTEM_TABLES};
 pub use errors::{CommonError, Result};
 pub use models::{
     system, AuditLogId, AuthType, JobId, JobStatus, JobType, LiveQueryId, NamespaceId, Role,
-    StorageId, StorageMode, TableAccess, TableName, TableType, UserId, UserName,
+    StorageId, StorageMode, TableAccess, TableId, TableName, TableType, UserId, UserName,
 };
 pub use storage::{Operation, Partition, StorageBackend, StorageError};
 pub use system_tables::{StoragePartition, SystemTable};

@@ -4,6 +4,7 @@
 
 use crate::stores::SystemTableStore;
 use kalamdb_commons::system::SystemTable;
+use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_store::{CrossUserTableStore, EntityStoreV2, StorageBackend};
 use std::sync::Arc;
 
@@ -71,7 +72,7 @@ mod tests {
         let retrieved = store.get(&table_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
-        assert_eq!(retrieved.table_id.as_str(), "default:conversations");
+        assert_eq!(retrieved.table_id.to_string(), "default:conversations");
         assert_eq!(retrieved.table_name.as_str(), "conversations");
     }
 

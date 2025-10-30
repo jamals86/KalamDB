@@ -544,11 +544,11 @@ mod tests {
 
         let test_db = TestDb::new(&cf_names).unwrap();
         let db = Arc::clone(&test_db.db);
+        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
 
         let user_store = Arc::new(UserTableStore::new(backend.clone(), "user_table:app:users"));
         let shared_store = Arc::new(SharedTableStore::new(backend.clone(), "shared_table:app:config"));
-        let stream_store = Arc::new(StreamTableStore::new(backend, "stream_table:app:events"));
-        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
+        let stream_store = Arc::new(StreamTableStore::new(backend.clone(), "stream_table:app:events"));
         let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
 
         let service = TableDeletionService::new(user_store, shared_store, stream_store, kalam_sql);

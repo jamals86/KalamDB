@@ -16,6 +16,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::SystemTable;
+use kalamdb_commons::{TableId, NamespaceId, TableName};
 use kalamdb_store::EntityStoreV2;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
@@ -219,7 +220,7 @@ mod tests {
         let retrieved = provider.get_table_by_id("table1").unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
-        assert_eq!(retrieved.table_id.as_str(), "default:conversations");
+        assert_eq!(retrieved.table_id.to_string(), "default:conversations");
         assert_eq!(retrieved.table_name.as_str(), "conversations");
     }
 

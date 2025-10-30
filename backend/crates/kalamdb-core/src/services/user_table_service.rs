@@ -415,7 +415,7 @@ mod tests {
 
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
         let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
-        let user_table_store = Arc::new(UserTableStore::new(backend));
+        let user_table_store = Arc::new(UserTableStore::new(backend, "user_tables"));
         UserTableService::new(kalam_sql, user_table_store)
     }
 

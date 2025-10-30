@@ -509,7 +509,9 @@ mod tests {
 
     fn create_test_db() -> Arc<UserTableStore> {
         let test_db = TestDb::single_cf("user_table:chat:messages").unwrap();
-        Arc::new(UserTableStore::new(test_db.db).unwrap())
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
+            Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db));
+        Arc::new(UserTableStore::new(backend, "user_table:chat:messages"))
     }
 
     fn create_test_schema() -> SchemaRef {

@@ -421,7 +421,8 @@ mod tests {
         let result2 = UserTableStoreExt::get(store.as_ref(), namespace_id.as_str(), table_name.as_str(), user2.as_str(), "row1")
             .unwrap();
         assert!(result2.is_some(), "user2's row should still exist");
-        assert_eq!(result2.unwrap()["name"], "Bob");
+        let row2 = result2.unwrap();
+        assert_eq!(row2.fields["name"], "Bob");
     }
 
     #[test]
