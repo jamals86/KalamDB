@@ -566,7 +566,7 @@ mod tests {
 
         // Verify soft deleted (get returns None)
         let retrieved = UserTableStoreExt::get(
-            detector.store(),
+            detector.store().as_ref(),
             namespace_id,
             table_name,
             user_id,
