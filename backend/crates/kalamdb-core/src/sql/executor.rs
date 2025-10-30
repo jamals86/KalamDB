@@ -1321,16 +1321,24 @@ impl SqlExecutor {
                 },
             };
 
-            // Get user table store
-            let store = self.user_table_store.as_ref().ok_or_else(|| {
-                KalamDbError::InvalidOperation("UserTableStore not configured".to_string())
+            // Create table-specific store with proper partition name
+            // Instead of using the generic self.user_table_store, create a store
+            // specific to this table with the correct column family name
+            let backend = self.storage_backend.as_ref().ok_or_else(|| {
+                KalamDbError::InvalidOperation("Storage backend not configured".to_string())
             })?;
+            
+            let table_store = Arc::new(crate::tables::new_user_table_store(
+                backend.clone(),
+                &namespace_id,
+                &table_name,
+            ));
 
             // Create provider with the CURRENT user_id (critical for data isolation)
             let mut provider = UserTableProvider::new(
                 metadata,
                 schema,
-                store.clone(),
+                table_store,
                 user_id.clone(),
                 user_role,
                 vec![], // parquet_paths - empty for now

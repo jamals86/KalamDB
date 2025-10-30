@@ -203,15 +203,15 @@ where
                     );
 
                     let (status_code, error_code, message) = match auth_error {
-                        AuthError::MissingAuthorization => (
+                        AuthError::MissingAuthorization(_) => (
                             401,
                             "MISSING_AUTHORIZATION",
                             "Authorization header is required",
                         ),
-                        AuthError::InvalidCredentials => {
+                        AuthError::InvalidCredentials(_) => {
                             (401, "INVALID_CREDENTIALS", "Invalid username or password")
                         }
-                        AuthError::UserNotFound => (401, "USER_NOT_FOUND", "User does not exist"),
+                        AuthError::UserNotFound(_) => (401, "USER_NOT_FOUND", "User does not exist"),
                         AuthError::TokenExpired => (401, "TOKEN_EXPIRED", "JWT token has expired"),
                         AuthError::InvalidSignature => {
                             (401, "INVALID_SIGNATURE", "JWT token signature is invalid")

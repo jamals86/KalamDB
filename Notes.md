@@ -58,7 +58,8 @@ Future:
 57) AuditLogStore shoud be similar to how the other system tables are located and designed
 @PHASE_14_ENTITYSTORE_REFACTORING.md
 hAS A DEEP DESIGN FOR HOW THEY SHOULD BE AND ALSO UPDATE TASKS.MD AND THE DESIGN HERE
-
+58) move the auth checking logic to kalamdb-auth crate instead of execute_sql_v1 method
+59) We still looking at X-USER-ID header in kalamdb-api/src/handlers/sql_handler.rs remove it completely from all the code!! even from tests
 
 Key Findings
 Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB column families yet, resulting in 0 rows flushed

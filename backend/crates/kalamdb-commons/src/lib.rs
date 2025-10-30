@@ -47,6 +47,7 @@ pub mod constants;
 pub mod errors;
 pub mod models;
 pub mod storage;
+pub mod string_interner;
 pub mod system_tables;
 pub mod websocket;
 
@@ -58,5 +59,6 @@ pub use models::{
     StorageId, StorageMode, TableAccess, TableId, TableName, TableType, UserId, UserName,
 };
 pub use storage::{Operation, Partition, StorageBackend, StorageError};
+pub use string_interner::{intern, stats as interner_stats, SystemColumns, SYSTEM_COLUMNS};
 pub use system_tables::{StoragePartition, SystemTable};
 pub use websocket::{ChangeType as WsChangeType, Notification, WebSocketMessage};

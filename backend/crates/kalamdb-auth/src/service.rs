@@ -256,7 +256,7 @@ impl AuthService {
                     password::verify_password(&password, &user.password_hash).await?;
                 if !password_match {
                     warn!("Invalid password for system user: {}", username);
-                    return Err(AuthError::InvalidCredentials);
+                    return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
                 }
             }
         } else {
@@ -264,7 +264,7 @@ impl AuthService {
             let password_match = password::verify_password(&password, &user.password_hash).await?;
             if !password_match {
                 warn!("Invalid password for user: {}", username);
-                return Err(AuthError::InvalidCredentials);
+                return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
             }
 
             // Check global remote access permission for regular users
@@ -406,7 +406,7 @@ impl AuthService {
             "subject": identity.subject
         });
 
-        let users = adapter.scan_all_users().map_err(AuthError::DatabaseError)?;
+        let users = adapter.scan_all_users().map_err(|e| AuthError::DatabaseError(e.to_string()))?;
 
         let user = users
             .into_iter()
@@ -422,7 +422,7 @@ impl AuthService {
                         }
                     })
             })
-            .ok_or(AuthError::UserNotFound)?;
+            .ok_or(AuthError::UserNotFound("OAuth user not found".to_string()))?;
 
         // Check if user is deleted
         if user.deleted_at.is_some() {
@@ -517,8 +517,8 @@ impl AuthService {
         // Cache miss - fetch from database
         let user = adapter
             .get_user(username)
-            .map_err(AuthError::DatabaseError)?
-            .ok_or(AuthError::UserNotFound)?;
+            .map_err(|e| AuthError::DatabaseError(e.to_string()))?
+            .ok_or_else(|| AuthError::UserNotFound(format!("User '{}' not found", username)))?;
 
         // Cache the user record for future lookups
         self.user_cache.insert(username.to_string(), user.clone()).await;

@@ -6,12 +6,12 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum AuthError {
     /// Missing or empty Authorization header
-    #[error("Missing authorization header")]
-    MissingAuthorization,
+    #[error("Missing authorization header: {0}")]
+    MissingAuthorization(String),
 
     /// Invalid username or password
-    #[error("Invalid credentials")]
-    InvalidCredentials,
+    #[error("Invalid credentials: {0}")]
+    InvalidCredentials(String),
 
     /// Malformed Authorization header (not properly formatted)
     #[error("Malformed authorization header: {0}")]
@@ -42,8 +42,12 @@ pub enum AuthError {
     UserDeleted,
 
     /// User not found in database
-    #[error("User not found")]
-    UserNotFound,
+    #[error("User not found: {0}")]
+    UserNotFound(String),
+
+    /// Remote access denied
+    #[error("Remote access denied: {0}")]
+    RemoteAccessDenied(String),
 
     /// Insufficient permissions for requested action
     #[error("Insufficient permissions: {0}")]
@@ -51,7 +55,7 @@ pub enum AuthError {
 
     /// Internal database error
     #[error("Database error: {0}")]
-    DatabaseError(#[from] anyhow::Error),
+    DatabaseError(String),
 
     /// Password hashing error
     #[error("Password hashing error: {0}")]
