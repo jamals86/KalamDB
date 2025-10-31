@@ -208,8 +208,7 @@ impl UserTableInsertHandler {
             // Generate row ID
             let row_id = self.generate_row_id()?;
 
-            // Create the key and entity for storage
-            let key = UserTableRowId::new(user_id.clone(), row_id.clone());
+            // Create the entity for storage
             let entity = UserTableRow {
                 row_id: row_id.clone(),
                 user_id: user_id.as_str().to_string(),

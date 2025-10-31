@@ -15,7 +15,6 @@ use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
 use crate::error::KalamDbError;
 // TODO: Phase 2b - FlushPolicy import will be needed again
 // use crate::flush::FlushPolicy;
-use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 // TODO: Phase 2b - StorageLocationService deprecated (replaced by system_storages)
 // use crate::services::storage_location_service::StorageLocationService;
 use crate::storage::column_family_manager::ColumnFamilyManager;
@@ -317,52 +316,6 @@ impl UserTableService {
             "Table definition for {}.{} saved to information_schema.tables (version 1)",
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str()
-        );
-
-        Ok(())
-    }
-
-    /// DEPRECATED: Create schema files for the table
-    ///
-    /// **REPLACED BY**: save_table_definition() which writes to information_schema_tables
-    ///
-    /// Creates:
-    /// - schema_v1.json: Arrow schema in JSON format
-    /// - manifest.json: Schema versioning metadata
-    fn create_schema_files(
-        &self,
-        namespace: &NamespaceId,
-        table_name: &TableName,
-        schema: &Arc<Schema>,
-        _flush_policy: &Option<DdlFlushPolicy>,
-        _deleted_retention_hours: Option<u32>,
-    ) -> Result<(), KalamDbError> {
-        // Create schema with options wrapper
-        let schema_with_options = ArrowSchemaWithOptions::new(schema.clone());
-
-        // TODO: Phase 2b - Save schema to information_schema.tables (TableDefinition.schema_history)
-        let schema_json = schema_with_options.to_json()?;
-        let schema_str = serde_json::to_string(&schema_json)
-            .map_err(|e| KalamDbError::SchemaError(format!("Failed to serialize schema: {}", e)))?;
-
-        // Create TableSchema record
-        let table_id = format!("{}:{}", namespace.as_str(), table_name.as_str());
-        let table_schema = kalamdb_sql::TableSchema {
-            schema_id: format!("{}_v1", table_id),
-            table_id: table_id.clone(),
-            version: 1,
-            arrow_schema: schema_str,
-            created_at: chrono::Utc::now().timestamp_millis(),
-            changes: "Initial schema".to_string(),
-        };
-
-        // TODO: Replace with information_schema_tables storage (Phase 2b)
-        // Schema will be stored in TableDefinition.schema_history array
-        // self.kalam_sql.insert_table_schema(&table_schema)?;
-
-        log::info!(
-            "Schema for table {} saved to system.table_schemas (version 1)",
-            table_id
         );
 
         Ok(())

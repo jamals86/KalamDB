@@ -97,15 +97,6 @@ impl TokioJobManager {
             jobs: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-
-    /// Remove completed/failed/cancelled jobs from registry
-    ///
-    /// Called periodically to prevent unbounded memory growth
-    fn cleanup_finished_jobs(&self) {
-        if let Ok(mut jobs) = self.jobs.write() {
-            jobs.retain(|_, entry| entry.handle.is_finished() == false);
-        }
-    }
 }
 
 #[async_trait]

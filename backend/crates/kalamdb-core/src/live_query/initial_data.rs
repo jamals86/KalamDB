@@ -8,7 +8,7 @@ use crate::catalog::TableType;
 use crate::error::KalamDbError;
 use crate::live_query::filter::FilterPredicate;
 use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
-use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
+use crate::tables::{StreamTableStore, UserTableStore};
 use chrono::DateTime;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
@@ -91,7 +91,6 @@ pub struct InitialDataResult {
 /// Service for fetching initial data when subscribing to live queries
 pub struct InitialDataFetcher {
     user_table_store: Option<Arc<UserTableStore>>,
-    shared_table_store: Option<Arc<SharedTableStore>>,
     stream_table_store: Option<Arc<StreamTableStore>>,
 }
 
@@ -99,12 +98,10 @@ impl InitialDataFetcher {
     /// Create a new initial data fetcher
     pub fn new(
         user_table_store: Option<Arc<UserTableStore>>,
-        shared_table_store: Option<Arc<SharedTableStore>>,
         stream_table_store: Option<Arc<StreamTableStore>>,
     ) -> Self {
         Self {
             user_table_store,
-            shared_table_store,
             stream_table_store,
         }
     }
@@ -298,19 +295,12 @@ impl InitialDataFetcher {
             .map(|dt| dt.timestamp_millis())
             .unwrap_or(0)
     }
-
-    fn is_deleted(row: &JsonValue) -> bool {
-        row.get(kalamdb_commons::constants::SystemColumnNames::DELETED)
-            .and_then(JsonValue::as_bool)
-            .unwrap_or(false)
-    }
 }
 
 impl Default for InitialDataFetcher {
     fn default() -> Self {
         Self {
             user_table_store: None,
-            shared_table_store: None,
             stream_table_store: None,
         }
     }

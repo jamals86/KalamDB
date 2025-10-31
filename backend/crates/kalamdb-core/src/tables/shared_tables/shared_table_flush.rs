@@ -20,7 +20,6 @@ use crate::tables::SharedTableStore;
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use kalamdb_commons::system::Job;
 use serde_json::Value as JsonValue;
 use std::path::PathBuf;
 use std::sync::Arc;

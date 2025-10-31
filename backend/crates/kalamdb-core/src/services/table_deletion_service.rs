@@ -430,12 +430,6 @@ impl TableDeletionService {
         let job_id = format!("drop_table:{}", table_id); //TODO: Use a function inside JobId to construct this
         let now_ms = chrono::Utc::now().timestamp_millis();
 
-        let parameters = vec![
-            format!("namespace_id={}", namespace_id.as_str()),
-            format!("table_name={}", table_name.as_str()),
-            format!("table_type={:?}", table_type),
-        ];
-
         let job: Job = Job {
             job_id: JobId::new(job_id.clone()),
             job_type: JobType::Cleanup,

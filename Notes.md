@@ -57,15 +57,17 @@ Future:
     - Has a deep design for how they should be and also update TASKS.MD and the design here
 
 
-62) Add test to flush table and check if the job persisted and completed with results correctly
+62) ✅ DONE - Add test to flush table and check if the job persisted and completed with results correctly (implemented in test_cli_flush_table and test_cli_flush_all_tables with system.jobs verification)
 63) check for each system table if the results returned cover all the columns defined in the TableSchema
-64) Add test to flush all and check if the job persisted and completed with results correctly
+64) ✅ DONE - Add test to flush all and check if the job persisted and completed with results correctly (implemented in test_cli_flush_all_tables with system.jobs verification for multiple tables)
 65) Add tests to cover the droping table and cleanup inside jobs table as well
 66) Make sure actions like: drop/export/import/flush is having jobs rows when they finishes (TODO: Also check what kind of jobs we have)
 67) test each role the actions he can do and cannot do, to cover the rbac system well, this should be done from the cli
 68) A service user can also create other regular users
 69) Server click ctrl+z two times will force kill even if it's still flushing or doing some job
-
+70) Check cleaning up completed jobs, we already have a config of how long should we retain them
+71) When flushing user table flush only the user who is requesting the flush to happen
+72) Whenever we drop the namespace remove all tables under it
 
 
 

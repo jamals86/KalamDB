@@ -53,7 +53,7 @@ use datafusion::sql::sqlparser;
 use kalamdb_auth::password::{self, PasswordPolicy};
 use kalamdb_commons::models::{AuditLogId, NamespaceId as CommonNamespaceId, StorageId, TableId, UserName};
 use kalamdb_commons::system::{AuditLogEntry, Namespace};
-use kalamdb_commons::{JobStatus, JobType, Role, TableAccess};
+use kalamdb_commons::{JobStatus, Role, TableAccess};
 use kalamdb_sql::ddl::{
     parse_job_command, AlterNamespaceStatement, AlterUserStatement, CreateNamespaceStatement,
     CreateTableStatement, CreateUserStatement, DescribeTableStatement, DropNamespaceStatement,
@@ -860,76 +860,7 @@ impl SqlExecutor {
         }
     }
 
-    /// Check if a query only accesses system tables (no user/shared/stream tables)
-    ///
-    /// This allows us to use a lightweight session that doesn't load all user tables.
-    fn is_system_only_query(sql_upper: &str) -> bool {
-        // Check if query contains FROM or JOIN with system.* tables only
-        // Simple heuristic: if it contains "FROM SYSTEM." or "JOIN SYSTEM." and no other FROM/JOIN
-        let has_system_table =
-            sql_upper.contains("FROM SYSTEM.") || sql_upper.contains("JOIN SYSTEM.");
-
-        if !has_system_table {
-            return false;
-        }
-
-        // Check if there are any non-system table references
-        // This is a simple check - could be more sophisticated
-        let words: Vec<&str> = sql_upper.split_whitespace().collect();
-        for i in 0..words.len() {
-            if (words[i] == "FROM" || words[i] == "JOIN") && i + 1 < words.len() {
-                let table_ref = words[i + 1];
-                // If it's not a system.* reference and not a subquery, it's a user table
-                if !table_ref.starts_with("SYSTEM.") && !table_ref.starts_with("(") {
-                    return false;
-                }
-            }
-        }
-
-        true
-    }
-
     /// Execute a query that only accesses system tables (optimized - no user table loading)
-    async fn execute_system_query(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
-        // Create a lightweight session with ONLY system tables registered
-        let session = self.session_factory.create_session();
-
-        let kalam_sql = self
-            .kalam_sql
-            .as_ref()
-            .ok_or_else(|| KalamDbError::InvalidOperation("KalamSQL not configured".to_string()))?;
-
-        // Register only system tables (no user table scanning!)
-        self.register_system_tables_in_session(&session, kalam_sql)?;
-
-        // Execute SQL via DataFusion
-        let df = session.sql(sql).await.map_err(|e| {
-            // Extract the root cause to avoid "Error planning query: Error during planning:" duplication
-            let err_msg = e.to_string();
-            if err_msg.contains("Error during planning:") {
-                // DataFusion already says "Error during planning", don't duplicate
-                KalamDbError::Other(err_msg)
-            } else {
-                KalamDbError::Other(format!("Error planning query: {}", err_msg))
-            }
-        })?;
-
-        // Collect results
-        let batches = df
-            .collect()
-            .await
-            .map_err(|e| KalamDbError::Other(format!("Error executing query: {}", e)))?;
-
-        // Return batches
-        if batches.is_empty() {
-            Ok(ExecutionResult::RecordBatches(vec![]))
-        } else if batches.len() == 1 {
-            Ok(ExecutionResult::RecordBatch(batches[0].clone()))
-        } else {
-            Ok(ExecutionResult::RecordBatches(batches))
-        }
-    }
-
     /// Create a fresh SessionContext for a specific user with only their tables registered
     ///
     /// This ensures user data isolation by creating a dedicated session with user-scoped TableProviders.
@@ -1556,49 +1487,6 @@ impl SqlExecutor {
 
     /// Execute query via DataFusion (legacy - loads all tables)
     ///
-    /// Always creates a fresh SessionContext to ensure tables are up-to-date after CREATE TABLE operations.
-    /// For queries with user_id, creates per-user providers with data isolation.
-    /// For queries without user_id, creates session with anonymous user (shared/stream tables accessible).
-    async fn execute_datafusion_query(
-        &self,
-        sql: &str,
-        user_id: Option<&UserId>,
-    ) -> Result<ExecutionResult, KalamDbError> {
-        // Always create a fresh SessionContext (whether user_id provided or not)
-        // This ensures newly created tables are available
-        let anonymous_user = UserId::from("anonymous");
-        let uid = user_id.unwrap_or(&anonymous_user);
-        let session = self.create_user_session_context(uid, None).await?;
-
-        // Execute SQL via DataFusion
-        let df = session.sql(sql).await.map_err(|e| {
-            // Extract the root cause to avoid "Error planning query: Error during planning:" duplication
-            let err_msg = e.to_string();
-            if err_msg.contains("Error during planning:") {
-                // DataFusion already says "Error during planning", don't duplicate
-                KalamDbError::Other(err_msg)
-            } else {
-                KalamDbError::Other(format!("Error planning query: {}", err_msg))
-            }
-        })?;
-
-        // Collect results
-        let batches = df
-            .collect()
-            .await
-            .map_err(|e| KalamDbError::Other(format!("Error executing query: {}", e)))?;
-
-        // Return batches
-        if batches.is_empty() {
-            // Return empty result with schema
-            Ok(ExecutionResult::RecordBatches(vec![]))
-        } else if batches.len() == 1 {
-            Ok(ExecutionResult::RecordBatch(batches[0].clone()))
-        } else {
-            Ok(ExecutionResult::RecordBatches(batches))
-        }
-    }
-
     /// Execute CREATE NAMESPACE
     async fn execute_create_namespace(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
         let stmt = CreateNamespaceStatement::parse(sql)

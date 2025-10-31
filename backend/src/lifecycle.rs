@@ -5,6 +5,7 @@
 //! server, and coordinating graceful shutdown.
 
 use kalamdb_core::jobs::JobManager;
+use log::debug;
 use crate::middleware;
 use crate::routes;
 use crate::ServerConfig;
@@ -454,7 +455,7 @@ async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
     match existing_user {
         Ok(Some(_)) => {
             // User already exists, skip creation
-            info!(
+            debug!(
                 "System user '{}' already exists, skipping initialization",
                 AuthConstants::DEFAULT_SYSTEM_USERNAME
             );

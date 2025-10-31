@@ -14,3 +14,8 @@ rustflags = ["-C", "link-arg=-Wl,-rpath,/Library/Developer/CommandLineTools/usr/
 LIBCLANG_PATH = "/Library/Developer/CommandLineTools/usr/lib"
 DYLD_FALLBACK_LIBRARY_PATH = "/Library/Developer/CommandLineTools/usr/lib"
 DYLD_LIBRARY_PATH = "/Library/Developer/CommandLineTools/usr/lib"
+
+# --- Windows (MSVC) ---
+[target.x86_64-pc-windows-msvc]
+# Usually no special flags are needed, but you can add linker hints if needed
+rustflags = []

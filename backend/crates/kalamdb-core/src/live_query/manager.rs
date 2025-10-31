@@ -34,7 +34,7 @@ impl LiveQueryManager {
         kalam_sql: Arc<KalamSql>,
         node_id: NodeId,
         user_table_store: Option<Arc<UserTableStore>>,
-        shared_table_store: Option<Arc<SharedTableStore>>,
+        _shared_table_store: Option<Arc<SharedTableStore>>,
         stream_table_store: Option<Arc<StreamTableStore>>,
     ) -> Self {
         let registry = Arc::new(tokio::sync::RwLock::new(LiveQueryRegistry::new(
@@ -44,7 +44,6 @@ impl LiveQueryManager {
         let filter_cache = Arc::new(tokio::sync::RwLock::new(FilterCache::new()));
         let initial_data_fetcher = Arc::new(InitialDataFetcher::new(
             user_table_store.clone(),
-            shared_table_store.clone(),
             stream_table_store.clone(),
         ));
 

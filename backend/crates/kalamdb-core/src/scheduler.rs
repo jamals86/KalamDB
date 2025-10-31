@@ -88,10 +88,6 @@ use tokio::task::JoinHandle;
 struct ScheduledTable {
     /// Table name
     table_name: TableName,
-    /// Column family name
-    cf_name: String,
-    /// Flush policy
-    policy: FlushPolicy,
 }
 
 /// Flush scheduler state
@@ -307,8 +303,6 @@ impl FlushScheduler {
         // Add to scheduled tables
         let scheduled = ScheduledTable {
             table_name,
-            cf_name: cf_name.clone(),
-            policy,
         };
 
         let mut tables = self

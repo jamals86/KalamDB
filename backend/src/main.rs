@@ -17,7 +17,7 @@ use std::env;
 #[actix_web::main]
 async fn main() -> Result<()> {
     // Parse command-line arguments
-    let args: Vec<String> = env::args().collect();
+    let _args: Vec<String> = env::args().collect();
 
     // Normal server startup
     // Load configuration (fallback to defaults when config file missing)

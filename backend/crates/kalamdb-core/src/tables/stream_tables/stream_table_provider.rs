@@ -211,7 +211,6 @@ impl StreamTableProvider {
         }
 
         // Generate timestamp for the event
-        let timestamp_ms = chrono::Utc::now().timestamp_millis();
         let timestamp_str = chrono::Utc::now().to_rfc3339();
 
         // Create StreamTableRow with event data

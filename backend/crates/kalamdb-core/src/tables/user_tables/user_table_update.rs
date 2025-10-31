@@ -10,7 +10,6 @@ use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::stores::system_table::UserTableStoreExt;
-use crate::tables::user_tables::user_table_store::UserTableRowId;
 use crate::tables::UserTableStore;
 
 use serde_json::Value as JsonValue;
@@ -80,7 +79,6 @@ impl UserTableUpdateHandler {
         }
 
         // Read existing row from store
-        let key = UserTableRowId::new(user_id.clone(), row_id);
         let existing_row = UserTableStoreExt::get(self.store.as_ref(), 
             namespace_id.as_str(),
             table_name.as_str(),
