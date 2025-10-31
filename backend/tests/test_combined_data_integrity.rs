@@ -171,7 +171,7 @@ async fn test_01_combined_data_count_and_select() {
     let select_response = server
         .execute_sql_as_user(
             &format!(
-                "SELECT order_id, customer_name, amount, status FROM {}.{} ORDER BY order_id",
+                "SELECT id, order_id, customer_name, amount, status FROM {}.{} ORDER BY order_id",
                 namespace, table_name
             ),
             user_id,
@@ -191,12 +191,29 @@ async fn test_01_combined_data_count_and_select() {
         assert_eq!(rows.len(), 15, "Should return 15 rows");
 
         // Verify order_id sequence is correct (1..15)
+        let mut last_id = 0_i64;
         for (idx, row) in rows.iter().enumerate() {
             eprintln!("Row {}: {:?}", idx, row);
-            let order_id = row.get("order_id").and_then(|v| v.as_i64()).unwrap_or(0);
+            let order_id = row
+                .get("order_id")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(|| panic!("Row {} missing order_id", idx));
             assert_eq!(order_id, (idx + 1) as i64, "order_id should be sequential");
+
+            let row_id = row
+                .get("id")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(|| panic!("Row {} missing auto-generated id", idx));
+            assert!(
+                row_id > last_id,
+                "Snowflake id for row {} should be monotonic (prev={}, current={})",
+                idx,
+                last_id,
+                row_id
+            );
+            last_id = row_id;
         }
-        println!("  ✓ All 15 rows returned in correct order");
+        println!("  ✓ All 15 rows returned with monotonic Snowflake ids");
     }
 
     if flush_result.rows_flushed > 0 {
@@ -784,7 +801,7 @@ async fn test_06_soft_delete_operations() {
             user_id,
         )
         .await;
-    assert_eq!(delete1.status, "success");
+    assert_eq!(delete1.status, "success", "Delete failed: {:?}", delete1);
 
     println!("Soft deleting task2...");
     let delete2 = server
@@ -796,7 +813,7 @@ async fn test_06_soft_delete_operations() {
             user_id,
         )
         .await;
-    assert_eq!(delete2.status, "success");
+    assert_eq!(delete2.status, "success", "Delete failed: {:?}", delete2);
 
     // Query should only show 3 tasks (task3, task4, task5)
     println!("Querying after soft deletes...");

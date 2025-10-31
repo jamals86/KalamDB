@@ -8,10 +8,9 @@
 //! - Multiple database instance management
 //! - Credential rotation and updates
 
-use kalam_cli::{FileCredentialStore, Result};
+use kalam_cli::{FileCredentialStore};
 use kalam_link::credentials::{CredentialStore, Credentials};
 use std::fs;
-use std::path::PathBuf;
 use tempfile::TempDir;
 
 #[cfg(unix)]

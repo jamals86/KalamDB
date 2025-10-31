@@ -25,10 +25,6 @@ use kalam_cli::{
 };
 
 // Build information - Create a static version string at compile time
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const COMMIT: &str = env!("GIT_COMMIT_HASH");
-const BUILD_DATE: &str = env!("BUILD_DATE");
-const BRANCH: &str = env!("GIT_BRANCH");
 
 // Macro to create the version string at compile time
 macro_rules! version_string {

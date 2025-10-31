@@ -138,7 +138,7 @@ async fn cleanup_test_data(table_full_name: &str) -> Result<(), Box<dyn std::err
 
 /// Helper to create a CLI command with default test settings
 fn create_cli_command() -> Command {
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd
 }
 
@@ -151,7 +151,7 @@ async fn test_cli_connection_and_prompt() {
         return;
     }
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u").arg(SERVER_URL).arg("--help");
 
     cmd.assert()
@@ -221,7 +221,7 @@ async fn test_cli_table_output_formatting() {
     .unwrap();
 
     // Query with table format (default)
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("--command")
@@ -261,7 +261,7 @@ async fn test_cli_json_output_format() {
     .unwrap();
 
     // Query with JSON format
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -304,7 +304,7 @@ async fn test_cli_csv_output_format() {
     .unwrap();
 
     // Query with CSV format
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -357,7 +357,7 @@ SELECT * FROM batch_test.items;"#,
     .unwrap();
 
     // Execute batch file
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -388,7 +388,7 @@ async fn test_cli_syntax_error_handling() {
         return;
     }
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -416,7 +416,7 @@ async fn test_cli_syntax_error_handling() {
 #[tokio::test]
 async fn test_cli_connection_failure_handling() {
     // Try to connect to non-existent server
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg("http://localhost:9999") // Non-existent port
         .arg("--command")
@@ -443,7 +443,7 @@ async fn test_cli_connection_failure_handling() {
 /// T050: Test help command
 #[tokio::test]
 async fn test_cli_help_command() {
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("--help");
 
     cmd.assert()
@@ -457,7 +457,7 @@ async fn test_cli_help_command() {
 /// T051: Test version flag
 #[tokio::test]
 async fn test_cli_version() {
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("--version");
 
     cmd.assert()
@@ -506,7 +506,7 @@ async fn test_cli_list_tables() {
     // Add a small delay to ensure table is registered in system.tables
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -538,7 +538,7 @@ async fn test_cli_describe_table() {
     let table = setup_test_data("describe_table").await.unwrap();
 
     // Note: \d meta-command not implemented yet, using SELECT from system.columns
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -669,7 +669,7 @@ async fn test_cli_subscription_pause_resume() {
 
     // Note: Testing pause/resume requires interactive input simulation
     // This test verifies the CLI accepts the subscription command
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("--help");
 
     let output = cmd.output().unwrap();
@@ -694,7 +694,7 @@ async fn test_cli_unsubscribe() {
 
     // Note: \unsubscribe is an interactive meta-command, not SQL
     // Test that the CLI binary exists and can be executed
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("--version");
 
     let output = cmd.output().unwrap();
@@ -763,7 +763,7 @@ timeout = 30
     )
     .unwrap();
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("--config")
         .arg(config_path.to_str().unwrap())
         .arg("--command")
@@ -804,7 +804,7 @@ format = "csv"
     .unwrap();
 
     // CLI args should override config
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("--config")
         .arg(config_path.to_str().unwrap())
         .arg("-u")
@@ -839,7 +839,7 @@ async fn test_cli_jwt_authentication() {
 
     // Note: This test assumes JWT auth is optional on localhost
     // In production, would need to obtain valid token first
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -864,7 +864,7 @@ async fn test_cli_invalid_token() {
         return;
     }
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -895,7 +895,7 @@ async fn test_cli_localhost_auth_bypass() {
     }
 
     // Localhost connections should work without token
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -964,7 +964,7 @@ async fn test_cli_explicit_flush() {
     .await
     .unwrap();
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -1007,7 +1007,7 @@ async fn test_cli_color_output() {
     let table = setup_test_data("color_output").await.unwrap();
 
     // Test with color enabled (default behavior)
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -1022,7 +1022,7 @@ async fn test_cli_color_output() {
     );
 
     // Test with color disabled
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -1046,7 +1046,7 @@ async fn test_cli_session_timeout() {
     }
 
     // Note: --timeout flag not yet implemented, just test that command executes
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -1066,7 +1066,7 @@ async fn test_cli_session_timeout() {
 async fn test_cli_command_history() {
     // History is handled by rustyline in interactive mode
     // For non-interactive tests, we verify the CLI supports it
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("--help");
 
     let output = cmd.output().unwrap();
@@ -1084,7 +1084,7 @@ async fn test_cli_command_history() {
 async fn test_cli_tab_completion() {
     // Tab completion is handled by rustyline in interactive mode
     // For non-interactive tests, we verify the CLI supports it
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("--help");
 
     let output = cmd.output().unwrap();
@@ -1108,7 +1108,7 @@ async fn test_cli_multiline_query() {
     // Multi-line query with newlines
     let multi_line_query = format!("SELECT \n  id, \n  content \nFROM \n  {} \nLIMIT 5", table);
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -1134,7 +1134,7 @@ async fn test_cli_query_with_comments() {
     // Test with simple SQL (comments in SQL strings don't work well in shell args)
     let query_simple = "SELECT 1 as test";
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -1158,7 +1158,7 @@ async fn test_cli_empty_query() {
         return;
     }
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -1195,7 +1195,7 @@ async fn test_cli_result_pagination() {
     }
 
     // Query all rows
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -1223,7 +1223,7 @@ async fn test_cli_verbose_output() {
         return;
     }
 
-    let mut cmd = Command::cargo_bin("kalam").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
@@ -1236,4 +1236,137 @@ async fn test_cli_verbose_output() {
 
     // Verbose mode should provide additional output
     assert!(output.status.success(), "Should handle verbose mode");
+}
+
+/// Test CLI authentication with unauthorized user
+#[tokio::test]
+async fn test_cli_authenticate_unauthorized_user() {
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running at {}. Skipping test.", SERVER_URL);
+        return;
+    }
+
+    // Try to authenticate with invalid credentials
+    let mut cmd = create_cli_command();
+    cmd.arg("-u")
+        .arg(SERVER_URL)
+        .arg("--username")
+        .arg("invalid_user")
+        .arg("--password")
+        .arg("wrong_password")
+        .arg("--command")
+        .arg("SELECT 1")
+        .timeout(TEST_TIMEOUT);
+
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should fail with authentication error
+    assert!(!output.status.success(), "CLI should fail with invalid credentials");
+    assert!(
+        stderr.contains("Unauthorized") || stderr.contains("authentication") || stderr.contains("401"),
+        "Error should indicate authentication failure: {}",
+        stderr
+    );
+}
+
+/// Test CLI authentication with valid user and check \info command
+#[tokio::test]
+async fn test_cli_authenticate_and_check_info() {
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running at {}. Skipping test.", SERVER_URL);
+        return;
+    }
+
+    // Use unique username to avoid conflicts
+    let test_username = format!("testuser_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+
+    // Create a test user via API
+    let create_user_sql = format!("CREATE USER {} IDENTIFIED BY 'testpass123'", test_username);
+    let result = execute_sql_as_root(&create_user_sql).await;
+    if result.is_err() || result.as_ref().unwrap()["status"] != "success" {
+        eprintln!("⚠️  Failed to create test user, skipping test");
+        return;
+    }
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Authenticate with the new user and run \info command
+    let mut cmd = create_cli_command();
+    cmd.arg("-u")
+        .arg(SERVER_URL)
+        .arg("--username")
+        .arg(&test_username)
+        .arg("--password")
+        .arg("testpass123")
+        .arg("--command")
+        .arg("\\info")
+        .timeout(TEST_TIMEOUT);
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should succeed and show user info
+    assert!(output.status.success(), "CLI should authenticate successfully with valid user");
+    assert!(
+        stdout.contains(&test_username),
+        "Info output should show the authenticated username: {}",
+        stdout
+    );
+
+    // Cleanup
+    let _ = execute_sql_as_root(&format!("DROP USER {}", test_username)).await;
+}
+
+/// Test CLI subscription with initial data
+#[tokio::test]
+async fn test_cli_subscription_with_initial_data() {
+    if !is_server_running().await {
+        eprintln!("⚠️  Server not running at {}. Skipping test.", SERVER_URL);
+        return;
+    }
+
+    // Use unique names to avoid conflicts
+    let namespace_name = format!("sub_test_ns_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+    let table_name = format!("{}.events", namespace_name);
+
+    // Setup: Create namespace and table, insert data
+    let _ = execute_sql_as_root(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace_name)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let _ = execute_sql_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let create_table_sql = format!("CREATE USER TABLE {} (id INT, event_type VARCHAR, timestamp BIGINT)", table_name);
+    let result = execute_sql_as_root(&create_table_sql).await.unwrap();
+    assert_eq!(result["status"], "success", "Should create user table");
+
+    // Insert some initial data
+    for i in 1..=3 {
+        let insert_sql = format!("INSERT INTO {} (id, event_type, timestamp) VALUES ({}, 'test_event', {})", table_name, i, i * 1000);
+        let _ = execute_sql_as_root(&insert_sql).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // Subscribe to the table and check initial results
+    let mut cmd = create_cli_command();
+    cmd.arg("-u")
+        .arg(SERVER_URL)
+        .arg("--command")
+        .arg(&format!("\\subscribe SELECT * FROM {}", table_name))
+        .timeout(Duration::from_secs(5)); // Short timeout since we just want initial data
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should succeed and show initial data
+    assert!(output.status.success(), "CLI subscription should succeed");
+    assert!(
+        stdout.contains("test_event") || stdout.contains("Starting subscription"),
+        "Output should show initial data or subscription start: {}",
+        stdout
+    );
+
+    // Cleanup
+    let _ = execute_sql_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }

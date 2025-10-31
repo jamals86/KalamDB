@@ -66,9 +66,6 @@ pub struct CLISession {
     /// Threshold for showing loading indicator (milliseconds)
     loading_threshold_ms: u64,
 
-    /// Current user ID
-    user_id: String,
-
     /// Authenticated username
     username: String,
 
@@ -154,7 +151,6 @@ impl CLISession {
             connected,
             subscription_paused: false,
             loading_threshold_ms: 200, // Default: 200ms
-            user_id: username.clone(),
             username,
             connected_at: Instant::now(),
             queries_executed: 0,

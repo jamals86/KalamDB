@@ -163,3 +163,4 @@ rocksdb = { workspace = true }
 base64 = { workspace = true }
 bcrypt = { workspace = true }
 datafusion = { workspace = true }
+libc = { workspace = true }

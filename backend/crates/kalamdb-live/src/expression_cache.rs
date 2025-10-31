@@ -32,7 +32,6 @@
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::logical_expr::Expr;
-use datafusion::prelude::*;
 use std::sync::Arc;
 
 /// A compiled and cached DataFusion expression
@@ -77,9 +76,6 @@ impl CachedExpression {
     /// )?;
     /// ```
     pub fn compile(filter_sql: &str, schema: &SchemaRef) -> Result<Self, String> {
-        // Create a DataFusion context
-        let ctx = SessionContext::new();
-
         // Parse the SQL expression
         // Note: This is a simplified implementation
         // In production, you'd use DataFusion's SQL parser with the schema

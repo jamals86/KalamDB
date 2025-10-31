@@ -3335,30 +3335,21 @@ impl SqlExecutor {
         // Check if it's a UserTableProvider
         if let Some(user_provider) = table_provider.as_any().downcast_ref::<UserTableProvider>() {
             // User table DELETE with isolation
-            let store = self.user_table_store.as_ref().ok_or_else(|| {
-                KalamDbError::InvalidOperation("UserTableStore not configured".to_string())
-            })?;
-
-            // Scan only this user's rows
-            let all_rows = store
-                .scan_user(
-                    &delete_info.namespace,
-                    &delete_info.table,
-                    effective_user_id.as_str(),
-                )
+            let all_rows = user_provider
+                .scan_current_user_rows()
                 .map_err(|e| KalamDbError::Other(format!("Scan failed: {}", e)))?;
 
             // Filter rows by WHERE clause
             let (where_col, where_val) = self.parse_simple_where(&delete_info.where_clause)?;
 
             let mut deleted_count = 0;
-            for (row_id, row_data) in all_rows {
+            for (_row_key, row_data) in all_rows {
                 // Check if row matches WHERE clause
                 if let Some(obj) = row_data.fields.as_object() {
                     if let Some(col_value) = obj.get(&where_col) {
                         if Self::value_matches(col_value, &where_val) {
                             // Call delete method (soft delete for user tables)
-                            user_provider.delete_row(&row_id).map_err(|e| {
+                            user_provider.delete_row(&row_data.row_id).map_err(|e| {
                                 KalamDbError::Other(format!("Delete failed: {}", e))
                             })?;
 

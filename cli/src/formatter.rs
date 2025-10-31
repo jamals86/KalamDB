@@ -251,15 +251,6 @@ impl OutputFormatter {
         Ok(output)
     }
 
-    /// Format error message (simple version)
-    fn format_error(&self, error: &str) -> String {
-        if self.color {
-            format!("\x1b[31mERROR:\x1b[0m {}", error)
-        } else {
-            format!("ERROR: {}", error)
-        }
-    }
-
     /// Format error detail (with code and details) - MySQL/PostgreSQL style
     fn format_error_detail(&self, error: &ErrorDetail) -> String {
         let mut output = String::new();

@@ -12,6 +12,7 @@ use crate::error::KalamDbError;
 use crate::ids::SnowflakeGenerator;
 use crate::live_query::manager::LiveQueryManager;
 use crate::stores::system_table::UserTableStoreExt;
+use crate::tables::user_tables::user_table_store::UserTableRow;
 use crate::tables::UserTableStore;
 use crate::tables::arrow_json_conversion::{arrow_batch_to_json, json_rows_to_arrow_batch, validate_insert_rows};
 use super::{UserTableDeleteHandler, UserTableInsertHandler, UserTableUpdateHandler};
@@ -23,10 +24,11 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::Role;
+use kalamdb_commons::{models::ColumnDefault, Role};
 use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
 use std::any::Any;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Shared Snowflake generator for auto-increment values
@@ -69,6 +71,9 @@ pub struct UserTableProvider {
 
     /// LiveQueryManager for WebSocket notifications
     live_query_manager: Option<Arc<LiveQueryManager>>,
+
+    /// Column default definitions for INSERT operations
+    column_defaults: HashMap<String, ColumnDefault>,
 }
 
 impl std::fmt::Debug for UserTableProvider {
@@ -104,6 +109,7 @@ impl UserTableProvider {
         let insert_handler = Arc::new(UserTableInsertHandler::new(store.clone()));
         let update_handler = Arc::new(UserTableUpdateHandler::new(store.clone()));
         let delete_handler = Arc::new(UserTableDeleteHandler::new(store.clone()));
+        let column_defaults = Self::derive_column_defaults(&schema);
 
         Self {
             table_metadata,
@@ -116,7 +122,22 @@ impl UserTableProvider {
             delete_handler,
             parquet_paths,
             live_query_manager: None,
+            column_defaults,
         }
+    }
+
+    /// Build default column map for INSERT operations.
+    ///
+    /// Currently injects SNOWFLAKE_ID default for auto-generated `id` columns.
+    fn derive_column_defaults(schema: &SchemaRef) -> HashMap<String, ColumnDefault> {
+        let mut defaults = HashMap::new();
+        if schema.field_with_name("id").is_ok() {
+            defaults.insert(
+                "id".to_string(),
+                ColumnDefault::FunctionCall("SNOWFLAKE_ID".to_string()),
+            );
+        }
+        defaults
     }
 
     /// Configure LiveQueryManager for WebSocket notifications
@@ -357,6 +378,42 @@ impl UserTableProvider {
             .as_bytes()
             .to_vec()
     }
+
+    /// Scan all rows for the current user.
+    pub fn scan_current_user_rows(&self) -> Result<Vec<(String, UserTableRow)>, KalamDbError> {
+        self.store.scan_user(
+            self.namespace_id().as_str(),
+            self.table_name().as_str(),
+            self.current_user_id.as_str(),
+        )
+    }
+
+    /// Flatten stored `UserTableRow` into a JSON object matching the logical schema.
+    fn flatten_row(metadata: &TableMetadata, data: UserTableRow) -> JsonValue {
+        let mut row = match data.fields {
+            JsonValue::Object(map) => map,
+            other => {
+                log::warn!(
+                    "Unexpected non-object payload in user table row {}.{}; defaulting to empty object",
+                    metadata.namespace.as_str(),
+                    metadata.table_name.as_str()
+                );
+                let mut map = serde_json::Map::new();
+                if !other.is_null() {
+                    map.insert("value".to_string(), other);
+                }
+                map
+            }
+        };
+
+        row.insert(
+            "_updated".to_string(),
+            JsonValue::String(data._updated.clone()),
+        );
+        row.insert("_deleted".to_string(), JsonValue::Bool(data._deleted));
+
+        JsonValue::Object(row)
+    }
 }
 
 #[async_trait]
@@ -436,7 +493,7 @@ impl TableProvider for UserTableProvider {
         // Convert JSON rows to Arrow RecordBatch (includes system columns)
         let row_values: Vec<JsonValue> = limited_rows
             .into_iter()
-            .map(|(_id, data)| serde_json::to_value(data).unwrap())
+            .map(|(_id, data)| Self::flatten_row(&self.table_metadata, data))
             .collect();
 
         let batch = json_rows_to_arrow_batch(&full_schema, row_values).map_err(|e| {
@@ -479,6 +536,19 @@ impl TableProvider for UserTableProvider {
                 DataFusionError::Execution(format!("Schema validation failed: {}", e))
             })?;
 
+            // Evaluate DEFAULT expressions (Snowflake IDs, timestamps, etc.)
+            for row in json_rows.iter_mut() {
+                UserTableInsertHandler::apply_defaults_and_validate(
+                    row,
+                    self.schema.as_ref(),
+                    &self.column_defaults,
+                    &self.current_user_id,
+                )
+                .map_err(|e| {
+                    DataFusionError::Execution(format!("DEFAULT evaluation failed: {}", e))
+                })?;
+            }
+
             // Populate auto-increment IDs when missing
             self.prepare_insert_rows(&mut json_rows)
                 .map_err(|e| DataFusionError::Execution(e))?;
@@ -495,15 +565,15 @@ impl TableProvider for UserTableProvider {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::flush::FlushPolicy;
     use crate::tables::UserTableStore;
     use chrono::Utc;
+    use datafusion::arrow::array::{BooleanArray, Int64Array, StringArray, TimestampMillisecondArray};
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use datafusion::execution::context::SessionContext;
     use kalamdb_store::test_utils::TestDb;
     use serde_json::json;
 
@@ -516,10 +586,8 @@ mod tests {
 
     fn create_test_schema() -> SchemaRef {
         Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Utf8, false),
+            Field::new("id", DataType::Int64, false),
             Field::new("content", DataType::Utf8, true),
-            Field::new("_updated", DataType::Int64, false),
-            Field::new("_deleted", DataType::Boolean, false),
         ]))
     }
 
@@ -603,6 +671,99 @@ mod tests {
         assert_eq!(prefix, expected);
     }
 
+    #[tokio::test]
+    async fn test_scan_flattens_user_rows() {
+        let store = create_test_db();
+        let schema = create_test_schema();
+        let metadata = create_test_metadata();
+        let user_id = UserId::new("user123".to_string());
+
+        let provider = UserTableProvider::new(
+            metadata.clone(),
+            schema.clone(),
+            store.clone(),
+            user_id.clone(),
+            Role::User,
+            vec![],
+        );
+
+        let row = UserTableRow {
+            row_id: "row1".to_string(),
+            user_id: user_id.as_str().to_string(),
+            fields: json!({
+                "id": 123_i64,
+                "content": "Hello, KalamDB!"
+            }),
+            _updated: "2025-01-01T00:00:00Z".to_string(),
+            _deleted: false,
+        };
+
+        UserTableStoreExt::put(
+            provider.store.as_ref(),
+            provider.namespace_id().as_str(),
+            provider.table_name().as_str(),
+            provider.current_user_id().as_str(),
+            &row.row_id,
+            &row,
+        )
+        .expect("should persist user row");
+
+        let ctx = SessionContext::new();
+        let exec_plan = provider
+            .scan(&ctx.state(), None, &[], None)
+            .await
+            .expect("scan should succeed");
+
+        let batches =
+            datafusion::physical_plan::collect(exec_plan, ctx.task_ctx())
+                .await
+                .expect("collect should succeed");
+
+        assert_eq!(batches.len(), 1, "should produce a single batch");
+        let batch = &batches[0];
+        assert_eq!(batch.num_rows(), 1, "should have one row");
+
+        let schema = batch.schema();
+
+        let id_idx = schema.index_of("id").expect("id column missing");
+        let id_array = batch
+            .column(id_idx)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("id column should be Int64");
+        assert_eq!(id_array.value(0), 123_i64);
+
+        let content_idx = schema
+            .index_of("content")
+            .expect("content column missing");
+        let content_array = batch
+            .column(content_idx)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("content column should be Utf8");
+        assert_eq!(content_array.value(0), "Hello, KalamDB!");
+
+        let updated_idx = schema
+            .index_of("_updated")
+            .expect("_updated column missing");
+        let updated_array = batch
+            .column(updated_idx)
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .expect("_updated column should be timestamp");
+        assert!(updated_array.value(0) > 0, "_updated should be populated");
+
+        let deleted_idx = schema
+            .index_of("_deleted")
+            .expect("_deleted column missing");
+        let deleted_array = batch
+            .column(deleted_idx)
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .expect("_deleted column should be boolean");
+        assert!(!deleted_array.value(0), "_deleted should be false");
+    }
+
     #[test]
     fn test_insert_row() {
         let store = create_test_db();
@@ -643,6 +804,57 @@ mod tests {
 
         let row_ids = result.unwrap();
         assert_eq!(row_ids.len(), 3, "Should generate 3 row IDs");
+    }
+
+    #[tokio::test]
+    async fn test_delete_row_excludes_soft_deleted_from_scan() {
+        let store = create_test_db();
+        let schema = create_test_schema();
+        let metadata = create_test_metadata();
+        let user_id = UserId::new("user123".to_string());
+
+        let provider = UserTableProvider::new(metadata, schema, store, user_id.clone(), Role::User, vec![]);
+
+        let row_a = json!({"content": "Keep me"});
+        let row_b = json!({"content": "Delete me"});
+
+        provider.insert_row(row_a).expect("insert row_a");
+        let id_b = provider.insert_row(row_b).expect("insert row_b");
+
+        provider.delete_row(&id_b).expect("soft delete row_b");
+
+        let ctx = SessionContext::new();
+        let exec_plan = provider
+            .scan(ctx.state().as_ref(), None, &[], None)
+            .await
+            .expect("scan should succeed");
+
+        let batches =
+            datafusion::physical_plan::collect(exec_plan, ctx.task_ctx())
+                .await
+                .expect("collect should succeed");
+
+        assert_eq!(batches.len(), 1);
+        let batch = &batches[0];
+        assert_eq!(batch.num_rows(), 1, "soft deleted row should be filtered out");
+
+        let schema = batch.schema();
+        let content_idx = schema.index_of("content").expect("content column missing");
+        let content_array = batch
+            .column(content_idx)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("content column should be Utf8");
+        assert_eq!(content_array.value(0), "Keep me");
+
+        // ensure remaining row is id_a
+        let id_idx = schema.index_of("id").expect("id column missing");
+        let id_array = batch
+            .column(id_idx)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("id column should be Int64");
+        assert!(id_array.value(0) > 0, "remaining row should have generated id");
     }
 
     #[test]

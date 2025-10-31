@@ -351,12 +351,13 @@ impl UserTableInsertHandler {
             let value_is_null = row_obj.get(column_name).map_or(false, |v| v.is_null());
 
             // T535: Detect omitted columns and apply DEFAULT
-            if !value_present {
+            if !value_present || value_is_null {
                 // Column omitted - check if DEFAULT exists
                 if let Some(default_spec) = column_defaults.get(column_name) {
                     // T536-T537: Evaluate DEFAULT function
                     let default_value = Self::evaluate_default_function(default_spec, user_id)?;
                     row_obj.insert(column_name.to_string(), default_value);
+                    continue;
                 } else if !field.is_nullable() {
                     // T554-T557: NOT NULL violation for omitted column without DEFAULT
                     return Err(KalamDbError::InvalidOperation(format!(
@@ -364,8 +365,10 @@ impl UserTableInsertHandler {
                         column_name
                     )));
                 }
-            } else if value_is_null && !field.is_nullable() {
-                // T554-T557: NOT NULL violation for explicitly NULL value
+            }
+
+            if value_is_null && !field.is_nullable() {
+                // T554-T557: NOT NULL violation for explicitly NULL value without DEFAULT
                 return Err(KalamDbError::InvalidOperation(format!(
                     "NOT NULL violation: column '{}' cannot be null",
                     column_name

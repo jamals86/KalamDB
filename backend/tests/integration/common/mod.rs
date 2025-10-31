@@ -39,10 +39,6 @@ pub mod flush_helpers;
 pub mod stress_utils;
 
 use anyhow::Result;
-use datafusion::arrow::array::{
-    BooleanArray, Float64Array, Int32Array, Int64Array, StringArray, TimestampMillisecondArray,
-};
-use datafusion::catalog::SchemaProvider;
 use kalamdb_api::models::{QueryResult, SqlResponse};
 use kalamdb_commons::models::{NamespaceId, StorageId, TableName};
 use kalamdb_core::live_query::{LiveQueryManager, NodeId};
@@ -57,83 +53,9 @@ use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::StorageBackend;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
-
-/// HTTP test server wrapper - simplified to avoid complex type signatures
-pub struct HttpTestServer {
-    /// Note: We store the TestServer and recreate services on each test call
-    /// This avoids complex generic type parameters
-    pub _env: TestServer,
-}
-
-impl HttpTestServer {
-    /// Execute a request against the test server
-    pub async fn execute_request(
-        &self,
-        req: actix_web::test::TestRequest,
-    ) -> actix_web::dev::ServiceResponse {
-        use actix_web::{test, App};
-        use jsonwebtoken::Algorithm;
-        use kalamdb_api::auth::jwt::JwtAuth;
-        use kalamdb_api::rate_limiter::RateLimiter;
-        use std::sync::Arc;
-
-        let jwt_auth = Arc::new(JwtAuth::new(
-            "kalamdb-dev-secret-key-change-in-production".to_string(),
-            Algorithm::HS256,
-        ));
-        let rate_limiter = Arc::new(RateLimiter::new());
-
-        let app = test::init_service(
-            App::new()
-                .app_data(actix_web::web::Data::new(self._env.session_factory.clone()))
-                .app_data(actix_web::web::Data::new(self._env.sql_executor.clone()))
-                .app_data(actix_web::web::Data::new(
-                    self._env.live_query_manager.clone(),
-                ))
-                .app_data(actix_web::web::Data::new(jwt_auth))
-                .app_data(actix_web::web::Data::new(rate_limiter))
-                .configure(kalamdb_api::routes::configure_routes),
-        )
-        .await;
-
-        let req = req.to_request();
-        test::call_service(&app, req).await
-    }
-
-    /// Convenience delegation to inner TestServer::execute_sql
-    pub async fn execute_sql(&self, sql: &str) -> SqlResponse {
-        self._env.execute_sql(sql).await
-    }
-
-    /// Execute SQL as a specific user via the global REST wiring.
-    pub async fn execute_sql_as_user(&self, sql: &str, user_id: &str) -> SqlResponse {
-        self._env.execute_sql_as_user(sql, user_id).await
-    }
-
-    /// Execute SQL with optional user context.
-    pub async fn execute_sql_with_user(&self, sql: &str, user_id: Option<&str>) -> SqlResponse {
-        self._env.execute_sql_with_user(sql, user_id).await
-    }
-
-    /// Check if a namespace exists in the underlying TestServer.
-    pub async fn namespace_exists(&self, namespace: &str) -> bool {
-        self._env.namespace_exists(namespace).await
-    }
-
-    /// Check if a table exists in the underlying TestServer.
-    pub async fn table_exists(&self, namespace: &str, table: &str) -> bool {
-        self._env.table_exists(namespace, table).await
-    }
-}
-
-/// Spin up an Actix test application wired with KalamDB services.
-pub async fn start_test_server() -> HttpTestServer {
-    // Reuse internal TestServer utilities for database + executor setup
-    let env = TestServer::new().await;
-    HttpTestServer { _env: env }
-}
 
 pub mod fixtures;
 pub mod websocket;
@@ -150,6 +72,8 @@ pub mod websocket;
 pub struct TestServer {
     /// Temporary directory for database files (shared via Arc to allow cloning)
     pub temp_dir: Arc<TempDir>,
+    /// Base directory for table storage (Parquet outputs)
+    storage_base_path: Arc<PathBuf>,
     /// Underlying RocksDB handle for tests that need direct access
     pub db: Arc<rocksdb::DB>,
     /// Shared DataFusion session context used by SqlExecutor (providers registered here)
@@ -170,6 +94,7 @@ impl Clone for TestServer {
     fn clone(&self) -> Self {
         Self {
             temp_dir: Arc::clone(&self.temp_dir),
+            storage_base_path: Arc::clone(&self.storage_base_path),
             db: Arc::clone(&self.db),
             session_context: Arc::clone(&self.session_context),
             kalam_sql: Arc::clone(&self.kalam_sql),
@@ -224,6 +149,11 @@ impl TestServer {
                 .to_string()
         });
 
+        // Prepare storage base directory for Parquet outputs
+        let storage_base_path = temp_dir.path().join("storage");
+        std::fs::create_dir_all(&storage_base_path)
+            .expect("Failed to create storage base directory for tests");
+
         // Initialize RocksDB with all system tables
         let db_init = kalamdb_store::RocksDbInit::new(&db_path);
         let db = db_init.open().expect("Failed to open RocksDB");
@@ -244,10 +174,13 @@ impl TestServer {
                 storage_name: "Local Filesystem".to_string(),
                 description: Some("Default local filesystem storage".to_string()),
                 storage_type: "filesystem".to_string(),
-                base_directory: "".to_string(),
+                base_directory: storage_base_path
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
                 credentials: None,
-                shared_tables_template: "{namespace}/{tableName}".to_string(),
-                user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
+                shared_tables_template: "shared/{namespace}/{tableName}".to_string(),
+                user_tables_template: "users/{userId}/tables/{namespace}/{tableName}".to_string(),
                 created_at: now,
                 updated_at: now,
             };
@@ -331,7 +264,7 @@ impl TestServer {
             .expect("Failed to register system schema");
 
         // Register all system tables using centralized function
-        let jobs_provider = kalamdb_core::system_table_registration::register_system_tables(
+        let _jobs_provider = kalamdb_core::system_table_registration::register_system_tables(
             &system_schema,
             backend.clone(),
         )
@@ -385,6 +318,7 @@ impl TestServer {
 
         Self {
             temp_dir: Arc::new(temp_dir),
+            storage_base_path: Arc::new(storage_base_path),
             db,
             session_context: session_context.clone(),
             kalam_sql,
@@ -395,19 +329,11 @@ impl TestServer {
         }
     }
 
-    /// Backwards-compatible helper returning a ready TestServer instance.
-    pub async fn start() -> Self {
-        Self::new().await
-    }
-
-    /// Alias maintained for older tests expecting TestServer::start_test_server().
+    /// Create a fully-initialized test server (alias for `new()`).
+    ///
+    /// Flush-specific tests use this to emphasise background jobs would normally be started.
     pub async fn start_test_server() -> Self {
-        Self::start().await
-    }
-
-    /// Alias maintained for websocket integration tests.
-    pub async fn start_http_server_for_websocket_tests() -> (Self, String) {
-        start_http_server_for_websocket_tests().await
+        Self::new().await
     }
 
     /// Execute SQL and return the response.
@@ -790,6 +716,11 @@ impl TestServer {
             .to_string()
     }
 
+    /// Base directory where table storage (Parquet files) is written.
+    pub fn storage_root(&self) -> PathBuf {
+        (*self.storage_base_path).clone()
+    }
+
     /// Check if a namespace exists.
     ///
     /// # Arguments
@@ -825,61 +756,6 @@ impl TestServer {
 /// The server runs in a background task and will be automatically stopped when dropped.
 ///
 /// # Example
-///
-/// ```no_run
-/// let (server, base_url) = start_http_server_for_websocket_tests().await;
-/// let ws_url = format!("{}/v1/ws", base_url.replace("http", "ws"));
-/// // Connect WebSocket and run tests...
-/// ```
-pub async fn start_http_server_for_websocket_tests() -> (TestServer, String) {
-    use actix_web::{web, App, HttpServer};
-    use jsonwebtoken::Algorithm;
-    use kalamdb_api::auth::jwt::JwtAuth;
-    use kalamdb_api::rate_limiter::RateLimiter;
-    use std::sync::Arc;
-
-    let server = TestServer::new().await;
-
-    let session_factory = server.session_factory.clone();
-    let sql_executor = server.sql_executor.clone();
-    let live_query_manager = server.live_query_manager.clone();
-
-    let jwt_auth = Arc::new(JwtAuth::new(
-        "kalamdb-dev-secret-key-change-in-production".to_string(),
-        Algorithm::HS256,
-    ));
-    let rate_limiter = Arc::new(RateLimiter::new());
-
-    // Bind to an ephemeral port to avoid collisions between tests
-    let http_server = HttpServer::new(move || {
-        App::new()
-            .app_data(web::Data::new(session_factory.clone()))
-            .app_data(web::Data::new(sql_executor.clone()))
-            .app_data(web::Data::new(live_query_manager.clone()))
-            .app_data(web::Data::new(jwt_auth.clone()))
-            .app_data(web::Data::new(rate_limiter.clone()))
-            .configure(kalamdb_api::routes::configure_routes)
-    })
-    .bind(("127.0.0.1", 0))
-    .expect("Failed to bind to ephemeral port");
-
-    let bound_addrs = http_server.addrs().to_vec();
-    let server_future = http_server.run();
-
-    // Spawn server in background
-    tokio::spawn(server_future);
-
-    // Give server time to start
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-    let addr = bound_addrs
-        .get(0)
-        .expect("Expected at least one listening address");
-    let base_url = format!("http://{}:{}", addr.ip(), addr.port());
-
-    (server, base_url)
-}
-
 /// Create a test JWT token for WebSocket authentication
 ///
 /// # Arguments
@@ -920,8 +796,7 @@ pub fn create_test_jwt(user_id: &str, secret: &str, exp_seconds: i64) -> String 
         &Header::new(Algorithm::HS256),
         &claims,
         &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .expect("Failed to create JWT token")
+    ).expect("Failed to create JWT token")
 }
 
 #[cfg(test)]

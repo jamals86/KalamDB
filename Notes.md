@@ -74,6 +74,10 @@ ctx.register_catalog("system", Arc::new(SystemCatalogProvider::new()));
 ctx.register_catalog("app", Arc::new(AppCatalogProvider::new(namespace)));
 Also check that registering ctaalogs are done in one place and one session, we shall combine everywhere were we register sessions and ctalogs into one place
 
+75) Fix cli highlight select statements
+76) Fix auto-complete in cli
+
+
 Key Findings
 Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB column families yet, resulting in 0 rows flushed
 Parquet Querying Limitation: After flush, data is removed from RocksDB but queries don't yet retrieve from Parquet files - this is a known gap

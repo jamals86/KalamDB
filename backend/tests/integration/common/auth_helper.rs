@@ -127,26 +127,7 @@ pub fn authenticate_basic(username: &str, password: &str) -> (String, bool) {
 ///
 /// # Example
 ///
-/// ```no_run
-/// let user = create_default_test_user(&server, "alice").await;
-/// ```
-pub async fn create_default_test_user(server: &super::TestServer, username: &str) -> User {
-    create_test_user(server, username, "Test123!@#", Role::User).await
-}
-
-/// Create test DBA user for admin operations
-///
-/// # Example
-///
-/// ```no_run
-/// let dba = create_test_dba(&server, "admin").await;
-/// assert_eq!(dba.role, Role::Dba);
-/// ```
-pub async fn create_test_dba(server: &super::TestServer, username: &str) -> User {
-    create_test_user(server, username, "AdminPass123!", Role::Dba).await
-}
-
-/// Create test JWT token for authentication
+/// Create HTTP Basic Auth header value
 ///
 /// # Arguments
 ///
@@ -191,6 +172,8 @@ pub fn create_jwt_token(username: &str, secret: &str, exp_seconds: i64) -> Strin
     let encoding_key = EncodingKey::from_secret(secret.as_bytes());
     encode(&header, &claims, &encoding_key).expect("Failed to create JWT token")
 }
+
+/// Create test system user for internal operations
 ///
 /// # Example
 ///

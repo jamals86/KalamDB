@@ -118,6 +118,7 @@ wasm-bindgen = { version = "0.2.105" }
 wasm-bindgen-futures = { version = "0.4" }
 wasm-bindgen-test = "0.3"
 js-sys = { version = "0.3" }
+libc = "0.2"
 web-sys = { version = "0.3" }
 getrandom = { version = "0.2.16", features = ["js"] }
 bigdecimal = "0.4"

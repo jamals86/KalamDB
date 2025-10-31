@@ -327,6 +327,7 @@ pub fn verify_parquet_files_exist(
         "  ✓ All {} Parquet files verified successfully",
         parquet_files.len()
     );
+
     Ok(())
 }
 
