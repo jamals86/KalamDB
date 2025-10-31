@@ -376,6 +376,7 @@ impl SharedTableService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::datatypes::Field;
     use datafusion::arrow::datatypes::DataType;
     use kalamdb_store::test_utils::TestDb;
     use kalamdb_store::{StorageBackend, RocksDBBackend};

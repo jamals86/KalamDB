@@ -28,6 +28,7 @@ mod tests {
     use kalamdb_commons::{UserId, UserName};
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_store::EntityStoreV2 as EntityStore;
+    use kalamdb_store::CrossUserTableStore;
     use serde_json::json;
 
     fn create_test_store() -> AuditLogsStore {
@@ -113,8 +114,8 @@ mod tests {
 
         // Verify actions
         for entry in entries {
-            assert_eq!(entry.action, "user.delete");
-            assert_eq!(entry.actor_user_id.as_str(), "admin");
+            assert_eq!(entry.1.action, "user.delete");
+            assert_eq!(entry.1.actor_user_id.as_str(), "admin");
         }
     }
 
@@ -135,10 +136,10 @@ mod tests {
         assert_eq!(entries.len(), 3);
 
         // Sort by timestamp to verify ordering capability
-        entries.sort_by_key(|e| e.timestamp);
-        assert_eq!(entries[0].timestamp, 1730000001000);
-        assert_eq!(entries[1].timestamp, 1730000002000);
-        assert_eq!(entries[2].timestamp, 1730000003000);
+        entries.sort_by_key(|e| e.1.timestamp);
+        assert_eq!(entries[0].1.timestamp, 1730000001000);
+        assert_eq!(entries[1].1.timestamp, 1730000002000);
+        assert_eq!(entries[2].1.timestamp, 1730000003000);
     }
 
     #[test]

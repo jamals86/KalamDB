@@ -10,18 +10,23 @@ mod common;
 
 use chrono::Utc;
 use common::{fixtures, TestServer};
-use kalamdb_commons::{JobStatus, JobType};
+use kalamdb_commons::{JobStatus, JobType, NamespaceId, TableName};
 use kalamdb_core::jobs::{JobExecutor, JobResult, UserCleanupConfig, UserCleanupJob};
-use kalamdb_core::tables::UserTableStore;
+use kalamdb_core::stores::system_table::UserTableStoreExt;
+use kalamdb_core::tables::{new_user_table_store, UserTableStore};
 use kalamdb_core::tables::system::JobsTableProvider;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
 use std::sync::Arc;
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
-fn user_store(server: &TestServer) -> Arc<UserTableStore> {
+fn user_store(server: &TestServer, namespace: &str, table_name: &str) -> Arc<UserTableStore> {
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(server.db.clone()));
-    Arc::new(UserTableStore::new(backend))
+    Arc::new(new_user_table_store(
+        backend,
+        &NamespaceId::new(namespace),
+        &TableName::new(table_name),
+    ))
 }
 
 fn cleanup_job(server: &TestServer, store: Arc<UserTableStore>) -> UserCleanupJob {
@@ -73,7 +78,7 @@ fn mark_user_deleted_at(server: &TestServer, username: &str, days_ago: i64) {
 #[actix_web::test]
 async fn test_cleanup_deletes_expired_users() {
     let server = TestServer::new().await;
-    let store = user_store(&server);
+    let store = user_store(&server, "cleanup_ns", "tasks");
     let job = cleanup_job(&server, store);
 
     create_user(&server, "cleanup_expired").await;
@@ -97,7 +102,7 @@ async fn test_cleanup_deletes_expired_users() {
 async fn test_cleanup_cascade_deletes_tables() {
     let server = TestServer::new().await;
     fixtures::create_namespace(&server, "cleanup_ns").await;
-    let store = user_store(&server);
+    let store = user_store(&server, "cleanup_ns", "tasks");
     let job = cleanup_job(&server, Arc::clone(&store));
 
     create_user(&server, "cleanup_tables").await;
@@ -145,14 +150,15 @@ async fn test_cleanup_cascade_deletes_tables() {
 #[actix_web::test]
 async fn test_cleanup_job_logging() {
     let server = TestServer::new().await;
-    let store = user_store(&server);
+    let store = user_store(&server, "cleanup_ns", "tasks");
     let job = cleanup_job(&server, Arc::clone(&store));
 
     create_user(&server, "cleanup_logs").await;
     soft_delete_user(&server, "cleanup_logs").await;
     mark_user_deleted_at(&server, "cleanup_logs", 40);
 
-    let jobs_provider = Arc::new(JobsTableProvider::new(server.kalam_sql.clone()));
+    let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(server.db.clone()));
+    let jobs_provider = Arc::new(JobsTableProvider::new(backend));
     let job_executor = JobExecutor::new(jobs_provider, "test-node".to_string());
 
     let job_id = "user-cleanup-test-job".to_string();

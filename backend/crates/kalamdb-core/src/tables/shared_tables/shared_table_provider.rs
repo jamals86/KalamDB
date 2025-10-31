@@ -553,7 +553,7 @@ mod tests {
             deleted_retention_hours: Some(24),
         };
 
-        let store = Arc::new(SharedTableStore::new(
+        let store = Arc::new(crate::tables::shared_tables::shared_table_store::new_shared_table_store(
             Arc::new(InMemoryBackend::new()),
             &metadata.namespace,
             &metadata.table_name,

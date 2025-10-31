@@ -163,6 +163,7 @@ impl TableProvider for AuditLogsTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::array::Array;
     use kalamdb_commons::{UserId, UserName};
     use kalamdb_store::test_utils::InMemoryBackend;
     use serde_json::json;

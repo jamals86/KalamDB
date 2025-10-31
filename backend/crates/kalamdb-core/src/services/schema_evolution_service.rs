@@ -504,6 +504,7 @@ impl SchemaEvolutionService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::{TableId, StorageId, LiveQueryId, UserId};
     use kalamdb_sql::{LiveQuery, Namespace};
     use kalamdb_store::test_utils::TestDb;
     use kalamdb_store::{StorageBackend, RocksDBBackend};

@@ -28,6 +28,7 @@ mod tests {
     use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserName};
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_store::EntityStoreV2 as EntityStore;
+    use kalamdb_store::CrossUserTableStore;
 
     fn create_test_store() -> UsersStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

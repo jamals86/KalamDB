@@ -266,7 +266,7 @@ impl TableProvider for UsersTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
+    use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserName};
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> UsersTableProvider {

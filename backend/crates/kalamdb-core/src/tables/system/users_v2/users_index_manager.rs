@@ -191,7 +191,7 @@ impl UserIndexManager {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use kalamdb_commons::{AuthType, StorageId, StorageMode};
+    use kalamdb_commons::{AuthType, StorageId, StorageMode, UserName};
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_manager() -> UserIndexManager {

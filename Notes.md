@@ -68,7 +68,7 @@ Future:
 70) Check cleaning up completed jobs, we already have a config of how long should we retain them
 71) When flushing user table flush only the user who is requesting the flush to happen
 72) Whenever we drop the namespace remove all tables under it
-
+73) Test creating different users and checking each operation they can do from cli integration tests
 
 
 Key Findings

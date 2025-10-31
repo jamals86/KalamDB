@@ -183,7 +183,7 @@ impl SystemTableProviderExt for TablesTableProvider {
 mod tests {
     use super::*;
     use kalamdb_commons::{
-        NamespaceId, StorageId, TableAccess, TableName, TableType as KalamTableType,
+        TableId, NamespaceId, StorageId, TableAccess, TableName, TableType as KalamTableType,
     };
     use kalamdb_store::test_utils::InMemoryBackend;
 
