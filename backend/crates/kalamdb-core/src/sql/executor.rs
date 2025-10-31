@@ -3039,7 +3039,7 @@ impl SqlExecutor {
             self.log_audit_event(
                 &ctx,
                 "table.set_access",
-                &table_id.to_string(),
+                &format!("{}.{}", stmt.namespace_id.as_str(), stmt.table_name.as_str()),
                 json!({ "access_level": format!("{:?}", access_level) }),
                 metadata,
             );

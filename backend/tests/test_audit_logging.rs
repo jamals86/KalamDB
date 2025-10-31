@@ -7,7 +7,7 @@ use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, UserTableService,
 };
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_core::tables::{SharedTableStore, StreamTableStore, UserTableStore};
+use kalamdb_core::sql::DataFusionSessionFactory;
 use kalamdb_sql::KalamSql;
 use kalamdb_store::{RocksDBBackend, RocksDbInit, StorageBackend};
 use serde_json::Value as JsonValue;
@@ -42,7 +42,9 @@ async fn setup_test_executor() -> (SqlExecutor, TempDir, Arc<KalamSql>) {
         kalam_sql.clone(),
     ));
 
-    let session_context = Arc::new(datafusion::prelude::SessionContext::new());
+    // Use DataFusionSessionFactory to properly configure "kalam" catalog
+    let session_factory = DataFusionSessionFactory::new().expect("Failed to create session factory");
+    let session_context = Arc::new(session_factory.create_session());
 
     let executor = SqlExecutor::new(
         namespace_service,
@@ -165,7 +167,7 @@ async fn test_audit_log_for_table_access_change() {
 
     executor
         .execute(
-            "ALTER TABLE analytics.events SET ACCESS public",
+            "ALTER TABLE analytics.events SET ACCESS LEVEL public",
             Some(&admin_id),
         )
         .await

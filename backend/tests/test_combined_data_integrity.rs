@@ -58,8 +58,8 @@ async fn test_01_combined_data_count_and_select() {
     println!("Inserting first batch of 10 rows (to be flushed)...");
     for i in 1..=10 {
         let insert_sql = format!(
-            "INSERT INTO {}.{} (order_id, customer_name, amount, status, created_at) 
-             VALUES ({}, 'Customer {}', {:.2}, 'completed', NOW())",
+            "INSERT INTO {}.{} (id, order_id, customer_name, amount, status, created_at) 
+             VALUES (SNOWFLAKE_ID(), {}, 'Customer {}', {:.2}, 'completed', NOW())",
             namespace,
             table_name,
             i,

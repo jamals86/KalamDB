@@ -69,7 +69,10 @@ Future:
 71) When flushing user table flush only the user who is requesting the flush to happen
 72) Whenever we drop the namespace remove all tables under it
 73) Test creating different users and checking each operation they can do from cli integration tests
-
+74) check if we are using system/kalam catalogs correctly in the datafusion sessions
+ctx.register_catalog("system", Arc::new(SystemCatalogProvider::new()));
+ctx.register_catalog("app", Arc::new(AppCatalogProvider::new(namespace)));
+Also check that registering ctaalogs are done in one place and one session, we shall combine everywhere were we register sessions and ctalogs into one place
 
 Key Findings
 Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB column families yet, resulting in 0 rows flushed
