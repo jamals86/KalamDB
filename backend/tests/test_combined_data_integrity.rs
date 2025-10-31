@@ -57,9 +57,10 @@ async fn test_01_combined_data_count_and_select() {
     // Insert first batch of 10 rows (these will be flushed to Parquet)
     println!("Inserting first batch of 10 rows (to be flushed)...");
     for i in 1..=10 {
+        // Don't specify 'id' column - let it auto-populate with NULL (will be handled by system)
         let insert_sql = format!(
-            "INSERT INTO {}.{} (id, order_id, customer_name, amount, status, created_at) 
-             VALUES (SNOWFLAKE_ID(), {}, 'Customer {}', {:.2}, 'completed', NOW())",
+            "INSERT INTO {}.{} (order_id, customer_name, amount, status, created_at) 
+             VALUES ({}, 'Customer {}', {:.2}, 'completed', NOW())",
             namespace,
             table_name,
             i,
@@ -67,6 +68,9 @@ async fn test_01_combined_data_count_and_select() {
             100.0 + (i as f64 * 10.0)
         );
         let response = server.execute_sql_as_user(&insert_sql, user_id).await;
+        if response.status != "success" {
+            eprintln!("Insert failed for row {}: {:?}", i, response);
+        }
         assert_eq!(response.status, "success");
     }
 
@@ -119,8 +123,8 @@ async fn test_01_combined_data_count_and_select() {
         }
     }
 
-    // Insert second batch of 5 rows (these remain in RocksDB buffer)
-    println!("Inserting second batch of 5 rows (remain in RocksDB)...");
+    // Insert second batch of 5 rows (these will remain in RocksDB)
+    println!("Inserting second batch of 5 rows (to remain in RocksDB)...");
     for i in 11..=15 {
         let insert_sql = format!(
             "INSERT INTO {}.{} (order_id, customer_name, amount, status, created_at) 
@@ -188,6 +192,7 @@ async fn test_01_combined_data_count_and_select() {
 
         // Verify order_id sequence is correct (1..15)
         for (idx, row) in rows.iter().enumerate() {
+            eprintln!("Row {}: {:?}", idx, row);
             let order_id = row.get("order_id").and_then(|v| v.as_i64()).unwrap_or(0);
             assert_eq!(order_id, (idx + 1) as i64, "order_id should be sequential");
         }

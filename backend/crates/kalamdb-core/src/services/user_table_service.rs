@@ -96,13 +96,22 @@ impl UserTableService {
         // 2. System column injection (_updated, _deleted)
         let schema = self.inject_system_columns(schema, TableType::User)?;
 
-        // 3. Storage location resolution - use storage_id to get the path template
+        // 3. Inject DEFAULT SNOWFLAKE_ID() for auto-injected id column
+        let mut modified_stmt = stmt.clone();
+        if !modified_stmt.column_defaults.contains_key("id") {
+            modified_stmt.column_defaults.insert(
+                "id".to_string(),
+                kalamdb_commons::models::ColumnDefault::FunctionCall("SNOWFLAKE_ID".to_string()),
+            );
+        }
+
+        // 4. Storage location resolution - use storage_id to get the path template
         let default_storage = StorageId::local();
-        let storage_id = stmt.storage_id.as_ref().unwrap_or(&default_storage);
+        let storage_id = modified_stmt.storage_id.as_ref().unwrap_or(&default_storage);
         let storage_location = self.resolve_storage_from_id(storage_id)?;
 
-        // 4. Save complete table definition to information_schema_tables (atomic write)
-        self.save_table_definition(&stmt, &schema)?;
+        // 5. Save complete table definition to information_schema_tables (atomic write)
+        self.save_table_definition(&modified_stmt, &schema)?;
 
         // 5. Create RocksDB column family for this table
         // This ensures the table is ready for data operations immediately after creation
@@ -124,13 +133,13 @@ impl UserTableService {
             namespace: namespace_id_core.clone(),
             created_at: chrono::Utc::now(),
             storage_location,
-            flush_policy: stmt
+            flush_policy: modified_stmt
                 .flush_policy
                 .clone()
                 .map(crate::flush::FlushPolicy::from)
                 .unwrap_or_default(),
             schema_version: 1,
-            deleted_retention_hours: stmt.deleted_retention_hours,
+            deleted_retention_hours: modified_stmt.deleted_retention_hours,
         };
 
         Ok(metadata)
