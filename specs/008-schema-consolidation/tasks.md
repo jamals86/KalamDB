@@ -86,25 +86,51 @@
 
 ### EntityStore Implementation for US1
 
-- [ ] T024 [P] [US1] Create directory `backend/crates/kalamdb-core/src/tables/system/schemas/`
-- [ ] T025 [P] [US1] Implement TableSchemaStore in `backend/crates/kalamdb-core/src/tables/system/schemas/table_schema_store.rs` following SystemTableStore<TableId, TableDefinition> pattern
-- [ ] T026 [US1] Implement EntityStore<TableId, TableDefinition> trait in `backend/crates/kalamdb-core/src/tables/system/schemas/table_schema_store.rs` with get(), put(), delete(), get_all() methods
-- [ ] T027 [P] [US1] Implement SchemaCache with DashMap in `backend/crates/kalamdb-core/src/tables/system/schemas/schema_cache.rs` with get(), invalidate(), insert(), max_size LRU eviction
-- [ ] T028 [US1] Add cache integration to TableSchemaStore: check cache before EntityStore reads in `backend/crates/kalamdb-core/src/tables/system/schemas/table_schema_store.rs`
-- [ ] T029 [P] [US1] Update `backend/crates/kalamdb-core/src/tables/system/schemas/mod.rs` to export TableSchemaStore and SchemaCache
+- [X] T024 [P] [US1] Create directory `backend/crates/kalamdb-core/src/tables/system/schemas/`
+- [X] T025 [P] [US1] Implement TableSchemaStore in `backend/crates/kalamdb-core/src/tables/system/schemas/table_schema_store.rs` following SystemTableStore<TableId, TableDefinition> pattern
+- [X] T026 [US1] Implement EntityStore<TableId, TableDefinition> trait in `backend/crates/kalamdb-core/src/tables/system/schemas/table_schema_store.rs` with get(), put(), delete(), get_all() methods
+- [X] T027 [P] [US1] Implement SchemaCache with DashMap in `backend/crates/kalamdb-core/src/tables/system/schemas/schema_cache.rs` with get(), invalidate(), insert(), max_size LRU eviction
+- [X] T028 [US1] Add cache integration to TableSchemaStore: check cache before EntityStore reads in `backend/crates/kalamdb-core/src/tables/system/schemas/table_schema_store.rs`
+- [X] T029 [P] [US1] Update `backend/crates/kalamdb-core/src/tables/system/schemas/mod.rs` to export TableSchemaStore and SchemaCache
 
 ### System Table Registration for US1
 
-- [ ] T030 [US1] Update system table registration in `backend/crates/kalamdb-core/src/tables/system_table_registration.rs` to include TableSchemaStore initialization
-- [ ] T031 [P] [US1] Define system table schemas (users, jobs, namespaces, storages, live_queries, tables, table_schemas) using consolidated TableDefinition models in `backend/crates/kalamdb-core/src/tables/system/system_table_definitions.rs`
-- [ ] T032 [US1] Register system table schemas in TableSchemaStore during initialization in `backend/crates/kalamdb-core/src/tables/system_table_registration.rs`
+- [X] T030 [US1] Update system table registration in `backend/crates/kalamdb-core/src/tables/system_table_registration.rs` to include TableSchemaStore initialization ✅ **COMPLETE** (2025-11-01)
+- [X] T031 [P] [US1] Define system table schemas (users, jobs, namespaces, storages, live_queries, tables, table_schemas) using consolidated TableDefinition models in `backend/crates/kalamdb-core/src/tables/system/system_table_definitions.rs` ✅ **COMPLETE** (2025-11-01)
+- [X] T032 [US1] Register system table schemas in TableSchemaStore during initialization in `backend/crates/kalamdb-core/src/tables/system_table_registration.rs` ✅ **COMPLETE** (2025-11-01)
+  - **Implementation Details**:
+    - Created `backend/crates/kalamdb-core/src/tables/system/system_table_definitions.rs` with 7 schema definition functions
+    - Functions: `users_table_definition()`, `jobs_table_definition()`, `namespaces_table_definition()`, `storages_table_definition()`, `live_queries_table_definition()`, `tables_table_definition()`, `table_schemas_table_definition()`
+    - Helper: `all_system_table_definitions()` returns Vec<(TableId, TableDefinition)>
+    - Updated `register_system_tables()` to return `(JobsTableProvider, TableSchemaStore, SchemaCache)` tuple
+    - Creates `system_table_schemas` partition automatically
+    - Initializes SchemaCache with 1000 entry capacity
+    - Pre-warms cache with all system table schemas
+    - Added 5 passing tests (2 in system_table_registration.rs, 3 in system_table_definitions.rs)
+    - Updated callers in `backend/src/lifecycle.rs` and `backend/tests/integration/common/mod.rs`
+    - Added `rocksdb = { workspace = true }` to kalamdb-core dev-dependencies
+    - **Status**: Full workspace builds successfully, all tests passing
 
 ### SQL Integration for US1
 
 - [ ] T033 [US1] Update CREATE TABLE parser in `backend/crates/kalamdb-sql/src/parser/ddl.rs` to populate TableDefinition with columns (ordinal_position 1-indexed, sequentially assigned)
 - [ ] T034 [US1] Update ALTER TABLE parser in `backend/crates/kalamdb-sql/src/parser/ddl.rs` to increment schema_version, add SchemaVersion to history, preserve ordinal_position
-- [ ] T035 [US1] Update DESCRIBE TABLE executor in `backend/crates/kalamdb-sql/src/executor/describe.rs` to query TableSchemaStore
-- [ ] T036 [P] [US1] Remove old schema model definitions from `backend/crates/kalamdb-sql/src/models/` (if any exist)
+- [X] T035 [US1] Update DESCRIBE TABLE executor in `backend/crates/kalamdb-core/src/sql/executor.rs` to query TableSchemaStore ✅ **COMPLETE** (2025-11-01)
+  - **Implementation Details**:
+    - Added `schema_store` and `schema_cache` fields to `SqlExecutor` struct
+    - Added `with_schema_infrastructure()` builder method to set schema store/cache
+    - Updated `lifecycle.rs` to pass schema_store and schema_cache to SqlExecutor
+    - Rewrote `execute_describe_table()` to query TableSchemaStore for column information
+    - Created `columns_to_record_batch()` helper - returns 8-column schema (column_name, ordinal_position, data_type, is_nullable, is_primary_key, is_partition_key, default_value, column_comment)
+    - Created `schema_history_to_record_batch()` helper for DESCRIBE TABLE HISTORY - shows version, created_at, changes, column_count
+    - Default behavior: Returns column-level schema information (like MySQL/PostgreSQL DESCRIBE)
+    - With HISTORY flag: Returns schema version history from TableDefinition.schema_history
+    - Fallback: Keeps old table_details_to_record_batch() for backward compatibility
+    - Added import for EntityStore trait from kalamdb_store
+    - Fixed ColumnDefault handling (it's an enum, not Option)
+    - **Status**: Full workspace builds successfully
+- [X] T036 [P] [US1] Remove old schema model definitions from `backend/crates/kalamdb-sql/src/models/` (if any exist) ✅ **COMPLETE** (2025-11-01)
+  - **Status**: No `models/` directory exists in kalamdb-sql - already clean
 
 ### DataFusion Integration for US1
 
@@ -136,7 +162,21 @@
 - [ ] T053 [P] [US1] Write integration test in `backend/tests/test_schema_consolidation.rs` verifying cache invalidation on ALTER TABLE
 - [ ] T054 [US1] Run `cargo test -p kalamdb-core --test test_schema_consolidation` and verify 100% pass rate
 
-**Checkpoint**: User Story 1 complete - all schema queries use single source of truth, EntityStore working, cache performance validated
+**Checkpoint**: User Story 1 **PARTIALLY COMPLETE** - System table registration ✅, DESCRIBE TABLE integration ✅, CREATE/ALTER TABLE integration pending
+
+**Phase 3 Progress Summary (2025-11-01)**:
+- ✅ T030-T032: System Table Registration - 100% complete (7 schemas, 5 tests passing)
+- ✅ T035: DESCRIBE TABLE Integration - 100% complete (column-level schema output)
+- ✅ T036: Cleanup - 100% complete (no old models to remove)
+- ⏸️ T033-T034: CREATE/ALTER TABLE - Deferred (requires deeper parser changes)
+- 📋 T037-T054: DataFusion, API, File Deletion, Integration Tests - Remaining work
+
+**Key Achievements**:
+1. TableSchemaStore and SchemaCache fully integrated into SqlExecutor
+2. DESCRIBE TABLE now returns column-level schema information from TableDefinition
+3. DESCRIBE TABLE HISTORY shows schema version history
+4. Full workspace builds successfully with zero errors
+5. Backward compatible fallback for systems without schema store
 
 ---
 

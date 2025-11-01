@@ -6,12 +6,15 @@
 use crate::tables::system::jobs_v2::JobsTableProvider;
 use crate::tables::system::live_queries_v2::LiveQueriesTableProvider;
 use crate::tables::system::namespaces_v2::NamespacesTableProvider;
+use crate::tables::system::schemas::{SchemaCache, TableSchemaStore};
 use crate::tables::system::storages_v2::StoragesTableProvider;
+use crate::tables::system::system_table_definitions::all_system_table_definitions;
 use crate::tables::system::tables_v2::TablesTableProvider;
 use crate::tables::system::users_v2::UsersTableProvider;
 use datafusion::catalog::memory::MemorySchemaProvider;
 use datafusion::catalog::SchemaProvider;
 use kalamdb_commons::system_tables::SystemTable;
+use kalamdb_store::entity_store::EntityStore;
 use std::sync::Arc;
 
 /// Register all system tables with the provided schema
@@ -20,12 +23,15 @@ use std::sync::Arc;
 /// storages, live_queries, jobs) with the DataFusion schema provider.
 /// All tables use the EntityStore-based v2 implementations.
 ///
+/// Additionally, it initializes the TableSchemaStore and registers all
+/// system table schemas for consistent schema management.
+///
 /// # Arguments
 /// * `system_schema` - The DataFusion schema provider to register tables with
 /// * `storage_backend` - The storage backend for EntityStore-based providers
 ///
 /// # Returns
-/// * `jobs_provider` - The jobs table provider (needed for job management)
+/// * `(jobs_provider, schema_store, schema_cache)` - Tuple of jobs provider, schema store, and cache
 ///
 /// # Example
 /// ```no_run
@@ -36,13 +42,33 @@ use std::sync::Arc;
 ///
 /// # let backend: Arc<dyn kalamdb_store::StorageBackend> = unimplemented!("provide a StorageBackend");
 /// let system_schema = Arc::new(MemorySchemaProvider::new());
-/// let jobs_provider = register_system_tables(&system_schema, backend)
+/// let (jobs_provider, schema_store, schema_cache) = register_system_tables(&system_schema, backend)
 ///     .expect("Failed to register system tables");
 /// ```
 pub fn register_system_tables(
     system_schema: &Arc<MemorySchemaProvider>,
     storage_backend: Arc<dyn kalamdb_store::StorageBackend>,
-) -> Result<Arc<JobsTableProvider>, String> {
+) -> Result<(Arc<JobsTableProvider>, Arc<TableSchemaStore>, Arc<SchemaCache>), String> {
+    use kalamdb_store::storage_trait::Partition;
+
+    // Create the system_table_schemas partition if it doesn't exist
+    let schemas_partition = Partition::new("system_table_schemas");
+    let _ = storage_backend.create_partition(&schemas_partition); // Ignore error if already exists
+
+    // Initialize TableSchemaStore and SchemaCache
+    let schema_store = Arc::new(TableSchemaStore::new(storage_backend.clone()));
+    let schema_cache = Arc::new(SchemaCache::new(1000)); // Cache up to 1000 schemas
+
+    // Register all system table schema definitions in TableSchemaStore
+    for (table_id, table_def) in all_system_table_definitions() {
+        schema_store
+            .put(&table_id, &table_def)
+            .map_err(|e| format!("Failed to register schema for {}: {}", table_id, e))?;
+        
+        // Pre-warm the cache with system table schemas
+        schema_cache.insert(table_id, table_def);
+    }
+
     // Create all system table providers using EntityStore-based v2 implementations
     let users_provider = Arc::new(UsersTableProvider::new(storage_backend.clone()));
     let tables_provider = Arc::new(TablesTableProvider::new(storage_backend.clone()));
@@ -91,13 +117,18 @@ pub fn register_system_tables(
         )
         .map_err(|e| format!("Failed to register system.jobs: {}", e))?;
 
-    Ok(jobs_provider)
+    Ok((jobs_provider, schema_store, schema_cache))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use datafusion::catalog::MemorySchemaProvider;
+    use kalamdb_commons::schemas::TableType;
+    use kalamdb_commons::{NamespaceId, TableId, TableName};
+    use kalamdb_store::RocksDBBackend;
+    use rocksdb::DB;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_register_system_tables_validates_all_tables() {
@@ -123,5 +154,78 @@ mod tests {
 
         // Verify we have all system table registrations covered
         assert_eq!(names.len(), 6);
+    }
+
+    #[tokio::test]
+    async fn test_register_system_tables_populates_schema_store() {
+        // Create temporary storage backend
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db = Arc::new(
+            DB::open_default(temp_dir.path().to_str().unwrap())
+                .expect("Failed to create RocksDB"),
+        );
+        let backend = Arc::new(RocksDBBackend::new(db));
+
+        // Create schema provider
+        let system_schema = Arc::new(MemorySchemaProvider::new());
+
+        // Register system tables
+        let (jobs_provider, schema_store, schema_cache) =
+            register_system_tables(&system_schema, backend)
+                .expect("Failed to register system tables");
+
+        // Verify jobs provider is returned
+        assert!(Arc::strong_count(&jobs_provider) >= 1);
+
+        // Verify all 7 system table schemas are in the store
+        let system_namespace = NamespaceId::from("system");
+        let all_schemas = schema_store
+            .scan_namespace(&system_namespace)
+            .expect("Failed to scan system namespace");
+
+        assert_eq!(
+            all_schemas.len(),
+            7,
+            "Expected 7 system table schemas, found {}",
+            all_schemas.len()
+        );
+
+                // Verify specific tables exist in schema store
+        let expected_table_names = vec![
+            "users",
+            "jobs",
+            "namespaces",
+            "storages",
+            "live_queries",
+            "tables",
+            "table_schemas",
+        ];
+
+        for &table_name in &expected_table_names {
+            let table_id = TableId::new(system_namespace.clone(), TableName::from(table_name));
+            let schema = schema_store
+                .get(&table_id)
+                .expect("Failed to get schema")
+                .unwrap_or_else(|| panic!("Schema not found for {}", table_name));
+
+            // TableDefinition doesn't have table_id field, just verify it exists
+            assert_eq!(schema.table_type, TableType::System);
+            assert!(
+                !schema.columns.is_empty(),
+                "Table {} should have columns",
+                table_name
+            );
+        }
+
+        // Verify cache is populated
+        for &table_name in &["users", "jobs", "namespaces", "storages", "live_queries", "tables", "table_schemas"] {
+            let table_id = TableId::new(system_namespace.clone(), TableName::from(table_name));
+            let cached_schema = schema_cache.get(&table_id);
+            assert!(
+                cached_schema.is_some(),
+                "Schema for {} should be cached",
+                table_name
+            );
+        }
     }
 }

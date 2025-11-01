@@ -5,11 +5,13 @@
 pub mod audit_logs;
 pub mod information_schema_columns;
 pub mod information_schema_tables;
+pub mod system_table_definitions; // Phase 15: System table schema definitions
 pub mod system_table_trait;
 // EntityStore-based system tables (using SystemTableStore<K,V>)
 pub mod jobs_v2;
 pub mod live_queries_v2;
 pub mod namespaces_v2;
+pub mod schemas; // Phase 15 (008-schema-consolidation): Schema storage
 pub mod storages_v2;
 pub mod tables_v2;
 pub mod users_v2;

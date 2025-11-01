@@ -18,6 +18,9 @@ kalamdb-auth = { path = "../kalamdb-auth" }
 arrow = { workspace = true }
 datafusion = { workspace = true }
 
+# Concurrent data structures
+dashmap = { workspace = true }
+
 # Async
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
@@ -59,3 +62,4 @@ regex = { workspace = true }
 # Testing utilities
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
+rocksdb = { workspace = true }

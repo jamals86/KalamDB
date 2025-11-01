@@ -57,6 +57,8 @@ pub use errors::{CommonError, Result};
 pub use models::{
     system, AuditLogId, AuthType, JobId, JobStatus, JobType, LiveQueryId, NamespaceId, Role,
     StorageId, StorageMode, TableAccess, TableId, TableName, TableType, UserId, UserName,
+    // Phase 15 (008-schema-consolidation): Re-export schema types
+    schemas, types,
 };
 pub use storage::{Operation, Partition, StorageBackend, StorageError};
 pub use string_interner::{intern, stats as interner_stats, SystemColumns, SYSTEM_COLUMNS};

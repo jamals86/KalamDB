@@ -110,6 +110,7 @@ impl From<String> for StorageType {
 /// - **Shared**: Shared tables accessible across all users (e.g., `categories`)
 /// - **Stream**: Event stream tables with TTL-based eviction (e.g., `chat_events`)
 /// - **System**: Internal system metadata tables (e.g., `information_schema.tables`)
+/// TODO: We already have different types defined in schemas/table_type.rs - reconcile
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]

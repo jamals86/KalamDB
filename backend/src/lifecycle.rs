@@ -139,7 +139,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         .expect("Failed to register system schema");
 
     // Register all system tables using centralized function (EntityStore-based v2 providers)
-    let jobs_provider = kalamdb_core::system_table_registration::register_system_tables(
+    let (jobs_provider, schema_store, schema_cache) = kalamdb_core::system_table_registration::register_system_tables(
         &system_schema,
         backend.clone(),
     )
@@ -148,6 +148,10 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     info!(
         "System tables registered with DataFusion (catalog: {})",
         catalog_name
+    );
+    info!(
+        "TableSchemaStore initialized with {} system table schemas",
+        7
     );
 
     // Storage registry and SQL executor
@@ -186,7 +190,8 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
             kalam_sql.clone(),
         )
         .with_password_complexity(config.auth.enforce_password_complexity)
-        .with_storage_backend(backend.clone()),
+        .with_storage_backend(backend.clone())
+        .with_schema_infrastructure(schema_store, schema_cache),
     );
 
     info!(

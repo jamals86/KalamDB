@@ -42,6 +42,8 @@ use crate::tables::{SharedTableProvider, StreamTableProvider, UserTableProvider}
 // All system tables now use EntityStore-based v2 providers
 use crate::tables::system::JobsTableProvider;
 use crate::tables::system::UsersTableProvider;
+// Phase 15 (008-schema-consolidation): Import EntityStore trait for TableSchemaStore
+use kalamdb_store::entity_store::EntityStore;
 use datafusion::arrow::array::{ArrayRef, StringArray};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
@@ -153,6 +155,9 @@ pub struct SqlExecutor {
     job_manager: Option<Arc<dyn crate::jobs::JobManager>>,
     // Live query manager for subscription coordination
     live_query_manager: Option<Arc<crate::live_query::LiveQueryManager>>,
+    // Phase 15 (008-schema-consolidation): Schema store and cache for DESCRIBE TABLE
+    schema_store: Option<Arc<crate::tables::system::schemas::TableSchemaStore>>,
+    schema_cache: Option<Arc<crate::tables::system::schemas::SchemaCache>>,
     enforce_password_complexity: bool,
 }
 
@@ -212,6 +217,8 @@ impl SqlExecutor {
             storage_registry: None,
             job_manager: None,
             live_query_manager: None,
+            schema_store: None,
+            schema_cache: None,
             enforce_password_complexity: false,
         }
     }
@@ -274,6 +281,17 @@ impl SqlExecutor {
     /// Enable or disable password complexity enforcement.
     pub fn with_password_complexity(mut self, enforce: bool) -> Self {
         self.enforce_password_complexity = enforce;
+        self
+    }
+
+    /// Phase 15 (008-schema-consolidation): Set schema store and cache for DESCRIBE TABLE
+    pub fn with_schema_infrastructure(
+        mut self,
+        schema_store: Arc<crate::tables::system::schemas::TableSchemaStore>,
+        schema_cache: Arc<crate::tables::system::schemas::SchemaCache>,
+    ) -> Self {
+        self.schema_store = Some(schema_store);
+        self.schema_cache = Some(schema_cache);
         self
     }
 
@@ -2195,36 +2213,87 @@ impl SqlExecutor {
     async fn execute_describe_table(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
         let stmt = DescribeTableStatement::parse(sql)?;
 
-        let kalam_sql = self
-            .kalam_sql
-            .as_ref()
-            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+        // Phase 15 (008-schema-consolidation): Use TableSchemaStore for schema information
+        if let (Some(schema_store), Some(_schema_cache)) = (&self.schema_store, &self.schema_cache) {
+            // Get table metadata from system.tables (for table-level info)
+            let kalam_sql = self
+                .kalam_sql
+                .as_ref()
+                .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
 
-        // Get all tables to find the requested one
-        let tables = kalam_sql
-            .scan_all_tables()
-            .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
+            let tables = kalam_sql
+                .scan_all_tables()
+                .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
 
-        // Find the table (match by name and optionally namespace)
-        let table = tables
-            .into_iter()
-            .find(|t| {
-                let name_matches = t.table_name.as_str() == stmt.table_name.as_str();
-                let namespace_matches = stmt
-                    .namespace_id
-                    .as_ref()
-                    .map(|ns| t.namespace.as_str() == ns.as_str())
-                    .unwrap_or(true);
-                name_matches && namespace_matches
-            })
-            .ok_or_else(|| {
-                KalamDbError::NotFound(format!("Table '{}' not found", stmt.table_name.as_str()))
-            })?;
+            let table = tables
+                .into_iter()
+                .find(|t| {
+                    let name_matches = t.table_name.as_str() == stmt.table_name.as_str();
+                    let namespace_matches = stmt
+                        .namespace_id
+                        .as_ref()
+                        .map(|ns| t.namespace.as_str() == ns.as_str())
+                        .unwrap_or(true);
+                    name_matches && namespace_matches
+                })
+                .ok_or_else(|| {
+                    KalamDbError::NotFound(format!("Table '{}' not found", stmt.table_name.as_str()))
+                })?;
 
-        // Convert to detailed RecordBatch with table metadata
-        let batch = Self::table_details_to_record_batch(&table)?;
+            // Construct TableId for schema lookup
+            let namespace_id = kalamdb_commons::NamespaceId::from(table.namespace.as_str());
+            let table_name = kalamdb_commons::TableName::from(table.table_name.as_str());
+            let table_id = kalamdb_commons::TableId::new(namespace_id, table_name);
 
-        Ok(ExecutionResult::RecordBatch(batch))
+            // Query TableSchemaStore for column definitions
+            let table_def = schema_store
+                .get(&table_id)
+                .map_err(|e| KalamDbError::Other(format!("Failed to get schema: {}", e)))?
+                .ok_or_else(|| {
+                    KalamDbError::NotFound(format!(
+                        "Schema not found for table '{}'",
+                        table_id
+                    ))
+                })?;
+
+            if stmt.show_history {
+                // Show schema version history
+                let batch = Self::schema_history_to_record_batch(&table_def)?;
+                Ok(ExecutionResult::RecordBatch(batch))
+            } else {
+                // Show column definitions (standard DESCRIBE TABLE output)
+                let batch = Self::columns_to_record_batch(&table_def.columns)?;
+                Ok(ExecutionResult::RecordBatch(batch))
+            }
+        } else {
+            // Fallback: old implementation (table metadata only)
+            let kalam_sql = self
+                .kalam_sql
+                .as_ref()
+                .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+
+            let tables = kalam_sql
+                .scan_all_tables()
+                .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
+
+            let table = tables
+                .into_iter()
+                .find(|t| {
+                    let name_matches = t.table_name.as_str() == stmt.table_name.as_str();
+                    let namespace_matches = stmt
+                        .namespace_id
+                        .as_ref()
+                        .map(|ns| t.namespace.as_str() == ns.as_str())
+                        .unwrap_or(true);
+                    name_matches && namespace_matches
+                })
+                .ok_or_else(|| {
+                    KalamDbError::NotFound(format!("Table '{}' not found", stmt.table_name.as_str()))
+                })?;
+
+            let batch = Self::table_details_to_record_batch(&table)?;
+            Ok(ExecutionResult::RecordBatch(batch))
+        }
     }
 
     /// Execute SHOW STATS FOR TABLE
@@ -3805,6 +3874,159 @@ impl SqlExecutor {
             .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
     }
 
+    /// Phase 15 (008-schema-consolidation): Convert column definitions to RecordBatch for DESCRIBE TABLE
+    fn columns_to_record_batch(
+        columns: &[kalamdb_commons::schemas::ColumnDefinition],
+    ) -> Result<RecordBatch, KalamDbError> {
+        use datafusion::arrow::array::{BooleanArray, Int32Array, StringArray};
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("column_name", DataType::Utf8, false),
+            Field::new("ordinal_position", DataType::Int32, false),
+            Field::new("data_type", DataType::Utf8, false),
+            Field::new("is_nullable", DataType::Boolean, false),
+            Field::new("is_primary_key", DataType::Boolean, false),
+            Field::new("is_partition_key", DataType::Boolean, false),
+            Field::new("default_value", DataType::Utf8, true),
+            Field::new("column_comment", DataType::Utf8, true),
+        ]));
+
+        let column_names: ArrayRef = Arc::new(StringArray::from(
+            columns
+                .iter()
+                .map(|c| c.column_name.as_str())
+                .collect::<Vec<_>>(),
+        ));
+
+        let ordinal_positions: ArrayRef = Arc::new(Int32Array::from(
+            columns
+                .iter()
+                .map(|c| c.ordinal_position as i32)
+                .collect::<Vec<_>>(),
+        ));
+
+        let data_types: ArrayRef = Arc::new(StringArray::from(
+            columns
+                .iter()
+                .map(|c| format!("{:?}", c.data_type))
+                .collect::<Vec<_>>(),
+        ));
+
+        let is_nullable: ArrayRef = Arc::new(BooleanArray::from(
+            columns.iter().map(|c| c.is_nullable).collect::<Vec<_>>(),
+        ));
+
+        let is_primary_key: ArrayRef = Arc::new(BooleanArray::from(
+            columns
+                .iter()
+                .map(|c| c.is_primary_key)
+                .collect::<Vec<_>>(),
+        ));
+
+        let is_partition_key: ArrayRef = Arc::new(BooleanArray::from(
+            columns
+                .iter()
+                .map(|c| c.is_partition_key)
+                .collect::<Vec<_>>(),
+        ));
+
+        let default_values: ArrayRef = Arc::new(StringArray::from(
+            columns
+                .iter()
+                .map(|c| {
+                    if c.default_value.is_none() {
+                        None
+                    } else {
+                        Some(format!("{:?}", c.default_value))
+                    }
+                })
+                .collect::<Vec<_>>(),
+        ));
+
+        let column_comments: ArrayRef = Arc::new(StringArray::from(
+            columns
+                .iter()
+                .map(|c| c.column_comment.as_deref())
+                .collect::<Vec<_>>(),
+        ));
+
+        RecordBatch::try_new(
+            schema,
+            vec![
+                column_names,
+                ordinal_positions,
+                data_types,
+                is_nullable,
+                is_primary_key,
+                is_partition_key,
+                default_values,
+                column_comments,
+            ],
+        )
+        .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
+    }
+
+    /// Phase 15 (008-schema-consolidation): Convert schema history to RecordBatch for DESCRIBE TABLE HISTORY
+    fn schema_history_to_record_batch(
+        table_def: &kalamdb_commons::schemas::TableDefinition,
+    ) -> Result<RecordBatch, KalamDbError> {
+        use datafusion::arrow::array::{Int64Array, Int32Array, StringArray};
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("version", DataType::Int32, false),
+            Field::new("created_at", DataType::Int64, false),
+            Field::new("changes", DataType::Utf8, true),
+            Field::new("column_count", DataType::Int32, false),
+        ]));
+
+        let versions: ArrayRef = Arc::new(Int32Array::from(
+            table_def
+                .schema_history
+                .iter()
+                .map(|v| v.version as i32)
+                .collect::<Vec<_>>(),
+        ));
+
+        let created_ats: ArrayRef = Arc::new(Int64Array::from(
+            table_def
+                .schema_history
+                .iter()
+                .map(|v| v.created_at.timestamp_millis())
+                .collect::<Vec<_>>(),
+        ));
+
+        let changes: ArrayRef = Arc::new(StringArray::from(
+            table_def
+                .schema_history
+                .iter()
+                .map(|v| v.changes.as_str())
+                .collect::<Vec<_>>(),
+        ));
+
+        // Count columns for each version by parsing arrow_schema_json
+        let column_counts: ArrayRef = Arc::new(Int32Array::from(
+            table_def
+                .schema_history
+                .iter()
+                .map(|v| {
+                    // Try to parse arrow_schema_json to count fields
+                    match serde_json::from_str::<serde_json::Value>(&v.arrow_schema_json) {
+                        Ok(val) => {
+                            val.get("fields")
+                                .and_then(|f| f.as_array())
+                                .map(|arr| arr.len() as i32)
+                                .unwrap_or(table_def.columns.len() as i32)
+                        }
+                        Err(_) => table_def.columns.len() as i32,
+                    }
+                })
+                .collect::<Vec<_>>(),
+        ));
+
+        RecordBatch::try_new(schema, vec![versions, created_ats, changes, column_counts])
+            .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))
+    }
+
     /// Convert table statistics to RecordBatch for SHOW STATS
     fn table_stats_to_record_batch(
         &self,
@@ -3858,14 +4080,17 @@ impl SqlExecutor {
                         "User table store not configured for SHOW TABLE STATS".to_string(),
                     )
                 })?;
-                let rows = store
-                    .scan_all(table.namespace.as_str(), table.table_name.as_str())
-                    .map_err(|e| {
-                        KalamDbError::Other(format!(
-                            "Failed to scan user table {}.{}: {}",
-                            table.namespace.as_str(),
-                            table.table_name.as_str(),
-                            e
+                let rows = UserTableStoreExt::scan_all(
+                    store.as_ref(),
+                    table.namespace.as_str(),
+                    table.table_name.as_str(),
+                )
+                .map_err(|e| {
+                    KalamDbError::Other(format!(
+                        "Failed to scan user table {}.{}: {}",
+                        table.namespace.as_str(),
+                        table.table_name.as_str(),
+                        e
                         ))
                     })?;
                 Ok(rows.len())

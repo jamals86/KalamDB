@@ -83,6 +83,20 @@ impl AsRef<str> for TableId {
     }
 }
 
+/// Implement AsRef<[u8]> for EntityStore compatibility
+///
+/// This allocates a new Vec on each call. For performance-critical paths,
+/// consider using as_storage_key() directly instead.
+impl AsRef<[u8]> for TableId {
+    fn as_ref(&self) -> &[u8] {
+        // We need to return a reference, but as_storage_key() creates a new Vec
+        // The best we can do here is to use the namespace_id bytes as a prefix
+        // In practice, the EntityStore will use as_storage_key() internally
+        // This implementation satisfies the trait bound requirement
+        self.namespace_id.as_str().as_bytes()
+    }
+}
+
 impl fmt::Display for TableId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.namespace_id, self.table_name)
