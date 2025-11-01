@@ -9,16 +9,14 @@
 //! - Empty queries and result pagination
 //! - Query result display and formatting
 
-use assert_cmd::Command;
-use predicates::prelude::*;
-use std::time::Duration;
 
-use crate::helpers::common::*;
+mod common;
+use common::*;
 
 /// T037: Test basic query execution
 #[test]
 fn test_cli_basic_query_execution() {
-    if !is_server_running() {
+    if !common::is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }

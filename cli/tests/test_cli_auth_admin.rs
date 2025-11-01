@@ -11,7 +11,9 @@
 //! # Run tests in another terminal
 //! cargo test --test test_cli_auth_admin -- --test-threads=1
 //! ```
-
+//TODO: Remove this since we have most of the tests covered by the integration tests
+mod common;
+use common::*;
 use assert_cmd::Command;
 use reqwest;
 use serde_json::json;

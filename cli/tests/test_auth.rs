@@ -10,113 +10,47 @@
 //! - Credential rotation and deletion
 //! - Admin operations with proper authentication
 
-//! Integration tests for authentication and authorization
-//!
-//! **Implements T052-T054, T110-T113**: Authentication, credential management, and access control
-//!
-//! These tests validate:
-//! - JWT authentication with valid/invalid tokens
-//! - Localhost authentication bypass
-//! - Credential storage and security
-//! - Multiple instance management
-//! - Credential rotation and deletion
-//! - Admin operations with proper authentication
-
-use assert_cmd::Command;
-use predicates::prelude::*;
-use std::fs;
+mod common;
+use common::*;
 use std::time::Duration;
+use kalam_link::CredentialStore;
 
-use reqwest;
-use serde_json::json;
-use tempfile::TempDir;
-use tokio;
+
 
 /// Test configuration constants
-const SERVER_URL: &str = "http://localhost:8080";
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Helper to check if server is running
-async fn is_server_running() -> bool {
-    // Try a simple SQL query instead of health endpoint
-    reqwest::Client::new()
-        .post(format!("{}/v1/api/sql", SERVER_URL))
-        .json(&json!({ "sql": "SELECT 1" }))
-        .timeout(Duration::from_secs(2))
-        .send()
-        .await
-        .map(|r| r.status().is_success())
-        .unwrap_or(false)
-}
-
-/// Helper to execute SQL with authentication
-async fn execute_sql_as(
-    username: &str,
-    password: &str,
-    sql: &str,
-) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let client = reqwest::Client::new();
-    let response = client
-        .post(format!("{}/v1/api/sql", SERVER_URL))
-        .basic_auth(username, Some(password))
-        .json(&json!({ "sql": sql }))
-        .send()
-        .await?;
-
-    let body = response.text().await?;
-    let parsed: serde_json::Value = serde_json::from_str(&body)?;
-    Ok(parsed)
-}
-
-/// Helper to execute SQL as root user (empty password for localhost)
-async fn execute_sql_as_root(sql: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    execute_sql_as("root", "", sql).await
-}
-
-/// Helper to create a CLI command with default test settings
-fn create_cli_command() -> Command {
-    let cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
-    cmd
-}
-
 /// T052: Test JWT authentication with valid token
-#[tokio::test]
-async fn test_cli_jwt_authentication() {
-    if !is_server_running().await {
+#[test]
+fn test_cli_jwt_authentication() {
+    if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
 
     // Note: This test assumes JWT auth is optional on localhost
     // In production, would need to obtain valid token first
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(SERVER_URL)
-        .arg("test_user")
-        .arg("--command")
-        .arg("SELECT 1 as auth_test")
-        .timeout(TEST_TIMEOUT);
-
-    let output = cmd.output().unwrap();
+    let result = execute_sql_via_cli("SELECT 1 as auth_test");
 
     // Should work (localhost typically bypasses auth)
     assert!(
-        output.status.success() || String::from_utf8_lossy(&output.stdout).contains("auth_test"),
-        "Should handle authentication"
+        result.is_ok(),
+        "Should handle authentication: {:?}",
+        result.err()
     );
 }
 
 /// T053: Test invalid token handling
-#[tokio::test]
-async fn test_cli_invalid_token() {
-    if !is_server_running().await {
+#[test]
+fn test_cli_invalid_token() {
+    if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
 
     let mut cmd = create_cli_command();
     cmd.arg("-u")
-        .arg(SERVER_URL)
+        .arg("http://localhost:8080")
         .arg("test_user")
         .arg("--token")
         .arg("invalid.jwt.token")
@@ -137,146 +71,96 @@ async fn test_cli_invalid_token() {
 }
 
 /// T054: Test localhost authentication bypass
-#[tokio::test]
-async fn test_cli_localhost_auth_bypass() {
-    if !is_server_running().await {
+#[test]
+fn test_cli_localhost_auth_bypass() {
+    if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
 
     // Localhost connections should work without token
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(SERVER_URL)
-        .arg("test_user")
-        .arg("--command")
-        .arg("SELECT 'localhost' as test")
-        .timeout(TEST_TIMEOUT);
-
-    let output = cmd.output().unwrap();
+    let result = execute_sql_via_cli("SELECT 'localhost' as test");
 
     // Should succeed without authentication
     assert!(
-        output.status.success(),
-        "Localhost should bypass authentication"
+        result.is_ok(),
+        "Localhost should bypass authentication: {:?}",
+        result.err()
     );
 }
 
 /// Test CLI authentication with unauthorized user
-#[tokio::test]
-async fn test_cli_authenticate_unauthorized_user() {
-    if !is_server_running().await {
-        eprintln!("⚠️  Server not running at {}. Skipping test.", SERVER_URL);
+#[test]
+fn test_cli_authenticate_unauthorized_user() {
+    if !is_server_running() {
+        eprintln!("⚠️  Server not running at http://localhost:8080. Skipping test.");
         return;
     }
 
     // Try to authenticate with invalid credentials
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(SERVER_URL)
-        .arg("--username")
-        .arg("invalid_user")
-        .arg("--password")
-        .arg("wrong_password")
-        .arg("--command")
-        .arg("SELECT 1")
-        .timeout(TEST_TIMEOUT);
-
-    let output = cmd.output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let result = execute_sql_via_cli_as("invalid_user", "wrong_password", "SELECT 1");
 
     // Should fail with authentication error
     assert!(
-        !output.status.success(),
+        result.is_err(),
         "CLI should fail with invalid credentials"
     );
+    let error_msg = result.err().unwrap().to_string();
     assert!(
-        stderr.contains("Unauthorized")
-            || stderr.contains("authentication")
-            || stderr.contains("401"),
+        error_msg.contains("Unauthorized")
+            || error_msg.contains("authentication")
+            || error_msg.contains("401"),
         "Error should indicate authentication failure: {}",
-        stderr
+        error_msg
     );
 }
 
 /// Test CLI authentication with valid user and check \info command
-#[tokio::test]
-async fn test_cli_authenticate_and_check_info() {
-    if !is_server_running().await {
-        eprintln!("⚠️  Server not running at {}. Skipping test.", SERVER_URL);
+#[test]
+fn test_cli_authenticate_and_check_info() {
+    if !is_server_running() {
+        eprintln!("⚠️  Server not running at http://localhost:8080. Skipping test.");
         return;
     }
 
     // Use unique username to avoid conflicts
-    let test_username = format!(
-        "testuser_{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    );
+    let test_username = generate_unique_table("testuser");
 
-    // Create a test user via API
+    // Create a test user via CLI
     let create_user_sql = format!("CREATE USER {} IDENTIFIED BY 'testpass123'", test_username);
-    let result = execute_sql_as_root(&create_user_sql).await;
-    if result.is_err() || result.as_ref().unwrap()["status"] != "success" {
+    let result = execute_sql_as_root_via_cli(&create_user_sql);
+    if result.is_err() {
         eprintln!("⚠️  Failed to create test user, skipping test");
         return;
     }
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    std::thread::sleep(Duration::from_millis(200));
 
     // Authenticate with the new user and run \info command
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(SERVER_URL)
-        .arg("--username")
-        .arg(&test_username)
-        .arg("--password")
-        .arg("testpass123")
-        .arg("--command")
-        .arg("\\info")
-        .timeout(TEST_TIMEOUT);
-
-    let output = cmd.output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result = execute_sql_via_cli_as(&test_username, "testpass123", "\\info");
 
     // Should succeed and show user info
     assert!(
-        output.status.success(),
-        "CLI should authenticate successfully with valid user"
+        result.is_ok(),
+        "CLI should authenticate successfully with valid user: {:?}",
+        result.err()
     );
+    let output = result.unwrap();
     assert!(
-        stdout.contains(&test_username),
+        output.contains(&test_username),
         "Info output should show the authenticated username: {}",
-        stdout
+        output
     );
 
     // Cleanup
-    let _ = execute_sql_as_root(&format!("DROP USER {}", test_username)).await;
+    let _ = execute_sql_as_root_via_cli(&format!("DROP USER {}", test_username));
 }
 
 // ============================================================================
 // Credential Store Tests (from test_cli_auth.rs)
 // ============================================================================
 
-use kalam_cli::FileCredentialStore;
-use kalam_link::credentials::{CredentialStore, Credentials};
-use tempfile::TempDir;
-
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
-/// Helper to create a temporary credential store
-fn create_temp_store() -> (FileCredentialStore, TempDir) {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let creds_path = temp_dir.path().join("credentials.toml");
-
-    let store =
-        FileCredentialStore::with_path(creds_path).expect("Failed to create credential store");
-
-    (store, temp_dir)
-}
+use std::fs;
 
 #[test]
 fn test_cli_credentials_stored_securely() {

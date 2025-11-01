@@ -10,37 +10,14 @@
 //! - Session timeout and command history
 //! - Tab completion and verbose output
 
+mod common;
+use common::*;
+
+
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
 use std::time::Duration;
-
-use tempfile::TempDir;
-
-/// Test configuration constants
-const SERVER_URL: &str = "http://localhost:8080";
-const TEST_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Helper to check if server is running
-fn is_server_running() -> bool {
-    // Try a simple CLI command to check if server is running
-    let mut cmd = create_cli_command();
-    cmd.arg("-u")
-        .arg(SERVER_URL)
-        .arg("test_user")
-        .arg("--command")
-        .arg("SELECT 1");
-
-    cmd.output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-}
-
-/// Helper to create a CLI command with default test settings
-fn create_cli_command() -> Command {
-    let cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
-    cmd
-}
 
 /// T036: Test CLI connection and prompt display
 #[test]
