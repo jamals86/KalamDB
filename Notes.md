@@ -82,6 +82,9 @@ Also check that registering ctaalogs are done in one place and one session, we s
 81) CLI - add integration tests which cover a real-life use case for chat app with an ai where we have conversations and messages between users and ai agents, real-time streams for ai thinking/thoughts/typing/user online/offline status, and also flushing messages to parquet files and reloading them back
 82) make sure rocksdb is only used inside kalamdb-store
 83) Make sure the sql engine works on the schemas first and from there he can get the actual data of the tables
+84) Divide backend/crates/kalamdb-core/src/sql/executor.rs into multiple files for better maintainability
+85) 
+
 
 IMPORTANT:
 1) Schema information_schema

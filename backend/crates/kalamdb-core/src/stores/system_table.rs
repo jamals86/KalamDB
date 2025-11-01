@@ -839,7 +839,8 @@ impl SystemTableStore<StreamTableRowId, StreamTableRow> {
             if let Some(ttl) = row.ttl_seconds {
                 let inserted_at = chrono::DateTime::parse_from_rfc3339(&row.inserted_at)
                     .map_err(|e| KalamDbError::Other(e.to_string()))?;
-                if chrono::Utc::now().timestamp() > inserted_at.timestamp() + ttl as i64 {
+                // Use >= for TTL check: evict if now >= inserted_at + ttl
+                if chrono::Utc::now().timestamp() >= inserted_at.timestamp() + ttl as i64 {
                     let key = StreamTableRowId::from_bytes(&key_bytes);
                     EntityStore::delete(self, &key)?;
                     deleted_count += 1;

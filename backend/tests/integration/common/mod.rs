@@ -443,15 +443,30 @@ impl TestServer {
                     }
                     ExecutionResult::RecordBatches(batches) => {
                         // Convert multiple batches to JSON
-                        let results: Vec<_> = batches
-                            .iter()
-                            .map(|batch| record_batch_to_query_result(batch, mask_credentials))
-                            .collect();
-                        SqlResponse {
-                            status: "success".to_string(),
-                            results,
-                            took_ms: 0,
-                            error: None,
+                        if batches.is_empty() {
+                            // Return empty result with 0 rows instead of empty results array
+                            SqlResponse {
+                                status: "success".to_string(),
+                                results: vec![QueryResult {
+                                    rows: Some(vec![]),
+                                    row_count: 0,
+                                    columns: vec![],
+                                    message: None,
+                                }],
+                                took_ms: 0,
+                                error: None,
+                            }
+                        } else {
+                            let results: Vec<_> = batches
+                                .iter()
+                                .map(|batch| record_batch_to_query_result(batch, mask_credentials))
+                                .collect();
+                            SqlResponse {
+                                status: "success".to_string(),
+                                results,
+                                took_ms: 0,
+                                error: None,
+                            }
                         }
                     }
                     ExecutionResult::Subscription(subscription_data) => {
@@ -489,9 +504,15 @@ impl TestServer {
                     Ok(df) => match df.collect().await {
                         Ok(batches) => {
                             if batches.is_empty() {
+                                // Return empty result with 0 rows instead of empty results array
                                 SqlResponse {
                                     status: "success".to_string(),
-                                    results: vec![],
+                                    results: vec![QueryResult {
+                                        rows: Some(vec![]),
+                                        row_count: 0,
+                                        columns: vec![],
+                                        message: None,
+                                    }],
                                     took_ms: 0,
                                     error: None,
                                 }

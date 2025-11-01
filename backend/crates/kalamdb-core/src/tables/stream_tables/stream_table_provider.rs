@@ -220,7 +220,7 @@ impl StreamTableProvider {
             inserted_at: timestamp_str.clone(),
             _updated: timestamp_str,
             _deleted: false,
-            ttl_seconds: None, // TTL is managed separately via table metadata
+            ttl_seconds: self.retention_seconds.map(|s| s as u64),
         };
 
         // Insert event into StreamTableStore
@@ -414,7 +414,9 @@ impl TableProvider for StreamTableProvider {
         let partitions = vec![vec![final_batch]];
         let table = MemTable::try_new(final_schema, partitions)
             .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-        table.scan(_state, projection, &[], limit).await
+        
+        // Don't pass projection to MemTable.scan() - we already projected
+        table.scan(_state, None, &[], limit).await
     }
 
     /// Insert data into the stream table

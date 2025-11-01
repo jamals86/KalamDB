@@ -2471,6 +2471,12 @@ impl SqlExecutor {
 
         users_provider.create_user(user.clone())?;
 
+        // Back-compat: also write to legacy KalamSQL store so auth/tests using
+        // the adapter can find the user while we complete full migration.
+        if let Some(kalam_sql) = &self.kalam_sql {
+            let _ = kalam_sql.insert_user(&user);
+        }
+
         self.log_audit_event(
             &ctx,
             "user.create",
@@ -2597,7 +2603,17 @@ impl SqlExecutor {
 
         // Soft delete the user
         let target_user_id = UserId::new(&stmt.username);
-        users_provider.delete_user(&target_user_id)?;
+        match users_provider.delete_user(&target_user_id) {
+            Ok(()) => { /* deleted */ }
+            Err(KalamDbError::NotFound(_)) if stmt.if_exists => {
+                // IF EXISTS: treat missing user as success (skipped)
+                return Ok(ExecutionResult::Success(format!(
+                    "User '{}' does not exist (skipped)",
+                    stmt.username
+                )));
+            }
+            Err(e) => return Err(e),
+        }
 
         self.log_audit_event(
             &ctx,
@@ -3292,6 +3308,53 @@ impl SqlExecutor {
         // Parse UPDATE statement (basic parser for integration tests)
         let update_info = self.parse_update_statement(sql)?;
 
+        // Special-case: limited UPDATE support for system.users (restore user via deleted_at = NULL)
+        if update_info.namespace.eq_ignore_ascii_case("system")
+            && update_info.table.eq_ignore_ascii_case("users")
+        {
+            // Only admins can update system tables
+            let ctx = self.create_execution_context(user_id)?;
+            if !ctx.is_admin() {
+                return Err(KalamDbError::Unauthorized(
+                    "Only DBA or System users can update system tables".to_string(),
+                ));
+            }
+
+            // Expect WHERE username = '...'
+            let (where_col, where_val) = self.parse_simple_where(&update_info.where_clause)?;
+            if where_col.to_ascii_lowercase() != "username" {
+                return Err(KalamDbError::InvalidSql(
+                    "Only WHERE username = '...' is supported for system.users".to_string(),
+                ));
+            }
+
+            // Only support SET deleted_at = NULL (restore user)
+            if update_info.set_values.len() != 1
+                || update_info.set_values[0].0.to_ascii_lowercase() != "deleted_at"
+                || !update_info.set_values[0].1.is_null()
+            {
+                return Err(KalamDbError::InvalidOperation(
+                    "Only UPDATE system.users SET deleted_at = NULL WHERE username = '...' is supported"
+                        .to_string(),
+                ));
+            }
+
+            // Perform restore
+            let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
+                KalamDbError::InvalidOperation("User management not configured".to_string())
+            })?;
+
+            let mut user = users_provider
+                .get_user_by_username(&where_val)?
+                .ok_or_else(|| KalamDbError::NotFound(format!("User not found: {}", where_val)))?;
+
+            user.deleted_at = None;
+            user.updated_at = chrono::Utc::now().timestamp_millis();
+            users_provider.update_user(user)?;
+
+            return Ok(ExecutionResult::Success("Updated 1 user(s)".to_string()));
+        }
+
         // Create appropriate SessionContext based on user_id
         let effective_user_id = user_id
             .cloned()
@@ -3322,24 +3385,16 @@ impl SqlExecutor {
         // Check if it's a UserTableProvider
         if let Some(user_provider) = table_provider.as_any().downcast_ref::<UserTableProvider>() {
             // User table UPDATE with isolation
-            let store = self.user_table_store.as_ref().ok_or_else(|| {
-                KalamDbError::InvalidOperation("UserTableStore not configured".to_string())
-            })?;
-
-            // Scan only this user's rows
-            let all_rows = store
-                .scan_user(
-                    &update_info.namespace,
-                    &update_info.table,
-                    effective_user_id.as_str(),
-                )
+            // Scan only this user's rows via the provider (ensures correct partition and filtering)
+            let all_rows = user_provider
+                .scan_current_user_rows()
                 .map_err(|e| KalamDbError::Other(format!("Scan failed: {}", e)))?;
 
             // Filter rows by WHERE clause (simple evaluation: col = 'value')
             let (where_col, where_val) = self.parse_simple_where(&update_info.where_clause)?;
 
             let mut updated_count = 0;
-            for (row_id, row_data) in all_rows {
+            for (_row_key, row_data) in all_rows {
                 // Check if row matches WHERE clause
                 if let Some(obj) = row_data.fields.as_object() {
                     if let Some(col_value) = obj.get(&where_col) {
@@ -3350,9 +3405,9 @@ impl SqlExecutor {
                                 updates.insert(col.clone(), val.clone());
                             }
 
-                            // Call update method
+                            // Call update method using the row's ID
                             user_provider
-                                .update_row(&row_id, serde_json::Value::Object(updates))
+                                .update_row(&row_data.row_id, serde_json::Value::Object(updates))
                                 .map_err(|e| {
                                     KalamDbError::Other(format!("Update failed: {}", e))
                                 })?;
@@ -3468,21 +3523,58 @@ impl SqlExecutor {
                 .scan_current_user_rows()
                 .map_err(|e| KalamDbError::Other(format!("Scan failed: {}", e)))?;
 
-            // Filter rows by WHERE clause
-            let (where_col, where_val) = self.parse_simple_where(&delete_info.where_clause)?;
-
+            // Filter rows by WHERE clause - support both '=' and 'IN'
             let mut deleted_count = 0;
-            for (_row_key, row_data) in all_rows {
-                // Check if row matches WHERE clause
-                if let Some(obj) = row_data.fields.as_object() {
-                    if let Some(col_value) = obj.get(&where_col) {
-                        if Self::value_matches(col_value, &where_val) {
-                            // Call delete method (soft delete for user tables)
-                            user_provider.delete_row(&row_data.row_id).map_err(|e| {
-                                KalamDbError::Other(format!("Delete failed: {}", e))
-                            })?;
+            
+            // Try parsing as IN clause first
+            if delete_info.where_clause.to_uppercase().contains(" IN ") {
+                let (where_col, where_vals) = self.parse_where_in(&delete_info.where_clause)?;
+                
+                for (_row_key, row_data) in all_rows {
+                    // Skip rows already soft-deleted
+                    if row_data._deleted {
+                        continue;
+                    }
+                    // Check if row matches WHERE IN clause
+                    if let Some(obj) = row_data.fields.as_object() {
+                        if let Some(col_value) = obj.get(&where_col) {
+                            let val_str = match col_value {
+                                serde_json::Value::String(s) => s.clone(),
+                                serde_json::Value::Number(n) => n.to_string(),
+                                _ => continue,
+                            };
+                            
+                            if where_vals.contains(&val_str) {
+                                // Call delete method (soft delete for user tables)
+                                user_provider.delete_row(&row_data.row_id).map_err(|e| {
+                                    KalamDbError::Other(format!("Delete failed: {}", e))
+                                })?;
 
-                            deleted_count += 1;
+                                deleted_count += 1;
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Simple equality WHERE clause
+                let (where_col, where_val) = self.parse_simple_where(&delete_info.where_clause)?;
+
+                for (_row_key, row_data) in all_rows {
+                    // Skip rows already soft-deleted
+                    if row_data._deleted {
+                        continue;
+                    }
+                    // Check if row matches WHERE clause
+                    if let Some(obj) = row_data.fields.as_object() {
+                        if let Some(col_value) = obj.get(&where_col) {
+                            if Self::value_matches(col_value, &where_val) {
+                                // Call delete method (soft delete for user tables)
+                                user_provider.delete_row(&row_data.row_id).map_err(|e| {
+                                    KalamDbError::Other(format!("Delete failed: {}", e))
+                                })?;
+
+                                deleted_count += 1;
+                            }
                         }
                     }
                 }
@@ -3512,21 +3604,58 @@ impl SqlExecutor {
             .scan(&delete_info.namespace, &delete_info.table)
             .map_err(|e| KalamDbError::Other(format!("Scan failed: {}", e)))?;
 
-        // Filter rows by WHERE clause
-        let (where_col, where_val) = self.parse_simple_where(&delete_info.where_clause)?;
-
+        // Filter rows by WHERE clause - support both '=' and 'IN'
         let mut deleted_count = 0;
-        for (row_id, row_data) in all_rows {
-            // Check if row matches WHERE clause
-            if let Some(obj) = row_data.fields.as_object() {
-                if let Some(col_value) = obj.get(&where_col) {
-                    if Self::value_matches(col_value, &where_val) {
-                        // Call soft delete method
-                        shared_provider
-                            .delete_soft(&row_id)
-                            .map_err(|e| KalamDbError::Other(format!("Delete failed: {}", e)))?;
+        
+        // Try parsing as IN clause first
+        if delete_info.where_clause.to_uppercase().contains(" IN ") {
+            let (where_col, where_vals) = self.parse_where_in(&delete_info.where_clause)?;
+            
+            for (row_id, row_data) in all_rows {
+                // Skip rows already soft-deleted
+                if row_data._deleted {
+                    continue;
+                }
+                // Check if row matches WHERE IN clause
+                if let Some(obj) = row_data.fields.as_object() {
+                    if let Some(col_value) = obj.get(&where_col) {
+                        let val_str = match col_value {
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Number(n) => n.to_string(),
+                            _ => continue,
+                        };
+                        
+                        if where_vals.contains(&val_str) {
+                            // Call soft delete method
+                            shared_provider
+                                .delete_soft(&row_id)
+                                .map_err(|e| KalamDbError::Other(format!("Delete failed: {}", e)))?;
 
-                        deleted_count += 1;
+                            deleted_count += 1;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Simple equality WHERE clause
+            let (where_col, where_val) = self.parse_simple_where(&delete_info.where_clause)?;
+
+            for (row_id, row_data) in all_rows {
+                // Skip rows already soft-deleted
+                if row_data._deleted {
+                    continue;
+                }
+                // Check if row matches WHERE clause
+                if let Some(obj) = row_data.fields.as_object() {
+                    if let Some(col_value) = obj.get(&where_col) {
+                        if Self::value_matches(col_value, &where_val) {
+                            // Call soft delete method
+                            shared_provider
+                                .delete_soft(&row_id)
+                                .map_err(|e| KalamDbError::Other(format!("Delete failed: {}", e)))?;
+
+                            deleted_count += 1;
+                        }
                     }
                 }
             }
@@ -3538,7 +3667,7 @@ impl SqlExecutor {
         )))
     }
 
-    /// Parse simple WHERE clause: col = 'value'
+    /// Parse simple WHERE clause: col = 'value' or col IN ('val1', 'val2', ...)
     fn parse_simple_where(&self, where_clause: &str) -> Result<(String, String), KalamDbError> {
         let parts: Vec<&str> = where_clause.split('=').map(|s| s.trim()).collect();
         if parts.len() != 2 {
@@ -3550,6 +3679,31 @@ impl SqlExecutor {
         let col_name = parts[0].to_string();
         let col_value = parts[1].trim_matches('\'').trim_matches('"').to_string();
         Ok((col_name, col_value))
+    }
+
+    /// Parse WHERE clause with IN support: col IN ('val1', 'val2', ...)
+    /// Returns (column_name, Vec<values>)
+    fn parse_where_in(&self, where_clause: &str) -> Result<(String, Vec<String>), KalamDbError> {
+        // Pattern: col IN ('val1', 'val2', ...)
+        let re = regex::Regex::new(r"(?i)(\w+)\s+IN\s*\((.+)\)").unwrap();
+        
+        if let Some(captures) = re.captures(where_clause.trim()) {
+            let col_name = captures[1].to_string();
+            let values_str = &captures[2];
+            
+            // Parse comma-separated quoted values
+            let values: Vec<String> = values_str
+                .split(',')
+                .map(|v| v.trim().trim_matches('\'').trim_matches('"').to_string())
+                .collect();
+            
+            return Ok((col_name, values));
+        }
+        
+        Err(KalamDbError::InvalidSql(format!(
+            "Invalid IN clause syntax: {}",
+            where_clause
+        )))
     }
 
     /// Compare a JSON value with a string literal from a WHERE clause
@@ -3598,8 +3752,15 @@ impl SqlExecutor {
                 )));
             }
             let col_name = parts[0].to_string();
-            let col_value = parts[1].trim_matches('\'').trim_matches('"').to_string();
-            set_values.push((col_name, serde_json::json!(col_value)));
+            let raw_val = parts[1].trim();
+            // Treat NULL as JSON null; otherwise strip quotes and keep as string literal
+            let value = if raw_val.eq_ignore_ascii_case("NULL") {
+                serde_json::Value::Null
+            } else {
+                let col_value = raw_val.trim_matches('\'').trim_matches('"').to_string();
+                serde_json::json!(col_value)
+            };
+            set_values.push((col_name, value));
         }
 
         Ok(UpdateInfo {
