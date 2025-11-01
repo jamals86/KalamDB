@@ -814,7 +814,7 @@ impl fmt::Display for ColumnDefault {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct TableDefinition {
     /// Unique table identifier: "{namespace_id}:{table_name}"
-    pub table_id: String,
+    pub table_id: String, //TODO: Use TableId 
     /// Table name (e.g., "users")
     pub table_name: TableName,
     /// Namespace ID (e.g., "app")

@@ -92,3 +92,45 @@ Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB
 Parquet Querying Limitation: After flush, data is removed from RocksDB but queries don't yet retrieve from Parquet files - this is a known gap
 
 
+
+
+/speckit.specify I want to create a new spec which will include these main stories:
+1) Now we have tables/fields/columns schemas scattered in the project in many places, i want to combine them into one place for handling the schema of each table which also include the system tables/fields
+- for that i want to create simple models which is located inside commons for all information_schemas
+- TableDefinition and SystemTable and InformationSchemaTable and UserTableCounter and TableSchema and ColumnDefinition and SchemaVersion should be consilidated into one folder: kalamdb-commons/src/models/schemas
+- TableDefinition will have all the information about the table just as it is having now, if anything is missing like Options add them as well
+- ColumnDefinition will have all the information about each field/column
+  is_nullable, is_primary_key, is_partition_key, default_value, etc
+- After creating these 2 models we need to refactor the whole code base to use these 2 models instead of having multiple models for each table scattered in the code base
+- This will help us to have a single source of truth for the table schemas and also make it easier to maintain and extend in the future
+- Also store the SchemaVersion inside TableDefinition
+- Remove all the other models we dont need them anymore after the refactor we should have one source of truth then
+- Consolidate all schema-related logic into the new models
+- Make sure these models can be cached for performance optimization
+- Update serialization/deserialization logic as needed
+- Update tests to reflect the new schema models and ensure coverage
+- Query information_schemas tables should use the new models to get the schema information
+- show tables/describe table commands should use the new models to get the schema information
+- Make sure all the codebase will use these models instead of having multiple models everywhere
+- If there is a common code which we use everywhere use a common function/method for it instead of duplicating the code in multiple places
+
+2) KalamDataType - I want to have one DataType place where i convert DataTypes from to arrow/datafusion also use this datatype inside ColumnDefinition
+   - BOOLEAN: [0x01][1 byte]
+   - INT: [0x02][4 bytes i32 little-endian]
+   - BIGINT: [0x03][8 bytes i64 little-endian]
+   - DOUBLE: [0x04][8 bytes f64 little-endian]
+   - TEXT: [0x05][4 bytes length][UTF-8 bytes]
+   - TIMESTAMP: [0x06][8 bytes microseconds]
+   - DATE: [0x07][4 bytes days]
+   - DATETIME: [0x08][8 bytes microseconds]
+   - TIME: [0x08][8 bytes microseconds]
+   - JSON: [0x09][4 bytes length][UTF-8 bytes]
+   - BYTES: [0x0A][4 bytes length][raw bytes]
+
+ - Name the DataType enum as KalamDataType
+ - Make sure all the codebase will use this datatype instead of having multiple datatypes everywhere
+ - Implement conversion functions between KalamDataType and Arrow/DataFusion DataTypes whgich shall exists in one place and convert them easily with also caching for faster lookups
+    - Update serialization/deserialization logic as needed
+    - Update tests to reflect the new datatype usage and ensure coverage
+    - Remove any other datatypes implementations we have in the code base
+    - If there is a common code which we use everywhere use a common function/method for it instead of duplicating the code in multiple places
