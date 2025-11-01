@@ -860,52 +860,45 @@ pub struct FlushPolicyDef {
     pub interval_seconds: Option<u64>,
 }
 
-/// Column definition in a table schema.
-///
-/// Defines the structure and constraints of a single column.
+// ============================================================================
+// DEPRECATED: Legacy schema types - DO NOT USE
+// ============================================================================
+// These types are kept for backward compatibility during migration.
+// Use schemas::TableDefinition, schemas::ColumnDefinition instead.
+// See specs/008-schema-consolidation for migration details.
+//
+// Migration Status:
+// - kalamdb-sql/src/adapter.rs: Still using old TableDefinition
+// - kalamdb-sql/src/lib.rs: Still using old TableDefinition
+// TODO Phase 5: Migrate remaining usages to schemas::TableDefinition
+
+/// DEPRECATED: Use schemas::ColumnDefinition instead.
+#[deprecated(since = "0.1.0", note = "Use schemas::ColumnDefinition instead")]
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ColumnDefinition {
-    /// Column name
     pub column_name: String,
-    /// Ordinal position (1-indexed, preserved across schema changes)
     pub ordinal_position: u32,
-    /// Data type (e.g., "Int64", "Utf8", "Boolean")
-    pub data_type: String,
-    /// Whether column allows NULL values
+    pub data_type: String, // LEGACY: Should be KalamDataType
     pub is_nullable: bool,
-    /// Default value specification
     pub column_default: Option<String>,
-    /// Whether column is the primary key
     pub is_primary_key: bool,
 }
 
-/// Schema version entry in table history.
-///
-/// Tracks schema evolution over time for migration and rollback.
+/// DEPRECATED: Use schemas versioning instead.
+#[deprecated(since = "0.1.0", note = "Use schemas versioning instead")]
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct SchemaVersion {
-    /// Schema version number (incremented on ALTER TABLE)
     pub version: u32,
-    /// Creation timestamp (Unix milliseconds)
     pub created_at: i64,
-    /// Human-readable description of changes
     pub changes: String,
-    /// Arrow schema as JSON string
     pub arrow_schema_json: String,
 }
 
 impl TableDefinition {
-    /// Extract column definitions from an Arrow schema.
-    ///
-    /// # Arguments
-    /// * `schema` - Arrow schema to extract columns from
-    /// * `column_defaults` - Map of column names to default values
-    /// * `primary_key_column` - Optional primary key column name
-    ///
-    /// # Returns
-    /// Vector of ColumnDefinition with ordinal positions assigned
+    /// DEPRECATED: Use schemas::TableDefinition::from_arrow_schema() instead.
+    #[deprecated(since = "0.1.0", note = "Use schemas::TableDefinition::from_arrow_schema()")]
     #[cfg(feature = "serde")]
     pub fn extract_columns_from_schema(
         schema: &arrow_schema::Schema,
@@ -922,7 +915,6 @@ impl TableDefinition {
                     .map(|pk| pk == column_name.as_str())
                     .unwrap_or(false);
 
-                // Get default value if specified
                 let column_default = column_defaults.get(&column_name).and_then(|def| match def {
                     ColumnDefault::None => None,
                     ColumnDefault::FunctionCall(func) => Some(format!("{}()", func)),
@@ -931,8 +923,8 @@ impl TableDefinition {
 
                 ColumnDefinition {
                     column_name,
-                    ordinal_position: (idx + 1) as u32, // 1-indexed
-                    data_type: format!("{:?}", field.data_type()), // e.g., "Int64", "Utf8"
+                    ordinal_position: (idx + 1) as u32,
+                    data_type: format!("{:?}", field.data_type()),
                     is_nullable: field.is_nullable(),
                     column_default,
                     is_primary_key,
@@ -941,18 +933,12 @@ impl TableDefinition {
             .collect()
     }
 
-    /// Serialize Arrow Schema to JSON string for schema_history.
-    ///
-    /// # Arguments
-    /// * `schema` - Arrow schema to serialize
-    ///
-    /// # Returns
-    /// JSON string representation of the schema
+    /// DEPRECATED: Use schemas::TableDefinition serialization instead.
+    #[deprecated(since = "0.1.0", note = "Use schemas::TableDefinition serialization")]
     #[cfg(feature = "serde")]
     pub fn serialize_arrow_schema(
         schema: &arrow_schema::Schema,
     ) -> Result<String, serde_json::Error> {
-        // Convert schema to JSON-compatible structure
         #[cfg_attr(feature = "serde", derive(Serialize))]
         struct SchemaJson {
             fields: Vec<FieldJson>,
@@ -980,6 +966,10 @@ impl TableDefinition {
         serde_json::to_string(&schema_json)
     }
 }
+
+// ============================================================================
+// End of deprecated types
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
