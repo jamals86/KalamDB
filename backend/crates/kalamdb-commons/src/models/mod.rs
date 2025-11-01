@@ -42,6 +42,10 @@ mod table_id;
 mod user_name;
 mod user_row_id;
 
+// Phase 15 (008-schema-consolidation): Unified schema and type system
+pub mod schemas;
+pub mod types;
+
 pub use audit_log_id::AuditLogId;
 pub use namespace_id::NamespaceId;
 pub use storage_id::StorageId;
