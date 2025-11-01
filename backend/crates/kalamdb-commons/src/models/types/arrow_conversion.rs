@@ -56,6 +56,15 @@ impl ToArrowType for KalamDataType {
                 let field = Field::new("item", ArrowDataType::Float32, false);
                 ArrowDataType::FixedSizeList(std::sync::Arc::new(field), *dim as i32)
             }
+            KalamDataType::Uuid => {
+                // UUID → FixedSizeBinary(16)
+                ArrowDataType::FixedSizeBinary(16)
+            }
+            KalamDataType::Decimal { precision, scale } => {
+                // DECIMAL → Decimal128
+                ArrowDataType::Decimal128(*precision, *scale as i8)
+            }
+            KalamDataType::SmallInt => ArrowDataType::Int16,
         };
 
         Ok(arrow_type)
@@ -66,6 +75,7 @@ impl FromArrowType for KalamDataType {
     fn from_arrow_type(arrow_type: &ArrowDataType) -> Result<Self, ArrowConversionError> {
         let kalam_type = match arrow_type {
             ArrowDataType::Boolean => KalamDataType::Boolean,
+            ArrowDataType::Int16 => KalamDataType::SmallInt,
             ArrowDataType::Int32 => KalamDataType::Int,
             ArrowDataType::Int64 => KalamDataType::BigInt,
             ArrowDataType::Float64 => KalamDataType::Double,
@@ -76,6 +86,19 @@ impl FromArrowType for KalamDataType {
             ArrowDataType::Date32 => KalamDataType::Date,
             ArrowDataType::Time64(TimeUnit::Microsecond) => KalamDataType::Time,
             ArrowDataType::Binary | ArrowDataType::LargeBinary => KalamDataType::Bytes,
+            ArrowDataType::FixedSizeBinary(16) => KalamDataType::Uuid,
+            ArrowDataType::Decimal128(precision, scale) => {
+                if *precision < 1 || *precision > 38 {
+                    return Err(ArrowConversionError::ConversionFailed(format!(
+                        "Decimal precision {} out of range (1-38)",
+                        precision
+                    )));
+                }
+                KalamDataType::Decimal {
+                    precision: *precision,
+                    scale: *scale as u8,
+                }
+            }
             ArrowDataType::FixedSizeList(field, size) => {
                 // FixedSizeList<Float32> → EMBEDDING
                 if matches!(field.data_type(), ArrowDataType::Float32) {
@@ -108,6 +131,7 @@ mod tests {
     fn test_simple_types_round_trip() {
         let types = vec![
             KalamDataType::Boolean,
+            KalamDataType::SmallInt,
             KalamDataType::Int,
             KalamDataType::BigInt,
             KalamDataType::Double,
@@ -118,6 +142,7 @@ mod tests {
             KalamDataType::DateTime,
             KalamDataType::Time,
             KalamDataType::Bytes,
+            KalamDataType::Uuid,
         ];
 
         for original in types {
@@ -125,6 +150,57 @@ mod tests {
             let round_trip = KalamDataType::from_arrow_type(&arrow).unwrap();
             assert_eq!(original, round_trip, "Failed round-trip for {:?}", original);
         }
+    }
+
+    #[test]
+    fn test_uuid_conversion() {
+        let uuid_type = KalamDataType::Uuid;
+        let arrow = uuid_type.to_arrow_type().unwrap();
+
+        // Verify Arrow type structure
+        assert!(matches!(arrow, ArrowDataType::FixedSizeBinary(16)));
+
+        // Round-trip
+        let round_trip = KalamDataType::from_arrow_type(&arrow).unwrap();
+        assert_eq!(uuid_type, round_trip);
+    }
+
+    #[test]
+    fn test_decimal_conversion() {
+        let test_cases = vec![
+            (10, 2),  // Money
+            (18, 0),  // Large integers
+            (38, 10), // High precision
+            (5, 5),   // All decimal
+        ];
+
+        for (precision, scale) in test_cases {
+            let original = KalamDataType::Decimal { precision, scale };
+            let arrow = original.to_arrow_type().unwrap();
+
+            // Verify Arrow type structure
+            if let ArrowDataType::Decimal128(p, s) = arrow {
+                assert_eq!(p, precision);
+                assert_eq!(s, scale as i8);
+            } else {
+                panic!("Expected Decimal128, got {:?}", arrow);
+            }
+
+            // Round-trip
+            let round_trip = KalamDataType::from_arrow_type(&arrow).unwrap();
+            assert_eq!(original, round_trip);
+        }
+    }
+
+    #[test]
+    fn test_smallint_conversion() {
+        let original = KalamDataType::SmallInt;
+        let arrow = original.to_arrow_type().unwrap();
+
+        assert!(matches!(arrow, ArrowDataType::Int16));
+
+        let round_trip = KalamDataType::from_arrow_type(&arrow).unwrap();
+        assert_eq!(original, round_trip);
     }
 
     #[test]
@@ -161,8 +237,13 @@ mod tests {
 
     #[test]
     fn test_unsupported_arrow_type() {
-        let unsupported = ArrowDataType::Decimal128(10, 2);
+        // Use a truly unsupported type (not Decimal128 which is now supported)
+        let unsupported = ArrowDataType::Decimal256(76, 10);
         assert!(KalamDataType::from_arrow_type(&unsupported).is_err());
+
+        // Also test Duration (time interval) - not yet supported
+        let unsupported_duration = ArrowDataType::Duration(TimeUnit::Second);
+        assert!(KalamDataType::from_arrow_type(&unsupported_duration).is_err());
     }
 
     #[test]

@@ -168,3 +168,4 @@ datafusion = { workspace = true }
 libc = { workspace = true }
 parquet = { workspace = true }
 arrow = { workspace = true }
+hex = { workspace = true }

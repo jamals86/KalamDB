@@ -76,6 +76,9 @@ pub struct UserTableProvider {
 
     /// Column default definitions for INSERT operations
     column_defaults: HashMap<String, ColumnDefault>,
+
+    /// Storage registry for resolving full storage paths (including base_directory)
+    storage_registry: Option<Arc<crate::storage::StorageRegistry>>,
 }
 
 impl std::fmt::Debug for UserTableProvider {
@@ -125,6 +128,7 @@ impl UserTableProvider {
             parquet_paths,
             live_query_manager: None,
             column_defaults,
+            storage_registry: None,
         }
     }
 
@@ -162,6 +166,15 @@ impl UserTableProvider {
         );
 
         self.live_query_manager = Some(manager);
+        self
+    }
+
+    /// Set the StorageRegistry for resolving full storage paths (builder pattern)
+    ///
+    /// # Arguments
+    /// * `registry` - StorageRegistry instance for path resolution
+    pub fn with_storage_registry(mut self, registry: Arc<crate::storage::StorageRegistry>) -> Self {
+        self.storage_registry = Some(registry);
         self
     }
 
@@ -449,6 +462,165 @@ impl UserTableProvider {
 
         JsonValue::Object(row)
     }
+
+    /// Scan Parquet files and return JSON rows
+    ///
+    /// Reads all Parquet files for the current user from the storage directory
+    /// and converts them to JSON for merging with RocksDB data.
+    async fn scan_parquet_files(
+        &self,
+        schema: &SchemaRef,
+    ) -> DataFusionResult<Vec<JsonValue>> {
+        use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        use std::fs;
+        use std::path::Path;
+
+        // Resolve full storage path using StorageRegistry (same logic as flush job)
+        let storage_path = if let Some(ref registry) = self.storage_registry {
+            // Use StorageRegistry to get full path (includes base_directory)
+            match registry.get_storage_config("local") {
+                Ok(Some(storage)) => {
+                    let path = storage
+                        .user_tables_template()
+                        .replace("{namespace}", self.namespace_id().as_str())
+                        .replace("{tableName}", self.table_name().as_str())
+                        .replace("{userId}", self.current_user_id.as_str())
+                        .replace("{shard}", "");
+
+                    if storage.base_directory().is_empty() {
+                        path
+                    } else {
+                        format!(
+                            "{}/{}",
+                            storage.base_directory().trim_end_matches('/'),
+                            path.trim_start_matches('/')
+                        )
+                    }
+                }
+                _ => {
+                    // Fallback to template substitution if registry lookup fails
+                    self.table_metadata.storage_location
+                        .replace("${user_id}", self.current_user_id.as_str())
+                        .replace("{userId}", self.current_user_id.as_str())
+                        .replace("{namespace}", self.namespace_id().as_str())
+                        .replace("{tableName}", self.table_name().as_str())
+                        .replace("{shard}", "")
+                }
+            }
+        } else {
+            // No registry available - use template substitution (legacy)
+            self.table_metadata.storage_location
+                .replace("${user_id}", self.current_user_id.as_str())
+                .replace("{userId}", self.current_user_id.as_str())
+                .replace("{namespace}", self.namespace_id().as_str())
+                .replace("{tableName}", self.table_name().as_str())
+                .replace("{shard}", "")
+        };
+
+        let storage_dir = Path::new(&storage_path);
+
+        log::debug!(
+            "Scanning Parquet files in: {} (exists: {})",
+            storage_path,
+            storage_dir.exists()
+        );
+
+        // If directory doesn't exist, no Parquet files to scan
+        if !storage_dir.exists() {
+            log::debug!("Storage directory does not exist, returning empty result");
+            return Ok(Vec::new());
+        }
+
+        // List all .parquet files in the directory
+        let parquet_files: Vec<_> = fs::read_dir(storage_dir)
+            .map_err(|e| {
+                DataFusionError::Execution(format!("Failed to read storage directory: {}", e))
+            })?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry.path().extension().and_then(|s| s.to_str()) == Some("parquet")
+            })
+            .map(|entry| entry.path())
+            .collect();
+
+        log::debug!("Found {} Parquet files", parquet_files.len());
+
+        if parquet_files.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut all_json_rows = Vec::new();
+
+        // Read each Parquet file
+        for parquet_file in parquet_files {
+            log::debug!("Reading Parquet file: {:?}", parquet_file);
+            
+            let file = fs::File::open(&parquet_file).map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "Failed to open Parquet file {:?}: {}",
+                    parquet_file, e
+                ))
+            })?;
+
+            let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "Failed to create Parquet reader for {:?}: {}",
+                    parquet_file, e
+                ))
+            })?;
+
+            let mut reader = builder.build().map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "Failed to build Parquet reader for {:?}: {}",
+                    parquet_file, e
+                ))
+            })?;
+
+            // Read all batches from this file
+            while let Some(batch_result) = reader.next() {
+                let batch = batch_result.map_err(|e| {
+                    DataFusionError::Execution(format!(
+                        "Failed to read batch from {:?}: {}",
+                        parquet_file, e
+                    ))
+                })?;
+
+                                // Convert Arrow batch to JSON rows
+                let json_rows = arrow_batch_to_json(&batch, true).map_err(|e| {
+                    DataFusionError::Execution(format!("Arrow to JSON conversion failed: {}", e))
+                })?;
+
+                // Filter out soft-deleted rows and add system columns if missing
+                for mut row in json_rows {
+                    // Ensure _deleted field exists (default to false for Parquet rows)
+                    if let Some(obj) = row.as_object_mut() {
+                        if !obj.contains_key("_deleted") {
+                            obj.insert("_deleted".to_string(), JsonValue::Bool(false));
+                        }
+                        
+                        // Ensure _updated field exists (use current time as fallback)
+                        if !obj.contains_key("_updated") {
+                            let now = chrono::Utc::now().to_rfc3339();
+                            obj.insert("_updated".to_string(), JsonValue::String(now));
+                        }
+                    }
+
+                    // Check if row is deleted
+                    if let Some(deleted) = row.get("_deleted").and_then(|v| v.as_bool()) {
+                        if !deleted {
+                            all_json_rows.push(row);
+                        }
+                    } else {
+                        // If _deleted field is missing or not a bool, include the row
+                        all_json_rows.push(row);
+                    }
+                }
+            }
+        }
+
+        log::debug!("Total rows from Parquet files: {}", all_json_rows.len());
+        Ok(all_json_rows)
+    }
 }
 
 #[async_trait]
@@ -474,6 +646,13 @@ impl TableProvider for UserTableProvider {
         _filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        log::debug!(
+            "UserTableProvider::scan() called for table {}.{}, user {}",
+            self.namespace_id().as_str(),
+            self.table_name().as_str(),
+            self.current_user_id.as_str()
+        );
+
         // Get the base schema and add system columns for the scan result
         let mut fields = self.schema.fields().to_vec();
 
@@ -491,6 +670,7 @@ impl TableProvider for UserTableProvider {
 
         let full_schema = Arc::new(Schema::new(fields));
 
+        // **STEP 1: Scan RocksDB buffered data**
         // Determine scan scope based on role (service/dba/system can see all users)
         let raw_rows = if matches!(self.access_role, Role::Service | Role::Dba | Role::System) {
             self.store
@@ -516,20 +696,32 @@ impl TableProvider for UserTableProvider {
             .filter(|(_row_id, row_data)| !row_data._deleted)
             .collect();
 
-        // Apply limit if specified
-        let limited_rows = if let Some(limit_value) = limit {
-            filtered_rows.into_iter().take(limit_value).collect()
-        } else {
-            filtered_rows
-        };
-
-        // Convert JSON rows to Arrow RecordBatch (includes system columns)
-        let row_values: Vec<JsonValue> = limited_rows
+        // Convert RocksDB rows to JSON for merging
+        let rocksdb_json: Vec<JsonValue> = filtered_rows
             .into_iter()
             .map(|(_id, data)| Self::flatten_row(&self.table_metadata, data))
             .collect();
 
-        let batch = json_rows_to_arrow_batch(&full_schema, row_values).map_err(|e| {
+        log::debug!("RocksDB rows: {}", rocksdb_json.len());
+
+        // **STEP 2: Scan Parquet files**
+        let parquet_json = self.scan_parquet_files(&full_schema).await?;
+
+        log::debug!("Parquet rows: {}", parquet_json.len());
+
+        // **STEP 3: Merge RocksDB + Parquet data**
+        let mut all_rows = parquet_json;
+        all_rows.extend(rocksdb_json);
+
+        // Apply limit if specified
+        let limited_rows = if let Some(limit_value) = limit {
+            all_rows.into_iter().take(limit_value).collect()
+        } else {
+            all_rows
+        };
+
+        // Convert JSON rows to Arrow RecordBatch (includes system columns)
+        let batch = json_rows_to_arrow_batch(&full_schema, limited_rows).map_err(|e| {
             DataFusionError::Execution(format!("JSON to Arrow conversion failed: {}", e))
         })?;
 

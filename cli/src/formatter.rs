@@ -86,11 +86,16 @@ impl OutputFormatter {
 
         // Handle data results
         if let Some(ref rows) = result.rows {
-            // Determine columns and pre-stringify all cell values for performance
-            let columns: Vec<String> = if rows.is_empty() {
+            // Always respect server-provided column order (from kalam-link)
+            // Fall back to deterministic alphabetical order if missing.
+            let columns: Vec<String> = if !result.columns.is_empty() {
                 result.columns.clone()
+            } else if rows.is_empty() {
+                vec![]
             } else {
-                rows[0].keys().cloned().collect()
+                let mut cols: Vec<String> = rows[0].keys().cloned().collect();
+                cols.sort();
+                cols
             };
 
             let terminal_width = Self::get_terminal_width();
@@ -256,10 +261,14 @@ impl OutputFormatter {
             return Ok("".to_string());
         }
 
-        let first = &rows[0];
-
-        // Extract columns
-        let columns: Vec<String> = first.keys().cloned().collect();
+        // Extract columns (prefer server-provided order)
+        let columns: Vec<String> = if !result.columns.is_empty() {
+            result.columns.clone()
+        } else {
+            let mut cols: Vec<String> = rows[0].keys().cloned().collect();
+            cols.sort();
+            cols
+        };
 
         // Build CSV
         let mut output = columns.join(",") + "\n";

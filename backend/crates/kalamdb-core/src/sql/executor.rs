@@ -1317,6 +1317,11 @@ impl SqlExecutor {
                 provider = provider.with_live_query_manager(Arc::clone(manager));
             }
 
+            // Wire through StorageRegistry for Parquet file path resolution
+            if let Some(registry) = &self.storage_registry {
+                provider = provider.with_storage_registry(Arc::clone(registry));
+            }
+
             let provider = Arc::new(provider);
 
             // Register with fully qualified name

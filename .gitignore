@@ -67,3 +67,4 @@ examples/simple-typescript/package-lock.json
 examples/simple-typescript/package-lock.json
 /backend/manual_flush
 /backend/multi_flush
+*.parquet

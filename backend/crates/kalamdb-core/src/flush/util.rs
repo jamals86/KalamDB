@@ -2,9 +2,10 @@
 
 use crate::error::KalamDbError;
 use datafusion::arrow::array::{
-    Array, ArrayData, ArrayRef, BinaryBuilder, BooleanBuilder, Date32Builder, FixedSizeListArray,
-    FixedSizeListBuilder, Float32Builder, Float64Builder, Int32Builder, Int64Builder,
-    StringBuilder, Time64MicrosecondBuilder, TimestampMillisecondBuilder,
+    Array, ArrayData, ArrayRef, BinaryBuilder, BooleanBuilder, Date32Builder,
+    Decimal128Builder, FixedSizeBinaryBuilder, FixedSizeListArray, FixedSizeListBuilder,
+    Float32Builder, Float64Builder, Int16Builder, Int32Builder, Int64Builder, StringBuilder,
+    Time64MicrosecondBuilder, TimestampMillisecondBuilder,
 };
 use datafusion::arrow::datatypes::{DataType, Field, SchemaRef, TimeUnit};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -25,15 +26,23 @@ pub struct JsonBatchBuilder {
 
 enum ColBuilder {
     Utf8(StringBuilder),
+    I16(Int16Builder),
     I32(Int32Builder),
     Int64(Int64Builder),
     F32(Float32Builder),
     F64(Float64Builder),
     Bool(BooleanBuilder),
-    TsMs(TimestampMillisecondBuilder),
+    TsMsNoTz(TimestampMillisecondBuilder),
+    TsMsUtc(TimestampMillisecondBuilder),
     Date32(Date32Builder),
     Time64Us(Time64MicrosecondBuilder),
     Binary(BinaryBuilder),
+    Uuid(FixedSizeBinaryBuilder),
+    Decimal128 {
+        builder: Decimal128Builder,
+        precision: u8,
+        scale: u8,
+    },
     FixedSizeListF32 {
         builder: FixedSizeListBuilder<Float32Builder>,
         size: i32,
@@ -47,20 +56,36 @@ impl JsonBatchBuilder {
             let name = f.name().clone();
             let b = match f.data_type() {
                 DataType::Utf8 => ColBuilder::Utf8(StringBuilder::new()),
+                DataType::Int16 => ColBuilder::I16(Int16Builder::new()),
                 DataType::Int32 => ColBuilder::I32(Int32Builder::new()),
                 DataType::Int64 => ColBuilder::Int64(Int64Builder::new()),
                 DataType::Float32 => ColBuilder::F32(Float32Builder::new()),
                 DataType::Float64 => ColBuilder::F64(Float64Builder::new()),
                 DataType::Boolean => ColBuilder::Bool(BooleanBuilder::new()),
-                DataType::Timestamp(TimeUnit::Millisecond, None)
-                | DataType::Timestamp(TimeUnit::Millisecond, Some(_)) => {
-                    ColBuilder::TsMs(TimestampMillisecondBuilder::new())
+                DataType::Timestamp(TimeUnit::Millisecond, None) => {
+                    ColBuilder::TsMsNoTz(TimestampMillisecondBuilder::new())
+                }
+                DataType::Timestamp(TimeUnit::Millisecond, Some(_)) => {
+                    ColBuilder::TsMsUtc(TimestampMillisecondBuilder::new())
                 }
                 DataType::Date32 => ColBuilder::Date32(Date32Builder::new()),
                 DataType::Time64(TimeUnit::Microsecond) => {
                     ColBuilder::Time64Us(Time64MicrosecondBuilder::new())
                 }
                 DataType::Binary => ColBuilder::Binary(BinaryBuilder::new()),
+                DataType::FixedSizeBinary(16) => {
+                    // UUID as FixedSizeBinary(16)
+                    ColBuilder::Uuid(FixedSizeBinaryBuilder::new(16))
+                }
+                DataType::Decimal128(precision, scale) => {
+                    // DECIMAL with precision and scale
+                    ColBuilder::Decimal128 {
+                        builder: Decimal128Builder::new().with_precision_and_scale(*precision, *scale as i8)
+                            .map_err(|e| KalamDbError::Other(format!("Invalid decimal params: {}", e)))?,
+                        precision: *precision,
+                        scale: *scale as u8,
+                    }
+                }
                 DataType::FixedSizeList(field, size) => {
                     // Support EMBEDDING as FixedSizeList<Float32>
                     if matches!(field.data_type(), DataType::Float32) {
@@ -119,6 +144,18 @@ impl JsonBatchBuilder {
                         b.append_null();
                     }
                 }
+                ColBuilder::I16(b) => {
+                    if let Some(val) = v.and_then(|vv| vv.as_i64()) {
+                        if val >= i16::MIN as i64 && val <= i16::MAX as i64 {
+                            b.append_value(val as i16);
+                        } else {
+                            // Out of range -> null to avoid panic/corruption
+                            b.append_null();
+                        }
+                    } else {
+                        b.append_null();
+                    }
+                }
                 ColBuilder::Int64(b) => {
                     if let Some(val) = v.and_then(|vv| vv.as_i64()) {
                         b.append_value(val);
@@ -151,7 +188,7 @@ impl JsonBatchBuilder {
                         b.append_null();
                     }
                 }
-                ColBuilder::TsMs(b) => {
+                ColBuilder::TsMsNoTz(b) | ColBuilder::TsMsUtc(b) => {
                     if let Some(vvv) = v {
                         if let Some(ms) = vvv.as_i64() {
                             b.append_value(ms);
@@ -267,6 +304,97 @@ impl JsonBatchBuilder {
                         b.append_null();
                     }
                 }
+                ColBuilder::Uuid(b) => {
+                    if let Some(v) = v {
+                        if let Some(s) = v.as_str() {
+                            // Parse UUID from RFC 4122 format string (e.g., "550e8400-e29b-41d4-a716-446655440000")
+                            // Remove hyphens and parse as hex
+                            let cleaned = s.replace('-', "");
+                            if cleaned.len() == 32 {
+                                if let Ok(bytes) = hex::decode(&cleaned) {
+                                    if bytes.len() == 16 {
+                                        b.append_value(&bytes);
+                                    } else {
+                                        b.append_null();
+                                    }
+                                } else {
+                                    b.append_null();
+                                }
+                            } else {
+                                b.append_null();
+                            }
+                        } else if let Some(arr) = v.as_array() {
+                            // Accept array of 16 bytes
+                            if arr.len() == 16 {
+                                let mut bytes = [0u8; 16];
+                                let mut ok = true;
+                                for (i, el) in arr.iter().enumerate() {
+                                    if let Some(n) = el.as_i64() {
+                                        if n >= 0 && n <= 255 {
+                                            bytes[i] = n as u8;
+                                        } else {
+                                            ok = false;
+                                            break;
+                                        }
+                                    } else {
+                                        ok = false;
+                                        break;
+                                    }
+                                }
+                                if ok {
+                                    b.append_value(&bytes);
+                                } else {
+                                    b.append_null();
+                                }
+                            } else {
+                                b.append_null();
+                            }
+                        } else {
+                            b.append_null();
+                        }
+                    } else {
+                        b.append_null();
+                    }
+                }
+                ColBuilder::Decimal128 { builder, precision, scale } => {
+                    if let Some(v) = v {
+                        // Parse decimal from number or string
+                        let decimal_value: Option<i128> = if let Some(n) = v.as_f64() {
+                            // Convert float to decimal by multiplying by 10^scale
+                            let multiplier = 10_i128.pow(*scale as u32);
+                            Some((n * multiplier as f64).round() as i128)
+                        } else if let Some(n) = v.as_i64() {
+                            // Integer value - multiply by 10^scale
+                            let multiplier = 10_i128.pow(*scale as u32);
+                            Some(n as i128 * multiplier)
+                        } else if let Some(s) = v.as_str() {
+                            // Parse string like "1234.56"
+                            if let Ok(f) = s.parse::<f64>() {
+                                let multiplier = 10_i128.pow(*scale as u32);
+                                Some((f * multiplier as f64).round() as i128)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                        if let Some(val) = decimal_value {
+                            // Validate precision (max digits)
+                            let max_val = 10_i128.pow(*precision as u32) - 1;
+                            if val.abs() <= max_val {
+                                builder.append_value(val);
+                            } else {
+                                // Value exceeds precision - null
+                                builder.append_null();
+                            }
+                        } else {
+                            builder.append_null();
+                        }
+                    } else {
+                        builder.append_null();
+                    }
+                }
                 ColBuilder::FixedSizeListF32 { builder, size } => {
                     // Expect an array of float values with exact length = size
                     if let Some(v) = v {
@@ -327,15 +455,23 @@ impl JsonBatchBuilder {
             .into_iter()
             .map(|(_, b)| match b {
                 ColBuilder::Utf8(mut b) => Arc::new(b.finish()) as ArrayRef,
+                ColBuilder::I16(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::I32(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::Int64(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::F32(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::F64(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::Bool(mut b) => Arc::new(b.finish()) as ArrayRef,
-                ColBuilder::TsMs(mut b) => Arc::new(b.finish()) as ArrayRef,
+                ColBuilder::TsMsNoTz(mut b) => Arc::new(b.finish()) as ArrayRef,
+                ColBuilder::TsMsUtc(mut b) => {
+                    Arc::new(b.finish().with_timezone("UTC")) as ArrayRef
+                }
                 ColBuilder::Date32(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::Time64Us(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::Binary(mut b) => Arc::new(b.finish()) as ArrayRef,
+                ColBuilder::Uuid(mut b) => Arc::new(b.finish()) as ArrayRef,
+                ColBuilder::Decimal128 { mut builder, .. } => {
+                    Arc::new(builder.finish()) as ArrayRef
+                }
                 ColBuilder::FixedSizeListF32 { mut builder, size } => {
                     let arr = builder.finish();
                     // Rebuild ArrayData to enforce non-nullable inner field (Float32, nullable=false)

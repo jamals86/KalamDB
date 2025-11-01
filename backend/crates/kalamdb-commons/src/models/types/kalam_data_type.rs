@@ -22,6 +22,9 @@ use std::fmt;
 /// - JSON = 0x0B (JSON document)
 /// - BYTES = 0x0C (binary data)
 /// - EMBEDDING = 0x0D (fixed-size float32 vector with dimension parameter)
+/// - UUID = 0x0E (128-bit universally unique identifier)
+/// - DECIMAL = 0x0F (fixed-point decimal with precision and scale)
+/// - SMALLINT = 0x10 (16-bit signed integer)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum KalamDataType {
     /// Boolean type (0x01)
@@ -63,6 +66,19 @@ pub enum KalamDataType {
     /// Fixed-size float32 vector for embeddings (0x0D)
     /// Parameter: dimension (1 ≤ dim ≤ 8192)
     Embedding(usize),
+
+    /// UUID (128-bit universally unique identifier) (0x0E)
+    /// Stored as 16 bytes in standard RFC 4122 format
+    Uuid,
+
+    /// Fixed-point decimal (0x0F)
+    /// Parameters: precision (total digits 1-38), scale (decimal places 0-precision)
+    /// Example: DECIMAL(10, 2) can store values like 12345678.90
+    Decimal { precision: u8, scale: u8 },
+
+    /// 16-bit signed integer (0x10)
+    /// Range: -32,768 to 32,767
+    SmallInt,
 }
 
 impl KalamDataType {
@@ -82,6 +98,9 @@ impl KalamDataType {
             KalamDataType::Json => 0x0B,
             KalamDataType::Bytes => 0x0C,
             KalamDataType::Embedding(_) => 0x0D,
+            KalamDataType::Uuid => 0x0E,
+            KalamDataType::Decimal { .. } => 0x0F,
+            KalamDataType::SmallInt => 0x10,
         }
     }
 
@@ -101,6 +120,9 @@ impl KalamDataType {
             0x0B => Ok(KalamDataType::Json),
             0x0C => Ok(KalamDataType::Bytes),
             0x0D => Err("EMBEDDING type requires dimension parameter".to_string()),
+            0x0E => Ok(KalamDataType::Uuid),
+            0x0F => Err("DECIMAL type requires precision and scale parameters".to_string()),
+            0x10 => Ok(KalamDataType::SmallInt),
             _ => Err(format!("Unknown type tag: 0x{:02X}", tag)),
         }
     }
@@ -115,6 +137,23 @@ impl KalamDataType {
         } else {
             Ok(())
         }
+    }
+
+    /// Validate DECIMAL precision and scale
+    pub fn validate_decimal_params(precision: u8, scale: u8) -> Result<(), String> {
+        if precision < 1 || precision > 38 {
+            return Err(format!(
+                "DECIMAL precision must be between 1 and 38, got {}",
+                precision
+            ));
+        }
+        if scale > precision {
+            return Err(format!(
+                "DECIMAL scale ({}) cannot exceed precision ({})",
+                scale, precision
+            ));
+        }
+        Ok(())
     }
 
     /// Get the SQL type name for display
@@ -133,6 +172,11 @@ impl KalamDataType {
             KalamDataType::Json => "JSON".to_string(),
             KalamDataType::Bytes => "BYTES".to_string(),
             KalamDataType::Embedding(dim) => format!("EMBEDDING({})", dim),
+            KalamDataType::Uuid => "UUID".to_string(),
+            KalamDataType::Decimal { precision, scale } => {
+                format!("DECIMAL({}, {})", precision, scale)
+            }
+            KalamDataType::SmallInt => "SMALLINT".to_string(),
         }
     }
 }
@@ -162,6 +206,16 @@ mod tests {
         assert_eq!(KalamDataType::Json.tag(), 0x0B);
         assert_eq!(KalamDataType::Bytes.tag(), 0x0C);
         assert_eq!(KalamDataType::Embedding(384).tag(), 0x0D);
+        assert_eq!(KalamDataType::Uuid.tag(), 0x0E);
+        assert_eq!(
+            KalamDataType::Decimal {
+                precision: 10,
+                scale: 2
+            }
+            .tag(),
+            0x0F
+        );
+        assert_eq!(KalamDataType::SmallInt.tag(), 0x10);
     }
 
     #[test]
@@ -171,7 +225,15 @@ mod tests {
             KalamDataType::Boolean
         );
         assert_eq!(KalamDataType::from_tag(0x06).unwrap(), KalamDataType::Text);
+        assert_eq!(KalamDataType::from_tag(0x0E).unwrap(), KalamDataType::Uuid);
+        assert_eq!(
+            KalamDataType::from_tag(0x10).unwrap(),
+            KalamDataType::SmallInt
+        );
         assert!(KalamDataType::from_tag(0xFF).is_err());
+        // DECIMAL and EMBEDDING require parameters
+        assert!(KalamDataType::from_tag(0x0D).is_err());
+        assert!(KalamDataType::from_tag(0x0F).is_err());
     }
 
     #[test]
@@ -185,9 +247,33 @@ mod tests {
     }
 
     #[test]
+    fn test_decimal_validation() {
+        // Valid cases
+        assert!(KalamDataType::validate_decimal_params(10, 2).is_ok());
+        assert!(KalamDataType::validate_decimal_params(38, 10).is_ok());
+        assert!(KalamDataType::validate_decimal_params(18, 0).is_ok());
+        assert!(KalamDataType::validate_decimal_params(5, 5).is_ok());
+
+        // Invalid cases
+        assert!(KalamDataType::validate_decimal_params(0, 0).is_err()); // precision too small
+        assert!(KalamDataType::validate_decimal_params(39, 2).is_err()); // precision too large
+        assert!(KalamDataType::validate_decimal_params(10, 11).is_err()); // scale > precision
+    }
+
+    #[test]
     fn test_sql_name() {
         assert_eq!(KalamDataType::Boolean.sql_name(), "BOOLEAN");
         assert_eq!(KalamDataType::Text.sql_name(), "TEXT");
         assert_eq!(KalamDataType::Embedding(768).sql_name(), "EMBEDDING(768)");
+        assert_eq!(KalamDataType::Uuid.sql_name(), "UUID");
+        assert_eq!(
+            KalamDataType::Decimal {
+                precision: 10,
+                scale: 2
+            }
+            .sql_name(),
+            "DECIMAL(10, 2)"
+        );
+        assert_eq!(KalamDataType::SmallInt.sql_name(), "SMALLINT");
     }
 }

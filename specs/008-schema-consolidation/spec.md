@@ -111,6 +111,43 @@ The system should cache frequently accessed schema information to minimize repea
 
 ---
 
+### User Story 5 - Critical P0 Datatype Expansion (Priority: P0)
+
+The type system must support essential datatypes required for modern database applications: UUID for distributed identifiers, DECIMAL for financial precision, and SMALLINT for integer storage efficiency. Currently, the absence of these types forces workarounds using TEXT (for UUID) and DOUBLE (for money), leading to data integrity issues and performance degradation.
+
+**Why this priority**: These are **critical missing types** that block common use cases:
+- **UUID**: Almost every modern app needs distributed unique identifiers (primary keys, API tokens, session IDs)
+- **DECIMAL**: Financial applications CANNOT use FLOAT/DOUBLE for money due to rounding errors - this is a data corruption bug
+- **SMALLINT**: Efficient storage for enum values, status codes, small counters (uses 2 bytes vs 4 bytes for INT)
+
+**Independent Test**: Can be fully tested by creating tables with UUID, DECIMAL, and SMALLINT columns, inserting values, flushing to Parquet, reading back, and verifying exact value preservation including UUID format, decimal precision, and smallint range validation. Delivers immediate value by enabling financial and distributed system use cases.
+
+**Acceptance Scenarios**:
+
+1. **Given** a table column is defined with KalamDataType::Uuid, **When** converting to Arrow DataType, **Then** conversion produces FixedSizeBinary(16) for 128-bit UUID storage
+
+2. **Given** a UUID value "550e8400-e29b-41d4-a716-446655440000" is inserted, **When** flushing to Parquet and reading back, **Then** UUID is preserved exactly in RFC 4122 format
+
+3. **Given** a table column is defined with KalamDataType::Decimal { precision: 10, scale: 2 }, **When** storing monetary value $1234.56, **Then** value is stored as Decimal128 with exact precision (no floating-point rounding errors)
+
+4. **Given** a DECIMAL(10, 2) column stores financial calculations, **When** querying sum, average, or other aggregations, **Then** results maintain exact decimal precision throughout computation
+
+5. **Given** a table column is defined with KalamDataType::SmallInt, **When** converting to Arrow DataType, **Then** conversion produces Int16 for 16-bit signed integer storage (-32,768 to 32,767 range)
+
+6. **Given** a SMALLINT column stores enum values (0-255), **When** inserting values outside valid range (e.g., 40000), **Then** system rejects with clear error "Value 40000 out of range for SMALLINT (-32,768 to 32,767)"
+
+7. **Given** wire format tags for new types (UUID=0x0E, DECIMAL=0x0F, SMALLINT=0x10), **When** serializing/deserializing table schemas, **Then** new types roundtrip correctly through Parquet metadata
+
+8. **Given** existing Parquet files with old type tags (0x01-0x0D), **When** system reads old files, **Then** backward compatibility is maintained and old types decode correctly
+
+9. **Given** DECIMAL precision validation (1-38), **When** CREATE TABLE specifies DECIMAL(0, 0) or DECIMAL(50, 2), **Then** system rejects with error "DECIMAL precision must be between 1 and 38"
+
+10. **Given** DECIMAL scale validation (0 ≤ scale ≤ precision), **When** CREATE TABLE specifies DECIMAL(10, 11), **Then** system rejects with error "DECIMAL scale (11) cannot exceed precision (10)"
+
+11. **Given** DateTime column stores "2025-01-01T12:00:00+02:00", **When** converting to UTC for storage, **Then** value is stored as "2025-01-01T10:00:00Z" (UTC normalization) and original timezone offset is LOST (applications must store timezone separately if needed)
+
+---
+
 ### Edge Cases
 
 - **Schema Evolution**: What happens when querying old schema versions after multiple ALTER TABLE operations? System must support schema_history array in TableDefinition to retrieve historical schemas.

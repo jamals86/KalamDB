@@ -24,8 +24,6 @@ Future:
 26) Low Priority - Maybe instead of _updated we can use _seq which is a snowflake id for better syncing ability accross distributed nodes
 28) ✅ DONE (2025-10-27) - Namespace struct duplication - YES, was duplicated between kalamdb-core/catalog and kalamdb-commons/system. Now consolidated into single source of truth at `kalamdb-commons/src/models/system.rs`. Removed `kalamdb-core/src/catalog/namespace.rs`. All validation logic (validate_name, can_delete, increment/decrement_table_count) moved to the commons version.
 
-29) instead of pub struct SystemTable name it KalamTable
-30) Make sure the TableSchema which is stored cover everything in one model and not spread into multiple models
 31) SHOW STATS FOR TABLE app.messages; maybe this is better be implemented with information_Schemas tasks
 32) Do we have counter per userId per buffered rows? this will help us tune the select from user table to check if we even need to query the buffer in first place
 33) Add option for a specific user to download all his data this is done with an endpoint in rest api which will create a zip file with all his tables data in parquet format and then provide a link to download it
@@ -90,6 +88,12 @@ Also check that registering ctaalogs are done in one place and one session, we s
 90) Create/alter table support table doesnt return the actual rows affected count
 91) If i set the logging to info inside config.toml i still see debug logs: level = "info"
 92) Check the datatypes converting between rust to arrow datatypes and to rocksdb its named json i dont want to use json for this, i want fast serdes for datatypes, maybe util.rs need to manage both serialize from parquet to arrow arrow to parquet both wys currently its located inside flush folder
+93) Add a new dataType which preserve the timezone info when storing timestamp with timezone
+94) [2025-11-01 23:49:37.806] [WARN ] - actix-rt|system:0|arbiter:9 - kalamdb_core::services::table_deletion_service:254 - Storage path does not exist: {namespace}/{tableName}/{userId}
+95) while: [2025-11-01 23:55:16.242] [INFO ] - main - kalamdb_server::lifecycle:413 - Waiting up to 300s for active flush jobs to complete...
+display what active jobs we are waiting on
+
+
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
