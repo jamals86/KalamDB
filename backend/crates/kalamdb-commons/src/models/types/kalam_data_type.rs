@@ -26,40 +26,40 @@ use std::fmt;
 pub enum KalamDataType {
     /// Boolean type (0x01)
     Boolean,
-    
+
     /// 32-bit signed integer (0x02)
     Int,
-    
+
     /// 64-bit signed integer (0x03)
     BigInt,
-    
+
     /// 64-bit floating point (0x04)
     Double,
-    
+
     /// 32-bit floating point (0x05)
     Float,
-    
+
     /// UTF-8 string (0x06)
     Text,
-    
+
     /// Timestamp with microsecond precision (0x07)
     Timestamp,
-    
+
     /// Date (days since epoch) (0x08)
     Date,
-    
+
     /// DateTime with timezone (0x09)
     DateTime,
-    
+
     /// Time of day (0x0A)
     Time,
-    
+
     /// JSON document (0x0B)
     Json,
-    
+
     /// Binary data (0x0C)
     Bytes,
-    
+
     /// Fixed-size float32 vector for embeddings (0x0D)
     /// Parameter: dimension (1 ≤ dim ≤ 8192)
     Embedding(usize),
@@ -166,7 +166,10 @@ mod tests {
 
     #[test]
     fn test_from_tag() {
-        assert_eq!(KalamDataType::from_tag(0x01).unwrap(), KalamDataType::Boolean);
+        assert_eq!(
+            KalamDataType::from_tag(0x01).unwrap(),
+            KalamDataType::Boolean
+        );
         assert_eq!(KalamDataType::from_tag(0x06).unwrap(), KalamDataType::Text);
         assert!(KalamDataType::from_tag(0xFF).is_err());
     }

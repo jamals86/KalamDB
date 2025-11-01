@@ -265,11 +265,12 @@ impl TestServer {
             .expect("Failed to register system schema");
 
         // Register all system tables using centralized function
-        let (_jobs_provider, _schema_store, _schema_cache) = kalamdb_core::system_table_registration::register_system_tables(
-            &system_schema,
-            backend.clone(),
-        )
-        .expect("Failed to register system tables");
+        let (_jobs_provider, _schema_store, _schema_cache) =
+            kalamdb_core::system_table_registration::register_system_tables(
+                &system_schema,
+                backend.clone(),
+            )
+            .expect("Failed to register system tables");
 
         // Initialize StorageRegistry for template validation
         let storage_registry = Arc::new(kalamdb_core::storage::StorageRegistry::new(

@@ -83,7 +83,7 @@ impl TableSchemaStore {
     /// ```rust,ignore
     /// let namespace_id = NamespaceId::new("default");
     /// for (table_id, schema) in store.scan_namespace(&namespace_id)? {
-    ///     println!("Table: {} (version {})", 
+    ///     println!("Table: {} (version {})",
     ///              table_id.table_name(),
     ///              schema.schema_version);
     /// }
@@ -93,15 +93,15 @@ impl TableSchemaStore {
         namespace_id: &NamespaceId,
     ) -> Result<Vec<(TableId, TableDefinition)>> {
         use kalamdb_store::storage_trait::Partition;
-        
+
         // Construct prefix: "{namespace_id}:"
         let prefix = format!("{}:", namespace_id.as_str());
         let prefix_bytes = prefix.as_bytes();
-        
+
         // Use backend's scan method with prefix
         let partition = Partition::new(self.partition());
         let iter = self.backend().scan(&partition, Some(prefix_bytes), None)?;
-        
+
         // Parse TableId from key bytes
         let mut result = Vec::new();
         for (key_bytes, value_bytes) in iter {
@@ -111,7 +111,7 @@ impl TableSchemaStore {
                 }
             }
         }
-        
+
         Ok(result)
     }
 
@@ -124,11 +124,11 @@ impl TableSchemaStore {
     /// All (TableId, TableDefinition) pairs in the database
     pub fn get_all(&self) -> Result<Vec<(TableId, TableDefinition)>> {
         use kalamdb_store::storage_trait::Partition;
-        
+
         // Use backend's scan method directly
         let partition = Partition::new(self.partition());
         let iter = self.backend().scan(&partition, None, None)?;
-        
+
         // Parse TableId from key bytes
         let mut result = Vec::new();
         for (key_bytes, value_bytes) in iter {
@@ -138,7 +138,7 @@ impl TableSchemaStore {
                 }
             }
         }
-        
+
         Ok(result)
     }
 }
@@ -156,7 +156,7 @@ impl EntityStore<TableId, TableDefinition> for TableSchemaStore {
     // Override put to use as_storage_key() for proper composite key handling
     fn put(&self, key: &TableId, entity: &TableDefinition) -> Result<()> {
         use kalamdb_store::storage_trait::Partition;
-        
+
         let partition = Partition::new(self.partition());
         let storage_key = key.as_storage_key();
         let value = self.serialize(entity)?;
@@ -166,7 +166,7 @@ impl EntityStore<TableId, TableDefinition> for TableSchemaStore {
     // Override get to use as_storage_key() for proper composite key handling
     fn get(&self, key: &TableId) -> Result<Option<TableDefinition>> {
         use kalamdb_store::storage_trait::Partition;
-        
+
         let partition = Partition::new(self.partition());
         let storage_key = key.as_storage_key();
         match self.backend().get(&partition, &storage_key)? {
@@ -178,7 +178,7 @@ impl EntityStore<TableId, TableDefinition> for TableSchemaStore {
     // Override delete to use as_storage_key() for proper composite key handling
     fn delete(&self, key: &TableId) -> Result<()> {
         use kalamdb_store::storage_trait::Partition;
-        
+
         let partition = Partition::new(self.partition());
         let storage_key = key.as_storage_key();
         self.backend().delete(&partition, &storage_key)
@@ -195,19 +195,17 @@ mod tests {
 
     fn create_test_table(namespace: &str, table: &str) -> (TableId, TableDefinition) {
         let table_id = TableId::from_strings(namespace, table);
-        let columns = vec![
-            ColumnDefinition::new(
-                "id",
-                1,
-                KalamDataType::Text,
-                false,
-                true,
-                false,
-                kalamdb_commons::schemas::ColumnDefault::None,
-                None,
-            ),
-        ];
-        
+        let columns = vec![ColumnDefinition::new(
+            "id",
+            1,
+            KalamDataType::Text,
+            false,
+            true,
+            false,
+            kalamdb_commons::schemas::ColumnDefault::None,
+            None,
+        )];
+
         let table_def = TableDefinition::new(
             namespace,
             table,
@@ -215,8 +213,9 @@ mod tests {
             columns,
             TableOptions::user(),
             None,
-        ).expect("Failed to create table definition");
-        
+        )
+        .expect("Failed to create table definition");
+
         (table_id, table_def)
     }
 
@@ -228,7 +227,9 @@ mod tests {
         let (table_id, table_def) = create_test_table("default", "users");
 
         // Put schema
-        store.put(&table_id, &table_def).expect("Failed to put schema");
+        store
+            .put(&table_id, &table_def)
+            .expect("Failed to put schema");
 
         // Get schema
         let retrieved = store.get(&table_id).expect("Failed to get schema");
@@ -261,11 +262,15 @@ mod tests {
         store.put(&table3_id, &table3_def).unwrap();
 
         // Scan default namespace
-        let default_tables = store.scan_namespace(&default_ns).expect("Failed to scan namespace");
+        let default_tables = store
+            .scan_namespace(&default_ns)
+            .expect("Failed to scan namespace");
         assert_eq!(default_tables.len(), 2);
 
         // Scan test namespace
-        let test_tables = store.scan_namespace(&test_ns).expect("Failed to scan namespace");
+        let test_tables = store
+            .scan_namespace(&test_ns)
+            .expect("Failed to scan namespace");
         assert_eq!(test_tables.len(), 1);
 
         // Get all tables

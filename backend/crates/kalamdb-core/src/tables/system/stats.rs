@@ -1,11 +1,11 @@
 //! system.stats virtual table
-//! 
+//!
 //! Provides runtime metrics as key-value pairs for observability.
 //! Initial implementation focuses on schema cache metrics.
 
 use crate::error::KalamDbError;
-use crate::tables::system::SystemTableProviderExt;
 use crate::tables::system::schemas::SchemaCache as TableSchemaCache;
+use crate::tables::system::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{ArrayRef, Float64Builder, StringBuilder};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
@@ -102,7 +102,10 @@ impl StatsTableProvider {
 
         let batch = RecordBatch::try_new(
             self.schema.clone(),
-            vec![Arc::new(names.finish()) as ArrayRef, Arc::new(values.finish()) as ArrayRef],
+            vec![
+                Arc::new(names.finish()) as ArrayRef,
+                Arc::new(values.finish()) as ArrayRef,
+            ],
         )
         .map_err(|e| KalamDbError::Other(format!("Failed to build stats batch: {}", e)))?;
 
@@ -147,9 +150,9 @@ impl TableProvider for StatsTableProvider {
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::datasource::MemTable;
         let schema = self.schema.clone();
-        let batch = self
-            .build_metrics_batch()
-            .map_err(|e| DataFusionError::Execution(format!("Failed to build stats batch: {}", e)))?;
+        let batch = self.build_metrics_batch().map_err(|e| {
+            DataFusionError::Execution(format!("Failed to build stats batch: {}", e))
+        })?;
         let partitions = vec![vec![batch]];
         let table = MemTable::try_new(schema, partitions)
             .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;

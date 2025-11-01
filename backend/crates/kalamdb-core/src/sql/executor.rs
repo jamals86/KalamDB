@@ -43,7 +43,6 @@ use crate::tables::{SharedTableProvider, StreamTableProvider, UserTableProvider}
 use crate::tables::system::JobsTableProvider;
 use crate::tables::system::UsersTableProvider;
 // Phase 15 (008-schema-consolidation): Import EntityStore trait for TableSchemaStore
-use kalamdb_store::entity_store::EntityStore;
 use datafusion::arrow::array::{ArrayRef, StringArray};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
@@ -65,6 +64,7 @@ use kalamdb_sql::ddl::{
 use kalamdb_sql::statement_classifier::SqlStatement;
 use kalamdb_sql::KalamSql;
 use kalamdb_sql::RocksDbAdapter;
+use kalamdb_store::entity_store::EntityStore;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -584,10 +584,7 @@ impl SqlExecutor {
                 Ok(Some(user)) => {
                     // Check if user is soft-deleted
                     if user.deleted_at.is_some() {
-                        log::warn!(
-                            "User '{}' is deleted, rejecting request",
-                            user_id.as_str()
-                        );
+                        log::warn!("User '{}' is deleted, rejecting request", user_id.as_str());
                         return Err(KalamDbError::PermissionDenied(
                             "User account has been deleted".to_string(),
                         ));
@@ -2229,7 +2226,8 @@ impl SqlExecutor {
         let stmt = DescribeTableStatement::parse(sql)?;
 
         // Phase 15 (008-schema-consolidation): Use TableSchemaStore for schema information
-        if let (Some(schema_store), Some(_schema_cache)) = (&self.schema_store, &self.schema_cache) {
+        if let (Some(schema_store), Some(_schema_cache)) = (&self.schema_store, &self.schema_cache)
+        {
             // Get table metadata from system.tables (for table-level info)
             let kalam_sql = self
                 .kalam_sql
@@ -2252,7 +2250,10 @@ impl SqlExecutor {
                     name_matches && namespace_matches
                 })
                 .ok_or_else(|| {
-                    KalamDbError::NotFound(format!("Table '{}' not found", stmt.table_name.as_str()))
+                    KalamDbError::NotFound(format!(
+                        "Table '{}' not found",
+                        stmt.table_name.as_str()
+                    ))
                 })?;
 
             // Construct TableId for schema lookup
@@ -2265,10 +2266,7 @@ impl SqlExecutor {
                 .get(&table_id)
                 .map_err(|e| KalamDbError::Other(format!("Failed to get schema: {}", e)))?
                 .ok_or_else(|| {
-                    KalamDbError::NotFound(format!(
-                        "Schema not found for table '{}'",
-                        table_id
-                    ))
+                    KalamDbError::NotFound(format!("Schema not found for table '{}'", table_id))
                 })?;
 
             if stmt.show_history {
@@ -2303,7 +2301,10 @@ impl SqlExecutor {
                     name_matches && namespace_matches
                 })
                 .ok_or_else(|| {
-                    KalamDbError::NotFound(format!("Table '{}' not found", stmt.table_name.as_str()))
+                    KalamDbError::NotFound(format!(
+                        "Table '{}' not found",
+                        stmt.table_name.as_str()
+                    ))
                 })?;
 
             let batch = Self::table_details_to_record_batch(&table)?;
@@ -3540,11 +3541,11 @@ impl SqlExecutor {
 
             // Filter rows by WHERE clause - support both '=' and 'IN'
             let mut deleted_count = 0;
-            
+
             // Try parsing as IN clause first
             if delete_info.where_clause.to_uppercase().contains(" IN ") {
                 let (where_col, where_vals) = self.parse_where_in(&delete_info.where_clause)?;
-                
+
                 for (_row_key, row_data) in all_rows {
                     // Skip rows already soft-deleted
                     if row_data._deleted {
@@ -3558,7 +3559,7 @@ impl SqlExecutor {
                                 serde_json::Value::Number(n) => n.to_string(),
                                 _ => continue,
                             };
-                            
+
                             if where_vals.contains(&val_str) {
                                 // Call delete method (soft delete for user tables)
                                 user_provider.delete_row(&row_data.row_id).map_err(|e| {
@@ -3621,11 +3622,11 @@ impl SqlExecutor {
 
         // Filter rows by WHERE clause - support both '=' and 'IN'
         let mut deleted_count = 0;
-        
+
         // Try parsing as IN clause first
         if delete_info.where_clause.to_uppercase().contains(" IN ") {
             let (where_col, where_vals) = self.parse_where_in(&delete_info.where_clause)?;
-            
+
             for (row_id, row_data) in all_rows {
                 // Skip rows already soft-deleted
                 if row_data._deleted {
@@ -3639,12 +3640,12 @@ impl SqlExecutor {
                             serde_json::Value::Number(n) => n.to_string(),
                             _ => continue,
                         };
-                        
+
                         if where_vals.contains(&val_str) {
                             // Call soft delete method
-                            shared_provider
-                                .delete_soft(&row_id)
-                                .map_err(|e| KalamDbError::Other(format!("Delete failed: {}", e)))?;
+                            shared_provider.delete_soft(&row_id).map_err(|e| {
+                                KalamDbError::Other(format!("Delete failed: {}", e))
+                            })?;
 
                             deleted_count += 1;
                         }
@@ -3665,9 +3666,9 @@ impl SqlExecutor {
                     if let Some(col_value) = obj.get(&where_col) {
                         if Self::value_matches(col_value, &where_val) {
                             // Call soft delete method
-                            shared_provider
-                                .delete_soft(&row_id)
-                                .map_err(|e| KalamDbError::Other(format!("Delete failed: {}", e)))?;
+                            shared_provider.delete_soft(&row_id).map_err(|e| {
+                                KalamDbError::Other(format!("Delete failed: {}", e))
+                            })?;
 
                             deleted_count += 1;
                         }
@@ -3701,20 +3702,20 @@ impl SqlExecutor {
     fn parse_where_in(&self, where_clause: &str) -> Result<(String, Vec<String>), KalamDbError> {
         // Pattern: col IN ('val1', 'val2', ...)
         let re = regex::Regex::new(r"(?i)(\w+)\s+IN\s*\((.+)\)").unwrap();
-        
+
         if let Some(captures) = re.captures(where_clause.trim()) {
             let col_name = captures[1].to_string();
             let values_str = &captures[2];
-            
+
             // Parse comma-separated quoted values
             let values: Vec<String> = values_str
                 .split(',')
                 .map(|v| v.trim().trim_matches('\'').trim_matches('"').to_string())
                 .collect();
-            
+
             return Ok((col_name, values));
         }
-        
+
         Err(KalamDbError::InvalidSql(format!(
             "Invalid IN clause syntax: {}",
             where_clause
@@ -4093,10 +4094,7 @@ impl SqlExecutor {
         ));
 
         let is_primary_key: ArrayRef = Arc::new(BooleanArray::from(
-            columns
-                .iter()
-                .map(|c| c.is_primary_key)
-                .collect::<Vec<_>>(),
+            columns.iter().map(|c| c.is_primary_key).collect::<Vec<_>>(),
         ));
 
         let is_partition_key: ArrayRef = Arc::new(BooleanArray::from(
@@ -4146,7 +4144,7 @@ impl SqlExecutor {
     fn schema_history_to_record_batch(
         table_def: &kalamdb_commons::schemas::TableDefinition,
     ) -> Result<RecordBatch, KalamDbError> {
-        use datafusion::arrow::array::{Int64Array, Int32Array, StringArray};
+        use datafusion::arrow::array::{Int32Array, Int64Array, StringArray};
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("version", DataType::Int32, false),
@@ -4187,12 +4185,11 @@ impl SqlExecutor {
                 .map(|v| {
                     // Try to parse arrow_schema_json to count fields
                     match serde_json::from_str::<serde_json::Value>(&v.arrow_schema_json) {
-                        Ok(val) => {
-                            val.get("fields")
-                                .and_then(|f| f.as_array())
-                                .map(|arr| arr.len() as i32)
-                                .unwrap_or(table_def.columns.len() as i32)
-                        }
+                        Ok(val) => val
+                            .get("fields")
+                            .and_then(|f| f.as_array())
+                            .map(|arr| arr.len() as i32)
+                            .unwrap_or(table_def.columns.len() as i32),
                         Err(_) => table_def.columns.len() as i32,
                     }
                 })
@@ -4267,8 +4264,8 @@ impl SqlExecutor {
                         table.namespace.as_str(),
                         table.table_name.as_str(),
                         e
-                        ))
-                    })?;
+                    ))
+                })?;
                 Ok(rows.len())
             }
             TableType::Shared => {

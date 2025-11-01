@@ -414,7 +414,7 @@ impl TableProvider for StreamTableProvider {
         let partitions = vec![vec![final_batch]];
         let table = MemTable::try_new(final_schema, partitions)
             .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-        
+
         // Don't pass projection to MemTable.scan() - we already projected
         table.scan(_state, None, &[], limit).await
     }
@@ -648,7 +648,7 @@ mod tests {
             table_metadata,
             schema,
             store,
-            Some(1),  // 1 second retention for this test
+            Some(1), // 1 second retention for this test
             false,
             Some(10000),
         );

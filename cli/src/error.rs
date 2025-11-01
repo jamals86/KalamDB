@@ -48,12 +48,57 @@ impl CLIError {
     pub fn subscription_error(msg: impl Into<String>) -> Self {
         CLIError::SubscriptionError(msg.into())
     }
+
+    fn format_link_error(err: &KalamLinkError) -> String {
+        match err {
+            KalamLinkError::NetworkError(msg) => Self::clean_nested_message(msg),
+            KalamLinkError::AuthenticationError(msg) => msg.clone(),
+            KalamLinkError::ConfigurationError(msg) => msg.clone(),
+            KalamLinkError::TimeoutError(msg) => msg.clone(),
+            KalamLinkError::QueryError(msg) => msg.clone(),
+            KalamLinkError::SerializationError(msg) => msg.clone(),
+            KalamLinkError::WebSocketError(msg) => msg.clone(),
+            KalamLinkError::InternalError(msg) => msg.clone(),
+            KalamLinkError::ServerError {
+                status_code,
+                message,
+            } => format!("Server error ({}): {}", status_code, message),
+            KalamLinkError::Cancelled => "Operation cancelled".to_string(),
+        }
+    }
+
+    fn clean_nested_message(message: &str) -> String {
+        let mut cleaned = message.trim();
+        let prefixes = [
+            "Connection failed:",
+            "connection failed:",
+            "Network error:",
+            "network error:",
+        ];
+
+        loop {
+            let mut stripped = false;
+            for prefix in &prefixes {
+                if let Some(rest) = cleaned.strip_prefix(prefix) {
+                    cleaned = rest.trim_start();
+                    stripped = true;
+                    break;
+                }
+            }
+
+            if !stripped {
+                break;
+            }
+        }
+
+        cleaned.to_string()
+    }
 }
 
 impl fmt::Display for CLIError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CLIError::LinkError(e) => write!(f, "Connection error: {}", e),
+            CLIError::LinkError(e) => write!(f, "{}", Self::format_link_error(e)),
             CLIError::ConfigurationError(msg) => write!(f, "Configuration error: {}", msg),
             CLIError::FileError(msg) => write!(f, "File error: {}", msg),
             CLIError::ParseError(msg) => write!(f, "Parse error: {}", msg),

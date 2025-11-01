@@ -26,8 +26,7 @@ async fn setup_test_executor() -> (SqlExecutor, TempDir, Arc<KalamSql>) {
 
     // Register default 'local' storage
     let storage_base_path = temp_dir.path().join("storage");
-    std::fs::create_dir_all(&storage_base_path)
-        .expect("Failed to create storage base directory");
+    std::fs::create_dir_all(&storage_base_path).expect("Failed to create storage base directory");
     let now = chrono::Utc::now().timestamp_millis();
     let default_storage = kalamdb_sql::Storage {
         storage_id: StorageId::new("local"),

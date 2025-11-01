@@ -49,7 +49,14 @@ use std::sync::Arc;
 pub fn register_system_tables(
     system_schema: &Arc<MemorySchemaProvider>,
     storage_backend: Arc<dyn kalamdb_store::StorageBackend>,
-) -> Result<(Arc<JobsTableProvider>, Arc<TableSchemaStore>, Arc<SchemaCache>), String> {
+) -> Result<
+    (
+        Arc<JobsTableProvider>,
+        Arc<TableSchemaStore>,
+        Arc<SchemaCache>,
+    ),
+    String,
+> {
     use kalamdb_store::storage_trait::Partition;
 
     // Create the system_table_schemas partition if it doesn't exist
@@ -65,7 +72,7 @@ pub fn register_system_tables(
         schema_store
             .put(&table_id, &table_def)
             .map_err(|e| format!("Failed to register schema for {}: {}", table_id, e))?;
-        
+
         // Pre-warm the cache with system table schemas
         schema_cache.insert(table_id, table_def);
     }
@@ -168,8 +175,7 @@ mod tests {
         // Create temporary storage backend
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let db = Arc::new(
-            DB::open_default(temp_dir.path().to_str().unwrap())
-                .expect("Failed to create RocksDB"),
+            DB::open_default(temp_dir.path().to_str().unwrap()).expect("Failed to create RocksDB"),
         );
         let backend = Arc::new(RocksDBBackend::new(db));
 
@@ -197,7 +203,7 @@ mod tests {
             all_schemas.len()
         );
 
-                // Verify specific tables exist in schema store
+        // Verify specific tables exist in schema store
         let expected_table_names = vec![
             "users",
             "jobs",
@@ -225,7 +231,15 @@ mod tests {
         }
 
         // Verify cache is populated
-        for &table_name in &["users", "jobs", "namespaces", "storages", "live_queries", "tables", "table_schemas"] {
+        for &table_name in &[
+            "users",
+            "jobs",
+            "namespaces",
+            "storages",
+            "live_queries",
+            "tables",
+            "table_schemas",
+        ] {
             let table_id = TableId::new(system_namespace.clone(), TableName::from(table_name));
             let cached_schema = schema_cache.get(&table_id);
             assert!(

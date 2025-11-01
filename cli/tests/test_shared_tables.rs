@@ -13,8 +13,6 @@ mod common;
 use common::*;
 use std::time::Duration;
 
-
-
 /// Test configuration constants
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -59,7 +57,10 @@ fn test_basic_table_creation_and_access() {
     );
 
     // Insert test data
-    let insert_sql = format!("INSERT INTO {}.{} (content) VALUES ('test data')", namespace, table_name);
+    let insert_sql = format!(
+        "INSERT INTO {}.{} (content) VALUES ('test data')",
+        namespace, table_name
+    );
     let result = common::execute_sql_as_root_via_cli(&insert_sql);
     assert!(
         result.is_ok(),

@@ -18,11 +18,13 @@ use rustyline::hint::Hinter;
 use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{CompletionType, Config, EditMode, Editor, Helper};
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::{
-    completer::AutoCompleter,
+    completer::{AutoCompleter, SQL_KEYWORDS, SQL_TYPES},
     error::{CLIError, Result},
     formatter::OutputFormatter,
     history::CommandHistory,
@@ -50,6 +52,9 @@ pub struct CLISession {
 
     /// Server URL
     server_url: String,
+
+    /// Server host (cached for prompt rendering)
+    server_host: String,
 
     /// Output format
     format: OutputFormat,
@@ -141,12 +146,14 @@ impl CLISession {
             AuthProvider::JwtToken(_) => "jwt-user".to_string(),
             AuthProvider::None => "anonymous".to_string(),
         };
+        let server_host = Self::extract_host(&server_url);
 
         Ok(Self {
             client,
             parser: CommandParser::new(),
             formatter: OutputFormatter::new(format, color),
             server_url,
+            server_host,
             format,
             color,
             connected,
@@ -305,6 +312,84 @@ impl CLISession {
         Ok(Some((config, message)))
     }
 
+    fn extract_host(url: &str) -> String {
+        let trimmed = url.trim();
+        let without_scheme = trimmed
+            .trim_start_matches("http://")
+            .trim_start_matches("https://")
+            .trim_start_matches("ws://")
+            .trim_start_matches("wss://");
+
+        let host = without_scheme
+            .split(|c| c == '/' || c == '?')
+            .next()
+            .unwrap_or(without_scheme);
+
+        if host.is_empty() {
+            "localhost".to_string()
+        } else {
+            host.to_string()
+        }
+    }
+
+    fn primary_prompt(&self) -> String {
+        let status = if self.color {
+            if self.connected {
+                "●".green().bold().to_string()
+            } else {
+                "○".yellow().bold().to_string()
+            }
+        } else if self.connected {
+            "[ok]".to_string()
+        } else {
+            "[--]".to_string()
+        };
+
+        let brand = if self.color {
+            "KalamDB".bright_blue().bold().to_string()
+        } else {
+            "kalamdb".to_string()
+        };
+
+        let brand_with_profile = if let Some(instance) = self.instance.as_deref() {
+            if self.color {
+                format!("{}{}", brand, format!("[{}]", instance).dimmed())
+            } else {
+                format!("{}[{}]", brand, instance)
+            }
+        } else {
+            brand
+        };
+
+        let identity = if self.color {
+            format!(
+                "{}{}",
+                self.username.cyan(),
+                format!("@{}", self.server_host).dimmed()
+            )
+        } else {
+            format!("{}@{}", self.username, self.server_host)
+        };
+
+        let arrow = if self.color {
+            "❯".bright_blue().bold().to_string()
+        } else {
+            ">".to_string()
+        };
+
+        let parts = vec![status, brand_with_profile, identity];
+        let body = parts.join(" ");
+        format!("{} {} ", body, arrow)
+    }
+
+    fn continuation_prompt(&self) -> String {
+        if self.color {
+            format!("  {} {} ", "↳".dimmed(), "❯".bright_blue().bold())
+        } else {
+            "  -> ".to_string()
+        }
+    }
+
     /// Create a spinner for long-running operations
     fn create_spinner() -> ProgressBar {
         let pb = ProgressBar::new_spinner();
@@ -369,8 +454,8 @@ impl CLISession {
         // Connection and auth successful - print welcome banner
         self.print_banner();
 
-        // Create rustyline helper with autocomplete only (no highlighting for performance)
-        let helper = CLIHelper { completer };
+        // Create rustyline helper with autocomplete, inline hints, and syntax highlighting
+        let helper = CLIHelper::new(completer, self.color);
 
         // Initialize readline with completer and proper configuration
         let config = Config::builder()
@@ -397,12 +482,12 @@ impl CLISession {
         loop {
             // Use continuation prompt if we're accumulating a multi-line command
             let prompt = if accumulated_command.is_empty() {
-                "kalam> "
+                self.primary_prompt()
             } else {
-                "    -> "
+                self.continuation_prompt()
             };
 
-            match rl.readline(prompt) {
+            match rl.readline(&prompt) {
                 Ok(line) => {
                     let line = line.trim();
 
@@ -579,19 +664,48 @@ impl CLISession {
 
         // Extract table names from response
         let mut table_names = Vec::new();
-        if !response.results.is_empty() {
-            if let Some(rows) = &response.results[0].rows {
+        if let Some(result) = response.results.get(0) {
+            if let Some(rows) = &result.rows {
                 for row in rows {
-                    if let Some(name_value) = row.get("table_name") {
-                        if let Some(name) = name_value.as_str() {
-                            table_names.push(name.to_string());
-                        }
+                    if let Some(name) = row.get("table_name").and_then(|value| value.as_str()) {
+                        table_names.push(name.to_string());
                     }
                 }
             }
         }
 
         completer.set_tables(table_names);
+        completer.clear_columns();
+
+        if let Ok(column_response) = self
+            .client
+            .execute_query(
+                "SELECT table_name, column_name FROM system.columns ORDER BY table_name, ordinal_position",
+            )
+            .await
+        {
+            if let Some(result) = column_response.results.get(0) {
+                if let Some(rows) = &result.rows {
+                    let mut column_map: HashMap<String, Vec<String>> = HashMap::new();
+
+                    for row in rows {
+                        if let (Some(table), Some(column)) = (
+                            row.get("table_name").and_then(|v| v.as_str()),
+                            row.get("column_name").and_then(|v| v.as_str()),
+                        ) {
+                            column_map
+                                .entry(table.to_string())
+                                .or_default()
+                                .push(column.to_string());
+                        }
+                    }
+
+                    for (table, columns) in column_map {
+                        completer.set_columns(table, columns);
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -700,8 +814,7 @@ impl CLISession {
             Command::Stats => {
                 // Show system statistics via system.stats virtual table
                 // Keep it simple and readable for users
-                self
-                    .execute("SELECT * FROM system.stats ORDER BY key")
+                self.execute("SELECT * FROM system.stats ORDER BY key")
                     .await?;
             }
             Command::Unknown(cmd) => {
@@ -1012,7 +1125,7 @@ impl CLISession {
         println!("    \\config                Show current configuration");
         println!("    \\flush                 Flush all data to disk");
         println!("    \\health                Check server health");
-    println!("    \\stats, \\metrics       Show server/runtime statistics");
+        println!("    \\stats, \\metrics       Show server/runtime statistics");
         println!("    \\pause                 Pause ingestion");
         println!("    \\continue              Resume ingestion");
         println!("    \\dt, \\tables           List all tables");
@@ -1342,9 +1455,223 @@ impl CLISession {
     }
 }
 
-/// Rustyline helper with autocomplete (no highlighting for performance)
+type CharIter<'a> = std::iter::Peekable<std::str::Chars<'a>>;
+
+struct SqlHighlighter {
+    keywords: HashSet<String>,
+    types: HashSet<String>,
+    color_enabled: bool,
+}
+
+impl SqlHighlighter {
+    fn new(color_enabled: bool) -> Self {
+        let keywords = SQL_KEYWORDS
+            .iter()
+            .map(|kw| kw.to_ascii_uppercase())
+            .collect::<HashSet<_>>();
+        let types = SQL_TYPES
+            .iter()
+            .map(|kw| kw.to_ascii_uppercase())
+            .collect::<HashSet<_>>();
+
+        Self {
+            keywords,
+            types,
+            color_enabled,
+        }
+    }
+
+    fn color_enabled(&self) -> bool {
+        self.color_enabled
+    }
+
+    fn highlight(&self, line: &str) -> Option<String> {
+        if !self.color_enabled || line.trim().is_empty() {
+            return None;
+        }
+
+        Some(self.highlight_line(line))
+    }
+
+    fn highlight_line(&self, line: &str) -> String {
+        let mut result = String::with_capacity(line.len() * 2);
+        let mut iter = line.chars().peekable();
+
+        while let Some(ch) = iter.next() {
+            if ch.is_whitespace() {
+                result.push(ch);
+                continue;
+            }
+
+            if ch == '-' {
+                if let Some('-') = iter.peek().copied() {
+                    result.push_str(&self.collect_comment(&mut iter));
+                    break;
+                } else {
+                    result.push(ch);
+                    continue;
+                }
+            }
+
+            if ch == '\'' || ch == '"' {
+                result.push_str(&self.collect_string(ch, &mut iter));
+                continue;
+            }
+
+            if ch.is_ascii_digit() {
+                result.push_str(&self.collect_number(ch, &mut iter));
+                continue;
+            }
+
+            if ch.is_alphabetic() || ch == '_' {
+                result.push_str(&self.collect_identifier(ch, &mut iter));
+                continue;
+            }
+
+            result.push(ch);
+        }
+
+        result
+    }
+
+    fn collect_comment(&self, iter: &mut CharIter<'_>) -> String {
+        let mut comment = String::from("--");
+        iter.next();
+        for ch in iter {
+            comment.push(ch);
+        }
+        self.style_comment(&comment)
+    }
+
+    fn collect_string(&self, quote: char, iter: &mut CharIter<'_>) -> String {
+        let mut literal = String::new();
+        literal.push(quote);
+
+        if quote == '\'' {
+            while let Some(next) = iter.next() {
+                literal.push(next);
+                if next == quote {
+                    if let Some(&dup) = iter.peek() {
+                        if dup == quote {
+                            literal.push(dup);
+                            iter.next();
+                            continue;
+                        }
+                    }
+                    break;
+                }
+            }
+        } else {
+            let mut escaped = false;
+            while let Some(next) = iter.next() {
+                literal.push(next);
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if next == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if next == quote {
+                    break;
+                }
+            }
+        }
+
+        self.style_string(&literal)
+    }
+
+    fn collect_number(&self, first: char, iter: &mut CharIter<'_>) -> String {
+        let mut number = String::new();
+        number.push(first);
+
+        while let Some(&next) = iter.peek() {
+            if next.is_ascii_digit() || next == '_' || next == '.' {
+                number.push(next);
+                iter.next();
+                continue;
+            }
+
+            if matches!(next, 'e' | 'E') {
+                number.push(next);
+                iter.next();
+                if let Some(&sign) = iter.peek() {
+                    if sign == '+' || sign == '-' {
+                        number.push(sign);
+                        iter.next();
+                    }
+                }
+                continue;
+            }
+
+            break;
+        }
+
+        self.style_number(&number)
+    }
+
+    fn collect_identifier(&self, first: char, iter: &mut CharIter<'_>) -> String {
+        let mut ident = String::new();
+        ident.push(first);
+
+        while let Some(&next) = iter.peek() {
+            if next.is_ascii_alphanumeric() || next == '_' {
+                ident.push(next);
+                iter.next();
+            } else {
+                break;
+            }
+        }
+
+        let upper = ident.to_ascii_uppercase();
+        if self.types.contains(&upper) {
+            self.style_type(&ident)
+        } else if self.keywords.contains(&upper) {
+            self.style_keyword(&ident)
+        } else {
+            self.style_identifier(&ident)
+        }
+    }
+
+    fn style_keyword(&self, token: &str) -> String {
+        token.blue().bold().to_string()
+    }
+
+    fn style_type(&self, token: &str) -> String {
+        token.magenta().bold().to_string()
+    }
+
+    fn style_identifier(&self, token: &str) -> String {
+        token.to_string()
+    }
+
+    fn style_number(&self, token: &str) -> String {
+        token.yellow().to_string()
+    }
+
+    fn style_string(&self, token: &str) -> String {
+        token.green().to_string()
+    }
+
+    fn style_comment(&self, token: &str) -> String {
+        token.dimmed().to_string()
+    }
+}
+
+/// Rustyline helper with autocomplete and highlighting
 struct CLIHelper {
     completer: AutoCompleter,
+    highlighter: SqlHighlighter,
+}
+
+impl CLIHelper {
+    fn new(completer: AutoCompleter, color_enabled: bool) -> Self {
+        Self {
+            highlighter: SqlHighlighter::new(color_enabled),
+            completer,
+        }
+    }
 }
 
 impl Completer for CLIHelper {
@@ -1362,9 +1689,29 @@ impl Completer for CLIHelper {
 
 impl Hinter for CLIHelper {
     type Hint = String;
+
+    fn hint(&self, line: &str, pos: usize, _ctx: &rustyline::Context<'_>) -> Option<Self::Hint> {
+        self.completer.completion_hint(line, pos)
+    }
 }
 
-impl Highlighter for CLIHelper {}
+impl Highlighter for CLIHelper {
+    fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
+        if let Some(highlighted) = self.highlighter.highlight(line) {
+            Cow::Owned(highlighted)
+        } else {
+            Cow::Borrowed(line)
+        }
+    }
+
+    fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
+        if self.highlighter.color_enabled() && !hint.is_empty() {
+            Cow::Owned(hint.dimmed().to_string())
+        } else {
+            Cow::Borrowed(hint)
+        }
+    }
+}
 
 impl Validator for CLIHelper {}
 

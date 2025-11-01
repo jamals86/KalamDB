@@ -49,22 +49,25 @@ pub async fn create_test_user(
         Role::Dba => "dba",
         Role::System => "system",
     };
-    
+
     let create_user_sql = format!(
         "CREATE USER '{}' WITH PASSWORD '{}' ROLE {} EMAIL '{}@example.com'",
         username, password, role_str, username
     );
-    
+
     // Use system user to create the user
     let system_user_id = UserId::new("system");
-    let result = server.sql_executor.execute(&create_user_sql, Some(&system_user_id)).await;
-    
+    let result = server
+        .sql_executor
+        .execute(&create_user_sql, Some(&system_user_id))
+        .await;
+
     if let Err(e) = &result {
         eprintln!("Failed to create test user '{}': {:?}", username, e);
         eprintln!("SQL: {}", create_user_sql);
         panic!("Failed to create test user: {:?}", e);
     }
-    
+
     eprintln!("✓ Created test user: {}", username);
 
     // Return user object for test verification

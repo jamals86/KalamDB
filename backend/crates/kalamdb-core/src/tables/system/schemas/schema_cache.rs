@@ -38,8 +38,8 @@
 use dashmap::DashMap;
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableDefinition;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 /// High-performance schema cache with LRU eviction.
 ///
@@ -58,22 +58,22 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub struct SchemaCache {
     /// Main cache storage (TableId → TableDefinition)
     cache: DashMap<TableId, Arc<TableDefinition>>,
-    
+
     /// Access timestamps for LRU eviction (TableId → access_time)
     access_times: DashMap<TableId, u64>,
-    
+
     /// Monotonic access counter for LRU ordering
     access_counter: AtomicUsize,
-    
+
     /// Maximum number of entries before eviction
     max_size: usize,
-    
+
     /// Cache hit count (for metrics)
     hit_count: AtomicUsize,
-    
+
     /// Cache miss count (for metrics)
     miss_count: AtomicUsize,
-    
+
     /// Eviction count (for metrics)
     eviction_count: AtomicUsize,
 }
@@ -124,11 +124,12 @@ impl SchemaCache {
         if let Some(entry) = self.cache.get(table_id) {
             // Update access time for LRU
             let access_time = self.access_counter.fetch_add(1, Ordering::Relaxed);
-            self.access_times.insert(table_id.clone(), access_time as u64);
-            
+            self.access_times
+                .insert(table_id.clone(), access_time as u64);
+
             // Increment hit counter
             self.hit_count.fetch_add(1, Ordering::Relaxed);
-            
+
             Some(entry.value().clone())
         } else {
             // Increment miss counter
@@ -208,7 +209,7 @@ impl SchemaCache {
         let hits = self.hit_count.load(Ordering::Relaxed);
         let misses = self.miss_count.load(Ordering::Relaxed);
         let total = hits + misses;
-        
+
         if total == 0 {
             0.0
         } else {
@@ -284,13 +285,14 @@ mod tests {
             columns,
             TableOptions::user(),
             None,
-        ).expect("Failed to create table definition")
+        )
+        .expect("Failed to create table definition")
     }
 
     #[test]
     fn test_cache_basic_operations() {
         let cache = SchemaCache::new(10);
-        
+
         let table_id = TableId::from_strings("default", "users");
         let schema = create_test_schema("users");
 
@@ -334,18 +336,24 @@ mod tests {
 
         // Insert table4 - should evict table1 (LRU)
         cache.insert(table4.clone(), create_test_schema("table4"));
-        
+
         assert_eq!(cache.len(), 3);
         assert!(cache.get(&table1).is_none(), "table1 should be evicted");
-        assert!(cache.get(&table2).is_some(), "table2 should still be cached");
-        assert!(cache.get(&table3).is_some(), "table3 should still be cached");
+        assert!(
+            cache.get(&table2).is_some(),
+            "table2 should still be cached"
+        );
+        assert!(
+            cache.get(&table3).is_some(),
+            "table3 should still be cached"
+        );
         assert!(cache.get(&table4).is_some(), "table4 should be cached");
     }
 
     #[test]
     fn test_cache_metrics() {
         let cache = SchemaCache::new(10);
-        
+
         let table1 = TableId::from_strings("default", "table1");
         let schema = create_test_schema("table1");
 
@@ -360,7 +368,7 @@ mod tests {
         cache.insert(table1.clone(), schema);
         cache.get(&table1); // Hit
         cache.get(&table1); // Hit
-        
+
         // Hit rate: 2 hits / 3 total = 0.666...
         let hit_rate = cache.hit_rate();
         assert!(hit_rate > 0.6 && hit_rate < 0.7, "Hit rate should be ~66%");
@@ -381,7 +389,7 @@ mod tests {
         let cache = Arc::new(SchemaCache::new(100));
         let table_id = TableId::from_strings("default", "users");
         let schema = create_test_schema("users");
-        
+
         cache.insert(table_id.clone(), schema);
 
         // Spawn 10 threads to read concurrently
@@ -389,7 +397,7 @@ mod tests {
             .map(|_| {
                 let cache_clone = Arc::clone(&cache);
                 let table_id_clone = table_id.clone();
-                
+
                 thread::spawn(move || {
                     for _ in 0..100 {
                         let result = cache_clone.get(&table_id_clone);
@@ -414,17 +422,17 @@ mod tests {
     #[test]
     fn test_cache_clear() {
         let cache = SchemaCache::new(10);
-        
+
         let table1 = TableId::from_strings("default", "table1");
         let table2 = TableId::from_strings("default", "table2");
-        
+
         cache.insert(table1.clone(), create_test_schema("table1"));
         cache.insert(table2.clone(), create_test_schema("table2"));
-        
+
         assert_eq!(cache.len(), 2);
-        
+
         cache.clear();
-        
+
         assert_eq!(cache.len(), 0);
         assert!(cache.is_empty());
         assert!(cache.get(&table1).is_none());

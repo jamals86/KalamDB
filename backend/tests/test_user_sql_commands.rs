@@ -78,9 +78,8 @@ async fn setup_test_executor() -> (
         .expect("Failed to register system tables");
 
     // Create users provider for test verification
-    let users_provider = Arc::new(kalamdb_core::tables::system::users_v2::UsersTableProvider::new(
-        backend.clone(),
-    ));
+    let users_provider =
+        Arc::new(kalamdb_core::tables::system::users_v2::UsersTableProvider::new(backend.clone()));
 
     // Create executor
     let executor = SqlExecutor::new(
@@ -165,7 +164,11 @@ async fn test_create_user_with_oauth_success() {
     let sql = r#"CREATE USER 'bob' WITH OAUTH '{"provider": "google", "subject": "12345"}' ROLE viewer EMAIL 'bob@example.com'"#;
     let result = executor.execute(sql, Some(&admin_id)).await;
 
-    assert!(result.is_ok(), "CREATE USER with OAuth should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "CREATE USER with OAuth should succeed: {:?}",
+        result
+    );
 
     let user = users_provider
         .get_user_by_username("bob")
@@ -236,7 +239,10 @@ async fn test_alter_user_set_password() {
         .await
         .expect("CREATE USER failed");
 
-    let old_user = users_provider.get_user_by_username("dave").unwrap().unwrap();
+    let old_user = users_provider
+        .get_user_by_username("dave")
+        .unwrap()
+        .unwrap();
     let old_hash = old_user.password_hash.clone();
 
     // Change password
@@ -245,7 +251,10 @@ async fn test_alter_user_set_password() {
 
     assert!(result.is_ok(), "ALTER USER SET PASSWORD should succeed");
 
-    let updated_user = users_provider.get_user_by_username("dave").unwrap().unwrap();
+    let updated_user = users_provider
+        .get_user_by_username("dave")
+        .unwrap()
+        .unwrap();
     assert_ne!(
         updated_user.password_hash, old_hash,
         "Password hash should change"
@@ -294,7 +303,10 @@ async fn test_drop_user_soft_delete() {
     assert!(result.is_ok(), "DROP USER should succeed");
 
     // Verify user is soft-deleted
-    let user = users_provider.get_user_by_username("frank").unwrap().unwrap();
+    let user = users_provider
+        .get_user_by_username("frank")
+        .unwrap()
+        .unwrap();
     assert!(
         user.deleted_at.is_some(),
         "User should have deleted_at timestamp"
@@ -332,7 +344,10 @@ async fn test_create_user_role_mapping() {
             role_str
         );
 
-        let user = users_provider.get_user_by_username(username).unwrap().unwrap();
+        let user = users_provider
+            .get_user_by_username(username)
+            .unwrap()
+            .unwrap();
         assert_eq!(
             user.role, expected_role,
             "Role {} should map to {:?}",
@@ -385,7 +400,10 @@ async fn test_alter_user_set_email() {
 
     assert!(result.is_ok(), "ALTER USER SET EMAIL should succeed");
 
-    let updated_user = users_provider.get_user_by_username("george").unwrap().unwrap();
+    let updated_user = users_provider
+        .get_user_by_username("george")
+        .unwrap()
+        .unwrap();
     assert_eq!(updated_user.email, Some("george@new.com".to_string()));
 }
 
@@ -713,7 +731,10 @@ async fn test_restore_deleted_user() {
         .expect("DROP USER failed");
 
     // Verify user is soft-deleted
-    let deleted_user = users_provider.get_user_by_username("restore_test").unwrap().unwrap();
+    let deleted_user = users_provider
+        .get_user_by_username("restore_test")
+        .unwrap()
+        .unwrap();
     assert!(
         deleted_user.deleted_at.is_some(),
         "User should be soft-deleted"
@@ -730,7 +751,10 @@ async fn test_restore_deleted_user() {
     );
 
     // Verify user is restored (deleted_at should be NULL)
-    let restored_user = users_provider.get_user_by_username("restore_test").unwrap().unwrap();
+    let restored_user = users_provider
+        .get_user_by_username("restore_test")
+        .unwrap()
+        .unwrap();
     assert!(
         restored_user.deleted_at.is_none(),
         "User should be restored (deleted_at should be NULL)"

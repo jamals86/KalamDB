@@ -9,26 +9,26 @@ use serde::{Deserialize, Serialize};
 pub struct ColumnDefinition {
     /// Column name (case-sensitive)
     pub column_name: String,
-    
+
     /// Ordinal position in table (1-indexed, sequential)
     /// Determines SELECT * column ordering
     pub ordinal_position: u32,
-    
+
     /// Data type
     pub data_type: KalamDataType,
-    
+
     /// Whether column can contain NULL values
     pub is_nullable: bool,
-    
+
     /// Whether this column is part of the primary key
     pub is_primary_key: bool,
-    
+
     /// Whether this column is part of the partition key (for distributed tables)
     pub is_partition_key: bool,
-    
+
     /// Default value specification
     pub default_value: ColumnDefault,
-    
+
     /// Optional column comment/description
     pub column_comment: Option<String>,
 }
@@ -96,10 +96,7 @@ impl ColumnDefinition {
 
     /// Get SQL DDL fragment for this column
     pub fn to_sql(&self) -> String {
-        let mut parts = vec![
-            self.column_name.clone(),
-            self.data_type.sql_name(),
-        ];
+        let mut parts = vec![self.column_name.clone(), self.data_type.sql_name()];
 
         if self.is_primary_key {
             parts.push("PRIMARY KEY".to_string());

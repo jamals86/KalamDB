@@ -12,10 +12,8 @@
 
 mod common;
 use common::*;
-use std::time::Duration;
 use kalam_link::CredentialStore;
-
-
+use std::time::Duration;
 
 /// Test configuration constants
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -101,10 +99,7 @@ fn test_cli_authenticate_unauthorized_user() {
     let result = execute_sql_via_cli_as("invalid_user", "wrong_password", "SELECT 1");
 
     // Should fail with authentication error
-    assert!(
-        result.is_err(),
-        "CLI should fail with invalid credentials"
-    );
+    assert!(result.is_err(), "CLI should fail with invalid credentials");
     let error_msg = result.err().unwrap().to_string();
     assert!(
         error_msg.contains("Unauthorized")

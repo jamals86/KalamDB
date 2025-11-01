@@ -1,6 +1,6 @@
 use assert_cmd;
-use std::process::Command;
 use std::io::{BufRead, BufReader};
+use std::process::Command;
 use std::process::{Child, Stdio};
 use std::sync::mpsc as std_mpsc;
 use std::thread;
@@ -29,7 +29,7 @@ pub fn is_server_running() -> bool {
 /// Helper to execute SQL via CLI
 pub fn execute_sql_via_cli(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
     let output = Command::new(env!("CARGO_BIN_EXE_kalam"))
-            .arg("-u")
+        .arg("-u")
         .arg(SERVER_URL)
         .arg("--command")
         .arg(sql)
@@ -38,14 +38,22 @@ pub fn execute_sql_via_cli(sql: &str) -> Result<String, Box<dyn std::error::Erro
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
-        Err(format!("CLI command failed: {}", String::from_utf8_lossy(&output.stderr)).into())
+        Err(format!(
+            "CLI command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into())
     }
 }
 
 /// Helper to execute SQL via CLI with authentication
-pub fn execute_sql_via_cli_as(username: &str, password: &str, sql: &str) -> Result<String, Box<dyn std::error::Error>> {
+pub fn execute_sql_via_cli_as(
+    username: &str,
+    password: &str,
+    sql: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let output = Command::new(env!("CARGO_BIN_EXE_kalam"))
-            .arg("-u")
+        .arg("-u")
         .arg(SERVER_URL)
         .arg("--username")
         .arg(username)
@@ -58,7 +66,11 @@ pub fn execute_sql_via_cli_as(username: &str, password: &str, sql: &str) -> Resu
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
-        Err(format!("CLI command failed: {}", String::from_utf8_lossy(&output.stderr)).into())
+        Err(format!(
+            "CLI command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into())
     }
 }
 
@@ -168,7 +180,7 @@ impl SubscriptionListener {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
-            
+
         let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
         let stdout_reader = BufReader::new(stdout);
 
@@ -189,7 +201,11 @@ impl SubscriptionListener {
     }
 
     /// Wait for a specific event pattern
-    pub fn wait_for_event(&mut self, pattern: &str, timeout: Duration) -> Result<String, Box<dyn std::error::Error>> {
+    pub fn wait_for_event(
+        &mut self,
+        pattern: &str,
+        timeout: Duration,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         let start = std::time::Instant::now();
 
         while start.elapsed() < timeout {
@@ -217,7 +233,9 @@ impl SubscriptionListener {
 }
 
 /// Helper to start a subscription listener in a background thread
-pub fn start_subscription_listener(query: &str) -> Result<std_mpsc::Receiver<String>, Box<dyn std::error::Error>> {
+pub fn start_subscription_listener(
+    query: &str,
+) -> Result<std_mpsc::Receiver<String>, Box<dyn std::error::Error>> {
     let (event_sender, event_receiver) = std_mpsc::channel();
     let query = query.to_string();
 

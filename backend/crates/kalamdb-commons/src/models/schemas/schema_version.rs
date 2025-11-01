@@ -8,14 +8,14 @@ use serde::{Deserialize, Serialize};
 pub struct SchemaVersion {
     /// Version number (1-indexed, monotonically increasing)
     pub version: u32,
-    
+
     /// Timestamp when this version was created
     pub created_at: DateTime<Utc>,
-    
+
     /// Description of changes made in this version
     /// Examples: "Initial schema", "Added email column", "Dropped legacy_id"
     pub changes: String,
-    
+
     /// Serialized Arrow schema as JSON for this version
     /// Allows reconstructing the exact Arrow schema at any point in history
     pub arrow_schema_json: String,
@@ -82,12 +82,7 @@ mod tests {
     #[test]
     fn test_with_timestamp() {
         let timestamp = Utc.with_ymd_and_hms(2025, 1, 1, 12, 0, 0).unwrap();
-        let version = SchemaVersion::with_timestamp(
-            2,
-            timestamp,
-            "Added column",
-            "{}",
-        );
+        let version = SchemaVersion::with_timestamp(2, timestamp, "Added column", "{}");
         assert_eq!(version.version, 2);
         assert_eq!(version.created_at, timestamp);
     }
@@ -107,7 +102,7 @@ mod tests {
         let v1 = SchemaVersion::initial("{}");
         std::thread::sleep(std::time::Duration::from_millis(10));
         let v2 = SchemaVersion::new(2, "Updated", "{}");
-        
+
         assert!(v1.created_at < v2.created_at);
         assert_eq!(v1.version + 1, v2.version);
     }

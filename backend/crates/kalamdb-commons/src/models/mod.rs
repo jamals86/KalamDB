@@ -819,7 +819,7 @@ impl fmt::Display for ColumnDefault {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct TableDefinition {
     /// Unique table identifier: "{namespace_id}:{table_name}"
-    pub table_id: String, //TODO: Use TableId 
+    pub table_id: String, //TODO: Use TableId
     /// Table name (e.g., "users")
     pub table_name: TableName,
     /// Namespace ID (e.g., "app")
@@ -898,7 +898,10 @@ pub struct SchemaVersion {
 
 impl TableDefinition {
     /// DEPRECATED: Use schemas::TableDefinition::from_arrow_schema() instead.
-    #[deprecated(since = "0.1.0", note = "Use schemas::TableDefinition::from_arrow_schema()")]
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use schemas::TableDefinition::from_arrow_schema()"
+    )]
     #[cfg(feature = "serde")]
     pub fn extract_columns_from_schema(
         schema: &arrow_schema::Schema,

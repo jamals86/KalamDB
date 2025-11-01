@@ -3,7 +3,6 @@
 mod common;
 use common::*;
 
-
 use std::time::Duration;
 
 #[test]
@@ -31,7 +30,7 @@ fn test_subscription_listener_functionality() {
     // Start subscription listener
     let query = format!("SELECT * FROM {}", table);
     println!("Starting subscription for: {}", query);
-    
+
     let mut listener = match SubscriptionListener::start(&query) {
         Ok(l) => l,
         Err(e) => {

@@ -139,11 +139,12 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         .expect("Failed to register system schema");
 
     // Register all system tables using centralized function (EntityStore-based v2 providers)
-    let (jobs_provider, schema_store, schema_cache) = kalamdb_core::system_table_registration::register_system_tables(
-        &system_schema,
-        backend.clone(),
-    )
-    .expect("Failed to register system tables");
+    let (jobs_provider, schema_store, schema_cache) =
+        kalamdb_core::system_table_registration::register_system_tables(
+            &system_schema,
+            backend.clone(),
+        )
+        .expect("Failed to register system tables");
 
     info!(
         "System tables registered with DataFusion (catalog: {})",

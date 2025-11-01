@@ -61,7 +61,7 @@ impl JobExecutor {
     /// Result of job execution
     pub fn execute_job<F>(
         &self,
-        job_id: String, //TODO: Use JobId type directly
+        job_id: String,   //TODO: Use JobId type directly
         job_type: String, //TODO: Use JobType type directly
         //TODO: Pass NamespaceId from context
         table_name: Option<String>, //TODO: Use TableName type directly
@@ -157,7 +157,7 @@ impl JobExecutor {
     /// * `job_fn` - The job function (must be Send + 'static)
     pub fn execute_async<F>(
         &self,
-        job_id: String, //TODO: Use JobId type directly
+        job_id: String,   //TODO: Use JobId type directly
         job_type: String, //TODO: Use JobType type directly
         //TODO: Pass NamespaceId from context
         table_name: Option<String>, //TODO: Use TableName type directly

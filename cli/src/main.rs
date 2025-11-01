@@ -252,11 +252,15 @@ async fn main() -> Result<()> {
             (None, Some(host)) => format!("http://{}:{}", host, cli.port),
             (None, None) => {
                 // Try to get from stored credentials first
-                if let Some(creds) = credential_store
-                    .get_credentials(&cli.instance)
-                    .map_err(|e| {
-                        CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
-                    })?
+                if let Some(creds) =
+                    credential_store
+                        .get_credentials(&cli.instance)
+                        .map_err(|e| {
+                            CLIError::ConfigurationError(format!(
+                                "Failed to load credentials: {}",
+                                e
+                            ))
+                        })?
                 {
                     let creds_url = creds.get_server_url();
                     if creds_url.starts_with("http://") || creds_url.starts_with("https://") {
@@ -280,11 +284,16 @@ async fn main() -> Result<()> {
             .or_else(|| config.auth.as_ref().and_then(|a| a.jwt_token.clone()))
         {
             AuthProvider::jwt_token(token)
-        } else if let (Some(username), Some(password)) = (cli.username.clone(), cli.password.clone()) {
+        } else if let (Some(username), Some(password)) =
+            (cli.username.clone(), cli.password.clone())
+        {
             AuthProvider::basic_auth(username, password)
-        } else if let Some(creds) = credential_store
-            .get_credentials(&cli.instance)
-            .map_err(|e| CLIError::ConfigurationError(format!("Failed to load credentials: {}", e)))?
+        } else if let Some(creds) =
+            credential_store
+                .get_credentials(&cli.instance)
+                .map_err(|e| {
+                    CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
+                })?
         {
             AuthProvider::basic_auth(creds.username, creds.password)
         } else if is_localhost_url(&server_url) {

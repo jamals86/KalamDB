@@ -11,10 +11,10 @@ use thiserror::Error;
 pub enum ArrowConversionError {
     #[error("Unsupported Arrow type: {0:?}")]
     UnsupportedArrowType(ArrowDataType),
-    
+
     #[error("Invalid EMBEDDING dimension: {0}")]
     InvalidEmbeddingDimension(i32),
-    
+
     #[error("Type conversion failed: {0}")]
     ConversionFailed(String),
 }
@@ -42,9 +42,7 @@ impl ToArrowType for KalamDataType {
             KalamDataType::Double => ArrowDataType::Float64,
             KalamDataType::Float => ArrowDataType::Float32,
             KalamDataType::Text => ArrowDataType::Utf8,
-            KalamDataType::Timestamp => {
-                ArrowDataType::Timestamp(TimeUnit::Microsecond, None)
-            }
+            KalamDataType::Timestamp => ArrowDataType::Timestamp(TimeUnit::Microsecond, None),
             KalamDataType::Date => ArrowDataType::Date32,
             KalamDataType::DateTime => {
                 // DateTime with timezone stored as Timestamp with UTC
@@ -56,13 +54,10 @@ impl ToArrowType for KalamDataType {
             KalamDataType::Embedding(dim) => {
                 // EMBEDDING(N) → FixedSizeList<Float32>
                 let field = Field::new("item", ArrowDataType::Float32, false);
-                ArrowDataType::FixedSizeList(
-                    std::sync::Arc::new(field),
-                    *dim as i32,
-                )
+                ArrowDataType::FixedSizeList(std::sync::Arc::new(field), *dim as i32)
             }
         };
-        
+
         Ok(arrow_type)
     }
 }
@@ -89,12 +84,18 @@ impl FromArrowType for KalamDataType {
                     }
                     KalamDataType::Embedding(*size as usize)
                 } else {
-                    return Err(ArrowConversionError::UnsupportedArrowType(arrow_type.clone()));
+                    return Err(ArrowConversionError::UnsupportedArrowType(
+                        arrow_type.clone(),
+                    ));
                 }
             }
-            _ => return Err(ArrowConversionError::UnsupportedArrowType(arrow_type.clone())),
+            _ => {
+                return Err(ArrowConversionError::UnsupportedArrowType(
+                    arrow_type.clone(),
+                ))
+            }
         };
-        
+
         Ok(kalam_type)
     }
 }
@@ -129,11 +130,11 @@ mod tests {
     #[test]
     fn test_embedding_conversion() {
         let dimensions = vec![1, 384, 768, 1536, 3072, 8192];
-        
+
         for dim in dimensions {
             let original = KalamDataType::Embedding(dim);
             let arrow = original.to_arrow_type().unwrap();
-            
+
             // Verify Arrow type structure
             if let ArrowDataType::FixedSizeList(ref field, size) = arrow {
                 assert_eq!(size, dim as i32);
@@ -141,7 +142,7 @@ mod tests {
             } else {
                 panic!("Expected FixedSizeList, got {:?}", arrow);
             }
-            
+
             // Round-trip
             let round_trip = KalamDataType::from_arrow_type(&arrow).unwrap();
             assert_eq!(original, round_trip);
@@ -154,7 +155,7 @@ mod tests {
             std::sync::Arc::new(Field::new("item", ArrowDataType::Float32, false)),
             9999,
         );
-        
+
         assert!(KalamDataType::from_arrow_type(&invalid_arrow).is_err());
     }
 

@@ -69,8 +69,8 @@ impl CreateUserStatement {
             return Err("SQL must start with CREATE USER".to_string());
         }
 
-    // Extract username after CREATE USER (accept quoted or unquoted)
-    let username = extract_keyword_value(&normalized, "USER")?;
+        // Extract username after CREATE USER (accept quoted or unquoted)
+        let username = extract_keyword_value(&normalized, "USER")?;
 
         // Determine auth type
         let auth_type = if normalized.to_uppercase().contains("WITH PASSWORD") {
@@ -282,7 +282,10 @@ impl DropUserStatement {
             extract_quoted_keyword_value(&normalized, "USER")?
         };
 
-        Ok(DropUserStatement { username, if_exists })
+        Ok(DropUserStatement {
+            username,
+            if_exists,
+        })
     }
 }
 

@@ -8,11 +8,11 @@ use serde_json::Value as JsonValue;
 pub enum ColumnDefault {
     /// No default value - column must be specified in INSERT
     None,
-    
+
     /// Literal value as JSON (supports all KalamDataTypes)
     /// Examples: null, true, 42, "hello", [1.0, 2.0, 3.0]
     Literal(JsonValue),
-    
+
     /// Function call with arguments
     /// Examples: NOW(), UUID(), CURRENT_USER()
     FunctionCall {
@@ -28,12 +28,12 @@ impl ColumnDefault {
     pub fn none() -> Self {
         ColumnDefault::None
     }
-    
+
     /// Create a literal default from a JSON value
     pub fn literal(value: JsonValue) -> Self {
         ColumnDefault::Literal(value)
     }
-    
+
     /// Create a function call default
     pub fn function(name: impl Into<String>, args: Vec<JsonValue>) -> Self {
         ColumnDefault::FunctionCall {
@@ -41,12 +41,12 @@ impl ColumnDefault {
             args,
         }
     }
-    
+
     /// Check if this is a None default
     pub fn is_none(&self) -> bool {
         matches!(self, ColumnDefault::None)
     }
-    
+
     /// Get SQL representation for display
     pub fn to_sql(&self) -> String {
         match self {
@@ -125,17 +125,11 @@ mod tests {
         assert_eq!(default.to_sql(), "NOW()");
 
         // Function with args
-        let default = ColumnDefault::function(
-            "UUID_GENERATE",
-            vec![json!("v4")],
-        );
+        let default = ColumnDefault::function("UUID_GENERATE", vec![json!("v4")]);
         assert_eq!(default.to_sql(), "UUID_GENERATE('v4')");
 
         // Function with multiple args
-        let default = ColumnDefault::function(
-            "CONCAT",
-            vec![json!("prefix_"), json!("value")],
-        );
+        let default = ColumnDefault::function("CONCAT", vec![json!("prefix_"), json!("value")]);
         assert_eq!(default.to_sql(), "CONCAT('prefix_', 'value')");
     }
 

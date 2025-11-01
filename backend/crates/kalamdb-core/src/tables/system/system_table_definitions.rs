@@ -13,7 +13,9 @@
 //! kalamdb-commons, ensuring consistency across the codebase.
 
 use kalamdb_commons::models::TableId;
-use kalamdb_commons::schemas::{ColumnDefinition, ColumnDefault, TableDefinition, TableOptions, TableType};
+use kalamdb_commons::schemas::{
+    ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
+};
 use kalamdb_commons::types::KalamDataType;
 
 /// Create TableDefinition for system.users table
@@ -550,9 +552,15 @@ pub fn all_system_table_definitions() -> Vec<(TableId, TableDefinition)> {
         (system_table_id("jobs"), jobs_table_definition()),
         (system_table_id("namespaces"), namespaces_table_definition()),
         (system_table_id("storages"), storages_table_definition()),
-        (system_table_id("live_queries"), live_queries_table_definition()),
+        (
+            system_table_id("live_queries"),
+            live_queries_table_definition(),
+        ),
         (system_table_id("tables"), tables_table_definition()),
-        (system_table_id("table_schemas"), table_schemas_table_definition()),
+        (
+            system_table_id("table_schemas"),
+            table_schemas_table_definition(),
+        ),
     ]
 }
 
@@ -575,7 +583,7 @@ mod tests {
     fn test_all_system_tables() {
         let all_tables = all_system_table_definitions();
         assert_eq!(all_tables.len(), 7);
-        
+
         // Verify all tables are in system namespace
         for (table_id, def) in all_tables {
             assert_eq!(table_id.namespace_id().as_str(), "system");

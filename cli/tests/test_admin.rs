@@ -14,8 +14,6 @@ use common::*;
 use serde_json::json;
 use std::time::Duration;
 
-
-
 /// Test configuration constants
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -53,11 +51,7 @@ fn test_cli_list_tables() {
     let result = execute_sql_via_cli(query_sql);
 
     // Should list tables
-    assert!(
-        result.is_ok(),
-        "Should list tables: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Should list tables: {:?}", result.err());
     let output = result.unwrap();
     assert!(
         output.contains("messages") || output.contains("row"),
@@ -98,15 +92,14 @@ fn test_cli_describe_table() {
     }
 
     // Query table info
-    let query_sql = format!("SELECT '{}' as table_info", format!("{}.{}", namespace, table_name));
+    let query_sql = format!(
+        "SELECT '{}' as table_info",
+        format!("{}.{}", namespace, table_name)
+    );
     let result = execute_sql_via_cli(&query_sql);
 
     // Should execute successfully and show table info
-    assert!(
-        result.is_ok(),
-        "Should describe table: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Should describe table: {:?}", result.err());
     let output = result.unwrap();
     assert!(
         output.contains("messages"),
@@ -174,15 +167,10 @@ fn test_cli_syntax_error_handling() {
     let result = execute_sql_via_cli("INVALID SQL SYNTAX HERE");
 
     // Should contain error message
-    assert!(
-        result.is_err(),
-        "Should fail with syntax error"
-    );
+    assert!(result.is_err(), "Should fail with syntax error");
     let error_msg = result.err().unwrap().to_string();
     assert!(
-        error_msg.contains("ERROR")
-            || error_msg.contains("Error")
-            || error_msg.contains("syntax"),
+        error_msg.contains("ERROR") || error_msg.contains("Error") || error_msg.contains("syntax"),
         "Should display error message: {}",
         error_msg
     );
@@ -259,4 +247,3 @@ fn test_server_health_check() {
         result.err()
     );
 }
-

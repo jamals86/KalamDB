@@ -481,8 +481,8 @@ impl AuthService {
 
     fn spawn_last_seen_update(adapter: Arc<RocksDbAdapter>, user: kalamdb_commons::system::User) {
         // Use username to fetch latest record from DB and update only once per day.
-    let username = user.username.as_str().to_string();
-    let username_for_log = username.clone();
+        let username = user.username.as_str().to_string();
+        let username_for_log = username.clone();
 
         tokio::spawn(async move {
             let update_result = task::spawn_blocking(move || {
@@ -508,13 +508,11 @@ impl AuthService {
                 Ok(Ok(())) => {}
                 Ok(Err(err)) => warn!(
                     "Failed to persist last_seen for user {}: {}",
-                    username_for_log,
-                    err
+                    username_for_log, err
                 ),
                 Err(join_err) => warn!(
                     "Failed to schedule last_seen update for user {}: {}",
-                    username_for_log,
-                    join_err
+                    username_for_log, join_err
                 ),
             }
         });

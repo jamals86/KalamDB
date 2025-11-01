@@ -13,8 +13,8 @@
 //! ```
 //TODO: Remove this since we have most of the tests covered by the integration tests
 mod common;
-use common::*;
 use assert_cmd::Command;
+use common::*;
 use reqwest;
 use serde_json::json;
 use std::time::Duration;

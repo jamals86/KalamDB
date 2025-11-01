@@ -9,7 +9,6 @@
 //! - Empty queries and result pagination
 //! - Query result display and formatting
 
-
 mod common;
 use common::*;
 
@@ -243,7 +242,10 @@ fn test_cli_multiline_query() {
     ));
 
     // Multi-line query with newlines
-    let multi_line_query = format!("SELECT \n  id, \n  content \nFROM \n  {} \nLIMIT 5", full_table_name);
+    let multi_line_query = format!(
+        "SELECT \n  id, \n  content \nFROM \n  {} \nLIMIT 5",
+        full_table_name
+    );
 
     let mut cmd = create_cli_command();
     cmd.arg("-u")

@@ -10,7 +10,10 @@ use serde_json::Value as JsonValue;
 use crate::{error::Result, session::OutputFormat};
 
 /// Maximum column width before truncation
-const MAX_COLUMN_WIDTH: usize = 50;
+const MAX_COLUMN_WIDTH: usize = 32;
+
+/// Minimum column width when resizing to fit the terminal
+const MIN_COLUMN_WIDTH: usize = 6;
 
 /// Formats query results for display
 pub struct OutputFormatter {
@@ -103,15 +106,40 @@ impl OutputFormatter {
                 }
             }
 
-            // Calculate total table width (columns + borders + padding)
-            let total_width: usize = col_widths.iter().sum::<usize>()
-                + (col_widths.len() * 3) // 2 spaces padding + 1 border per column
-                + 1; // Final border
-
-            // If table is too wide, apply truncation
-            if total_width > terminal_width {
+            let column_count = col_widths.len();
+            if column_count > 0 {
                 for width in col_widths.iter_mut() {
-                    *width = (*width).min(MAX_COLUMN_WIDTH);
+                    if *width > MAX_COLUMN_WIDTH {
+                        *width = MAX_COLUMN_WIDTH;
+                    }
+                }
+
+                let border_padding = column_count * 3 + 1;
+                let mut available = terminal_width.saturating_sub(border_padding);
+                if available < column_count {
+                    available = column_count;
+                }
+
+                let mut total_width = col_widths.iter().sum::<usize>();
+                while total_width > available {
+                    if let Some((idx, _)) = col_widths
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, width)| **width > MIN_COLUMN_WIDTH)
+                        .max_by_key(|(_, width)| *width)
+                    {
+                        col_widths[idx] -= 1;
+                    } else if let Some((idx, _)) = col_widths
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, width)| **width > 1)
+                        .max_by_key(|(_, width)| *width)
+                    {
+                        col_widths[idx] -= 1;
+                    } else {
+                        break;
+                    }
+                    total_width = col_widths.iter().sum();
                 }
             }
 

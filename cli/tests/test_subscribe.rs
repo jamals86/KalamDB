@@ -13,7 +13,6 @@
 mod common;
 use common::*;
 
-
 use std::time::Duration;
 
 /// T041: Test basic live query subscription
@@ -126,7 +125,7 @@ fn test_cli_live_query_with_filter() {
 
     // Read a line to verify subscription started
     let _ = listener.read_line();
-    
+
     listener.stop().unwrap();
     cleanup_test_table(&table).unwrap();
 }
@@ -276,7 +275,10 @@ fn test_cli_subscription_comprehensive_crud() {
         .arg(SERVER_URL)
         .arg("root")
         .arg("--command")
-        .arg(&format!("SUBSCRIBE TO SELECT * FROM {} LIMIT 1", table_name))
+        .arg(&format!(
+            "SUBSCRIBE TO SELECT * FROM {} LIMIT 1",
+            table_name
+        ))
         .timeout(std::time::Duration::from_secs(2)); // Short timeout
 
     let output = cmd.output().unwrap();

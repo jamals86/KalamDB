@@ -22,8 +22,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 /// Helper to create a test SQL executor with all dependencies
-async fn setup_test_executor(
-) -> (
+async fn setup_test_executor() -> (
     SqlExecutor,
     TempDir,
     Arc<KalamSql>,
@@ -78,9 +77,8 @@ async fn setup_test_executor(
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
     register_system_tables(&system_schema, backend.clone())
         .expect("Failed to register system tables");
-    let users_provider = Arc::new(kalamdb_core::tables::system::users_v2::UsersTableProvider::new(
-        backend.clone(),
-    ));
+    let users_provider =
+        Arc::new(kalamdb_core::tables::system::users_v2::UsersTableProvider::new(backend.clone()));
 
     // Create executor
     let executor = SqlExecutor::new(

@@ -44,7 +44,9 @@ async fn test_e2e_auth_flow() {
 
     // Create namespace (as DBA user)
     let create_ns_sql = format!("CREATE NAMESPACE {}", namespace);
-    let response = server.execute_sql_as_user(&create_ns_sql, user.id.as_str()).await;
+    let response = server
+        .execute_sql_as_user(&create_ns_sql, user.id.as_str())
+        .await;
     assert_eq!(
         response.status, "success",
         "Failed to create namespace: {:?}",
@@ -158,7 +160,8 @@ async fn test_role_based_auth_e2e() {
         auth_helper::create_test_user(&server, "regular_user", "Password123!", Role::User).await;
     let service_user =
         auth_helper::create_test_user(&server, "service_user", "Password123!", Role::Service).await;
-    let dba_user = auth_helper::create_test_user(&server, "dba_user", "Password123!", Role::Dba).await;
+    let dba_user =
+        auth_helper::create_test_user(&server, "dba_user", "Password123!", Role::Dba).await;
 
     println!("✅ Created users with roles: User, Service, DBA");
 
@@ -280,18 +283,30 @@ async fn test_password_security_e2e() {
     println!("   Username: {}", user.username.as_str());
 
     // Verify user exists by querying system.users
-    let query_sql = format!("SELECT user_id, username, role FROM system.users WHERE user_id = '{}'", user.id.as_str());
+    let query_sql = format!(
+        "SELECT user_id, username, role FROM system.users WHERE user_id = '{}'",
+        user.id.as_str()
+    );
     let response = server.execute_sql_as_user(&query_sql, "system").await;
     if response.status == "success" {
-        println!("✅ User found in system.users: {:?}", response.results[0].rows);
+        println!(
+            "✅ User found in system.users: {:?}",
+            response.results[0].rows
+        );
     } else {
         eprintln!("❌ User not found in system.users: {:?}", response.error);
     }
 
     // Change password via SQL (use system user for ALTER USER command)
     // Syntax: ALTER USER 'user_id' SET PASSWORD 'new_password'
-    let change_password_sql = format!("ALTER USER '{}' SET PASSWORD '{}'", user.id.as_str(), new_password);
-    let response = server.execute_sql_as_user(&change_password_sql, "system").await;
+    let change_password_sql = format!(
+        "ALTER USER '{}' SET PASSWORD '{}'",
+        user.id.as_str(),
+        new_password
+    );
+    let response = server
+        .execute_sql_as_user(&change_password_sql, "system")
+        .await;
     if response.status != "success" {
         eprintln!("❌ ALTER USER failed: {:?}", response.error);
         eprintln!("   SQL: {}", change_password_sql);
@@ -309,7 +324,9 @@ async fn test_password_security_e2e() {
     println!("✅ Password change operation completed");
 
     // Cleanup (use system user for DROP USER command)
-    server.execute_sql_as_user(&format!("DROP USER {}", user.id.as_str()), "system").await;
+    server
+        .execute_sql_as_user(&format!("DROP USER {}", user.id.as_str()), "system")
+        .await;
 
     println!("🎉 Password Security E2E Test Completed!");
 }

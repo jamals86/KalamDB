@@ -8,15 +8,15 @@ pub struct UserTableOptions {
     /// User ID partitioning strategy
     #[serde(default)]
     pub partition_by_user: bool,
-    
+
     /// Maximum rows per user partition (0 = unlimited)
     #[serde(default)]
     pub max_rows_per_user: u64,
-    
+
     /// Enable row-level security
     #[serde(default = "default_true")]
     pub enable_rls: bool,
-    
+
     /// Compression algorithm (none, snappy, lz4, zstd)
     #[serde(default = "default_compression")]
     pub compression: String,
@@ -28,19 +28,19 @@ pub struct SharedTableOptions {
     /// Access level (public, restricted)
     #[serde(default = "default_access_level")]
     pub access_level: String,
-    
+
     /// Enable caching for shared data
     #[serde(default = "default_true")]
     pub enable_cache: bool,
-    
+
     /// Cache TTL in seconds (0 = no expiration)
     #[serde(default = "default_cache_ttl")]
     pub cache_ttl_seconds: u64,
-    
+
     /// Compression algorithm (none, snappy, lz4, zstd)
     #[serde(default = "default_compression")]
     pub compression: String,
-    
+
     /// Enable replication across nodes
     #[serde(default)]
     pub enable_replication: bool,
@@ -51,23 +51,23 @@ pub struct SharedTableOptions {
 pub struct StreamTableOptions {
     /// Time-to-live for stream events in seconds (required for STREAM tables)
     pub ttl_seconds: u64,
-    
+
     /// Eviction strategy (time_based, size_based, hybrid)
     #[serde(default = "default_eviction_strategy")]
     pub eviction_strategy: String,
-    
+
     /// Maximum stream size in bytes (0 = unlimited)
     #[serde(default)]
     pub max_stream_size_bytes: u64,
-    
+
     /// Enable automatic compaction
     #[serde(default = "default_true")]
     pub enable_compaction: bool,
-    
+
     /// Watermark delay in seconds for late events
     #[serde(default = "default_watermark_delay")]
     pub watermark_delay_seconds: u64,
-    
+
     /// Compression algorithm (none, snappy, lz4, zstd)
     #[serde(default = "default_compression")]
     pub compression: String,
@@ -79,15 +79,15 @@ pub struct SystemTableOptions {
     /// System table is read-only
     #[serde(default = "default_true")]
     pub read_only: bool,
-    
+
     /// Enable system table caching
     #[serde(default = "default_true")]
     pub enable_cache: bool,
-    
+
     /// Cache TTL in seconds
     #[serde(default = "default_system_cache_ttl")]
     pub cache_ttl_seconds: u64,
-    
+
     /// Allow system table queries only from localhost
     #[serde(default)]
     pub localhost_only: bool,

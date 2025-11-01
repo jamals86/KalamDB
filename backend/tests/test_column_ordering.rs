@@ -2,11 +2,11 @@
 //!
 //! Tests that SELECT * returns columns in ordinal_position order
 
-use kalamdb_commons::{NamespaceId, TableId, TableName};
 use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableType};
 use kalamdb_commons::types::KalamDataType;
+use kalamdb_commons::{NamespaceId, TableId, TableName};
 use kalamdb_core::system_table_registration::register_system_tables;
-use kalamdb_store::{RocksDBBackend, EntityStoreV2};
+use kalamdb_store::{EntityStoreV2, RocksDBBackend};
 use rocksdb::DB;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -68,7 +68,9 @@ async fn test_select_star_returns_columns_in_ordinal_order() {
     assert_eq!(retrieved.columns[3].ordinal_position, 4);
 
     // Verify Arrow schema has columns in the same order
-    let arrow_schema = retrieved.to_arrow_schema().expect("Failed to convert to Arrow schema");
+    let arrow_schema = retrieved
+        .to_arrow_schema()
+        .expect("Failed to convert to Arrow schema");
     assert_eq!(arrow_schema.fields().len(), 4);
     assert_eq!(arrow_schema.field(0).name(), "id");
     assert_eq!(arrow_schema.field(1).name(), "name");
@@ -115,7 +117,9 @@ async fn test_alter_table_add_column_assigns_next_ordinal() {
 
     // Simulate ALTER TABLE ADD COLUMN
     let new_column = ColumnDefinition::simple("email", 3, KalamDataType::Text);
-    table_def.add_column(new_column).expect("Failed to add column");
+    table_def
+        .add_column(new_column)
+        .expect("Failed to add column");
 
     schema_store
         .put(&test_table_id, &table_def)
@@ -172,7 +176,9 @@ async fn test_alter_table_drop_column_preserves_ordinals() {
         .expect("Failed to store initial table");
 
     // Simulate ALTER TABLE DROP COLUMN email (position 3)
-    table_def.drop_column("email").expect("Failed to drop column");
+    table_def
+        .drop_column("email")
+        .expect("Failed to drop column");
 
     schema_store
         .put(&test_table_id, &table_def)
@@ -230,7 +236,9 @@ async fn test_system_tables_have_correct_column_ordering() {
     }
 
     // Verify Arrow schema matches column order
-    let arrow_schema = users_schema.to_arrow_schema().expect("Failed to convert to Arrow");
+    let arrow_schema = users_schema
+        .to_arrow_schema()
+        .expect("Failed to convert to Arrow");
     for (idx, column) in users_schema.columns.iter().enumerate() {
         assert_eq!(
             arrow_schema.field(idx).name(),

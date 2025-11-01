@@ -15,15 +15,15 @@ pub enum TableType {
     /// Per-user tables with user-specific partitioning
     /// Options: `UserTableOptions` (partition_by_user, max_rows_per_user, enable_rls, compression)
     User,
-    
+
     /// Shared tables accessible across all users
     /// Options: `SharedTableOptions` (access_level, enable_cache, cache_ttl_seconds, compression, enable_replication)
     Shared,
-    
+
     /// Event stream tables with TTL-based eviction
     /// Options: `StreamTableOptions` (ttl_seconds, eviction_strategy, max_stream_size_bytes, enable_compaction, watermark_delay_seconds, compression)
     Stream,
-    
+
     /// Internal system metadata tables
     /// Options: `SystemTableOptions` (read_only, enable_cache, cache_ttl_seconds, localhost_only)
     System,

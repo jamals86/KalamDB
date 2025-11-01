@@ -35,11 +35,7 @@ async fn test_schema_store_persistence() {
         .scan_namespace(&system_namespace)
         .expect("Failed to scan namespace");
 
-    assert_eq!(
-        all_schemas.len(),
-        7,
-        "Should have 7 system table schemas"
-    );
+    assert_eq!(all_schemas.len(), 7, "Should have 7 system table schemas");
 
     // Verify specific table schemas
     let table_names = vec![
@@ -143,7 +139,7 @@ async fn test_schema_versioning() {
 
     // Verify schema has columns (versioning may not be initialized for system tables)
     assert!(!schema.columns.is_empty(), "Schema should have columns");
-    
+
     // If schema history exists, verify it
     if !schema.schema_history.is_empty() {
         assert_eq!(
@@ -156,7 +152,10 @@ async fn test_schema_versioning() {
             schema.schema_history[0].version
         );
     } else {
-        println!("✅ Schema exists with {} columns (history not initialized)", schema.columns.len());
+        println!(
+            "✅ Schema exists with {} columns (history not initialized)",
+            schema.columns.len()
+        );
     }
 }
 
@@ -177,7 +176,7 @@ async fn test_all_system_tables_have_schemas() {
             .expect("Failed to register system tables");
 
     let system_namespace = NamespaceId::from("system");
-    
+
     // All 7 system tables should have schema definitions
     let expected_tables = vec![
         "users",
@@ -204,12 +203,27 @@ async fn test_all_system_tables_have_schemas() {
 
         // Verify each column has required metadata
         for (idx, col) in schema.columns.iter().enumerate() {
-            assert!(!col.column_name.is_empty(), "Column {} in {} should have a name", idx, table_name);
+            assert!(
+                !col.column_name.is_empty(),
+                "Column {} in {} should have a name",
+                idx,
+                table_name
+            );
             // Ordinal positions are 1-indexed, so column 0 has ordinal_position 1
-            assert_eq!(col.ordinal_position as usize, idx + 1, "Column {} in {} should have correct ordinal (1-indexed)", idx, table_name);
+            assert_eq!(
+                col.ordinal_position as usize,
+                idx + 1,
+                "Column {} in {} should have correct ordinal (1-indexed)",
+                idx,
+                table_name
+            );
         }
 
-        println!("✅ system.{} has {} columns", table_name, schema.columns.len());
+        println!(
+            "✅ system.{} has {} columns",
+            table_name,
+            schema.columns.len()
+        );
     }
 }
 
@@ -240,8 +254,14 @@ async fn test_internal_api_schema_matches_describe_table() {
 
     // Verify the API schema has expected structure
     assert!(!api_schema.columns.is_empty(), "Schema should have columns");
-    assert_eq!(api_schema.table_name, "users", "Table name should be 'users'");
-    assert_eq!(api_schema.namespace_id, "system", "Namespace should be 'system'");
+    assert_eq!(
+        api_schema.table_name, "users",
+        "Table name should be 'users'"
+    );
+    assert_eq!(
+        api_schema.namespace_id, "system",
+        "Namespace should be 'system'"
+    );
 
     // Verify all columns have correct ordinal positions (1-indexed)
     for (idx, column) in api_schema.columns.iter().enumerate() {
@@ -255,14 +275,19 @@ async fn test_internal_api_schema_matches_describe_table() {
     }
 
     // Verify the schema can convert to Arrow schema
-    let arrow_schema = api_schema.to_arrow_schema().expect("Should convert to Arrow schema");
+    let arrow_schema = api_schema
+        .to_arrow_schema()
+        .expect("Should convert to Arrow schema");
     assert_eq!(
         arrow_schema.fields().len(),
         api_schema.columns.len(),
         "Arrow schema should have same number of fields as columns"
     );
 
-    println!("✅ Internal API schema structure is valid for system.users ({} columns)", api_schema.columns.len());
+    println!(
+        "✅ Internal API schema structure is valid for system.users ({} columns)",
+        api_schema.columns.len()
+    );
 }
 
 #[tokio::test]
@@ -314,7 +339,8 @@ async fn test_cache_invalidation_on_alter_table() {
         kalamdb_commons::models::schemas::TableType::User,
         columns_v1.clone(),
         None,
-    ).expect("Failed to create table definition");
+    )
+    .expect("Failed to create table definition");
 
     // 1. Store initial schema
     schema_store
@@ -370,7 +396,8 @@ async fn test_cache_invalidation_on_alter_table() {
         kalamdb_commons::models::schemas::TableType::User,
         columns_v2.clone(),
         None,
-    ).expect("Failed to create updated table definition");
+    )
+    .expect("Failed to create updated table definition");
 
     // 4. Invalidate cache (this is what ALTER TABLE would do)
     schema_cache.invalidate(&test_table_id);
@@ -386,8 +413,15 @@ async fn test_cache_invalidation_on_alter_table() {
         .expect("Failed to get schema after update")
         .expect("Schema should exist after update");
 
-    assert_eq!(cached_v2.columns.len(), 3, "Should have 3 columns after update");
-    assert_eq!(cached_v2.columns[2].column_name, "email", "New column should be 'email'");
+    assert_eq!(
+        cached_v2.columns.len(),
+        3,
+        "Should have 3 columns after update"
+    );
+    assert_eq!(
+        cached_v2.columns[2].column_name, "email",
+        "New column should be 'email'"
+    );
 
     // 7. Verify subsequent read comes from fresh cache (cached_v2 should equal a new read)
     let cached_v2_again = schema_store
@@ -395,7 +429,11 @@ async fn test_cache_invalidation_on_alter_table() {
         .expect("Failed to get schema again")
         .expect("Schema should exist");
 
-    assert_eq!(cached_v2_again.columns.len(), 3, "Cache should have 3 columns");
+    assert_eq!(
+        cached_v2_again.columns.len(),
+        3,
+        "Cache should have 3 columns"
+    );
 
     println!("✅ Cache invalidation works correctly");
 }

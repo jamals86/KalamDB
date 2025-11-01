@@ -11,6 +11,91 @@ use colored::*;
 use rustyline::completion::{Completer, Pair};
 use std::collections::HashMap;
 
+pub(crate) const SQL_KEYWORDS: &[&str] = &[
+    // DML
+    "SELECT",
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "FROM",
+    "WHERE",
+    "JOIN",
+    "ON",
+    "AND",
+    "OR",
+    "NOT",
+    "IN",
+    "LIKE",
+    "BETWEEN",
+    "IS",
+    "NULL",
+    "AS",
+    "ORDER",
+    "BY",
+    "GROUP",
+    "HAVING",
+    "LIMIT",
+    "OFFSET",
+    "DISTINCT",
+    "VALUES",
+    "SET",
+    // DDL
+    "CREATE",
+    "DROP",
+    "ALTER",
+    "TABLE",
+    "INDEX",
+    "VIEW",
+    "DATABASE",
+    "SCHEMA",
+    // Constraints
+    "PRIMARY",
+    "KEY",
+    "FOREIGN",
+    "REFERENCES",
+    "UNIQUE",
+    "DEFAULT",
+    "CHECK",
+    "AUTO_INCREMENT",
+    // Functions
+    "COUNT",
+    "SUM",
+    "AVG",
+    "MIN",
+    "MAX",
+    "COALESCE",
+    "CAST",
+    "CONCAT",
+    "LENGTH",
+    "UPPER",
+    "LOWER",
+    "TRIM",
+    "NOW",
+    "CURRENT_TIMESTAMP",
+    // Types
+    "INTEGER",
+    "BIGINT",
+    "TEXT",
+    "VARCHAR",
+    "BOOLEAN",
+    "TIMESTAMP",
+    "FLOAT",
+    "DOUBLE",
+    "JSON",
+];
+
+pub(crate) const SQL_TYPES: &[&str] = &[
+    "INTEGER",
+    "BIGINT",
+    "TEXT",
+    "VARCHAR",
+    "BOOLEAN",
+    "TIMESTAMP",
+    "FLOAT",
+    "DOUBLE",
+    "JSON",
+];
+
 /// Styled completion candidate
 #[derive(Debug, Clone)]
 pub struct StyledPair {
@@ -69,86 +154,10 @@ pub struct AutoCompleter {
 impl AutoCompleter {
     /// Create a new auto-completer
     pub fn new() -> Self {
-        let mut keywords = vec![
-            // DML
-            "SELECT",
-            "INSERT",
-            "UPDATE",
-            "DELETE",
-            "FROM",
-            "WHERE",
-            "JOIN",
-            "ON",
-            "AND",
-            "OR",
-            "NOT",
-            "IN",
-            "LIKE",
-            "BETWEEN",
-            "IS",
-            "NULL",
-            "AS",
-            "ORDER",
-            "BY",
-            "GROUP",
-            "HAVING",
-            "LIMIT",
-            "OFFSET",
-            "DISTINCT",
-            "VALUES",
-            "SET",
-            // DDL
-            "CREATE",
-            "DROP",
-            "ALTER",
-            "TABLE",
-            "INDEX",
-            "VIEW",
-            "DATABASE",
-            "SCHEMA",
-            // Constraints
-            "PRIMARY",
-            "KEY",
-            "FOREIGN",
-            "REFERENCES",
-            "UNIQUE",
-            "NOT",
-            "NULL",
-            "DEFAULT",
-            "CHECK",
-            "AUTO_INCREMENT",
-            // Functions
-            "COUNT",
-            "SUM",
-            "AVG",
-            "MIN",
-            "MAX",
-            "COALESCE",
-            "CAST",
-            "CONCAT",
-            "LENGTH",
-            "UPPER",
-            "LOWER",
-            "TRIM",
-            "NOW",
-            "CURRENT_TIMESTAMP",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect::<Vec<String>>();
-
-        let types = [
-            "INTEGER",
-            "BIGINT",
-            "TEXT",
-            "VARCHAR",
-            "BOOLEAN",
-            "TIMESTAMP",
-            "FLOAT",
-            "DOUBLE",
-            "JSON",
-        ];
-        keywords.extend(types.iter().map(|s| s.to_string()));
+        let keywords = SQL_KEYWORDS
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<String>>();
 
         let meta_commands = vec![
             "\\quit",
@@ -190,6 +199,35 @@ impl AutoCompleter {
     /// Update cached table names
     pub fn set_tables(&mut self, tables: Vec<String>) {
         self.tables = tables;
+    }
+
+    /// Provide a completion hint for inline suggestions
+    pub fn completion_hint(&self, line: &str, pos: usize) -> Option<String> {
+        let start = line[..pos]
+            .rfind(|c: char| c.is_whitespace() || c == '(' || c == '.')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+
+        let word = &line[start..pos];
+        if word.is_empty() {
+            return None;
+        }
+
+        let candidates = self.get_styled_completions(word, line);
+        for candidate in candidates {
+            if candidate.replacement.len() <= word.len() {
+                continue;
+            }
+
+            let suffix = &candidate.replacement[word.len()..];
+            if word.chars().all(|c| c.is_ascii_lowercase()) {
+                return Some(suffix.to_ascii_lowercase());
+            } else {
+                return Some(suffix.to_string());
+            }
+        }
+
+        None
     }
 
     /// Update cached column names for a table
@@ -294,18 +332,7 @@ impl AutoCompleter {
 
     /// Check if a keyword is a type
     fn is_type(word: &str) -> bool {
-        matches!(
-            word,
-            "INTEGER"
-                | "BIGINT"
-                | "TEXT"
-                | "VARCHAR"
-                | "BOOLEAN"
-                | "TIMESTAMP"
-                | "FLOAT"
-                | "DOUBLE"
-                | "JSON"
-        )
+        SQL_TYPES.contains(&word)
     }
 }
 

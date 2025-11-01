@@ -11,7 +11,6 @@
 mod common;
 use common::*;
 
-
 use std::fs;
 
 #[test]

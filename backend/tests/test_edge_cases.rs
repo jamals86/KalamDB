@@ -292,7 +292,7 @@ async fn test_role_change_applies_next_request() {
     let mut user = kalam_sql.get_user("role_change_user").unwrap().unwrap();
     user.role = Role::Dba;
     kalam_sql.insert_user(&user).expect("Failed to update user");
-    
+
     // Invalidate the user cache to ensure the role change is reflected
     auth_service.invalidate_user_cache("role_change_user").await;
 

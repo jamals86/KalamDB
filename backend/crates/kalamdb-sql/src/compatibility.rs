@@ -83,12 +83,18 @@ fn map_custom_type(name: &ObjectName, modifiers: &[String]) -> Result<DataType, 
         "embedding" => {
             // Extract dimension from modifiers
             if modifiers.len() != 1 {
-                return Err("EMBEDDING type requires exactly one dimension parameter, e.g., EMBEDDING(384)".to_string());
+                return Err(
+                    "EMBEDDING type requires exactly one dimension parameter, e.g., EMBEDDING(384)"
+                        .to_string(),
+                );
             }
-            
+
             let dim_str = &modifiers[0];
             let dim = dim_str.parse::<usize>().map_err(|_| {
-                format!("EMBEDDING dimension must be a positive integer, got '{}'", dim_str)
+                format!(
+                    "EMBEDDING dimension must be a positive integer, got '{}'",
+                    dim_str
+                )
             })?;
 
             // Validate dimension is within allowed range (1-8192)
@@ -96,16 +102,23 @@ fn map_custom_type(name: &ObjectName, modifiers: &[String]) -> Result<DataType, 
                 return Err("EMBEDDING dimension must be at least 1".to_string());
             }
             if dim > 8192 {
-                return Err(format!("EMBEDDING dimension must be at most 8192 (found {})", dim));
+                return Err(format!(
+                    "EMBEDDING dimension must be at most 8192 (found {})",
+                    dim
+                ));
             }
 
             // Return FixedSizeList<Float32> to match KalamDataType::Embedding Arrow conversion
             DataType::FixedSizeList(
-                std::sync::Arc::new(arrow::datatypes::Field::new("item", DataType::Float32, false)),
+                std::sync::Arc::new(arrow::datatypes::Field::new(
+                    "item",
+                    DataType::Float32,
+                    false,
+                )),
                 dim as i32,
             )
         }
-        
+
         // PostgreSQL serial aliases
         "serial" | "serial4" => DataType::Int32,
         "bigserial" | "serial8" => DataType::Int64,

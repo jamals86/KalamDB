@@ -113,7 +113,7 @@ async fn test_flush_table_persists_job() {
 #[tokio::test]
 async fn test_flush_all_tables_persists_jobs() {
     let (executor, _temp_dir, kalam_sql) = setup_test_environment().await;
-    
+
     // Create a DBA user to execute admin operations
     let admin_username = "test_admin";
     let admin_password = "AdminPass123!";
@@ -133,7 +133,9 @@ async fn test_flush_all_tables_persists_jobs() {
         last_seen: None,
         deleted_at: None,
     };
-    kalam_sql.insert_user(&admin_user).expect("Failed to insert admin user");
+    kalam_sql
+        .insert_user(&admin_user)
+        .expect("Failed to insert admin user");
     let admin_id = kalamdb_commons::UserId::new(admin_username);
 
     // Create 'local' storage (required for user tables)

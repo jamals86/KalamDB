@@ -1,6 +1,6 @@
 //! Table definition - single source of truth for table schemas
 
-use crate::models::schemas::{ColumnDefinition, SchemaVersion, TableType, TableOptions};
+use crate::models::schemas::{ColumnDefinition, SchemaVersion, TableOptions, TableType};
 use crate::models::types::{ArrowConversionError, ToArrowType};
 use arrow_schema::{Field, Schema as ArrowSchema};
 use chrono::{DateTime, Utc};
@@ -12,32 +12,32 @@ use std::sync::Arc;
 pub struct TableDefinition {
     /// Namespace ID (e.g., "default", "user_123")
     pub namespace_id: String,
-    
+
     /// Table name (case-sensitive)
     pub table_name: String,
-    
+
     /// Table type (USER, SHARED, STREAM, SYSTEM)
     pub table_type: TableType,
-    
+
     /// Column definitions (ordered by ordinal_position)
     pub columns: Vec<ColumnDefinition>,
-    
+
     /// Current schema version number
     pub schema_version: u32,
-    
+
     /// Schema version history (embedded for atomic updates)
     /// Sorted by version (ascending)
     pub schema_history: Vec<SchemaVersion>,
-    
+
     /// Type-safe table options based on table_type
     pub table_options: TableOptions,
-    
+
     /// Table comment/description
     pub table_comment: Option<String>,
-    
+
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
-    
+
     /// Last modification timestamp
     pub updated_at: DateTime<Utc>,
 }
@@ -55,7 +55,7 @@ impl TableDefinition {
     ) -> Result<Self, String> {
         let columns_sorted = Self::validate_and_sort_columns(columns)?;
         let now = Utc::now();
-        
+
         Ok(Self {
             namespace_id: namespace_id.into(),
             table_name: table_name.into(),
@@ -84,20 +84,35 @@ impl TableDefinition {
             TableType::Stream => TableOptions::stream(86400), // Default 24h TTL
             TableType::System => TableOptions::system(),
         };
-        
-        Self::new(namespace_id, table_name, table_type, columns, table_options, table_comment)
+
+        Self::new(
+            namespace_id,
+            table_name,
+            table_type,
+            columns,
+            table_options,
+            table_comment,
+        )
     }
 
     /// Validate and sort columns by ordinal_position
-    fn validate_and_sort_columns(mut columns: Vec<ColumnDefinition>) -> Result<Vec<ColumnDefinition>, String> {
+    fn validate_and_sort_columns(
+        mut columns: Vec<ColumnDefinition>,
+    ) -> Result<Vec<ColumnDefinition>, String> {
         // Check for duplicate ordinal positions
         let mut positions = std::collections::HashSet::new();
         for col in &columns {
             if col.ordinal_position == 0 {
-                return Err(format!("Column '{}' has invalid ordinal_position 0 (must be ≥ 1)", col.column_name));
+                return Err(format!(
+                    "Column '{}' has invalid ordinal_position 0 (must be ≥ 1)",
+                    col.column_name
+                ));
             }
             if !positions.insert(col.ordinal_position) {
-                return Err(format!("Duplicate ordinal_position {}", col.ordinal_position));
+                return Err(format!(
+                    "Duplicate ordinal_position {}",
+                    col.ordinal_position
+                ));
             }
         }
 
@@ -146,11 +161,11 @@ impl TableDefinition {
     ) -> Result<(), String> {
         let new_version = self.schema_version + 1;
         let schema_version = SchemaVersion::new(new_version, changes, arrow_schema_json);
-        
+
         self.schema_history.push(schema_version);
         self.schema_version = new_version;
         self.updated_at = Utc::now();
-        
+
         Ok(())
     }
 
@@ -178,7 +193,12 @@ impl TableDefinition {
     /// Add a column (for ALTER TABLE ADD COLUMN)
     pub fn add_column(&mut self, column: ColumnDefinition) -> Result<(), String> {
         // Validate ordinal_position is next available
-        let max_ordinal = self.columns.iter().map(|c| c.ordinal_position).max().unwrap_or(0);
+        let max_ordinal = self
+            .columns
+            .iter()
+            .map(|c| c.ordinal_position)
+            .max()
+            .unwrap_or(0);
         if column.ordinal_position != max_ordinal + 1 {
             return Err(format!(
                 "New column must have ordinal_position {}, got {}",
@@ -356,7 +376,9 @@ mod tests {
         )
         .unwrap();
 
-        table.add_schema_version("Added email column", "{}").unwrap();
+        table
+            .add_schema_version("Added email column", "{}")
+            .unwrap();
         assert_eq!(table.schema_version, 2);
         assert_eq!(table.schema_history.len(), 1);
         assert_eq!(table.schema_history[0].version, 2);
@@ -417,7 +439,7 @@ mod tests {
         let dropped = table.drop_column("name").unwrap();
         assert_eq!(dropped.column_name, "name");
         assert_eq!(table.columns.len(), 2);
-        
+
         // Verify ordinal_position preserved
         assert_eq!(table.columns[0].ordinal_position, 1); // id
         assert_eq!(table.columns[1].ordinal_position, 3); // age (not renumbered)
@@ -435,7 +457,7 @@ mod tests {
             None,
         )
         .unwrap();
-        
+
         assert!(matches!(user_table.options(), TableOptions::User(_)));
 
         // Test STREAM table options
