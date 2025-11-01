@@ -52,6 +52,7 @@ impl JobsTableSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn test_jobs_table_schema() {

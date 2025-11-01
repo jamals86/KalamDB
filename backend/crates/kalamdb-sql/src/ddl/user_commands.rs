@@ -319,6 +319,7 @@ mod tests {
         assert_eq!(stmt.auth_type, AuthType::OAuth);
         assert_eq!(stmt.password, None);
         assert_eq!(stmt.role, Role::User); // viewer maps to User
+        assert_eq!(stmt.email, Some("user@example.com".to_string()));
     }
 
     #[test]

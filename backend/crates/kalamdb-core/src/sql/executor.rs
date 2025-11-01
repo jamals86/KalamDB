@@ -759,7 +759,14 @@ impl SqlExecutor {
             SqlStatement::DropUser => self.execute_drop_user(sql, user_id, metadata).await,
             SqlStatement::Update => self.execute_update(sql, user_id).await,
             SqlStatement::Delete => self.execute_delete(sql, user_id).await,
-            SqlStatement::Select | SqlStatement::Insert => {
+            SqlStatement::Insert => {
+                // Check write permissions for shared tables before executing
+                let referenced_tables = Self::extract_table_references(sql);
+                self.check_write_permissions(user_id, &referenced_tables)?;
+                self.execute_datafusion_query_with_tables(sql, user_id, referenced_tables)
+                    .await
+            }
+            SqlStatement::Select => {
                 // Extract referenced tables from SQL and load only those
                 let referenced_tables = Self::extract_table_references(sql);
                 self.execute_datafusion_query_with_tables(sql, user_id, referenced_tables)
@@ -1467,6 +1474,75 @@ impl SqlExecutor {
         }
 
         Ok(user_session)
+    }
+
+    /// Check write permissions for shared tables
+    ///
+    /// For SHARED tables with PUBLIC access level, only service/dba/system roles can write.
+    /// Regular users can only READ public shared tables.
+    fn check_write_permissions(
+        &self,
+        user_id: Option<&UserId>,
+        table_refs: &Option<std::collections::HashSet<String>>,
+    ) -> Result<(), KalamDbError> {
+        // Get user role
+        let ctx = self.create_execution_context(user_id)?;
+        let user_role = ctx.user_role;
+
+        // Admins and service accounts can write to everything
+        if matches!(user_role, Role::System | Role::Dba | Role::Service) {
+            return Ok(());
+        }
+
+        // For regular users, check each referenced table
+        if let Some(table_refs) = table_refs {
+            let kalam_sql = self
+                .kalam_sql
+                .as_ref()
+                .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+
+            let all_tables = kalam_sql
+                .scan_all_tables()
+                .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
+
+            for table_ref in table_refs {
+                // Parse namespace.table or just table
+                let parts: Vec<&str> = table_ref.split('.').collect();
+                let (namespace, table_name) = if parts.len() == 2 {
+                    (parts[0], parts[1])
+                } else {
+                    ("default", parts[0])
+                };
+
+                // Find the table
+                if let Some(table) = all_tables.iter().find(|t| {
+                    t.namespace.as_str() == namespace && t.table_name.as_str() == table_name
+                }) {
+                    // Only check SHARED tables
+                    if table.table_type == TableType::Shared {
+                        let access_level = table.access_level.unwrap_or(TableAccess::Private);
+                        let is_owner = false; // TODO: Implement owner tracking
+
+                        if !crate::auth::rbac::can_write_shared_table(
+                            access_level,
+                            is_owner,
+                            user_role,
+                        ) {
+                            return Err(KalamDbError::Unauthorized(format!(
+                                "User '{}' (role: {:?}) does not have write permission to shared table '{}.{}' (access_level: {:?})",
+                                user_id.map(|u| u.as_str()).unwrap_or("anonymous"),
+                                user_role,
+                                namespace,
+                                table_name,
+                                access_level
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Execute query via DataFusion with selective table loading
@@ -3324,6 +3400,12 @@ impl SqlExecutor {
         // Parse UPDATE statement (basic parser for integration tests)
         let update_info = self.parse_update_statement(sql)?;
 
+        // Check write permissions for shared tables
+        let table_name = format!("{}.{}", update_info.namespace, update_info.table);
+        let mut table_refs = std::collections::HashSet::new();
+        table_refs.insert(table_name.clone());
+        self.check_write_permissions(user_id, &Some(table_refs))?;
+
         // Special-case: limited UPDATE support for system.users (restore user via deleted_at = NULL)
         if update_info.namespace.eq_ignore_ascii_case("system")
             && update_info.table.eq_ignore_ascii_case("users")
@@ -3504,6 +3586,12 @@ impl SqlExecutor {
     ) -> Result<ExecutionResult, KalamDbError> {
         // Parse DELETE statement
         let delete_info = self.parse_delete_statement(sql)?;
+
+        // Check write permissions for shared tables
+        let table_name = format!("{}.{}", delete_info.namespace, delete_info.table);
+        let mut table_refs = std::collections::HashSet::new();
+        table_refs.insert(table_name.clone());
+        self.check_write_permissions(user_id, &Some(table_refs))?;
 
         // Create appropriate SessionContext based on user_id
         let effective_user_id = user_id

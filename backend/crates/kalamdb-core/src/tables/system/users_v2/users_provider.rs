@@ -174,6 +174,8 @@ impl UsersTableProvider {
         let mut emails = StringBuilder::new();
         let mut auth_types = StringBuilder::new();
         let mut auth_datas = StringBuilder::new();
+        let mut storage_modes = StringBuilder::new();
+        let mut storage_ids = StringBuilder::new();
         let mut created_ats = Vec::new();
         let mut updated_ats = Vec::new();
         let mut last_seens = Vec::new();
@@ -187,6 +189,8 @@ impl UsersTableProvider {
             emails.append_option(user.email.as_deref());
             auth_types.append_value(user.auth_type.as_str());
             auth_datas.append_option(user.auth_data.as_deref());
+            storage_modes.append_value(user.storage_mode.as_str());
+            storage_ids.append_option(user.storage_id.as_ref().map(|s| s.as_str()));
             created_ats.push(Some(user.created_at));
             updated_ats.push(Some(user.updated_at));
             last_seens.push(user.last_seen);
@@ -203,6 +207,8 @@ impl UsersTableProvider {
                 Arc::new(emails.finish()) as ArrayRef,
                 Arc::new(auth_types.finish()) as ArrayRef,
                 Arc::new(auth_datas.finish()) as ArrayRef,
+                Arc::new(storage_modes.finish()) as ArrayRef,
+                Arc::new(storage_ids.finish()) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(last_seens)) as ArrayRef,
@@ -402,14 +408,14 @@ mod tests {
         // Scan all
         let batch = provider.scan_all_users().unwrap();
         assert_eq!(batch.num_rows(), 3);
-        assert_eq!(batch.num_columns(), 11);
+        assert_eq!(batch.num_columns(), 13);
     }
 
     #[test]
     fn test_table_provider_schema() {
         let provider = create_test_provider();
         let schema = provider.schema();
-        assert_eq!(schema.fields().len(), 11);
+        assert_eq!(schema.fields().len(), 13);
         assert_eq!(schema.field(0).name(), "user_id");
         assert_eq!(schema.field(1).name(), "username");
     }

@@ -100,6 +100,14 @@ struct Cli {
     #[arg(long = "no-color")]
     no_color: bool,
 
+    /// Disable spinners/animations
+    #[arg(long = "no-spinner")]
+    no_spinner: bool,
+
+    /// Loading indicator threshold in ms (0 to always show)
+    #[arg(long = "loading-threshold-ms")]
+    loading_threshold_ms: Option<u64>,
+
     /// Configuration file path
     #[arg(long = "config", default_value = "~/.kalam/config.toml")]
     config: PathBuf,
@@ -309,6 +317,8 @@ async fn main() -> Result<()> {
             !cli.no_color,
             Some(cli.instance.clone()),
             Some(credential_store),
+            cli.loading_threshold_ms,
+            !cli.no_spinner,
         )
         .await?;
 
@@ -409,6 +419,8 @@ async fn main() -> Result<()> {
         !cli.no_color,
         Some(cli.instance.clone()),
         Some(credential_store),
+        cli.loading_threshold_ms,
+        !cli.no_spinner,
     )
     .await?;
 

@@ -71,6 +71,9 @@ pub struct CLISession {
     /// Threshold for showing loading indicator (milliseconds)
     loading_threshold_ms: u64,
 
+    /// Enable spinners/animations
+    animations: bool,
+
     /// Authenticated username
     username: String,
 
@@ -106,7 +109,17 @@ impl CLISession {
         format: OutputFormat,
         color: bool,
     ) -> Result<Self> {
-        Self::with_auth_and_instance(server_url, auth, format, color, None, None).await
+        Self::with_auth_and_instance(
+            server_url,
+            auth,
+            format,
+            color,
+            None,
+            None,
+            None,
+            true,
+        )
+        .await
     }
 
     /// Create a new CLI session with AuthProvider, instance name, and credential store
@@ -119,6 +132,8 @@ impl CLISession {
         color: bool,
         instance: Option<String>,
         credential_store: Option<crate::credentials::FileCredentialStore>,
+        loading_threshold_ms: Option<u64>,
+        animations: bool,
     ) -> Result<Self> {
         // Build kalam-link client with authentication
         let client = KalamLinkClient::builder()
@@ -158,7 +173,8 @@ impl CLISession {
             color,
             connected,
             subscription_paused: false,
-            loading_threshold_ms: 200, // Default: 200ms
+            loading_threshold_ms: loading_threshold_ms.unwrap_or(200),
+            animations,
             username,
             connected_at: Instant::now(),
             queries_executed: 0,
@@ -183,22 +199,25 @@ impl CLISession {
 
         // Create a loading indicator with proper cleanup
         let spinner = Arc::new(Mutex::new(None::<ProgressBar>));
-        let spinner_clone = Arc::clone(&spinner);
-
-        let show_loading = tokio::spawn({
+        let show_loading = if self.animations {
+            let spinner_clone = Arc::clone(&spinner);
             let threshold = Duration::from_millis(self.loading_threshold_ms);
-            async move {
+            Some(tokio::spawn(async move {
                 tokio::time::sleep(threshold).await;
                 let pb = Self::create_spinner();
                 *spinner_clone.lock().unwrap() = Some(pb);
-            }
-        });
+            }))
+        } else {
+            None
+        };
 
         // Execute the query
         let result = self.client.execute_query(sql).await;
 
         // Cancel the loading indicator and finish spinner if it was shown
-        show_loading.abort();
+        if let Some(task) = show_loading {
+            task.abort();
+        }
         if let Some(pb) = spinner.lock().unwrap().take() {
             pb.finish_and_clear();
         }
@@ -424,12 +443,10 @@ impl CLISession {
         // Create autocompleter and verify connection by fetching tables
         // This also verifies authentication works
         let mut completer = AutoCompleter::new();
-        print!("{}", "Connecting and authenticating... ".dimmed());
-        std::io::Write::flush(&mut std::io::stdout()).ok();
+        println!("{}", "Connecting and authenticating...".dimmed());
 
         // Try to fetch tables - this verifies both connection and authentication
         if let Err(e) = self.refresh_tables(&mut completer).await {
-            println!("{}", "✗".red());
             eprintln!();
             eprintln!("{} {}", "Connection failed:".red().bold(), e);
             eprintln!();
@@ -446,10 +463,11 @@ impl CLISession {
             eprintln!("  • Verify credentials with: kalam --username <user> --password <pass>");
             eprintln!("  • Use \\show-credentials to see stored credentials");
             eprintln!();
-            return Err(e);
+            // Exit to avoid a second noisy error line from main's Result
+            std::process::exit(1);
         }
 
-        println!("{}", "✓".green());
+        println!("{}", "✓ Connected".green());
 
         // Connection and auth successful - print welcome banner
         self.print_banner();
@@ -654,36 +672,116 @@ impl CLISession {
         println!();
     }
 
-    /// Fetch table names from server and update completer
+    /// Fetch namespaces, table names, and column names from server and update completer
     async fn refresh_tables(&mut self, completer: &mut AutoCompleter) -> Result<()> {
-        // Query system.tables to get table names
-        let response = self
-            .client
-            .execute_query("SELECT table_name FROM system.tables")
-            .await?;
+        // Query namespaces first
+        let namespaces_res = if self.animations {
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                    .template("{spinner:.cyan} Fetching namespaces...")
+                    .unwrap(),
+            );
+            pb.enable_steady_tick(Duration::from_millis(80));
+            let resp = self
+                .client
+                .execute_query("SELECT name FROM system.namespaces ORDER BY name")
+                .await;
+            pb.finish_and_clear();
+            resp
+        } else {
+            self
+                .client
+                .execute_query("SELECT name FROM system.namespaces ORDER BY name")
+                .await
+        };
 
-        // Extract table names from response
+        if let Ok(ns_resp) = namespaces_res {
+            let mut namespaces = Vec::new();
+            if let Some(result) = ns_resp.results.get(0) {
+                if let Some(rows) = &result.rows {
+                    for row in rows {
+                        if let Some(ns) = row.get("name").and_then(|v| v.as_str()) {
+                            namespaces.push(ns.to_string());
+                        }
+                    }
+                }
+            }
+            completer.set_namespaces(namespaces);
+        }
+
+        // Query system.tables to get table names and namespace mapping
+        let response = if self.animations {
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                    .template("{spinner:.cyan} Fetching tables...")
+                    .unwrap(),
+            );
+            pb.enable_steady_tick(Duration::from_millis(80));
+            let resp = self
+                .client
+                .execute_query("SELECT table_name, namespace FROM system.tables")
+                .await?;
+            pb.finish_and_clear();
+            resp
+        } else {
+            self.client
+                .execute_query("SELECT table_name, namespace FROM system.tables")
+                .await?
+        };
+
+        // Extract table names and namespace mapping from response
         let mut table_names = Vec::new();
+        let mut ns_map: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
         if let Some(result) = response.results.get(0) {
             if let Some(rows) = &result.rows {
                 for row in rows {
-                    if let Some(name) = row.get("table_name").and_then(|value| value.as_str()) {
+                    let name_opt = row.get("table_name").and_then(|v| v.as_str());
+                    let ns_opt = row.get("namespace").and_then(|v| v.as_str());
+                    if let Some(name) = name_opt {
                         table_names.push(name.to_string());
+                        if let Some(ns) = ns_opt {
+                            ns_map.entry(ns.to_string()).or_default().push(name.to_string());
+                        }
                     }
                 }
             }
         }
 
         completer.set_tables(table_names);
+        for (ns, tables) in ns_map {
+            completer.set_namespace_tables(ns, tables);
+        }
         completer.clear_columns();
 
-        if let Ok(column_response) = self
-            .client
-            .execute_query(
-                "SELECT table_name, column_name FROM system.columns ORDER BY table_name, ordinal_position",
-            )
-            .await
-        {
+        if let Ok(column_response) = if self.animations {
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                    .template("{spinner:.cyan} Fetching columns...")
+                    .unwrap(),
+            );
+            pb.enable_steady_tick(Duration::from_millis(80));
+            let resp = self
+                .client
+                .execute_query(
+                    "SELECT table_name, column_name FROM system.columns ORDER BY table_name, ordinal_position",
+                )
+                .await;
+            pb.finish_and_clear();
+            resp
+        } else {
+            self.client
+                .execute_query(
+                    "SELECT table_name, column_name FROM system.columns ORDER BY table_name, ordinal_position",
+                )
+                .await
+        } {
             if let Some(result) = column_response.results.get(0) {
                 if let Some(rows) = &result.rows {
                     let mut column_map: HashMap<String, Vec<String>> = HashMap::new();
@@ -1110,47 +1208,123 @@ impl CLISession {
         }
     }
 
-    /// Show help message
+    /// Show help message (styled, sectioned)
     fn show_help(&self) {
-        println!("Kalam CLI Commands:");
+        use colored::Colorize;
+
         println!();
-        println!("  SQL Statements:");
-        println!("    SELECT, INSERT, UPDATE, DELETE, CREATE TABLE, etc.");
-        println!();
-        println!("  Meta-commands:");
-        println!("    \\quit, \\q              Exit the CLI");
-        println!("    \\help, \\?              Show this help message");
-        println!("    \\info, \\session         Show current session information");
-        println!("    \\connect <url>         Connect to a different server");
-        println!("    \\config                Show current configuration");
-        println!("    \\flush                 Flush all data to disk");
-        println!("    \\health                Check server health");
-        println!("    \\stats, \\metrics       Show server/runtime statistics");
-        println!("    \\pause                 Pause ingestion");
-        println!("    \\continue              Resume ingestion");
-        println!("    \\dt, \\tables           List all tables");
-        println!("    \\d <table>             Describe table schema");
-        println!("    \\format <type>         Set output format (table, json, csv)");
-        println!("    \\subscribe <query>     Start WebSocket subscription");
-        println!("    \\watch <query>         Alias for \\subscribe");
-        println!("    \\unsubscribe           Cancel active subscription");
-        println!("    \\refresh-tables        Refresh table names for autocomplete");
-        println!("    \\show-credentials      Show stored credentials for current instance");
-        println!("    \\update-credentials <user> <pass>  Update credentials");
-        println!("    \\delete-credentials    Delete stored credentials");
-        println!();
-        println!("  Features:");
-        println!("    - TAB completion for SQL keywords, table names, and columns");
-        println!("    - Loading indicator for queries taking longer than 200ms");
-        println!("    - Command history (saved in ~/.kalam/history)");
-        println!();
-        println!("  Examples:");
-        println!("    SELECT * FROM users WHERE age > 18;");
-        println!("    INSERT INTO users (name, age) VALUES ('Alice', 25);");
-        println!("    \\dt");
-        println!("    \\d users");
-        println!("    \\subscribe SELECT * FROM messages");
-        println!("    \\show-credentials");
+        println!(
+            "{}",
+            "╔═══════════════════════════════════════════════════════════╗"
+                .bright_blue()
+                .bold()
+        );
+        println!(
+            "{}{}{}",
+            "║ ".bright_blue().bold(),
+            "Commands & Shortcuts".white().bold(),
+            format!(
+                "{}",
+                "                                                 ║"
+            )
+            .bright_blue()
+            .bold()
+        );
+        println!(
+            "{}",
+            "╠═══════════════════════════════════════════════════════════╣"
+                .bright_blue()
+                .bold()
+        );
+
+        // Basics
+        println!("{}", "║  Basics".bright_blue().bold());
+        println!("{}", "║    • Write SQL; end with ';' to run".to_string());
+        println!(
+            "{}{}",
+            "║    • Autocomplete: keywords, namespaces, tables, columns  ".to_string(),
+            "(Tab)".dimmed()
+        );
+        println!(
+            "{}",
+            "║    • Inline hints and SQL highlighting enabled".to_string()
+        );
+
+        // Meta-commands (two columns)
+        println!(
+            "{}",
+            "╠───────────────────────────────────────────────────────────╣"
+                .bright_blue()
+                .bold()
+        );
+        println!("{}", "║  Meta-Commands".bright_blue().bold());
+        let left = vec![
+            ("\\help, \\?", "Show this help"),
+            ("\\quit, \\q", "Exit CLI"),
+            ("\\info", "Session info"),
+            ("\\connect <url>", "Connect to server"),
+            ("\\config", "Show config"),
+            ("\\format <type>", "table|json|csv"),
+        ];
+        let right = vec![
+            ("\\dt", "List tables"),
+            ("\\d <table>", "Describe table"),
+            ("\\stats", "System stats"),
+            ("\\health", "Health check"),
+            ("\\refresh-tables", "Refresh autocomplete"),
+            ("\\subscribe <SQL>", "Start live query"),
+        ];
+        for i in 0..left.len().max(right.len()) {
+            let l = left.get(i).map(|(a, b)| format!("{:<18} {:<18}", a.cyan(), b)).unwrap_or_else(|| "".into());
+            let r = right
+                .get(i)
+                .map(|(a, b)| format!("{:<18} {:<18}", a.cyan(), b))
+                .unwrap_or_else(|| "".into());
+            println!("║  {}  {}{}", l, r, " ".repeat(7));
+        }
+
+        // Credentials
+        println!(
+            "{}",
+            "╠───────────────────────────────────────────────────────────╣"
+                .bright_blue()
+                .bold()
+        );
+        println!("{}", "║  Credentials".bright_blue().bold());
+        println!(
+            "║    {:<24} {}",
+            "\\show-credentials".cyan(),
+            "Show stored credentials"
+        );
+        println!(
+            "║    {:<24} {}",
+            "\\update-credentials <u> <p>".cyan(),
+            "Update credentials"
+        );
+        println!(
+            "║    {:<24} {}",
+            "\\delete-credentials".cyan(),
+            "Delete stored credentials"
+        );
+
+        // Tips & examples
+        println!(
+            "{}",
+            "╠───────────────────────────────────────────────────────────╣"
+                .bright_blue()
+                .bold()
+        );
+        println!("{}", "║  Examples".bright_blue().bold());
+        println!("║    {}", "SELECT * FROM system.tables LIMIT 5;".green());
+        println!("║    {}", "SELECT name FROM system.namespaces;".green());
+        println!("║    {}", "\\d system.jobs".green());
+
+        println!(
+            "{}",
+            "╚═══════════════════════════════════════════════════════════╝"
+                .bright_blue()
+                .bold()
+        );
         println!();
     }
 

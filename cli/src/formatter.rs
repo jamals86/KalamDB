@@ -86,6 +86,7 @@ impl OutputFormatter {
 
         // Handle data results
         if let Some(ref rows) = result.rows {
+            // Determine columns and pre-stringify all cell values for performance
             let columns: Vec<String> = if rows.is_empty() {
                 result.columns.clone()
             } else {
@@ -94,16 +95,20 @@ impl OutputFormatter {
 
             let terminal_width = Self::get_terminal_width();
 
-            // Calculate initial column widths
+            // Precompute string values once to avoid double formatting
+            let mut string_rows: Vec<Vec<String>> = Vec::with_capacity(rows.len());
             let mut col_widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
             for row in rows {
+                let mut srow: Vec<String> = Vec::with_capacity(columns.len());
                 for (i, col) in columns.iter().enumerate() {
                     let value = row
                         .get(col)
                         .map(|v| self.format_json_value(v))
                         .unwrap_or_else(|| "NULL".to_string());
                     col_widths[i] = col_widths[i].max(value.len());
+                    srow.push(value);
                 }
+                string_rows.push(srow);
             }
 
             let column_count = col_widths.len();
@@ -181,15 +186,11 @@ impl OutputFormatter {
             output.push('\n');
 
             // Data rows
-            for row in rows {
+            for srow in &string_rows {
                 output.push('│');
-                for (i, col) in columns.iter().enumerate() {
-                    let value = row
-                        .get(col)
-                        .map(|v| self.format_json_value(v))
-                        .unwrap_or_else(|| "NULL".to_string());
+                for (i, value) in srow.iter().enumerate() {
                     output.push(' ');
-                    let truncated = Self::truncate_value(&value, col_widths[i]);
+                    let truncated = Self::truncate_value(value, col_widths[i]);
                     output.push_str(&format!("{:width$}", truncated, width = col_widths[i]));
                     output.push(' ');
                     output.push('│');
@@ -209,7 +210,7 @@ impl OutputFormatter {
             }
             output.push('\n');
 
-            let row_count = rows.len();
+            let row_count = string_rows.len();
             let row_label = if row_count == 1 { "row" } else { "rows" };
             output.push_str(&format!("({} {})\n", row_count, row_label));
             // Add blank line for psql-style formatting

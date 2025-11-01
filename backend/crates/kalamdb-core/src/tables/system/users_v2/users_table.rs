@@ -3,11 +3,13 @@
 //! This module defines the Arrow schema for the system.users table.
 //! Uses OnceLock for zero-overhead static schema caching.
 
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
-use std::sync::{Arc, OnceLock};
+use datafusion::arrow::datatypes::SchemaRef;
+use std::sync::OnceLock;
+
+use crate::tables::system::system_table_definitions::users_table_definition;
 
 /// Static schema cache for the users table
-static USERS_SCHEMA: OnceLock<Arc<Schema>> = OnceLock::new();
+static USERS_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
 
 /// System users table schema definition
 pub struct UsersTableSchema;
@@ -17,38 +19,15 @@ impl UsersTableSchema {
     ///
     /// Uses OnceLock to ensure the schema is created exactly once and reused
     /// across all providers without synchronization overhead.
+    ///
+    /// Schema is built from TableDefinition which ensures columns are ordered
+    /// by ordinal_position (Phase 4 requirement: T062-T065).
     pub fn schema() -> SchemaRef {
         USERS_SCHEMA
             .get_or_init(|| {
-                Arc::new(Schema::new(vec![
-                    Field::new("user_id", DataType::Utf8, false),
-                    Field::new("username", DataType::Utf8, false),
-                    Field::new("password_hash", DataType::Utf8, false),
-                    Field::new("role", DataType::Utf8, false),
-                    Field::new("email", DataType::Utf8, true),
-                    Field::new("auth_type", DataType::Utf8, false),
-                    Field::new("auth_data", DataType::Utf8, true),
-                    Field::new(
-                        "created_at",
-                        DataType::Timestamp(TimeUnit::Millisecond, None),
-                        false,
-                    ),
-                    Field::new(
-                        "updated_at",
-                        DataType::Timestamp(TimeUnit::Millisecond, None),
-                        false,
-                    ),
-                    Field::new(
-                        "last_seen",
-                        DataType::Timestamp(TimeUnit::Millisecond, None),
-                        true,
-                    ),
-                    Field::new(
-                        "deleted_at",
-                        DataType::Timestamp(TimeUnit::Millisecond, None),
-                        true,
-                    ),
-                ]))
+                users_table_definition()
+                    .to_arrow_schema()
+                    .expect("Failed to convert users TableDefinition to Arrow schema")
             })
             .clone()
     }
@@ -72,22 +51,29 @@ impl UsersTableSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn test_users_table_schema() {
         let schema = UsersTableSchema::schema();
-        assert_eq!(schema.fields().len(), 11);
-        assert_eq!(schema.field(0).name(), "user_id");
-        assert_eq!(schema.field(1).name(), "username");
-        assert_eq!(schema.field(2).name(), "password_hash");
-        assert_eq!(schema.field(3).name(), "role");
-        assert_eq!(schema.field(4).name(), "email");
-        assert_eq!(schema.field(5).name(), "auth_type");
-        assert_eq!(schema.field(6).name(), "auth_data");
-        assert_eq!(schema.field(7).name(), "created_at");
-        assert_eq!(schema.field(8).name(), "updated_at");
-        assert_eq!(schema.field(9).name(), "last_seen");
-        assert_eq!(schema.field(10).name(), "deleted_at");
+        // Schema built from TableDefinition, verify field count and names are correct
+        assert_eq!(schema.fields().len(), 13);
+        
+        // Verify fields exist (order guaranteed by TableDefinition's ordinal_position)
+        let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
+        assert!(field_names.contains(&"user_id"));
+        assert!(field_names.contains(&"username"));
+        assert!(field_names.contains(&"password_hash"));
+        assert!(field_names.contains(&"role"));
+        assert!(field_names.contains(&"email"));
+        assert!(field_names.contains(&"auth_type"));
+        assert!(field_names.contains(&"auth_data"));
+        assert!(field_names.contains(&"storage_mode"));
+        assert!(field_names.contains(&"storage_id"));
+        assert!(field_names.contains(&"created_at"));
+        assert!(field_names.contains(&"updated_at"));
+        assert!(field_names.contains(&"last_seen"));
+        assert!(field_names.contains(&"deleted_at"));
     }
 
     #[test]

@@ -117,6 +117,9 @@ impl StyledPair {
                 format!("{}  {}", text.cyan().bold(), "command".dimmed())
             }
             CompletionCategory::Type => format!("{}  {}", text.magenta(), "type".dimmed()),
+            CompletionCategory::Namespace => {
+                format!("{}  {}", text.cyan(), "namespace".dimmed())
+            }
         };
 
         Self {
@@ -134,6 +137,7 @@ enum CompletionCategory {
     Column,
     MetaCommand,
     Type,
+    Namespace,
 }
 
 /// Auto-completer for SQL and meta-commands
@@ -149,6 +153,12 @@ pub struct AutoCompleter {
 
     /// Cached column names per table (table_name -> Vec<column_name>)
     columns: HashMap<String, Vec<String>>,
+
+    /// Cached namespaces
+    namespaces: Vec<String>,
+
+    /// Cached tables per namespace (namespace -> Vec<table_name>)
+    ns_tables: HashMap<String, Vec<String>>,
 }
 
 impl AutoCompleter {
@@ -193,12 +203,24 @@ impl AutoCompleter {
             meta_commands,
             tables: Vec::new(),
             columns: HashMap::new(),
+            namespaces: Vec::new(),
+            ns_tables: HashMap::new(),
         }
     }
 
     /// Update cached table names
     pub fn set_tables(&mut self, tables: Vec<String>) {
         self.tables = tables;
+    }
+
+    /// Update cached namespaces
+    pub fn set_namespaces(&mut self, namespaces: Vec<String>) {
+        self.namespaces = namespaces;
+    }
+
+    /// Update cached tables for a given namespace
+    pub fn set_namespace_tables(&mut self, namespace: String, tables: Vec<String>) {
+        self.ns_tables.insert(namespace, tables);
     }
 
     /// Provide a completion hint for inline suggestions
@@ -213,7 +235,7 @@ impl AutoCompleter {
             return None;
         }
 
-        let candidates = self.get_styled_completions(word, line);
+        let candidates = self.get_styled_completions(word, line, pos);
         for candidate in candidates {
             if candidate.replacement.len() <= word.len() {
                 continue;
@@ -241,19 +263,29 @@ impl AutoCompleter {
     }
 
     /// Detect completion context from the line
-    fn detect_context(&self, line: &str) -> CompletionContext {
+    fn detect_context(&self, line: &str, pos: usize) -> CompletionContext {
         let line_upper = line.to_uppercase();
 
         // Check if we're after FROM or JOIN (table name context)
         if line_upper.contains(" FROM ") || line_upper.contains(" JOIN ") {
-            // Check if there's a dot (table.column context)
-            if let Some(dot_pos) = line.rfind('.') {
+            // Consider the token currently being edited (up to pos)
+            let upto = &line[..pos];
+            if let Some(dot_pos) = upto.rfind('.') {
                 // Extract table name before the dot
-                let before_dot = &line[..dot_pos];
+                let before_dot = &upto[..dot_pos];
                 if let Some(word_start) =
                     before_dot.rfind(|c: char| c.is_whitespace() || c == '(' || c == ',')
                 {
                     let table_name = before_dot[word_start + 1..].trim().to_string();
+                    // If the token before dot matches a known namespace, assume namespace.table completion
+                    let ns_upper = table_name.to_ascii_uppercase();
+                    if self
+                        .namespaces
+                        .iter()
+                        .any(|ns| ns.to_ascii_uppercase() == ns_upper)
+                    {
+                        return CompletionContext::NamespaceTable(table_name);
+                    }
                     return CompletionContext::Column(table_name);
                 }
             }
@@ -265,7 +297,7 @@ impl AutoCompleter {
     }
 
     /// Get completions with styling for display
-    fn get_styled_completions(&self, input: &str, line: &str) -> Vec<StyledPair> {
+    fn get_styled_completions(&self, input: &str, line: &str, pos: usize) -> Vec<StyledPair> {
         let input_upper = input.to_uppercase();
         let mut results = Vec::new();
 
@@ -282,14 +314,60 @@ impl AutoCompleter {
             return results;
         }
 
-        let context = self.detect_context(line);
+        let context = self.detect_context(line, pos);
 
         match context {
             CompletionContext::Table => {
                 // Only suggest table names
-                for table in &self.tables {
-                    if table.to_uppercase().starts_with(&input_upper) {
-                        results.push(StyledPair::new(table.clone(), CompletionCategory::Table));
+                // If input contains a dot, try namespace.table suggestions
+                if let Some(dot_idx) = input.find('.') {
+                    let (ns_part, tbl_part) = input.split_at(dot_idx);
+                    let ns_part_upper = ns_part.to_ascii_uppercase();
+                    let tbl_part = tbl_part.trim_start_matches('.');
+                    let tbl_part_upper = tbl_part.to_ascii_uppercase();
+
+                    // Exact namespace match
+                    if let Some((ns_name, tables)) = self
+                        .ns_tables
+                        .iter()
+                        .find(|(k, _)| k.to_ascii_uppercase() == ns_part_upper)
+                    {
+                        for t in tables {
+                            if t.to_ascii_uppercase().starts_with(&tbl_part_upper) {
+                                results.push(StyledPair::new(
+                                    format!("{}.{}", ns_name, t),
+                                    CompletionCategory::Table,
+                                ));
+                            }
+                        }
+                    }
+
+                    // Also suggest namespaces (ns.) if partial matches
+                    for ns in &self.namespaces {
+                        if ns.to_ascii_uppercase().starts_with(&ns_part_upper) {
+                            results.push(StyledPair::new(
+                                format!("{}.", ns),
+                                CompletionCategory::Namespace,
+                            ));
+                        }
+                    }
+                } else {
+                    // No dot → offer namespaces (as ns.) and bare tables
+                    for ns in &self.namespaces {
+                        if ns.to_ascii_uppercase().starts_with(&input_upper) {
+                            results.push(StyledPair::new(
+                                format!("{}.", ns),
+                                CompletionCategory::Namespace,
+                            ));
+                        }
+                    }
+                    for table in &self.tables {
+                        if table.to_uppercase().starts_with(&input_upper) {
+                            results.push(StyledPair::new(
+                                table.clone(),
+                                CompletionCategory::Table,
+                            ));
+                        }
                     }
                 }
             }
@@ -299,6 +377,17 @@ impl AutoCompleter {
                     for col in cols {
                         if col.to_uppercase().starts_with(&input_upper) {
                             results.push(StyledPair::new(col.clone(), CompletionCategory::Column));
+                        }
+                    }
+                }
+            }
+            CompletionContext::NamespaceTable(ref namespace) => {
+                if let Some(cols) = self.ns_tables.get(namespace) {
+                    // Here `cols` are tables within the namespace
+                    for t in cols {
+                        let composite = format!("{}.{}", namespace, t);
+                        if composite.to_ascii_uppercase().starts_with(&input_upper) {
+                            results.push(StyledPair::new(composite, CompletionCategory::Table));
                         }
                     }
                 }
@@ -345,6 +434,8 @@ enum CompletionContext {
     Table,
     /// Column name context (after table.)
     Column(String),
+    /// Namespace-qualified table context (after FROM/JOIN with ns.)
+    NamespaceTable(String),
 }
 
 impl Default for AutoCompleter {
@@ -363,13 +454,21 @@ impl Completer for AutoCompleter {
         _ctx: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Pair>)> {
         // Find the start of the current word
-        let start = line[..pos]
-            .rfind(|c: char| c.is_whitespace() || c == '(' || c == '.')
-            .map(|i| i + 1)
-            .unwrap_or(0);
+        // Compute token start. In Table context keep namespace prefix (do not split on '.')
+        let ctx = self.detect_context(line, pos);
+        let start = match ctx {
+            CompletionContext::Table | CompletionContext::NamespaceTable(_) => line[..pos]
+                .rfind(|c: char| c.is_whitespace() || c == '(' || c == ',')
+                .map(|i| i + 1)
+                .unwrap_or(0),
+            _ => line[..pos]
+                .rfind(|c: char| c.is_whitespace() || c == '(' || c == '.')
+                .map(|i| i + 1)
+                .unwrap_or(0),
+        };
 
         let word = &line[start..pos];
-        let styled_completions = self.get_styled_completions(word, line);
+        let styled_completions = self.get_styled_completions(word, line, pos);
 
         let pairs: Vec<Pair> = styled_completions
             .into_iter()
@@ -390,14 +489,16 @@ mod tests {
     #[test]
     fn test_keyword_completion() {
         let completer = AutoCompleter::new();
-        let completions = completer.get_styled_completions("SEL", "SEL");
+        let line = "SEL";
+        let completions = completer.get_styled_completions("SEL", line, line.len());
         assert!(completions.iter().any(|c| c.replacement == "SELECT"));
     }
 
     #[test]
     fn test_meta_command_completion() {
         let completer = AutoCompleter::new();
-        let completions = completer.get_styled_completions("\\q", "\\q");
+        let line = "\\q";
+        let completions = completer.get_styled_completions("\\q", line, line.len());
         assert!(completions.iter().any(|c| c.replacement == "\\quit"));
         assert!(completions.iter().any(|c| c.replacement == "\\q"));
     }
@@ -407,7 +508,8 @@ mod tests {
         let mut completer = AutoCompleter::new();
         completer.set_tables(vec!["users".to_string(), "user_sessions".to_string()]);
 
-        let completions = completer.get_styled_completions("user", "user");
+        let line = "user";
+        let completions = completer.get_styled_completions("user", line, line.len());
         assert!(completions.iter().any(|c| c.replacement == "users"));
         assert!(completions.iter().any(|c| c.replacement == "user_sessions"));
     }
@@ -418,7 +520,8 @@ mod tests {
         completer.set_tables(vec!["users".to_string(), "messages".to_string()]);
 
         // After FROM, should only suggest tables
-        let completions = completer.get_styled_completions("me", "SELECT * FROM me");
+        let line = "SELECT * FROM me";
+        let completions = completer.get_styled_completions("me", line, line.len());
         assert!(completions.iter().any(|c| c.replacement == "messages"));
     }
 
@@ -432,7 +535,8 @@ mod tests {
         );
 
         // After table., should suggest columns (with FROM keyword present)
-        let completions = completer.get_styled_completions("na", "SELECT users.na FROM users");
+        let line = "SELECT users.na FROM users";
+        let completions = completer.get_styled_completions("na", line, line.len());
         assert!(completions.iter().any(|c| c.replacement == "name"));
     }
 }

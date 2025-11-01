@@ -1,9 +1,13 @@
 //! System.live_queries table schema
 //!
 //! Defines the Arrow schema for the system.live_queries table.
+//! 
+//! Phase 4 (Column Ordering): Uses live_queries_table_definition().to_arrow_schema()
+//! to ensure consistent column ordering via ordinal_position field.
 
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use std::sync::{Arc, OnceLock};
+use datafusion::arrow::datatypes::SchemaRef;
+use std::sync::OnceLock;
+use crate::tables::system::system_table_definitions::live_queries_table_definition;
 
 /// Cached schema for system.live_queries table
 static LIVE_QUERIES_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
@@ -14,7 +18,7 @@ pub struct LiveQueriesTableSchema;
 impl LiveQueriesTableSchema {
     /// Get the Arrow schema for system.live_queries table
     ///
-    /// Schema includes:
+    /// Schema includes (in ordinal_position order):
     /// - live_id: Utf8 (PK) - Format: {user_id}-{unique_conn_id}-{table_name}-{query_id}
     /// - connection_id: Utf8
     /// - namespace_id: Utf8
@@ -30,34 +34,9 @@ impl LiveQueriesTableSchema {
     pub fn schema() -> SchemaRef {
         LIVE_QUERIES_SCHEMA
             .get_or_init(|| {
-                Arc::new(Schema::new(vec![
-                    Field::new("live_id", DataType::Utf8, false),
-                    Field::new("connection_id", DataType::Utf8, false),
-                    Field::new("namespace_id", DataType::Utf8, false),
-                    Field::new("table_name", DataType::Utf8, false),
-                    Field::new("query_id", DataType::Utf8, false),
-                    Field::new("user_id", DataType::Utf8, false),
-                    Field::new("query", DataType::Utf8, false),
-                    Field::new("options", DataType::Utf8, true),
-                    Field::new(
-                        "created_at",
-                        DataType::Timestamp(
-                            datafusion::arrow::datatypes::TimeUnit::Millisecond,
-                            None,
-                        ),
-                        false,
-                    ),
-                    Field::new(
-                        "last_update",
-                        DataType::Timestamp(
-                            datafusion::arrow::datatypes::TimeUnit::Millisecond,
-                            None,
-                        ),
-                        false,
-                    ),
-                    Field::new("changes", DataType::Int64, false),
-                    Field::new("node", DataType::Utf8, false),
-                ]))
+                live_queries_table_definition()
+                    .to_arrow_schema()
+                    .expect("Failed to convert live_queries TableDefinition to Arrow schema")
             })
             .clone()
     }

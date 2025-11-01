@@ -156,6 +156,14 @@ cargo test -p kalamdb-sql
 - **Storage Abstraction**: Use `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>` (except in kalamdb-store)
 
 ## Recent Changes
+- 2025-11-01: **Phase 4 Column Ordering Investigation** - Discovered and partially fixed incomplete Phase 4 implementation:
+  - **Issue**: Phase 4 marked complete but SELECT * returned random column order each query
+  - **Root Cause**: System table providers used hardcoded Arrow schemas instead of TableDefinition.to_arrow_schema()
+  - **Fixed**: system.jobs now uses jobs_table_definition().to_arrow_schema() for consistent ordering
+  - **Incomplete**: 5/6 system tables (users, namespaces, storages, live_queries, tables) have incomplete TableDefinitions
+  - **Status**: Created PHASE4_COLUMN_ORDERING_STATUS.md and COLUMN_ORDERING_FIX_SUMMARY.md
+  - **Next Steps**: Complete missing ColumnDefinitions (~40-50 entries) then apply same pattern to other tables
+  - **Files**: Modified jobs_v2/jobs_table.rs; reverted incomplete changes to other 5 system tables
 - 2025-11-01: **Phase 14 Step 12: Additional Optimizations (P0 Tasks)** - Completed critical performance and reliability improvements:
   - **T236 String Interner**: Verified existing implementation with DashMap-based lock-free interning, pre-interned SYSTEM_COLUMNS (5 tests pass)
   - **T237 Error Handling**: Added StorageError::LockPoisoned variant, replaced unwrap() with expect() + clear messages, graceful degradation

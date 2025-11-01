@@ -72,8 +72,58 @@ pub fn users_table_definition() -> TableDefinition {
             Some("User role: user, service, dba, system".to_string()),
         ),
         ColumnDefinition::new(
-            "created_at",
+            "email",
             5,
+            KalamDataType::Text,
+            true, // NULLABLE
+            false,
+            false,
+            ColumnDefault::None,
+            Some("User email address".to_string()),
+        ),
+        ColumnDefinition::new(
+            "auth_type",
+            6,
+            KalamDataType::Text,
+            false, // NOT NULL
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Authentication type: Password, OAuth, ApiKey".to_string()),
+        ),
+        ColumnDefinition::new(
+            "auth_data",
+            7,
+            KalamDataType::Text,
+            true, // NULLABLE
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Authentication data (JSON for OAuth provider/subject)".to_string()),
+        ),
+        ColumnDefinition::new(
+            "storage_mode",
+            8,
+            KalamDataType::Text,
+            false, // NOT NULL
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Preferred storage partitioning mode".to_string()),
+        ),
+        ColumnDefinition::new(
+            "storage_id",
+            9,
+            KalamDataType::Text,
+            true, // NULLABLE
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Optional preferred storage configuration ID".to_string()),
+        ),
+        ColumnDefinition::new(
+            "created_at",
+            10,
             KalamDataType::Timestamp,
             false, // NOT NULL
             false,
@@ -83,7 +133,7 @@ pub fn users_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "updated_at",
-            6,
+            11,
             KalamDataType::Timestamp,
             false, // NOT NULL
             false,
@@ -93,7 +143,7 @@ pub fn users_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "last_seen",
-            7,
+            12,
             KalamDataType::Timestamp,
             true, // NULLABLE
             false,
@@ -103,7 +153,7 @@ pub fn users_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "deleted_at",
-            8,
+            13,
             KalamDataType::Timestamp,
             true, // NULLABLE
             false,
@@ -157,8 +207,28 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Job type: flush, retention, cleanup, etc.".to_string()),
         ),
         ColumnDefinition::new(
-            "status",
+            "namespace_id",
             3,
+            KalamDataType::Text,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Namespace ID".to_string()),
+        ),
+        ColumnDefinition::new(
+            "table_name",
+            4,
+            KalamDataType::Text,
+            true,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Table name (optional)".to_string()),
+        ),
+        ColumnDefinition::new(
+            "status",
+            5,
             KalamDataType::Text,
             false,
             false,
@@ -167,8 +237,58 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Job status: pending, running, completed, failed, cancelled".to_string()),
         ),
         ColumnDefinition::new(
+            "parameters",
+            6,
+            KalamDataType::Text,
+            true,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Job parameters (JSON)".to_string()),
+        ),
+        ColumnDefinition::new(
+            "result",
+            7,
+            KalamDataType::Text,
+            true,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Job result".to_string()),
+        ),
+        ColumnDefinition::new(
+            "trace",
+            8,
+            KalamDataType::Text,
+            true,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Job trace information".to_string()),
+        ),
+        ColumnDefinition::new(
+            "memory_used",
+            9,
+            KalamDataType::BigInt,
+            true,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Memory used in bytes".to_string()),
+        ),
+        ColumnDefinition::new(
+            "cpu_used",
+            10,
+            KalamDataType::BigInt,
+            true,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("CPU time used in microseconds".to_string()),
+        ),
+        ColumnDefinition::new(
             "created_at",
-            4,
+            11,
             KalamDataType::Timestamp,
             false,
             false,
@@ -178,7 +298,7 @@ pub fn jobs_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "started_at",
-            5,
+            12,
             KalamDataType::Timestamp,
             true,
             false,
@@ -188,7 +308,7 @@ pub fn jobs_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "completed_at",
-            6,
+            13,
             KalamDataType::Timestamp,
             true,
             false,
@@ -197,8 +317,18 @@ pub fn jobs_table_definition() -> TableDefinition {
             Some("Job completion timestamp".to_string()),
         ),
         ColumnDefinition::new(
+            "node_id",
+            14,
+            KalamDataType::Text,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Node ID executing the job".to_string()),
+        ),
+        ColumnDefinition::new(
             "error_message",
-            7,
+            15,
             KalamDataType::Text,
             true,
             false,
@@ -223,8 +353,10 @@ pub fn jobs_table_definition() -> TableDefinition {
 ///
 /// Schema:
 /// - namespace_id TEXT PRIMARY KEY
-/// - owner_user_id TEXT NOT NULL
+/// - name TEXT NOT NULL
 /// - created_at TIMESTAMP NOT NULL
+/// - options TEXT (nullable, JSON configuration)
+/// - table_count INT NOT NULL
 pub fn namespaces_table_definition() -> TableDefinition {
     let columns = vec![
         ColumnDefinition::new(
@@ -238,14 +370,14 @@ pub fn namespaces_table_definition() -> TableDefinition {
             Some("Namespace identifier".to_string()),
         ),
         ColumnDefinition::new(
-            "owner_user_id",
+            "name",
             2,
             KalamDataType::Text,
             false,
             false,
             false,
             ColumnDefault::None,
-            Some("User who owns this namespace".to_string()),
+            Some("Namespace name".to_string()),
         ),
         ColumnDefinition::new(
             "created_at",
@@ -256,6 +388,26 @@ pub fn namespaces_table_definition() -> TableDefinition {
             false,
             ColumnDefault::None,
             Some("Namespace creation timestamp".to_string()),
+        ),
+        ColumnDefinition::new(
+            "options",
+            4,
+            KalamDataType::Text,
+            true, // NULLABLE
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Namespace configuration options (JSON)".to_string()),
+        ),
+        ColumnDefinition::new(
+            "table_count",
+            5,
+            KalamDataType::Int,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Number of tables in this namespace".to_string()),
         ),
     ];
 
@@ -274,9 +426,15 @@ pub fn namespaces_table_definition() -> TableDefinition {
 ///
 /// Schema:
 /// - storage_id TEXT PRIMARY KEY
-/// - storage_mode TEXT NOT NULL
-/// - config JSON NOT NULL
+/// - storage_name TEXT NOT NULL
+/// - description TEXT (nullable)
+/// - storage_type TEXT NOT NULL
+/// - base_directory TEXT NOT NULL
+/// - credentials TEXT (nullable)
+/// - shared_tables_template TEXT NOT NULL
+/// - user_tables_template TEXT NOT NULL
 /// - created_at TIMESTAMP NOT NULL
+/// - updated_at TIMESTAMP NOT NULL
 pub fn storages_table_definition() -> TableDefinition {
     let columns = vec![
         ColumnDefinition::new(
@@ -290,34 +448,94 @@ pub fn storages_table_definition() -> TableDefinition {
             Some("Storage identifier".to_string()),
         ),
         ColumnDefinition::new(
-            "storage_mode",
+            "storage_name",
             2,
             KalamDataType::Text,
             false,
             false,
             false,
             ColumnDefault::None,
-            Some("Storage mode: Table, Parquet, S3".to_string()),
+            Some("Human-readable storage name".to_string()),
         ),
         ColumnDefinition::new(
-            "config",
+            "description",
             3,
-            KalamDataType::Json,
+            KalamDataType::Text,
+            true, // NULLABLE
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Storage description".to_string()),
+        ),
+        ColumnDefinition::new(
+            "storage_type",
+            4,
+            KalamDataType::Text,
             false,
             false,
             false,
             ColumnDefault::None,
-            Some("Storage configuration JSON".to_string()),
+            Some("Storage type: Local, S3, Azure, GCS".to_string()),
+        ),
+        ColumnDefinition::new(
+            "base_directory",
+            5,
+            KalamDataType::Text,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Base directory path for storage".to_string()),
+        ),
+        ColumnDefinition::new(
+            "credentials",
+            6,
+            KalamDataType::Text,
+            true, // NULLABLE
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Encrypted credentials JSON".to_string()),
+        ),
+        ColumnDefinition::new(
+            "shared_tables_template",
+            7,
+            KalamDataType::Text,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Path template for shared tables".to_string()),
+        ),
+        ColumnDefinition::new(
+            "user_tables_template",
+            8,
+            KalamDataType::Text,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Path template for user tables".to_string()),
         ),
         ColumnDefinition::new(
             "created_at",
-            4,
+            9,
             KalamDataType::Timestamp,
             false,
             false,
             false,
             ColumnDefault::None,
             Some("Storage creation timestamp".to_string()),
+        ),
+        ColumnDefinition::new(
+            "updated_at",
+            10,
+            KalamDataType::Timestamp,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Last update timestamp".to_string()),
         ),
     ];
 
@@ -335,25 +553,73 @@ pub fn storages_table_definition() -> TableDefinition {
 /// Create TableDefinition for system.live_queries table
 ///
 /// Schema:
-/// - query_id TEXT PRIMARY KEY
+/// - live_id TEXT PRIMARY KEY
+/// - connection_id TEXT NOT NULL
+/// - namespace_id TEXT NOT NULL
+/// - table_name TEXT NOT NULL
+/// - query_id TEXT NOT NULL
 /// - user_id TEXT NOT NULL
 /// - query TEXT NOT NULL
+/// - options TEXT (nullable, JSON)
 /// - created_at TIMESTAMP NOT NULL
+/// - last_update TIMESTAMP NOT NULL
+/// - changes BIGINT NOT NULL
+/// - node TEXT NOT NULL
 pub fn live_queries_table_definition() -> TableDefinition {
     let columns = vec![
         ColumnDefinition::new(
-            "query_id",
+            "live_id",
             1,
             KalamDataType::Text,
             false,
             true,
             false,
             ColumnDefault::None,
-            Some("Live query identifier (UUID)".to_string()),
+            Some("Live query identifier (format: {user_id}-{conn_id}-{table}-{query_id})".to_string()),
+        ),
+        ColumnDefinition::new(
+            "connection_id",
+            2,
+            KalamDataType::Text,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("WebSocket connection identifier".to_string()),
+        ),
+        ColumnDefinition::new(
+            "namespace_id",
+            3,
+            KalamDataType::Text,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Namespace containing the table".to_string()),
+        ),
+        ColumnDefinition::new(
+            "table_name",
+            4,
+            KalamDataType::Text,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Table being queried".to_string()),
+        ),
+        ColumnDefinition::new(
+            "query_id",
+            5,
+            KalamDataType::Text,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Query identifier (UUID)".to_string()),
         ),
         ColumnDefinition::new(
             "user_id",
-            2,
+            6,
             KalamDataType::Text,
             false,
             false,
@@ -363,7 +629,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "query",
-            3,
+            7,
             KalamDataType::Text,
             false,
             false,
@@ -372,14 +638,54 @@ pub fn live_queries_table_definition() -> TableDefinition {
             Some("SQL query for real-time subscription".to_string()),
         ),
         ColumnDefinition::new(
+            "options",
+            8,
+            KalamDataType::Text,
+            true, // NULLABLE
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Query options (JSON)".to_string()),
+        ),
+        ColumnDefinition::new(
             "created_at",
-            4,
+            9,
             KalamDataType::Timestamp,
             false,
             false,
             false,
             ColumnDefault::None,
             Some("Live query creation timestamp".to_string()),
+        ),
+        ColumnDefinition::new(
+            "last_update",
+            10,
+            KalamDataType::Timestamp,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Last update sent to client".to_string()),
+        ),
+        ColumnDefinition::new(
+            "changes",
+            11,
+            KalamDataType::BigInt,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Number of changes pushed to client".to_string()),
+        ),
+        ColumnDefinition::new(
+            "node",
+            12,
+            KalamDataType::Text,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Server node handling this live query".to_string()),
         ),
     ];
 
@@ -398,10 +704,17 @@ pub fn live_queries_table_definition() -> TableDefinition {
 ///
 /// Schema:
 /// - table_id TEXT PRIMARY KEY (composite: namespace_id:table_name)
-/// - namespace_id TEXT NOT NULL
 /// - table_name TEXT NOT NULL
+/// - namespace TEXT NOT NULL
 /// - table_type TEXT NOT NULL
 /// - created_at TIMESTAMP NOT NULL
+/// - storage_location TEXT NOT NULL
+/// - storage_id TEXT (nullable)
+/// - use_user_storage BOOLEAN NOT NULL
+/// - flush_policy TEXT NOT NULL
+/// - schema_version INT NOT NULL
+/// - deleted_retention_hours INT NOT NULL
+/// - access_level TEXT (nullable)
 pub fn tables_table_definition() -> TableDefinition {
     let columns = vec![
         ColumnDefinition::new(
@@ -415,24 +728,24 @@ pub fn tables_table_definition() -> TableDefinition {
             Some("Table identifier: namespace_id:table_name".to_string()),
         ),
         ColumnDefinition::new(
-            "namespace_id",
+            "table_name",
             2,
             KalamDataType::Text,
             false,
             false,
             false,
             ColumnDefault::None,
-            Some("Namespace containing this table".to_string()),
+            Some("Table name within namespace".to_string()),
         ),
         ColumnDefinition::new(
-            "table_name",
+            "namespace",
             3,
             KalamDataType::Text,
             false,
             false,
             false,
             ColumnDefault::None,
-            Some("Table name within namespace".to_string()),
+            Some("Namespace containing this table".to_string()),
         ),
         ColumnDefinition::new(
             "table_type",
@@ -453,6 +766,76 @@ pub fn tables_table_definition() -> TableDefinition {
             false,
             ColumnDefault::None,
             Some("Table creation timestamp".to_string()),
+        ),
+        ColumnDefinition::new(
+            "storage_location",
+            6,
+            KalamDataType::Text,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Storage location path".to_string()),
+        ),
+        ColumnDefinition::new(
+            "storage_id",
+            7,
+            KalamDataType::Text,
+            true, // NULLABLE
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Storage configuration ID".to_string()),
+        ),
+        ColumnDefinition::new(
+            "use_user_storage",
+            8,
+            KalamDataType::Boolean,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Whether table uses user-specific storage".to_string()),
+        ),
+        ColumnDefinition::new(
+            "flush_policy",
+            9,
+            KalamDataType::Text,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Flush policy configuration (JSON)".to_string()),
+        ),
+        ColumnDefinition::new(
+            "schema_version",
+            10,
+            KalamDataType::Int,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Current schema version number".to_string()),
+        ),
+        ColumnDefinition::new(
+            "deleted_retention_hours",
+            11,
+            KalamDataType::Int,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Hours to retain soft-deleted records".to_string()),
+        ),
+        ColumnDefinition::new(
+            "access_level",
+            12,
+            KalamDataType::Text,
+            true, // NULLABLE
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Access level for shared tables: PUBLIC, PRIVATE, RESTRICTED".to_string()),
         ),
     ];
 
@@ -574,7 +957,7 @@ mod tests {
         assert_eq!(def.namespace_id, "system");
         assert_eq!(def.table_name, "users");
         assert_eq!(def.table_type, TableType::System);
-        assert_eq!(def.columns.len(), 8);
+        assert_eq!(def.columns.len(), 13);
         assert_eq!(def.columns[0].column_name, "user_id");
         assert!(def.columns[0].is_primary_key);
     }

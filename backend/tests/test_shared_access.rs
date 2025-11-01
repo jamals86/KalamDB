@@ -368,7 +368,7 @@ async fn test_change_access_level_requires_privileges() {
     // Verify access level unchanged
     let table = server
         .kalam_sql
-        .get_table("default.config")
+        .get_table("default:config")
         .unwrap()
         .unwrap();
     assert_eq!(table.access_level, Some(TableAccess::Private));
@@ -386,7 +386,7 @@ async fn test_change_access_level_requires_privileges() {
     // Verify access level changed to public
     let table = server
         .kalam_sql
-        .get_table("default.config")
+        .get_table("default:config")
         .unwrap()
         .unwrap();
     assert_eq!(table.access_level, Some(TableAccess::Public));
@@ -405,7 +405,7 @@ async fn test_change_access_level_requires_privileges() {
     // Verify access level changed back to private
     let table = server
         .kalam_sql
-        .get_table("default.config")
+        .get_table("default:config")
         .unwrap()
         .unwrap();
     assert_eq!(table.access_level, Some(TableAccess::Private));

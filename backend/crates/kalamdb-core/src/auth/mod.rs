@@ -6,7 +6,7 @@ pub mod roles;
 // Re-export RBAC functions
 pub use rbac::{
     can_access_shared_table, can_access_table_type, can_alter_table, can_create_table,
-    can_delete_table, can_execute_admin_operations, can_manage_users,
+    can_delete_table, can_execute_admin_operations, can_manage_users, can_write_shared_table,
 };
 
 // Legacy string-based role functions (deprecated, use rbac module instead)

@@ -170,6 +170,37 @@ pub fn can_access_shared_table(access_level: TableAccess, is_owner: bool, role: 
     }
 }
 
+/// Check if a user can write to (INSERT/UPDATE/DELETE) a shared table.
+///
+/// # Access Rules
+/// - **Public**: Only service/dba/system roles can write (users are READ ONLY)
+/// - **Private**: Only service/dba/system roles can write
+/// - **Restricted**: Only service/dba/system roles or table owner can write
+///
+/// # Arguments
+/// * `access_level` - Table's access level
+/// * `is_owner` - Whether the user owns the table (reserved for future use)
+/// * `role` - User's role
+///
+/// # Returns
+/// True if write access is allowed, false otherwise
+pub fn can_write_shared_table(access_level: TableAccess, is_owner: bool, role: Role) -> bool {
+    // Admins and service accounts can write to everything
+    if matches!(role, Role::System | Role::Dba | Role::Service) {
+        return true;
+    }
+
+    match access_level {
+        TableAccess::Public => false, // Regular users CANNOT write to public tables (read-only)
+        TableAccess::Private => false, // Only privileged roles (checked above)
+        TableAccess::Restricted => {
+            // For now, only privileged roles or table owner can write
+            // TODO: Implement permissions table for explicit grants
+            is_owner
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

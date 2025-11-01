@@ -42,11 +42,11 @@ impl ToArrowType for KalamDataType {
             KalamDataType::Double => ArrowDataType::Float64,
             KalamDataType::Float => ArrowDataType::Float32,
             KalamDataType::Text => ArrowDataType::Utf8,
-            KalamDataType::Timestamp => ArrowDataType::Timestamp(TimeUnit::Microsecond, None),
+            KalamDataType::Timestamp => ArrowDataType::Timestamp(TimeUnit::Millisecond, None),
             KalamDataType::Date => ArrowDataType::Date32,
             KalamDataType::DateTime => {
                 // DateTime with timezone stored as Timestamp with UTC
-                ArrowDataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()))
+                ArrowDataType::Timestamp(TimeUnit::Millisecond, Some("UTC".into()))
             }
             KalamDataType::Time => ArrowDataType::Time64(TimeUnit::Microsecond),
             KalamDataType::Json => ArrowDataType::Utf8, // JSON stored as UTF-8 string
@@ -71,8 +71,8 @@ impl FromArrowType for KalamDataType {
             ArrowDataType::Float64 => KalamDataType::Double,
             ArrowDataType::Float32 => KalamDataType::Float,
             ArrowDataType::Utf8 | ArrowDataType::LargeUtf8 => KalamDataType::Text,
-            ArrowDataType::Timestamp(TimeUnit::Microsecond, None) => KalamDataType::Timestamp,
-            ArrowDataType::Timestamp(TimeUnit::Microsecond, Some(_)) => KalamDataType::DateTime,
+            ArrowDataType::Timestamp(TimeUnit::Millisecond, None) => KalamDataType::Timestamp,
+            ArrowDataType::Timestamp(TimeUnit::Millisecond, Some(_)) => KalamDataType::DateTime,
             ArrowDataType::Date32 => KalamDataType::Date,
             ArrowDataType::Time64(TimeUnit::Microsecond) => KalamDataType::Time,
             ArrowDataType::Binary | ArrowDataType::LargeBinary => KalamDataType::Bytes,
@@ -172,7 +172,7 @@ mod tests {
         let arrow = ts.to_arrow_type().unwrap();
         assert!(matches!(
             arrow,
-            ArrowDataType::Timestamp(TimeUnit::Microsecond, None)
+            ArrowDataType::Timestamp(TimeUnit::Millisecond, None)
         ));
 
         // DateTime with timezone
@@ -180,7 +180,7 @@ mod tests {
         let arrow = dt.to_arrow_type().unwrap();
         assert!(matches!(
             arrow,
-            ArrowDataType::Timestamp(TimeUnit::Microsecond, Some(_))
+            ArrowDataType::Timestamp(TimeUnit::Millisecond, Some(_))
         ));
     }
 }
