@@ -48,16 +48,11 @@ pub use storage_trait::{Operation, Partition, StorageBackend, StorageError};
 // Phase 14: Export new type-safe EntityStore traits
 pub use entity_store::{
     CrossUserTableStore,
-    EntityStore as EntityStoreV2, // Alias to avoid conflict during migration
+    EntityStore as EntityStoreV2, // Alias to avoid conflict during migration, FIXME: Rename to EntityStore later
 };
 
 // Export index types
 pub use index::{FunctionExtractor, IndexKeyExtractor, SecondaryIndex};
-
-// NOTE: Old RocksDB-based table stores removed - use EntityStore implementations in kalamdb-core instead
-// pub use shared_table_store::SharedTableStore;
-// pub use stream_table_store::StreamTableStore;
-// pub use user_table_store::UserTableStore;
 
 // Make test_utils available for testing in dependent crates
 pub mod test_utils;

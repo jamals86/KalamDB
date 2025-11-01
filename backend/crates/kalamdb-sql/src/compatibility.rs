@@ -55,7 +55,7 @@ pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType, String>
         Interval => DataType::Interval(IntervalUnit::MonthDayNano),
 
         // Custom or dialect specific identifiers ----------------------------
-        Custom(name, _) => map_custom_type(name)?,
+        Custom(name, modifiers) => map_custom_type(name, modifiers)?,
 
         // Struct / collection types -----------------------------------------
         Array(_) | Enum(_, _) | Set(_) | Struct(_, _) => DataType::Utf8,
@@ -70,7 +70,7 @@ pub fn map_sql_type_to_arrow(sql_type: &SQLDataType) -> Result<DataType, String>
     Ok(dtype)
 }
 
-fn map_custom_type(name: &ObjectName) -> Result<DataType, String> {
+fn map_custom_type(name: &ObjectName, modifiers: &[String]) -> Result<DataType, String> {
     let ident = name
         .0
         .iter()
@@ -79,6 +79,33 @@ fn map_custom_type(name: &ObjectName) -> Result<DataType, String> {
         .join(".");
 
     let dtype = match ident.as_str() {
+        // KalamDB-specific: EMBEDDING(dimension) -> FixedSizeList<Float32>
+        "embedding" => {
+            // Extract dimension from modifiers
+            if modifiers.len() != 1 {
+                return Err("EMBEDDING type requires exactly one dimension parameter, e.g., EMBEDDING(384)".to_string());
+            }
+            
+            let dim_str = &modifiers[0];
+            let dim = dim_str.parse::<usize>().map_err(|_| {
+                format!("EMBEDDING dimension must be a positive integer, got '{}'", dim_str)
+            })?;
+
+            // Validate dimension is within allowed range (1-8192)
+            if dim < 1 {
+                return Err("EMBEDDING dimension must be at least 1".to_string());
+            }
+            if dim > 8192 {
+                return Err(format!("EMBEDDING dimension must be at most 8192 (found {})", dim));
+            }
+
+            // Return FixedSizeList<Float32> to match KalamDataType::Embedding Arrow conversion
+            DataType::FixedSizeList(
+                std::sync::Arc::new(arrow::datatypes::Field::new("item", DataType::Float32, false)),
+                dim as i32,
+            )
+        }
+        
         // PostgreSQL serial aliases
         "serial" | "serial4" => DataType::Int32,
         "bigserial" | "serial8" => DataType::Int64,
@@ -115,6 +142,15 @@ mod tests {
         )
     }
 
+    fn custom_with_size(name: &str, size: i32) -> SQLDataType {
+        SQLDataType::Custom(
+            ObjectName(vec![sqlparser::ast::ObjectNamePart::Identifier(
+                Ident::new(name),
+            )]),
+            vec![size.to_string()],
+        )
+    }
+
     #[test]
     fn maps_postgres_serial_types() {
         assert_eq!(
@@ -143,6 +179,41 @@ mod tests {
     fn rejects_unknown_custom_types() {
         let err = map_sql_type_to_arrow(&custom("geography")).unwrap_err();
         assert!(err.to_string().contains("Unsupported custom data type"));
+    }
+
+    #[test]
+    fn maps_embedding_type() {
+        // Test valid embedding dimensions
+        for dim in [384, 768, 1536, 3072] {
+            let result = map_sql_type_to_arrow(&custom_with_size("EMBEDDING", dim)).unwrap();
+            match result {
+                DataType::FixedSizeList(field, size) => {
+                    assert_eq!(size, dim);
+                    assert_eq!(field.data_type(), &DataType::Float32);
+                    assert_eq!(field.name(), "item");
+                    assert!(!field.is_nullable());
+                }
+                _ => panic!("Expected FixedSizeList, got {:?}", result),
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_embedding_without_dimension() {
+        let err = map_sql_type_to_arrow(&custom("EMBEDDING")).unwrap_err();
+        assert!(err.contains("requires exactly one dimension parameter"));
+    }
+
+    #[test]
+    fn rejects_embedding_dimension_zero() {
+        let err = map_sql_type_to_arrow(&custom_with_size("EMBEDDING", 0)).unwrap_err();
+        assert!(err.contains("must be at least 1"));
+    }
+
+    #[test]
+    fn rejects_embedding_dimension_too_large() {
+        let err = map_sql_type_to_arrow(&custom_with_size("EMBEDDING", 9000)).unwrap_err();
+        assert!(err.contains("must be at most 8192"));
     }
 }
 
