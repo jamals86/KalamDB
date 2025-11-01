@@ -83,6 +83,9 @@ pub enum StorageError {
     /// Unique constraint violation (for indexes)
     UniqueConstraintViolation(String),
 
+    /// Lock poisoning error (internal concurrency issue)
+    LockPoisoned(String),
+
     /// Other errors
     Other(String),
 }
@@ -97,6 +100,7 @@ impl fmt::Display for StorageError {
             StorageError::UniqueConstraintViolation(msg) => {
                 write!(f, "Unique constraint violation: {}", msg)
             }
+            StorageError::LockPoisoned(msg) => write!(f, "Lock poisoned: {}", msg),
             StorageError::Other(msg) => write!(f, "Storage error: {}", msg),
         }
     }

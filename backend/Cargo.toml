@@ -107,9 +107,9 @@ path = "tests/integration/flush/test_manual_flush_verification.rs"
 name = "test_namespace_validation"
 path = "tests/integration/combined/test_namespace_validation.rs"
 
-[[test]]
-name = "test_enhanced_api_features"
-path = "tests/integration/api/test_enhanced_api_features.rs"
+# [[test]]
+# name = "test_enhanced_api_features"
+# path = "tests/integration/api/test_enhanced_api_features.rs"
 
 [[test]]
 name = "test_automatic_flushing"

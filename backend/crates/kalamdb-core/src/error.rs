@@ -90,6 +90,9 @@ impl From<kalamdb_store::StorageError> for KalamDbError {
             kalamdb_store::StorageError::UniqueConstraintViolation(msg) => {
                 KalamDbError::AlreadyExists(msg)
             }
+            kalamdb_store::StorageError::LockPoisoned(msg) => {
+                KalamDbError::Other(format!("Lock poisoned: {}", msg))
+            }
             kalamdb_store::StorageError::Other(msg) => KalamDbError::Other(msg),
         }
     }

@@ -5,9 +5,8 @@ Future:
 6) Make sure _updated timestamp include also nanosecond precision
 7) when reading --file todo-app.sql from the cli ignore the lines with -- since they are comments, and create a test to cover this case
 8) Inside kalam-link instead of having 2 different websockets implementations to use only one which also supports the wasm target, by doing so we can reduce code duplication and have less maintenance burden
-9) Implement users/roles and authentication keys using oauth or jwt tokens, this should replace the api_key thing we have now
+
 10) in query inside where clause support comparison operators for null values, like IS NULL and IS NOT NULL
-11) ✅ DONE - check in the integration tests if a flush job took took_ms = 0 then it's a failure (implemented in test_manual_flush_verification.rs tests 09, 10, 11, 12 with execute_flush_synchronously and took_ms verification)
 12) In cli if a query took took_ms = 0 then it's a failure
 13) In the cli add a command to show all live queries
 14) In the cli add a command to kill a live query by its live id
@@ -27,9 +26,9 @@ Future:
 
 29) instead of pub struct SystemTable name it KalamTable
 30) Make sure the TableSchema which is stored cover everything in one model and not spread into multiple models
-31) SHOW STATS FOR TABLE app.messages;
+31) SHOW STATS FOR TABLE app.messages; maybe this is better be implemented with information_Schemas tasks
 32) Do we have counter per userId per buffered rows? this will help us tune the select from user table to check if we even need to query the buffer in first place
-33) Add option for a specific usere to download all his data
+33) Add option for a specific user to download all his data this is done with an endpoint in rest api which will create a zip file with all his tables data in parquet format and then provide a link to download it
 34) Add to the roadmap adding join which can join tables: shared<->shared, shared<->user, user<->user, user<->stream
 35) Add to cli/server a version which will print the commit and build date as well which is auto-increment: add prompt instead of this one: Starting KalamDB Server v0.1.0
 36) update all packages to the latest available version
@@ -78,7 +77,15 @@ Also check that registering ctaalogs are done in one place and one session, we s
 76) Fix auto-complete in cli
 77) Flush table job got stuck for a long time, need to investigate why and also why the tests don't detect this issue and still passes?!
 78) Support an endpoint for exporting user data as a whole in a zip file
+79) Need to scan the code to make it more lighweight and less dependencies, by doing that we can lower the file binary size and also memory consumption
+80) More integration tests inside cli tool which covers importing sql files with multiple statements
+81) CLI - add integration tests which cover a real-life use case for chat app with an ai where we have conversations and messages between users and ai agents, real-time streams for ai thinking/thoughts/typing/user online/offline status, and also flushing messages to parquet files and reloading them back
 
+
+IMPORTANT:
+1) Schema information_schema
+2) Datatypes for columns
+3) Parametrized Queries
 
 Key Findings
 Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB column families yet, resulting in 0 rows flushed
