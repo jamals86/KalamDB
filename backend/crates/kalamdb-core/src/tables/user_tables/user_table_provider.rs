@@ -218,11 +218,29 @@ impl UserTableProvider {
     /// # Returns
     /// The generated row ID
     pub fn insert_row(&self, row_data: JsonValue) -> Result<String, KalamDbError> {
+        // Apply DEFAULTS and auto-generated columns for direct inserts (parity with SQL INSERT)
+        let mut rows = vec![row_data];
+        // Evaluate DEFAULT expressions (Snowflake IDs, timestamps, etc.)
+        for row in rows.iter_mut() {
+            UserTableInsertHandler::apply_defaults_and_validate(
+                row,
+                self.schema.as_ref(),
+                &self.column_defaults,
+                &self.current_user_id,
+            )?;
+        }
+        // Populate auto-increment IDs and timestamps when missing
+        self.prepare_insert_rows(&mut rows)
+            .map_err(KalamDbError::InvalidOperation)?;
+
+        // At this point there is exactly one row
+        let finalized = rows.into_iter().next().expect("row must exist");
+
         self.insert_handler.insert_row(
             self.namespace_id(),
             self.table_name(),
             &self.current_user_id,
-            row_data,
+            finalized,
         )
     }
 
@@ -234,6 +252,20 @@ impl UserTableProvider {
     /// # Returns
     /// Vector of generated row IDs
     pub fn insert_batch(&self, rows: Vec<JsonValue>) -> Result<Vec<String>, KalamDbError> {
+        let mut rows = rows;
+        // Evaluate DEFAULT expressions (Snowflake IDs, timestamps, etc.)
+        for row in rows.iter_mut() {
+            UserTableInsertHandler::apply_defaults_and_validate(
+                row,
+                self.schema.as_ref(),
+                &self.column_defaults,
+                &self.current_user_id,
+            )?;
+        }
+        // Populate auto-increment IDs and timestamps when missing
+        self.prepare_insert_rows(&mut rows)
+            .map_err(KalamDbError::InvalidOperation)?;
+
         self.insert_handler.insert_batch(
             self.namespace_id(),
             self.table_name(),

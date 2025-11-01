@@ -195,4 +195,10 @@ cargo test -p kalamdb-sql
 
 
 <!-- MANUAL ADDITIONS START -->
+ - 2025-11-01: Phase 6 (US4) Observability
+   - Added system.stats virtual table (initial metrics) and CLI support via \stats (alias: \metrics)
+   - CLI help and autocompletion updated; displays key/value metrics from system.stats
+ - 2025-11-01: User tables & Jobs executor test fixes
+   - User tables: Direct provider inserts now apply DEFAULTs and auto-generate id/created_at (parity with SQL path); soft delete made idempotent for missing rows
+   - Jobs executor: Unknown job types now map to a default enum (Cleanup) instead of erroring; executor tests (success/failure/metrics/async/node-id) all pass
 <!-- MANUAL ADDITIONS END -->

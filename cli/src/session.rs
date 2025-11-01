@@ -656,7 +656,7 @@ impl CLISession {
             }
             Command::Describe(table) => {
                 let query = format!(
-                    "SELECT * FROM system.columns WHERE table_name = '{}'",
+                    "SELECT * FROM system.columns WHERE table_name = '{}' ORDER BY ordinal_position",
                     table
                 );
                 self.execute(&query).await?;
@@ -696,6 +696,13 @@ impl CLISession {
             }
             Command::Info => {
                 self.show_session_info();
+            }
+            Command::Stats => {
+                // Show system statistics via system.stats virtual table
+                // Keep it simple and readable for users
+                self
+                    .execute("SELECT * FROM system.stats ORDER BY key")
+                    .await?;
             }
             Command::Unknown(cmd) => {
                 eprintln!("Unknown command: {}. Type \\help for help.", cmd);
@@ -1005,6 +1012,7 @@ impl CLISession {
         println!("    \\config                Show current configuration");
         println!("    \\flush                 Flush all data to disk");
         println!("    \\health                Check server health");
+    println!("    \\stats, \\metrics       Show server/runtime statistics");
         println!("    \\pause                 Pause ingestion");
         println!("    \\continue              Resume ingestion");
         println!("    \\dt, \\tables           List all tables");

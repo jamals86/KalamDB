@@ -212,11 +212,11 @@ mod tests {
     #[test]
     fn test_create_and_get_table() {
         let provider = create_test_provider();
-        let table = create_test_table("table1", "conversations");
+    let table = create_test_table("table1", "conversations");
 
         provider.create_table(table.clone()).unwrap();
 
-        let retrieved = provider.get_table_by_id("table1").unwrap();
+    let retrieved = provider.get_table_by_id("default:conversations").unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.table_id.to_string(), "default:conversations");
@@ -226,7 +226,7 @@ mod tests {
     #[test]
     fn test_update_table() {
         let provider = create_test_provider();
-        let mut table = create_test_table("table1", "conversations");
+    let mut table = create_test_table("table1", "conversations");
         provider.create_table(table.clone()).unwrap();
 
         // Update
@@ -234,7 +234,10 @@ mod tests {
         provider.update_table(table.clone()).unwrap();
 
         // Verify
-        let retrieved = provider.get_table_by_id("table1").unwrap().unwrap();
+        let retrieved = provider
+            .get_table_by_id("default:conversations")
+            .unwrap()
+            .unwrap();
         assert_eq!(retrieved.schema_version, 2);
     }
 

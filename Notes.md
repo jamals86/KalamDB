@@ -83,7 +83,20 @@ Also check that registering ctaalogs are done in one place and one session, we s
 82) make sure rocksdb is only used inside kalamdb-store
 83) Make sure the sql engine works on the schemas first and from there he can get the actual data of the tables
 84) Divide backend/crates/kalamdb-core/src/sql/executor.rs into multiple files for better maintainability
-85) 
+85) Jobs model add NamespaceId type
+86) Make node_id: String, into NodeId type
+87) implement a service which answer these kind of things: fn get_memory_usage_mb() and will be used in stats/jobs memory/cpu and other places when needed
+
+
+
+
+Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
+	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.
+	2.	Temp Indexing: On each row insert/update, serialize embeddings into a temporary .hnsw file under /tmp/kalamdb/{namespace}/{table}/{column}-hot_index.hnsw for fast incremental indexing.
+	3.	Flush Behavior: During table flush, if {table}/{column}-index.hnsw doesn’t exist, create it from all embeddings in the Parquet batches; otherwise, load and append new vectors while marking any deleted rows in the index.
+	4.	Search Integration: Register a DataFusion scalar function vector_search(column, query_vector, top_k) that loads the HNSW index, filters out deleted entries, and returns nearest row IDs + distances.
+	5.	Job System Hook: Add an async background IndexUpdateJob triggered post-flush to merge temporary indexes, apply deletions, and update last_indexed_batch metadata for each table column.
+
 
 
 IMPORTANT:

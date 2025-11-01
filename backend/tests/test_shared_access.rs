@@ -11,7 +11,7 @@
 mod common;
 
 use common::{auth_helper, TestServer};
-use kalamdb_api::models::SqlResponse;
+use kalamdb_api::models::{QueryResult, SqlResponse};
 use kalamdb_commons::{Role, TableAccess};
 // No direct RocksDB usage in tests outside kalamdb-store
 
@@ -265,17 +265,38 @@ async fn test_shared_table_defaults_to_private() {
     );
 
     // Verify the table was created with default "private" access level
-    let table = server
-        .kalam_sql
-        .get_table("default.default_access")
-        .expect("Failed to get table")
-        .expect("Table should exist");
-
-    assert_eq!(
-        table.access_level,
-        Some(TableAccess::Private),
-        "Default access level should be Private"
+    // Query system.tables to get the table metadata
+    let query_table_sql = "SELECT access_level FROM system.tables WHERE table_id = 'default:default_access'";
+    let query_result = server
+        .execute_sql_as_user(query_table_sql, service_username)
+        .await;
+    
+    assert!(
+        is_success(&query_result),
+        "Failed to query system.tables: {:?}",
+        query_result.error
     );
+    
+    // Parse the result to check access_level
+    assert!(!query_result.results.is_empty(), "Expected query results");
+    let result = &query_result.results[0];
+    
+    if let Some(ref rows) = result.rows {
+        assert!(!rows.is_empty(), "Table should exist in system.tables");
+        
+        let row = &rows[0];
+        let access_level = row.get("access_level")
+            .and_then(|v| v.as_str())
+            .expect("access_level should be present");
+        
+        assert_eq!(
+            access_level,
+            "private",
+            "Default access level should be Private"
+        );
+    } else {
+        panic!("Expected rows in system.tables query result");
+    }
 
     // Create a regular user and verify they cannot access it
     let regular_username = "regular_user";

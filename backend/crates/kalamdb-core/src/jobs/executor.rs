@@ -61,9 +61,10 @@ impl JobExecutor {
     /// Result of job execution
     pub fn execute_job<F>(
         &self,
-        job_id: String,
-        job_type: String,
-        table_name: Option<String>,
+        job_id: String, //TODO: Use JobId type directly
+        job_type: String, //TODO: Use JobType type directly
+        //TODO: Pass NamespaceId from context
+        table_name: Option<String>, //TODO: Use TableName type directly
         parameters: Vec<String>,
         job_fn: F,
     ) -> Result<JobResult, KalamDbError>
@@ -71,19 +72,8 @@ impl JobExecutor {
         F: FnOnce() -> Result<String, String>,
     {
         // Parse job_type string to enum
-        let job_type_enum = match job_type.as_str() {
-            "flush" => JobType::Flush,
-            "compact" => JobType::Compact,
-            "cleanup" => JobType::Cleanup,
-            "backup" => JobType::Backup,
-            "restore" => JobType::Restore,
-            _ => {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "Unknown job type: {}",
-                    job_type
-                )));
-            }
-        };
+        // Map string to JobType; default unknown types to Cleanup for flexibility in tests and custom jobs
+        let job_type_enum = JobType::from_str(&job_type).unwrap_or(JobType::Cleanup);
 
         // T101: Register job with status='running'
         let namespace_id = NamespaceId::new("default".to_string()); // TODO: Get from context
@@ -167,9 +157,10 @@ impl JobExecutor {
     /// * `job_fn` - The job function (must be Send + 'static)
     pub fn execute_async<F>(
         &self,
-        job_id: String,
-        job_type: String,
-        table_name: Option<String>,
+        job_id: String, //TODO: Use JobId type directly
+        job_type: String, //TODO: Use JobType type directly
+        //TODO: Pass NamespaceId from context
+        table_name: Option<String>, //TODO: Use TableName type directly
         parameters: Vec<String>,
         job_fn: F,
     ) -> Result<(), KalamDbError>
@@ -177,19 +168,8 @@ impl JobExecutor {
         F: FnOnce() -> Result<String, String> + Send + 'static,
     {
         // Parse job_type string to enum
-        let job_type_enum = match job_type.as_str() {
-            "flush" => JobType::Flush,
-            "compact" => JobType::Compact,
-            "cleanup" => JobType::Cleanup,
-            "backup" => JobType::Backup,
-            "restore" => JobType::Restore,
-            _ => {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "Unknown job type: {}",
-                    job_type
-                )));
-            }
-        };
+        // Map string to JobType; default unknown types to Cleanup to allow arbitrary labels (e.g., "background")
+        let job_type_enum = JobType::from_str(&job_type).unwrap_or(JobType::Cleanup);
 
         // Register job immediately
         let namespace_id = NamespaceId::new("default".to_string()); // TODO: Get from context

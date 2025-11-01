@@ -289,7 +289,7 @@ impl StreamTableProvider {
     /// Event data if found, None otherwise
     pub fn get_event(&self, row_id: &str) -> Result<Option<JsonValue>, KalamDbError> {
         EntityStore::get(self.store.as_ref(), &StreamTableRowId::new(row_id))
-            .map(|opt| opt.map(|row| serde_json::to_value(row).unwrap()))
+            .map(|opt| opt.map(|row| row.fields))
             .map_err(|e| KalamDbError::Other(e.to_string()))
     }
 
@@ -297,7 +297,7 @@ impl StreamTableProvider {
     ///
     /// # Returns
     /// Vector of (row_id, row_data) tuples
-    pub fn scan_events(&self) -> Result<Vec<(String, JsonValue)>, KalamDbError> {
+    pub fn scan_events(&self) -> Result<Vec<(JsonValue, String)>, KalamDbError> {
         let rows = self
             .store
             .scan(self.namespace_id().as_str(), self.table_name().as_str())
@@ -305,7 +305,7 @@ impl StreamTableProvider {
 
         Ok(rows
             .into_iter()
-            .map(|(row_id, row)| (row_id, row.fields))
+            .map(|(row_id, row)| (row.fields, row_id))
             .collect())
     }
 
@@ -621,7 +621,37 @@ mod tests {
 
     #[test]
     fn test_evict_expired() {
-        let (provider, _test_db) = create_test_provider();
+        // Create a provider with short TTL (1 second)
+        let test_db = TestDb::new(&["stream_app:events"]).unwrap();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("event_type", DataType::Utf8, false),
+        ]));
+
+        let table_metadata = TableMetadata {
+            table_name: TableName::new("events"),
+            table_type: TableType::Stream,
+            namespace: NamespaceId::new("app"),
+            created_at: chrono::Utc::now(),
+            storage_location: String::new(),
+            flush_policy: crate::flush::FlushPolicy::RowLimit { row_limit: 0 },
+            schema_version: 1,
+            deleted_retention_hours: None,
+        };
+
+        let store = Arc::new(StreamTableStore::new(
+            Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone())),
+            "stream_app:events",
+        ));
+
+        let provider = StreamTableProvider::new(
+            table_metadata,
+            schema,
+            store,
+            Some(1),  // 1 second retention for this test
+            false,
+            Some(10000),
+        );
 
         // Insert events with short TTL (1 second)
         provider.insert_event("evt001", json!({"id": 1})).unwrap();

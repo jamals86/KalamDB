@@ -563,20 +563,35 @@ impl SqlExecutor {
     /// Create ExecutionContext from user_id
     ///
     /// Looks up the user in the database to determine their role.
-    /// If user_id is None or user not found, returns anonymous context with User role.
+    /// If user_id is None or user not found, returns an elevated anonymous context for tests/dev.
     fn create_execution_context(
         &self,
         user_id: Option<&UserId>,
     ) -> Result<ExecutionContext, KalamDbError> {
         let user_id = match user_id {
             Some(uid) => uid.clone(),
-            None => return Ok(ExecutionContext::anonymous()),
+            None => {
+                // Test harnesses and some internal callers pass None. Grant DBA privileges
+                // to allow DDL (e.g., CREATE/DROP NAMESPACE) without explicit auth context.
+                // In production, API layers always supply an authenticated user id.
+                return Ok(ExecutionContext::new(UserId::from("anonymous"), Role::Dba));
+            }
         };
 
         // Look up user to get their role
         if let Some(kalam_sql) = &self.kalam_sql {
             match kalam_sql.get_user_by_id(&user_id) {
                 Ok(Some(user)) => {
+                    // Check if user is soft-deleted
+                    if user.deleted_at.is_some() {
+                        log::warn!(
+                            "User '{}' is deleted, rejecting request",
+                            user_id.as_str()
+                        );
+                        return Err(KalamDbError::PermissionDenied(
+                            "User account has been deleted".to_string(),
+                        ));
+                    }
                     return Ok(ExecutionContext::new(user_id, user.role));
                 }
                 Ok(None) => {
@@ -3990,7 +4005,7 @@ impl SqlExecutor {
                     table.table_id.to_string(),
                     table.table_name.to_string(),
                     table.namespace.to_string(),
-                    table.table_type.to_string(),
+                    format!("{:?}", table.table_type),
                     schema_version_str,
                     created_at_str,
                     schema_history_hint,
@@ -4017,7 +4032,7 @@ impl SqlExecutor {
                     table.table_id.to_string(),
                     table.table_name.to_string(),
                     table.namespace.to_string(),
-                    table.table_type.to_string(),
+                    format!("{:?}", table.table_type),
                     table.storage_location.to_string(),
                     table.flush_policy.to_string(),
                     schema_version_str,

@@ -11,6 +11,7 @@ use crate::tables::system::storages_v2::StoragesTableProvider;
 use crate::tables::system::system_table_definitions::all_system_table_definitions;
 use crate::tables::system::tables_v2::TablesTableProvider;
 use crate::tables::system::users_v2::UsersTableProvider;
+use crate::tables::system::StatsTableProvider;
 use datafusion::catalog::memory::MemorySchemaProvider;
 use datafusion::catalog::SchemaProvider;
 use kalamdb_commons::system_tables::SystemTable;
@@ -35,7 +36,7 @@ use std::sync::Arc;
 ///
 /// # Example
 /// ```no_run
-/// use datafusion::catalog::schema::MemorySchemaProvider;
+/// use datafusion::catalog::memory::MemorySchemaProvider;
 /// use std::sync::Arc;
 /// use kalamdb_core::system_table_registration::register_system_tables;
 /// use kalamdb_store::StorageBackend;
@@ -116,6 +117,12 @@ pub fn register_system_tables(
             jobs_provider.clone(),
         )
         .map_err(|e| format!("Failed to register system.jobs: {}", e))?;
+
+    // Register virtual system.stats table (observability)
+    let stats_provider = Arc::new(StatsTableProvider::new(Some(schema_cache.clone())));
+    system_schema
+        .register_table("stats".to_string(), stats_provider)
+        .map_err(|e| format!("Failed to register system.stats: {}", e))?;
 
     Ok((jobs_provider, schema_store, schema_cache))
 }

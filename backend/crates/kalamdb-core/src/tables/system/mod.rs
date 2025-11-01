@@ -15,6 +15,7 @@ pub mod schemas; // Phase 15 (008-schema-consolidation): Schema storage
 pub mod storages_v2;
 pub mod tables_v2;
 pub mod users_v2;
+pub mod stats;
 
 // Export common trait
 pub use system_table_trait::SystemTableProviderExt;
@@ -28,3 +29,4 @@ pub use namespaces_v2::NamespacesTableProvider;
 pub use storages_v2::StoragesTableProvider;
 pub use tables_v2::TablesTableProvider;
 pub use users_v2::UsersTableProvider;
+pub use stats::StatsTableProvider;

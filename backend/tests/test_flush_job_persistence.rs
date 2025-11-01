@@ -113,7 +113,37 @@ async fn test_flush_table_persists_job() {
 #[tokio::test]
 async fn test_flush_all_tables_persists_jobs() {
     let (executor, _temp_dir, kalam_sql) = setup_test_environment().await;
-    let admin_id = kalamdb_commons::UserId::new("test_admin");
+    
+    // Create a DBA user to execute admin operations
+    let admin_username = "test_admin";
+    let admin_password = "AdminPass123!";
+    let now = chrono::Utc::now().timestamp_millis();
+    let admin_user = kalamdb_commons::system::User {
+        id: kalamdb_commons::UserId::new(admin_username),
+        username: kalamdb_commons::UserName::new(admin_username),
+        password_hash: bcrypt::hash(admin_password, 12).expect("Failed to hash password"),
+        role: kalamdb_commons::Role::Dba,
+        email: Some("admin@example.com".to_string()),
+        auth_type: kalamdb_commons::AuthType::Password,
+        auth_data: None,
+        storage_mode: kalamdb_commons::StorageMode::Table,
+        storage_id: None,
+        created_at: now,
+        updated_at: now,
+        last_seen: None,
+        deleted_at: None,
+    };
+    kalam_sql.insert_user(&admin_user).expect("Failed to insert admin user");
+    let admin_id = kalamdb_commons::UserId::new(admin_username);
+
+    // Create 'local' storage (required for user tables)
+    executor
+        .execute(
+            "CREATE STORAGE local TYPE filesystem NAME 'Local Storage' PATH '/tmp/kalamdb_test/local'",
+            Some(&admin_id),
+        )
+        .await
+        .expect("Failed to create local storage");
 
     // Create namespace
     executor

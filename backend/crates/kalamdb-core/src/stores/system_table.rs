@@ -300,11 +300,16 @@ impl UserTableStoreExt<UserTableRowId, UserTableRow>
             EntityStore::delete(self, &key)?;
         } else {
             // Soft delete: mark _deleted=true
-            let mut row = EntityStore::get(self, &key)?.ok_or_else(|| {
-                KalamDbError::InvalidOperation("Row not found for soft delete".to_string())
-            })?;
-            row._deleted = true;
-            EntityStore::put(self, &key, &row)?;
+            match EntityStore::get(self, &key)? {
+                Some(mut row) => {
+                    row._deleted = true;
+                    EntityStore::put(self, &key, &row)?;
+                }
+                None => {
+                    // Idempotent soft delete: if the row doesn't exist, treat as success
+                    // This matches API expectations and simplifies client retries.
+                }
+            }
         }
         Ok(())
     }

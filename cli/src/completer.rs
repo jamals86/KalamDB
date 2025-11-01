@@ -155,6 +155,8 @@ impl AutoCompleter {
             "\\q",
             "\\help",
             "\\?",
+            "\\stats",
+            "\\metrics",
             "\\connect",
             "\\c",
             "\\config",

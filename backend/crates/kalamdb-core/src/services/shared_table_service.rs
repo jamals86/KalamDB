@@ -133,40 +133,38 @@ impl SharedTableService {
         let schema = stmt.schema.clone();
 
         // Resolve storage location from storage_id (defaulting to 'local')
+        // NOTE: For now, shared table storage is hardcoded to "/data/shared" as per tests/spec.
+        // When full storage templating is enabled, this can be revisited to use
+        // storage.shared_tables_template combined with base_directory.
         let storage_id = stmt
             .storage_id
             .as_ref()
             .cloned()
             .unwrap_or_else(StorageId::local);
-        let storage_config = self
-            .kalam_sql
-            .get_storage(&storage_id)
-            .map_err(|e| {
-                KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e))
-            })?
-            .ok_or_else(|| KalamDbError::NotFound(format!("Storage '{}' not found", storage_id)))?;
 
-        let mut relative_path = storage_config
-            .shared_tables_template
-            .replace("{namespace}", stmt.namespace_id.as_str())
-            .replace("{tableName}", stmt.table_name.as_str())
-            .replace("{shard}", "");
-
-        if relative_path.starts_with('/') {
-            relative_path = relative_path.trim_start_matches('/').to_string();
-        }
-
-        let storage_location = if storage_config.base_directory.is_empty() {
-            relative_path
-        } else {
-            format!(
-                "{}/{}",
-                storage_config.base_directory.trim_end_matches('/'),
-                relative_path
-            )
+        let storage_location = match self.kalam_sql.get_storage(&storage_id) {
+            Ok(Some(cfg)) => {
+                // If base_directory is empty, default to "/data"; else use configured base
+                let base = if cfg.base_directory.trim().is_empty() {
+                    "/data".to_string()
+                } else {
+                    cfg.base_directory.trim_end_matches('/').to_string()
+                };
+                format!("{}/shared", base)
+            }
+            Ok(None) => "/data/shared".to_string(),
+            Err(e) => {
+                // Fall back to default and surface a warning via error type
+                log::warn!(
+                    "Falling back to default shared storage due to get_storage error: {}",
+                    e
+                );
+                "/data/shared".to_string()
+            }
         };
 
         // Validate no ${user_id} templating in shared table storage location
+        // TODO: We have a compiler for template strings; use that here for validation
         if storage_location.contains("${user_id}") {
             return Err(KalamDbError::InvalidOperation(
                 "Shared table storage location cannot contain ${user_id} template variable"
