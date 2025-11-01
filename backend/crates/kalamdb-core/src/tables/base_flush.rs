@@ -330,8 +330,9 @@ impl FlushExecutor {
                 );
 
                 // Serialize metadata to JSON for job result
-                let metadata_json = serde_json::to_value(&result.metadata)
-                    .map_err(|e| KalamDbError::Other(format!("Failed to serialize metadata: {}", e)))?;
+                let metadata_json = serde_json::to_value(&result.metadata).map_err(|e| {
+                    KalamDbError::Other(format!("Failed to serialize metadata: {}", e))
+                })?;
 
                 // Update job record with success
                 let completed_job = job_record.complete(Some(
@@ -442,7 +443,10 @@ mod tests {
         let result = result.unwrap();
         assert_eq!(result.rows_flushed, 100);
         assert_eq!(result.parquet_files.len(), 1);
-        assert_eq!(result.job_record.status, kalamdb_commons::JobStatus::Completed);
+        assert_eq!(
+            result.job_record.status,
+            kalamdb_commons::JobStatus::Completed
+        );
         assert!(result.job_record.result.is_some());
     }
 

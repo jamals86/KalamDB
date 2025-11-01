@@ -21,7 +21,7 @@ use kalamdb_commons::Role;
 use std::time::{Duration, Instant};
 
 /// Performance benchmark for Basic Auth authentication
-/// 
+///
 /// Note: This test creates fresh app instances for each request to avoid actix-web
 /// test framework RefCell borrow conflicts. However, there's still a known issue
 /// with connection_info() being called within the handler that can cause panics.
@@ -90,9 +90,21 @@ async fn benchmark_basic_auth_performance() {
     println!("  p99 latency: {:.2}ms", p99.as_millis());
 
     // Performance assertions
-    assert!(p50 < Duration::from_millis(100), "p50 latency too high: {:?}", p50);
-    assert!(p95 < Duration::from_millis(200), "p95 latency too high: {:?}", p95);
-    assert!(p99 < Duration::from_millis(500), "p99 latency too high: {:?}", p99);
+    assert!(
+        p50 < Duration::from_millis(100),
+        "p50 latency too high: {:?}",
+        p50
+    );
+    assert!(
+        p95 < Duration::from_millis(200),
+        "p95 latency too high: {:?}",
+        p95
+    );
+    assert!(
+        p99 < Duration::from_millis(500),
+        "p99 latency too high: {:?}",
+        p99
+    );
 }
 
 /// Performance benchmark for JWT authentication
@@ -172,9 +184,21 @@ async fn benchmark_jwt_auth_performance() {
     println!("  p99 latency: {:.2}ms", p99.as_millis());
 
     // Performance assertions
-    assert!(p50 < Duration::from_millis(100), "p50 latency too high: {:?}", p50);
-    assert!(p95 < Duration::from_millis(200), "p95 latency too high: {:?}", p95);
-    assert!(p99 < Duration::from_millis(500), "p99 latency too high: {:?}", p99);
+    assert!(
+        p50 < Duration::from_millis(100),
+        "p50 latency too high: {:?}",
+        p50
+    );
+    assert!(
+        p95 < Duration::from_millis(200),
+        "p95 latency too high: {:?}",
+        p95
+    );
+    assert!(
+        p99 < Duration::from_millis(500),
+        "p99 latency too high: {:?}",
+        p99
+    );
 }
 
 /// Test cache effectiveness by comparing first request vs cached requests
@@ -258,22 +282,33 @@ async fn test_auth_cache_effectiveness() {
     let avg_cached_time = cached_latencies.iter().sum::<Duration>() / cached_latencies.len() as u32;
 
     println!("Cache Effectiveness Test:");
-    println!("  First request (cache miss): {:.2}ms", first_request_time.as_millis());
-    println!("  Average cached requests: {:.2}ms", avg_cached_time.as_millis());
-    println!("  Cache speedup: {:.1}x", first_request_time.as_millis() as f64 / avg_cached_time.as_millis() as f64);
+    println!(
+        "  First request (cache miss): {:.2}ms",
+        first_request_time.as_millis()
+    );
+    println!(
+        "  Average cached requests: {:.2}ms",
+        avg_cached_time.as_millis()
+    );
+    println!(
+        "  Cache speedup: {:.1}x",
+        first_request_time.as_millis() as f64 / avg_cached_time.as_millis() as f64
+    );
 
     // Cache should provide at least 2x speedup
-    assert!(first_request_time.as_millis() as f64 / avg_cached_time.as_millis() as f64 >= 2.0,
-        "Cache should provide at least 2x speedup");
+    assert!(
+        first_request_time.as_millis() as f64 / avg_cached_time.as_millis() as f64 >= 2.0,
+        "Cache should provide at least 2x speedup"
+    );
 }
 
 /// Test concurrent authentication load
 #[tokio::test]
 async fn test_concurrent_auth_load() {
-    use kalamdb_auth::service::AuthService;
-    use kalamdb_auth::connection::ConnectionInfo;
     use base64::engine::general_purpose;
     use base64::Engine;
+    use kalamdb_auth::connection::ConnectionInfo;
+    use kalamdb_auth::service::AuthService;
 
     let server = TestServer::new().await;
 
@@ -313,8 +348,9 @@ async fn test_concurrent_auth_load() {
             // Pick a user based on index
             let user_idx = i % users_clone.len();
             let (username, password) = &users_clone[user_idx];
-            
-            let credentials = general_purpose::STANDARD.encode(format!("{}:{}", username, password));
+
+            let credentials =
+                general_purpose::STANDARD.encode(format!("{}:{}", username, password));
             let auth_header = format!("Basic {}", credentials);
             let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
 
@@ -351,16 +387,26 @@ async fn test_concurrent_auth_load() {
     println!("Concurrent Auth Load Test Results:");
     println!("  Total requests: {}", num_concurrent_requests);
     println!("  Successful requests: {}", successful_requests);
-    println!("  Success rate: {:.1}%", (successful_requests as f64 / num_concurrent_requests as f64) * 100.0);
+    println!(
+        "  Success rate: {:.1}%",
+        (successful_requests as f64 / num_concurrent_requests as f64) * 100.0
+    );
     println!("  p50 latency: {:.2}ms", p50.as_millis());
     println!("  p95 latency: {:.2}ms", p95.as_millis());
     println!("  p99 latency: {:.2}ms", p99.as_millis());
 
     // Performance assertions - bcrypt is intentionally slow for security
     // With cost=12, expect ~100-300ms per auth on modern hardware
-    assert_eq!(successful_requests, num_concurrent_requests, "All concurrent requests should succeed");
-    assert!(p95 < Duration::from_millis(10000), "Concurrent auth p95 latency too high: {:?}", p95);
-    
+    assert_eq!(
+        successful_requests, num_concurrent_requests,
+        "All concurrent requests should succeed"
+    );
+    assert!(
+        p95 < Duration::from_millis(10000),
+        "Concurrent auth p95 latency too high: {:?}",
+        p95
+    );
+
     println!("✓ Concurrent authentication test passed");
 }
 

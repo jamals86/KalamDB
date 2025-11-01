@@ -13,8 +13,8 @@ use common::{fixtures, TestServer};
 use kalamdb_commons::{JobStatus, JobType, NamespaceId, TableName};
 use kalamdb_core::jobs::{JobExecutor, JobResult, UserCleanupConfig, UserCleanupJob};
 use kalamdb_core::stores::system_table::UserTableStoreExt;
-use kalamdb_core::tables::{new_user_table_store, UserTableStore};
 use kalamdb_core::tables::system::JobsTableProvider;
+use kalamdb_core::tables::{new_user_table_store, UserTableStore};
 use kalamdb_store::{RocksDBBackend, StorageBackend};
 use std::sync::Arc;
 

@@ -76,9 +76,7 @@ impl UserIndexManager {
         // Handle username changes
         if let Some(old) = old_user {
             if old.username != new_user.username {
-                self
-                    .username_idx
-                    .remove_user(old.username.as_str())?;
+                self.username_idx.remove_user(old.username.as_str())?;
                 self.username_idx.index_user(new_user)?;
             }
         } else {
@@ -119,9 +117,7 @@ impl UserIndexManager {
     /// Result indicating success or failure
     pub fn remove_user(&self, user: &User) -> Result<(), KalamDbError> {
         // Remove from username index
-        self
-            .username_idx
-            .remove_user(user.username.as_str())?;
+        self.username_idx.remove_user(user.username.as_str())?;
 
         // Remove from role index
         self.role_idx.remove_user(&user.id, &user.role)?;
@@ -207,7 +203,7 @@ mod tests {
     ) -> User {
         let now_ms = Utc::now().timestamp_millis();
         let deleted_at_ms = deleted_at.map(|dt| dt.timestamp_millis());
-        
+
         User {
             id: UserId::new(id),
             username: UserName::new(username),

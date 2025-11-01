@@ -7,15 +7,17 @@
 //! - Storage path templating with ${user_id} substitution
 //! - Hybrid RocksDB + Parquet querying
 
+use super::{UserTableDeleteHandler, UserTableInsertHandler, UserTableUpdateHandler};
 use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
 use crate::error::KalamDbError;
 use crate::ids::SnowflakeGenerator;
 use crate::live_query::manager::LiveQueryManager;
 use crate::stores::system_table::UserTableStoreExt;
+use crate::tables::arrow_json_conversion::{
+    arrow_batch_to_json, json_rows_to_arrow_batch, validate_insert_rows,
+};
 use crate::tables::user_tables::user_table_store::UserTableRow;
 use crate::tables::UserTableStore;
-use crate::tables::arrow_json_conversion::{arrow_batch_to_json, json_rows_to_arrow_batch, validate_insert_rows};
-use super::{UserTableDeleteHandler, UserTableInsertHandler, UserTableUpdateHandler};
 use async_trait::async_trait;
 use chrono::Utc;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
@@ -478,9 +480,7 @@ impl TableProvider for UserTableProvider {
         // Filter out soft-deleted rows (_deleted=true)
         let filtered_rows: Vec<_> = raw_rows
             .into_iter()
-            .filter(|(_row_id, row_data)| {
-                !row_data._deleted
-            })
+            .filter(|(_row_id, row_data)| !row_data._deleted)
             .collect();
 
         // Apply limit if specified
@@ -571,7 +571,9 @@ mod tests {
     use crate::flush::FlushPolicy;
     use crate::tables::UserTableStore;
     use chrono::Utc;
-    use datafusion::arrow::array::{BooleanArray, Int64Array, StringArray, TimestampMillisecondArray};
+    use datafusion::arrow::array::{
+        BooleanArray, Int64Array, StringArray, TimestampMillisecondArray,
+    };
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use datafusion::execution::context::SessionContext;
     use kalamdb_store::test_utils::TestDb;
@@ -714,10 +716,9 @@ mod tests {
             .await
             .expect("scan should succeed");
 
-        let batches =
-            datafusion::physical_plan::collect(exec_plan, ctx.task_ctx())
-                .await
-                .expect("collect should succeed");
+        let batches = datafusion::physical_plan::collect(exec_plan, ctx.task_ctx())
+            .await
+            .expect("collect should succeed");
 
         assert_eq!(batches.len(), 1, "should produce a single batch");
         let batch = &batches[0];
@@ -733,9 +734,7 @@ mod tests {
             .expect("id column should be Int64");
         assert_eq!(id_array.value(0), 123_i64);
 
-        let content_idx = schema
-            .index_of("content")
-            .expect("content column missing");
+        let content_idx = schema.index_of("content").expect("content column missing");
         let content_array = batch
             .column(content_idx)
             .as_any()
@@ -813,7 +812,8 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(metadata, schema, store, user_id.clone(), Role::User, vec![]);
+        let provider =
+            UserTableProvider::new(metadata, schema, store, user_id.clone(), Role::User, vec![]);
 
         let row_a = json!({"content": "Keep me"});
         let row_b = json!({"content": "Delete me"});
@@ -825,18 +825,21 @@ mod tests {
 
         let ctx = SessionContext::new();
         let exec_plan = provider
-            .scan(ctx.state().as_ref(), None, &[], None)
+            .scan(&ctx.state(), None, &[], None)
             .await
             .expect("scan should succeed");
 
-        let batches =
-            datafusion::physical_plan::collect(exec_plan, ctx.task_ctx())
-                .await
-                .expect("collect should succeed");
+        let batches = datafusion::physical_plan::collect(exec_plan, ctx.task_ctx())
+            .await
+            .expect("collect should succeed");
 
         assert_eq!(batches.len(), 1);
         let batch = &batches[0];
-        assert_eq!(batch.num_rows(), 1, "soft deleted row should be filtered out");
+        assert_eq!(
+            batch.num_rows(),
+            1,
+            "soft deleted row should be filtered out"
+        );
 
         let schema = batch.schema();
         let content_idx = schema.index_of("content").expect("content column missing");
@@ -854,7 +857,10 @@ mod tests {
             .as_any()
             .downcast_ref::<Int64Array>()
             .expect("id column should be Int64");
-        assert!(id_array.value(0) > 0, "remaining row should have generated id");
+        assert!(
+            id_array.value(0) > 0,
+            "remaining row should have generated id"
+        );
     }
 
     #[test]

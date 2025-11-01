@@ -147,7 +147,7 @@ mod tests {
     use super::*;
     use crate::jobs::{JobExecutor, StreamEvictionJob};
     use crate::tables::system::JobsTableProvider;
-    use crate::tables::{StreamTableStore, new_stream_table_store};
+    use crate::tables::{new_stream_table_store, StreamTableStore};
     use kalamdb_commons::models::{NamespaceId, TableName};
     use kalamdb_sql::KalamSql;
     use kalamdb_store::RocksDbInit;

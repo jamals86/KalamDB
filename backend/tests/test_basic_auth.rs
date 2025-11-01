@@ -28,10 +28,10 @@ async fn test_basic_auth_success() {
     auth_helper::create_test_user(&server, username, password, Role::User).await;
 
     // Test authentication directly using AuthService (no HTTP layer needed)
-    use kalamdb_auth::service::AuthService;
-    use kalamdb_auth::connection::ConnectionInfo;
     use base64::engine::general_purpose;
     use base64::Engine;
+    use kalamdb_auth::connection::ConnectionInfo;
+    use kalamdb_auth::service::AuthService;
 
     let auth_service = AuthService::new(
         "test-secret".to_string(),
@@ -41,18 +41,25 @@ async fn test_basic_auth_success() {
         Role::User,
     );
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
-    
+
     // Create Basic Auth header
     let credentials = general_purpose::STANDARD.encode(format!("{}:{}", username, password));
     let auth_header = format!("Basic {}", credentials);
 
     // Authenticate
     let result = auth_service
-        .authenticate(&auth_header, &connection_info, &Arc::new(server.kalam_sql.adapter().clone()))
+        .authenticate(
+            &auth_header,
+            &connection_info,
+            &Arc::new(server.kalam_sql.adapter().clone()),
+        )
         .await;
 
     // Verify success
-    assert!(result.is_ok(), "Authentication should succeed with valid credentials");
+    assert!(
+        result.is_ok(),
+        "Authentication should succeed with valid credentials"
+    );
     let authenticated_user = result.unwrap();
     assert_eq!(authenticated_user.username, username);
     assert_eq!(authenticated_user.role, Role::User);
@@ -72,10 +79,10 @@ async fn test_basic_auth_invalid_credentials() {
     auth_helper::create_test_user(&server, username, correct_password, Role::User).await;
 
     // Test authentication with wrong password
-    use kalamdb_auth::service::AuthService;
-    use kalamdb_auth::connection::ConnectionInfo;
     use base64::engine::general_purpose;
     use base64::Engine;
+    use kalamdb_auth::connection::ConnectionInfo;
+    use kalamdb_auth::service::AuthService;
 
     let auth_service = AuthService::new(
         "test-secret".to_string(),
@@ -85,27 +92,34 @@ async fn test_basic_auth_invalid_credentials() {
         Role::User,
     );
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
-    
+
     // Create Basic Auth header with WRONG password
     let credentials = general_purpose::STANDARD.encode(format!("{}:{}", username, wrong_password));
     let auth_header = format!("Basic {}", credentials);
 
     // Authenticate
     let result = auth_service
-        .authenticate(&auth_header, &connection_info, &Arc::new(server.kalam_sql.adapter().clone()))
+        .authenticate(
+            &auth_header,
+            &connection_info,
+            &Arc::new(server.kalam_sql.adapter().clone()),
+        )
         .await;
 
     // Verify failure
-    assert!(result.is_err(), "Authentication should fail with invalid password");
-    
+    assert!(
+        result.is_err(),
+        "Authentication should fail with invalid password"
+    );
+
     println!("✓ Invalid credentials correctly rejected");
 }
 
 /// Test authentication failure with missing Authorization header
 #[tokio::test]
 async fn test_basic_auth_missing_header() {
-    use kalamdb_auth::service::AuthService;
     use kalamdb_auth::connection::ConnectionInfo;
+    use kalamdb_auth::service::AuthService;
 
     let server = TestServer::new().await;
     let auth_service = AuthService::new(
@@ -116,23 +130,30 @@ async fn test_basic_auth_missing_header() {
         Role::User,
     );
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
-    
+
     // Empty authorization header
     let result = auth_service
-        .authenticate("", &connection_info, &Arc::new(server.kalam_sql.adapter().clone()))
+        .authenticate(
+            "",
+            &connection_info,
+            &Arc::new(server.kalam_sql.adapter().clone()),
+        )
         .await;
 
     // Verify failure
-    assert!(result.is_err(), "Authentication should fail with missing header");
-    
+    assert!(
+        result.is_err(),
+        "Authentication should fail with missing header"
+    );
+
     println!("✓ Missing Authorization header correctly rejected");
 }
 
 /// Test authentication failure with malformed Authorization header
 #[tokio::test]
 async fn test_basic_auth_malformed_header() {
-    use kalamdb_auth::service::AuthService;
     use kalamdb_auth::connection::ConnectionInfo;
+    use kalamdb_auth::service::AuthService;
 
     let server = TestServer::new().await;
     let auth_service = AuthService::new(
@@ -155,7 +176,11 @@ async fn test_basic_auth_malformed_header() {
 
     for malformed_header in malformed_headers {
         let result = auth_service
-            .authenticate(malformed_header, &connection_info, &Arc::new(server.kalam_sql.adapter().clone()))
+            .authenticate(
+                malformed_header,
+                &connection_info,
+                &Arc::new(server.kalam_sql.adapter().clone()),
+            )
             .await;
 
         assert!(
@@ -171,10 +196,10 @@ async fn test_basic_auth_malformed_header() {
 /// Test authentication with non-existent user
 #[tokio::test]
 async fn test_basic_auth_nonexistent_user() {
-    use kalamdb_auth::service::AuthService;
-    use kalamdb_auth::connection::ConnectionInfo;
     use base64::engine::general_purpose;
     use base64::Engine;
+    use kalamdb_auth::connection::ConnectionInfo;
+    use kalamdb_auth::service::AuthService;
 
     let server = TestServer::new().await;
     let auth_service = AuthService::new(
@@ -185,17 +210,24 @@ async fn test_basic_auth_nonexistent_user() {
         Role::User,
     );
     let connection_info = ConnectionInfo::new(Some("127.0.0.1".to_string()));
-    
+
     // Create auth header for user that doesn't exist
     let credentials = general_purpose::STANDARD.encode("nonexistent:password123");
     let auth_header = format!("Basic {}", credentials);
 
     let result = auth_service
-        .authenticate(&auth_header, &connection_info, &Arc::new(server.kalam_sql.adapter().clone()))
+        .authenticate(
+            &auth_header,
+            &connection_info,
+            &Arc::new(server.kalam_sql.adapter().clone()),
+        )
         .await;
 
     // Verify failure
-    assert!(result.is_err(), "Authentication should fail for non-existent user");
-    
+    assert!(
+        result.is_err(),
+        "Authentication should fail for non-existent user"
+    );
+
     println!("✓ Nonexistent user correctly rejected");
 }

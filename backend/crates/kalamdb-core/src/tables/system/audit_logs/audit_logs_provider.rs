@@ -228,25 +228,13 @@ mod tests {
 
         // Append entries with different actions
         provider
-            .append(create_test_entry(
-                "audit_001",
-                "user.create",
-                1730000000000,
-            ))
+            .append(create_test_entry("audit_001", "user.create", 1730000000000))
             .unwrap();
         provider
-            .append(create_test_entry(
-                "audit_002",
-                "user.update",
-                1730000001000,
-            ))
+            .append(create_test_entry("audit_002", "user.update", 1730000001000))
             .unwrap();
         provider
-            .append(create_test_entry(
-                "audit_003",
-                "user.create",
-                1730000002000,
-            ))
+            .append(create_test_entry("audit_003", "user.create", 1730000002000))
             .unwrap();
 
         // Scan all and verify
@@ -268,11 +256,7 @@ mod tests {
 
         // Append test entry
         provider
-            .append(create_test_entry(
-                "audit_001",
-                "user.create",
-                1730000000000,
-            ))
+            .append(create_test_entry("audit_001", "user.create", 1730000000000))
             .unwrap();
 
         // Scan with all columns
@@ -314,8 +298,8 @@ mod tests {
             actor_username: UserName::new("admin"),
             action: "test.action".to_string(),
             target: "test.target".to_string(),
-            details: None,       // Optional
-            ip_address: None,    // Optional
+            details: None,    // Optional
+            ip_address: None, // Optional
         };
 
         provider.append(entry).unwrap();
@@ -359,11 +343,7 @@ mod tests {
 
         // Test load_batch
         provider
-            .append(create_test_entry(
-                "audit_001",
-                "test.action",
-                1730000000000,
-            ))
+            .append(create_test_entry("audit_001", "test.action", 1730000000000))
             .unwrap();
         let batch = provider.load_batch().unwrap();
         assert_eq!(batch.num_rows(), 1);

@@ -115,11 +115,7 @@ impl SharedTableFlushJob {
         }
 
         self.store
-            .delete_batch_by_keys(
-                self.namespace_id.as_str(),
-                self.table_name.as_str(),
-                &keys,
-            )
+            .delete_batch_by_keys(self.namespace_id.as_str(), self.table_name.as_str(), &keys)
             .map_err(|e| KalamDbError::Other(format!("Failed to delete flushed rows: {}", e)))?;
 
         log::debug!("Deleted {} flushed rows from storage", keys.len());
@@ -206,7 +202,8 @@ impl TableFlush for SharedTableFlushJob {
             );
 
             return Ok(FlushJobResult {
-                job_record: self.create_job_record(&self.generate_job_id(), self.namespace_id.clone()),
+                job_record: self
+                    .create_job_record(&self.generate_job_id(), self.namespace_id.clone()),
                 rows_flushed: 0,
                 parquet_files: vec![],
                 metadata: crate::tables::base_flush::FlushMetadata::shared_table(),
@@ -226,7 +223,7 @@ impl TableFlush for SharedTableFlushJob {
 
         // Determine output path: ${storage_location}/${table_name}/batch-{timestamp}.parquet
         let batch_filename = self.generate_batch_filename();
-        let table_dir = PathBuf::from(&self.storage_location).join(self.table_name.as_str());
+        let table_dir = PathBuf::from(&self.storage_location);
         let output_path = table_dir.join(&batch_filename);
 
         // Ensure directory exists
@@ -281,6 +278,8 @@ impl TableFlush for SharedTableFlushJob {
             self.table_name.as_str()
         );
 
+        let parquet_path = output_path.to_string_lossy().to_string();
+
         // Send flush notification if LiveQueryManager configured
         if let Some(manager) = &self.live_query_manager {
             let table_name = format!(
@@ -288,7 +287,7 @@ impl TableFlush for SharedTableFlushJob {
                 self.namespace_id.as_str(),
                 self.table_name.as_str()
             );
-            let parquet_files = vec![batch_filename.clone()];
+            let parquet_files = vec![parquet_path.clone()];
 
             let notification =
                 ChangeNotification::flush(table_name.clone(), rows_count, parquet_files.clone());
@@ -308,7 +307,7 @@ impl TableFlush for SharedTableFlushJob {
         Ok(FlushJobResult {
             job_record: self.create_job_record(&self.generate_job_id(), self.namespace_id.clone()),
             rows_flushed: rows_count,
-            parquet_files: vec![batch_filename],
+            parquet_files: vec![parquet_path],
             metadata: crate::tables::base_flush::FlushMetadata::shared_table(),
         })
     }
@@ -334,7 +333,7 @@ impl TableFlush for SharedTableFlushJob {
 mod tests {
     use super::*;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
-    use kalamdb_store::{RocksDBBackend, test_utils::TestDb};
+    use kalamdb_store::{test_utils::TestDb, RocksDBBackend};
 
     #[test]
     fn test_generate_batch_filename() {
@@ -345,7 +344,10 @@ mod tests {
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
         let job = SharedTableFlushJob::new(
-            Arc::new(SharedTableStore::new(backend, "shared_table:test:test_table")),
+            Arc::new(SharedTableStore::new(
+                backend,
+                "shared_table:test:test_table",
+            )),
             namespace_id,
             table_name,
             schema,
@@ -366,7 +368,10 @@ mod tests {
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
         let job = SharedTableFlushJob::new(
-            Arc::new(SharedTableStore::new(backend, "shared_table:test_ns:test_table")),
+            Arc::new(SharedTableStore::new(
+                backend,
+                "shared_table:test_ns:test_table",
+            )),
             namespace_id,
             table_name,
             schema,

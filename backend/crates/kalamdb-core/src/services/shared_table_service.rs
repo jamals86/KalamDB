@@ -12,8 +12,8 @@ use crate::error::KalamDbError;
 use crate::flush::FlushPolicy;
 use crate::stores::system_table::SharedTableStoreExt;
 use crate::tables::SharedTableStore;
-use datafusion::arrow::datatypes::{Schema};
-use kalamdb_commons::models::{StorageId};
+use datafusion::arrow::datatypes::Schema;
+use kalamdb_commons::models::StorageId;
 use kalamdb_sql::ddl::{CreateTableStatement, FlushPolicy as DdlFlushPolicy};
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
@@ -133,12 +133,38 @@ impl SharedTableService {
         let schema = stmt.schema.clone();
 
         // Resolve storage location from storage_id (defaulting to 'local')
-        let _storage_id = stmt
+        let storage_id = stmt
             .storage_id
             .as_ref()
             .cloned()
-            .unwrap_or_else(|| StorageId::local());
-        let storage_location = format!("/data/shared"); // TODO: Get from storage configuration
+            .unwrap_or_else(StorageId::local);
+        let storage_config = self
+            .kalam_sql
+            .get_storage(&storage_id)
+            .map_err(|e| {
+                KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e))
+            })?
+            .ok_or_else(|| KalamDbError::NotFound(format!("Storage '{}' not found", storage_id)))?;
+
+        let mut relative_path = storage_config
+            .shared_tables_template
+            .replace("{namespace}", stmt.namespace_id.as_str())
+            .replace("{tableName}", stmt.table_name.as_str())
+            .replace("{shard}", "");
+
+        if relative_path.starts_with('/') {
+            relative_path = relative_path.trim_start_matches('/').to_string();
+        }
+
+        let storage_location = if storage_config.base_directory.is_empty() {
+            relative_path
+        } else {
+            format!(
+                "{}/{}",
+                storage_config.base_directory.trim_end_matches('/'),
+                relative_path
+            )
+        };
 
         // Validate no ${user_id} templating in shared table storage location
         if storage_location.contains("${user_id}") {
@@ -379,7 +405,7 @@ mod tests {
     use arrow::datatypes::Field;
     use datafusion::arrow::datatypes::DataType;
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{StorageBackend, RocksDBBackend};
+    use kalamdb_store::{RocksDBBackend, StorageBackend};
 
     fn create_test_service() -> (SharedTableService, TestDb) {
         let test_db = TestDb::new(&[
@@ -390,7 +416,8 @@ mod tests {
         .unwrap();
 
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
-        let shared_table_store = Arc::new(SharedTableStore::new(backend, "shared_table:app:config"));
+        let shared_table_store =
+            Arc::new(SharedTableStore::new(backend, "shared_table:app:config"));
         let kalam_sql =
             Arc::new(KalamSql::new(Arc::new(RocksDBBackend::new(test_db.db.clone()))).unwrap());
 

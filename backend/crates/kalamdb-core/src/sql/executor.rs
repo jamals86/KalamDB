@@ -37,13 +37,11 @@ use crate::services::{
 };
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
-use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
-use crate::tables::{
-    SharedTableProvider, StreamTableProvider, UserTableProvider,
-};
+use crate::tables::{new_user_table_store, SharedTableStore, StreamTableStore, UserTableStore};
+use crate::tables::{SharedTableProvider, StreamTableProvider, UserTableProvider};
 // All system tables now use EntityStore-based v2 providers
-use crate::tables::system::UsersTableProvider;
 use crate::tables::system::JobsTableProvider;
+use crate::tables::system::UsersTableProvider;
 use datafusion::arrow::array::{ArrayRef, StringArray};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
@@ -51,7 +49,9 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser;
 use kalamdb_auth::password::{self, PasswordPolicy};
-use kalamdb_commons::models::{AuditLogId, NamespaceId as CommonNamespaceId, StorageId, TableId, UserName};
+use kalamdb_commons::models::{
+    AuditLogId, NamespaceId as CommonNamespaceId, StorageId, TableId, UserName,
+};
 use kalamdb_commons::system::{AuditLogEntry, Namespace};
 use kalamdb_commons::{JobStatus, Role, TableAccess};
 use kalamdb_sql::ddl::{
@@ -1258,7 +1258,7 @@ impl SqlExecutor {
             let backend = self.storage_backend.as_ref().ok_or_else(|| {
                 KalamDbError::InvalidOperation("Storage backend not configured".to_string())
             })?;
-            
+
             let table_store = Arc::new(crate::tables::new_user_table_store(
                 backend.clone(),
                 &namespace_id,
@@ -1868,11 +1868,6 @@ impl SqlExecutor {
             .as_ref()
             .ok_or_else(|| KalamDbError::Other("JobManager not initialized".to_string()))?;
 
-        let user_table_store = self
-            .user_table_store
-            .as_ref()
-            .ok_or_else(|| KalamDbError::Other("UserTableStore not initialized".to_string()))?;
-
         let storage_registry = self
             .storage_registry
             .as_ref()
@@ -1963,8 +1958,19 @@ impl SqlExecutor {
         let namespace_id = stmt.namespace.clone();
         let table_name = stmt.table_name.clone();
 
+        let storage_backend = self
+            .storage_backend
+            .as_ref()
+            .ok_or_else(|| KalamDbError::Other("Storage backend not initialized".to_string()))?;
+
+        let table_store = Arc::new(new_user_table_store(
+            storage_backend.clone(),
+            &stmt.namespace,
+            &stmt.table_name,
+        ));
+
         let flush_job = crate::flush::UserTableFlushJob::new(
-            user_table_store.clone(),
+            table_store,
             namespace_id,
             table_name.clone(),
             arrow_schema.schema,
@@ -1976,6 +1982,7 @@ impl SqlExecutor {
         let namespace_str = stmt.namespace.clone();
         let table_name_str = stmt.table_name.clone();
         let storage_location_clone = table.storage_location.clone();
+        let jobs_provider_clone = jobs_provider.clone();
 
         // Spawn async flush task via JobManager
         let job_future = Box::pin(async move {
@@ -1986,28 +1993,73 @@ impl SqlExecutor {
                 table_name_str
             );
 
-            match flush_job.execute_tracked() {
-                Ok(result) => {
-                    let users_count = result.metadata.users_count().unwrap_or(0);
-                    log::info!(
-                        "Flush job completed successfully: job_id={}, rows_flushed={}, users_count={}, parquet_files={}",
+            let result = flush_job.execute_tracked();
+
+            // Update job status in database based on result
+            if let Some(ref provider) = jobs_provider_clone {
+                let job_id_obj = kalamdb_commons::JobId::new(job_id_clone.clone());
+                let mut job_record = match provider.get_job(&job_id_obj) {
+                    Ok(Some(job)) => job,
+                    Ok(None) => {
+                        log::error!(
+                            "Job {} not found in database during completion",
+                            job_id_clone
+                        );
+                        return Err("Job record not found".to_string());
+                    }
+                    Err(e) => {
+                        log::error!("Failed to get job {} from database: {}", job_id_clone, e);
+                        return Err(format!("Failed to get job record: {}", e));
+                    }
+                };
+
+                match &result {
+                    Ok(flush_result) => {
+                        let users_count = flush_result.metadata.users_count().unwrap_or(0);
+                        job_record = job_record.complete(Some(format!(
+                            "Flushed {} rows for {} users. Storage location: {}. Parquet files: {}",
+                            flush_result.rows_flushed,
+                            users_count,
+                            storage_location_clone,
+                            flush_result.parquet_files.len()
+                        )));
+                        log::info!(
+                            "Flush job completed successfully: job_id={}, rows_flushed={}, users_count={}, parquet_files={}",
+                            job_id_clone,
+                            flush_result.rows_flushed,
+                            users_count,
+                            flush_result.parquet_files.len()
+                        );
+                    }
+                    Err(e) => {
+                        job_record = job_record.fail(e.to_string());
+                        log::error!("Flush job failed: job_id={}, error={}", job_id_clone, e);
+                    }
+                }
+
+                // Persist the updated job status
+                if let Err(e) = provider.update_job(job_record) {
+                    log::error!(
+                        "Failed to update job {} status in database: {}",
                         job_id_clone,
-                        result.rows_flushed,
-                        users_count,
-                        result.parquet_files.len()
+                        e
                     );
+                    return Err(format!("Failed to update job status: {}", e));
+                }
+            }
+
+            match result {
+                Ok(flush_result) => {
+                    let users_count = flush_result.metadata.users_count().unwrap_or(0);
                     Ok(format!(
                         "Flushed {} rows for {} users. Storage location: {}. Parquet files: {}",
-                        result.rows_flushed,
+                        flush_result.rows_flushed,
                         users_count,
                         storage_location_clone,
-                        result.parquet_files.len()
+                        flush_result.parquet_files.len()
                     ))
                 }
-                Err(e) => {
-                    log::error!("Flush job failed: job_id={}, error={}", job_id_clone, e);
-                    Err(format!("Flush failed: {}", e))
-                }
+                Err(e) => Err(format!("Flush failed: {}", e)),
             }
         });
 
@@ -2640,12 +2692,12 @@ impl SqlExecutor {
                     "Insufficient privileges to create USER tables".to_string(),
                 ));
             }
-            
+
             // NOTE: USER tables are multi-tenant tables that store data for ALL users.
             // The user_id parameter here is ONLY for authentication/authorization (RBAC).
             // It does NOT determine table ownership - the table is accessible to all authenticated users.
             // Data isolation is handled at query time by automatically filtering rows by user_id.
-            
+
             let namespace_id_for_parse =
                 kalamdb_commons::models::NamespaceId::new(namespace_id.as_str());
 
@@ -2847,7 +2899,10 @@ impl SqlExecutor {
                             .unwrap_or_else(|_| "{}".to_string());
 
                     let table = kalamdb_sql::Table {
-                        table_id: TableId::from_strings(&namespace_id.as_str(), &table_name.as_str()),
+                        table_id: TableId::from_strings(
+                            &namespace_id.as_str(),
+                            &table_name.as_str(),
+                        ),
                         table_name: table_name.clone(),
                         namespace: namespace_id.clone(),
                         table_type: TableType::Shared,
@@ -2930,7 +2985,10 @@ impl SqlExecutor {
                             .unwrap_or_else(|_| "{}".to_string());
 
                     let table = kalamdb_sql::Table {
-                        table_id: TableId::from_strings(&namespace_id.as_str(), &table_name.as_str()),
+                        table_id: TableId::from_strings(
+                            &namespace_id.as_str(),
+                            &table_name.as_str(),
+                        ),
                         table_name: table_name.clone(),
                         namespace: namespace_id.clone(),
                         table_type: TableType::Shared,
@@ -3010,15 +3068,16 @@ impl SqlExecutor {
                 .as_ref()
                 .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
 
-            let table_id = TableId::from_strings(
-                stmt.namespace_id.as_str(),
-                stmt.table_name.as_str()
-            );
+            let table_id =
+                TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
             let mut table = kalam_sql
                 .get_table(&table_id.to_string())
                 .map_err(|e| KalamDbError::Other(format!("Failed to get table: {}", e)))?
                 .ok_or_else(|| {
-                    KalamDbError::table_not_found(format!("Table '{}' not found", table_id.to_string()))
+                    KalamDbError::table_not_found(format!(
+                        "Table '{}' not found",
+                        table_id.to_string()
+                    ))
                 })?;
 
             // Verify table is SHARED type
@@ -3039,7 +3098,11 @@ impl SqlExecutor {
             self.log_audit_event(
                 &ctx,
                 "table.set_access",
-                &format!("{}.{}", stmt.namespace_id.as_str(), stmt.table_name.as_str()),
+                &format!(
+                    "{}.{}",
+                    stmt.namespace_id.as_str(),
+                    stmt.table_name.as_str()
+                ),
                 json!({ "access_level": format!("{:?}", access_level) }),
                 metadata,
             );
@@ -3078,10 +3141,8 @@ impl SqlExecutor {
 
         let ctx = self.create_execution_context(user_id)?;
         let requested_table_type: TableType = stmt.table_type.into();
-        let table_identifier = TableId::from_strings(
-            stmt.namespace_id.as_str(),
-            stmt.table_name.as_str()
-        );
+        let table_identifier =
+            TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
 
         let actual_table_type = if let Some(kalam_sql) = &self.kalam_sql {
             match kalam_sql.get_table(&table_identifier.to_string()) {
@@ -3250,14 +3311,13 @@ impl SqlExecutor {
             })?;
 
         // Execute the update on shared table
-        let store = self.shared_table_store.as_ref()
+        let store = self
+            .shared_table_store
+            .as_ref()
             .ok_or_else(|| KalamDbError::InvalidOperation("Store not configured".to_string()))?;
-        let all_rows = SharedTableStoreExt::scan(
-            store.as_ref(),
-            &update_info.namespace,
-            &update_info.table,
-        )
-        .map_err(|e| KalamDbError::Other(e.to_string()))?;
+        let all_rows =
+            SharedTableStoreExt::scan(store.as_ref(), &update_info.namespace, &update_info.table)
+                .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         // Filter rows by WHERE clause (simple evaluation: col = 'value')
         let (where_col, where_val) = self.parse_simple_where(&update_info.where_clause)?;
@@ -3997,17 +4057,28 @@ mod tests {
         let session_context = Arc::new(SessionContext::new());
 
         // Initialize table services for tests using EntityStore implementations
-        let user_table_store = Arc::new(crate::tables::new_user_table_store(backend.clone(), &NamespaceId::new("default"), &TableName::new("test")));
+        let user_table_store = Arc::new(crate::tables::new_user_table_store(
+            backend.clone(),
+            &NamespaceId::new("default"),
+            &TableName::new("test"),
+        ));
         let user_table_service = Arc::new(crate::services::UserTableService::new(
             kalam_sql.clone(),
             user_table_store.clone(),
         ));
-        let shared_table_store = Arc::new(crate::tables::new_shared_table_store(backend.clone(), &NamespaceId::new("default"), &TableName::new("test")));
+        let shared_table_store = Arc::new(crate::tables::new_shared_table_store(
+            backend.clone(),
+            &NamespaceId::new("default"),
+            &TableName::new("test"),
+        ));
         let shared_table_service = Arc::new(crate::services::SharedTableService::new(
             shared_table_store.clone(),
             kalam_sql.clone(),
         ));
-        let stream_table_store = Arc::new(crate::tables::new_stream_table_store(&NamespaceId::new("default"), &TableName::new("test")));
+        let stream_table_store = Arc::new(crate::tables::new_stream_table_store(
+            &NamespaceId::new("default"),
+            &TableName::new("test"),
+        ));
         let stream_table_service = Arc::new(crate::services::StreamTableService::new(
             stream_table_store.clone(),
             kalam_sql.clone(),
@@ -4103,17 +4174,28 @@ mod tests {
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
         let session_context = Arc::new(SessionContext::new());
 
-        let user_table_store = Arc::new(crate::tables::new_user_table_store(backend.clone(), &NamespaceId::new("default"), &TableName::new("test")));
+        let user_table_store = Arc::new(crate::tables::new_user_table_store(
+            backend.clone(),
+            &NamespaceId::new("default"),
+            &TableName::new("test"),
+        ));
         let user_table_service = Arc::new(crate::services::UserTableService::new(
             kalam_sql.clone(),
             user_table_store.clone(),
         ));
-        let shared_table_store = Arc::new(crate::tables::new_shared_table_store(backend.clone(), &NamespaceId::new("default"), &TableName::new("test")));
+        let shared_table_store = Arc::new(crate::tables::new_shared_table_store(
+            backend.clone(),
+            &NamespaceId::new("default"),
+            &TableName::new("test"),
+        ));
         let shared_table_service = Arc::new(crate::services::SharedTableService::new(
             shared_table_store.clone(),
             kalam_sql.clone(),
         ));
-        let stream_table_store = Arc::new(crate::tables::new_stream_table_store(&NamespaceId::new("default"), &TableName::new("test")));
+        let stream_table_store = Arc::new(crate::tables::new_stream_table_store(
+            &NamespaceId::new("default"),
+            &TableName::new("test"),
+        ));
         let stream_table_service = Arc::new(crate::services::StreamTableService::new(
             stream_table_store.clone(),
             kalam_sql.clone(),

@@ -8,7 +8,9 @@
 
 use crate::catalog::{NamespaceId, TableMetadata, TableName};
 use crate::error::KalamDbError;
-use crate::tables::arrow_json_conversion::{arrow_batch_to_json, json_rows_to_arrow_batch, validate_insert_rows};
+use crate::tables::arrow_json_conversion::{
+    arrow_batch_to_json, json_rows_to_arrow_batch, validate_insert_rows,
+};
 use crate::tables::shared_tables::shared_table_store::{
     SharedTableRow, SharedTableRowId, SharedTableStore,
 };
@@ -16,10 +18,10 @@ use async_trait::async_trait;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use kalamdb_store::EntityStoreV2 as EntityStore;
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_store::EntityStoreV2 as EntityStore;
 use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;
@@ -275,9 +277,10 @@ impl TableProvider for SharedTableProvider {
                 )
             })
             .collect();
-        let batch = shared_rows_to_arrow_batch(&rows_with_ids, &full_schema, limit).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to convert rows to Arrow: {}", e))
-        })?;
+        let batch =
+            shared_rows_to_arrow_batch(&rows_with_ids, &full_schema, limit).map_err(|e| {
+                DataFusionError::Execution(format!("Failed to convert rows to Arrow: {}", e))
+            })?;
 
         // Apply projection if specified
         let (final_batch, final_schema) = if let Some(proj_indices) = projection {
@@ -442,24 +445,14 @@ fn shared_rows_to_arrow_batch(
             DataType::Int64 => {
                 let values: Vec<Option<i64>> = rows_to_process
                     .iter()
-                    .map(|(_, row_data)| {
-                        row_data
-                            .fields
-                            .get(field.name())
-                            .and_then(|v| v.as_i64())
-                    })
+                    .map(|(_, row_data)| row_data.fields.get(field.name()).and_then(|v| v.as_i64()))
                     .collect();
                 Arc::new(Int64Array::from(values))
             }
             DataType::Float64 => {
                 let values: Vec<Option<f64>> = rows_to_process
                     .iter()
-                    .map(|(_, row_data)| {
-                        row_data
-                            .fields
-                            .get(field.name())
-                            .and_then(|v| v.as_f64())
-                    })
+                    .map(|(_, row_data)| row_data.fields.get(field.name()).and_then(|v| v.as_f64()))
                     .collect();
                 Arc::new(Float64Array::from(values))
             }
@@ -470,10 +463,7 @@ fn shared_rows_to_arrow_batch(
                         if field.name() == "_deleted" {
                             Some(row_data._deleted)
                         } else {
-                            row_data
-                                .fields
-                                .get(field.name())
-                                .and_then(|v| v.as_bool())
+                            row_data.fields.get(field.name()).and_then(|v| v.as_bool())
                         }
                     })
                     .collect();
@@ -488,18 +478,15 @@ fn shared_rows_to_arrow_batch(
                                 .ok()
                                 .map(|dt| dt.timestamp_millis())
                         } else {
-                            row_data
-                                .fields
-                                .get(field.name())
-                                .and_then(|v| {
-                                    v.as_i64().or_else(|| {
-                                        v.as_str().and_then(|s| {
-                                            chrono::DateTime::parse_from_rfc3339(s)
-                                                .ok()
-                                                .map(|dt| dt.timestamp_millis())
-                                        })
+                            row_data.fields.get(field.name()).and_then(|v| {
+                                v.as_i64().or_else(|| {
+                                    v.as_str().and_then(|s| {
+                                        chrono::DateTime::parse_from_rfc3339(s)
+                                            .ok()
+                                            .map(|dt| dt.timestamp_millis())
                                     })
                                 })
+                            })
                         }
                     })
                     .collect();
@@ -526,7 +513,7 @@ mod tests {
     use super::*;
     use crate::catalog::TableType;
     use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-    use kalamdb_store::test_utils::{TestDb, InMemoryBackend};
+    use kalamdb_store::test_utils::{InMemoryBackend, TestDb};
 
     fn create_test_provider() -> (SharedTableProvider, TestDb) {
         let test_db = TestDb::new(&["shared_table:app:config"]).unwrap();
@@ -553,11 +540,13 @@ mod tests {
             deleted_retention_hours: Some(24),
         };
 
-        let store = Arc::new(crate::tables::shared_tables::shared_table_store::new_shared_table_store(
-            Arc::new(InMemoryBackend::new()),
-            &metadata.namespace,
-            &metadata.table_name,
-        ));
+        let store = Arc::new(
+            crate::tables::shared_tables::shared_table_store::new_shared_table_store(
+                Arc::new(InMemoryBackend::new()),
+                &metadata.namespace,
+                &metadata.table_name,
+            ),
+        );
         let provider = SharedTableProvider::new(metadata, schema, store);
 
         (provider, test_db)
@@ -639,8 +628,7 @@ mod tests {
         eprintln!("Stored _deleted value: {:?}", stored_data._deleted);
 
         assert_eq!(
-            stored_data._deleted,
-            true,
+            stored_data._deleted, true,
             "Row should be marked as deleted"
         );
     }

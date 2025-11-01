@@ -274,8 +274,8 @@ async fn main() -> Result<()> {
 
     // Helper function to check if URL is localhost
     fn is_localhost_url(url: &str) -> bool {
-        url.contains("localhost") 
-            || url.contains("127.0.0.1") 
+        url.contains("localhost")
+            || url.contains("127.0.0.1")
             || url.contains("::1")
             || url.contains("0.0.0.0")
     }

@@ -27,6 +27,8 @@ pub struct ServerConfig {
     pub oauth: OAuthSettings,
     #[serde(default)]
     pub user_management: UserManagementSettings,
+    #[serde(default)]
+    pub shutdown: ShutdownSettings,
 }
 
 /// Server settings
@@ -39,9 +41,6 @@ pub struct ServerSettings {
     /// API version prefix for endpoints (default: "v1")
     #[serde(default = "default_api_version")]
     pub api_version: String,
-    /// Timeout in seconds to wait for flush jobs to complete during graceful shutdown (T158j)
-    #[serde(default = "default_flush_job_shutdown_timeout")]
-    pub flush_job_shutdown_timeout_seconds: u32,
 }
 
 /// Storage settings
@@ -191,6 +190,21 @@ pub struct UserManagementSettings {
     /// Cron expression for scheduling the cleanup job
     #[serde(default = "default_cleanup_job_schedule")]
     pub cleanup_job_schedule: String,
+}
+
+/// Shutdown settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShutdownSettings {
+    /// Flush job timeout settings
+    pub flush: ShutdownFlushSettings,
+}
+
+/// Flush job shutdown timeout settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShutdownFlushSettings {
+    /// Timeout in seconds to wait for flush jobs to complete during graceful shutdown
+    #[serde(default = "default_flush_job_shutdown_timeout")]
+    pub timeout: u32,
 }
 
 /// Rate limiter settings
@@ -403,6 +417,22 @@ impl Default for UserManagementSettings {
         Self {
             deletion_grace_period_days: default_user_deletion_grace_period(),
             cleanup_job_schedule: default_cleanup_job_schedule(),
+        }
+    }
+}
+
+impl Default for ShutdownSettings {
+    fn default() -> Self {
+        Self {
+            flush: ShutdownFlushSettings::default(),
+        }
+    }
+}
+
+impl Default for ShutdownFlushSettings {
+    fn default() -> Self {
+        Self {
+            timeout: default_flush_job_shutdown_timeout(),
         }
     }
 }
@@ -753,7 +783,6 @@ impl ServerConfig {
                 port: 8080,
                 workers: 0,
                 api_version: default_api_version(),
-                flush_job_shutdown_timeout_seconds: default_flush_job_shutdown_timeout(),
             },
             storage: StorageSettings {
                 rocksdb_path: "./data/rocksdb".to_string(),
@@ -786,6 +815,7 @@ impl ServerConfig {
             auth: AuthSettings::default(),
             oauth: OAuthSettings::default(),
             user_management: UserManagementSettings::default(),
+            shutdown: ShutdownSettings::default(),
         }
     }
 }

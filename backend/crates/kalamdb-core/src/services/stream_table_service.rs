@@ -13,7 +13,7 @@ use crate::error::KalamDbError;
 use crate::stores::system_table::SharedTableStoreExt;
 use crate::tables::StreamTableStore;
 use datafusion::arrow::datatypes::Schema;
-use kalamdb_commons::models::{StorageId};
+use kalamdb_commons::models::StorageId;
 use kalamdb_sql::ddl::CreateTableStatement;
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
@@ -89,11 +89,11 @@ impl StreamTableService {
         // Save complete table definition to information_schema_tables (atomic write)
         self.save_table_definition(&stmt, &schema)?;
 
-                // Create the column family in RocksDB
+        // Create the column family in RocksDB
         SharedTableStoreExt::create_column_family(
             self.stream_table_store.as_ref(),
             stmt.namespace_id.as_str(),
-            stmt.table_name.as_str()
+            stmt.table_name.as_str(),
         )
         .map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to create column family: {}", e))
@@ -216,7 +216,7 @@ mod tests {
     use super::*;
     use datafusion::arrow::datatypes::{DataType, Field};
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{StorageBackend, RocksDBBackend};
+    use kalamdb_store::{RocksDBBackend, StorageBackend};
 
     fn create_test_service() -> (StreamTableService, TestDb) {
         let test_db = TestDb::new(&[

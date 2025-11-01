@@ -107,7 +107,10 @@ impl UserTableService {
 
         // 4. Storage location resolution - use storage_id to get the path template
         let default_storage = StorageId::local();
-        let storage_id = modified_stmt.storage_id.as_ref().unwrap_or(&default_storage);
+        let storage_id = modified_stmt
+            .storage_id
+            .as_ref()
+            .unwrap_or(&default_storage);
         let storage_location = self.resolve_storage_from_id(storage_id)?;
 
         // 5. Save complete table definition to information_schema_tables (atomic write)
@@ -243,10 +246,7 @@ impl UserTableService {
         stmt: &CreateTableStatement,
         schema: &Arc<Schema>,
     ) -> Result<(), KalamDbError> {
-        use kalamdb_commons::models::{
-            FlushPolicyDef, SchemaVersion, TableDefinition,
-        };
-        
+        use kalamdb_commons::models::{FlushPolicyDef, SchemaVersion, TableDefinition};
 
         // Extract columns from schema with ordinal positions
         let columns = TableDefinition::extract_columns_from_schema(
@@ -369,7 +369,7 @@ impl UserTableService {
 mod tests {
     use super::*;
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{StorageBackend, RocksDBBackend};
+    use kalamdb_store::{RocksDBBackend, StorageBackend};
 
     fn setup_test_service() -> UserTableService {
         let test_db =

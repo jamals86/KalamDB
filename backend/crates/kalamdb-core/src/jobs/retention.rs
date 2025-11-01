@@ -117,7 +117,7 @@ mod tests {
 
     use crate::catalog::NamespaceId;
     use kalamdb_commons::system::Job;
-    use kalamdb_commons::{JobType, JobId};
+    use kalamdb_commons::{JobId, JobType};
     use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
@@ -175,8 +175,14 @@ mod tests {
         assert_eq!(deleted, 1);
 
         // Verify old job is gone, recent job remains
-        assert!(provider.get_job(&JobId::new("old-completed")).unwrap().is_none());
-        assert!(provider.get_job(&JobId::new("recent-completed")).unwrap().is_some());
+        assert!(provider
+            .get_job(&JobId::new("old-completed"))
+            .unwrap()
+            .is_none());
+        assert!(provider
+            .get_job(&JobId::new("recent-completed"))
+            .unwrap()
+            .is_some());
     }
 
     #[test]

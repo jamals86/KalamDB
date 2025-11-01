@@ -4,8 +4,6 @@
 //! in `main.rs`: bootstrapping databases and services, wiring the HTTP
 //! server, and coordinating graceful shutdown.
 
-use kalamdb_core::jobs::JobManager;
-use log::debug;
 use crate::middleware;
 use crate::routes;
 use crate::ServerConfig;
@@ -15,6 +13,7 @@ use datafusion::catalog::memory::MemorySchemaProvider;
 use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
+use kalamdb_core::jobs::JobManager;
 use kalamdb_core::live_query::{LiveQueryManager, NodeId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
@@ -34,6 +33,7 @@ use kalamdb_sql::KalamSql;
 use kalamdb_sql::RocksDbAdapter;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
+use log::debug;
 use log::{info, warn};
 use std::sync::Arc;
 use std::time::Duration;
@@ -361,7 +361,7 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
 
     let flush_scheduler_shutdown = components.flush_scheduler.clone();
     let stream_eviction_scheduler_shutdown = components.stream_eviction_scheduler.clone();
-    let shutdown_timeout_secs = config.server.flush_job_shutdown_timeout_seconds;
+    let shutdown_timeout_secs = config.shutdown.flush.timeout;
 
     let session_factory = components.session_factory.clone();
     let sql_executor = components.sql_executor.clone();
@@ -447,7 +447,6 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
 async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
     use kalamdb_commons::constants::AuthConstants;
     use kalamdb_commons::system::User;
-    
 
     // Check if root user already exists
     let existing_user = kalam_sql.get_user(AuthConstants::DEFAULT_SYSTEM_USERNAME);
@@ -497,9 +496,7 @@ async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
                 "✓ Created system user '{}' (localhost-only access, no password required)",
                 username
             );
-            info!(
-                "  To enable remote access, set a password: ALTER USER root SET PASSWORD '...'",
-            );
+            info!("  To enable remote access, set a password: ALTER USER root SET PASSWORD '...'",);
 
             Ok(())
         }
@@ -535,8 +532,14 @@ async fn check_remote_access_security(
             warn!("║  Set a strong password for the root user:                        ║");
             warn!("║     ALTER USER root SET PASSWORD 'strong-password-here';         ║");
             warn!("║                                                                   ║");
-            warn!("║  Note: allow_remote_access config is currently: {}               ║", 
-                  if config.auth.allow_remote_access { "ENABLED " } else { "DISABLED" });
+            warn!(
+                "║  Note: allow_remote_access config is currently: {}               ║",
+                if config.auth.allow_remote_access {
+                    "ENABLED "
+                } else {
+                    "DISABLED"
+                }
+            );
             warn!("║  (Remote access still requires password for system users)        ║");
             warn!("║                                                                   ║");
             warn!("╚═══════════════════════════════════════════════════════════════════╝");

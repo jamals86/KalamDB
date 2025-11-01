@@ -270,8 +270,8 @@ fn get_process_memory() -> usize {
     {
         // macOS implementation using task_info via libc
         use libc::{
-            mach_msg_type_number_t, mach_task_self, mach_task_basic_info_data_t, task_info,
-            kern_return_t, MACH_TASK_BASIC_INFO, KERN_SUCCESS,
+            kern_return_t, mach_msg_type_number_t, mach_task_basic_info_data_t, mach_task_self,
+            task_info, KERN_SUCCESS, MACH_TASK_BASIC_INFO,
         };
         use std::mem;
 
@@ -372,9 +372,7 @@ impl CpuMonitor {
                     }
                 };
 
-                let measurement = CpuMeasurement {
-                    cpu_percent,
-                };
+                let measurement = CpuMeasurement { cpu_percent };
 
                 measurements.lock().await.push(measurement);
                 tokio::time::sleep(interval).await;

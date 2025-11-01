@@ -9,29 +9,24 @@
 pub mod arrow_json_conversion;
 pub mod base_flush;
 pub mod parquet_scan;
-pub mod system;
-pub mod user_tables;
 pub mod shared_tables;
 pub mod stream_tables;
+pub mod system;
+pub mod user_tables;
 
 // Re-export flush types
 pub use base_flush::{
-    FlushJobResult, FlushMetadata, UserTableFlushMetadata, SharedTableFlushMetadata, TableFlush,
+    FlushJobResult, FlushMetadata, SharedTableFlushMetadata, TableFlush, UserTableFlushMetadata,
 };
 
 // Re-export from consolidated modules
-pub use user_tables::{
-    UserTableStore, UserTableRow, UserTableRowId, new_user_table_store,
-    UserTableProvider,
-    UserTableInsertHandler,
-    UserTableUpdateHandler,
-    UserTableDeleteHandler,
-};
 pub use shared_tables::{
-    SharedTableStore, SharedTableRow, SharedTableRowId, new_shared_table_store,
-    SharedTableProvider,
+    new_shared_table_store, SharedTableProvider, SharedTableRow, SharedTableRowId, SharedTableStore,
 };
 pub use stream_tables::{
-    StreamTableStore, StreamTableRow, StreamTableRowId, new_stream_table_store,
-    StreamTableProvider,
+    new_stream_table_store, StreamTableProvider, StreamTableRow, StreamTableRowId, StreamTableStore,
+};
+pub use user_tables::{
+    new_user_table_store, UserTableDeleteHandler, UserTableInsertHandler, UserTableProvider,
+    UserTableRow, UserTableRowId, UserTableStore, UserTableUpdateHandler,
 };

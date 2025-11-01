@@ -46,13 +46,10 @@ use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
     UserTableService,
 };
-use kalamdb_core::tables::{
-    SharedTableStore, StreamTableStore, UserTableStore,
-};
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_store::RocksDBBackend;
-use kalamdb_store::StorageBackend;
+use kalamdb_core::tables::{SharedTableStore, StreamTableStore, UserTableStore};
+use kalamdb_store::{Partition as StorePartition, RocksDBBackend, StorageBackend};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -174,10 +171,7 @@ impl TestServer {
                 storage_name: "Local Filesystem".to_string(),
                 description: Some("Default local filesystem storage".to_string()),
                 storage_type: "filesystem".to_string(),
-                base_directory: storage_base_path
-                    .to_str()
-                    .unwrap()
-                    .to_string(),
+                base_directory: storage_base_path.to_str().unwrap().to_string(),
                 credentials: None,
                 shared_tables_template: "shared/{namespace}/{tableName}".to_string(),
                 user_tables_template: "users/{userId}/tables/{namespace}/{tableName}".to_string(),
@@ -214,11 +208,18 @@ impl TestServer {
 
         // Initialize stores (needed by some services)
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
+        for partition_name in ["user_tables", "shared_tables", "stream_tables"] {
+            let partition = StorePartition::new(partition_name);
+            if let Err(err) = backend.create_partition(&partition) {
+                eprintln!(
+                    "Warning: failed to create partition {}: {}",
+                    partition_name, err
+                );
+            }
+        }
         let user_table_store = Arc::new(UserTableStore::new(backend.clone(), "user_tables"));
-        let shared_table_store =
-            Arc::new(SharedTableStore::new(backend.clone(), "shared_tables"));
-        let stream_table_store =
-            Arc::new(StreamTableStore::new(backend.clone(), "stream_tables"));
+        let shared_table_store = Arc::new(SharedTableStore::new(backend.clone(), "shared_tables"));
+        let stream_table_store = Arc::new(StreamTableStore::new(backend.clone(), "stream_tables"));
 
         // Initialize services
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
@@ -796,7 +797,8 @@ pub fn create_test_jwt(user_id: &str, secret: &str, exp_seconds: i64) -> String 
         &Header::new(Algorithm::HS256),
         &claims,
         &EncodingKey::from_secret(secret.as_bytes()),
-    ).expect("Failed to create JWT token")
+    )
+    .expect("Failed to create JWT token")
 }
 
 #[cfg(test)]

@@ -107,7 +107,12 @@ mod tests {
     use sqlparser::ast::Ident;
 
     fn custom(name: &str) -> SQLDataType {
-        SQLDataType::Custom(ObjectName(vec![sqlparser::ast::ObjectNamePart::Identifier(Ident::new(name))]), vec![])
+        SQLDataType::Custom(
+            ObjectName(vec![sqlparser::ast::ObjectNamePart::Identifier(
+                Ident::new(name),
+            )]),
+            vec![],
+        )
     }
 
     #[test]

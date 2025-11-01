@@ -45,27 +45,54 @@ async fn test_e2e_auth_flow() {
     // Create namespace
     let create_ns_sql = format!("CREATE NAMESPACE {}", namespace);
     let response = server.execute_sql_as_user(&create_ns_sql, username).await;
-    assert_eq!(response.status, "success", "Failed to create namespace: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "Failed to create namespace: {:?}",
+        response.error
+    );
     println!("✅ Namespace '{}' created", namespace);
 
     // Create table
-    let create_table_sql = format!("CREATE TABLE {}.{} (id INTEGER, name TEXT)", namespace, table_name);
-    let response = server.execute_sql_as_user(&create_table_sql, username).await;
-    assert_eq!(response.status, "success", "Failed to create table: {:?}", response.error);
+    let create_table_sql = format!(
+        "CREATE TABLE {}.{} (id INTEGER, name TEXT)",
+        namespace, table_name
+    );
+    let response = server
+        .execute_sql_as_user(&create_table_sql, username)
+        .await;
+    assert_eq!(
+        response.status, "success",
+        "Failed to create table: {:?}",
+        response.error
+    );
     println!("✅ Table '{}.{}' created", namespace, table_name);
 
     // Insert data
-    let insert_sql = format!("INSERT INTO {}.{} (id, name) VALUES (1, 'Alice'), (2, 'Bob')", namespace, table_name);
+    let insert_sql = format!(
+        "INSERT INTO {}.{} (id, name) VALUES (1, 'Alice'), (2, 'Bob')",
+        namespace, table_name
+    );
     let response = server.execute_sql_as_user(&insert_sql, username).await;
-    assert_eq!(response.status, "success", "Failed to insert data: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "Failed to insert data: {:?}",
+        response.error
+    );
     println!("✅ Data inserted into table");
 
     // Query data
     let select_sql = format!("SELECT * FROM {}.{}", namespace, table_name);
     let response = server.execute_sql_as_user(&select_sql, username).await;
-    assert_eq!(response.status, "success", "Failed to query data: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "Failed to query data: {:?}",
+        response.error
+    );
     assert!(!response.results.is_empty(), "No results returned");
-    println!("✅ Data queried successfully ({} rows)", response.results[0].row_count);
+    println!(
+        "✅ Data queried successfully ({} rows)",
+        response.results[0].row_count
+    );
 
     // Phase 3: User Soft Deletion
     println!("🗑️  Phase 3: Testing user soft deletion");
@@ -73,16 +100,31 @@ async fn test_e2e_auth_flow() {
     // Soft delete the user via SQL
     let delete_user_sql = format!("ALTER USER {} SET deleted = true", username);
     let response = server.execute_sql(&delete_user_sql).await; // Execute as system user
-    assert_eq!(response.status, "success", "Failed to soft delete user: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "Failed to soft delete user: {:?}",
+        response.error
+    );
     println!("✅ User '{}' soft deleted", username);
 
     // Verify authentication fails for deleted user
     let post_delete_sql = format!("SELECT 1");
     let response = server.execute_sql_as_user(&post_delete_sql, username).await;
-    assert_eq!(response.status, "error", "Authentication should fail for deleted user");
-    assert!(response.error.as_ref().unwrap().message.contains("deleted") ||
-            response.error.as_ref().unwrap().message.contains("Invalid username"),
-            "Error should indicate user deletion or invalid credentials: {:?}", response.error);
+    assert_eq!(
+        response.status, "error",
+        "Authentication should fail for deleted user"
+    );
+    assert!(
+        response.error.as_ref().unwrap().message.contains("deleted")
+            || response
+                .error
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("Invalid username"),
+        "Error should indicate user deletion or invalid credentials: {:?}",
+        response.error
+    );
     println!("✅ Authentication correctly fails for deleted user");
 
     // Phase 4: User Restoration
@@ -91,13 +133,23 @@ async fn test_e2e_auth_flow() {
     // Restore the user via SQL
     let restore_user_sql = format!("ALTER USER {} SET deleted = false", username);
     let response = server.execute_sql(&restore_user_sql).await; // Execute as system user
-    assert_eq!(response.status, "success", "Failed to restore user: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "Failed to restore user: {:?}",
+        response.error
+    );
     println!("✅ User '{}' restored", username);
 
     // Verify authentication works again
     let post_restore_sql = format!("SELECT COUNT(*) FROM {}.{}", namespace, table_name);
-    let response = server.execute_sql_as_user(&post_restore_sql, username).await;
-    assert_eq!(response.status, "success", "Authentication should work for restored user: {:?}", response.error);
+    let response = server
+        .execute_sql_as_user(&post_restore_sql, username)
+        .await;
+    assert_eq!(
+        response.status, "success",
+        "Authentication should work for restored user: {:?}",
+        response.error
+    );
     println!("✅ Authentication works for restored user");
 
     // Phase 5: Cleanup
@@ -106,19 +158,31 @@ async fn test_e2e_auth_flow() {
     // Drop table
     let drop_table_sql = format!("DROP TABLE {}.{}", namespace, table_name);
     let response = server.execute_sql_as_user(&drop_table_sql, username).await;
-    assert_eq!(response.status, "success", "Failed to drop table: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "Failed to drop table: {:?}",
+        response.error
+    );
     println!("✅ Table dropped");
 
     // Drop namespace
     let drop_ns_sql = format!("DROP NAMESPACE {} CASCADE", namespace);
     let response = server.execute_sql_as_user(&drop_ns_sql, username).await;
-    assert_eq!(response.status, "success", "Failed to drop namespace: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "Failed to drop namespace: {:?}",
+        response.error
+    );
     println!("✅ Namespace dropped");
 
     // Permanently delete user (cleanup)
     let drop_user_sql = format!("DROP USER {}", username);
     let response = server.execute_sql(&drop_user_sql).await; // Execute as system user
-    assert_eq!(response.status, "success", "Failed to drop user: {:?}", response.error);
+    assert_eq!(
+        response.status, "success",
+        "Failed to drop user: {:?}",
+        response.error
+    );
     println!("✅ User permanently deleted");
 
     println!("🎉 E2E Authentication Flow Test Completed Successfully!");
@@ -142,8 +206,10 @@ async fn test_role_based_auth_e2e() {
     println!("👥 Testing Role-Based Authentication E2E");
 
     // Create users with different roles
-    let user_user = auth_helper::create_test_user(&server, "regular_user", "pass123", Role::User).await;
-    let service_user = auth_helper::create_test_user(&server, "service_user", "pass123", Role::Service).await;
+    let user_user =
+        auth_helper::create_test_user(&server, "regular_user", "pass123", Role::User).await;
+    let service_user =
+        auth_helper::create_test_user(&server, "service_user", "pass123", Role::Service).await;
     let dba_user = auth_helper::create_test_user(&server, "dba_user", "pass123", Role::Dba).await;
 
     println!("✅ Created users with roles: User, Service, DBA");
@@ -151,39 +217,69 @@ async fn test_role_based_auth_e2e() {
     // Create namespace as DBA
     let create_ns_sql = format!("CREATE NAMESPACE {}", namespace);
     let response = server.execute_sql_as_user(&create_ns_sql, "dba_user").await;
-    assert_eq!(response.status, "success", "DBA should be able to create namespace");
+    assert_eq!(
+        response.status, "success",
+        "DBA should be able to create namespace"
+    );
     println!("✅ DBA user created namespace");
 
     // Regular user tries to create namespace (should fail)
-    let response = server.execute_sql_as_user(&create_ns_sql, "regular_user").await;
-    assert_eq!(response.status, "error", "Regular user should not be able to create namespace");
+    let response = server
+        .execute_sql_as_user(&create_ns_sql, "regular_user")
+        .await;
+    assert_eq!(
+        response.status, "error",
+        "Regular user should not be able to create namespace"
+    );
     println!("✅ Regular user correctly denied namespace creation");
 
     // Service user tries to create namespace (should fail)
-    let response = server.execute_sql_as_user(&create_ns_sql, "service_user").await;
-    assert_eq!(response.status, "error", "Service user should not be able to create namespace");
+    let response = server
+        .execute_sql_as_user(&create_ns_sql, "service_user")
+        .await;
+    assert_eq!(
+        response.status, "error",
+        "Service user should not be able to create namespace"
+    );
     println!("✅ Service user correctly denied namespace creation");
 
     // Create table as DBA
     let create_table_sql = format!("CREATE TABLE {}.test_table (id INTEGER)", namespace);
-    let response = server.execute_sql_as_user(&create_table_sql, "dba_user").await;
-    assert_eq!(response.status, "success", "DBA should be able to create table");
+    let response = server
+        .execute_sql_as_user(&create_table_sql, "dba_user")
+        .await;
+    assert_eq!(
+        response.status, "success",
+        "DBA should be able to create table"
+    );
     println!("✅ DBA user created table");
 
     // Regular user creates user table (should succeed)
     let user_table_sql = "CREATE TABLE regular_user.test_table (id INTEGER)".to_string();
-    let response = server.execute_sql_as_user(&user_table_sql, "regular_user").await;
-    assert_eq!(response.status, "success", "Regular user should be able to create user table");
+    let response = server
+        .execute_sql_as_user(&user_table_sql, "regular_user")
+        .await;
+    assert_eq!(
+        response.status, "success",
+        "Regular user should be able to create user table"
+    );
     println!("✅ Regular user created user table");
 
     // Service user creates user table (should succeed)
     let service_table_sql = "CREATE TABLE service_user.test_table (id INTEGER)".to_string();
-    let response = server.execute_sql_as_user(&service_table_sql, "service_user").await;
-    assert_eq!(response.status, "success", "Service user should be able to create user table");
+    let response = server
+        .execute_sql_as_user(&service_table_sql, "service_user")
+        .await;
+    assert_eq!(
+        response.status, "success",
+        "Service user should be able to create user table"
+    );
     println!("✅ Service user created user table");
 
     // Cleanup
-    server.execute_sql_as_user(&format!("DROP NAMESPACE {} CASCADE", namespace), "dba_user").await;
+    server
+        .execute_sql_as_user(&format!("DROP NAMESPACE {} CASCADE", namespace), "dba_user")
+        .await;
     server.execute_sql("DROP USER regular_user").await;
     server.execute_sql("DROP USER service_user").await;
     server.execute_sql("DROP USER dba_user").await;

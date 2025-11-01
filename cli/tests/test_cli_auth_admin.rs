@@ -66,10 +66,20 @@ async fn test_root_can_create_namespace() {
     }
 
     // Use unique namespace name to avoid conflicts
-    let namespace_name = format!("test_root_ns_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+    let namespace_name = format!(
+        "test_root_ns_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
 
     // Clean up any existing namespace (just in case)
-    let _ = execute_sql_as_root(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace_name)).await;
+    let _ = execute_sql_as_root(&format!(
+        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        namespace_name
+    ))
+    .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Create namespace as root
@@ -88,9 +98,10 @@ async fn test_root_can_create_namespace() {
     }
 
     // Verify namespace was created
-    let select_result = execute_sql_as_root(
-        &format!("SELECT name FROM system.namespaces WHERE name = '{}'", namespace_name),
-    )
+    let select_result = execute_sql_as_root(&format!(
+        "SELECT name FROM system.namespaces WHERE name = '{}'",
+        namespace_name
+    ))
     .await
     .unwrap();
 
@@ -140,9 +151,14 @@ async fn test_root_can_create_drop_tables() {
     );
 
     // Drop table
-    let result = execute_sql_as_root("DROP TABLE test_tables_ns.test_table").await.unwrap();
+    let result = execute_sql_as_root("DROP TABLE test_tables_ns.test_table")
+        .await
+        .unwrap();
 
-    assert_eq!(result["status"], "success", "Root user should be able to drop tables");
+    assert_eq!(
+        result["status"], "success",
+        "Root user should be able to drop tables"
+    );
 
     // Cleanup
     let _ = execute_sql_as_root("DROP NAMESPACE test_tables_ns CASCADE").await;
@@ -157,10 +173,17 @@ async fn test_cli_create_namespace_as_root() {
     }
 
     // Use unique namespace name to avoid conflicts
-    let namespace_name = format!("cli_test_ns_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+    let namespace_name = format!(
+        "cli_test_ns_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
 
     // Clean up any existing namespace
-    let drop_result = execute_sql_as_root(&format!("DROP NAMESPACE IF EXISTS {}", namespace_name)).await;
+    let drop_result =
+        execute_sql_as_root(&format!("DROP NAMESPACE IF EXISTS {}", namespace_name)).await;
     if let Err(e) = &drop_result {
         eprintln!("DROP NAMESPACE failed: {:?}", e);
     }
@@ -191,14 +214,15 @@ async fn test_cli_create_namespace_as_root() {
     );
 
     // Verify namespace was created
-    let result = execute_sql_as_root(
-        &format!("SELECT name FROM system.namespaces WHERE name = '{}'", namespace_name),
-    )
+    let result = execute_sql_as_root(&format!(
+        "SELECT name FROM system.namespaces WHERE name = '{}'",
+        namespace_name
+    ))
     .await
     .unwrap();
 
     assert_eq!(result["status"], "success");
-    
+
     // Cleanup
     let _ = execute_sql_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
 }
@@ -215,8 +239,7 @@ async fn test_regular_user_cannot_create_namespace() {
     let _ = execute_sql_as_root("DROP USER IF EXISTS testuser").await;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let result =
-        execute_sql_as_root("CREATE USER testuser PASSWORD 'testpass' ROLE user").await;
+    let result = execute_sql_as_root("CREATE USER testuser PASSWORD 'testpass' ROLE user").await;
 
     if result.is_err() || result.as_ref().unwrap()["status"] != "success" {
         eprintln!("⚠️  Failed to create test user, skipping test");
@@ -288,19 +311,32 @@ async fn test_cli_admin_operations() {
     }
 
     // Use unique namespace name to avoid conflicts
-    let namespace_name = format!("admin_ops_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+    let namespace_name = format!(
+        "admin_ops_test_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
 
     // Clean up
-    let _ = execute_sql_as_root(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace_name)).await;
+    let _ = execute_sql_as_root(&format!(
+        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        namespace_name
+    ))
+    .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Test batch SQL with multiple admin commands
-    let sql_batch = format!(r#"
+    let sql_batch = format!(
+        r#"
 CREATE NAMESPACE {};
 CREATE USER TABLE {}.users (id INT, name VARCHAR) FLUSH ROWS 10;
 INSERT INTO {}.users (id, name) VALUES (1, 'Alice');
 SELECT * FROM {}.users;
-"#, namespace_name, namespace_name, namespace_name, namespace_name);
+"#,
+        namespace_name, namespace_name, namespace_name, namespace_name
+    );
 
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
     cmd.arg("-u")
@@ -352,7 +388,7 @@ async fn test_cli_show_namespaces() {
         "SHOW NAMESPACES command should succeed: {}",
         stdout
     );
-    
+
     // Should show table format with column headers
     assert!(
         stdout.contains("name") || stdout.contains("namespace"),
@@ -370,19 +406,32 @@ async fn test_cli_flush_table() {
     }
 
     // Use unique namespace name to avoid conflicts
-    let namespace_name = format!("flush_test_ns_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+    let namespace_name = format!(
+        "flush_test_ns_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
 
     // Setup: Create namespace and user table
-    let _ = execute_sql_as_root(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace_name)).await;
+    let _ = execute_sql_as_root(&format!(
+        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        namespace_name
+    ))
+    .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let _ = execute_sql_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Create a USER table with flush policy (SHARED tables cannot be flushed)
-    let result = execute_sql_as_root(
-        &format!("CREATE USER TABLE {}.metrics (timestamp BIGINT, value DOUBLE) FLUSH ROWS 5", namespace_name)
-    ).await.unwrap();
+    let result = execute_sql_as_root(&format!(
+        "CREATE USER TABLE {}.metrics (timestamp BIGINT, value DOUBLE) FLUSH ROWS 5",
+        namespace_name
+    ))
+    .await
+    .unwrap();
 
     assert_eq!(
         result["status"], "success",
@@ -421,7 +470,10 @@ async fn test_cli_flush_table() {
 
     // Verify the flush command was accepted (should show job info or success message)
     assert!(
-        stdout.contains("Flush") || stdout.contains("Job") || stdout.contains("success") || stdout.contains("Query OK"),
+        stdout.contains("Flush")
+            || stdout.contains("Job")
+            || stdout.contains("success")
+            || stdout.contains("Query OK"),
         "Output should indicate flush operation: {}",
         stdout
     );
@@ -429,7 +481,9 @@ async fn test_cli_flush_table() {
     // Extract job ID from output (format: "Job ID: flush-...")
     let job_id = if let Some(job_id_start) = stdout.find("Job ID: ") {
         let id_start = job_id_start + "Job ID: ".len();
-        let id_end = stdout[id_start..].find('\n').unwrap_or(stdout[id_start..].len());
+        let id_end = stdout[id_start..]
+            .find('\n')
+            .unwrap_or(stdout[id_start..].len());
         Some(stdout[id_start..id_start + id_end].trim().to_string())
     } else {
         None
@@ -449,7 +503,8 @@ async fn test_cli_flush_table() {
         // Fallback to querying by type and table name
         "SELECT job_id, job_type, status, namespace_id, table_name, result FROM system.jobs \
          WHERE job_type = 'flush' AND table_name = 'metrics' \
-         ORDER BY created_at DESC LIMIT 1".to_string()
+         ORDER BY created_at DESC LIMIT 1"
+            .to_string()
     };
 
     let jobs_result = execute_sql_as_root(&jobs_query).await.unwrap();
@@ -479,16 +534,20 @@ async fn test_cli_flush_table() {
     } else {
         vec![]
     };
-    
+
     assert!(
         !jobs_data.is_empty(),
         "Should have found the flush job{}: {}",
-        if job_id.is_some() { " by job ID" } else { " by table name" },
+        if job_id.is_some() {
+            " by job ID"
+        } else {
+            " by table name"
+        },
         jobs_result
     );
 
     let job = &jobs_data[0];
-    
+
     // If we extracted a job ID, verify it matches
     if let Some(expected_job_id) = job_id {
         assert_eq!(
@@ -497,7 +556,7 @@ async fn test_cli_flush_table() {
             "Job ID should match the one returned by FLUSH command"
         );
     }
-    
+
     assert_eq!(
         job["job_type"].as_str().unwrap(),
         "flush",
@@ -513,7 +572,7 @@ async fn test_cli_flush_table() {
         &format!("{}.metrics", namespace_name),
         "Job should reference correct table"
     );
-    
+
     // Verify job completed successfully
     let job_status = job["status"].as_str().unwrap();
     assert!(
@@ -533,9 +592,12 @@ async fn test_cli_flush_table() {
     }
 
     // Verify data is still accessible after flush
-    let result = execute_sql_as_root(&format!("SELECT COUNT(*) as count FROM {}.metrics", namespace_name))
-        .await
-        .unwrap();
+    let result = execute_sql_as_root(&format!(
+        "SELECT COUNT(*) as count FROM {}.metrics",
+        namespace_name
+    ))
+    .await
+    .unwrap();
 
     assert_eq!(result["status"], "success");
 
@@ -560,16 +622,20 @@ async fn test_cli_flush_all_tables() {
 
     // Create multiple USER tables (SHARED tables cannot be flushed)
     let _ = execute_sql_as_root(
-        "CREATE USER TABLE flush_all_test.table1 (id INT, data VARCHAR) FLUSH ROWS 10"
-    ).await;
+        "CREATE USER TABLE flush_all_test.table1 (id INT, data VARCHAR) FLUSH ROWS 10",
+    )
+    .await;
     let _ = execute_sql_as_root(
-        "CREATE USER TABLE flush_all_test.table2 (id INT, value DOUBLE) FLUSH ROWS 10"
-    ).await;
+        "CREATE USER TABLE flush_all_test.table2 (id INT, value DOUBLE) FLUSH ROWS 10",
+    )
+    .await;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Insert some data
-    let _ = execute_sql_as_root("INSERT INTO flush_all_test.table1 (id, data) VALUES (1, 'test')").await;
-    let _ = execute_sql_as_root("INSERT INTO flush_all_test.table2 (id, value) VALUES (1, 42.0)").await;
+    let _ = execute_sql_as_root("INSERT INTO flush_all_test.table1 (id, data) VALUES (1, 'test')")
+        .await;
+    let _ =
+        execute_sql_as_root("INSERT INTO flush_all_test.table2 (id, value) VALUES (1, 42.0)").await;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Execute FLUSH ALL TABLES via CLI
@@ -593,7 +659,10 @@ async fn test_cli_flush_all_tables() {
 
     // Verify the command was accepted
     assert!(
-        stdout.contains("Flush") || stdout.contains("Job") || stdout.contains("success") || stdout.contains("Query OK"),
+        stdout.contains("Flush")
+            || stdout.contains("Job")
+            || stdout.contains("success")
+            || stdout.contains("Query OK"),
         "Output should indicate flush operation: {}",
         stdout
     );
@@ -641,7 +710,8 @@ async fn test_cli_flush_all_tables() {
         // Fallback to querying by namespace
         "SELECT job_id, job_type, status, namespace_id, table_name, result FROM system.jobs \
          WHERE job_type = 'flush' AND namespace_id = 'flush_all_test' \
-         ORDER BY created_at DESC".to_string()
+         ORDER BY created_at DESC"
+            .to_string()
     };
 
     let jobs_result = execute_sql_as_root(&jobs_query).await.unwrap();
@@ -669,13 +739,18 @@ async fn test_cli_flush_all_tables() {
     } else {
         &vec![]
     };
-    
+
     // Note: May have 0 jobs if tables were empty and nothing to flush
     if jobs_data.is_empty() {
         if !job_ids.is_empty() {
-            panic!("Expected to find jobs with IDs {:?}, but found none", job_ids);
+            panic!(
+                "Expected to find jobs with IDs {:?}, but found none",
+                job_ids
+            );
         }
-        eprintln!("Warning: No flush jobs found. Tables may have been empty or jobs not created yet.");
+        eprintln!(
+            "Warning: No flush jobs found. Tables may have been empty or jobs not created yet."
+        );
     }
 
     // If we extracted job IDs, verify we found all of them
@@ -721,7 +796,9 @@ async fn test_cli_flush_all_tables() {
             let job = completed_jobs[0];
             let result_str = job["result"].as_str().unwrap_or("");
             assert!(
-                !result_str.is_empty() || result_str.contains("rows") || result_str.contains("Flushed"),
+                !result_str.is_empty()
+                    || result_str.contains("rows")
+                    || result_str.contains("Flushed"),
                 "Completed job should have result information: {}",
                 result_str
             );

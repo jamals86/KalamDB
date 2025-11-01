@@ -76,7 +76,7 @@ Also check that registering ctaalogs are done in one place and one session, we s
 
 75) Fix cli highlight select statements
 76) Fix auto-complete in cli
-
+77) Flush table job got stuck for a long time, need to investigate why and also why the tests don't detect this issue and still passes?!
 
 Key Findings
 Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB column families yet, resulting in 0 rows flushed

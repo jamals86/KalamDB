@@ -155,7 +155,10 @@ where
                     Ok(s) => s.to_string(),
                     Err(_) => {
                         let request_id = generate_request_id();
-                        warn!("Invalid Authorization header format from {:?}, request_id={}", remote_addr, request_id);
+                        warn!(
+                            "Invalid Authorization header format from {:?}, request_id={}",
+                            remote_addr, request_id
+                        );
                         let (req, _) = req.into_parts();
                         let response = HttpResponse::Unauthorized().json(json!({
                             "error": "INVALID_AUTHORIZATION_HEADER",
@@ -167,7 +170,10 @@ where
                 },
                 None => {
                     let request_id = generate_request_id();
-                    warn!("Missing Authorization header from {:?}, request_id={}", remote_addr, request_id);
+                    warn!(
+                        "Missing Authorization header from {:?}, request_id={}",
+                        remote_addr, request_id
+                    );
                     let (req, _) = req.into_parts();
                     let response = HttpResponse::Unauthorized().json(json!({
                         "error": "MISSING_AUTHORIZATION",
@@ -211,7 +217,9 @@ where
                         AuthError::InvalidCredentials(_) => {
                             (401, "INVALID_CREDENTIALS", "Invalid username or password")
                         }
-                        AuthError::UserNotFound(_) => (401, "USER_NOT_FOUND", "User does not exist"),
+                        AuthError::UserNotFound(_) => {
+                            (401, "USER_NOT_FOUND", "User does not exist")
+                        }
                         AuthError::TokenExpired => (401, "TOKEN_EXPIRED", "JWT token has expired"),
                         AuthError::InvalidSignature => {
                             (401, "INVALID_SIGNATURE", "JWT token signature is invalid")

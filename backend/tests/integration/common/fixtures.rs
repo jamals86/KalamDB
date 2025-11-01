@@ -197,7 +197,7 @@ pub async fn create_shared_table(
             conversation_id TEXT NOT NULL,
             title TEXT,
             status TEXT,
-            participant_count INTEGER,
+            participant_count BIGINT,
             created_at TIMESTAMP
         "#
     };

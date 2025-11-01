@@ -137,7 +137,8 @@ impl AutoCompleter {
         .map(|s| s.to_string())
         .collect::<Vec<String>>();
 
-        let types = ["INTEGER",
+        let types = [
+            "INTEGER",
             "BIGINT",
             "TEXT",
             "VARCHAR",
@@ -145,7 +146,8 @@ impl AutoCompleter {
             "TIMESTAMP",
             "FLOAT",
             "DOUBLE",
-            "JSON"];
+            "JSON",
+        ];
         keywords.extend(types.iter().map(|s| s.to_string()));
 
         let meta_commands = vec![

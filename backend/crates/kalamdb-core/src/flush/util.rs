@@ -2,7 +2,8 @@
 
 use crate::error::KalamDbError;
 use datafusion::arrow::array::{
-    ArrayRef, BooleanBuilder, Int64Builder, StringBuilder, TimestampMillisecondBuilder,
+    ArrayRef, BooleanBuilder, Float64Builder, Int64Builder, StringBuilder,
+    TimestampMillisecondBuilder,
 };
 use datafusion::arrow::datatypes::{DataType, SchemaRef, TimeUnit};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -11,7 +12,7 @@ use std::sync::Arc;
 
 /// Build an Arrow RecordBatch from JSON rows based on the provided schema.
 /// TODO: Improve this to use streaming instead of loading all rows into memory
-/// Supported types: Utf8, Int64, Boolean, Timestamp(Millisecond, None)
+/// Supported types: Utf8, Int64, Float64, Boolean, Timestamp(Millisecond, None)
 /// Streaming JSON batch builder that appends rows using Arrow builders,
 /// avoiding an intermediate Vec of all rows.
 pub struct JsonBatchBuilder {
@@ -22,6 +23,7 @@ pub struct JsonBatchBuilder {
 enum ColBuilder {
     Utf8(StringBuilder),
     Int64(Int64Builder),
+    F64(Float64Builder),
     Bool(BooleanBuilder),
     TsMs(TimestampMillisecondBuilder),
 }
@@ -34,6 +36,7 @@ impl JsonBatchBuilder {
             let b = match f.data_type() {
                 DataType::Utf8 => ColBuilder::Utf8(StringBuilder::new()),
                 DataType::Int64 => ColBuilder::Int64(Int64Builder::new()),
+                DataType::Float64 => ColBuilder::F64(Float64Builder::new()),
                 DataType::Boolean => ColBuilder::Bool(BooleanBuilder::new()),
                 DataType::Timestamp(TimeUnit::Millisecond, None) => {
                     ColBuilder::TsMs(TimestampMillisecondBuilder::new())
@@ -69,6 +72,15 @@ impl JsonBatchBuilder {
                 ColBuilder::Int64(b) => {
                     if let Some(val) = v.and_then(|vv| vv.as_i64()) {
                         b.append_value(val);
+                    } else {
+                        b.append_null();
+                    }
+                }
+                ColBuilder::F64(b) => {
+                    if let Some(val) = v.and_then(|vv| vv.as_f64()) {
+                        b.append_value(val);
+                    } else if let Some(val) = v.and_then(|vv| vv.as_i64()) {
+                        b.append_value(val as f64);
                     } else {
                         b.append_null();
                     }
@@ -109,6 +121,7 @@ impl JsonBatchBuilder {
             .map(|(_, b)| match b {
                 ColBuilder::Utf8(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::Int64(mut b) => Arc::new(b.finish()) as ArrayRef,
+                ColBuilder::F64(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::Bool(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::TsMs(mut b) => Arc::new(b.finish()) as ArrayRef,
             })

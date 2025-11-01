@@ -155,14 +155,32 @@ impl UserTableFlushJob {
 
     /// Parse user key to extract user_id and row_id
     fn parse_user_key(&self, key_str: &str) -> Result<(String, String), KalamDbError> {
-        let parts: Vec<&str> = key_str.split('#').collect();
-        if parts.len() != 2 {
+        let delimiter = if key_str.contains('#') {
+            '#'
+        } else if key_str.contains(':') {
+            ':'
+        } else {
             return Err(KalamDbError::Other(format!(
                 "Invalid user table key format: {}",
                 key_str
             )));
-        }
-        Ok((parts[0].to_string(), parts[1].to_string()))
+        };
+
+        let mut parts = key_str.splitn(2, delimiter);
+        let user_id = parts
+            .next()
+            .ok_or_else(|| {
+                KalamDbError::Other(format!("Invalid user table key format: {}", key_str))
+            })?
+            .to_string();
+        let row_id = parts
+            .next()
+            .ok_or_else(|| {
+                KalamDbError::Other(format!("Invalid user table key format: {}", key_str))
+            })?
+            .to_string();
+
+        Ok((user_id, row_id))
     }
 
     /// Convert JSON rows to Arrow RecordBatch
@@ -370,7 +388,8 @@ impl TableFlush for UserTableFlushJob {
             );
 
             return Ok(FlushJobResult {
-                job_record: self.create_job_record(&self.generate_job_id(), self.namespace_id.clone()),
+                job_record: self
+                    .create_job_record(&self.generate_job_id(), self.namespace_id.clone()),
                 rows_flushed: 0,
                 parquet_files: vec![],
                 metadata: crate::tables::base_flush::FlushMetadata::user_table(0, vec![]),
@@ -389,15 +408,9 @@ impl TableFlush for UserTableFlushJob {
                     let keys: Vec<Vec<u8>> = rows.iter().map(|(key, _)| key.clone()).collect();
 
                     if let Err(e) = self.delete_flushed_keys(&keys) {
-                        log::error!(
-                            "Failed to delete flushed rows for user {}: {}",
-                            user_id,
-                            e
-                        );
-                        error_messages.push(format!(
-                            "Failed to delete rows for user {}: {}",
-                            user_id, e
-                        ));
+                        log::error!("Failed to delete flushed rows for user {}: {}", user_id, e);
+                        error_messages
+                            .push(format!("Failed to delete rows for user {}: {}", user_id, e));
                     } else {
                         total_rows_flushed += rows_count;
                         log::debug!(

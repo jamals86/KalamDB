@@ -27,8 +27,8 @@ mod tests {
     use super::*;
     use kalamdb_commons::{UserId, UserName};
     use kalamdb_store::test_utils::InMemoryBackend;
-    use kalamdb_store::EntityStoreV2 as EntityStore;
     use kalamdb_store::CrossUserTableStore;
+    use kalamdb_store::EntityStoreV2 as EntityStore;
     use serde_json::json;
 
     fn create_test_store() -> AuditLogsStore {
@@ -36,11 +36,7 @@ mod tests {
         new_audit_logs_store(backend)
     }
 
-    fn create_test_audit_entry(
-        audit_id: &str,
-        action: &str,
-        timestamp_ms: i64,
-    ) -> AuditLogEntry {
+    fn create_test_audit_entry(audit_id: &str, action: &str, timestamp_ms: i64) -> AuditLogEntry {
         AuditLogEntry {
             audit_id: AuditLogId::new(audit_id),
             timestamp: timestamp_ms,
@@ -104,7 +100,11 @@ mod tests {
         // Insert multiple entries
         for i in 1..=5 {
             let audit_id = AuditLogId::new(&format!("audit_{:03}", i));
-            let entry = create_test_audit_entry(&format!("audit_{:03}", i), "user.delete", 1730000000000 + (i as i64 * 1000));
+            let entry = create_test_audit_entry(
+                &format!("audit_{:03}", i),
+                "user.delete",
+                1730000000000 + (i as i64 * 1000),
+            );
             EntityStore::put(&store, &audit_id, &entry).unwrap();
         }
 
@@ -155,8 +155,7 @@ mod tests {
                 let store_clone = Arc::clone(&store);
                 thread::spawn(move || {
                     for i in 0..10 {
-                        let audit_id =
-                            AuditLogId::new(&format!("audit_t{}_i{}", thread_id, i));
+                        let audit_id = AuditLogId::new(&format!("audit_t{}_i{}", thread_id, i));
                         let entry = create_test_audit_entry(
                             &format!("audit_t{}_i{}", thread_id, i),
                             "concurrent.write",

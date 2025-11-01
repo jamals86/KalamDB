@@ -34,9 +34,20 @@ async fn setup_test_executor() -> (SqlExecutor, TempDir, Arc<KalamSql>) {
     let kalam_sql = Arc::new(KalamSql::new(backend.clone()).expect("Failed to create KalamSQL"));
 
     // Create stores
-    let user_table_store = Arc::new(kalamdb_core::tables::new_user_table_store(backend.clone(), &kalamdb_commons::NamespaceId::new("test_ns"), &kalamdb_commons::TableName::new("test_table")));
-    let shared_table_store = Arc::new(kalamdb_core::tables::new_shared_table_store(backend.clone(), &kalamdb_commons::NamespaceId::new("test_ns"), &kalamdb_commons::TableName::new("test_table")));
-    let stream_table_store = Arc::new(kalamdb_core::tables::new_stream_table_store(&kalamdb_commons::NamespaceId::new("test_ns"), &kalamdb_commons::TableName::new("test_table")));
+    let user_table_store = Arc::new(kalamdb_core::tables::new_user_table_store(
+        backend.clone(),
+        &kalamdb_commons::NamespaceId::new("test_ns"),
+        &kalamdb_commons::TableName::new("test_table"),
+    ));
+    let shared_table_store = Arc::new(kalamdb_core::tables::new_shared_table_store(
+        backend.clone(),
+        &kalamdb_commons::NamespaceId::new("test_ns"),
+        &kalamdb_commons::TableName::new("test_table"),
+    ));
+    let stream_table_store = Arc::new(kalamdb_core::tables::new_stream_table_store(
+        &kalamdb_commons::NamespaceId::new("test_ns"),
+        &kalamdb_commons::TableName::new("test_table"),
+    ));
 
     // Create services
     let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));

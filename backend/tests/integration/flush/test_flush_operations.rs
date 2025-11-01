@@ -1,759 +1,207 @@
-//! Integration tests for Flush Operations
-//!
-//! **IMPORTANT**: Automatic flush background scheduler is NOT YET IMPLEMENTED.
-//! These tests verify that:
-//! 1. Tables can be created with FLUSH ROWS policy (metadata is stored)
-//! 2. Inserts work correctly with flush policies defined
-//! 3. Queries return correct data from RocksDB buffer
-//!
-//! **NOT TESTED (because not implemented)**:
-//! - Automatic flush triggering based on row count
-//! - Parquet file generation
-//! - Queries combining Parquet + RocksDB data
-//!
-//! The manual flush job code exists in `kalamdb-core/src/flush/`, but there is no
-//! background scheduler to trigger it automatically when row thresholds are reached.
-//!
-//! Table schema used: AI messaging app messages table with variety of column types:
-//! - message_id (BIGINT) - unique message identifier
-//! - sender_id (VARCHAR) - user who sent the message
-//! - conversation_id (VARCHAR) - conversation thread
-//! - content (TEXT) - message content
-//! - tokens (INT) - token count for AI processing
-//! - cost (DOUBLE) - cost in dollars
-//! - created_at (TIMESTAMP) - when message was created
-//! - is_ai (BOOLEAN) - whether message is from AI
+//! Integration tests focused on flush job behaviour for different table types.
 
 #[path = "../common/mod.rs"]
 mod common;
 
 use common::{fixtures, flush_helpers, TestServer};
-use std::fs;
-use std::path::PathBuf;
-use std::time::Duration;
-use tokio::time::sleep;
+use kalamdb_core::catalog::UserId as ExecutorUserId;
+use std::sync::Arc;
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/// Check if Parquet files exist for a user table
-/// Returns (number of .parquet files found, total files in directory)
-fn check_user_table_parquet_files(
-    namespace: &str,
-    table_name: &str,
-    user_id: &str,
-) -> (usize, usize) {
-    // User table storage path: /data/${user_id}/tables/
-    // Full path: ./data/{user_id}/tables/{namespace}/{table_name}/
-    let storage_path = PathBuf::from("./data")
-        .join(user_id)
-        .join("tables")
-        .join(namespace)
-        .join(table_name);
-
-    if !storage_path.exists() {
-        return (0, 0);
-    }
-
-    let mut parquet_count = 0;
-    let mut total_count = 0;
-
-    if let Ok(entries) = fs::read_dir(&storage_path) {
-        for entry in entries.flatten() {
-            if let Ok(file_type) = entry.file_type() {
-                if file_type.is_file() {
-                    total_count += 1;
-                    if let Some(extension) = entry.path().extension() {
-                        if extension == "parquet" {
-                            parquet_count += 1;
-                            println!("  Found Parquet file: {}", entry.path().display());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    (parquet_count, total_count)
-}
-
-/// Check if Parquet files exist for a shared table
-/// Returns (number of .parquet files found, total files in directory)
-fn check_shared_table_parquet_files(namespace: &str, table_name: &str) -> (usize, usize) {
-    // Shared table storage path: ./data/shared/{namespace}/{table_name}/
-    let storage_path = PathBuf::from("./data")
-        .join("shared")
-        .join(namespace)
-        .join(table_name);
-
-    if !storage_path.exists() {
-        return (0, 0);
-    }
-
-    let mut parquet_count = 0;
-    let mut total_count = 0;
-
-    if let Ok(entries) = fs::read_dir(&storage_path) {
-        for entry in entries.flatten() {
-            if let Ok(file_type) = entry.file_type() {
-                if file_type.is_file() {
-                    total_count += 1;
-                    if let Some(extension) = entry.path().extension() {
-                        if extension == "parquet" {
-                            parquet_count += 1;
-                            println!("  Found Parquet file: {}", entry.path().display());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    (parquet_count, total_count)
-}
-
-// ============================================================================
-// Test 1: Automatic Flushing - User Table
-// ============================================================================
-
+/// Manual flush on a user table should create Parquet files under the configured storage path.
 #[actix_web::test]
-async fn test_01_auto_flush_user_table() {
+async fn test_user_table_manual_flush_creates_parquet() {
     let server = TestServer::new().await;
+    let namespace = "flush_ops_user";
+    let table_name = "telemetry";
+    let user_id = "user_ops_001";
 
-    // Create namespace
-    fixtures::create_namespace(&server, "auto_user_ns").await;
+    fixtures::create_namespace(&server, namespace).await;
 
-    // Create user table with auto-flush after 100 rows
-    let create_sql = r#"CREATE USER TABLE auto_user_ns.messages (
-        message_id BIGINT,
-        sender_id VARCHAR,
-        conversation_id VARCHAR,
-        content TEXT,
-        tokens INT,
-        cost DOUBLE,
-        created_at TIMESTAMP,
-        is_ai BOOLEAN
-    ) FLUSH ROWS 100"#;
-
-    let response = server
-        .execute_sql_with_user(create_sql, Some("test_user_001"))
-        .await;
+    let create_sql = format!(
+        "CREATE USER TABLE {}.{} (
+            id BIGINT,
+            metric TEXT,
+            value DOUBLE
+        ) FLUSH ROWS 5",
+        namespace, table_name
+    );
+    let response = server.execute_sql_as_user(&create_sql, user_id).await;
     assert_eq!(
         response.status, "success",
-        "Failed to create user table with auto-flush: {:?}",
-        response.error
+        "Failed to create table: {:?}",
+        response
     );
-
-    // Insert 110 rows (should trigger auto-flush after first 100)
-    println!("Inserting 110 rows (should auto-flush at 100)...");
-    for i in 1..=110 {
-        let insert_sql = format!(
-            r#"INSERT INTO auto_user_ns.messages (message_id, sender_id, conversation_id, content, tokens, cost, created_at, is_ai) 
-               VALUES ({}, 'sender_{:04}', 'conv_auto', 'Auto message {}', {}, {:.4}, '2025-10-21T12:{:02}:00', {})"#,
-            i,
-            i % 30,
-            i,
-            40 + (i % 60),
-            0.0005 + (i as f64 * 0.0001),
-            i % 60,
-            if i % 5 == 0 { "true" } else { "false" }
-        );
-
-        let response = server
-            .execute_sql_with_user(&insert_sql, Some("test_user_001"))
-            .await;
-        if response.status != "success" {
-            panic!("Failed to insert row {}: {:?}", i, response.error);
-        }
-    }
-    println!("Inserted 110 rows");
-
-    // Wait for auto-flush to complete
-    // NOTE: Auto-flush scheduler is NOT YET IMPLEMENTED
-    // This sleep does nothing currently, but is here for when flush is implemented
-    println!("Waiting for auto-flush to complete...");
-    sleep(Duration::from_millis(500)).await;
-
-    // TODO: Verify Parquet files when auto-flush scheduler is implemented
-    // Currently, all data remains in RocksDB buffer
-    println!("NOTE: Auto-flush scheduler not yet implemented - data remains in RocksDB");
-
-    // Query the table - should return all 110 rows (currently all from RocksDB buffer)
-    println!("Querying after auto-flush...");
-    let query_response = server
-        .execute_sql_with_user(
-            "SELECT COUNT(message_id) as count FROM auto_user_ns.messages",
-            Some("test_user_001"),
-        )
-        .await;
-
-    assert_eq!(
-        query_response.status, "success",
-        "Failed to query after auto-flush: {:?}",
-        query_response.error
-    );
-
-    if let Some(rows) = query_response.results.first().and_then(|r| r.rows.as_ref()) {
-        let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap_or(0);
-        assert_eq!(
-            count, 110,
-            "Expected 110 rows after auto-flush (100 flushed + 10 buffered), got {}",
-            count
-        );
-        println!("✓ All 110 rows returned after auto-flush");
-    }
-
-    // Insert another 50 rows (total now: 100 flushed + 60 buffered = 160)
-    println!("Adding 50 more rows...");
-    for i in 111..=160 {
-        let insert_sql = format!(
-            r#"INSERT INTO auto_user_ns.messages (message_id, sender_id, conversation_id, content, tokens, cost, created_at, is_ai) 
-               VALUES ({}, 'sender_{:04}', 'conv_auto', 'Additional auto message {}', {}, {:.4}, '2025-10-21T13:{:02}:00', {})"#,
-            i,
-            i % 30,
-            i,
-            50 + (i % 50),
-            0.001 + (i as f64 * 0.0001),
-            i % 60,
-            if i % 6 == 0 { "true" } else { "false" }
-        );
-
-        let response = server
-            .execute_sql_with_user(&insert_sql, Some("test_user_001"))
-            .await;
-        if response.status != "success" {
-            panic!(
-                "Failed to insert additional row {}: {:?}",
-                i, response.error
-            );
-        }
-    }
-
-    // Query again - should return all 160 rows (100 flushed + 60 buffered)
-    println!("Querying combined flushed and buffered data...");
-    let final_response = server
-        .execute_sql_with_user(
-            "SELECT COUNT(*) as total FROM auto_user_ns.messages",
-            Some("test_user_001"),
-        )
-        .await;
-
-    assert_eq!(
-        final_response.status, "success",
-        "Failed to query combined data: {:?}",
-        final_response.error
-    );
-
-    if let Some(rows) = final_response.results.first().and_then(|r| r.rows.as_ref()) {
-        let total = rows[0].get("total").and_then(|v| v.as_i64()).unwrap_or(0);
-        assert_eq!(
-            total, 160,
-            "Expected 160 rows (100 flushed + 60 buffered), got {}",
-            total
-        );
-        println!("✓ All 160 rows returned (flushed + buffered)");
-    }
-
-    // Verify aggregations work across both flushed and buffered data
-    let avg_response = server
-        .execute_sql_with_user(
-            "SELECT AVG(tokens) as avg_tokens, MAX(cost) as max_cost FROM auto_user_ns.messages",
-            Some("test_user_001"),
-        )
-        .await;
-
-    if let Some(rows) = avg_response.results.first().and_then(|r| r.rows.as_ref()) {
-        let avg_tokens = rows[0]
-            .get("avg_tokens")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        assert!(
-            avg_tokens > 0.0,
-            "Average tokens should be calculated correctly"
-        );
-        println!("✓ Aggregations work correctly across flushed and buffered data");
-    }
-
-    println!("✓ Auto-flush POLICY test for user table PASSED (NOTE: actual flushing not yet implemented)");
-}
-
-// ============================================================================
-// Test 2: Large Dataset Auto-Flush - User Table
-// ============================================================================
-
-#[actix_web::test]
-async fn test_02_large_dataset_user_table() {
-    let server = TestServer::new().await;
-
-    // Create namespace
-    fixtures::create_namespace(&server, "large_user_ns").await;
-
-    // Create user table with auto-flush after 100 rows
-    let create_sql = r#"CREATE USER TABLE large_user_ns.messages (
-        message_id BIGINT,
-        sender_id VARCHAR,
-        conversation_id VARCHAR,
-        content TEXT,
-        tokens INT,
-        cost DOUBLE,
-        created_at TIMESTAMP,
-        is_ai BOOLEAN
-    ) FLUSH ROWS 100"#;
 
     server
-        .execute_sql_with_user(create_sql, Some("test_user_002"))
-        .await;
+        .sql_executor
+        .load_existing_tables(ExecutorUserId::from("system"))
+        .await
+        .expect("failed to register tables");
 
-    // Insert 1000 rows (should trigger multiple flushes)
-    println!("Inserting 1000 rows...");
-    for i in 1..=1000 {
+    for i in 0..5 {
         let insert_sql = format!(
-            r#"INSERT INTO large_user_ns.messages (message_id, sender_id, conversation_id, content, tokens, cost, created_at, is_ai) 
-               VALUES ({}, 'user_{:04}', 'conv_{:03}', 'Message content number {}', {}, {:.4}, '2025-10-21T10:{:02}:00', {})"#,
+            "INSERT INTO {}.{} (id, metric, value) VALUES ({}, 'cpu', {})",
+            namespace,
+            table_name,
             i,
-            i % 50,
-            (i / 100) + 1,
-            i,
-            50 + (i % 100),
-            0.001 + (i as f64 * 0.0001),
-            i % 60,
-            if i % 3 == 0 { "true" } else { "false" }
+            0.5 + (i as f64)
         );
-
-        let response = server
-            .execute_sql_with_user(&insert_sql, Some("test_user_002"))
-            .await;
-        if response.status != "success" {
-            panic!("Failed to insert row {}: {:?}", i, response.error);
-        }
-    }
-    println!("Inserted 1000 rows successfully");
-
-    // Wait for all flushes to complete
-    // NOTE: Auto-flush scheduler is NOT YET IMPLEMENTED
-    sleep(Duration::from_millis(1000)).await;
-
-    // TODO: Verify Parquet files when auto-flush scheduler is implemented
-    println!("NOTE: Auto-flush scheduler not yet implemented - all data in RocksDB");
-
-    // Query and verify all 1000 rows are returned (currently all from RocksDB buffer)
-    println!("Querying large dataset...");
-    let query_response = server
-        .execute_sql_with_user(
-            "SELECT COUNT(*) as count FROM large_user_ns.messages",
-            Some("test_user_002"),
-        )
-        .await;
-
-    assert_eq!(query_response.status, "success");
-
-    if let Some(rows) = query_response.results.first().and_then(|r| r.rows.as_ref()) {
-        let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap_or(0);
-        assert_eq!(count, 1000, "Expected 1000 rows, got {}", count);
-        println!("✓ All 1000 rows returned from multiple flushes");
+        let response = server.execute_sql_as_user(&insert_sql, user_id).await;
+        assert_eq!(
+            response.status, "success",
+            "Insert failed: {:?}",
+            response.error
+        );
     }
 
-    // Query with filters to verify data integrity
-    let filter_response = server
-        .execute_sql_with_user(
-            "SELECT COUNT(*) as ai_count FROM large_user_ns.messages WHERE is_ai = true",
-            Some("test_user_002"),
-        )
-        .await;
-
-    if let Some(rows) = filter_response
+    let count_sql = format!("SELECT COUNT(*) AS cnt FROM {}.{}", namespace, table_name);
+    let count_response = server.execute_sql_as_user(&count_sql, user_id).await;
+    assert_eq!(
+        count_response.status, "success",
+        "Count query failed: {:?}",
+        count_response.error
+    );
+    let row_count = count_response
         .results
         .first()
         .and_then(|r| r.rows.as_ref())
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.get("cnt"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    assert_eq!(row_count, 5, "Expected 5 rows after inserts");
+
     {
-        let ai_count = rows[0]
-            .get("ai_count")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
-        assert!(
-            ai_count >= 333 && ai_count <= 334,
-            "Expected ~333 AI messages, got {}",
-            ai_count
+        use kalamdb_commons::models::{
+            NamespaceId as ModelNamespaceId, TableName as ModelTableName,
+        };
+        use kalamdb_core::stores::system_table::UserTableStoreExt;
+
+        let backend = Arc::new(kalamdb_store::RocksDBBackend::new(server.db.clone()));
+        let model_namespace = ModelNamespaceId::new(namespace);
+        let model_table = ModelTableName::new(table_name);
+        let store =
+            kalamdb_core::tables::new_user_table_store(backend, &model_namespace, &model_table);
+        let buffered_rows = UserTableStoreExt::scan_all(&store, namespace, table_name)
+            .expect("scan_all() should succeed");
+        assert_eq!(
+            buffered_rows.len(),
+            5,
+            "Expected buffered rows before flush"
         );
-        println!("✓ Filtered query works correctly on large flushed dataset");
     }
 
-    // Verify data from different conversations (tests multiple flush cycles)
-    let conv_response = server
-        .execute_sql_with_user(
-            "SELECT conversation_id, COUNT(*) as count FROM large_user_ns.messages GROUP BY conversation_id ORDER BY conversation_id",
-            Some("test_user_002")
-        )
-        .await;
-
-    if let Some(rows) = conv_response.results.first().and_then(|r| r.rows.as_ref()) {
-        assert!(rows.len() >= 10, "Expected at least 10 conversations");
-        println!("✓ Data correctly distributed across multiple flush cycles");
-    }
-
-    println!("✓ Large dataset user table test PASSED (NOTE: data in RocksDB, not flushed)");
-}
-
-// ============================================================================
-// Test 3: Automatic Flushing - Shared Table
-// ============================================================================
-
-#[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init"]
-async fn test_03_auto_flush_shared_table() {
-    let server = TestServer::new().await;
-
-    // Create namespace
-    fixtures::create_namespace(&server, "auto_shared_ns").await;
-
-    // Create shared table with auto-flush after 100 rows
-    let create_sql = r#"CREATE SHARED TABLE auto_shared_ns.messages (
-        message_id BIGINT,
-        sender_id VARCHAR,
-        conversation_id VARCHAR,
-        content TEXT,
-        tokens INT,
-        cost DOUBLE,
-        created_at TIMESTAMP,
-        is_ai BOOLEAN
-    ) FLUSH ROWS 100"#;
-
-    let response = server.execute_sql(create_sql).await;
-    assert_eq!(
-        response.status, "success",
-        "Failed to create shared table with auto-flush: {:?}",
-        response.error
+    let before = flush_helpers::check_user_parquet_files(&server, namespace, table_name, user_id);
+    assert!(
+        before.is_empty(),
+        "Parquet files should not exist before flush"
     );
 
-    // Insert 110 rows (should auto-flush at 100)
-    println!("Inserting 110 rows into auto-flush shared table...");
-    for i in 1..=110 {
-        let insert_sql = format!(
-            r#"INSERT INTO auto_shared_ns.messages (message_id, sender_id, conversation_id, content, tokens, cost, created_at, is_ai) 
-               VALUES ({}, 'shared_user_{:04}', 'shared_conv_auto', 'Auto shared message {}', {}, {:.4}, '2025-10-21T16:{:02}:00', {})"#,
-            i,
-            i % 35,
-            i,
-            45 + (i % 65),
-            0.00075 + (i as f64 * 0.00011),
-            i % 60,
-            if i % 5 == 0 { "true" } else { "false" }
-        );
+    let flush_sql = format!("FLUSH TABLE {}.{}", namespace, table_name);
+    let flush_response = server.execute_sql_as_user(&flush_sql, "system").await;
+    assert_eq!(
+        flush_response.status, "success",
+        "FLUSH TABLE failed: {:?}",
+        flush_response.error
+    );
 
-        let response = server.execute_sql(&insert_sql).await;
-        if response.status != "success" {
-            panic!(
-                "Failed to insert row {} into auto-flush shared table: {:?}",
-                i, response.error
-            );
-        }
-    }
-    println!("Inserted 110 rows into auto-flush shared table");
-
-    // Wait for auto-flush
-    // NOTE: Auto-flush scheduler is NOT YET IMPLEMENTED
-    println!("Waiting for auto-flush of shared table...");
-    sleep(Duration::from_millis(500)).await;
-
-    // TODO: Verify Parquet files when auto-flush scheduler is implemented
-    println!("NOTE: Auto-flush scheduler not yet implemented - all data in RocksDB");
-
-    // Query - should return all 110 rows (currently all from RocksDB buffer)
-    println!("Querying after auto-flush of shared table...");
-    let query_response = server
-        .execute_sql("SELECT COUNT(*) as count FROM auto_shared_ns.messages")
-        .await;
-
-    assert_eq!(query_response.status, "success");
-
-    if let Some(rows) = query_response.results.first().and_then(|r| r.rows.as_ref()) {
-        let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap_or(0);
-        assert_eq!(
-            count, 110,
-            "Expected 110 rows after auto-flush of shared table, got {}",
-            count
-        );
-        println!("✓ All 110 rows returned from auto-flushed shared table");
-    }
-
-    // Insert another 50 rows
-    println!("Adding 50 more rows to auto-flush shared table...");
-    for i in 111..=160 {
-        let insert_sql = format!(
-            r#"INSERT INTO auto_shared_ns.messages (message_id, sender_id, conversation_id, content, tokens, cost, created_at, is_ai) 
-               VALUES ({}, 'shared_user_{:04}', 'shared_conv_auto', 'More auto shared message {}', {}, {:.4}, '2025-10-21T17:{:02}:00', {})"#,
-            i,
-            i % 35,
-            i,
-            55 + (i % 55),
-            0.0012 + (i as f64 * 0.00013),
-            i % 60,
-            if i % 6 == 0 { "true" } else { "false" }
-        );
-
-        let response = server.execute_sql(&insert_sql).await;
-        if response.status != "success" {
-            panic!(
-                "Failed to insert additional row {}: {:?}",
-                i, response.error
-            );
-        }
-    }
-
-    // Query again - should return all 160 rows
-    println!("Querying final state of auto-flush shared table...");
-    let final_response = server
-        .execute_sql("SELECT COUNT(message_id) as total FROM auto_shared_ns.messages")
-        .await;
-
-    assert_eq!(final_response.status, "success");
-
-    if let Some(rows) = final_response.results.first().and_then(|r| r.rows.as_ref()) {
-        let total = rows[0].get("total").and_then(|v| v.as_i64()).unwrap_or(0);
-        assert_eq!(
-            total, 160,
-            "Expected 160 rows in shared table (100 flushed + 60 buffered), got {}",
-            total
-        );
-        println!("✓ All 160 rows returned from auto-flush shared table");
-    }
-
-    // Test complex query with aggregations and filters
-    let complex_response = server
-        .execute_sql(
-            "SELECT is_ai, COUNT(message_id) as msg_count, AVG(cost) as avg_cost, SUM(tokens) as total_tokens 
-             FROM auto_shared_ns.messages 
-             GROUP BY is_ai 
-             ORDER BY is_ai"
-        )
-        .await;
-
-    assert_eq!(complex_response.status, "success");
-
-    if let Some(rows) = complex_response
+    let job_id_message = flush_response
         .results
         .first()
-        .and_then(|r| r.rows.as_ref())
-    {
-        assert!(rows.len() >= 1, "Expected grouped results");
-        println!("✓ Complex aggregations work across flushed and buffered shared table data");
-    }
+        .and_then(|r| r.message.as_deref())
+        .unwrap_or("");
+    let job_id =
+        flush_helpers::extract_job_id(job_id_message).expect("FLUSH TABLE should return a job id");
 
-    println!("✓ Auto-flush POLICY test for shared table PASSED (NOTE: actual flushing not yet implemented)");
+    let job_result = flush_helpers::wait_for_flush_job_completion(
+        &server,
+        &job_id,
+        std::time::Duration::from_secs(5),
+    )
+    .await
+    .expect("flush job should complete");
+    assert!(
+        job_result.to_lowercase().contains("parquet files"),
+        "Unexpected flush job result: {}",
+        job_result
+    );
+    assert!(
+        !job_result.contains("Parquet files: 0"),
+        "Flush did not produce Parquet files: {}",
+        job_result
+    );
+
+    let parquet_files = flush_helpers::wait_for_parquet_files(
+        &server,
+        namespace,
+        table_name,
+        user_id,
+        std::time::Duration::from_secs(5),
+        1,
+    )
+    .await
+    .expect("Parquet files should appear after flush");
+    flush_helpers::verify_parquet_files_exist(&parquet_files, 1, &job_result)
+        .expect("Parquet files should exist after flush");
 }
 
-// ============================================================================
-// Test 4: Large Dataset Auto-Flush - Shared Table
-// ============================================================================
-
+/// Manual flush on a shared table should also generate Parquet output.
 #[actix_web::test]
-#[ignore = "Shared tables require pre-created column families at DB init"]
-async fn test_04_large_dataset_shared_table() {
+async fn test_shared_table_manual_flush_creates_parquet() {
     let server = TestServer::new().await;
+    let namespace = "flush_ops_shared";
+    let table_name = "audit_events";
 
-    // Create namespace
-    fixtures::create_namespace(&server, "large_shared_ns").await;
-
-    // Create shared table with auto-flush after 100 rows
-    let create_sql = r#"CREATE SHARED TABLE large_shared_ns.messages (
-        message_id BIGINT,
-        sender_id VARCHAR,
-        conversation_id VARCHAR,
-        content TEXT,
-        tokens INT,
-        cost DOUBLE,
-        created_at TIMESTAMP,
-        is_ai BOOLEAN
-    ) FLUSH ROWS 100"#;
-
-    server.execute_sql(create_sql).await;
-
-    // Insert 1000 rows (should trigger multiple flushes)
-    println!("Inserting 1000 rows into shared table...");
-    for i in 1..=1000 {
-        let insert_sql = format!(
-            r#"INSERT INTO large_shared_ns.messages (message_id, sender_id, conversation_id, content, tokens, cost, created_at, is_ai) 
-               VALUES ({}, 'shared_user_{:04}', 'shared_conv_{:03}', 'Shared message {}', {}, {:.4}, '2025-10-21T14:{:02}:00', {})"#,
-            i,
-            i % 40,
-            (i / 100) + 1,
-            i,
-            55 + (i % 90),
-            0.0015 + (i as f64 * 0.00012),
-            i % 60,
-            if i % 3 == 0 { "true" } else { "false" }
-        );
-
-        let response = server.execute_sql(&insert_sql).await;
-        if response.status != "success" {
-            panic!(
-                "Failed to insert row {} into shared table: {:?}",
-                i, response.error
-            );
-        }
-    }
-    println!("Inserted 1000 rows into shared table");
-
-    // Wait for all flushes to complete
-    // NOTE: Auto-flush scheduler is NOT YET IMPLEMENTED
-    sleep(Duration::from_millis(1000)).await;
-
-    // TODO: Verify Parquet files when auto-flush scheduler is implemented
-    println!("NOTE: Auto-flush scheduler not yet implemented - all data in RocksDB");
-
-    // Query and verify all 1000 rows from multiple flush cycles (currently all from RocksDB)
-    println!("Querying large shared table dataset...");
-    let query_response = server
-        .execute_sql("SELECT COUNT(message_id) as count FROM large_shared_ns.messages")
-        .await;
-
-    assert_eq!(query_response.status, "success");
-
-    if let Some(rows) = query_response.results.first().and_then(|r| r.rows.as_ref()) {
-        let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap_or(0);
-        assert_eq!(
-            count, 1000,
-            "Expected 1000 rows in shared table, got {}",
-            count
-        );
-        println!("✓ All 1000 rows returned from flushed shared table");
-    }
-
-    // Verify filtering works across multiple flush cycles
-    let filter_response = server
-        .execute_sql(
-            "SELECT COUNT(message_id) as count FROM large_shared_ns.messages WHERE is_ai = true",
-        )
-        .await;
-
-    if let Some(rows) = filter_response
-        .results
-        .first()
-        .and_then(|r| r.rows.as_ref())
-    {
-        let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap_or(0);
-        assert!(
-            count >= 333 && count <= 334,
-            "Expected ~333 AI messages in shared table"
-        );
-    }
-
-    // Test data distribution across conversations
-    let conv_response = server
-        .execute_sql(
-            "SELECT conversation_id, COUNT(message_id) as count FROM large_shared_ns.messages GROUP BY conversation_id ORDER BY conversation_id"
-        )
-        .await;
-
-    if let Some(rows) = conv_response.results.first().and_then(|r| r.rows.as_ref()) {
-        assert!(
-            rows.len() >= 10,
-            "Expected at least 10 conversations in shared table"
-        );
-        println!("✓ Shared table data correctly distributed across multiple flush cycles");
-    }
-
-    println!("✓ Large dataset shared table test PASSED (NOTE: data in RocksDB, not flushed)");
-}
-
-// ============================================================================
-// Test 5: Data Integrity Across Flush Boundaries
-// ============================================================================
-
-#[actix_web::test]
-async fn test_05_flush_data_integrity() {
-    let server = TestServer::new().await;
-
-    // Create namespace
-    fixtures::create_namespace(&server, "integrity_ns").await;
-
-    // Create user table
-    let create_sql = r#"CREATE USER TABLE integrity_ns.messages (
-        message_id BIGINT,
-        sender_id VARCHAR,
-        conversation_id VARCHAR,
-        content TEXT,
-        tokens INT,
-        cost DOUBLE,
-        created_at TIMESTAMP,
-        is_ai BOOLEAN
-    ) FLUSH ROWS 50"#;
+    fixtures::create_namespace(&server, namespace).await;
+    let create_resp = fixtures::create_shared_table(&server, namespace, table_name).await;
 
     server
-        .execute_sql_with_user(create_sql, Some("test_user_003"))
-        .await;
+        .sql_executor
+        .load_existing_tables(ExecutorUserId::from("system"))
+        .await
+        .expect("failed to register tables");
+    assert_eq!(
+        create_resp.status, "success",
+        "Failed to create shared table: {:?}",
+        create_resp.error
+    );
 
-    // Insert data with specific values to verify integrity
-    let test_data = vec![
-        (1, "user_001", "conv_001", "Test message 1", 100, 0.01, true),
-        (
-            2,
-            "user_002",
-            "conv_001",
-            "Test message 2",
-            200,
-            0.02,
-            false,
-        ),
-        (
-            3,
-            "user_001",
-            "conv_002",
-            "Test message 3",
-            150,
-            0.015,
-            true,
-        ),
-    ];
-
-    for (id, user, conv, content, tokens, cost, is_ai) in test_data {
+    for i in 0..8 {
         let insert_sql = format!(
-            r#"INSERT INTO integrity_ns.messages (message_id, sender_id, conversation_id, content, tokens, cost, created_at, is_ai) 
-               VALUES ({}, '{}', '{}', '{}', {}, {}, '2025-10-21T18:00:00', {})"#,
-            id, user, conv, content, tokens, cost, is_ai
+            "INSERT INTO {}.{} (conversation_id, title, status, participant_count, created_at) \
+             VALUES ('conv-{}', 'title-{}', 'open', {}, NOW())",
+            namespace,
+            table_name,
+            i,
+            i,
+            2 + (i % 3)
         );
-        server
-            .execute_sql_with_user(&insert_sql, Some("test_user_003"))
-            .await;
+        let response = server.execute_sql_as_user(&insert_sql, "system").await;
+        assert_eq!(
+            response.status, "success",
+            "Insert failed: {:?}",
+            response.error
+        );
     }
 
-    // Wait for potential flush
-    sleep(Duration::from_millis(200)).await;
+    let before = flush_helpers::check_shared_parquet_files(&server, namespace, table_name);
+    assert!(
+        before.is_empty(),
+        "No Parquet files should exist before flush"
+    );
 
-    // Verify exact data
-    let verify_response = server
-        .execute_sql_with_user(
-            "SELECT message_id, sender_id, tokens, cost, is_ai FROM integrity_ns.messages ORDER BY message_id",
-            Some("test_user_003")
-        )
-        .await;
+    let flush_result =
+        flush_helpers::execute_shared_flush_synchronously(&server, namespace, table_name)
+            .await
+            .expect("shared table flush should succeed");
+    assert_eq!(flush_result.rows_flushed, 8);
+    assert!(
+        !flush_result.parquet_files.is_empty(),
+        "Shared flush returned no files: {:?}",
+        flush_result
+    );
 
-    if let Some(rows) = verify_response
-        .results
-        .first()
-        .and_then(|r| r.rows.as_ref())
-    {
-        assert_eq!(rows.len(), 3, "Expected 3 rows");
-
-        // Verify first row
-        assert_eq!(
-            rows[0].get("message_id").and_then(|v| v.as_i64()).unwrap(),
-            1
-        );
-        assert_eq!(
-            rows[0].get("sender_id").and_then(|v| v.as_str()).unwrap(),
-            "user_001"
-        );
-        assert_eq!(rows[0].get("tokens").and_then(|v| v.as_i64()).unwrap(), 100);
-        assert_eq!(rows[0].get("cost").and_then(|v| v.as_f64()).unwrap(), 0.01);
-        assert_eq!(
-            rows[0].get("is_ai").and_then(|v| v.as_bool()).unwrap(),
-            true
-        );
-
-        println!("✓ Data integrity verified after potential flush");
-    }
-
-    println!("✓ Flush data integrity test PASSED (NOTE: data in RocksDB, not flushed)");
+    let after = flush_helpers::check_shared_parquet_files(&server, namespace, table_name);
+    flush_helpers::verify_parquet_files_exist(&after, 1, "shared table manual flush")
+        .expect("Parquet files should exist after shared table flush");
 }

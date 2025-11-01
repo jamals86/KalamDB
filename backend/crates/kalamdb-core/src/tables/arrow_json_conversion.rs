@@ -499,7 +499,11 @@ mod tests {
         assert_eq!(batch.num_rows(), 3);
         assert_eq!(batch.num_columns(), 2);
 
-        let id_col = batch.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
+        let id_col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
         assert_eq!(id_col.value(0), 1);
         assert_eq!(id_col.value(1), 2);
         assert_eq!(id_col.value(2), 3);
@@ -517,13 +521,13 @@ mod tests {
     #[test]
     fn test_validate_insert_rows_success() {
         let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),  // NOT NULL
-            Field::new("name", DataType::Utf8, true),  // NULLABLE
+            Field::new("id", DataType::Int64, false), // NOT NULL
+            Field::new("name", DataType::Utf8, true), // NULLABLE
         ]));
 
         let rows = vec![
             json!({"id": 1, "name": "Alice"}),
-            json!({"id": 2, "name": null}),  // Null is OK for nullable column
+            json!({"id": 2, "name": null}), // Null is OK for nullable column
         ];
 
         assert!(validate_insert_rows(&schema, &rows).is_ok());
@@ -538,7 +542,7 @@ mod tests {
 
         let rows = vec![
             json!({"id": 1, "name": "Alice"}),
-            json!({"id": 2, "name": null}),  // Should fail - NOT NULL violation
+            json!({"id": 2, "name": null}), // Should fail - NOT NULL violation
         ];
 
         let result = validate_insert_rows(&schema, &rows);
@@ -555,7 +559,7 @@ mod tests {
 
         let rows = vec![
             json!({"id": 1, "active": true}),
-            json!({"id": 2, "active": "not_a_boolean"}),  // Type mismatch
+            json!({"id": 2, "active": "not_a_boolean"}), // Type mismatch
         ];
 
         let result = validate_insert_rows(&schema, &rows);

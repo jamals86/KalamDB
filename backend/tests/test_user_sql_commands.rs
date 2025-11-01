@@ -33,9 +33,20 @@ async fn setup_test_executor() -> (SqlExecutor, TempDir, Arc<KalamSql>) {
     let kalam_sql = Arc::new(KalamSql::new(backend.clone()).expect("Failed to create KalamSQL"));
 
     // Create stores (via generic StorageBackend)
-    let user_table_store = Arc::new(kalamdb_core::tables::new_user_table_store(backend.clone(), &kalamdb_commons::NamespaceId::new("test_ns"), &kalamdb_commons::TableName::new("test_table")));
-    let shared_table_store = Arc::new(kalamdb_core::tables::new_shared_table_store(backend.clone(), &kalamdb_commons::NamespaceId::new("test_ns"), &kalamdb_commons::TableName::new("test_table")));
-    let stream_table_store = Arc::new(kalamdb_core::tables::new_stream_table_store(&kalamdb_commons::NamespaceId::new("test_ns"), &kalamdb_commons::TableName::new("test_table")));
+    let user_table_store = Arc::new(kalamdb_core::tables::new_user_table_store(
+        backend.clone(),
+        &kalamdb_commons::NamespaceId::new("test_ns"),
+        &kalamdb_commons::TableName::new("test_table"),
+    ));
+    let shared_table_store = Arc::new(kalamdb_core::tables::new_shared_table_store(
+        backend.clone(),
+        &kalamdb_commons::NamespaceId::new("test_ns"),
+        &kalamdb_commons::TableName::new("test_table"),
+    ));
+    let stream_table_store = Arc::new(kalamdb_core::tables::new_stream_table_store(
+        &kalamdb_commons::NamespaceId::new("test_ns"),
+        &kalamdb_commons::TableName::new("test_table"),
+    ));
 
     // Create services
     let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
@@ -570,17 +581,21 @@ async fn test_create_user_duplicate_error() {
     // Create user first time
     let create_sql = "CREATE USER 'duplicate_test' WITH PASSWORD 'Password123!' ROLE user";
     let result1 = executor.execute(create_sql, Some(&admin_id)).await;
-    
+
     if let Err(ref e) = result1 {
         eprintln!("First CREATE USER failed with error: {:?}", e);
     }
-    assert!(result1.is_ok(), "First CREATE USER should succeed: {:?}", result1);
+    assert!(
+        result1.is_ok(),
+        "First CREATE USER should succeed: {:?}",
+        result1
+    );
 
     // Try to create same user again
     let result2 = executor.execute(create_sql, Some(&admin_id)).await;
-    
+
     eprintln!("Second CREATE USER result: {:?}", result2);
-    
+
     assert!(
         result2.is_err(),
         "Duplicate CREATE USER should fail with error, but got: {:?}",
@@ -729,14 +744,11 @@ async fn test_select_users_excludes_deleted() {
         .expect("DROP USER failed");
 
     // SELECT from system.users (should exclude deleted by default)
-    let select_sql = "SELECT username FROM system.users WHERE username IN ('active_user', 'deleted_user')";
+    let select_sql =
+        "SELECT username FROM system.users WHERE username IN ('active_user', 'deleted_user')";
     let result = executor.execute(select_sql, Some(&admin_id)).await;
 
-    assert!(
-        result.is_ok(),
-        "SELECT should succeed: {:?}",
-        result
-    );
+    assert!(result.is_ok(), "SELECT should succeed: {:?}", result);
 
     // Verify result excludes deleted user
     // Note: The exact verification depends on ExecutionResult structure

@@ -32,14 +32,14 @@ pub enum QueryCacheKey {
 /// Cached query result with TTL
 #[derive(Debug, Clone)]
 struct CachedResult {
-    value: Arc<[u8]>,  // Zero-copy shared result
+    value: Arc<[u8]>, // Zero-copy shared result
     cached_at: Instant,
 }
 
 impl CachedResult {
     fn new(value: Vec<u8>) -> Self {
         Self {
-            value: value.into(),  // Vec<u8> → Arc<[u8]>
+            value: value.into(), // Vec<u8> → Arc<[u8]>
             cached_at: Instant::now(),
         }
     }
@@ -106,7 +106,10 @@ impl QueryCache {
     }
 
     /// Create a new query cache with custom TTL and max entries
-    pub fn with_config_and_max_entries(ttl_config: QueryCacheTtlConfig, max_entries: usize) -> Self {
+    pub fn with_config_and_max_entries(
+        ttl_config: QueryCacheTtlConfig,
+        max_entries: usize,
+    ) -> Self {
         Self {
             cache: Arc::new(DashMap::new()),
             ttl_config,
@@ -151,14 +154,16 @@ impl QueryCache {
             // LRU eviction: if cache is full, remove oldest entry
             if self.cache.len() >= self.max_entries {
                 // Find and remove the oldest entry
-                if let Some(oldest_key) = self.cache.iter()
+                if let Some(oldest_key) = self
+                    .cache
+                    .iter()
                     .min_by_key(|entry| entry.value().cached_at)
                     .map(|entry| entry.key().clone())
                 {
                     self.cache.remove(&oldest_key);
                 }
             }
-            
+
             self.cache.insert(key, CachedResult::new(bytes));
         }
     }
@@ -167,14 +172,16 @@ impl QueryCache {
     pub fn invalidate_tables(&self) {
         self.cache.remove(&QueryCacheKey::AllTables);
         // Also remove individual table entries
-        self.cache.retain(|k, _| !matches!(k, QueryCacheKey::Table(_)));
+        self.cache
+            .retain(|k, _| !matches!(k, QueryCacheKey::Table(_)));
     }
 
     /// Invalidate all namespaces-related queries
     pub fn invalidate_namespaces(&self) {
         self.cache.remove(&QueryCacheKey::AllNamespaces);
         // Also remove individual namespace entries
-        self.cache.retain(|k, _| !matches!(k, QueryCacheKey::Namespace(_)));
+        self.cache
+            .retain(|k, _| !matches!(k, QueryCacheKey::Namespace(_)));
     }
 
     /// Invalidate all live queries-related queries
@@ -534,11 +541,8 @@ mod tests {
     #[test]
     fn test_lru_eviction() {
         // Create cache with max 5 entries
-        let cache = QueryCache::with_config_and_max_entries(
-            QueryCacheTtlConfig::default(),
-            5,
-        );
-        
+        let cache = QueryCache::with_config_and_max_entries(QueryCacheTtlConfig::default(), 5);
+
         let data = vec![TestData {
             id: "1".to_string(),
             value: 100,
@@ -554,7 +558,7 @@ mod tests {
         let stats = cache.stats();
         // Should have at most 5 entries due to LRU eviction
         assert!(stats.total_entries <= 5);
-        
+
         // Newest entries should still be present
         let newest: Option<Vec<TestData>> = cache.get(&QueryCacheKey::Table("table_9".to_string()));
         assert!(newest.is_some());

@@ -94,18 +94,18 @@ pub fn new_user_table_store(
         namespace_id.as_str(),
         table_name.as_str()
     );
-    
+
     // Ensure the partition exists in RocksDB
     let partition = kalamdb_store::Partition::new(partition_name.clone());
     let _ = backend.create_partition(&partition); // Ignore error if already exists
-    
+
     SystemTableStore::new(backend, partition_name)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::{EntityStoreV2, test_utils::InMemoryBackend};
+    use kalamdb_store::{test_utils::InMemoryBackend, EntityStoreV2};
 
     fn create_test_store() -> UserTableStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

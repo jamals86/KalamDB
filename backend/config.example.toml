@@ -195,6 +195,12 @@ jwt_trusted_issuers = []
 # If false, system users can only authenticate from localhost
 allow_remote_access = false
 
+[shutdown]
+# Timeout settings for graceful shutdown
+
+[shutdown.flush]
+# Timeout in seconds to wait for flush jobs to complete during graceful shutdown (default: 300)
+timeout = 300
 
 # T105 - Phase 7, User Story 5: System User Management
 [auth]

@@ -301,9 +301,7 @@ impl FlushScheduler {
         )?;
 
         // Add to scheduled tables
-        let scheduled = ScheduledTable {
-            table_name,
-        };
+        let scheduled = ScheduledTable { table_name };
 
         let mut tables = self
             .scheduled_tables

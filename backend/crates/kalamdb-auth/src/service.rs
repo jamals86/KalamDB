@@ -237,16 +237,15 @@ impl AuthService {
             }
 
             // T106: If remote access is enabled for internal user, password MUST be set
-            if remote_allowed && !connection_info.is_localhost()
-                && user.password_hash.is_empty() {
-                    warn!(
-                        "System user '{}' attempted remote authentication without password",
-                        username
-                    );
-                    return Err(AuthError::AuthenticationFailed(
-                        "Remote-enabled system users must have a password set".to_string(),
-                    ));
-                }
+            if remote_allowed && !connection_info.is_localhost() && user.password_hash.is_empty() {
+                warn!(
+                    "System user '{}' attempted remote authentication without password",
+                    username
+                );
+                return Err(AuthError::AuthenticationFailed(
+                    "Remote-enabled system users must have a password set".to_string(),
+                ));
+            }
 
             // For localhost connections with internal auth_type, password can be empty
             // For remote connections, password is required (enforced above)
@@ -256,7 +255,9 @@ impl AuthService {
                     password::verify_password(&password, &user.password_hash).await?;
                 if !password_match {
                     warn!("Invalid password for system user: {}", username);
-                    return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
+                    return Err(AuthError::InvalidCredentials(
+                        "Invalid username or password".to_string(),
+                    ));
                 }
             }
         } else {
@@ -264,7 +265,9 @@ impl AuthService {
             let password_match = password::verify_password(&password, &user.password_hash).await?;
             if !password_match {
                 warn!("Invalid password for user: {}", username);
-                return Err(AuthError::InvalidCredentials("Invalid username or password".to_string()));
+                return Err(AuthError::InvalidCredentials(
+                    "Invalid username or password".to_string(),
+                ));
             }
 
             // Check global remote access permission for regular users
@@ -317,7 +320,9 @@ impl AuthService {
                 jwt_auth::validate_jwt_token(token, &self.jwt_secret, &self.trusted_jwt_issuers)?;
 
             // Cache the validated claims
-            self.jwt_cache.insert(token.to_string(), validated_claims.clone()).await;
+            self.jwt_cache
+                .insert(token.to_string(), validated_claims.clone())
+                .await;
             validated_claims
         };
 
@@ -394,7 +399,8 @@ impl AuthService {
         // For now, we use a simple approach: validate with a generic secret
         // In production, you'd fetch the JWKS (JSON Web Key Set) from the provider
         // For HS256 (testing), we use the JWT secret
-        let claims = oauth::validate_oauth_token(token, &self.jwt_secret, "").map_err(|_| AuthError::InvalidSignature)?;
+        let claims = oauth::validate_oauth_token(token, &self.jwt_secret, "")
+            .map_err(|_| AuthError::InvalidSignature)?;
 
         // Extract provider and subject from claims
         let identity = oauth::extract_provider_and_subject(&claims);
@@ -406,7 +412,9 @@ impl AuthService {
             "subject": identity.subject
         });
 
-        let users = adapter.scan_all_users().map_err(|e| AuthError::DatabaseError(e.to_string()))?;
+        let users = adapter
+            .scan_all_users()
+            .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
 
         let user = users
             .into_iter()
@@ -521,7 +529,9 @@ impl AuthService {
             .ok_or_else(|| AuthError::UserNotFound(format!("User '{}' not found", username)))?;
 
         // Cache the user record for future lookups
-        self.user_cache.insert(username.to_string(), user.clone()).await;
+        self.user_cache
+            .insert(username.to_string(), user.clone())
+            .await;
 
         Ok(user)
     }
@@ -552,8 +562,8 @@ impl AuthService {
     /// Cache stats including entry count
     pub fn get_user_cache_stats(&self) -> UserCacheStats {
         UserCacheStats {
-            hits: 0, // TODO: Implement proper stats tracking
-            misses: 0, // TODO: Implement proper stats tracking
+            hits: 0,       // TODO: Implement proper stats tracking
+            misses: 0,     // TODO: Implement proper stats tracking
             hit_rate: 0.0, // TODO: Implement proper stats tracking
             entry_count: self.user_cache.entry_count(),
         }
@@ -585,8 +595,8 @@ impl AuthService {
     /// Cache stats including entry count
     pub fn get_jwt_cache_stats(&self) -> JwtCacheStats {
         JwtCacheStats {
-            hits: 0, // TODO: Implement proper stats tracking
-            misses: 0, // TODO: Implement proper stats tracking
+            hits: 0,       // TODO: Implement proper stats tracking
+            misses: 0,     // TODO: Implement proper stats tracking
             hit_rate: 0.0, // TODO: Implement proper stats tracking
             entry_count: self.jwt_cache.entry_count(),
         }

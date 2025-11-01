@@ -71,5 +71,6 @@ pub fn try_extract_rocksdb_db(
 ) -> Option<std::sync::Arc<rocksdb::DB>> {
     backend
         .as_any()
-        .downcast_ref::<crate::rocksdb_impl::RocksDBBackend>().map(|rb| rb.db().clone())
+        .downcast_ref::<crate::rocksdb_impl::RocksDBBackend>()
+        .map(|rb| rb.db().clone())
 }

@@ -225,10 +225,54 @@ pub fn validate_no_extra_tokens(
 /// assert_eq!(table, "users");
 /// ```
 pub fn parse_table_reference(table_ref: &str) -> DdlResult<(Option<String>, String)> {
-    let parts: Vec<&str> = table_ref.split('.').collect();
+    // Basic validation: table reference should not contain SQL keywords or complex expressions
+    let trimmed = table_ref.trim();
+    if trimmed.is_empty() {
+        return Err("Table reference cannot be empty".to_string());
+    }
+
+    // Check for SQL keywords that indicate this is not a simple table reference
+    let sql_keywords = [
+        "SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER",
+    ];
+    let upper_ref = trimmed.to_uppercase();
+    for keyword in &sql_keywords {
+        if upper_ref.contains(&format!(" {}", keyword)) || upper_ref.starts_with(keyword) {
+            return Err(format!(
+                "Invalid table reference '{}'. Table references should be simple identifiers like 'table' or 'namespace.table', not SQL statements",
+                table_ref
+            ));
+        }
+    }
+
+    // Check for spaces (indicates complex expression)
+    if trimmed.contains(' ') {
+        return Err(format!(
+            "Invalid table reference '{}'. Table references should not contain spaces",
+            table_ref
+        ));
+    }
+
+    let parts: Vec<&str> = trimmed.split('.').collect();
     match parts.len() {
-        1 => Ok((None, parts[0].to_string())),
-        2 => Ok((Some(parts[0].to_string()), parts[1].to_string())),
+        1 => {
+            let table = parts[0];
+            if table.is_empty() {
+                return Err("Table name cannot be empty".to_string());
+            }
+            Ok((None, table.to_string()))
+        }
+        2 => {
+            let namespace = parts[0];
+            let table = parts[1];
+            if namespace.is_empty() {
+                return Err("Namespace name cannot be empty".to_string());
+            }
+            if table.is_empty() {
+                return Err("Table name cannot be empty".to_string());
+            }
+            Ok((Some(namespace.to_string()), table.to_string()))
+        }
         _ => Err(format!(
             "Invalid table reference '{}'. Expected 'table' or 'namespace.table'",
             table_ref
@@ -361,5 +405,44 @@ mod tests {
         assert!(
             validate_no_extra_tokens("FLUSH TABLE prod.events extra", 3, "FLUSH TABLE").is_err()
         );
+    }
+
+    #[test]
+    fn test_parse_table_reference_valid() {
+        // Simple table name
+        let (ns, table) = parse_table_reference("users").unwrap();
+        assert_eq!(ns, None);
+        assert_eq!(table, "users");
+
+        // Namespace.table
+        let (ns, table) = parse_table_reference("prod.events").unwrap();
+        assert_eq!(ns, Some("prod".to_string()));
+        assert_eq!(table, "events");
+
+        // Quoted identifiers
+        let (ns, table) = parse_table_reference("\"my-table\"").unwrap();
+        assert_eq!(ns, None);
+        assert_eq!(table, "\"my-table\"");
+    }
+
+    #[test]
+    fn test_parse_table_reference_invalid() {
+        // SQL statements should be rejected
+        assert!(parse_table_reference("select * from users").is_err());
+        assert!(parse_table_reference("SELECT * FROM users").is_err());
+        assert!(parse_table_reference("users where id > 1").is_err());
+
+        // Spaces should be rejected
+        assert!(parse_table_reference("my table").is_err());
+        assert!(parse_table_reference("prod.my table").is_err());
+
+        // Empty parts
+        assert!(parse_table_reference("").is_err());
+        assert!(parse_table_reference(".").is_err());
+        assert!(parse_table_reference("prod.").is_err());
+        assert!(parse_table_reference(".table").is_err());
+
+        // Too many dots
+        assert!(parse_table_reference("a.b.c").is_err());
     }
 }

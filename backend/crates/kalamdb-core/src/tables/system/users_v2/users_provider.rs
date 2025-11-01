@@ -98,8 +98,7 @@ impl UsersTableProvider {
         // If username changed, update index
         if existing_user.username != user.username {
             // Remove old username
-            self
-                .username_index
+            self.username_index
                 .remove_user(existing_user.username.as_str())?;
             // Add new username
             self.username_index.index_user(&user)?;

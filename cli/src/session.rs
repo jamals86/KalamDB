@@ -124,15 +124,16 @@ impl CLISession {
             .build()?;
 
         // Try to fetch server info from health check
-        let (server_version, server_api_version, server_build_date, connected) = match client.health_check().await {
-            Ok(health) => (
-                Some(health.version), 
-                Some(health.api_version), 
-                health.build_date,
-                true
-            ),
-            Err(_) => (None, None, None, false),
-        };
+        let (server_version, server_api_version, server_build_date, connected) =
+            match client.health_check().await {
+                Ok(health) => (
+                    Some(health.version),
+                    Some(health.api_version),
+                    health.build_date,
+                    true,
+                ),
+                Err(_) => (None, None, None, false),
+            };
 
         // Extract username from auth provider
         let username = match &auth {
@@ -353,15 +354,18 @@ impl CLISession {
             eprintln!("  • Network connectivity issue");
             eprintln!();
             eprintln!("{}", "Try:".cyan().bold());
-            eprintln!("  • Check if server is running: curl {}/v1/api/healthcheck", self.server_url);
+            eprintln!(
+                "  • Check if server is running: curl {}/v1/api/healthcheck",
+                self.server_url
+            );
             eprintln!("  • Verify credentials with: kalam --username <user> --password <pass>");
             eprintln!("  • Use \\show-credentials to see stored credentials");
             eprintln!();
             return Err(e);
         }
-        
+
         println!("{}", "✓".green());
-        
+
         // Connection and auth successful - print welcome banner
         self.print_banner();
 
@@ -554,7 +558,7 @@ impl CLISession {
             )
             .dimmed()
         );
-        
+
         println!(
             "  {}  Type {} for help, {} for session info, {} to exit",
             "💡".dimmed(),
@@ -1034,19 +1038,32 @@ impl CLISession {
     /// Displays detailed information about the current CLI session
     fn show_session_info(&self) {
         use colored::Colorize;
-        
+
         println!();
-        println!("{}", "═══════════════════════════════════════".cyan().bold());
+        println!(
+            "{}",
+            "═══════════════════════════════════════".cyan().bold()
+        );
         println!("{}", "    Session Information".white().bold());
-        println!("{}", "═══════════════════════════════════════".cyan().bold());
+        println!(
+            "{}",
+            "═══════════════════════════════════════".cyan().bold()
+        );
         println!();
-        
+
         // Connection info
         println!("{}", "Connection:".yellow().bold());
         println!("  Server URL:     {}", self.server_url.green());
         println!("  Username:       {}", self.username.green());
-        println!("  Connected:      {}", if self.connected { "Yes".green() } else { "No".red() });
-        
+        println!(
+            "  Connected:      {}",
+            if self.connected {
+                "Yes".green()
+            } else {
+                "No".red()
+            }
+        );
+
         // Session timing
         let uptime = self.connected_at.elapsed();
         let hours = uptime.as_secs() / 3600;
@@ -1061,7 +1078,7 @@ impl CLISession {
         };
         println!("  Session time:   {}", uptime_str.green());
         println!();
-        
+
         // Server info
         println!("{}", "Server:".yellow().bold());
         if let Some(ref version) = self.server_version {
@@ -1080,7 +1097,7 @@ impl CLISession {
             println!("  Build Date:     {}", "Unknown".dimmed());
         }
         println!();
-        
+
         // Client info
         println!("{}", "Client:".yellow().bold());
         println!("  CLI Version:    {}", env!("CARGO_PKG_VERSION").green());
@@ -1088,22 +1105,35 @@ impl CLISession {
         println!("  Git Branch:     {}", env!("GIT_BRANCH").green());
         println!("  Git Commit:     {}", env!("GIT_COMMIT_HASH").green());
         println!();
-        
+
         // Session statistics
         println!("{}", "Statistics:".yellow().bold());
-        println!("  Queries:        {}", self.queries_executed.to_string().green());
+        println!(
+            "  Queries:        {}",
+            self.queries_executed.to_string().green()
+        );
         println!("  Format:         {}", format!("{:?}", self.format).green());
-        println!("  Colors:         {}", if self.color { "Enabled".green() } else { "Disabled".red() });
+        println!(
+            "  Colors:         {}",
+            if self.color {
+                "Enabled".green()
+            } else {
+                "Disabled".red()
+            }
+        );
         println!();
-        
+
         // Instance info
         if let Some(ref instance) = self.instance {
             println!("{}", "Credentials:".yellow().bold());
             println!("  Instance:       {}", instance.green());
             println!();
         }
-        
-        println!("{}", "═══════════════════════════════════════".cyan().bold());
+
+        println!(
+            "{}",
+            "═══════════════════════════════════════".cyan().bold()
+        );
         println!();
     }
 

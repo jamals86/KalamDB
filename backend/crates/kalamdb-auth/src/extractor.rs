@@ -109,9 +109,7 @@ async fn extract_basic_auth(
 
     let is_localhost = client_ip
         .as_deref()
-        .map(|ip| {
-            ip == "127.0.0.1" || ip == "::1" || ip.starts_with("127.") || ip == "localhost"
-        })
+        .map(|ip| ip == "127.0.0.1" || ip == "::1" || ip.starts_with("127.") || ip == "localhost")
         .unwrap_or(false);
 
     let is_system_internal = user.role == Role::System && user.auth_type == AuthType::Internal;

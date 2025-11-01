@@ -78,7 +78,9 @@ pub async fn websocket_handler_v1(
         Ok(auth) => {
             info!(
                 "WebSocket connection authenticated: connection_id={}, user_id={}, username={}",
-                connection_id, auth.user_id.as_str(), auth.username
+                connection_id,
+                auth.user_id.as_str(),
+                auth.username
             );
             auth
         }

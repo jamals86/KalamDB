@@ -7,9 +7,9 @@
 //! - Validating authentication responses
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use kalamdb_commons::system::User;
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
 
 /// Create a test user with password authentication

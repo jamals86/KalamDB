@@ -3,11 +3,13 @@
 //! Bug: FLUSH TABLE creates a job but doesn't persist it to system.jobs,
 //! while FLUSH ALL TABLES does persist jobs correctly.
 
-use kalamdb_core::services::{NamespaceService, UserTableService, SharedTableService, StreamTableService};
+use kalamdb_core::services::{
+    NamespaceService, SharedTableService, StreamTableService, UserTableService,
+};
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_core::tables::{new_user_table_store, new_shared_table_store, new_stream_table_store};
+use kalamdb_core::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
 use kalamdb_sql::KalamSql;
-use kalamdb_store::{RocksDbInit, RocksDBBackend, StorageBackend};
+use kalamdb_store::{RocksDBBackend, RocksDbInit, StorageBackend};
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -76,9 +78,9 @@ async fn test_flush_table_persists_job() {
     // This test verifies that the flush job is persisted to system.jobs
     // We can't easily run a full flush without complex setup, but we can verify
     // the job record is created which is what the bug report is about
-    
+
     let (_executor, _temp_dir, kalam_sql) = setup_test_environment().await;
-    
+
     // Create a job directly using the Jobs API
     use kalamdb_commons::{JobId, JobType, NamespaceId, TableName};
     let job = kalamdb_commons::system::Job::new(
@@ -95,7 +97,7 @@ async fn test_flush_table_persists_job() {
     // Verify it was persisted
     let jobs = kalam_sql.scan_all_jobs().expect("Failed to scan jobs");
     assert_eq!(jobs.len(), 1, "Should have exactly 1 job");
-    
+
     let retrieved_job = &jobs[0];
     assert_eq!(retrieved_job.job_id.as_str(), "test-flush-123");
     assert_eq!(retrieved_job.job_type, JobType::Flush);
@@ -145,9 +147,7 @@ async fn test_flush_all_tables_persists_jobs() {
     println!("Flush all result: {:?}", flush_result);
 
     // Verify jobs were persisted
-    let jobs = kalam_sql
-        .scan_all_jobs()
-        .expect("Failed to scan jobs");
+    let jobs = kalam_sql.scan_all_jobs().expect("Failed to scan jobs");
 
     let flush_jobs: Vec<_> = jobs
         .iter()

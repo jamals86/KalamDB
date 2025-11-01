@@ -43,7 +43,10 @@ use crate::tables::shared_tables::shared_table_store::{SharedTableRow, SharedTab
 use crate::tables::stream_tables::stream_table_store::{StreamTableRow, StreamTableRowId};
 use crate::tables::system::SystemTableProviderExt;
 use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId};
-use kalamdb_store::{entity_store::{CrossUserTableStore, EntityStore}, StorageBackend};
+use kalamdb_store::{
+    entity_store::{CrossUserTableStore, EntityStore},
+    StorageBackend,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -226,7 +229,10 @@ pub trait UserTableStoreExt<K, V> {
         &self,
         namespace_id: &str,
         table_name: &str,
-    ) -> std::result::Result<Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), KalamDbError>> + Send>, KalamDbError>;
+    ) -> std::result::Result<
+        Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), KalamDbError>> + Send>,
+        KalamDbError,
+    >;
 
     /// Delete multiple keys in batch
     fn delete_batch_by_keys(
@@ -237,7 +243,9 @@ pub trait UserTableStoreExt<K, V> {
     ) -> std::result::Result<(), KalamDbError>;
 }
 
-impl UserTableStoreExt<UserTableRowId, UserTableRow> for SystemTableStore<UserTableRowId, UserTableRow> {
+impl UserTableStoreExt<UserTableRowId, UserTableRow>
+    for SystemTableStore<UserTableRowId, UserTableRow>
+{
     fn scan_user(
         &self,
         _namespace_id: &str,
@@ -247,9 +255,10 @@ impl UserTableStoreExt<UserTableRowId, UserTableRow> for SystemTableStore<UserTa
         // Scan with prefix "user_id:"
         let prefix_key = UserTableRowId::new(kalamdb_commons::UserId::new(user_id), "");
         let results = EntityStore::scan_prefix(self, &prefix_key)?;
-        Ok(results.into_iter().map(|(key, row)| {
-            (String::from_utf8_lossy(key.as_ref()).to_string(), row)
-        }).collect())
+        Ok(results
+            .into_iter()
+            .map(|(key, row)| (String::from_utf8_lossy(key.as_ref()).to_string(), row))
+            .collect())
     }
 
     fn get(
@@ -291,8 +300,9 @@ impl UserTableStoreExt<UserTableRowId, UserTableRow> for SystemTableStore<UserTa
             EntityStore::delete(self, &key)?;
         } else {
             // Soft delete: mark _deleted=true
-            let mut row = EntityStore::get(self, &key)?
-                .ok_or_else(|| KalamDbError::InvalidOperation("Row not found for soft delete".to_string()))?;
+            let mut row = EntityStore::get(self, &key)?.ok_or_else(|| {
+                KalamDbError::InvalidOperation("Row not found for soft delete".to_string())
+            })?;
             row._deleted = true;
             EntityStore::put(self, &key, &row)?;
         }
@@ -316,9 +326,10 @@ impl UserTableStoreExt<UserTableRowId, UserTableRow> for SystemTableStore<UserTa
         _table_name: &str,
     ) -> std::result::Result<Vec<(String, UserTableRow)>, KalamDbError> {
         let results = EntityStore::scan_all(self)?;
-        Ok(results.into_iter().map(|(key, row)| {
-            (String::from_utf8_lossy(key.as_ref()).to_string(), row)
-        }).collect())
+        Ok(results
+            .into_iter()
+            .map(|(key, row)| (String::from_utf8_lossy(key.as_ref()).to_string(), row))
+            .collect())
     }
 
     fn create_column_family(
@@ -369,7 +380,10 @@ impl UserTableStoreExt<UserTableRowId, UserTableRow> for SystemTableStore<UserTa
         &self,
         _namespace_id: &str,
         _table_name: &str,
-    ) -> std::result::Result<Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), KalamDbError>> + Send>, KalamDbError> {
+    ) -> std::result::Result<
+        Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), KalamDbError>> + Send>,
+        KalamDbError,
+    > {
         // For now, just collect all and return as iterator
         let all = EntityStore::scan_all(self)?;
         let iter = all.into_iter().map(|(k, v)| {
@@ -456,7 +470,10 @@ pub trait SharedTableStoreExt<K, V> {
         &self,
         namespace_id: &str,
         table_name: &str,
-    ) -> std::result::Result<Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), KalamDbError>> + Send>, KalamDbError>;
+    ) -> std::result::Result<
+        Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), KalamDbError>> + Send>,
+        KalamDbError,
+    >;
 
     /// Delete multiple keys in batch
     fn delete_batch_by_keys(
@@ -467,7 +484,9 @@ pub trait SharedTableStoreExt<K, V> {
     ) -> std::result::Result<(), KalamDbError>;
 }
 
-impl SharedTableStoreExt<UserTableRowId, UserTableRow> for SystemTableStore<UserTableRowId, UserTableRow> {
+impl SharedTableStoreExt<UserTableRowId, UserTableRow>
+    for SystemTableStore<UserTableRowId, UserTableRow>
+{
     fn scan(
         &self,
         namespace_id: &str,
@@ -556,7 +575,10 @@ impl SharedTableStoreExt<UserTableRowId, UserTableRow> for SystemTableStore<User
         &self,
         namespace_id: &str,
         table_name: &str,
-    ) -> std::result::Result<Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), KalamDbError>> + Send>, KalamDbError> {
+    ) -> std::result::Result<
+        Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), KalamDbError>> + Send>,
+        KalamDbError,
+    > {
         // Scan with iterator for efficient streaming
         UserTableStoreExt::scan_iter(self, namespace_id, table_name)
     }
@@ -572,16 +594,19 @@ impl SharedTableStoreExt<UserTableRowId, UserTableRow> for SystemTableStore<User
     }
 }
 
-impl SharedTableStoreExt<SharedTableRowId, SharedTableRow> for SystemTableStore<SharedTableRowId, SharedTableRow> {
+impl SharedTableStoreExt<SharedTableRowId, SharedTableRow>
+    for SystemTableStore<SharedTableRowId, SharedTableRow>
+{
     fn scan(
         &self,
         _namespace_id: &str,
         _table_name: &str,
     ) -> std::result::Result<Vec<(String, SharedTableRow)>, KalamDbError> {
         let results = EntityStore::scan_all(self)?;
-        Ok(results.into_iter().map(|(key, row)| {
-            (String::from_utf8_lossy(key.as_ref()).to_string(), row)
-        }).collect())
+        Ok(results
+            .into_iter()
+            .map(|(key, row)| (String::from_utf8_lossy(key.as_ref()).to_string(), row))
+            .collect())
     }
 
     fn get(
@@ -633,7 +658,10 @@ impl SharedTableStoreExt<SharedTableRowId, SharedTableRow> for SystemTableStore<
         _namespace_id: &str,
         _table_name: &str,
     ) -> std::result::Result<(), KalamDbError> {
-        // Column family creation is handled by the backend
+        let partition = kalamdb_store::Partition::new(self.partition.clone());
+        self.backend
+            .create_partition(&partition)
+            .map_err(|e| KalamDbError::Other(format!("Failed to create partition: {}", e)))?;
         Ok(())
     }
 
@@ -655,7 +683,10 @@ impl SharedTableStoreExt<SharedTableRowId, SharedTableRow> for SystemTableStore<
         &self,
         _namespace_id: &str,
         _table_name: &str,
-    ) -> std::result::Result<Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), KalamDbError>> + Send>, KalamDbError> {
+    ) -> std::result::Result<
+        Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), KalamDbError>> + Send>,
+        KalamDbError,
+    > {
         // For now, just collect all and return as iterator
         let all = EntityStore::scan_all(self)?;
         let iter = all.into_iter().map(|(k, v)| {
@@ -773,8 +804,8 @@ impl SharedTableStoreExt<StreamTableRowId, StreamTableRow>
         // For now, just collect all and return as iterator
         let all = EntityStore::scan_all(self)?;
         let iter = all.into_iter().map(|(k, v)| {
-            let value_bytes =
-                serde_json::to_vec(&v).map_err(|e| KalamDbError::SerializationError(e.to_string()))?;
+            let value_bytes = serde_json::to_vec(&v)
+                .map_err(|e| KalamDbError::SerializationError(e.to_string()))?;
             Ok((k, value_bytes))
         });
         Ok(Box::new(iter))

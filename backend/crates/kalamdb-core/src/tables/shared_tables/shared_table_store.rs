@@ -72,7 +72,7 @@ pub fn new_shared_table_store(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::{EntityStoreV2, test_utils::InMemoryBackend};
+    use kalamdb_store::{test_utils::InMemoryBackend, EntityStoreV2};
 
     fn create_test_store() -> SharedTableStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());

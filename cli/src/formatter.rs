@@ -104,7 +104,7 @@ impl OutputFormatter {
             }
 
             // Calculate total table width (columns + borders + padding)
-            let total_width: usize = col_widths.iter().sum::<usize>() 
+            let total_width: usize = col_widths.iter().sum::<usize>()
                 + (col_widths.len() * 3) // 2 spaces padding + 1 border per column
                 + 1; // Final border
 

@@ -166,7 +166,8 @@ impl InitialDataFetcher {
                         continue;
                     }
 
-                    let timestamp = Self::extract_updated_timestamp(&serde_json::to_value(&row).unwrap());
+                    let timestamp =
+                        Self::extract_updated_timestamp(&serde_json::to_value(&row).unwrap());
                     if let Some(since) = since_timestamp {
                         if timestamp < since {
                             continue;

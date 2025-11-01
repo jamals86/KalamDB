@@ -5,8 +5,10 @@
 //! - System column injection (inserted_at, _updated, _deleted)
 //! - In-memory only (not persisted to disk)
 
-pub mod stream_table_store;
 pub mod stream_table_provider;
+pub mod stream_table_store;
 
-pub use stream_table_store::{StreamTableRow, StreamTableRowId, StreamTableStore, new_stream_table_store};
 pub use stream_table_provider::StreamTableProvider;
+pub use stream_table_store::{
+    new_stream_table_store, StreamTableRow, StreamTableRowId, StreamTableStore,
+};

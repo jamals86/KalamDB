@@ -88,8 +88,12 @@ pub async fn execute_sql_v1(
         Err(e) => {
             let took_ms = start_time.elapsed().as_millis() as u64;
             let (code, message) = match e {
-                kalamdb_auth::AuthError::MissingAuthorization(msg) => ("MISSING_AUTHORIZATION", msg),
-                kalamdb_auth::AuthError::MalformedAuthorization(msg) => ("MALFORMED_AUTHORIZATION", msg),
+                kalamdb_auth::AuthError::MissingAuthorization(msg) => {
+                    ("MISSING_AUTHORIZATION", msg)
+                }
+                kalamdb_auth::AuthError::MalformedAuthorization(msg) => {
+                    ("MALFORMED_AUTHORIZATION", msg)
+                }
                 kalamdb_auth::AuthError::InvalidCredentials(msg) => ("INVALID_CREDENTIALS", msg),
                 kalamdb_auth::AuthError::RemoteAccessDenied(msg) => ("REMOTE_ACCESS_DENIED", msg),
                 kalamdb_auth::AuthError::UserNotFound(msg) => ("USER_NOT_FOUND", msg),

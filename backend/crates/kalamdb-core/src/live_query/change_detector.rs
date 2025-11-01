@@ -110,7 +110,7 @@ impl UserTableChangeDetector {
             _deleted: false,
         };
 
-                // Step 4: Store the row (system columns injected by store)
+        // Step 4: Store the row (system columns injected by store)
         UserTableStoreExt::put(
             self.store.as_ref(),
             namespace_id,
@@ -121,7 +121,7 @@ impl UserTableChangeDetector {
         )
         .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
-                // Step 4: Get the stored value with system columns
+        // Step 4: Get the stored value with system columns
         let new_value = UserTableStoreExt::get_include_deleted(
             self.store.as_ref(),
             namespace_id,
@@ -150,16 +150,16 @@ impl UserTableChangeDetector {
                     KalamDbError::Other("UPDATE detected but old value is None".to_string())
                 })?;
                 ChangeNotification::update(
-                    table_name.to_string(), 
+                    table_name.to_string(),
                     serde_json::to_value(&old_data.fields).unwrap_or(serde_json::json!({})),
-                    serde_json::to_value(&new_value.fields).unwrap_or(serde_json::json!({}))
+                    serde_json::to_value(&new_value.fields).unwrap_or(serde_json::json!({})),
                 )
             }
             ChangeType::Insert => {
                 // INSERT: only new values
                 ChangeNotification::insert(
-                    table_name.to_string(), 
-                    serde_json::to_value(&new_value.fields).unwrap_or(serde_json::json!({}))
+                    table_name.to_string(),
+                    serde_json::to_value(&new_value.fields).unwrap_or(serde_json::json!({})),
                 )
             }
             _ => {
@@ -225,15 +225,21 @@ impl UserTableChangeDetector {
             ChangeNotification::delete_hard(table_name.to_string(), row_id.to_string())
         } else {
             // Soft delete: get updated row with _deleted=true
-            let deleted_row = UserTableStoreExt::get_include_deleted(self.store.as_ref(), namespace_id, table_name, user_id, row_id)
-                .map_err(|e| KalamDbError::Other(e.to_string()))?
-                .or_else(|| old_value.clone())
-                .ok_or_else(|| KalamDbError::Other("Row not found after soft delete".to_string()))?;
+            let deleted_row = UserTableStoreExt::get_include_deleted(
+                self.store.as_ref(),
+                namespace_id,
+                table_name,
+                user_id,
+                row_id,
+            )
+            .map_err(|e| KalamDbError::Other(e.to_string()))?
+            .or_else(|| old_value.clone())
+            .ok_or_else(|| KalamDbError::Other("Row not found after soft delete".to_string()))?;
 
             // Soft delete sends the row with _deleted=true
             ChangeNotification::delete_soft(
-                table_name.to_string(), 
-                serde_json::to_value(&deleted_row.fields).unwrap_or(serde_json::json!({}))
+                table_name.to_string(),
+                serde_json::to_value(&deleted_row.fields).unwrap_or(serde_json::json!({})),
             )
         };
 
@@ -437,7 +443,7 @@ impl SharedTableChangeDetector {
 mod tests {
     use super::*;
     use crate::live_query::connection_registry::NodeId;
-    use crate::tables::{new_user_table_store, new_shared_table_store, new_stream_table_store};
+    use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
     use kalamdb_commons::{NamespaceId, TableName};
     use kalamdb_sql::KalamSql;
     use kalamdb_store::RocksDbInit;

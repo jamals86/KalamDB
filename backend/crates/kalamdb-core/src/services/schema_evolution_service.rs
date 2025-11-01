@@ -504,10 +504,10 @@ impl SchemaEvolutionService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{TableId, StorageId, LiveQueryId, UserId};
+    use kalamdb_commons::{LiveQueryId, StorageId, TableId, UserId};
     use kalamdb_sql::{LiveQuery, Namespace};
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{StorageBackend, RocksDBBackend};
+    use kalamdb_store::{RocksDBBackend, StorageBackend};
 
     fn setup_test_db() -> (Arc<KalamSql>, TestDb) {
         // Create TestDb with required column families
@@ -529,10 +529,7 @@ mod tests {
     fn create_test_table(kalam_sql: &KalamSql, table_type: &str) -> String {
         let table_id_str = "test_ns:test_table".to_string();
         let parts: Vec<&str> = table_id_str.split(':').collect();
-        let table_id = TableId::new(
-            NamespaceId::new(parts[0]),
-            TableName::new(parts[1]),
-        );
+        let table_id = TableId::new(NamespaceId::new(parts[0]), TableName::new(parts[1]));
 
         // Create namespace
         let namespace = Namespace {

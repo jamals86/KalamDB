@@ -132,7 +132,7 @@ mod tests {
     fn test_intern_same_string_returns_same_arc() {
         let s1 = intern("test_column_unique_1");
         let s2 = intern("test_column_unique_1");
-        
+
         // Should be the exact same allocation
         assert!(Arc::ptr_eq(&s1, &s2));
     }
@@ -141,7 +141,7 @@ mod tests {
     fn test_intern_different_strings() {
         let s1 = intern("column_a_unique_2");
         let s2 = intern("column_b_unique_2");
-        
+
         // Should be different allocations
         assert!(!Arc::ptr_eq(&s1, &s2));
     }
@@ -152,12 +152,12 @@ mod tests {
         let updated = SYSTEM_COLUMNS.updated.clone();
         let deleted = SYSTEM_COLUMNS.deleted.clone();
         let row_id = SYSTEM_COLUMNS.row_id.clone();
-        
+
         // Verify they have correct values
         assert_eq!(updated.as_ref(), "_updated");
         assert_eq!(deleted.as_ref(), "_deleted");
         assert_eq!(row_id.as_ref(), "_row_id");
-        
+
         // Interning the same string should return the same Arc
         let updated2 = intern("_updated");
         assert!(Arc::ptr_eq(&updated, &updated2));
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn test_all_system_columns() {
         let cols = &*SYSTEM_COLUMNS;
-        
+
         assert_eq!(cols.updated.as_ref(), "_updated");
         assert_eq!(cols.deleted.as_ref(), "_deleted");
         assert_eq!(cols.row_id.as_ref(), "_row_id");
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn test_concurrent_interning() {
         use std::thread;
-        
+
         let handles: Vec<_> = (0..10)
             .map(|i| {
                 thread::spawn(move || {
@@ -192,17 +192,17 @@ mod tests {
                 })
             })
             .collect();
-        
+
         let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
-        
+
         // Verify all "concurrent_test_unique_3" strings point to same allocation
         for i in 1..results.len() {
             assert!(Arc::ptr_eq(&results[0].0, &results[i].0));
         }
-        
+
         // Verify thread-specific strings are different
         for i in 0..results.len() {
-            for j in i+1..results.len() {
+            for j in i + 1..results.len() {
                 assert!(!Arc::ptr_eq(&results[i].1, &results[j].1));
             }
         }
@@ -217,7 +217,7 @@ mod tests {
             columns.push(intern("dedup_namespace_id_4"));
             columns.push(intern("dedup_updated_4"));
         }
-        
+
         // Verify all references point to same allocations
         for i in (0..columns.len()).step_by(3) {
             if i + 5 < columns.len() {
@@ -232,7 +232,7 @@ mod tests {
     fn test_empty_string() {
         let s1 = intern("");
         let s2 = intern("");
-        
+
         assert!(Arc::ptr_eq(&s1, &s2));
         assert_eq!(s1.as_ref(), "");
     }
@@ -241,7 +241,7 @@ mod tests {
     fn test_unicode_strings() {
         let s1 = intern("用户ID");
         let s2 = intern("用户ID");
-        
+
         assert!(Arc::ptr_eq(&s1, &s2));
         assert_eq!(s1.as_ref(), "用户ID");
     }

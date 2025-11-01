@@ -11,9 +11,9 @@ use crate::catalog::{NamespaceId, TableMetadata, TableName};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::stores::system_table::SharedTableStoreExt;
-use crate::tables::{StreamTableRowId, StreamTableStore, StreamTableRow};
-use crate::tables::system::LiveQueriesTableProvider;
 use crate::tables::arrow_json_conversion::{arrow_batch_to_json, json_rows_to_arrow_batch};
+use crate::tables::system::LiveQueriesTableProvider;
+use crate::tables::{StreamTableRow, StreamTableRowId, StreamTableStore};
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::TableProvider;
@@ -298,11 +298,15 @@ impl StreamTableProvider {
     /// # Returns
     /// Vector of (row_id, row_data) tuples
     pub fn scan_events(&self) -> Result<Vec<(String, JsonValue)>, KalamDbError> {
-        let rows = self.store
+        let rows = self
+            .store
             .scan(self.namespace_id().as_str(), self.table_name().as_str())
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
-        
-        Ok(rows.into_iter().map(|(row_id, row)| (row_id, row.fields)).collect())
+
+        Ok(rows
+            .into_iter()
+            .map(|(row_id, row)| (row_id, row.fields))
+            .collect())
     }
 
     /// Count events in the stream table
@@ -318,10 +322,8 @@ impl StreamTableProvider {
     /// # Returns
     /// Number of events deleted
     pub fn evict_expired(&self) -> Result<usize, KalamDbError> {
-        self.store.cleanup_expired_rows(
-            self.namespace_id().as_str(),
-            self.table_name().as_str(),
-        )
+        self.store
+            .cleanup_expired_rows(self.namespace_id().as_str(), self.table_name().as_str())
             .map_err(|e| KalamDbError::Other(e.to_string()))
     }
 }
@@ -378,7 +380,10 @@ impl TableProvider for StreamTableProvider {
         };
 
         // Convert events to Arrow RecordBatch (extract .fields from StreamTableRow)
-        let row_values: Vec<JsonValue> = events_to_process.into_iter().map(|(_id, row)| row.fields).collect();
+        let row_values: Vec<JsonValue> = events_to_process
+            .into_iter()
+            .map(|(_id, row)| row.fields)
+            .collect();
         let batch = json_rows_to_arrow_batch(&self.schema, row_values).map_err(|e| {
             DataFusionError::Execution(format!("Failed to convert events to Arrow: {}", e))
         })?;
@@ -484,8 +489,6 @@ impl TableProvider for StreamTableProvider {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,9 +517,10 @@ mod tests {
             deleted_retention_hours: None,
         };
 
-        let store = Arc::new(StreamTableStore::new(Arc::new(
-            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
-        ), "stream_app:events"));
+        let store = Arc::new(StreamTableStore::new(
+            Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone())),
+            "stream_app:events",
+        ));
 
         let provider = StreamTableProvider::new(
             table_metadata,
@@ -689,9 +693,10 @@ mod tests {
             deleted_retention_hours: None,
         };
 
-        let store = Arc::new(StreamTableStore::new(Arc::new(
-            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
-        ), "stream_app:ephemeral_events"));
+        let store = Arc::new(StreamTableStore::new(
+            Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone())),
+            "stream_app:ephemeral_events",
+        ));
 
         let provider = StreamTableProvider::new(
             table_metadata,
@@ -737,9 +742,10 @@ mod tests {
             deleted_retention_hours: None,
         };
 
-        let store = Arc::new(StreamTableStore::new(Arc::new(
-            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
-        ), "stream_app:ephemeral_events2"));
+        let store = Arc::new(StreamTableStore::new(
+            Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone())),
+            "stream_app:ephemeral_events2",
+        ));
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
@@ -791,9 +797,10 @@ mod tests {
             deleted_retention_hours: None,
         };
 
-        let store = Arc::new(StreamTableStore::new(Arc::new(
-            kalamdb_store::RocksDBBackend::new(test_db.db.clone()),
-        ), "stream_app:persistent_events"));
+        let store = Arc::new(StreamTableStore::new(
+            Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone())),
+            "stream_app:persistent_events",
+        ));
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
