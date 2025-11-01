@@ -6,8 +6,7 @@
 
 use crate::error::KalamDbError;
 use crate::tables::system::JobsTableProvider;
-use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId};
+use kalamdb_commons::JobStatus;
 use std::sync::Arc;
 
 /// Configuration for job retention
@@ -116,7 +115,9 @@ impl RetentionPolicy {
 mod tests {
     use super::*;
 
+    use crate::catalog::NamespaceId;
     use kalamdb_commons::system::Job;
+    use kalamdb_commons::{JobId, JobType};
     use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
@@ -124,10 +125,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
-        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
-        let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql));
+        let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.adapter().backend()));
         let retention = RetentionPolicy::with_defaults(Arc::clone(&jobs_provider));
         (retention, jobs_provider, temp_dir)
     }
@@ -174,8 +175,14 @@ mod tests {
         assert_eq!(deleted, 1);
 
         // Verify old job is gone, recent job remains
-        assert!(provider.get_job("old-completed").unwrap().is_none());
-        assert!(provider.get_job("recent-completed").unwrap().is_some());
+        assert!(provider
+            .get_job(&JobId::new("old-completed"))
+            .unwrap()
+            .is_none());
+        assert!(provider
+            .get_job(&JobId::new("recent-completed"))
+            .unwrap()
+            .is_some());
     }
 
     #[test]
@@ -202,7 +209,10 @@ mod tests {
 
         // Failed job should still exist due to extended retention
         assert_eq!(deleted, 0);
-        assert!(provider.get_job(&JobId::new("old-failed")).unwrap().is_some());
+        assert!(provider
+            .get_job(&JobId::new("old-failed"))
+            .unwrap()
+            .is_some());
     }
 
     #[test]
@@ -229,7 +239,10 @@ mod tests {
 
         // Very old failed job should be deleted
         assert_eq!(deleted, 1);
-        assert!(provider.get_job(&JobId::new("very-old-failed")).unwrap().is_none());
+        assert!(provider
+            .get_job(&JobId::new("very-old-failed"))
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -255,7 +268,10 @@ mod tests {
 
         // Running job should never be deleted
         assert_eq!(deleted, 0);
-        assert!(provider.get_job(&JobId::new("old-running")).unwrap().is_some());
+        assert!(provider
+            .get_job(&JobId::new("old-running"))
+            .unwrap()
+            .is_some());
     }
 
     #[test]
@@ -263,10 +279,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
-        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
-        let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql));
+        let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.adapter().backend()));
 
         let custom_config = RetentionConfig {
             retention_days: 7,

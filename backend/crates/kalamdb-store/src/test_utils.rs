@@ -48,7 +48,11 @@ impl Default for InMemoryBackend {
 }
 
 impl StorageBackend for InMemoryBackend {
-    fn get(&self, partition: &Partition, key: &[u8]) -> crate::storage_trait::Result<Option<Vec<u8>>> {
+    fn get(
+        &self,
+        partition: &Partition,
+        key: &[u8],
+    ) -> crate::storage_trait::Result<Option<Vec<u8>>> {
         let data = self.data.read().unwrap();
         Ok(data
             .get(partition.name())
@@ -56,9 +60,14 @@ impl StorageBackend for InMemoryBackend {
             .cloned())
     }
 
-    fn put(&self, partition: &Partition, key: &[u8], value: &[u8]) -> crate::storage_trait::Result<()> {
+    fn put(
+        &self,
+        partition: &Partition,
+        key: &[u8],
+        value: &[u8],
+    ) -> crate::storage_trait::Result<()> {
         let mut data = self.data.write().unwrap();
-        let map = data.entry(partition.name().to_string()).or_insert_with(HashMap::new);
+        let map = data.entry(partition.name().to_string()).or_default();
         map.insert(key.to_vec(), value.to_vec());
         Ok(())
     }
@@ -131,7 +140,7 @@ impl StorageBackend for InMemoryBackend {
 
     fn create_partition(&self, partition: &Partition) -> crate::storage_trait::Result<()> {
         let mut data = self.data.write().unwrap();
-        data.entry(partition.name().to_string()).or_insert_with(HashMap::new);
+        data.entry(partition.name().to_string()).or_default();
         Ok(())
     }
 
@@ -256,4 +265,3 @@ mod tests {
         assert!(test_db.db.cf_handle("user_table:app:messages").is_some());
     }
 }
-

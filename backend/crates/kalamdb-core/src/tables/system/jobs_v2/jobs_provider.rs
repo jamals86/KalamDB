@@ -7,16 +7,18 @@ use super::super::SystemTableProviderExt;
 use super::{new_jobs_store, JobsStore, JobsTableSchema};
 use crate::error::KalamDbError;
 use async_trait::async_trait;
-use datafusion::arrow::array::{ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMillisecondArray};
+use datafusion::arrow::array::{
+    ArrayRef, Int64Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::Job;
 use kalamdb_commons::JobId;
 use kalamdb_store::EntityStoreV2;
+use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -116,6 +118,18 @@ impl JobsTableProvider {
         self.update_job(cancelled_job)?;
 
         Ok(())
+    }
+
+    /// Cancel a running job (string version for backward compatibility)
+    pub fn cancel_job_str(&self, job_id: &str) -> Result<(), KalamDbError> {
+        let job_id_typed = JobId::new(job_id);
+        self.cancel_job(&job_id_typed)
+    }
+
+    /// Get a job by string ID (for backward compatibility)
+    pub fn get_job_str(&self, job_id: &str) -> Result<Option<Job>, KalamDbError> {
+        let job_id_typed = JobId::new(job_id);
+        self.get_job(&job_id_typed)
     }
 
     /// Delete jobs older than retention period (in days)
@@ -244,7 +258,7 @@ impl TableProvider for JobsTableProvider {
 }
 
 impl SystemTableProviderExt for JobsTableProvider {
-    fn table_name(&self) -> &'static str {
+    fn table_name(&self) -> &str {
         "system.jobs"
     }
 
@@ -260,8 +274,8 @@ impl SystemTableProviderExt for JobsTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{NamespaceId, TableName, JobType, JobStatus};
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_commons::{JobStatus, JobType, NamespaceId, TableName};
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> JobsTableProvider {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -325,7 +339,7 @@ mod tests {
         let job = create_test_job("job1");
 
         provider.create_job(job).unwrap();
-        
+
         let job_id = JobId::new("job1");
         provider.delete_job(&job_id).unwrap();
 

@@ -15,8 +15,9 @@
 
 use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
-use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
-use kalamdb_commons::models::{JobStatus, JobType};
+use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
+use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
+use kalamdb_commons::models::{JobId, JobStatus, JobType};
 use kalamdb_sql::{Job, KalamSql};
 use std::fs;
 use std::path::Path;
@@ -208,18 +209,18 @@ impl TableDeletionService {
         table_type: &TableType,
     ) -> Result<(), KalamDbError> {
         match table_type {
-            TableType::User => self
-                .user_table_store
-                .drop_table(namespace_id.as_str(), table_name.as_str())
-                .map_err(|e| {
-                    KalamDbError::IoError(format!("Failed to drop user table data: {}", e))
-                }),
-            TableType::Shared => self
-                .shared_table_store
-                .drop_table(namespace_id.as_str(), table_name.as_str())
-                .map_err(|e| {
-                    KalamDbError::IoError(format!("Failed to drop shared table data: {}", e))
-                }),
+            TableType::User => UserTableStoreExt::drop_table(
+                self.user_table_store.as_ref(),
+                namespace_id.as_str(),
+                table_name.as_str(),
+            )
+            .map_err(|e| KalamDbError::IoError(format!("Failed to drop user table data: {}", e))),
+            TableType::Shared => SharedTableStoreExt::drop_table(
+                self.shared_table_store.as_ref(),
+                namespace_id.as_str(),
+                table_name.as_str(),
+            )
+            .map_err(|e| KalamDbError::IoError(format!("Failed to drop shared table data: {}", e))),
             TableType::Stream => self
                 .stream_table_store
                 .drop_table(namespace_id.as_str(), table_name.as_str())
@@ -383,7 +384,7 @@ impl TableDeletionService {
     }
 
     /// Decrement storage location usage count (T172)
-    fn decrement_storage_usage(&self, location_name: &str) -> Result<(), KalamDbError> {
+    fn decrement_storage_usage(&self, _location_name: &str) -> Result<(), KalamDbError> {
         // TODO: Phase 2b - system_storages no longer tracks usage_count, validation happens differently
         // Storage location usage tracking will be reimplemented when needed
         log::warn!(
@@ -422,17 +423,11 @@ impl TableDeletionService {
         table_name: &TableName,
         table_type: &TableType,
     ) -> Result<String, KalamDbError> {
-        let job_id = format!("drop_table:{}", table_id);
+        let job_id = format!("drop_table:{}", table_id); //TODO: Use a function inside JobId to construct this
         let now_ms = chrono::Utc::now().timestamp_millis();
 
-        let parameters = vec![
-            format!("namespace_id={}", namespace_id.as_str()),
-            format!("table_name={}", table_name.as_str()),
-            format!("table_type={:?}", table_type),
-        ];
-
         let job: Job = Job {
-            job_id: job_id.clone(),
+            job_id: JobId::new(job_id.clone()),
             job_type: JobType::Cleanup,
             status: JobStatus::Running,
             namespace_id: namespace_id.clone(),
@@ -523,7 +518,7 @@ impl TableDeletionService {
 mod tests {
     use super::*;
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{kalamdb_commons::storage::StorageBackend, RocksDBBackend};
+    use kalamdb_store::{RocksDBBackend, StorageBackend};
 
     fn create_test_service() -> (TableDeletionService, TestDb) {
         // Create test database with all required column families
@@ -539,11 +534,17 @@ mod tests {
 
         let test_db = TestDb::new(&cf_names).unwrap();
         let db = Arc::clone(&test_db.db);
-
-        let user_store = Arc::new(UserTableStore::new(db.clone()).unwrap());
-        let shared_store = Arc::new(SharedTableStore::new(db.clone()).unwrap());
-        let stream_store = Arc::new(StreamTableStore::new(db.clone()).unwrap());
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
+
+        let user_store = Arc::new(UserTableStore::new(backend.clone(), "user_table:app:users"));
+        let shared_store = Arc::new(SharedTableStore::new(
+            backend.clone(),
+            "shared_table:app:config",
+        ));
+        let stream_store = Arc::new(StreamTableStore::new(
+            backend.clone(),
+            "stream_table:app:events",
+        ));
         let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
 
         let service = TableDeletionService::new(user_store, shared_store, stream_store, kalam_sql);

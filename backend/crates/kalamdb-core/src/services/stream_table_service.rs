@@ -10,11 +10,10 @@
 
 use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType};
 use crate::error::KalamDbError;
-use crate::schema::arrow_schema::ArrowSchemaWithOptions;
-use crate::stores::StreamTableStore;
+use crate::stores::system_table::SharedTableStoreExt;
+use crate::tables::StreamTableStore;
 use datafusion::arrow::datatypes::Schema;
 use kalamdb_commons::models::StorageId;
-use kalamdb_commons::system::TableSchema;
 use kalamdb_sql::ddl::CreateTableStatement;
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
@@ -90,10 +89,15 @@ impl StreamTableService {
         // Save complete table definition to information_schema_tables (atomic write)
         self.save_table_definition(&stmt, &schema)?;
 
-        // Create column family for this stream table
-        self.stream_table_store
-            .create_column_family(stmt.namespace_id.as_str(), stmt.table_name.as_str())
-            .map_err(|e| KalamDbError::Other(format!("Failed to create column family: {}", e)))?;
+        // Create the column family in RocksDB
+        SharedTableStoreExt::create_column_family(
+            self.stream_table_store.as_ref(),
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str(),
+        )
+        .map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to create column family: {}", e))
+        })?;
 
         // Create and return table metadata
         let metadata = TableMetadata {
@@ -191,68 +195,6 @@ impl StreamTableService {
     ///
     /// **REPLACED BY**: save_table_definition() which writes to information_schema_tables
     ///
-    /// Stream tables store:
-    /// - Schema in system_table_schemas (version 1)
-    /// - Table metadata in system_tables
-    /// - Retention configuration in table options
-    fn create_schema_metadata(
-        &self,
-        namespace_id: &NamespaceId,
-        table_name: &TableName,
-        schema: &Arc<Schema>,
-        retention_seconds: Option<u32>,
-        ephemeral: bool,
-        max_buffer: Option<usize>,
-    ) -> Result<(), KalamDbError> {
-        // Serialize Arrow schema to JSON
-        let arrow_with_options = ArrowSchemaWithOptions::new(schema.clone());
-        let arrow_schema_json = arrow_with_options.to_json_string()?;
-
-        // Create table ID
-        let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
-
-        // Create TableSchema record for version 1
-        let table_schema = TableSchema {
-            schema_id: format!("{}:1", table_id),
-            table_id: table_id.clone(),
-            version: 1,
-            arrow_schema: arrow_schema_json,
-            created_at: chrono::Utc::now().timestamp_millis(), // Use millis for consistency
-            changes: format!(
-                "Initial stream table schema. Retention: {:?}s, Ephemeral: {}, Max Buffer: {:?}",
-                retention_seconds, ephemeral, max_buffer
-            ),
-        };
-
-        // TODO: Replace with information_schema_tables storage (Phase 2b)
-        // Schema will be stored in TableDefinition.schema_history array
-        // self.kalam_sql.insert_table_schema(&table_schema)?;
-
-        // Create Table record in system_tables
-        let table = kalamdb_sql::Table {
-            table_id: table_id.clone(),
-            table_name: table_name.clone(),
-            namespace: namespace_id.clone(),
-            table_type: TableType::Stream,
-            created_at: chrono::Utc::now().timestamp(),
-            storage_location: String::new(), // Stream tables don't use Parquet
-            storage_id: Some(StorageId::from("local")),
-            use_user_storage: false,
-            flush_policy: String::new(), // Stream tables don't flush to Parquet
-            schema_version: 1,
-            deleted_retention_hours: 0, // Stream tables don't have soft deletes
-            access_level: None,         // STREAM tables don't use access_level
-        };
-
-        // TODO: Add insert_table method to kalamdb-sql
-        // For now we'll skip this
-        // self.kalam_sql
-        //     .insert_table(&table)
-        //     .map_err(|e| KalamDbError::InternalError(e.to_string()))?;
-
-        Ok(())
-    }
-
     /// Check if a table already exists
     fn table_exists(
         &self,
@@ -274,7 +216,7 @@ mod tests {
     use super::*;
     use datafusion::arrow::datatypes::{DataType, Field};
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{kalamdb_commons::storage::StorageBackend, RocksDBBackend};
+    use kalamdb_store::{RocksDBBackend, StorageBackend};
 
     fn create_test_service() -> (StreamTableService, TestDb) {
         let test_db = TestDb::new(&[
@@ -284,8 +226,8 @@ mod tests {
         ])
         .unwrap();
 
-        let stream_table_store = Arc::new(StreamTableStore::new(test_db.db.clone()).unwrap());
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
+        let stream_table_store = Arc::new(StreamTableStore::new(backend.clone(), "stream_tables"));
         let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
 
         let service = StreamTableService::new(stream_table_store, kalam_sql);

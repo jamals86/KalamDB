@@ -5,9 +5,8 @@ Future:
 6) Make sure _updated timestamp include also nanosecond precision
 7) when reading --file todo-app.sql from the cli ignore the lines with -- since they are comments, and create a test to cover this case
 8) Inside kalam-link instead of having 2 different websockets implementations to use only one which also supports the wasm target, by doing so we can reduce code duplication and have less maintenance burden
-9) Implement users/roles and authentication keys using oauth or jwt tokens, this should replace the api_key thing we have now
+
 10) in query inside where clause support comparison operators for null values, like IS NULL and IS NOT NULL
-11) ✅ DONE - check in the integration tests if a flush job took took_ms = 0 then it's a failure (implemented in test_manual_flush_verification.rs tests 09, 10, 11, 12 with execute_flush_synchronously and took_ms verification)
 12) In cli if a query took took_ms = 0 then it's a failure
 13) In the cli add a command to show all live queries
 14) In the cli add a command to kill a live query by its live id
@@ -27,9 +26,9 @@ Future:
 
 29) instead of pub struct SystemTable name it KalamTable
 30) Make sure the TableSchema which is stored cover everything in one model and not spread into multiple models
-31) SHOW STATS FOR TABLE app.messages;
+31) SHOW STATS FOR TABLE app.messages; maybe this is better be implemented with information_Schemas tasks
 32) Do we have counter per userId per buffered rows? this will help us tune the select from user table to check if we even need to query the buffer in first place
-33) Add option for a specific usere to download all his data
+33) Add option for a specific user to download all his data this is done with an endpoint in rest api which will create a zip file with all his tables data in parquet format and then provide a link to download it
 34) Add to the roadmap adding join which can join tables: shared<->shared, shared<->user, user<->user, user<->stream
 35) Add to cli/server a version which will print the commit and build date as well which is auto-increment: add prompt instead of this one: Starting KalamDB Server v0.1.0
 36) update all packages to the latest available version
@@ -40,7 +39,6 @@ Future:
 41) storing credentials in kalamdb-credentials alongside the url of the database
 42) CLI should also support a regular user as well and not only the root user
 43) Whenever a user send a query/sql statement first of all we check the role he has if he is creating create/alter tables then we first check the user role before we display an error like: namespace does not exists, maybe its better to include in these CREATE/ALTER sql also which roles can access them so we dont read data from untrusted users its a sensitive topic.
-44) Remove all X-USER-ID header we will be using oauth/basic auth or incase of system user we will add it to the auth basic auth with empty password and only from localhost only
 45) "system_users" is repeated so many times in the code base we should use a column family enum for all of them, and making all of them as Partition::new("system_users") instead of hardcoding the string multiple times, we already have SystemTable enum we can add ColumnFamily as well
 46) nodeId should be unique and used from the config file and use NodeId enum
 47) No need to map developer to service role we need to use only Role's values
@@ -55,8 +53,39 @@ Future:
 56) Add to README.md
     - Vector database
     - Vector Search
-    - 
+    - Has a deep design for how they should be and also update TASKS.MD and the design here
 
+
+62) ✅ DONE - Add test to flush table and check if the job persisted and completed with results correctly (implemented in test_cli_flush_table and test_cli_flush_all_tables with system.jobs verification)
+63) check for each system table if the results returned cover all the columns defined in the TableSchema
+64) ✅ DONE - Add test to flush all and check if the job persisted and completed with results correctly (implemented in test_cli_flush_all_tables with system.jobs verification for multiple tables)
+65) Add tests to cover the droping table and cleanup inside jobs table as well
+66) Make sure actions like: drop/export/import/flush is having jobs rows when they finishes (TODO: Also check what kind of jobs we have)
+67) test each role the actions he can do and cannot do, to cover the rbac system well, this should be done from the cli
+68) A service user can also create other regular users
+69) Server click ctrl+z two times will force kill even if it's still flushing or doing some job
+70) Check cleaning up completed jobs, we already have a config of how long should we retain them
+71) When flushing user table flush only the user who is requesting the flush to happen
+72) Whenever we drop the namespace remove all tables under it
+73) Test creating different users and checking each operation they can do from cli integration tests
+74) check if we are using system/kalam catalogs correctly in the datafusion sessions
+ctx.register_catalog("system", Arc::new(SystemCatalogProvider::new()));
+ctx.register_catalog("app", Arc::new(AppCatalogProvider::new(namespace)));
+Also check that registering ctaalogs are done in one place and one session, we shall combine everywhere were we register sessions and ctalogs into one place
+
+75) Fix cli highlight select statements
+76) Fix auto-complete in cli
+77) Flush table job got stuck for a long time, need to investigate why and also why the tests don't detect this issue and still passes?!
+78) Support an endpoint for exporting user data as a whole in a zip file
+79) Need to scan the code to make it more lighweight and less dependencies, by doing that we can lower the file binary size and also memory consumption
+80) More integration tests inside cli tool which covers importing sql files with multiple statements
+81) CLI - add integration tests which cover a real-life use case for chat app with an ai where we have conversations and messages between users and ai agents, real-time streams for ai thinking/thoughts/typing/user online/offline status, and also flushing messages to parquet files and reloading them back
+
+
+IMPORTANT:
+1) Schema information_schema
+2) Datatypes for columns
+3) Parametrized Queries
 
 Key Findings
 Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB column families yet, resulting in 0 rows flushed

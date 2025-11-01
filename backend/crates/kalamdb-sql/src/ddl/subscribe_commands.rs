@@ -100,16 +100,10 @@ pub struct SubscribeStatement {
 }
 
 /// Options for SUBSCRIBE TO command.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct SubscribeOptions {
     /// Number of recent rows to fetch initially (default: 0, no initial fetch)
     pub last_rows: Option<usize>,
-}
-
-impl Default for SubscribeOptions {
-    fn default() -> Self {
-        Self { last_rows: None }
-    }
 }
 
 impl SubscribeStatement {
@@ -366,9 +360,26 @@ mod tests {
     }
 
     #[test]
-    fn test_to_select_sql_ignores_options() {
-        let stmt =
-            SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (last_rows=10)").unwrap();
-        assert_eq!(stmt.to_select_sql(), "SELECT * FROM app.messages");
+    fn test_parse_subscribe_malformed_table_reference() {
+        // Test that SQL statements are rejected as table references
+        let result = SubscribeStatement::parse("SUBSCRIBE TO select * from admin_ops_test.users");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err();
+        assert!(err_msg.contains("Invalid table reference"));
+        assert!(err_msg.contains("not SQL statements"));
+    }
+
+    #[test]
+    fn test_parse_subscribe_table_reference_with_spaces() {
+        // Test that table references with spaces are rejected
+        let result = SubscribeStatement::parse("SUBSCRIBE TO my table");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("should not contain spaces"));
+    }
+
+    #[test]
+    fn test_parse_subscribe_invalid_option_format() {
+        let result = SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS invalid");
+        assert!(result.is_err());
     }
 }

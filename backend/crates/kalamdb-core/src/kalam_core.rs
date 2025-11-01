@@ -4,7 +4,7 @@
 //! `Arc<dyn kalamdb_store::StorageBackend>` and wires up the
 //! table stores used by services.
 
-use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
+use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use std::sync::Arc;
 
 /// Core store handles required by kalamdb-core services.
@@ -19,9 +19,9 @@ impl KalamCore {
     ///
     /// Creates EntityStore-based table stores that work with any StorageBackend.
     pub fn new(backend: Arc<dyn kalamdb_store::StorageBackend>) -> anyhow::Result<Self> {
-        let user_table_store = Arc::new(UserTableStore::new(backend.clone()));
-        let shared_table_store = Arc::new(SharedTableStore::new(backend.clone()));
-        let stream_table_store = Arc::new(StreamTableStore::new(backend));
+        let user_table_store = Arc::new(UserTableStore::new(backend.clone(), "user_tables"));
+        let shared_table_store = Arc::new(SharedTableStore::new(backend.clone(), "shared_tables"));
+        let stream_table_store = Arc::new(StreamTableStore::new(backend, "stream_tables"));
 
         Ok(Self {
             user_table_store,

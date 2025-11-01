@@ -80,7 +80,7 @@ impl FilterPredicate {
             Statement::Query(query) => {
                 if let Some(selection) = &query.body.as_select().and_then(|s| s.selection.as_ref())
                 {
-                    selection.clone()
+                    (*selection).clone()
                 } else {
                     return Err(KalamDbError::InvalidOperation(
                         "No WHERE clause found".to_string(),

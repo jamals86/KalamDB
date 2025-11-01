@@ -13,10 +13,10 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::User;
 use kalamdb_commons::UserId;
 use kalamdb_store::EntityStoreV2;
+use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -59,12 +59,20 @@ impl UsersTableProvider {
     /// # Returns
     /// Result indicating success or failure
     pub fn create_user(&self, user: User) -> Result<(), KalamDbError> {
+        // Check if username already exists (duplicate check via unique index)
+        if let Some(_existing_id) = self.username_index.lookup(user.username.as_str())? {
+            return Err(KalamDbError::AlreadyExists(format!(
+                "User with username '{}' already exists",
+                user.username.as_str()
+            )));
+        }
+
         // Store user by ID
         self.store.put(&user.id, &user)?;
-        
+
         // Update username index
         self.username_index.index_user(&user)?;
-        
+
         Ok(())
     }
 
@@ -90,14 +98,15 @@ impl UsersTableProvider {
         // If username changed, update index
         if existing_user.username != user.username {
             // Remove old username
-            self.username_index.remove_user(&existing_user.username)?;
+            self.username_index
+                .remove_user(existing_user.username.as_str())?;
             // Add new username
             self.username_index.index_user(&user)?;
         }
 
         // Update user
         self.store.put(&user.id, &user)?;
-        
+
         Ok(())
     }
 
@@ -122,7 +131,7 @@ impl UsersTableProvider {
         self.store.put(user_id, &user)?;
 
         // Note: Keep username index for audit trail / recovery
-        
+
         Ok(())
     }
 
@@ -147,7 +156,7 @@ impl UsersTableProvider {
     pub fn get_user_by_username(&self, username: &str) -> Result<Option<User>, KalamDbError> {
         // Lookup user_id via secondary index
         let user_id = self.username_index.lookup(username)?;
-        
+
         match user_id {
             Some(id) => Ok(self.store.get(&id)?),
             None => Ok(None),
@@ -207,7 +216,7 @@ impl UsersTableProvider {
 }
 
 impl SystemTableProviderExt for UsersTableProvider {
-    fn table_name(&self) -> &'static str {
+    fn table_name(&self) -> &str {
         UsersTableSchema::table_name()
     }
 
@@ -256,8 +265,8 @@ impl TableProvider for UsersTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{AuthType, Role, StorageMode, StorageId};
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserName};
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> UsersTableProvider {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -267,7 +276,7 @@ mod tests {
     fn create_test_user(id: &str, username: &str) -> User {
         User {
             id: UserId::new(id),
-            username: username.to_string(),
+            username: UserName::new(username),
             password_hash: "hashed_password".to_string(),
             role: Role::User,
             email: Some(format!("{}@example.com", username)),
@@ -294,7 +303,7 @@ mod tests {
         let retrieved = provider.get_user_by_id(&UserId::new("user1")).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
-        assert_eq!(retrieved.username, "alice");
+        assert_eq!(retrieved.username.as_str(), "alice");
         assert_eq!(retrieved.email, Some("alice@example.com".to_string()));
     }
 
@@ -320,14 +329,20 @@ mod tests {
         provider.create_user(user).unwrap();
 
         // Update user
-        let mut updated = provider.get_user_by_id(&UserId::new("user1")).unwrap().unwrap();
+        let mut updated = provider
+            .get_user_by_id(&UserId::new("user1"))
+            .unwrap()
+            .unwrap();
         updated.email = Some("newemail@example.com".to_string());
         updated.updated_at = 2000;
 
         provider.update_user(updated).unwrap();
 
         // Verify update
-        let retrieved = provider.get_user_by_id(&UserId::new("user1")).unwrap().unwrap();
+        let retrieved = provider
+            .get_user_by_id(&UserId::new("user1"))
+            .unwrap()
+            .unwrap();
         assert_eq!(retrieved.email, Some("newemail@example.com".to_string()));
         assert_eq!(retrieved.updated_at, 2000);
     }
@@ -340,8 +355,11 @@ mod tests {
         provider.create_user(user).unwrap();
 
         // Update username
-        let mut updated = provider.get_user_by_id(&UserId::new("user1")).unwrap().unwrap();
-        updated.username = "bob".to_string();
+        let mut updated = provider
+            .get_user_by_id(&UserId::new("user1"))
+            .unwrap()
+            .unwrap();
+        updated.username = UserName::new("bob");
 
         provider.update_user(updated).unwrap();
 
@@ -364,7 +382,10 @@ mod tests {
         provider.delete_user(&UserId::new("user1")).unwrap();
 
         // Verify deleted_at is set
-        let retrieved = provider.get_user_by_id(&UserId::new("user1")).unwrap().unwrap();
+        let retrieved = provider
+            .get_user_by_id(&UserId::new("user1"))
+            .unwrap()
+            .unwrap();
         assert!(retrieved.deleted_at.is_some());
     }
 

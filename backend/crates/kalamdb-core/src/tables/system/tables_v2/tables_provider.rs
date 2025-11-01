@@ -7,15 +7,17 @@ use super::super::SystemTableProviderExt;
 use super::{new_tables_store, TablesStore, TablesTableSchema};
 use crate::error::KalamDbError;
 use async_trait::async_trait;
-use datafusion::arrow::array::{ArrayRef, BooleanArray, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray};
+use datafusion::arrow::array::{
+    ArrayRef, BooleanArray, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::SystemTable;
 use kalamdb_store::EntityStoreV2;
+use kalamdb_store::StorageBackend;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -46,23 +48,21 @@ impl TablesTableProvider {
         }
     }
 
-    /// Create a new table entry
     pub fn create_table(&self, table: SystemTable) -> Result<(), KalamDbError> {
-        self.store.put(&table.table_id, &table)?;
+        self.store.put(&table.table_id.to_string(), &table)?;
         Ok(())
     }
 
-    /// Update an existing table entry
     pub fn update_table(&self, table: SystemTable) -> Result<(), KalamDbError> {
         // Check if table exists
-        if self.store.get(&table.table_id)?.is_none() {
+        if self.store.get(&table.table_id.to_string())?.is_none() {
             return Err(KalamDbError::NotFound(format!(
                 "Table not found: {}",
                 table.table_id
             )));
         }
 
-        self.store.put(&table.table_id, &table)?;
+        self.store.put(&table.table_id.to_string(), &table)?;
         Ok(())
     }
 
@@ -95,7 +95,7 @@ impl TablesTableProvider {
         let mut access_levels = StringBuilder::new();
 
         for (_key, table) in tables {
-            table_ids.append_value(&table.table_id);
+            table_ids.append_value(&table.table_id.to_string());
             table_names.append_value(table.table_name.as_str());
             namespaces.append_value(table.namespace.as_str());
             table_types.append_value(table.table_type.as_str());
@@ -166,7 +166,7 @@ impl TableProvider for TablesTableProvider {
 }
 
 impl SystemTableProviderExt for TablesTableProvider {
-    fn table_name(&self) -> &'static str {
+    fn table_name(&self) -> &str {
         "system.tables"
     }
 
@@ -182,8 +182,10 @@ impl SystemTableProviderExt for TablesTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{TableName, NamespaceId, TableType as KalamTableType, StorageId, TableAccess};
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_commons::{
+        NamespaceId, StorageId, TableAccess, TableId, TableName, TableType as KalamTableType,
+    };
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> TablesTableProvider {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -192,7 +194,7 @@ mod tests {
 
     fn create_test_table(table_id: &str, table_name: &str) -> SystemTable {
         SystemTable {
-            table_id: table_id.to_string(),
+            table_id: TableId::new(NamespaceId::new("default"), TableName::new(table_name)),
             table_name: TableName::new(table_name),
             namespace: NamespaceId::new("default"),
             table_type: KalamTableType::User,
@@ -217,7 +219,7 @@ mod tests {
         let retrieved = provider.get_table_by_id("table1").unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
-        assert_eq!(retrieved.table_id, "table1");
+        assert_eq!(retrieved.table_id.to_string(), "default:conversations");
         assert_eq!(retrieved.table_name.as_str(), "conversations");
     }
 

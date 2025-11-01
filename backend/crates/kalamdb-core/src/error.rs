@@ -83,9 +83,16 @@ impl From<kalamdb_store::StorageError> for KalamDbError {
         match err {
             kalamdb_store::StorageError::PartitionNotFound(msg) => KalamDbError::NotFound(msg),
             kalamdb_store::StorageError::IoError(msg) => KalamDbError::IoError(msg),
-            kalamdb_store::StorageError::SerializationError(msg) => KalamDbError::SerializationError(msg),
+            kalamdb_store::StorageError::SerializationError(msg) => {
+                KalamDbError::SerializationError(msg)
+            }
             kalamdb_store::StorageError::Unsupported(msg) => KalamDbError::InvalidOperation(msg),
-            kalamdb_store::StorageError::UniqueConstraintViolation(msg) => KalamDbError::AlreadyExists(msg),
+            kalamdb_store::StorageError::UniqueConstraintViolation(msg) => {
+                KalamDbError::AlreadyExists(msg)
+            }
+            kalamdb_store::StorageError::LockPoisoned(msg) => {
+                KalamDbError::Other(format!("Lock poisoned: {}", msg))
+            }
             kalamdb_store::StorageError::Other(msg) => KalamDbError::Other(msg),
         }
     }

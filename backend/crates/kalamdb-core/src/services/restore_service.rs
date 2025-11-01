@@ -14,7 +14,7 @@
 use crate::catalog::{NamespaceId, TableType};
 use crate::error::KalamDbError;
 use crate::services::backup_service::BackupManifest;
-use kalamdb_commons::models::{JobStatus, JobType};
+use kalamdb_commons::models::{JobId, JobStatus, JobType};
 use kalamdb_sql::{Job, KalamSql};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -176,14 +176,17 @@ impl RestoreService {
 
         // Validate schema consistency: all tables have at least one schema version
         for table in &manifest.tables {
-            if !manifest.table_schemas.contains_key(&table.table_id) {
+            if !manifest
+                .table_schemas
+                .contains_key(&table.table_id.to_string())
+            {
                 return Err(KalamDbError::InvalidSql(format!(
                     "Missing schema for table '{}'",
                     table.table_name
                 )));
             }
 
-            let schemas = &manifest.table_schemas[&table.table_id];
+            let schemas = &manifest.table_schemas[&table.table_id.to_string()];
             if schemas.is_empty() {
                 return Err(KalamDbError::InvalidSql(format!(
                     "No schema versions for table '{}'",
@@ -514,7 +517,7 @@ impl RestoreService {
 
         // Delete tables
         for table in &manifest.tables {
-            if let Err(e) = self.kalam_sql.delete_table(&table.table_id) {
+            if let Err(e) = self.kalam_sql.delete_table(&table.table_id.to_string()) {
                 log::error!("Failed to delete table '{}': {}", table.table_name, e);
             }
         }
@@ -552,7 +555,7 @@ impl RestoreService {
 
         let now_ms = chrono::Utc::now().timestamp_millis();
         let job = Job {
-            job_id: job_id.clone(),
+            job_id: JobId::new(job_id.clone()),
             job_type: JobType::Restore,
             status: JobStatus::Running,
             namespace_id: namespace_id.clone(),

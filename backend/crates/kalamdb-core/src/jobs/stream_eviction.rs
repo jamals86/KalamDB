@@ -11,11 +11,12 @@
 
 use crate::error::KalamDbError;
 use crate::jobs::{JobExecutor, JobResult};
-use crate::stores::StreamTableStore;
+use crate::stores::system_table::SharedTableStoreExt;
+use crate::tables::StreamTableStore;
 use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 /// Configuration for stream table eviction
 #[derive(Debug, Clone)]
@@ -164,7 +165,7 @@ impl StreamEvictionJob {
         &self,
         namespace_id: NamespaceId,
         table_name: TableName,
-        retention_period_ms: i64,
+        _retention_period_ms: i64,
     ) -> Result<usize, KalamDbError> {
         // For the new StreamTableStore, we use cleanup_expired_rows
         // which handles TTL-based eviction automatically
@@ -199,7 +200,7 @@ impl StreamEvictionJob {
     ) -> Result<usize, KalamDbError> {
         let namespace_id_str = namespace_id.as_str().to_string();
         let table_name_str = table_name.as_str().to_string();
-        let stream_store = Arc::clone(&self.stream_store);
+        let stream_store: Arc<StreamTableStore> = Arc::clone(&self.stream_store);
 
         // Execute eviction through job executor for monitoring
         let job_id = format!(
@@ -235,10 +236,12 @@ impl StreamEvictionJob {
                 // The row_data contains "inserted_at" field
                 events.sort_by(|(_, a), (_, b)| {
                     let a_time = a
+                        .fields
                         .get("inserted_at")
                         .and_then(|v| v.as_str())
                         .unwrap_or("1970-01-01T00:00:00Z");
                     let b_time = b
+                        .fields
                         .get("inserted_at")
                         .and_then(|v| v.as_str())
                         .unwrap_or("1970-01-01T00:00:00Z");
@@ -303,7 +306,7 @@ impl StreamEvictionJob {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::system::JobsTableProvider;
+    use crate::tables::{new_stream_table_store, system::JobsTableProvider};
     use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
@@ -312,11 +315,13 @@ mod tests {
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
 
-        let stream_store = Arc::new(StreamTableStore::new(db.clone()).unwrap());
-        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        let test_namespace = NamespaceId::new("test");
+        let test_table = TableName::new("events");
+        let stream_store = Arc::new(new_stream_table_store(&test_namespace, &test_table));
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
-        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
-        let jobs_provider = Arc::new(JobsTableProvider::new(Arc::clone(&kalam_sql)));
+        let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
+        let jobs_provider = Arc::new(JobsTableProvider::new(Arc::clone(&backend)));
         let job_executor = Arc::new(JobExecutor::new(jobs_provider, "test-node".to_string()));
 
         let eviction_job =
@@ -338,11 +343,13 @@ mod tests {
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
 
-        let stream_store = Arc::new(StreamTableStore::new(db.clone()).unwrap());
-        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        let test_namespace = NamespaceId::new("test");
+        let test_table = TableName::new("events");
+        let stream_store = Arc::new(new_stream_table_store(&test_namespace, &test_table));
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
-        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
-        let jobs_provider = Arc::new(JobsTableProvider::new(Arc::clone(&kalam_sql)));
+        let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
+        let jobs_provider = Arc::new(JobsTableProvider::new(Arc::clone(&backend)));
         let job_executor = Arc::new(JobExecutor::new(jobs_provider, "test-node".to_string()));
 
         let config = StreamEvictionConfig {

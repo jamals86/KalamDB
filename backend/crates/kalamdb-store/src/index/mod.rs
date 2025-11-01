@@ -94,7 +94,7 @@
 //! let admin_ids = index_manager.get_by_role("admin")?;
 //! ```
 
-use kalamdb_commons::storage::{Partition, Result, StorageBackend, StorageError};
+use crate::storage_trait::{Partition, Result, StorageBackend, StorageError};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -214,7 +214,11 @@ where
     ///     |user: &User| user.username.clone(),
     /// );
     /// ```
-    pub fn unique<F>(backend: Arc<dyn StorageBackend>, partition_name: &str, key_extractor: F) -> Self
+    pub fn unique<F>(
+        backend: Arc<dyn StorageBackend>,
+        partition_name: &str,
+        key_extractor: F,
+    ) -> Self
     where
         F: Fn(&T) -> K + Send + Sync + 'static,
     {
@@ -248,7 +252,11 @@ where
     ///     |user: &User| user.role.clone(),
     /// );
     /// ```
-    pub fn non_unique<F>(backend: Arc<dyn StorageBackend>, partition_name: &str, key_extractor: F) -> Self
+    pub fn non_unique<F>(
+        backend: Arc<dyn StorageBackend>,
+        partition_name: &str,
+        key_extractor: F,
+    ) -> Self
     where
         F: Fn(&T) -> K + Send + Sync + 'static,
     {
@@ -400,8 +408,9 @@ where
         let partition = Partition::new(&self.partition);
         match self.backend.get(&partition, index_key.as_ref())? {
             Some(bytes) => {
-                let pk = String::from_utf8(bytes)
-                    .map_err(|e| StorageError::SerializationError(format!("Invalid UTF-8 in primary key: {}", e)))?;
+                let pk = String::from_utf8(bytes).map_err(|e| {
+                    StorageError::SerializationError(format!("Invalid UTF-8 in primary key: {}", e))
+                })?;
                 Ok(Some(pk))
             }
             None => Ok(None),
@@ -426,8 +435,12 @@ where
             Some(bytes) => {
                 if self.unique {
                     // Unique index: single primary key
-                    let pk = String::from_utf8(bytes)
-                        .map_err(|e| StorageError::SerializationError(format!("Invalid UTF-8 in primary key: {}", e)))?;
+                    let pk = String::from_utf8(bytes).map_err(|e| {
+                        StorageError::SerializationError(format!(
+                            "Invalid UTF-8 in primary key: {}",
+                            e
+                        ))
+                    })?;
                     Ok(vec![pk])
                 } else {
                     // Non-unique index: array of primary keys
@@ -483,9 +496,10 @@ mod tests {
     #[test]
     fn test_unique_index_put_get() {
         let (backend, _temp_dir) = create_test_backend();
-        let idx = SecondaryIndex::unique(backend.clone(), "idx_test_username", |user: &TestUser| {
-            user.username.as_bytes().to_vec()
-        });
+        let idx =
+            SecondaryIndex::unique(backend.clone(), "idx_test_username", |user: &TestUser| {
+                user.username.as_bytes().to_vec()
+            });
 
         let user = TestUser {
             user_id: "u1".to_string(),
@@ -509,9 +523,10 @@ mod tests {
     #[test]
     fn test_unique_index_duplicate_error() {
         let (backend, _temp_dir) = create_test_backend();
-        let idx = SecondaryIndex::unique(backend.clone(), "idx_test_username", |user: &TestUser| {
-            user.username.as_bytes().to_vec()
-        });
+        let idx =
+            SecondaryIndex::unique(backend.clone(), "idx_test_username", |user: &TestUser| {
+                user.username.as_bytes().to_vec()
+            });
 
         let user1 = TestUser {
             user_id: "u1".to_string(),
@@ -541,9 +556,10 @@ mod tests {
     #[test]
     fn test_unique_index_update() {
         let (backend, _temp_dir) = create_test_backend();
-        let idx = SecondaryIndex::unique(backend.clone(), "idx_test_username", |user: &TestUser| {
-            user.username.as_bytes().to_vec()
-        });
+        let idx =
+            SecondaryIndex::unique(backend.clone(), "idx_test_username", |user: &TestUser| {
+                user.username.as_bytes().to_vec()
+            });
 
         let user_old = TestUser {
             user_id: "u1".to_string(),
@@ -579,9 +595,10 @@ mod tests {
     #[test]
     fn test_unique_index_delete() {
         let (backend, _temp_dir) = create_test_backend();
-        let idx = SecondaryIndex::unique(backend.clone(), "idx_test_username", |user: &TestUser| {
-            user.username.as_bytes().to_vec()
-        });
+        let idx =
+            SecondaryIndex::unique(backend.clone(), "idx_test_username", |user: &TestUser| {
+                user.username.as_bytes().to_vec()
+            });
 
         let user = TestUser {
             user_id: "u1".to_string(),
@@ -602,9 +619,10 @@ mod tests {
     #[test]
     fn test_non_unique_index_multiple_entries() {
         let (backend, _temp_dir) = create_test_backend();
-        let idx = SecondaryIndex::non_unique(backend.clone(), "idx_test_role", |user: &TestUser| {
-            user.role.as_bytes().to_vec()
-        });
+        let idx =
+            SecondaryIndex::non_unique(backend.clone(), "idx_test_role", |user: &TestUser| {
+                user.role.as_bytes().to_vec()
+            });
 
         let users = vec![
             TestUser {
@@ -647,9 +665,10 @@ mod tests {
     #[test]
     fn test_non_unique_index_delete() {
         let (backend, _temp_dir) = create_test_backend();
-        let idx = SecondaryIndex::non_unique(backend.clone(), "idx_test_role", |user: &TestUser| {
-            user.role.as_bytes().to_vec()
-        });
+        let idx =
+            SecondaryIndex::non_unique(backend.clone(), "idx_test_role", |user: &TestUser| {
+                user.role.as_bytes().to_vec()
+            });
 
         let user1 = TestUser {
             user_id: "u1".to_string(),

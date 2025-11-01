@@ -17,14 +17,15 @@ use std::env;
 #[actix_web::main]
 async fn main() -> Result<()> {
     // Parse command-line arguments
-    let args: Vec<String> = env::args().collect();
+    let _args: Vec<String> = env::args().collect();
 
     // Normal server startup
     // Load configuration (fallback to defaults when config file missing)
     let config = match ServerConfig::from_file("config.toml") {
         Ok(cfg) => cfg,
-        Err(_) => {
-            eprintln!("Warning: config.toml not found, using defaults");
+        Err(e) => {
+            eprintln!("Warning: Failed to load config.toml: {}", e);
+            eprintln!("Using defaults");
             ServerConfig::default()
         }
     };

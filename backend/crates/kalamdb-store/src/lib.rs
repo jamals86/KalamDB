@@ -44,12 +44,11 @@ pub use sharding::{
     AlphabeticSharding, ConsistentHashSharding, NumericSharding, ShardingRegistry, ShardingStrategy,
 };
 pub use storage_trait::{Operation, Partition, StorageBackend, StorageError};
-pub use traits::EntityStore; // Old EntityStore<T> trait (to be deprecated)
 
 // Phase 14: Export new type-safe EntityStore traits
 pub use entity_store::{
-    EntityStore as EntityStoreV2,      // Alias to avoid conflict during migration
     CrossUserTableStore,
+    EntityStore as EntityStoreV2, // Alias to avoid conflict during migration
 };
 
 // Export index types
@@ -70,12 +69,8 @@ pub mod test_utils;
 pub fn try_extract_rocksdb_db(
     backend: &std::sync::Arc<dyn crate::storage_trait::StorageBackend>,
 ) -> Option<std::sync::Arc<rocksdb::DB>> {
-    if let Some(rb) = backend
+    backend
         .as_any()
         .downcast_ref::<crate::rocksdb_impl::RocksDBBackend>()
-    {
-        Some(rb.db().clone())
-    } else {
-        None
-    }
+        .map(|rb| rb.db().clone())
 }

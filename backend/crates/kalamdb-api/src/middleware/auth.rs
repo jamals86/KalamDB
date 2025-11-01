@@ -30,7 +30,6 @@
 //! ```
 
 use actix_web::{
-    body::BoxBody,
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     Error, HttpMessage, HttpResponse,
 };
@@ -67,6 +66,16 @@ impl AuthMiddleware {
             rocks_adapter,
         }
     }
+}
+
+/// Generate a unique request ID for this request
+fn generate_request_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("req_{}", timestamp)
 }
 
 impl<S> Transform<S, ServiceRequest> for AuthMiddleware
@@ -145,21 +154,31 @@ where
                 Some(header) => match header.to_str() {
                     Ok(s) => s.to_string(),
                     Err(_) => {
-                        warn!("Invalid Authorization header format from {:?}", remote_addr);
+                        let request_id = generate_request_id();
+                        warn!(
+                            "Invalid Authorization header format from {:?}, request_id={}",
+                            remote_addr, request_id
+                        );
                         let (req, _) = req.into_parts();
                         let response = HttpResponse::Unauthorized().json(json!({
                             "error": "INVALID_AUTHORIZATION_HEADER",
-                            "message": "Authorization header contains invalid characters"
+                            "message": "Authorization header contains invalid characters",
+                            "request_id": request_id
                         }));
                         return Ok(ServiceResponse::new(req, response));
                     }
                 },
                 None => {
-                    warn!("Missing Authorization header from {:?}", remote_addr);
+                    let request_id = generate_request_id();
+                    warn!(
+                        "Missing Authorization header from {:?}, request_id={}",
+                        remote_addr, request_id
+                    );
                     let (req, _) = req.into_parts();
                     let response = HttpResponse::Unauthorized().json(json!({
                         "error": "MISSING_AUTHORIZATION",
-                        "message": "Authorization header is required. Use 'Authorization: Basic <credentials>' or 'Authorization: Bearer <token>'"
+                        "message": "Authorization header is required. Use 'Authorization: Basic <credentials>' or 'Authorization: Bearer <token>'",
+                        "request_id": request_id
                     }));
                     return Ok(ServiceResponse::new(req, response));
                 }
@@ -183,21 +202,24 @@ where
                     service.call(req).await
                 }
                 Err(auth_error) => {
+                    let request_id = generate_request_id();
                     warn!(
-                        "Authentication failed from {:?}: {}",
-                        remote_addr, auth_error
+                        "Authentication failed from {:?}: {}, request_id={}",
+                        remote_addr, auth_error, request_id
                     );
 
                     let (status_code, error_code, message) = match auth_error {
-                        AuthError::MissingAuthorization => (
+                        AuthError::MissingAuthorization(_) => (
                             401,
                             "MISSING_AUTHORIZATION",
                             "Authorization header is required",
                         ),
-                        AuthError::InvalidCredentials => {
+                        AuthError::InvalidCredentials(_) => {
                             (401, "INVALID_CREDENTIALS", "Invalid username or password")
                         }
-                        AuthError::UserNotFound => (401, "USER_NOT_FOUND", "User does not exist"),
+                        AuthError::UserNotFound(_) => {
+                            (401, "USER_NOT_FOUND", "User does not exist")
+                        }
                         AuthError::TokenExpired => (401, "TOKEN_EXPIRED", "JWT token has expired"),
                         AuthError::InvalidSignature => {
                             (401, "INVALID_SIGNATURE", "JWT token signature is invalid")
@@ -229,7 +251,8 @@ where
                     )
                     .json(json!({
                         "error": error_code,
-                        "message": message
+                        "message": message,
+                        "request_id": request_id
                     }));
                     Ok(ServiceResponse::new(req, response))
                 }
@@ -241,20 +264,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::{test, web, App, HttpResponse};
-    use kalamdb_commons::Role;
-
-    async fn test_endpoint(req: actix_web::HttpRequest) -> HttpResponse {
-        let user = req.extensions().get::<AuthenticatedUser>().cloned();
-        match user {
-            Some(u) => HttpResponse::Ok().json(json!({
-                "user_id": u.user_id.to_string(),
-                "username": u.username,
-                "role": format!("{:?}", u.role),
-            })),
-            None => HttpResponse::Unauthorized().json(json!({"error": "Not authenticated"})),
-        }
-    }
 
     #[actix_web::test]
     async fn test_localhost_bypass() {
@@ -271,7 +280,7 @@ mod tests {
     async fn test_missing_authorization_header() {
         // This would require a full integration test setup
         // For now, we verify the error response structure
-        let error = AuthError::MissingAuthorization;
+        let error = AuthError::MissingAuthorization("Missing authorization header".to_string());
         assert_eq!(format!("{}", error), "Missing authorization header");
     }
 }

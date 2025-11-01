@@ -73,19 +73,20 @@ pub fn validate_oauth_token(
     expected_issuer: &str,
 ) -> AuthResult<OAuthClaims> {
     // Decode token header to get algorithm
-    let header = decode_header(token)
-        .map_err(|e| AuthError::MalformedAuthorization(format!("Invalid OAuth token header: {}", e)))?;
+    let header = decode_header(token).map_err(|e| {
+        AuthError::MalformedAuthorization(format!("Invalid OAuth token header: {}", e))
+    })?;
 
     // Determine algorithm (OAuth providers typically use RS256, but we support HS256 for testing)
     let algorithm = header.alg;
-    
+
     // Decode and validate token
     let mut validation = Validation::new(algorithm);
     validation.validate_exp = true; // Check expiration
     validation.validate_nbf = false; // Don't check "not before"
     validation.validate_aud = false; // Don't validate audience automatically
-    // Note: We manually check issuer after decoding instead of using set_issuer
-    // because set_issuer requires exact match which may fail with trailing slashes
+                                     // Note: We manually check issuer after decoding instead of using set_issuer
+                                     // because set_issuer requires exact match which may fail with trailing slashes
 
     let decoding_key = match algorithm {
         Algorithm::HS256 => DecodingKey::from_secret(secret.as_bytes()),

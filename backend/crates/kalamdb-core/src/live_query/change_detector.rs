@@ -36,7 +36,8 @@
 
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, ChangeType, LiveQueryManager};
-use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
+use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
+use crate::tables::{SharedTableRow, SharedTableStore, UserTableStore};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -84,10 +85,14 @@ impl UserTableChangeDetector {
         row_data: JsonValue,
     ) -> Result<(), KalamDbError> {
         // Step 1: Check if row exists (for INSERT vs UPDATE detection)
-        let old_value = self
-            .store
-            .get(namespace_id, table_name, user_id, row_id)
-            .map_err(|e| KalamDbError::Other(e.to_string()))?;
+        let old_value = UserTableStoreExt::get(
+            self.store.as_ref(),
+            namespace_id,
+            table_name,
+            user_id,
+            row_id,
+        )
+        .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         // Step 2: Determine change type
         let change_type = if old_value.is_some() {
@@ -96,24 +101,40 @@ impl UserTableChangeDetector {
             ChangeType::Insert
         };
 
-        // Step 3: Store the row (system columns injected by store)
-        self.store
-            .put(namespace_id, table_name, user_id, row_id, row_data.clone())
-            .map_err(|e| KalamDbError::Other(e.to_string()))?;
+        // Step 3: Create UserTableRow from JsonValue (system columns will be updated by store)
+        let entity = crate::tables::user_tables::user_table_store::UserTableRow {
+            row_id: row_id.to_string(),
+            user_id: user_id.to_string(),
+            fields: row_data,
+            _updated: chrono::Utc::now().to_rfc3339(),
+            _deleted: false,
+        };
+
+        // Step 4: Store the row (system columns injected by store)
+        UserTableStoreExt::put(
+            self.store.as_ref(),
+            namespace_id,
+            table_name,
+            user_id,
+            row_id,
+            &entity,
+        )
+        .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         // Step 4: Get the stored value with system columns
-        let new_value = self
-            .store
-            .get(namespace_id, table_name, user_id, row_id)
-            .map_err(|e| KalamDbError::Other(e.to_string()))?
-            .ok_or_else(|| KalamDbError::Other("Failed to retrieve stored row".to_string()))?;
+        let new_value = UserTableStoreExt::get_include_deleted(
+            self.store.as_ref(),
+            namespace_id,
+            table_name,
+            user_id,
+            row_id,
+        )
+        .map_err(|e| KalamDbError::Other(e.to_string()))?
+        .ok_or_else(|| KalamDbError::Other("Failed to retrieve stored row".to_string()))?;
 
         // T175: Filter out _deleted=true rows from INSERT/UPDATE notifications
         // Only send DELETE notification for deleted rows
-        let is_deleted = new_value
-            .get("_deleted")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let is_deleted = new_value._deleted;
 
         if is_deleted {
             // Row is soft-deleted, skip INSERT/UPDATE notification
@@ -128,11 +149,18 @@ impl UserTableChangeDetector {
                 let old_data = old_value.ok_or_else(|| {
                     KalamDbError::Other("UPDATE detected but old value is None".to_string())
                 })?;
-                ChangeNotification::update(table_name.to_string(), old_data, new_value)
+                ChangeNotification::update(
+                    table_name.to_string(),
+                    serde_json::to_value(&old_data.fields).unwrap_or(serde_json::json!({})),
+                    serde_json::to_value(&new_value.fields).unwrap_or(serde_json::json!({})),
+                )
             }
             ChangeType::Insert => {
                 // INSERT: only new values
-                ChangeNotification::insert(table_name.to_string(), new_value)
+                ChangeNotification::insert(
+                    table_name.to_string(),
+                    serde_json::to_value(&new_value.fields).unwrap_or(serde_json::json!({})),
+                )
             }
             _ => {
                 return Err(KalamDbError::Other("Invalid change type".to_string()));
@@ -171,15 +199,25 @@ impl UserTableChangeDetector {
         hard: bool,
     ) -> Result<(), KalamDbError> {
         // Step 1: Get existing row data (for notification)
-        let old_value = self
-            .store
-            .get(namespace_id, table_name, user_id, row_id)
-            .map_err(|e| KalamDbError::Other(e.to_string()))?;
+        let old_value = UserTableStoreExt::get(
+            self.store.as_ref(),
+            namespace_id,
+            table_name,
+            user_id,
+            row_id,
+        )
+        .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         // Step 2: Perform deletion
-        self.store
-            .delete(namespace_id, table_name, user_id, row_id, hard)
-            .map_err(|e| KalamDbError::Other(e.to_string()))?;
+        UserTableStoreExt::delete(
+            self.store.as_ref(),
+            namespace_id,
+            table_name,
+            user_id,
+            row_id,
+            hard,
+        )
+        .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         // Step 3: Create appropriate notification based on delete type
         let notification = if hard {
@@ -187,14 +225,22 @@ impl UserTableChangeDetector {
             ChangeNotification::delete_hard(table_name.to_string(), row_id.to_string())
         } else {
             // Soft delete: get updated row with _deleted=true
-            let deleted_row = self
-                .store
-                .get_include_deleted(namespace_id, table_name, user_id, row_id)
-                .map_err(|e| KalamDbError::Other(e.to_string()))?
-                .unwrap_or_else(|| old_value.clone().unwrap_or(serde_json::json!({})));
+            let deleted_row = UserTableStoreExt::get_include_deleted(
+                self.store.as_ref(),
+                namespace_id,
+                table_name,
+                user_id,
+                row_id,
+            )
+            .map_err(|e| KalamDbError::Other(e.to_string()))?
+            .or_else(|| old_value.clone())
+            .ok_or_else(|| KalamDbError::Other("Row not found after soft delete".to_string()))?;
 
             // Soft delete sends the row with _deleted=true
-            ChangeNotification::delete_soft(table_name.to_string(), deleted_row)
+            ChangeNotification::delete_soft(
+                table_name.to_string(),
+                serde_json::to_value(&deleted_row.fields).unwrap_or(serde_json::json!({})),
+            )
         };
 
         // Step 4: Notify subscribers
@@ -258,14 +304,15 @@ impl SharedTableChangeDetector {
         };
 
         // Store the row
+        let shared_row = SharedTableRow {
+            row_id: row_id.to_string(),
+            fields: row_data,
+            _updated: chrono::Utc::now().to_rfc3339(),
+            _deleted: false,
+            access_level: kalamdb_commons::TableAccess::Public,
+        };
         self.store
-            .put(
-                namespace_id,
-                table_name,
-                row_id,
-                row_data.clone(),
-                kalamdb_commons::TableAccess::Public,
-            )
+            .put(namespace_id, table_name, row_id, &shared_row)
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         // Get stored value with system columns
@@ -277,10 +324,7 @@ impl SharedTableChangeDetector {
 
         // T175: Filter out _deleted=true rows from INSERT/UPDATE notifications
         // Only send DELETE notification for deleted rows
-        let is_deleted = new_value
-            .get("_deleted")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let is_deleted = new_value._deleted;
 
         if is_deleted {
             // Row is soft-deleted, skip INSERT/UPDATE notification
@@ -294,9 +338,16 @@ impl SharedTableChangeDetector {
                 let old_data = old_value.ok_or_else(|| {
                     KalamDbError::Other("UPDATE detected but old value is None".to_string())
                 })?;
-                ChangeNotification::update(table_name.to_string(), old_data, new_value)
+                ChangeNotification::update(
+                    table_name.to_string(),
+                    serde_json::to_value(&old_data.fields).unwrap_or(serde_json::json!({})),
+                    serde_json::to_value(&new_value.fields).unwrap_or(serde_json::json!({})),
+                )
             }
-            ChangeType::Insert => ChangeNotification::insert(table_name.to_string(), new_value),
+            ChangeType::Insert => ChangeNotification::insert(
+                table_name.to_string(),
+                serde_json::to_value(&new_value.fields).unwrap_or(serde_json::json!({})),
+            ),
             _ => {
                 return Err(KalamDbError::Other("Invalid change type".to_string()));
             }
@@ -348,10 +399,21 @@ impl SharedTableChangeDetector {
                 .store
                 .get_include_deleted(namespace_id, table_name, row_id)
                 .map_err(|e| KalamDbError::Other(e.to_string()))?
-                .unwrap_or_else(|| old_value.clone().unwrap_or(serde_json::json!({})));
+                .unwrap_or_else(|| {
+                    old_value.clone().unwrap_or(SharedTableRow {
+                        row_id: row_id.to_string(),
+                        fields: serde_json::json!({}),
+                        _updated: "".to_string(),
+                        _deleted: true,
+                        access_level: kalamdb_commons::TableAccess::Public,
+                    })
+                });
 
             // Soft delete sends the row with _deleted=true
-            ChangeNotification::delete_soft(table_name.to_string(), deleted_row)
+            ChangeNotification::delete_soft(
+                table_name.to_string(),
+                serde_json::to_value(deleted_row).unwrap(),
+            )
         };
 
         // Notify subscribers
@@ -381,6 +443,8 @@ impl SharedTableChangeDetector {
 mod tests {
     use super::*;
     use crate::live_query::connection_registry::NodeId;
+    use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
+    use kalamdb_commons::{NamespaceId, TableName};
     use kalamdb_sql::KalamSql;
     use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
@@ -390,11 +454,23 @@ mod tests {
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = init.open().unwrap();
 
-        let user_table_store = Arc::new(UserTableStore::new(Arc::clone(&db)).unwrap());
-        let shared_table_store = Arc::new(SharedTableStore::new(Arc::clone(&db)).unwrap());
-        let stream_table_store = Arc::new(StreamTableStore::new(Arc::clone(&db)).unwrap());
-        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
+
+        let user_table_store = Arc::new(new_user_table_store(
+            backend.clone(),
+            &NamespaceId::new("default"),
+            &TableName::new("test"),
+        ));
+        let shared_table_store = Arc::new(new_shared_table_store(
+            backend.clone(),
+            &NamespaceId::new("default"),
+            &TableName::new("test"),
+        ));
+        let stream_table_store = Arc::new(new_stream_table_store(
+            &NamespaceId::new("default"),
+            &TableName::new("test"),
+        ));
         let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let live_query_manager = Arc::new(LiveQueryManager::new(
             kalam_sql,
@@ -425,10 +501,14 @@ mod tests {
             .unwrap();
 
         // Verify row exists
-        let retrieved = detector
-            .store()
-            .get(namespace_id, table_name, user_id, row_id)
-            .unwrap();
+        let retrieved = UserTableStoreExt::get(
+            detector.store().as_ref(),
+            namespace_id,
+            table_name,
+            user_id,
+            row_id,
+        )
+        .unwrap();
         assert!(retrieved.is_some());
     }
 
@@ -456,12 +536,16 @@ mod tests {
             .unwrap();
 
         // Verify updated value
-        let retrieved = detector
-            .store()
-            .get(namespace_id, table_name, user_id, row_id)
-            .unwrap()
-            .unwrap();
-        assert_eq!(retrieved["text"], "Hello World");
+        let retrieved = UserTableStoreExt::get(
+            detector.store().as_ref(),
+            namespace_id,
+            table_name,
+            user_id,
+            row_id,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(retrieved.fields["text"], "Hello World");
     }
 
     #[tokio::test]
@@ -487,10 +571,14 @@ mod tests {
             .unwrap();
 
         // Verify soft deleted (get returns None)
-        let retrieved = detector
-            .store()
-            .get(namespace_id, table_name, user_id, row_id)
-            .unwrap();
+        let retrieved = UserTableStoreExt::get(
+            detector.store().as_ref(),
+            namespace_id,
+            table_name,
+            user_id,
+            row_id,
+        )
+        .unwrap();
         assert!(retrieved.is_none());
     }
 }

@@ -10,11 +10,10 @@
 use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::flush::FlushPolicy;
-use crate::schema::arrow_schema::ArrowSchemaWithOptions;
-use crate::stores::SharedTableStore;
-use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use crate::stores::system_table::SharedTableStoreExt;
+use crate::tables::SharedTableStore;
+use datafusion::arrow::datatypes::Schema;
 use kalamdb_commons::models::StorageId;
-use kalamdb_commons::system::TableSchema;
 use kalamdb_sql::ddl::{CreateTableStatement, FlushPolicy as DdlFlushPolicy};
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
@@ -138,8 +137,34 @@ impl SharedTableService {
             .storage_id
             .as_ref()
             .cloned()
-            .unwrap_or_else(|| StorageId::local());
-        let storage_location = format!("/data/shared"); // TODO: Get from storage configuration
+            .unwrap_or_else(StorageId::local);
+        let storage_config = self
+            .kalam_sql
+            .get_storage(&storage_id)
+            .map_err(|e| {
+                KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e))
+            })?
+            .ok_or_else(|| KalamDbError::NotFound(format!("Storage '{}' not found", storage_id)))?;
+
+        let mut relative_path = storage_config
+            .shared_tables_template
+            .replace("{namespace}", stmt.namespace_id.as_str())
+            .replace("{tableName}", stmt.table_name.as_str())
+            .replace("{shard}", "");
+
+        if relative_path.starts_with('/') {
+            relative_path = relative_path.trim_start_matches('/').to_string();
+        }
+
+        let storage_location = if storage_config.base_directory.is_empty() {
+            relative_path
+        } else {
+            format!(
+                "{}/{}",
+                storage_config.base_directory.trim_end_matches('/'),
+                relative_path
+            )
+        };
 
         // Validate no ${user_id} templating in shared table storage location
         if storage_location.contains("${user_id}") {
@@ -153,7 +178,7 @@ impl SharedTableService {
         let flush_policy = self.parse_flush_policy(stmt.flush_policy.as_ref())?;
 
         // Save complete table definition to information_schema_tables (atomic write)
-        self.save_table_definition(&stmt, &schema, &storage_location)?;
+        self.save_table_definition(&stmt, &schema)?;
 
         // Create RocksDB column family for this table
         // This ensures the table is ready for data operations immediately after creation
@@ -222,38 +247,6 @@ impl SharedTableService {
         Ok(())
     }
 
-    /// Inject system columns for shared tables
-    ///
-    /// Adds _updated (TIMESTAMP) and _deleted (BOOLEAN) columns.
-    fn inject_system_columns(&self, schema: Arc<Schema>) -> Result<Arc<Schema>, KalamDbError> {
-        // Check if system columns already exist
-        let has_updated = schema.field_with_name("_updated").is_ok();
-        let has_deleted = schema.field_with_name("_deleted").is_ok();
-
-        if has_updated && has_deleted {
-            // System columns already exist
-            return Ok(schema);
-        }
-
-        // Create system columns
-        let mut fields: Vec<Arc<Field>> = schema.fields().iter().cloned().collect();
-
-        if !has_updated {
-            fields.push(Arc::new(Field::new(
-                "_updated",
-                DataType::Timestamp(TimeUnit::Millisecond, None),
-                false, // Not nullable
-            )));
-        }
-
-        if !has_deleted {
-            fields.push(Arc::new(Field::new("_deleted", DataType::Boolean, false)));
-            // Not nullable
-        }
-
-        Ok(Arc::new(Schema::new(fields)))
-    }
-
     /// Parse flush policy from statement
     fn parse_flush_policy(
         &self,
@@ -302,7 +295,6 @@ impl SharedTableService {
         &self,
         stmt: &CreateTableStatement,
         schema: &Arc<Schema>,
-        storage_location: &str,
     ) -> Result<(), KalamDbError> {
         use kalamdb_commons::models::{FlushPolicyDef, SchemaVersion, TableDefinition};
 
@@ -391,77 +383,6 @@ impl SharedTableService {
         Ok(())
     }
 
-    /// DEPRECATED: Create schema metadata in system_table_schemas
-    ///
-    /// **REPLACED BY**: save_table_definition() which writes to information_schema_tables
-    fn create_schema_metadata(
-        &self,
-        namespace_id: &NamespaceId,
-        table_name: &TableName,
-        schema: &Arc<Schema>,
-        storage_location: &str,
-        flush_policy: &FlushPolicy,
-        deleted_retention: Option<u64>,
-    ) -> Result<(), KalamDbError> {
-        // Serialize Arrow schema to JSON
-        let arrow_with_options = ArrowSchemaWithOptions::new(schema.clone());
-        let arrow_schema_json = arrow_with_options.to_json_string()?;
-
-        // Create table ID
-        let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
-
-        // Create TableSchema record for version 1
-        let table_schema = TableSchema {
-            schema_id: format!("{}:1", table_id),
-            table_id: table_id.clone(),
-            version: 1,
-            arrow_schema: arrow_schema_json,
-            // Use millis for consistency with other parts of the system
-            created_at: chrono::Utc::now().timestamp_millis(),
-            changes: format!(
-                "Initial shared table schema. System columns: _updated, _deleted. Deleted retention: {:?}h",
-                deleted_retention.map(|s| s / 3600)
-            ),
-        };
-
-        // TODO: Replace with information_schema_tables storage (Phase 2b)
-        // Schema will be stored in TableDefinition.schema_history array
-        // self.kalam_sql.insert_table_schema(&table_schema)?;
-
-        // Create Table record in system_tables
-        let flush_policy_str = match flush_policy {
-            FlushPolicy::RowLimit { row_limit } => format!("rows:{}", row_limit),
-            FlushPolicy::TimeInterval { interval_seconds } => format!("time:{}s", interval_seconds),
-            FlushPolicy::Combined {
-                row_limit,
-                interval_seconds,
-            } => format!("combined:{}rows,{}s", row_limit, interval_seconds),
-        };
-
-        let _table = kalamdb_sql::Table {
-            table_id: table_id.clone(),
-            table_name: TableName::new(table_name.as_str()),
-            namespace: NamespaceId::new(namespace_id.as_str()),
-            table_type: TableType::Shared,
-            created_at: chrono::Utc::now().timestamp_millis(),
-            storage_location: storage_location.to_string(),
-            storage_id: Some(StorageId::new("local")),
-            use_user_storage: false,
-            flush_policy: flush_policy_str,
-            schema_version: 1,
-            deleted_retention_hours: deleted_retention.map(|s| (s / 3600) as i32).unwrap_or(0),
-            access_level: Some(kalamdb_commons::TableAccess::Private), // Default for SHARED tables
-        };
-
-        // TODO: Add insert_table method to kalamdb-sql
-        // For now we'll skip this
-        // self.kalam_sql
-        //     .insert_table(&table)
-        //     .map_err(|e| KalamDbError::InternalError(e.to_string()))?;
-
-        Ok(())
-    }
-
     /// Check if a table already exists
     fn table_exists(
         &self,
@@ -481,9 +402,10 @@ impl SharedTableService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::datatypes::Field;
     use datafusion::arrow::datatypes::DataType;
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{kalamdb_commons::storage::StorageBackend, RocksDBBackend};
+    use kalamdb_store::{RocksDBBackend, StorageBackend};
 
     fn create_test_service() -> (SharedTableService, TestDb) {
         let test_db = TestDb::new(&[
@@ -494,7 +416,8 @@ mod tests {
         .unwrap();
 
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
-        let shared_table_store = Arc::new(SharedTableStore::new(backend));
+        let shared_table_store =
+            Arc::new(SharedTableStore::new(backend, "shared_table:app:config"));
         let kalam_sql =
             Arc::new(KalamSql::new(Arc::new(RocksDBBackend::new(test_db.db.clone()))).unwrap());
 
@@ -536,33 +459,6 @@ mod tests {
         assert_eq!(metadata.table_type, TableType::Shared);
         assert_eq!(metadata.namespace.as_str(), "app");
         assert_eq!(metadata.storage_location, "/data/shared");
-    }
-
-    #[test]
-    fn test_shared_table_has_system_columns() {
-        let (service, _test_db) = create_test_service();
-
-        // Create shared table with simple schema
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-            Field::new("name", DataType::Utf8, false),
-        ]));
-
-        // Inject system columns
-        let schema_with_columns = service.inject_system_columns(schema).unwrap();
-
-        // Verify _updated and _deleted columns exist
-        assert!(schema_with_columns.field_with_name("_updated").is_ok());
-        assert!(schema_with_columns.field_with_name("_deleted").is_ok());
-
-        let updated_field = schema_with_columns.field_with_name("_updated").unwrap();
-        assert_eq!(
-            updated_field.data_type(),
-            &DataType::Timestamp(TimeUnit::Millisecond, None)
-        );
-
-        let deleted_field = schema_with_columns.field_with_name("_deleted").unwrap();
-        assert_eq!(deleted_field.data_type(), &DataType::Boolean);
     }
 
     #[test]

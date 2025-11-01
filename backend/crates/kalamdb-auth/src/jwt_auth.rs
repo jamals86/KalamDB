@@ -124,7 +124,8 @@ fn verify_issuer(issuer: &str, trusted_issuers: &[String]) -> AuthResult<()> {
 pub fn extract_claims_unverified(token: &str) -> AuthResult<JwtClaims> {
     // Decode without verification (dangerous!)
     let mut validation = Validation::new(Algorithm::HS256);
-    validation.insecure_disable_signature_validation(); // DANGEROUS
+    #[allow(deprecated)]
+    validation.insecure_disable_signature_validation(); // DANGEROUS - but needed for unverified claim extraction
     validation.validate_exp = false;
 
     let decoding_key = DecodingKey::from_secret(b""); // Empty key since we're not validating

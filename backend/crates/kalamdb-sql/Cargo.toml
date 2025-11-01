@@ -13,6 +13,7 @@ kalamdb-store = { path = "../kalamdb-store" }
 
 # Database
 arrow = { workspace = true }
+dashmap = { workspace = true }
 
 # Serialization
 serde = { workspace = true }

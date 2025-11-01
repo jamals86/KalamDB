@@ -7,9 +7,38 @@ use crate::error::{AuthError, AuthResult};
 use crate::jwt_auth;
 use crate::password;
 // use kalamdb_commons::{Role, UserId}; // Unused imports removed
+use chrono::{DateTime, Utc};
 use kalamdb_sql::RocksDbAdapter;
 use log::{info, warn};
+use moka::future::Cache;
 use std::sync::Arc;
+use tokio::task;
+
+/// User cache statistics for monitoring and performance tracking
+#[derive(Debug, Clone)]
+pub struct UserCacheStats {
+    /// Number of cache hits
+    pub hits: u64,
+    /// Number of cache misses
+    pub misses: u64,
+    /// Cache hit rate (0.0 to 1.0)
+    pub hit_rate: f64,
+    /// Current number of entries in cache
+    pub entry_count: u64,
+}
+
+/// JWT cache statistics for monitoring and performance tracking
+#[derive(Debug, Clone)]
+pub struct JwtCacheStats {
+    /// Number of cache hits
+    pub hits: u64,
+    /// Number of cache misses
+    pub misses: u64,
+    /// Cache hit rate (0.0 to 1.0)
+    pub hit_rate: f64,
+    /// Current number of entries in cache
+    pub entry_count: u64,
+}
 
 /// Authentication service that orchestrates all auth methods.
 ///
@@ -25,9 +54,19 @@ pub struct AuthService {
     /// Whether to allow remote (non-localhost) access
     allow_remote_access: bool,
     /// OAuth auto-provisioning enabled (Phase 10, User Story 8)
+    #[allow(dead_code)]
     oauth_auto_provision: bool,
     /// Default role for auto-provisioned OAuth users
+    #[allow(dead_code)]
     oauth_default_role: kalamdb_commons::Role,
+    /// User record cache for performance optimization
+    /// Key: username, Value: User record
+    /// TTL: 5 minutes, Max capacity: 1000 users
+    user_cache: Cache<String, kalamdb_commons::system::User>,
+    /// JWT claims cache for performance optimization
+    /// Key: JWT token string, Value: Validated JWT claims
+    /// TTL: 10 minutes, Max capacity: 500 tokens
+    jwt_cache: Cache<String, crate::jwt_auth::JwtClaims>,
 }
 
 impl AuthService {
@@ -46,12 +85,26 @@ impl AuthService {
         oauth_auto_provision: bool,
         oauth_default_role: kalamdb_commons::Role,
     ) -> Self {
+        // Initialize user cache with 5-minute TTL and 1000 max entries
+        let user_cache = Cache::builder()
+            .max_capacity(1000)
+            .time_to_live(std::time::Duration::from_secs(300)) // 5 minutes
+            .build();
+
+        // Initialize JWT cache with 10-minute TTL and 500 max entries
+        let jwt_cache = Cache::builder()
+            .max_capacity(500)
+            .time_to_live(std::time::Duration::from_secs(600)) // 10 minutes
+            .build();
+
         Self {
             jwt_secret,
             trusted_jwt_issuers,
             allow_remote_access,
             oauth_auto_provision,
             oauth_default_role,
+            user_cache,
+            jwt_cache,
         }
     }
 
@@ -87,11 +140,15 @@ impl AuthService {
         } else if auth_header.starts_with("Bearer ") {
             // Try JWT first, then OAuth if JWT fails
             // This allows for fallback when JWT validation fails
-            match self.authenticate_jwt(auth_header, connection_info, adapter).await {
+            match self
+                .authenticate_jwt(auth_header, connection_info, adapter)
+                .await
+            {
                 Ok(user) => Ok(user),
                 Err(_) => {
                     // JWT failed, try OAuth
-                    self.authenticate_oauth(auth_header, connection_info, adapter).await
+                    self.authenticate_oauth(auth_header, connection_info, adapter)
+                        .await
                 }
             }
         } else {
@@ -136,9 +193,13 @@ impl AuthService {
 
         // T140 (Phase 10, User Story 8): Prevent OAuth users from password authentication
         if user.auth_type == kalamdb_commons::AuthType::OAuth {
-            warn!("OAuth user '{}' attempted password authentication", username);
+            warn!(
+                "OAuth user '{}' attempted password authentication",
+                username
+            );
             return Err(AuthError::AuthenticationFailed(
-                "OAuth users cannot authenticate with password. Use OAuth token instead.".to_string(),
+                "OAuth users cannot authenticate with password. Use OAuth token instead."
+                    .to_string(),
             ));
         }
 
@@ -176,16 +237,14 @@ impl AuthService {
             }
 
             // T106: If remote access is enabled for internal user, password MUST be set
-            if remote_allowed && !connection_info.is_localhost() {
-                if user.password_hash.is_empty() {
-                    warn!(
-                        "System user '{}' attempted remote authentication without password",
-                        username
-                    );
-                    return Err(AuthError::AuthenticationFailed(
-                        "Remote-enabled system users must have a password set".to_string(),
-                    ));
-                }
+            if remote_allowed && !connection_info.is_localhost() && user.password_hash.is_empty() {
+                warn!(
+                    "System user '{}' attempted remote authentication without password",
+                    username
+                );
+                return Err(AuthError::AuthenticationFailed(
+                    "Remote-enabled system users must have a password set".to_string(),
+                ));
             }
 
             // For localhost connections with internal auth_type, password can be empty
@@ -196,7 +255,9 @@ impl AuthService {
                     password::verify_password(&password, &user.password_hash).await?;
                 if !password_match {
                     warn!("Invalid password for system user: {}", username);
-                    return Err(AuthError::InvalidCredentials);
+                    return Err(AuthError::InvalidCredentials(
+                        "Invalid username or password".to_string(),
+                    ));
                 }
             }
         } else {
@@ -204,7 +265,9 @@ impl AuthService {
             let password_match = password::verify_password(&password, &user.password_hash).await?;
             if !password_match {
                 warn!("Invalid password for user: {}", username);
-                return Err(AuthError::InvalidCredentials);
+                return Err(AuthError::InvalidCredentials(
+                    "Invalid username or password".to_string(),
+                ));
             }
 
             // Check global remote access permission for regular users
@@ -217,11 +280,13 @@ impl AuthService {
 
         info!("User authenticated via Basic Auth: {}", username);
 
+        Self::spawn_last_seen_update(adapter.clone(), user.clone());
+
         Ok(AuthenticatedUser::new(
-            user.id,
-            user.username.into_string(),
+            user.id.clone(),
+            user.username.as_str().to_string(),
             user.role,
-            user.email,
+            user.email.clone(),
             connection_info.clone(),
         ))
     }
@@ -246,9 +311,20 @@ impl AuthService {
             .strip_prefix("Bearer ")
             .ok_or_else(|| AuthError::MalformedAuthorization("Bearer token missing".to_string()))?;
 
-        // Validate token
-        let claims =
-            jwt_auth::validate_jwt_token(token, &self.jwt_secret, &self.trusted_jwt_issuers)?;
+        // Check JWT cache first
+        let claims = if let Some(cached_claims) = self.jwt_cache.get(token).await {
+            cached_claims
+        } else {
+            // Cache miss - validate JWT
+            let validated_claims =
+                jwt_auth::validate_jwt_token(token, &self.jwt_secret, &self.trusted_jwt_issuers)?;
+
+            // Cache the validated claims
+            self.jwt_cache
+                .insert(token.to_string(), validated_claims.clone())
+                .await;
+            validated_claims
+        };
 
         // Look up user in database using username from JWT claims
         // The JWT sub field contains the user_id, but we'll use username for lookup
@@ -273,11 +349,13 @@ impl AuthService {
 
         info!("User authenticated via JWT: {}", user.username);
 
+        Self::spawn_last_seen_update(adapter.clone(), user.clone());
+
         Ok(AuthenticatedUser::new(
-            user.id,
-            user.username.into_string(),
+            user.id.clone(),
+            user.username.as_str().to_string(),
             user.role,
-            user.email,
+            user.email.clone(),
             connection_info.clone(),
         ))
     }
@@ -314,18 +392,15 @@ impl AuthService {
 
         // Try to extract provider info without full validation first
         // (we'll validate once we know which provider to check against)
-        let _header = jsonwebtoken::decode_header(token)
-            .map_err(|e| AuthError::MalformedAuthorization(format!("Invalid token header: {}", e)))?;
-        
+        let _header = jsonwebtoken::decode_header(token).map_err(|e| {
+            AuthError::MalformedAuthorization(format!("Invalid token header: {}", e))
+        })?;
+
         // For now, we use a simple approach: validate with a generic secret
         // In production, you'd fetch the JWKS (JSON Web Key Set) from the provider
         // For HS256 (testing), we use the JWT secret
         let claims = oauth::validate_oauth_token(token, &self.jwt_secret, "")
-            .or_else(|_| {
-                // If validation fails, try to extract claims without validation
-                // to get the issuer for better error messages
-                Err(AuthError::InvalidSignature)
-            })?;
+            .map_err(|_| AuthError::InvalidSignature)?;
 
         // Extract provider and subject from claims
         let identity = oauth::extract_provider_and_subject(&claims);
@@ -339,13 +414,13 @@ impl AuthService {
 
         let users = adapter
             .scan_all_users()
-            .map_err(AuthError::DatabaseError)?;
-        
+            .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
+
         let user = users
             .into_iter()
             .find(|u| {
                 u.auth_type == kalamdb_commons::AuthType::OAuth
-                    && u.auth_data.as_ref().map_or(false, |data| {
+                    && u.auth_data.as_ref().is_some_and(|data| {
                         // Parse stored auth_data and compare
                         if let Ok(stored_json) = serde_json::from_str::<serde_json::Value>(data) {
                             stored_json.get("provider") == auth_data.get("provider")
@@ -355,7 +430,7 @@ impl AuthService {
                         }
                     })
             })
-            .ok_or(AuthError::UserNotFound)?;
+            .ok_or(AuthError::UserNotFound("OAuth user not found".to_string()))?;
 
         // Check if user is deleted
         if user.deleted_at.is_some() {
@@ -370,13 +445,18 @@ impl AuthService {
             ));
         }
 
-        info!("User authenticated via OAuth ({}): {}", identity.provider, user.username);
+        info!(
+            "User authenticated via OAuth ({}): {}",
+            identity.provider, user.username
+        );
+
+        Self::spawn_last_seen_update(adapter.clone(), user.clone());
 
         Ok(AuthenticatedUser::new(
-            user.id,
-            user.username.into_string(),
+            user.id.clone(),
+            user.username.as_str().to_string(),
             user.role,
-            user.email,
+            user.email.clone(),
             connection_info.clone(),
         ))
     }
@@ -392,14 +472,133 @@ impl AuthService {
     ///
     /// # Errors
     /// Returns `AuthError::UserNotFound` if user doesn't exist
+    fn needs_last_seen_update(last_seen: Option<i64>, now: DateTime<Utc>) -> bool {
+        match last_seen.and_then(DateTime::<Utc>::from_timestamp_millis) {
+            Some(prev) => prev.date_naive() != now.date_naive(),
+            None => true,
+        }
+    }
+
+    fn spawn_last_seen_update(
+        adapter: Arc<RocksDbAdapter>,
+        mut user: kalamdb_commons::system::User,
+    ) {
+        let now = Utc::now();
+        if !Self::needs_last_seen_update(user.last_seen, now) {
+            return;
+        }
+
+        let new_timestamp = now.timestamp_millis();
+        user.last_seen = Some(new_timestamp);
+        user.updated_at = new_timestamp;
+        let user_id = user.id.clone();
+
+        tokio::spawn(async move {
+            let uid = user_id.clone();
+            let update_result = task::spawn_blocking(move || adapter.update_user(&user)).await;
+            match update_result {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => warn!(
+                    "Failed to persist last_seen for user {}: {}",
+                    uid.as_str(),
+                    err
+                ),
+                Err(join_err) => warn!(
+                    "Failed to schedule last_seen update for user {}: {}",
+                    uid.as_str(),
+                    join_err
+                ),
+            }
+        });
+    }
+
     async fn get_user_by_username(
         &self,
         username: &str,
         adapter: &Arc<RocksDbAdapter>,
     ) -> AuthResult<kalamdb_commons::system::User> {
-        adapter
+        // Check cache first
+        if let Some(user) = self.user_cache.get(username).await {
+            return Ok(user);
+        }
+
+        // Cache miss - fetch from database
+        let user = adapter
             .get_user(username)
-            .map_err(AuthError::DatabaseError)?
-            .ok_or(AuthError::UserNotFound)
+            .map_err(|e| AuthError::DatabaseError(e.to_string()))?
+            .ok_or_else(|| AuthError::UserNotFound(format!("User '{}' not found", username)))?;
+
+        // Cache the user record for future lookups
+        self.user_cache
+            .insert(username.to_string(), user.clone())
+            .await;
+
+        Ok(user)
+    }
+
+    /// Invalidate user cache entry for a specific username.
+    ///
+    /// This should be called whenever a user record is updated
+    /// (password change, role change, metadata change, etc.)
+    ///
+    /// # Arguments
+    /// * `username` - Username to invalidate from cache
+    pub async fn invalidate_user_cache(&self, username: &str) {
+        self.user_cache.invalidate(username).await;
+    }
+
+    /// Clear all user cache entries.
+    ///
+    /// This should be called during bulk operations or when
+    /// cache consistency needs to be guaranteed.
+    pub async fn clear_user_cache(&self) {
+        self.user_cache.invalidate_all();
+        self.user_cache.run_pending_tasks().await;
+    }
+
+    /// Get user cache statistics for monitoring.
+    ///
+    /// # Returns
+    /// Cache stats including entry count
+    pub fn get_user_cache_stats(&self) -> UserCacheStats {
+        UserCacheStats {
+            hits: 0,       // TODO: Implement proper stats tracking
+            misses: 0,     // TODO: Implement proper stats tracking
+            hit_rate: 0.0, // TODO: Implement proper stats tracking
+            entry_count: self.user_cache.entry_count(),
+        }
+    }
+
+    /// Invalidate JWT cache entry for a specific token.
+    ///
+    /// This should be called when a JWT token needs to be invalidated
+    /// (e.g., user logout, token revocation).
+    ///
+    /// # Arguments
+    /// * `token` - JWT token string to invalidate from cache
+    pub async fn invalidate_jwt_cache(&self, token: &str) {
+        self.jwt_cache.invalidate(token).await;
+    }
+
+    /// Clear all JWT cache entries.
+    ///
+    /// This should be called during bulk operations or when
+    /// JWT cache consistency needs to be guaranteed.
+    pub async fn clear_jwt_cache(&self) {
+        self.jwt_cache.invalidate_all();
+        self.jwt_cache.run_pending_tasks().await;
+    }
+
+    /// Get JWT cache statistics for monitoring.
+    ///
+    /// # Returns
+    /// Cache stats including entry count
+    pub fn get_jwt_cache_stats(&self) -> JwtCacheStats {
+        JwtCacheStats {
+            hits: 0,       // TODO: Implement proper stats tracking
+            misses: 0,     // TODO: Implement proper stats tracking
+            hit_rate: 0.0, // TODO: Implement proper stats tracking
+            entry_count: self.jwt_cache.entry_count(),
+        }
     }
 }

@@ -13,6 +13,9 @@ base64 = { workspace = true }
 # JWT validation
 jsonwebtoken = { workspace = true }
 
+# Web framework
+actix-web = { workspace = true }
+
 # Internal dependencies
 kalamdb-commons = { path = "../kalamdb-commons" }
 kalamdb-store = { path = "../kalamdb-store" }
@@ -34,3 +37,6 @@ tokio = { workspace = true }
 
 # Time handling
 chrono = { workspace = true }
+
+# Caching
+moka = { workspace = true }

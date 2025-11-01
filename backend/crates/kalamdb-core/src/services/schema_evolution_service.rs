@@ -18,8 +18,6 @@ use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::schema::ArrowSchemaWithOptions;
 use arrow::datatypes::{DataType, Field, Schema};
-use kalamdb_commons::models::{StorageId, UserId};
-use kalamdb_commons::system::{LiveQuery, Namespace};
 use kalamdb_sql::ddl::ColumnOperation;
 use kalamdb_sql::{KalamSql, Table, TableSchema};
 use std::sync::Arc;
@@ -179,7 +177,7 @@ impl SchemaEvolutionService {
         };
 
         // Create and insert new schema version
-        let new_schema = TableSchema {
+        let _new_schema = TableSchema {
             schema_id: format!("{}:v{}", table_id, new_version),
             table_id: table_id.clone(),
             version: new_version,
@@ -506,9 +504,10 @@ impl SchemaEvolutionService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::{LiveQueryId, StorageId, TableId, UserId};
     use kalamdb_sql::{LiveQuery, Namespace};
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{kalamdb_commons::storage::StorageBackend, RocksDBBackend};
+    use kalamdb_store::{RocksDBBackend, StorageBackend};
 
     fn setup_test_db() -> (Arc<KalamSql>, TestDb) {
         // Create TestDb with required column families
@@ -528,7 +527,9 @@ mod tests {
     }
 
     fn create_test_table(kalam_sql: &KalamSql, table_type: &str) -> String {
-        let table_id = "test_ns:test_table".to_string();
+        let table_id_str = "test_ns:test_table".to_string();
+        let parts: Vec<&str> = table_id_str.split(':').collect();
+        let table_id = TableId::new(NamespaceId::new(parts[0]), TableName::new(parts[1]));
 
         // Create namespace
         let namespace = Namespace {
@@ -567,8 +568,8 @@ mod tests {
         let schema_with_opts = ArrowSchemaWithOptions::new(Arc::new(schema));
         let schema_json = schema_with_opts.to_json_string().unwrap();
         let _table_schema = TableSchema {
-            schema_id: format!("{}:v1", table_id),
-            table_id: table_id.clone(),
+            schema_id: format!("{}:v1", table_id.to_string()),
+            table_id: table_id.to_string(),
             version: 1,
             arrow_schema: schema_json,
             created_at: chrono::Utc::now().timestamp(),
@@ -577,7 +578,7 @@ mod tests {
         // TODO: Replace with information_schema_tables storage (Phase 2b)
         // kalam_sql.insert_table_schema(&table_schema).unwrap();
 
-        table_id
+        table_id_str
     }
 
     #[test]
@@ -717,7 +718,7 @@ mod tests {
 
         // Create active live query
         let live_query = LiveQuery {
-            live_id: "lq123".to_string(),
+            live_id: LiveQueryId::new("lq123"),
             connection_id: "conn1".to_string(),
             namespace_id: NamespaceId::new("test_ns"),
             table_name: TableName::new("test_table"),

@@ -15,11 +15,11 @@ use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
 use crate::error::KalamDbError;
 // TODO: Phase 2b - FlushPolicy import will be needed again
 // use crate::flush::FlushPolicy;
-use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 // TODO: Phase 2b - StorageLocationService deprecated (replaced by system_storages)
 // use crate::services::storage_location_service::StorageLocationService;
 use crate::storage::column_family_manager::ColumnFamilyManager;
-use crate::stores::UserTableStore;
+use crate::stores::system_table::UserTableStoreExt;
+use crate::tables::UserTableStore;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use kalamdb_commons::models::StorageId;
 use kalamdb_sql::ddl::{CreateTableStatement, FlushPolicy as DdlFlushPolicy};
@@ -96,13 +96,25 @@ impl UserTableService {
         // 2. System column injection (_updated, _deleted)
         let schema = self.inject_system_columns(schema, TableType::User)?;
 
-        // 3. Storage location resolution - use storage_id to get the path template
+        // 3. Inject DEFAULT SNOWFLAKE_ID() for auto-injected id column
+        let mut modified_stmt = stmt.clone();
+        if !modified_stmt.column_defaults.contains_key("id") {
+            modified_stmt.column_defaults.insert(
+                "id".to_string(),
+                kalamdb_commons::models::ColumnDefault::FunctionCall("SNOWFLAKE_ID".to_string()),
+            );
+        }
+
+        // 4. Storage location resolution - use storage_id to get the path template
         let default_storage = StorageId::local();
-        let storage_id = stmt.storage_id.as_ref().unwrap_or(&default_storage);
+        let storage_id = modified_stmt
+            .storage_id
+            .as_ref()
+            .unwrap_or(&default_storage);
         let storage_location = self.resolve_storage_from_id(storage_id)?;
 
-        // 4. Save complete table definition to information_schema_tables (atomic write)
-        self.save_table_definition(&stmt, &schema)?;
+        // 5. Save complete table definition to information_schema_tables (atomic write)
+        self.save_table_definition(&modified_stmt, &schema)?;
 
         // 5. Create RocksDB column family for this table
         // This ensures the table is ready for data operations immediately after creation
@@ -124,13 +136,13 @@ impl UserTableService {
             namespace: namespace_id_core.clone(),
             created_at: chrono::Utc::now(),
             storage_location,
-            flush_policy: stmt
+            flush_policy: modified_stmt
                 .flush_policy
                 .clone()
                 .map(crate::flush::FlushPolicy::from)
                 .unwrap_or_default(),
             schema_version: 1,
-            deleted_retention_hours: stmt.deleted_retention_hours,
+            deleted_retention_hours: modified_stmt.deleted_retention_hours,
         };
 
         Ok(metadata)
@@ -234,10 +246,7 @@ impl UserTableService {
         stmt: &CreateTableStatement,
         schema: &Arc<Schema>,
     ) -> Result<(), KalamDbError> {
-        use kalamdb_commons::models::{
-            ColumnDefinition, FlushPolicyDef, SchemaVersion, TableDefinition,
-        };
-        use std::collections::HashMap;
+        use kalamdb_commons::models::{FlushPolicyDef, SchemaVersion, TableDefinition};
 
         // Extract columns from schema with ordinal positions
         let columns = TableDefinition::extract_columns_from_schema(
@@ -321,52 +330,6 @@ impl UserTableService {
         Ok(())
     }
 
-    /// DEPRECATED: Create schema files for the table
-    ///
-    /// **REPLACED BY**: save_table_definition() which writes to information_schema_tables
-    ///
-    /// Creates:
-    /// - schema_v1.json: Arrow schema in JSON format
-    /// - manifest.json: Schema versioning metadata
-    fn create_schema_files(
-        &self,
-        namespace: &NamespaceId,
-        table_name: &TableName,
-        schema: &Arc<Schema>,
-        _flush_policy: &Option<DdlFlushPolicy>,
-        _deleted_retention_hours: Option<u32>,
-    ) -> Result<(), KalamDbError> {
-        // Create schema with options wrapper
-        let schema_with_options = ArrowSchemaWithOptions::new(schema.clone());
-
-        // TODO: Phase 2b - Save schema to information_schema.tables (TableDefinition.schema_history)
-        let schema_json = schema_with_options.to_json()?;
-        let schema_str = serde_json::to_string(&schema_json)
-            .map_err(|e| KalamDbError::SchemaError(format!("Failed to serialize schema: {}", e)))?;
-
-        // Create TableSchema record
-        let table_id = format!("{}:{}", namespace.as_str(), table_name.as_str());
-        let table_schema = kalamdb_sql::TableSchema {
-            schema_id: format!("{}_v1", table_id),
-            table_id: table_id.clone(),
-            version: 1,
-            arrow_schema: schema_str,
-            created_at: chrono::Utc::now().timestamp_millis(),
-            changes: "Initial schema".to_string(),
-        };
-
-        // TODO: Replace with information_schema_tables storage (Phase 2b)
-        // Schema will be stored in TableDefinition.schema_history array
-        // self.kalam_sql.insert_table_schema(&table_schema)?;
-
-        log::info!(
-            "Schema for table {} saved to system.table_schemas (version 1)",
-            table_id
-        );
-
-        Ok(())
-    }
-
     /// Get the column family name for a user table
     ///
     /// Returns the name that should be used when creating the column family.
@@ -406,7 +369,7 @@ impl UserTableService {
 mod tests {
     use super::*;
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{kalamdb_commons::storage::StorageBackend, RocksDBBackend};
+    use kalamdb_store::{RocksDBBackend, StorageBackend};
 
     fn setup_test_service() -> UserTableService {
         let test_db =
@@ -414,7 +377,7 @@ mod tests {
 
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
         let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
-        let user_table_store = Arc::new(UserTableStore::new(backend));
+        let user_table_store = Arc::new(UserTableStore::new(backend, "user_tables"));
         UserTableService::new(kalam_sql, user_table_store)
     }
 

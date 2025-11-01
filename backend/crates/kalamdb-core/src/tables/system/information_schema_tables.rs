@@ -10,8 +10,8 @@ use crate::error::KalamDbError;
 use crate::tables::system::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    ArrayRef, BooleanArray, Int32Array, Int64Array, RecordBatch, StringBuilder,
-    TimestampMillisecondArray, UInt32Array, UInt64Array,
+    ArrayRef, BooleanArray, RecordBatch, StringBuilder, TimestampMillisecondArray, UInt32Array,
+    UInt64Array,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::datasource::{TableProvider, TableType};
@@ -141,7 +141,7 @@ impl InformationSchemaTablesProvider {
 }
 
 impl SystemTableProviderExt for InformationSchemaTablesProvider {
-    fn table_name(&self) -> &'static str {
+    fn table_name(&self) -> &str {
         "information_schema.tables"
     }
 

@@ -12,7 +12,6 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::execution::context::SessionContext;
 use datafusion::logical_expr::ScalarUDF;
 use datafusion::prelude::SessionConfig;
-use std::sync::Arc;
 
 /// Session state with KalamDB context
 #[derive(Debug, Clone)]

@@ -640,7 +640,6 @@ async fn test_15_storage_lookup_table_level() {
             id BIGINT,
             message TEXT
         )
-        OWNER_ID 'user1'
         STORAGE 'table_storage'
         USE_USER_STORAGE
     "#;

@@ -135,7 +135,12 @@ impl ShardingStrategy for AlphabeticSharding {
         }
 
         // Get first character (case-insensitive)
-        let first_char = key.chars().next().unwrap().to_ascii_uppercase();
+        // Safety: we checked key.is_empty() above, so there's guaranteed to be at least one char
+        let first_char = key
+            .chars()
+            .next()
+            .expect("key is non-empty, guaranteed to have first char")
+            .to_ascii_uppercase();
 
         // Convert to numeric value (A=0, Z=25, non-letters=0)
         let char_value = if first_char.is_ascii_alphabetic() {
@@ -303,7 +308,10 @@ impl ShardingRegistry {
     /// * `name` - Unique name for the strategy
     /// * `strategy` - Strategy implementation
     pub fn register(&self, name: impl Into<String>, strategy: Arc<dyn ShardingStrategy>) {
-        let mut strategies = self.strategies.write().unwrap();
+        let mut strategies = self
+            .strategies
+            .write()
+            .expect("ShardingRegistry lock poisoned during write");
         strategies.insert(name.into(), strategy);
     }
 
@@ -317,13 +325,19 @@ impl ShardingRegistry {
     ///
     /// Some(strategy) if found, None otherwise
     pub fn get(&self, name: &str) -> Option<Arc<dyn ShardingStrategy>> {
-        let strategies = self.strategies.read().unwrap();
+        let strategies = self
+            .strategies
+            .read()
+            .expect("ShardingRegistry lock poisoned during read");
         strategies.get(name).cloned()
     }
 
     /// List all registered strategy names
     pub fn list_strategies(&self) -> Vec<String> {
-        let strategies = self.strategies.read().unwrap();
+        let strategies = self
+            .strategies
+            .read()
+            .expect("ShardingRegistry lock poisoned during read");
         strategies.keys().cloned().collect()
     }
 }

@@ -43,6 +43,7 @@ pub mod retention;
 pub mod stream_eviction;
 pub mod stream_eviction_scheduler;
 pub mod tokio_job_manager;
+pub mod user_cleanup;
 
 pub use executor::{JobExecutor, JobResult};
 pub use job_cleanup::JobCleanupTask;
@@ -51,3 +52,4 @@ pub use retention::{RetentionConfig, RetentionPolicy};
 pub use stream_eviction::{StreamEvictionConfig, StreamEvictionJob};
 pub use stream_eviction_scheduler::StreamEvictionScheduler;
 pub use tokio_job_manager::TokioJobManager;
+pub use user_cleanup::{UserCleanupConfig, UserCleanupJob};

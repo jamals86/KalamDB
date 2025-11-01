@@ -34,7 +34,7 @@
 //! ```
 
 use anyhow::{bail, Result};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::SinkExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -87,19 +87,6 @@ pub struct NotificationMessage {
     pub timestamp: Option<String>,
 }
 
-/// WebSocket initial data message format.
-///
-/// Sent from server to client with initial query results.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InitialDataMessage {
-    /// Query ID this data belongs to
-    pub query_id: String,
-    /// Initial rows
-    pub rows: Vec<Value>,
-    /// Row count
-    pub count: usize,
-}
-
 /// WebSocket client for testing.
 ///
 /// Real implementation using tokio-tungstenite for actual WebSocket connections.
@@ -108,8 +95,6 @@ pub struct WebSocketClient {
     ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
     /// Active subscriptions
     subscriptions: Vec<Subscription>,
-    /// Received notifications (for testing)
-    notifications: Vec<NotificationMessage>,
 }
 
 impl WebSocketClient {
@@ -170,7 +155,6 @@ impl WebSocketClient {
         Ok(Self {
             ws_stream,
             subscriptions: Vec::new(),
-            notifications: Vec::new(),
         })
     }
 
@@ -237,118 +221,10 @@ impl WebSocketClient {
         Ok(())
     }
 
-    /// Wait for a notification with timeout.
-    ///
-    /// # Arguments
-    ///
-    /// * `timeout_duration` - Maximum time to wait
-    ///
-    /// # Returns
-    ///
-    /// The next notification, or an error if timeout is reached
-    pub async fn wait_for_notification(
-        &mut self,
-        timeout_duration: Duration,
-    ) -> Result<NotificationMessage> {
-        match timeout(timeout_duration, self.ws_stream.next()).await {
-            Ok(Some(Ok(Message::Text(text)))) => {
-                let notification: NotificationMessage = serde_json::from_str(&text)?;
-                self.notifications.push(notification.clone());
-                Ok(notification)
-            }
-            Ok(Some(Ok(_))) => {
-                bail!("Received non-text WebSocket message")
-            }
-            Ok(Some(Err(e))) => {
-                bail!("WebSocket error: {}", e)
-            }
-            Ok(None) => {
-                bail!("WebSocket connection closed")
-            }
-            Err(_) => {
-                bail!(
-                    "Timeout waiting for notification after {:?}",
-                    timeout_duration
-                )
-            }
-        }
-    }
-
-    /// Wait for initial data response.
-    ///
-    /// # Arguments
-    ///
-    /// * `query_id` - Query ID to wait for
-    /// * `timeout_duration` - Maximum time to wait
-    pub async fn wait_for_initial_data(
-        &mut self,
-        query_id: &str,
-        timeout_duration: Duration,
-    ) -> Result<InitialDataMessage> {
-        match timeout(timeout_duration, self.ws_stream.next()).await {
-            Ok(Some(Ok(Message::Text(text)))) => {
-                let initial_data: InitialDataMessage = serde_json::from_str(&text)?;
-                if initial_data.query_id == query_id {
-                    Ok(initial_data)
-                } else {
-                    bail!("Received initial data for different query_id")
-                }
-            }
-            Ok(Some(Ok(_))) => {
-                bail!("Received non-text WebSocket message")
-            }
-            Ok(Some(Err(e))) => {
-                bail!("WebSocket error: {}", e)
-            }
-            Ok(None) => {
-                bail!("WebSocket connection closed")
-            }
-            Err(_) => {
-                bail!(
-                    "Timeout waiting for initial data after {:?}",
-                    timeout_duration
-                )
-            }
-        }
-    }
-
-    /// Receive and buffer multiple notifications without blocking.
-    ///
-    /// Collects all available messages from the WebSocket stream.
-    pub async fn receive_notifications(&mut self, timeout_duration: Duration) -> Result<()> {
-        let deadline = tokio::time::Instant::now() + timeout_duration;
-
-        while tokio::time::Instant::now() < deadline {
-            match timeout(Duration::from_millis(50), self.ws_stream.next()).await {
-                Ok(Some(Ok(Message::Text(text)))) => {
-                    if let Ok(notification) = serde_json::from_str::<NotificationMessage>(&text) {
-                        self.notifications.push(notification);
-                    }
-                }
-                Ok(Some(Ok(_))) => {
-                    // Ignore non-text messages
-                }
-                Ok(Some(Err(_))) => {
-                    break;
-                }
-                Ok(None) => {
-                    break;
-                }
-                Err(_) => {
-                    // Timeout on this iteration, continue loop
-                    continue;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     /// Disconnect from WebSocket.
     pub async fn disconnect(&mut self) -> Result<()> {
         self.ws_stream.close(None).await?;
         self.subscriptions.clear();
-        self.notifications.clear();
         Ok(())
     }
 
@@ -360,18 +236,6 @@ impl WebSocketClient {
     /// Check if subscribed to a specific query_id.
     pub fn is_subscribed(&self, query_id: &str) -> bool {
         self.subscriptions.iter().any(|s| s.query_id == query_id)
-    }
-
-    /// Get all received notifications.
-    ///
-    /// Returns a reference to all notifications received since connection.
-    pub fn get_notifications(&self) -> &[NotificationMessage] {
-        &self.notifications
-    }
-
-    /// Clear notification buffer.
-    pub fn clear_notifications(&mut self) {
-        self.notifications.clear();
     }
 }
 

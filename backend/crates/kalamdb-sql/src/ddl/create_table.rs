@@ -26,9 +26,6 @@ static FLUSH_RE: Lazy<Regex> = Lazy::new(|| {
 static TABLE_TYPE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?i)\s+TABLE_TYPE\s+['\"]?[a-z0-9_]+['\"]?"#).unwrap());
 
-static OWNER_ID_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?i)\s+OWNER_ID\s+['\"][^'\"]+['\"]"#).unwrap());
-
 static STORAGE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?i)\s+STORAGE\s+['\"]?[a-z0-9_]+['\"]?"#).unwrap());
 
@@ -185,7 +182,6 @@ impl CreateTableStatement {
         // Remove KalamDB-specific clauses using pre-compiled regexes
         normalized_sql = FLUSH_RE.replace_all(&normalized_sql, "").into_owned();
         normalized_sql = TABLE_TYPE_RE.replace_all(&normalized_sql, "").into_owned();
-        normalized_sql = OWNER_ID_RE.replace_all(&normalized_sql, "").into_owned();
         normalized_sql = STORAGE_RE.replace_all(&normalized_sql, "").into_owned();
         normalized_sql = USE_USER_STORAGE_RE
             .replace_all(&normalized_sql, "")

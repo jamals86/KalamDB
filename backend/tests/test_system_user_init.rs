@@ -3,12 +3,12 @@
 /// Tests that the database creates a default system user on first startup
 /// with appropriate credentials and security settings.
 use kalamdb_commons::constants::AuthConstants;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::User;
 use kalamdb_commons::{AuthType, Role, UserId};
 use kalamdb_sql::KalamSql;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
 /// Helper to create fresh KalamSql instance for testing
@@ -40,7 +40,7 @@ async fn test_system_user_created_on_init() {
         .expect("Failed to query user")
         .expect("System user should exist");
 
-    assert_eq!(user.username, AuthConstants::DEFAULT_SYSTEM_USERNAME);
+    assert_eq!(user.username, AuthConstants::DEFAULT_SYSTEM_USERNAME.into());
     assert_eq!(user.role, Role::System);
     assert_eq!(user.auth_type, AuthType::Internal);
     assert!(
@@ -218,7 +218,7 @@ async fn create_default_system_user_for_test(kalam_sql: Arc<KalamSql>) -> anyhow
 
             let user = User {
                 id: user_id,
-                username: username.clone(),
+                username: username.clone().into(),
                 password_hash,
                 role,
                 email: Some(email),
@@ -254,4 +254,3 @@ fn generate_random_password_for_test(length: usize) -> String {
         })
         .collect()
 }
-

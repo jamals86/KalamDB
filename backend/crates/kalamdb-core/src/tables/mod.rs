@@ -1,25 +1,32 @@
 //! Tables module for table types and providers
 //!
 //! This module contains implementations for different table types:
-//! - User tables: Per-user isolated tables
-//! - Shared tables: Global tables accessible to all users
-//! - Stream tables: Ephemeral event streaming tables
-//! - System tables: Internal system metadata tables
+//! - User tables: Per-user isolated tables (EntityStore-based)
+//! - Shared tables: Global tables accessible to all users (EntityStore-based)
+//! - Stream tables: Ephemeral event streaming tables (in-memory EntityStore)
+//! - System tables: Internal system metadata tables (EntityStore-based v2 providers)
 
-pub mod hybrid_table_provider;
+pub mod arrow_json_conversion;
+pub mod base_flush;
 pub mod parquet_scan;
-pub mod shared_table_provider;
-pub mod stream_table_provider;
+pub mod shared_tables;
+pub mod stream_tables;
 pub mod system;
-pub mod user_table_delete;
-pub mod user_table_insert;
-pub mod user_table_provider;
-pub mod user_table_update;
+pub mod user_tables;
 
-pub use hybrid_table_provider::HybridTableProvider;
-pub use shared_table_provider::SharedTableProvider;
-pub use stream_table_provider::StreamTableProvider;
-pub use user_table_delete::UserTableDeleteHandler;
-pub use user_table_insert::UserTableInsertHandler;
-pub use user_table_provider::UserTableProvider;
-pub use user_table_update::UserTableUpdateHandler;
+// Re-export flush types
+pub use base_flush::{
+    FlushJobResult, FlushMetadata, SharedTableFlushMetadata, TableFlush, UserTableFlushMetadata,
+};
+
+// Re-export from consolidated modules
+pub use shared_tables::{
+    new_shared_table_store, SharedTableProvider, SharedTableRow, SharedTableRowId, SharedTableStore,
+};
+pub use stream_tables::{
+    new_stream_table_store, StreamTableProvider, StreamTableRow, StreamTableRowId, StreamTableStore,
+};
+pub use user_tables::{
+    new_user_table_store, UserTableDeleteHandler, UserTableInsertHandler, UserTableProvider,
+    UserTableRow, UserTableRowId, UserTableStore, UserTableUpdateHandler,
+};

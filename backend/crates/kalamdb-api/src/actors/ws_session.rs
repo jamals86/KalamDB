@@ -329,9 +329,13 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                                 last_rows_u32, subscription.options.last_rows
                             );
 
-                            let initial_data_options = last_rows_u32
-                                .filter(|value| *value > 0)
-                                .map(|value| InitialDataOptions::last(value as usize));
+                            let initial_data_options =
+                                Some(if let Some(last_rows) = last_rows_u32 {
+                                    InitialDataOptions::last(last_rows as usize)
+                                } else {
+                                    // Default: fetch up to 100 recent rows for initial data
+                                    InitialDataOptions::last(100)
+                                });
 
                             debug!(
                                 "Initial data options: {:?} (will fetch: {})",
@@ -394,7 +398,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                                                     sub_id,
                                                     initial.rows.len()
                                                 );
-                                                
+
                                                 // Convert Vec<JsonValue> to Vec<HashMap<String, JsonValue>>
                                                 let rows: Vec<std::collections::HashMap<String, serde_json::Value>> = initial.rows
                                                     .into_iter()
@@ -436,7 +440,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                                             if let Ok(json) = serde_json::to_string(&error_msg) {
                                                 ctx.text(json);
                                             }
-                                            
+
                                             // Close WebSocket connection after sending error
                                             warn!(
                                                 "Closing WebSocket connection {} due to subscription failure",
@@ -504,7 +508,7 @@ impl Handler<SendNotification> for WebSocketSession {
 mod tests {
     use super::*;
     use kalamdb_core::live_query::{LiveQueryManager, NodeId};
-    use kalamdb_core::storage::RocksDbInit;
+    use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
     #[test]
@@ -513,7 +517,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_init = kalamdb_store::RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = db_init.open().unwrap();
-        let backend: Arc<dyn kalamdb_store::storage_trait::StorageBackend> =
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
         let manager = Arc::new(LiveQueryManager::new(

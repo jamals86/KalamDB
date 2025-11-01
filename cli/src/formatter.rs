@@ -104,7 +104,7 @@ impl OutputFormatter {
             }
 
             // Calculate total table width (columns + borders + padding)
-            let total_width: usize = col_widths.iter().sum::<usize>() 
+            let total_width: usize = col_widths.iter().sum::<usize>()
                 + (col_widths.len() * 3) // 2 spaces padding + 1 border per column
                 + 1; // Final border
 
@@ -249,15 +249,6 @@ impl OutputFormatter {
         }
 
         Ok(output)
-    }
-
-    /// Format error message (simple version)
-    fn format_error(&self, error: &str) -> String {
-        if self.color {
-            format!("\x1b[31mERROR:\x1b[0m {}", error)
-        } else {
-            format!("ERROR: {}", error)
-        }
     }
 
     /// Format error detail (with code and details) - MySQL/PostgreSQL style

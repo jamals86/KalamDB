@@ -9,10 +9,11 @@ use crate::live_query::connection_registry::{
 };
 use crate::live_query::filter::FilterCache;
 use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
-use crate::stores::{SharedTableStore, StreamTableStore, UserTableStore};
-use crate::tables::system::live_queries_provider::LiveQueriesTableProvider;
+use crate::tables::system::LiveQueriesTableProvider;
+use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_commons::models::{NamespaceId, TableName, TableType};
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
+use kalamdb_commons::LiveQueryId;
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -33,17 +34,17 @@ impl LiveQueryManager {
         kalam_sql: Arc<KalamSql>,
         node_id: NodeId,
         user_table_store: Option<Arc<UserTableStore>>,
-        shared_table_store: Option<Arc<SharedTableStore>>,
+        _shared_table_store: Option<Arc<SharedTableStore>>,
         stream_table_store: Option<Arc<StreamTableStore>>,
     ) -> Self {
         let registry = Arc::new(tokio::sync::RwLock::new(LiveQueryRegistry::new(
             node_id.clone(),
         )));
-        let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(kalam_sql.clone()));
+        let live_queries_provider =
+            Arc::new(LiveQueriesTableProvider::new(kalam_sql.adapter().backend()));
         let filter_cache = Arc::new(tokio::sync::RwLock::new(FilterCache::new()));
         let initial_data_fetcher = Arc::new(InitialDataFetcher::new(
             user_table_store.clone(),
-            shared_table_store.clone(),
             stream_table_store.clone(),
         ));
 
@@ -174,7 +175,7 @@ impl LiveQueryManager {
 
         // Create record for system.live_queries
         let live_query_record = SystemLiveQuery {
-            live_id: live_id.to_string(),
+            live_id: LiveQueryId::new(live_id.to_string()),
             connection_id: connection_id.to_string(),
             namespace_id: NamespaceId::new(namespace.to_string()),
             table_name: TableName::new(canonical_table.clone()),
@@ -421,7 +422,7 @@ impl LiveQueryManager {
 
         // Delete from system.live_queries
         self.live_queries_provider
-            .delete_live_query(&live_id.to_string())?;
+            .delete_live_query_str(&live_id.to_string())?;
 
         Ok(())
     }
@@ -828,21 +829,34 @@ pub struct RegistryStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::RocksDbInit;
+    use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
     use kalamdb_commons::models::{ColumnDefinition, TableDefinition};
     use kalamdb_commons::{NamespaceId, StorageId, TableName, TableType};
+    use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
     async fn create_test_manager() -> (LiveQueryManager, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = Arc::new(init.open().unwrap());
-        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
-        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
-        let user_table_store = Arc::new(UserTableStore::new(Arc::clone(&db)).unwrap());
-        let shared_table_store = Arc::new(SharedTableStore::new(Arc::clone(&db)).unwrap());
-        let stream_table_store = Arc::new(StreamTableStore::new(Arc::clone(&db)).unwrap());
+        let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
+
+        // Create table stores for testing (using default namespace and table)
+        let test_namespace = NamespaceId::new("user1");
+        let test_table = TableName::new("messages");
+        let user_table_store = Arc::new(new_user_table_store(
+            backend.clone(),
+            &test_namespace,
+            &test_table,
+        ));
+        let shared_table_store = Arc::new(new_shared_table_store(
+            backend.clone(),
+            &test_namespace,
+            &test_table,
+        ));
+        let stream_table_store = Arc::new(new_stream_table_store(&test_namespace, &test_table));
 
         // Create test tables in information_schema_tables
         let messages_table = TableDefinition {

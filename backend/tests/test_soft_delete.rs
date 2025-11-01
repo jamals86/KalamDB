@@ -364,4 +364,3 @@ async fn test_count_excludes_deleted_rows() {
 
     println!("✅ COUNT excludes soft deleted rows");
 }
-

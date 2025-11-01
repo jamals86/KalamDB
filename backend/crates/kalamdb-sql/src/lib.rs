@@ -41,12 +41,12 @@ pub mod parser;
 pub mod query_cache;
 pub mod statement_classifier;
 
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::{NamespaceId, StorageId, TableName, UserId};
+use kalamdb_store::StorageBackend;
 // Re-export system models from kalamdb-commons (single source of truth)
 pub use kalamdb_commons::system::{
-    InformationSchemaTable, Job, LiveQuery, Namespace, Storage, SystemTable as Table, TableSchema,
-    User, UserTableCounter,
+    AuditLogEntry, InformationSchemaTable, Job, LiveQuery, Namespace, Storage,
+    SystemTable as Table, TableSchema, User, UserTableCounter,
 };
 
 pub use adapter::StorageAdapter;
@@ -237,6 +237,16 @@ impl KalamSql {
     /// Delete a job by ID
     pub fn delete_job(&self, job_id: &str) -> Result<()> {
         self.adapter.delete_job(job_id)
+    }
+
+    /// Insert an audit log entry.
+    pub fn insert_audit_log(&self, entry: &AuditLogEntry) -> Result<()> {
+        self.adapter.insert_audit_log(entry)
+    }
+
+    /// Retrieve all audit log entries.
+    pub fn scan_all_audit_logs(&self) -> Result<Vec<AuditLogEntry>> {
+        self.adapter.scan_audit_logs()
     }
 
     // Scan operations for all system tables

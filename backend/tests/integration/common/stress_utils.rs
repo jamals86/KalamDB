@@ -79,11 +79,11 @@ impl ConcurrentWriters {
         let inserts_per_writer = self.config.target_rate / self.config.writer_count;
         let interval = Duration::from_millis(1000 / inserts_per_writer as u64);
 
-        for i in 0..self.config.writer_count {
+        for _i in 0..self.config.writer_count {
             let running = Arc::clone(&self.running);
             let insert_count = Arc::clone(&self.insert_count);
-            let namespace = self.config.namespace.clone();
-            let table_name = self.config.table_name.clone();
+            let _namespace = self.config.namespace.clone();
+            let _table_name = self.config.table_name.clone();
 
             let handle = tokio::spawn(async move {
                 while running.load(Ordering::SeqCst) {
@@ -112,101 +112,11 @@ impl ConcurrentWriters {
             total_inserts: self.insert_count.load(Ordering::SeqCst),
         }
     }
-
-    /// Get current insert count
-    pub fn insert_count(&self) -> u64 {
-        self.insert_count.load(Ordering::SeqCst)
-    }
 }
 
 /// Statistics from writer run
 pub struct WriterStats {
     pub total_inserts: u64,
-}
-
-/// Configuration for WebSocket subscribers
-pub struct SubscriberConfig {
-    /// Number of concurrent WebSocket connections
-    pub subscriber_count: usize,
-    /// Namespace to subscribe to
-    pub namespace: String,
-    /// Table name to subscribe to
-    pub table_name: String,
-}
-
-impl Default for SubscriberConfig {
-    fn default() -> Self {
-        Self {
-            subscriber_count: 20,
-            namespace: "default".to_string(),
-            table_name: "stress_test".to_string(),
-        }
-    }
-}
-
-/// WebSocket subscribers for stress testing
-pub struct WebSocketSubscribers {
-    config: SubscriberConfig,
-    running: Arc<AtomicBool>,
-    notification_count: Arc<AtomicU64>,
-    disconnect_count: Arc<AtomicU64>,
-    handles: Vec<JoinHandle<()>>,
-}
-
-impl WebSocketSubscribers {
-    /// Create new WebSocket subscribers
-    pub fn new(config: SubscriberConfig) -> Self {
-        Self {
-            config,
-            running: Arc::new(AtomicBool::new(false)),
-            notification_count: Arc::new(AtomicU64::new(0)),
-            disconnect_count: Arc::new(AtomicU64::new(0)),
-            handles: Vec::new(),
-        }
-    }
-
-    /// Start WebSocket subscribers
-    pub async fn start(&mut self) {
-        self.running.store(true, Ordering::SeqCst);
-
-        for i in 0..self.config.subscriber_count {
-            let running = Arc::clone(&self.running);
-            let notification_count = Arc::clone(&self.notification_count);
-            let disconnect_count = Arc::clone(&self.disconnect_count);
-
-            let handle = tokio::spawn(async move {
-                // TODO: T231 - Implement actual WebSocket subscription logic
-                // For now, just simulate
-
-                while running.load(Ordering::SeqCst) {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-            });
-
-            self.handles.push(handle);
-        }
-    }
-
-    /// Stop all subscribers
-    pub async fn stop(&mut self) -> SubscriberStats {
-        self.running.store(false, Ordering::SeqCst);
-
-        // Wait for all handles to complete
-        for handle in self.handles.drain(..) {
-            let _ = handle.await;
-        }
-
-        SubscriberStats {
-            total_notifications: self.notification_count.load(Ordering::SeqCst),
-            total_disconnects: self.disconnect_count.load(Ordering::SeqCst),
-        }
-    }
-}
-
-/// Statistics from subscriber run
-pub struct SubscriberStats {
-    pub total_notifications: u64,
-    pub total_disconnects: u64,
 }
 
 /// Memory monitoring with periodic measurements
@@ -220,7 +130,6 @@ pub struct MemoryMonitor {
 /// Single memory measurement
 #[derive(Debug, Clone)]
 pub struct MemoryMeasurement {
-    pub timestamp: Instant,
     pub rss_bytes: usize,
 }
 
@@ -248,7 +157,6 @@ impl MemoryMonitor {
                 // TODO: T232 - Implement actual memory measurement
                 // For now, use a placeholder
                 let measurement = MemoryMeasurement {
-                    timestamp: Instant::now(),
                     rss_bytes: get_process_memory(),
                 };
 
@@ -360,44 +268,26 @@ fn get_process_memory() -> usize {
 
     #[cfg(target_os = "macos")]
     {
-        // macOS implementation using task_info
+        // macOS implementation using task_info via libc
+        use libc::{
+            kern_return_t, mach_msg_type_number_t, mach_task_basic_info_data_t, mach_task_self,
+            task_info, KERN_SUCCESS, MACH_TASK_BASIC_INFO,
+        };
         use std::mem;
 
-        #[repr(C)]
-        struct mach_task_basic_info {
-            virtual_size: u64,
-            resident_size: u64,
-            resident_size_max: u64,
-            user_time: [u32; 2],
-            system_time: [u32; 2],
-            policy: i32,
-            suspend_count: i32,
-        }
-
-        extern "C" {
-            fn mach_task_self() -> u32;
-            fn task_info(
-                task: u32,
-                flavor: i32,
-                task_info: *mut mach_task_basic_info,
-                task_info_count: *mut u32,
-            ) -> i32;
-        }
-
-        const MACH_TASK_BASIC_INFO: i32 = 20;
-
         unsafe {
-            let mut info: mach_task_basic_info = mem::zeroed();
-            let mut count = (mem::size_of::<mach_task_basic_info>() / mem::size_of::<u32>()) as u32;
+            let mut info: mach_task_basic_info_data_t = mem::zeroed();
+            let mut count: mach_msg_type_number_t =
+                (mem::size_of::<mach_task_basic_info_data_t>() / mem::size_of::<i32>()) as _;
 
-            let result = task_info(
+            let result: kern_return_t = task_info(
                 mach_task_self(),
                 MACH_TASK_BASIC_INFO,
-                &mut info,
+                (&mut info as *mut mach_task_basic_info_data_t).cast(),
                 &mut count,
             );
 
-            if result == 0 {
+            if result == KERN_SUCCESS {
                 info.resident_size as usize
             } else {
                 0
@@ -432,7 +322,6 @@ struct CpuTimes {
 /// Single CPU measurement
 #[derive(Debug, Clone)]
 pub struct CpuMeasurement {
-    pub timestamp: Instant,
     pub cpu_percent: f64,
 }
 
@@ -483,10 +372,7 @@ impl CpuMonitor {
                     }
                 };
 
-                let measurement = CpuMeasurement {
-                    timestamp: Instant::now(),
-                    cpu_percent,
-                };
+                let measurement = CpuMeasurement { cpu_percent };
 
                 measurements.lock().await.push(measurement);
                 tokio::time::sleep(interval).await;
@@ -506,16 +392,6 @@ impl CpuMonitor {
 
         let measurements = self.measurements.lock().await;
         measurements.clone()
-    }
-
-    /// Get maximum CPU usage from all measurements
-    pub async fn max_cpu_percent(&self) -> Option<f64> {
-        let measurements = self.measurements.lock().await;
-
-        measurements
-            .iter()
-            .map(|m| m.cpu_percent)
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
     }
 }
 

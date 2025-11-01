@@ -47,8 +47,9 @@
 //! ```
 
 use crate::{
+    models::{JobId, LiveQueryId, TableId, UserName},
     AuthType, JobStatus, JobType, NamespaceId, Role, StorageId, StorageMode, TableAccess,
-    TableName, TableType, UserId, models::{JobId, LiveQueryId, TableId, UserName},
+    TableName, TableType, UserId,
 };
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
@@ -267,6 +268,21 @@ impl Job {
         self.trace = Some(trace);
         self
     }
+}
+
+/// Audit log entry for administrative actions.
+///
+/// Captures who performed an action, what they targeted, and contextual metadata.
+#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
+pub struct AuditLogEntry {
+    pub audit_id: crate::models::AuditLogId,
+    pub timestamp: i64,
+    pub actor_user_id: UserId,
+    pub actor_username: UserName,
+    pub action: String,
+    pub target: String,
+    pub details: Option<String>,    // JSON blob for additional context
+    pub ip_address: Option<String>, // Connection source (if available)
 }
 
 /// Namespace entity for system.namespaces table.
@@ -636,7 +652,7 @@ mod tests {
     fn test_user_serialization() {
         let user = User {
             id: UserId::new("u_123"),
-            username: "alice".to_string(),
+            username: "alice".into(),
             password_hash: "$2b$12$hash".to_string(),
             role: Role::User,
             email: Some("test@example.com".to_string()),
@@ -660,7 +676,7 @@ mod tests {
     #[test]
     fn test_job_serialization() {
         let job = Job {
-            job_id: "job_123".to_string(),
+            job_id: "job_123".into(),
             job_type: JobType::Flush,
             namespace_id: NamespaceId::new("default"),
             table_name: Some(TableName::new("events")),
@@ -704,7 +720,7 @@ mod tests {
     #[test]
     fn test_system_table_serialization() {
         let table = SystemTable {
-            table_id: "tbl_123".to_string(),
+            table_id: TableId::from_strings("default", "events"),
             table_name: TableName::new("events"),
             namespace: NamespaceId::new("default"),
             table_type: TableType::User,
@@ -729,7 +745,7 @@ mod tests {
     #[test]
     fn test_live_query_serialization() {
         let live_query = LiveQuery {
-            live_id: "u_123-conn_456-events-q_789".to_string(),
+            live_id: "u_123-conn_456-events-q_789".into(),
             connection_id: "conn_456".to_string(),
             namespace_id: NamespaceId::new("default"),
             table_name: TableName::new("events"),
@@ -757,7 +773,7 @@ mod tests {
             table_schema: NamespaceId::new("default"),
             table_name: TableName::new("events"),
             table_type: "BASE TABLE".to_string(),
-            table_id: "tbl_123".to_string(),
+            table_id: TableId::from_strings("default", "events"),
             created_at: 1730000000000,
             updated_at: 1730000000000,
             schema_version: 1,
@@ -796,7 +812,7 @@ mod tests {
     #[test]
     fn test_job_builder_pattern() {
         let job = Job::new(
-            "job_123".to_string(),
+            JobId::new("job_123"),
             JobType::Flush,
             NamespaceId::new("default"),
             "server-01".to_string(),
@@ -804,7 +820,7 @@ mod tests {
         .with_table_name(TableName::new("events"))
         .with_parameters(r#"["param1", "param2"]"#.to_string());
 
-        assert_eq!(job.job_id, "job_123");
+        assert_eq!(job.job_id, JobId::new("job_123"));
         assert_eq!(job.table_name, Some(TableName::new("events")));
         assert_eq!(job.status, JobStatus::Running);
     }
@@ -812,7 +828,7 @@ mod tests {
     #[test]
     fn test_job_state_transitions() {
         let job = Job::new(
-            "job_123".to_string(),
+            JobId::new("job_123"),
             JobType::Flush,
             NamespaceId::new("default"),
             "server-01".to_string(),

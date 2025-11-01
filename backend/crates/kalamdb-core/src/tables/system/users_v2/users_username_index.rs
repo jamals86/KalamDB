@@ -6,10 +6,10 @@
 use crate::error::KalamDbError;
 use crate::stores::SystemTableStore;
 use kalamdb_commons::models::UserName;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::User;
 use kalamdb_commons::UserId;
 use kalamdb_store::EntityStoreV2;
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
 /// Secondary index for username -> user_id lookups
@@ -30,16 +30,15 @@ pub fn new_username_index(backend: Arc<dyn StorageBackend>) -> UsernameIndex {
 pub trait UsernameIndexExt {
     /// Index a user (add username -> user_id mapping)
     fn index_user(&self, user: &User) -> Result<(), KalamDbError>;
-    
+
     /// Remove a user from the index
     fn remove_user(&self, username: &str) -> Result<(), KalamDbError>;
-    
+
     /// Lookup a user by username
     fn lookup(&self, username: &str) -> Result<Option<UserId>, KalamDbError>;
 }
 
 impl UsernameIndexExt for UsernameIndex {
-
     /// Index a user (add username -> user_id mapping)
     ///
     /// # Arguments
@@ -48,7 +47,7 @@ impl UsernameIndexExt for UsernameIndex {
     /// # Returns
     /// Result indicating success or failure
     fn index_user(&self, user: &User) -> Result<(), KalamDbError> {
-        let username = UserName::new(&user.username);
+        let username = user.username.to_lowercase();
         self.put(&username, &user.id)?;
         Ok(())
     }
@@ -61,7 +60,7 @@ impl UsernameIndexExt for UsernameIndex {
     /// # Returns
     /// Result indicating success or failure
     fn remove_user(&self, username: &str) -> Result<(), KalamDbError> {
-        let username = UserName::new(username);
+        let username = UserName::new(username).to_lowercase();
         self.delete(&username)?;
         Ok(())
     }
@@ -74,7 +73,7 @@ impl UsernameIndexExt for UsernameIndex {
     /// # Returns
     /// Option<UserId> if found, None otherwise
     fn lookup(&self, username: &str) -> Result<Option<UserId>, KalamDbError> {
-        let username = UserName::new(username);
+        let username = UserName::new(username).to_lowercase();
         Ok(self.get(&username)?)
     }
 }
@@ -82,8 +81,8 @@ impl UsernameIndexExt for UsernameIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{AuthType, Role, StorageMode, StorageId};
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_commons::{AuthType, Role, StorageId, StorageMode};
+    use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_index() -> UsernameIndex {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -93,7 +92,7 @@ mod tests {
     fn create_test_user(id: &str, username: &str) -> User {
         User {
             id: UserId::new(id),
-            username: username.to_string(),
+            username: UserName::new(username),
             password_hash: "hashed_password".to_string(),
             role: Role::User,
             email: Some(format!("{}@example.com", username)),

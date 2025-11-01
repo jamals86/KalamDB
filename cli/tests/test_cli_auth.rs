@@ -8,25 +8,11 @@
 //! - Multiple database instance management
 //! - Credential rotation and updates
 
-use kalam_cli::{FileCredentialStore, Result};
-use kalam_link::credentials::{CredentialStore, Credentials};
+mod common;
+use common::*;
+
+
 use std::fs;
-use std::path::PathBuf;
-use tempfile::TempDir;
-
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
-/// Helper to create a temporary credential store
-fn create_temp_store() -> (FileCredentialStore, TempDir) {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let creds_path = temp_dir.path().join("credentials.toml");
-
-    let store =
-        FileCredentialStore::with_path(creds_path).expect("Failed to create credential store");
-
-    (store, temp_dir)
-}
 
 #[test]
 fn test_cli_credentials_stored_securely() {

@@ -6,7 +6,7 @@
 mod common;
 
 use common::{fixtures, TestServer};
-use kalamdb_commons::{AuthType, Role, StorageMode, UserId};
+use kalamdb_commons::models::{AuthType, Role, StorageMode, UserId, UserName};
 
 async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId {
     // Note: Users provider treats user_id as username key; keep them equal
@@ -14,7 +14,7 @@ async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId 
     let now = chrono::Utc::now().timestamp_millis();
     let user = kalamdb_commons::system::User {
         id: user_id.clone(),
-        username: username.to_string(),
+        username: UserName::new(username),
         password_hash: "".to_string(),
         role,
         email: Some(format!("{}@test.local", username)),
@@ -218,4 +218,3 @@ async fn test_system_role_all_access_smoke() {
         .await;
     assert_eq!(resp.status, "success");
 }
-

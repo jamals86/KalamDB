@@ -9,7 +9,7 @@
 //! **REFACTORED**: Now uses kalamdb-sql crate for RocksDB persistence instead of JSON config files
 
 use crate::error::KalamDbError;
-use kalamdb_commons::models::{NamespaceId, UserId};
+use kalamdb_commons::models::NamespaceId;
 use kalamdb_commons::system::Namespace;
 use kalamdb_sql::KalamSql;
 use serde_json::Value as JsonValue;
@@ -236,7 +236,7 @@ impl NamespaceService {
 mod tests {
     use super::*;
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{kalamdb_commons::storage::StorageBackend, RocksDBBackend};
+    use kalamdb_store::{RocksDBBackend, StorageBackend};
 
     fn setup_test_service() -> NamespaceService {
         let test_db = TestDb::new(&["system_namespaces"]).unwrap();

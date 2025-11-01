@@ -137,7 +137,7 @@ impl AutoCompleter {
         .map(|s| s.to_string())
         .collect::<Vec<String>>();
 
-        let types = vec![
+        let types = [
             "INTEGER",
             "BIGINT",
             "TEXT",

@@ -21,10 +21,14 @@ pub struct ServerConfig {
     pub stream: StreamSettings,
     #[serde(default)]
     pub rate_limit: RateLimitSettings,
-    #[serde(default)]
+    #[serde(default, alias = "authentication")]
     pub auth: AuthSettings,
     #[serde(default)]
     pub oauth: OAuthSettings,
+    #[serde(default)]
+    pub user_management: UserManagementSettings,
+    #[serde(default)]
+    pub shutdown: ShutdownSettings,
 }
 
 /// Server settings
@@ -37,9 +41,6 @@ pub struct ServerSettings {
     /// API version prefix for endpoints (default: "v1")
     #[serde(default = "default_api_version")]
     pub api_version: String,
-    /// Timeout in seconds to wait for flush jobs to complete during graceful shutdown (T158j)
-    #[serde(default = "default_flush_job_shutdown_timeout")]
-    pub flush_job_shutdown_timeout_seconds: u32,
 }
 
 /// Storage settings
@@ -179,6 +180,33 @@ pub struct StreamSettings {
     pub eviction_interval_seconds: u64,
 }
 
+/// User management cleanup settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserManagementSettings {
+    /// Grace period (in days) before soft-deleted users are purged
+    #[serde(default = "default_user_deletion_grace_period")]
+    pub deletion_grace_period_days: i64,
+
+    /// Cron expression for scheduling the cleanup job
+    #[serde(default = "default_cleanup_job_schedule")]
+    pub cleanup_job_schedule: String,
+}
+
+/// Shutdown settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShutdownSettings {
+    /// Flush job timeout settings
+    pub flush: ShutdownFlushSettings,
+}
+
+/// Flush job shutdown timeout settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShutdownFlushSettings {
+    /// Timeout in seconds to wait for flush jobs to complete during graceful shutdown
+    #[serde(default = "default_flush_job_shutdown_timeout")]
+    pub timeout: u32,
+}
+
 /// Rate limiter settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RateLimitSettings {
@@ -223,6 +251,10 @@ pub struct AuthSettings {
     /// Bcrypt cost factor (default: 12, range: 4-31)
     #[serde(default = "default_auth_bcrypt_cost")]
     pub bcrypt_cost: u32,
+
+    /// Enforce password complexity policy (uppercase, lowercase, digit, special)
+    #[serde(default = "default_auth_enforce_password_complexity")]
+    pub enforce_password_complexity: bool,
 }
 
 /// OAuth settings (Phase 10, User Story 8)
@@ -327,6 +359,7 @@ impl Default for AuthSettings {
             min_password_length: default_auth_min_password_length(),
             max_password_length: default_auth_max_password_length(),
             bcrypt_cost: default_auth_bcrypt_cost(),
+            enforce_password_complexity: default_auth_enforce_password_complexity(),
         }
     }
 }
@@ -375,6 +408,31 @@ impl Default for RateLimitSettings {
             max_queries_per_sec: default_rate_limit_queries_per_sec(),
             max_messages_per_sec: default_rate_limit_messages_per_sec(),
             max_subscriptions_per_user: default_rate_limit_max_subscriptions(),
+        }
+    }
+}
+
+impl Default for UserManagementSettings {
+    fn default() -> Self {
+        Self {
+            deletion_grace_period_days: default_user_deletion_grace_period(),
+            cleanup_job_schedule: default_cleanup_job_schedule(),
+        }
+    }
+}
+
+impl Default for ShutdownSettings {
+    fn default() -> Self {
+        Self {
+            flush: ShutdownFlushSettings::default(),
+        }
+    }
+}
+
+impl Default for ShutdownFlushSettings {
+    fn default() -> Self {
+        Self {
+            timeout: default_flush_job_shutdown_timeout(),
         }
     }
 }
@@ -480,6 +538,14 @@ fn default_stream_eviction_interval() -> u64 {
     60 // 60 seconds = 1 minute
 }
 
+fn default_user_deletion_grace_period() -> i64 {
+    30 // 30 days
+}
+
+fn default_cleanup_job_schedule() -> String {
+    "0 2 * * *".to_string()
+}
+
 // Rate limiter defaults
 fn default_rate_limit_queries_per_sec() -> u32 {
     100 // 100 queries per second per user
@@ -516,6 +582,10 @@ fn default_auth_max_password_length() -> usize {
 
 fn default_auth_bcrypt_cost() -> u32 {
     12 // Bcrypt cost factor 12 (good balance of security and performance)
+}
+
+fn default_auth_enforce_password_complexity() -> bool {
+    false
 }
 
 // OAuth defaults (Phase 10, User Story 8)
@@ -692,6 +762,16 @@ impl ServerConfig {
             ));
         }
 
+        if self.user_management.deletion_grace_period_days < 0 {
+            return Err(anyhow::anyhow!(
+                "deletion_grace_period_days cannot be negative"
+            ));
+        }
+
+        if self.user_management.cleanup_job_schedule.trim().is_empty() {
+            return Err(anyhow::anyhow!("cleanup_job_schedule cannot be empty"));
+        }
+
         Ok(())
     }
 
@@ -703,7 +783,6 @@ impl ServerConfig {
                 port: 8080,
                 workers: 0,
                 api_version: default_api_version(),
-                flush_job_shutdown_timeout_seconds: default_flush_job_shutdown_timeout(),
             },
             storage: StorageSettings {
                 rocksdb_path: "./data/rocksdb".to_string(),
@@ -735,6 +814,8 @@ impl ServerConfig {
             rate_limit: RateLimitSettings::default(),
             auth: AuthSettings::default(),
             oauth: OAuthSettings::default(),
+            user_management: UserManagementSettings::default(),
+            shutdown: ShutdownSettings::default(),
         }
     }
 }

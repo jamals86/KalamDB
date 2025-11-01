@@ -4,16 +4,16 @@
 //! in `main.rs`: bootstrapping databases and services, wiring the HTTP
 //! server, and coordinating graceful shutdown.
 
-use crate::config::ServerConfig;
 use crate::middleware;
 use crate::routes;
+use crate::ServerConfig;
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
 use datafusion::catalog::memory::MemorySchemaProvider;
 use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
-use kalamdb_store::StorageBackend;
+use kalamdb_core::jobs::JobManager;
 use kalamdb_core::live_query::{LiveQueryManager, NodeId};
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
@@ -22,16 +22,19 @@ use kalamdb_core::services::{
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::storage::StorageRegistry;
-use kalamdb_core::stores::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_core::{
-    jobs::{JobExecutor, StreamEvictionJob, StreamEvictionScheduler, TokioJobManager},
+    jobs::{
+        JobCleanupTask, JobExecutor, JobResult, StreamEvictionJob, StreamEvictionScheduler,
+        TokioJobManager, UserCleanupConfig, UserCleanupJob,
+    },
     scheduler::FlushScheduler,
 };
 use kalamdb_sql::KalamSql;
 use kalamdb_sql::RocksDbAdapter;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
-use log::info;
+use log::debug;
+use log::{info, warn};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -60,7 +63,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
 
     // Initialize RocksDB backend for all components (single StorageBackend trait)
     let backend = Arc::new(RocksDBBackend::new(db.clone()));
-    
+
     // Initialize KalamSQL for system table access
     let kalam_sql = Arc::new(KalamSql::new(backend.clone())?);
     info!("KalamSQL initialized");
@@ -135,10 +138,9 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         .register_schema("system", system_schema.clone())
         .expect("Failed to register system schema");
 
-    // Register all system tables using centralized function
+    // Register all system tables using centralized function (EntityStore-based v2 providers)
     let jobs_provider = kalamdb_core::system_table_registration::register_system_tables(
         &system_schema,
-        kalam_sql.clone(),
         backend.clone(),
     )
     .expect("Failed to register system tables");
@@ -183,6 +185,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
             stream_table_store.clone(),
             kalam_sql.clone(),
         )
+        .with_password_complexity(config.auth.enforce_password_complexity)
         .with_storage_backend(backend.clone()),
     );
 
@@ -231,7 +234,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     let stream_eviction_job = Arc::new(StreamEvictionJob::with_defaults(
         stream_table_store.clone(),
         kalam_sql.clone(),
-        job_executor,
+        job_executor.clone(),
     ));
 
     let eviction_interval = Duration::from_secs(config.stream.eviction_interval_seconds);
@@ -242,6 +245,70 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     info!(
         "Stream eviction scheduler initialized (interval: {} seconds)",
         config.stream.eviction_interval_seconds
+    );
+
+    // User cleanup job (scheduled background task)
+    let user_cleanup_job = Arc::new(UserCleanupJob::new(
+        kalam_sql.clone(),
+        user_table_store.clone(),
+        UserCleanupConfig {
+            grace_period_days: config.user_management.deletion_grace_period_days,
+        },
+    ));
+
+    let cleanup_interval =
+        JobCleanupTask::parse_cron_schedule(&config.user_management.cleanup_job_schedule);
+    let cleanup_job_manager = job_manager.clone();
+    let cleanup_job_executor = job_executor.clone();
+    let scheduled_cleanup_job = Arc::clone(&user_cleanup_job);
+
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(cleanup_interval);
+
+        loop {
+            ticker.tick().await;
+
+            let job_id = format!("user-cleanup-{}", chrono::Utc::now().timestamp_millis());
+            let job_id_clone = job_id.clone();
+            let job_executor = Arc::clone(&cleanup_job_executor);
+            let job_instance = Arc::clone(&scheduled_cleanup_job);
+            let grace_period = job_instance.config().grace_period_days;
+
+            let job_future = Box::pin(async move {
+                let executor_job_id = job_id;
+                let cleanup_job = Arc::clone(&job_instance);
+                let result = job_executor.execute_job(
+                    executor_job_id,
+                    "user_cleanup".to_string(),
+                    None,
+                    vec![format!("grace_period_days={}", grace_period)],
+                    move || {
+                        cleanup_job
+                            .enforce()
+                            .map(|count| format!("Deleted {} expired users", count))
+                            .map_err(|err| err.to_string())
+                    },
+                );
+
+                match result {
+                    Ok(JobResult::Success(msg)) => Ok(msg),
+                    Ok(JobResult::Failure(msg)) => Err(msg),
+                    Err(err) => Err(err.to_string()),
+                }
+            });
+
+            if let Err(e) = cleanup_job_manager
+                .start_job(job_id_clone, "user_cleanup".to_string(), job_future)
+                .await
+            {
+                log::error!("Failed to start user cleanup job: {}", e);
+            }
+        }
+    });
+    info!(
+        "User cleanup job scheduled (grace period: {} days, schedule: {})",
+        config.user_management.deletion_grace_period_days,
+        config.user_management.cleanup_job_schedule
     );
 
     // Resume crash recovery jobs
@@ -271,6 +338,9 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     // T125-T127: Create default system user on first startup
     create_default_system_user(kalam_sql.clone()).await?;
 
+    // Security warning: Check if remote access is enabled with empty root password
+    check_remote_access_security(&config, kalam_sql.clone()).await?;
+
     Ok(ApplicationComponents {
         session_factory,
         sql_executor,
@@ -291,7 +361,7 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
 
     let flush_scheduler_shutdown = components.flush_scheduler.clone();
     let stream_eviction_scheduler_shutdown = components.stream_eviction_scheduler.clone();
-    let shutdown_timeout_secs = config.server.flush_job_shutdown_timeout_seconds;
+    let shutdown_timeout_secs = config.shutdown.flush.timeout;
 
     let session_factory = components.session_factory.clone();
     let sql_executor = components.sql_executor.clone();
@@ -377,7 +447,6 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
 async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
     use kalamdb_commons::constants::AuthConstants;
     use kalamdb_commons::system::User;
-    use rand::Rng;
 
     // Check if root user already exists
     let existing_user = kalam_sql.get_user(AuthConstants::DEFAULT_SYSTEM_USERNAME);
@@ -385,7 +454,7 @@ async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
     match existing_user {
         Ok(Some(_)) => {
             // User already exists, skip creation
-            info!(
+            debug!(
                 "System user '{}' already exists, skipping initialization",
                 AuthConstants::DEFAULT_SYSTEM_USERNAME
             );
@@ -399,13 +468,14 @@ async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
             let role = Role::System; // Highest privilege level
             let created_at = chrono::Utc::now().timestamp_millis();
 
-            // T126: Generate random password for emergency remote access
-            let password = generate_random_password(24);
-            let password_hash = bcrypt::hash(&password, bcrypt::DEFAULT_COST)?;
+            // T126: Create with EMPTY password hash for localhost-only access
+            // This allows passwordless authentication from localhost (127.0.0.1, ::1)
+            // For remote access, set a password using: ALTER USER root SET PASSWORD '...'
+            let password_hash = String::new(); // Empty = localhost-only, no password required
 
             let user = User {
                 id: user_id,
-                username: username.clone(),
+                username: username.clone().into(),
                 password_hash,
                 role,
                 email: Some(email),
@@ -421,61 +491,60 @@ async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
 
             kalam_sql.insert_user(&user)?;
 
-            // T127: Log system user credentials to stdout
-            log_system_user_credentials(&username, &password);
+            // T127: Log system user information to stdout
+            info!(
+                "✓ Created system user '{}' (localhost-only access, no password required)",
+                username
+            );
+            info!("  To enable remote access, set a password: ALTER USER root SET PASSWORD '...'",);
 
             Ok(())
         }
     }
 }
 
-/// Generate a random password for system user
+/// Check for security issues with remote access configuration
 ///
-/// Creates a cryptographically secure random password with:
-/// - Uppercase letters
-/// - Lowercase letters  
-/// - Numbers
-/// - Special characters
-fn generate_random_password(length: usize) -> String {
-    use rand::Rng;
+/// Informs users about password requirements for remote access
+async fn check_remote_access_security(
+    config: &ServerConfig,
+    kalam_sql: Arc<KalamSql>,
+) -> Result<()> {
+    use kalamdb_commons::constants::AuthConstants;
 
-    const CHARSET: &[u8] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
-    let mut rng = rand::thread_rng();
+    // Check if root user exists and has empty password
+    // Always show this info if root has no password, regardless of allow_remote_access setting
+    if let Ok(Some(user)) = kalam_sql.get_user(AuthConstants::DEFAULT_SYSTEM_USERNAME) {
+        if user.password_hash.is_empty() {
+            // Root user has no password - this is secure for localhost-only but warn about limitations
+            warn!("╔═══════════════════════════════════════════════════════════════════╗");
+            warn!("║                    ⚠️  SECURITY NOTICE ⚠️                           ║");
+            warn!("╠═══════════════════════════════════════════════════════════════════╣");
+            warn!("║                                                                   ║");
+            warn!("║  Root user has NO PASSWORD (localhost-only access enabled)       ║");
+            warn!("║                                                                   ║");
+            warn!("║  SECURITY ENFORCEMENT:                                           ║");
+            warn!("║  • Remote authentication is BLOCKED for users with no password   ║");
+            warn!("║  • Root can only connect from localhost (127.0.0.1)              ║");
+            warn!("║  • This configuration is secure by design                        ║");
+            warn!("║                                                                   ║");
+            warn!("║  TO ENABLE REMOTE ACCESS:                                        ║");
+            warn!("║  Set a strong password for the root user:                        ║");
+            warn!("║     ALTER USER root SET PASSWORD 'strong-password-here';         ║");
+            warn!("║                                                                   ║");
+            warn!(
+                "║  Note: allow_remote_access config is currently: {}               ║",
+                if config.auth.allow_remote_access {
+                    "ENABLED "
+                } else {
+                    "DISABLED"
+                }
+            );
+            warn!("║  (Remote access still requires password for system users)        ║");
+            warn!("║                                                                   ║");
+            warn!("╚═══════════════════════════════════════════════════════════════════╝");
+        }
+    }
 
-    (0..length)
-        .map(|_| {
-            let idx = rng.gen_range(0..CHARSET.len());
-            CHARSET[idx] as char
-        })
-        .collect()
-}
-
-/// T127: Log system user credentials to stdout on first initialization
-///
-/// Displays credentials in a clear, formatted box for the administrator to save.
-/// Includes security warnings about saving credentials securely.
-fn log_system_user_credentials(username: &str, password: &str) {
-    println!("\n");
-    println!("╔═══════════════════════════════════════════════════════════════════╗");
-    println!("║                  KALAMDB SYSTEM USER CREATED                      ║");
-    println!("╠═══════════════════════════════════════════════════════════════════╣");
-    println!("║                                                                   ║");
-    println!("║  Username: {:<54} ║", username);
-    println!("║  Password: {:<54} ║", password);
-    println!("║                                                                   ║");
-    println!("║  ⚠️  IMPORTANT: Save these credentials securely!                   ║");
-    println!("║                                                                   ║");
-    println!("║  Default Access: Localhost only (127.0.0.1, ::1)                   ║");
-    println!("║  Remote Access:  Disabled by default for security                 ║");
-    println!("║                                                                   ║");
-    println!("║  To enable remote access:                                        ║");
-    println!("║  1. Set allow_remote_access=true in config.toml [auth] section    ║");
-    println!("║  2. OR add {{\"allow_remote\": true}} to user metadata via SQL        ║");
-    println!("║                                                                   ║");
-    println!("║  This password is for emergency remote access only.              ║");
-    println!("║  For localhost connections, password is optional.                ║");
-    println!("║                                                                   ║");
-    println!("╚═══════════════════════════════════════════════════════════════════╝");
-    println!("\n");
+    Ok(())
 }

@@ -14,7 +14,7 @@ pub struct TablesTableSchema;
 
 impl TablesTableSchema {
     /// Get the cached schema for the system.tables table
-    /// 
+    ///
     /// Uses OnceLock to ensure the schema is created exactly once and reused
     /// across all providers without synchronization overhead.
     pub fn schema() -> SchemaRef {
@@ -44,17 +44,17 @@ impl TablesTableSchema {
 
     /// Get the table name
     pub fn table_name() -> &'static str {
-        "tables"
+        kalamdb_commons::SystemTable::Tables.table_name()
     }
 
     /// Get the column family name in RocksDB
     pub fn column_family_name() -> &'static str {
-        "system_tables"
+        kalamdb_commons::SystemTable::Tables.column_family_name()
     }
 
     /// Get the partition key for storage
     pub fn partition() -> &'static str {
-        "system_tables"
+        kalamdb_commons::SystemTable::Tables.column_family_name()
     }
 }
 

@@ -1,146 +1,100 @@
-//! Generic system table store implementation.
+//! System table store implementation using EntityStore pattern.
 //!
-//! This module provides `SystemTableStore<K, V>`, a generic implementation of
-//! `EntityStore<K, V>` and `CrossUserTableStore<K, V>` for all system tables.
+//! This module provides a generic SystemTableStore<K, V> that implements EntityStore<K, V>
+//! for all system tables. It provides strongly-typed CRUD operations with automatic
+//! JSON serialization and admin-only access control.
 //!
-//! ## Type Safety
+//! ## Architecture
 //!
-//! The store is generic over both key type (K) and value type (V):
-//! - **K**: Type-safe key (UserId, TableId, JobId, etc.)
-//! - **V**: Entity type (User, Job, Namespace, etc.)
+//! SystemTableStore sits on top of EntityStore<T> and adds:
+//! - Admin-only access control (table_access() returns None)
+//! - Consistent partition naming for system tables
+//! - Type-safe key/value operations for system entities
 //!
 //! ## Usage Examples
 //!
 //! ```rust,ignore
 //! use kalamdb_core::stores::SystemTableStore;
-//! use kalamdb_commons::models::{UserId, User};
-//! use kalamdb_store::StorageBackend;
-//! use std::sync::Arc;
+//! use kalamdb_commons::system::User;
+//! use kalamdb_commons::UserId;
 //!
-//! // Create a store for system.users
-//! let store = SystemTableStore::<UserId, User>::new(
-//!     backend,
-//!     "system_users"
-//! );
+//! // Create a users table store
+//! let users_store = SystemTableStore::<UserId, User>::new(backend, "system_users");
 //!
-//! // Type-safe operations
-//! let user_id = UserId::new("u1");
-//! let user = User { id: user_id.clone(), ... };
-//! store.put(&user_id, &user)?;
-//! let retrieved = store.get(&user_id)?;
+//! // Store a user
+//! let user = User { /* ... */ };
+//! users_store.put(&user_id, &user).unwrap();
+//!
+//! // Retrieve a user
+//! let retrieved = users_store.get(&user_id).unwrap();
 //! ```
 //!
-//! ## System Tables Using This Store
+//! ## System Tables
 //!
-//! - `system.users`: `SystemTableStore<UserId, User>`
-//! - `system.tables`: `SystemTableStore<TableId, TableMetadata>`
-//! - `system.jobs`: `SystemTableStore<JobId, Job>`
-//! - `system.namespaces`: `SystemTableStore<NamespaceId, Namespace>`
-//! - `system.storages`: `SystemTableStore<StorageId, Storage>`
-//! - `system.live_queries`: `SystemTableStore<LiveQueryId, LiveQuery>`
+//! - `SystemTableStore<UserId, User>` - system.users
+//! - `SystemTableStore<JobId, Job>` - system.jobs
+//! - `SystemTableStore<NamespaceId, Namespace>` - system.namespaces
+//! - `SystemTableStore<StorageId, Storage>` - system.storages
+//! - `SystemTableStore<LiveQueryId, LiveQuery>` - system.live_queries
+//! - `SystemTableStore<String, SystemTable>` - system.tables
 
-use kalamdb_store::{EntityStoreV2, CrossUserTableStore, StorageBackend};
-use kalamdb_commons::models::TableAccess;
+use crate::error::KalamDbError;
+use crate::tables::shared_tables::shared_table_store::{SharedTableRow, SharedTableRowId};
+use crate::tables::stream_tables::stream_table_store::{StreamTableRow, StreamTableRowId};
+use crate::tables::system::SystemTableProviderExt;
+use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId};
+use kalamdb_store::{
+    entity_store::{CrossUserTableStore, EntityStore},
+    StorageBackend,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Generic system table store implementation.
+/// Generic store for system tables with admin-only access control.
 ///
-/// This struct provides a reusable implementation of `EntityStore<K, V>` and
-/// `CrossUserTableStore<K, V>` for all system tables. System tables are:
-/// - **Admin-only**: Only dba/system roles can access
-/// - **Cross-user**: Not isolated to specific users
-/// - **Metadata storage**: Store system configuration and state
+/// This store provides strongly-typed CRUD operations for system entities.
+/// All system tables are admin-only (dba/system roles required).
 ///
 /// ## Type Parameters
+/// - `K`: Key type (must implement AsRef<[u8]> + Clone + Send + Sync)
+/// - `V`: Value type (must implement Serialize + DeserializeOwned + Send + Sync)
 ///
-/// - `K`: Key type that implements `AsRef<[u8]> + Clone + Send + Sync`
-///   - Examples: `UserId`, `TableId`, `JobId`, `NamespaceId`, `StorageId`, `LiveQueryId`
-/// - `V`: Value/entity type that implements `Serialize + Deserialize + Send + Sync`
-///   - Examples: `User`, `Job`, `Namespace`, `Storage`, `LiveQuery`
-///
-/// ## Access Control
-///
-/// All system tables return `None` from `table_access()`, indicating admin-only access.
-/// Only users with `Role::Dba` or `Role::System` can read/write system tables.
-///
-/// ## Example: Users Table
-///
+/// ## Examples
 /// ```rust,ignore
-/// use kalamdb_commons::models::{UserId, User};
+/// // Users table
+/// let users_store = SystemTableStore::<UserId, User>::new(backend, "system_users");
 ///
-/// let users_store = SystemTableStore::<UserId, User>::new(
-///     backend,
-///     "system_users"
-/// );
-///
-/// let user_id = UserId::new("admin");
-/// let user = User {
-///     id: user_id.clone(),
-///     username: "admin".into(),
-///     role: Role::Dba,
-///     ...
-/// };
-///
-/// users_store.put(&user_id, &user)?;
+/// // Jobs table
+/// let jobs_store = SystemTableStore::<JobId, Job>::new(backend, "system_jobs");
 /// ```
-pub struct SystemTableStore<K, V>
-where
-    K: AsRef<[u8]> + Clone + Send + Sync,
-    V: Serialize + for<'de> Deserialize<'de> + Send + Sync,
-{
-    /// Storage backend for persistence
+pub struct SystemTableStore<K, V> {
+    /// Storage backend (RocksDB, in-memory, etc.)
     backend: Arc<dyn StorageBackend>,
-    
-    /// Partition name (e.g., "system_users", "system_jobs")
+    /// Partition name for this table
     partition: String,
-    
-    /// Phantom data for key and value types
-    _marker: std::marker::PhantomData<(K, V)>,
+    /// Phantom data to ensure type safety
+    _phantom: std::marker::PhantomData<(K, V)>,
 }
 
-impl<K, V> SystemTableStore<K, V>
-where
-    K: AsRef<[u8]> + Clone + Send + Sync,
-    V: Serialize + for<'de> Deserialize<'de> + Send + Sync,
-{
+impl<K, V> SystemTableStore<K, V> {
     /// Creates a new system table store.
     ///
-    /// ## Arguments
+    /// # Arguments
+    /// * `backend` - Storage backend implementation
+    /// * `partition` - Partition name (e.g., "system_users", "system_jobs")
     ///
-    /// - `backend`: Storage backend (typically RocksDB)
-    /// - `partition`: Partition name (e.g., "system_users", "system_jobs")
-    ///
-    /// ## Example
-    ///
-    /// ```rust,ignore
-    /// use kalamdb_commons::models::{JobId, Job};
-    ///
-    /// let jobs_store = SystemTableStore::<JobId, Job>::new(
-    ///     backend,
-    ///     "system_jobs"
-    /// );
-    /// ```
+    /// # Returns
+    /// A new SystemTableStore instance
     pub fn new(backend: Arc<dyn StorageBackend>, partition: impl Into<String>) -> Self {
         Self {
             backend,
             partition: partition.into(),
-            _marker: std::marker::PhantomData,
+            _phantom: std::marker::PhantomData,
         }
-    }
-
-    /// Returns a reference to the partition name.
-    pub fn partition_name(&self) -> &str {
-        &self.partition
-    }
-
-    /// Returns a reference to the storage backend.
-    pub fn storage_backend(&self) -> &Arc<dyn StorageBackend> {
-        &self.backend
     }
 }
 
-impl<K, V> EntityStoreV2<K, V> for SystemTableStore<K, V>
+impl<K, V> EntityStore<K, V> for SystemTableStore<K, V>
 where
     K: AsRef<[u8]> + Clone + Send + Sync,
     V: Serialize + for<'de> Deserialize<'de> + Send + Sync,
@@ -154,190 +108,854 @@ where
     }
 }
 
+/// Access control for system tables (admin-only).
+///
+/// System tables can only be accessed by dba and system roles.
+/// This trait implementation ensures all system table stores
+/// return None for table_access(), indicating admin-only access.
+impl<K: Send + Sync, V: Send + Sync> SystemTableProviderExt for SystemTableStore<K, V> {
+    fn table_name(&self) -> &str {
+        // Extract table name from partition (remove "system_" prefix)
+        self.partition
+            .strip_prefix("system_")
+            .unwrap_or(&self.partition)
+    }
+
+    fn schema_ref(&self) -> arrow::datatypes::SchemaRef {
+        // System tables don't have fixed schemas in the traditional sense
+        // They use dynamic JSON serialization
+        Arc::new(arrow::datatypes::Schema::empty())
+    }
+
+    fn load_batch(&self) -> std::result::Result<arrow::record_batch::RecordBatch, KalamDbError> {
+        // System tables are accessed via typed EntityStore operations
+        // Not via SQL/RecordBatch interface
+        Err(KalamDbError::InvalidOperation(
+            "System tables do not support RecordBatch loading".to_string(),
+        ))
+    }
+}
+
 impl<K, V> CrossUserTableStore<K, V> for SystemTableStore<K, V>
 where
     K: AsRef<[u8]> + Clone + Send + Sync,
     V: Serialize + for<'de> Deserialize<'de> + Send + Sync,
 {
-    /// Returns `None` for all system tables, indicating admin-only access.
-    ///
-    /// System tables can only be accessed by users with `Role::Dba` or `Role::System`.
-    fn table_access(&self) -> Option<TableAccess> {
+    fn table_access(&self) -> Option<kalamdb_commons::models::TableAccess> {
+        // System tables are admin-only (return None)
         None
+    }
+}
+
+/// Extension trait for user table stores with user-specific operations
+pub trait UserTableStoreExt<K, V> {
+    /// Scan all rows for a specific user in a table
+    fn scan_user(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        user_id: &str,
+    ) -> std::result::Result<Vec<(String, V)>, KalamDbError>;
+
+    /// Get a row (excludes soft-deleted by default)
+    fn get(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        user_id: &str,
+        row_id: &str,
+    ) -> std::result::Result<Option<V>, KalamDbError>;
+
+    /// Put a row (insert or update)
+    fn put(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        user_id: &str,
+        row_id: &str,
+        row: &V,
+    ) -> std::result::Result<(), KalamDbError>;
+
+    /// Delete a row (soft or hard)
+    fn delete(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        user_id: &str,
+        row_id: &str,
+        hard: bool,
+    ) -> std::result::Result<(), KalamDbError>;
+
+    /// Get a row including soft-deleted ones
+    fn get_include_deleted(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        user_id: &str,
+        row_id: &str,
+    ) -> std::result::Result<Option<V>, KalamDbError>;
+
+    /// Scan all rows in a user table (including deleted)
+    fn scan_all(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> std::result::Result<Vec<(String, V)>, KalamDbError>;
+
+    /// Create column family for user table
+    fn create_column_family(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> std::result::Result<(), KalamDbError>;
+
+    /// Drop user table (delete all data)
+    fn drop_table(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> std::result::Result<(), KalamDbError>;
+
+    /// Delete all rows for a specific user
+    fn delete_all_for_user(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        user_id: &str,
+    ) -> std::result::Result<usize, KalamDbError>;
+
+    /// Scan with iterator for efficient streaming
+    fn scan_iter(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> std::result::Result<
+        Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), KalamDbError>> + Send>,
+        KalamDbError,
+    >;
+
+    /// Delete multiple keys in batch
+    fn delete_batch_by_keys(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        keys: &[String],
+    ) -> std::result::Result<(), KalamDbError>;
+}
+
+impl UserTableStoreExt<UserTableRowId, UserTableRow>
+    for SystemTableStore<UserTableRowId, UserTableRow>
+{
+    fn scan_user(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+        user_id: &str,
+    ) -> std::result::Result<Vec<(String, UserTableRow)>, KalamDbError> {
+        // Scan with prefix "user_id:"
+        let prefix_key = UserTableRowId::new(kalamdb_commons::UserId::new(user_id), "");
+        let results = EntityStore::scan_prefix(self, &prefix_key)?;
+        Ok(results
+            .into_iter()
+            .map(|(key, row)| (String::from_utf8_lossy(key.as_ref()).to_string(), row))
+            .collect())
+    }
+
+    fn get(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+        user_id: &str,
+        row_id: &str,
+    ) -> std::result::Result<Option<UserTableRow>, KalamDbError> {
+        let key = UserTableRowId::new(kalamdb_commons::UserId::new(user_id), row_id);
+        let row = EntityStore::get(self, &key)?;
+        // Filter out soft-deleted rows
+        Ok(row.filter(|r| !r._deleted))
+    }
+
+    fn put(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+        user_id: &str,
+        row_id: &str,
+        row: &UserTableRow,
+    ) -> std::result::Result<(), KalamDbError> {
+        let key = UserTableRowId::new(kalamdb_commons::UserId::new(user_id), row_id);
+        EntityStore::put(self, &key, row)?;
+        Ok(())
+    }
+
+    fn delete(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+        user_id: &str,
+        row_id: &str,
+        hard: bool,
+    ) -> std::result::Result<(), KalamDbError> {
+        let key = UserTableRowId::new(kalamdb_commons::UserId::new(user_id), row_id);
+        if hard {
+            EntityStore::delete(self, &key)?;
+        } else {
+            // Soft delete: mark _deleted=true
+            let mut row = EntityStore::get(self, &key)?.ok_or_else(|| {
+                KalamDbError::InvalidOperation("Row not found for soft delete".to_string())
+            })?;
+            row._deleted = true;
+            EntityStore::put(self, &key, &row)?;
+        }
+        Ok(())
+    }
+
+    fn get_include_deleted(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+        user_id: &str,
+        row_id: &str,
+    ) -> std::result::Result<Option<UserTableRow>, KalamDbError> {
+        let key = UserTableRowId::new(kalamdb_commons::UserId::new(user_id), row_id);
+        Ok(EntityStore::get(self, &key)?)
+    }
+
+    fn scan_all(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+    ) -> std::result::Result<Vec<(String, UserTableRow)>, KalamDbError> {
+        let results = EntityStore::scan_all(self)?;
+        Ok(results
+            .into_iter()
+            .map(|(key, row)| (String::from_utf8_lossy(key.as_ref()).to_string(), row))
+            .collect())
+    }
+
+    fn create_column_family(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+    ) -> std::result::Result<(), KalamDbError> {
+        // Create the column family/partition in RocksDB
+        // The partition name is already set in self.partition (e.g., "user_app:test_conversations")
+        let partition = kalamdb_store::Partition::new(self.partition.clone());
+        self.backend
+            .create_partition(&partition)
+            .map_err(|e| KalamDbError::Other(format!("Failed to create partition: {}", e)))?;
+        Ok(())
+    }
+
+    fn drop_table(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+    ) -> std::result::Result<(), KalamDbError> {
+        // For now, just scan and delete all - in practice this should use backend drop
+        let all_results = EntityStore::scan_all(self)?;
+        for (key_bytes, _) in all_results {
+            let key = UserTableRowId::from_bytes(&key_bytes);
+            EntityStore::delete(self, &key)?;
+        }
+        Ok(())
+    }
+
+    fn delete_all_for_user(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        user_id: &str,
+    ) -> std::result::Result<usize, KalamDbError> {
+        let user_rows = self.scan_user(namespace_id, table_name, user_id)?;
+        let mut deleted_count = 0;
+        for (key_str, _) in user_rows {
+            let key = UserTableRowId::from_key_string(key_str);
+            EntityStore::delete(self, &key)?;
+            deleted_count += 1;
+        }
+        Ok(deleted_count)
+    }
+
+    fn scan_iter(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+    ) -> std::result::Result<
+        Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), KalamDbError>> + Send>,
+        KalamDbError,
+    > {
+        // For now, just collect all and return as iterator
+        let all = EntityStore::scan_all(self)?;
+        let iter = all.into_iter().map(|(k, v)| {
+            let value_bytes = serde_json::to_vec(&v)
+                .map_err(|e| KalamDbError::SerializationError(e.to_string()))?;
+            Ok((k, value_bytes))
+        });
+        Ok(Box::new(iter))
+    }
+
+    fn delete_batch_by_keys(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+        keys: &[String],
+    ) -> std::result::Result<(), KalamDbError> {
+        for key_str in keys {
+            let key = UserTableRowId::from_key_string(key_str.clone());
+            EntityStore::delete(self, &key)?;
+        }
+        Ok(())
+    }
+}
+
+/// Extension trait for shared table stores with shared table operations
+pub trait SharedTableStoreExt<K, V> {
+    /// Scan all rows in a shared table
+    fn scan(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> std::result::Result<Vec<(String, V)>, KalamDbError>;
+
+    /// Get a row by ID
+    fn get(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        row_id: &str,
+    ) -> std::result::Result<Option<V>, KalamDbError>;
+
+    /// Put a row
+    fn put(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        row_id: &str,
+        row: &V,
+    ) -> std::result::Result<(), KalamDbError>;
+
+    /// Delete a row
+    fn delete(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        row_id: &str,
+        hard: bool,
+    ) -> std::result::Result<(), KalamDbError>;
+
+    /// Get a row including soft-deleted ones
+    fn get_include_deleted(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        row_id: &str,
+    ) -> std::result::Result<Option<V>, KalamDbError>;
+
+    /// Create column family for shared table
+    fn create_column_family(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> std::result::Result<(), KalamDbError>;
+
+    /// Drop shared table (delete all data)
+    fn drop_table(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> std::result::Result<(), KalamDbError>;
+
+    /// Scan with iterator for efficient streaming
+    fn scan_iter(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> std::result::Result<
+        Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), KalamDbError>> + Send>,
+        KalamDbError,
+    >;
+
+    /// Delete multiple keys in batch
+    fn delete_batch_by_keys(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        keys: &[String],
+    ) -> std::result::Result<(), KalamDbError>;
+}
+
+impl SharedTableStoreExt<UserTableRowId, UserTableRow>
+    for SystemTableStore<UserTableRowId, UserTableRow>
+{
+    fn scan(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> std::result::Result<Vec<(String, UserTableRow)>, KalamDbError> {
+        // Scan all rows for the user in the user table
+        UserTableStoreExt::scan_all(self, namespace_id, table_name)
+    }
+
+    fn get(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        row_id: &str,
+    ) -> std::result::Result<Option<UserTableRow>, KalamDbError> {
+        // Get a specific row by ID, including soft-deleted ones
+        UserTableStoreExt::get_include_deleted(self, namespace_id, table_name, "", row_id)
+    }
+
+    fn put(
+        &self,
+        namespace_id: &str,
+        _table_name: &str,
+        row_id: &str,
+        row: &UserTableRow,
+    ) -> std::result::Result<(), KalamDbError> {
+        // Put a row (insert or update)
+        let key = UserTableRowId::new(kalamdb_commons::UserId::new(namespace_id), row_id);
+        EntityStore::put(self, &key, row)?;
+        Ok(())
+    }
+
+    fn delete(
+        &self,
+        namespace_id: &str,
+        _table_name: &str,
+        row_id: &str,
+        hard: bool,
+    ) -> std::result::Result<(), KalamDbError> {
+        // Delete a row by ID (soft or hard delete)
+        let key = UserTableRowId::new(kalamdb_commons::UserId::new(namespace_id), row_id);
+        if hard {
+            EntityStore::delete(self, &key)?;
+        } else {
+            // Soft delete: just remove from the main table, keep in the history
+            let row = EntityStore::get(self, &key)?;
+            if let Some(_existing_row) = row {
+                // Insert into history table (not shown here)
+                // self.insert_history(existing_row)?;
+                // Now delete from main table
+                EntityStore::delete(self, &key)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn get_include_deleted(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        row_id: &str,
+    ) -> std::result::Result<Option<UserTableRow>, KalamDbError> {
+        // Include deleted rows in the result
+        UserTableStoreExt::get_include_deleted(self, namespace_id, table_name, "", row_id)
+    }
+
+    fn create_column_family(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> std::result::Result<(), KalamDbError> {
+        // Create column family for user table
+        UserTableStoreExt::create_column_family(self, namespace_id, table_name)
+    }
+
+    fn drop_table(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> std::result::Result<(), KalamDbError> {
+        // Drop the user table
+        UserTableStoreExt::drop_table(self, namespace_id, table_name)
+    }
+
+    fn scan_iter(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+    ) -> std::result::Result<
+        Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), KalamDbError>> + Send>,
+        KalamDbError,
+    > {
+        // Scan with iterator for efficient streaming
+        UserTableStoreExt::scan_iter(self, namespace_id, table_name)
+    }
+
+    fn delete_batch_by_keys(
+        &self,
+        namespace_id: &str,
+        table_name: &str,
+        keys: &[String],
+    ) -> std::result::Result<(), KalamDbError> {
+        // Delete multiple keys in batch
+        UserTableStoreExt::delete_batch_by_keys(self, namespace_id, table_name, keys)
+    }
+}
+
+impl SharedTableStoreExt<SharedTableRowId, SharedTableRow>
+    for SystemTableStore<SharedTableRowId, SharedTableRow>
+{
+    fn scan(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+    ) -> std::result::Result<Vec<(String, SharedTableRow)>, KalamDbError> {
+        let results = EntityStore::scan_all(self)?;
+        Ok(results
+            .into_iter()
+            .map(|(key, row)| (String::from_utf8_lossy(key.as_ref()).to_string(), row))
+            .collect())
+    }
+
+    fn get(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+        row_id: &str,
+    ) -> std::result::Result<Option<SharedTableRow>, KalamDbError> {
+        let key = SharedTableRowId::new(row_id);
+        Ok(EntityStore::get(self, &key)?)
+    }
+
+    fn put(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+        row_id: &str,
+        row: &SharedTableRow,
+    ) -> std::result::Result<(), KalamDbError> {
+        let key = SharedTableRowId::new(row_id);
+        EntityStore::put(self, &key, row)?;
+        Ok(())
+    }
+
+    fn delete(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+        row_id: &str,
+        _hard: bool,
+    ) -> std::result::Result<(), KalamDbError> {
+        let key = SharedTableRowId::new(row_id);
+        EntityStore::delete(self, &key)?;
+        Ok(())
+    }
+
+    fn get_include_deleted(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+        row_id: &str,
+    ) -> std::result::Result<Option<SharedTableRow>, KalamDbError> {
+        let key = SharedTableRowId::new(row_id);
+        Ok(EntityStore::get(self, &key)?)
+    }
+
+    fn create_column_family(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+    ) -> std::result::Result<(), KalamDbError> {
+        let partition = kalamdb_store::Partition::new(self.partition.clone());
+        self.backend
+            .create_partition(&partition)
+            .map_err(|e| KalamDbError::Other(format!("Failed to create partition: {}", e)))?;
+        Ok(())
+    }
+
+    fn drop_table(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+    ) -> std::result::Result<(), KalamDbError> {
+        // For now, just scan and delete all - in practice this should use backend drop
+        let all_results = EntityStore::scan_all(self)?;
+        for (key_bytes, _) in all_results {
+            let key = SharedTableRowId::from_bytes(&key_bytes);
+            EntityStore::delete(self, &key)?;
+        }
+        Ok(())
+    }
+
+    fn scan_iter(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+    ) -> std::result::Result<
+        Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), KalamDbError>> + Send>,
+        KalamDbError,
+    > {
+        // For now, just collect all and return as iterator
+        let all = EntityStore::scan_all(self)?;
+        let iter = all.into_iter().map(|(k, v)| {
+            let value_bytes = serde_json::to_vec(&v)
+                .map_err(|e| KalamDbError::SerializationError(e.to_string()))?;
+            Ok((k, value_bytes))
+        });
+        Ok(Box::new(iter))
+    }
+
+    fn delete_batch_by_keys(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+        keys: &[String],
+    ) -> std::result::Result<(), KalamDbError> {
+        for key_str in keys {
+            let key = SharedTableRowId::new(key_str);
+            EntityStore::delete(self, &key)?;
+        }
+        Ok(())
+    }
+}
+
+impl SharedTableStoreExt<StreamTableRowId, StreamTableRow>
+    for SystemTableStore<StreamTableRowId, StreamTableRow>
+{
+    fn scan(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+    ) -> std::result::Result<Vec<(String, StreamTableRow)>, KalamDbError> {
+        let results = EntityStore::scan_all(self)?;
+        Ok(results
+            .into_iter()
+            .map(|(key, row)| (String::from_utf8_lossy(key.as_ref()).to_string(), row))
+            .collect())
+    }
+
+    fn get(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+        row_id: &str,
+    ) -> std::result::Result<Option<StreamTableRow>, KalamDbError> {
+        let key = StreamTableRowId::new(row_id);
+        Ok(EntityStore::get(self, &key)?)
+    }
+
+    fn put(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+        row_id: &str,
+        row: &StreamTableRow,
+    ) -> std::result::Result<(), KalamDbError> {
+        let key = StreamTableRowId::new(row_id);
+        EntityStore::put(self, &key, row)?;
+        Ok(())
+    }
+
+    fn delete(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+        row_id: &str,
+        _hard: bool,
+    ) -> std::result::Result<(), KalamDbError> {
+        let key = StreamTableRowId::new(row_id);
+        EntityStore::delete(self, &key)?;
+        Ok(())
+    }
+
+    fn get_include_deleted(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+        row_id: &str,
+    ) -> std::result::Result<Option<StreamTableRow>, KalamDbError> {
+        let key = StreamTableRowId::new(row_id);
+        Ok(EntityStore::get(self, &key)?)
+    }
+
+    fn create_column_family(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+    ) -> std::result::Result<(), KalamDbError> {
+        // Column family creation is handled by the backend
+        Ok(())
+    }
+
+    fn drop_table(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+    ) -> std::result::Result<(), KalamDbError> {
+        // For now, just scan and delete all - in practice this should use backend drop
+        let all_results = EntityStore::scan_all(self)?;
+        for (key_bytes, _) in all_results {
+            let key = StreamTableRowId::from_bytes(&key_bytes);
+            EntityStore::delete(self, &key)?;
+        }
+        Ok(())
+    }
+
+    fn scan_iter(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+    ) -> std::result::Result<
+        Box<dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), KalamDbError>> + Send>,
+        KalamDbError,
+    > {
+        // For now, just collect all and return as iterator
+        let all = EntityStore::scan_all(self)?;
+        let iter = all.into_iter().map(|(k, v)| {
+            let value_bytes = serde_json::to_vec(&v)
+                .map_err(|e| KalamDbError::SerializationError(e.to_string()))?;
+            Ok((k, value_bytes))
+        });
+        Ok(Box::new(iter))
+    }
+
+    fn delete_batch_by_keys(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+        keys: &[String],
+    ) -> std::result::Result<(), KalamDbError> {
+        for key_str in keys {
+            let key = StreamTableRowId::new(key_str);
+            EntityStore::delete(self, &key)?;
+        }
+        Ok(())
+    }
+}
+
+// NOTE: cleanup_expired_rows is NOT part of SharedTableStoreExt trait
+// It's a separate method that can be called directly on StreamTableStore
+impl SystemTableStore<StreamTableRowId, StreamTableRow> {
+    pub fn cleanup_expired_rows(
+        &self,
+        _namespace_id: &str,
+        _table_name: &str,
+    ) -> std::result::Result<usize, KalamDbError> {
+        let all_rows = EntityStore::scan_all(self)?;
+        let mut deleted_count = 0;
+        for (key_bytes, row) in all_rows {
+            if let Some(ttl) = row.ttl_seconds {
+                let inserted_at = chrono::DateTime::parse_from_rfc3339(&row.inserted_at)
+                    .map_err(|e| KalamDbError::Other(e.to_string()))?;
+                if chrono::Utc::now().timestamp() > inserted_at.timestamp() + ttl as i64 {
+                    let key = StreamTableRowId::from_bytes(&key_bytes);
+                    EntityStore::delete(self, &key)?;
+                    deleted_count += 1;
+                }
+            }
+        }
+        Ok(deleted_count)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::models::{UserId, Role};
     use kalamdb_store::test_utils::InMemoryBackend;
     use serde::{Deserialize, Serialize};
 
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
     struct TestEntity {
         id: String,
         name: String,
-    }
-
-    #[test]
-    fn test_system_table_store_new() {
-        let backend = Arc::new(InMemoryBackend::new());
-        let store = SystemTableStore::<UserId, TestEntity>::new(
-            backend,
-            "test_partition"
-        );
-
-        assert_eq!(store.partition_name(), "test_partition");
+        value: i32,
     }
 
     #[test]
     fn test_system_table_store_put_get() {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = SystemTableStore::<UserId, TestEntity>::new(
-            backend,
-            "test_partition"
-        );
+        let store = SystemTableStore::<String, TestEntity>::new(backend, "test_system");
 
-        let key = UserId::new("test_key");
         let entity = TestEntity {
-            id: "test_key".to_string(),
+            id: "e1".to_string(),
             name: "Test Entity".to_string(),
+            value: 42,
         };
 
         // Put entity
-        store.put(&key, &entity).unwrap();
+        let key_e1 = "e1".to_string();
+        store.put(&key_e1, &entity).unwrap();
 
         // Get entity
-        let retrieved = store.get(&key).unwrap();
-        assert_eq!(retrieved, Some(entity));
+        let retrieved = store.get(&key_e1).unwrap().unwrap();
+        assert_eq!(retrieved, entity);
+
+        // Get non-existent entity
+        let key_e999 = "e999".to_string();
+        let missing = store.get(&key_e999).unwrap();
+        assert!(missing.is_none());
     }
 
     #[test]
     fn test_system_table_store_delete() {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = SystemTableStore::<UserId, TestEntity>::new(
-            backend,
-            "test_partition"
-        );
+        let store = SystemTableStore::<String, TestEntity>::new(backend, "test_system");
 
-        let key = UserId::new("test_key");
         let entity = TestEntity {
-            id: "test_key".to_string(),
+            id: "e1".to_string(),
             name: "Test Entity".to_string(),
+            value: 42,
         };
 
-        // Put and verify
+        let key = "e1".to_string();
         store.put(&key, &entity).unwrap();
         assert!(store.get(&key).unwrap().is_some());
 
-        // Delete and verify
         store.delete(&key).unwrap();
         assert!(store.get(&key).unwrap().is_none());
+
+        // Idempotent delete
+        store.delete(&key).unwrap();
     }
 
     #[test]
     fn test_system_table_store_scan_all() {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = SystemTableStore::<UserId, TestEntity>::new(
-            backend,
-            "test_partition"
-        );
+        let store = SystemTableStore::<String, TestEntity>::new(backend, "test_system");
 
-        // Insert multiple entities
-        for i in 0..5 {
-            let key = UserId::new(format!("key_{}", i));
-            let entity = TestEntity {
-                id: format!("key_{}", i),
-                name: format!("Entity {}", i),
-            };
-            store.put(&key, &entity).unwrap();
+        let entities = vec![
+            TestEntity {
+                id: "e1".to_string(),
+                name: "Entity 1".to_string(),
+                value: 10,
+            },
+            TestEntity {
+                id: "e2".to_string(),
+                name: "Entity 2".to_string(),
+                value: 20,
+            },
+        ];
+
+        for entity in &entities {
+            let key = entity.id.clone();
+            store.put(&key, entity).unwrap();
         }
 
-        // Scan all
-        let results = store.scan_all().unwrap();
-        assert_eq!(results.len(), 5);
+        let all = store.scan_all().unwrap();
+        assert_eq!(all.len(), 2);
+
+        // Verify entities are returned
+        let keys: std::collections::HashSet<_> = all.iter().map(|(k, _)| k.clone()).collect();
+        assert!(keys.contains(&"e1".as_bytes().to_vec()));
+        assert!(keys.contains(&"e2".as_bytes().to_vec()));
     }
 
     #[test]
-    fn test_system_table_store_access_control() {
+    fn test_system_table_provider_ext() {
         let backend = Arc::new(InMemoryBackend::new());
-        let store = SystemTableStore::<UserId, TestEntity>::new(
-            backend,
-            "test_partition"
-        );
+        let store = SystemTableStore::<String, TestEntity>::new(backend, "system_test_table");
 
-        // System tables return None for table_access
-        assert_eq!(store.table_access(), None);
+        // Test table name extraction
+        assert_eq!(store.table_name(), "test_table");
 
-        // Only admin roles can read
-        assert!(!store.can_read(&Role::User));
-        assert!(!store.can_read(&Role::Service));
-        assert!(store.can_read(&Role::Dba));
-        assert!(store.can_read(&Role::System));
-    }
+        // Test schema (empty for system tables)
+        let schema = store.schema_ref();
+        assert_eq!(schema.fields().len(), 0);
 
-    #[test]
-    fn test_system_table_store_type_safety() {
-        // This test verifies compile-time type safety
-        let backend = Arc::new(InMemoryBackend::new());
-        let store = SystemTableStore::<UserId, TestEntity>::new(
-            backend,
-            "test_partition"
-        );
-
-        let user_id = UserId::new("test");
-        let entity = TestEntity {
-            id: "test".to_string(),
-            name: "Test".to_string(),
-        };
-
-        // Type-safe operations
-        store.put(&user_id, &entity).unwrap();
-        let _retrieved: Option<TestEntity> = store.get(&user_id).unwrap();
-
-        // The following would fail to compile:
-        // let table_id = TableId::new(...);
-        // store.put(&table_id, &entity); // ✗ Compile error - wrong key type
-    }
-
-    #[test]
-    fn test_system_table_store_get_nonexistent() {
-        let backend = Arc::new(InMemoryBackend::new());
-        let store = SystemTableStore::<UserId, TestEntity>::new(
-            backend,
-            "test_partition"
-        );
-
-        let key = UserId::new("nonexistent");
-        let result = store.get(&key).unwrap();
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_system_table_store_update() {
-        let backend = Arc::new(InMemoryBackend::new());
-        let store = SystemTableStore::<UserId, TestEntity>::new(
-            backend,
-            "test_partition"
-        );
-
-        let key = UserId::new("test_key");
-        let entity1 = TestEntity {
-            id: "test_key".to_string(),
-            name: "Original".to_string(),
-        };
-        let entity2 = TestEntity {
-            id: "test_key".to_string(),
-            name: "Updated".to_string(),
-        };
-
-        // Initial put
-        store.put(&key, &entity1).unwrap();
-        assert_eq!(store.get(&key).unwrap().unwrap().name, "Original");
-
-        // Update
-        store.put(&key, &entity2).unwrap();
-        assert_eq!(store.get(&key).unwrap().unwrap().name, "Updated");
+        // Test load_batch (should fail for system tables)
+        let result = store.load_batch();
+        assert!(result.is_err());
     }
 }

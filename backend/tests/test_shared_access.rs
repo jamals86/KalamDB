@@ -565,4 +565,3 @@ async fn test_alter_access_level_only_on_shared_tables() {
         "ALTER TABLE SET ACCESS LEVEL should fail on USER tables"
     );
 }
-

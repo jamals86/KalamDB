@@ -14,12 +14,12 @@
 //! called during server startup.
 
 use kalamdb_commons::constants::AuthConstants;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::User;
 use kalamdb_commons::{AuthType, Role, UserId};
 use kalamdb_sql::KalamSql;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -50,7 +50,7 @@ async fn create_system_user(kalam_sql: &KalamSql) -> Result<(), Box<dyn std::err
 
     let user = User {
         id: system_user_id,
-        username: AuthConstants::DEFAULT_SYSTEM_USERNAME.to_string(),
+        username: AuthConstants::DEFAULT_SYSTEM_USERNAME.into(),
         auth_type: AuthType::Internal,
         password_hash,
         role: Role::System,
@@ -240,4 +240,3 @@ async fn test_system_user_has_metadata() {
     println!("  Updated at: {}", user.updated_at);
     println!("  Email: {:?}", user.email);
 }
-

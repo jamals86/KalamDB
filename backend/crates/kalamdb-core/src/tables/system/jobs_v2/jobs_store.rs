@@ -3,9 +3,9 @@
 //! This module provides a SystemTableStore<JobId, Job> wrapper for the system.jobs table.
 
 use crate::stores::SystemTableStore;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::Job;
 use kalamdb_commons::JobId;
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
 /// Type alias for the jobs table store
@@ -25,8 +25,10 @@ pub fn new_jobs_store(backend: Arc<dyn StorageBackend>) -> JobsStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{NamespaceId, TableName, JobType, JobStatus, Role};
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_commons::{JobStatus, JobType, NamespaceId, Role, TableName};
+    use kalamdb_store::test_utils::InMemoryBackend;
+    use kalamdb_store::CrossUserTableStore;
+    use kalamdb_store::EntityStoreV2 as EntityStore;
 
     fn create_test_store() -> JobsStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -66,10 +68,10 @@ mod tests {
         let job = create_test_job("job1");
 
         // Put job
-        store.put(&job_id, &job).unwrap();
+        EntityStore::put(&store, &job_id, &job).unwrap();
 
         // Get job
-        let retrieved = store.get(&job_id).unwrap();
+        let retrieved = EntityStore::get(&store, &job_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.job_id, job_id);
@@ -83,11 +85,11 @@ mod tests {
         let job = create_test_job("job1");
 
         // Put then delete
-        store.put(&job_id, &job).unwrap();
-        store.delete(&job_id).unwrap();
+        EntityStore::put(&store, &job_id, &job).unwrap();
+        EntityStore::delete(&store, &job_id).unwrap();
 
         // Verify deleted
-        let retrieved = store.get(&job_id).unwrap();
+        let retrieved = EntityStore::get(&store, &job_id).unwrap();
         assert!(retrieved.is_none());
     }
 
@@ -99,11 +101,11 @@ mod tests {
         for i in 1..=3 {
             let job_id = JobId::new(format!("job{}", i));
             let job = create_test_job(&format!("job{}", i));
-            store.put(&job_id, &job).unwrap();
+            EntityStore::put(&store, &job_id, &job).unwrap();
         }
 
         // Scan all
-        let jobs = store.scan_all().unwrap();
+        let jobs = EntityStore::scan_all(&store).unwrap();
         assert_eq!(jobs.len(), 3);
     }
 
@@ -115,9 +117,9 @@ mod tests {
         assert!(store.table_access().is_none());
 
         // Only Service, Dba, System roles can read
-        assert!(!store.can_read(Role::User));
-        assert!(store.can_read(Role::Service));
-        assert!(store.can_read(Role::Dba));
-        assert!(store.can_read(Role::System));
+        assert!(!store.can_read(&Role::User));
+        assert!(store.can_read(&Role::Service));
+        assert!(store.can_read(&Role::Dba));
+        assert!(store.can_read(&Role::System));
     }
 }

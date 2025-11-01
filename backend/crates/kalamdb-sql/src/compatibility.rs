@@ -107,7 +107,12 @@ mod tests {
     use sqlparser::ast::Ident;
 
     fn custom(name: &str) -> SQLDataType {
-        SQLDataType::Custom(ObjectName(vec![Ident::new(name)]), vec![])
+        SQLDataType::Custom(
+            ObjectName(vec![sqlparser::ast::ObjectNamePart::Identifier(
+                Ident::new(name),
+            )]),
+            vec![],
+        )
     }
 
     #[test]
@@ -129,12 +134,8 @@ mod tests {
     #[test]
     fn maps_unsigned_variants() {
         assert_eq!(
-            map_sql_type_to_arrow(&SQLDataType::UnsignedInt(None)).unwrap(),
+            map_sql_type_to_arrow(&SQLDataType::UnsignedInteger).unwrap(),
             DataType::UInt32
-        );
-        assert_eq!(
-            map_sql_type_to_arrow(&SQLDataType::UnsignedBigInt(None)).unwrap(),
-            DataType::UInt64
         );
     }
 

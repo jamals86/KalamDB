@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Type-safe row identifier for shared and stream tables.
-/// 
+///
 /// This newtype wrapper provides compile-time safety for row IDs,
 /// preventing them from being confused with other string/byte identifiers.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

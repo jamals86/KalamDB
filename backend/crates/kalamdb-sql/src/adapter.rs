@@ -3,11 +3,12 @@
 //! Provides low-level read/write operations for system tables in RocksDB.
 
 // Import all system models from the crate root (which re-exports from commons)
-use crate::{Job, LiveQuery, Namespace, Storage, Table, TableSchema, User};
+use crate::{AuditLogEntry, Job, LiveQuery, Namespace, Storage, Table, TableSchema, User};
 // use kalamdb_commons::models::TableDefinition; // Unused
 use anyhow::{anyhow, Result};
-use kalamdb_store::StorageBackend;
+use kalamdb_commons::models::AuditLogId;
 use kalamdb_commons::{StoragePartition, SystemTable};
+use kalamdb_store::{EntityStoreV2, StorageBackend};
 use std::sync::Arc;
 
 /// Storage adapter for system tables (backend-agnostic)
@@ -40,6 +41,54 @@ impl StorageAdapter {
             Some(value) => Ok(Some(serde_json::from_slice(&value)?)),
             None => Ok(None),
         }
+    }
+
+    /// Insert an audit log entry
+    pub fn insert_audit_log(&self, entry: &AuditLogEntry) -> Result<()> {
+        // Create an entity store for audit logs using the entity_store module
+        struct AuditLogEntityStore {
+            backend: Arc<dyn StorageBackend>,
+        }
+
+        impl EntityStoreV2<AuditLogId, AuditLogEntry> for AuditLogEntityStore {
+            fn backend(&self) -> &Arc<dyn StorageBackend> {
+                &self.backend
+            }
+
+            fn partition(&self) -> &str {
+                "system_audit_log"
+            }
+        }
+
+        let store = AuditLogEntityStore {
+            backend: self.backend.clone(),
+        };
+        EntityStoreV2::put(&store, &entry.audit_id, entry)?;
+        Ok(())
+    }
+
+    /// Scan all audit log entries
+    pub fn scan_audit_logs(&self) -> Result<Vec<AuditLogEntry>> {
+        // Create an entity store for audit logs using the entity_store module
+        struct AuditLogEntityStore {
+            backend: Arc<dyn StorageBackend>,
+        }
+
+        impl EntityStoreV2<AuditLogId, AuditLogEntry> for AuditLogEntityStore {
+            fn backend(&self) -> &Arc<dyn StorageBackend> {
+                &self.backend
+            }
+
+            fn partition(&self) -> &str {
+                "system_audit_log"
+            }
+        }
+
+        let store = AuditLogEntityStore {
+            backend: self.backend.clone(),
+        };
+        let entries: Vec<(Vec<u8>, AuditLogEntry)> = EntityStoreV2::scan_all(&store)?;
+        Ok(entries.into_iter().map(|(_, entry)| entry).collect())
     }
 
     /// Insert a new user
@@ -354,7 +403,9 @@ impl StorageAdapter {
         let p = StoragePartition::InformationSchemaTables.partition();
         let prefix = format!("{}:", namespace_id);
         let mut tables = Vec::new();
-        let iter = self.backend.scan(&p.into(), Some(prefix.as_bytes()), None)?;
+        let iter = self
+            .backend
+            .scan(&p.into(), Some(prefix.as_bytes()), None)?;
         for (_k, v) in iter {
             tables.push(serde_json::from_slice(&v)?);
         }
@@ -508,4 +559,3 @@ mod tests {
         // Will be implemented in integration tests
     }
 }
-

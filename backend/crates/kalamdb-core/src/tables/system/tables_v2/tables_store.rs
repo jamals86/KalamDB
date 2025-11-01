@@ -3,12 +3,12 @@
 //! This module provides a SystemTableStore<String, SystemTable> wrapper for the system.tables table.
 
 use crate::stores::SystemTableStore;
-use kalamdb_store::StorageBackend;
 use kalamdb_commons::system::SystemTable;
+use kalamdb_store::StorageBackend;
 use std::sync::Arc;
 
 /// Type alias for the tables table store
-pub type TablesStore = SystemTableStore<String, SystemTable>;
+pub type TablesStore = SystemTableStore<String, SystemTable>; //TODO: Need to use TableId?
 
 /// Helper function to create a new tables table store
 ///
@@ -18,14 +18,16 @@ pub type TablesStore = SystemTableStore<String, SystemTable>;
 /// # Returns
 /// A new SystemTableStore instance configured for the tables table
 pub fn new_tables_store(backend: Arc<dyn StorageBackend>) -> TablesStore {
-    SystemTableStore::new(backend, "system_tables")//TODO: user the enum partition name
+    SystemTableStore::new(backend, "system_tables") //TODO: user the enum partition name
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{TableName, NamespaceId, TableType, StorageId, Role, TableAccess};
-    use kalamdb_store::InMemoryBackend;
+    use kalamdb_commons::{NamespaceId, Role, StorageId, TableAccess, TableName, TableType};
+    use kalamdb_store::test_utils::InMemoryBackend;
+    use kalamdb_store::CrossUserTableStore;
+    use kalamdb_store::EntityStoreV2 as EntityStore;
 
     fn create_test_store() -> TablesStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
@@ -34,7 +36,10 @@ mod tests {
 
     fn create_test_table(table_id: &str, table_name: &str) -> SystemTable {
         SystemTable {
-            table_id: table_id.to_string(),
+            table_id: kalamdb_commons::TableId::new(
+                NamespaceId::new("default"),
+                TableName::new(table_name),
+            ),
             table_name: TableName::new(table_name),
             namespace: NamespaceId::new("default"),
             table_type: TableType::User,
@@ -58,7 +63,7 @@ mod tests {
     #[test]
     fn test_put_and_get_table() {
         let store = create_test_store();
-        let table_id = "table1".to_string();
+        let table_id = "default:conversations".to_string();
         let table = create_test_table("table1", "conversations");
 
         // Put table
@@ -68,7 +73,7 @@ mod tests {
         let retrieved = store.get(&table_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
-        assert_eq!(retrieved.table_id, table_id);
+        assert_eq!(retrieved.table_id.to_string(), "default:conversations");
         assert_eq!(retrieved.table_name.as_str(), "conversations");
     }
 
@@ -111,9 +116,9 @@ mod tests {
         assert!(store.table_access().is_none());
 
         // Only Service, Dba, System roles can read
-        assert!(!store.can_read(Role::User));
-        assert!(store.can_read(Role::Service));
-        assert!(store.can_read(Role::Dba));
-        assert!(store.can_read(Role::System));
+        assert!(!store.can_read(&Role::User));
+        assert!(store.can_read(&Role::Service));
+        assert!(store.can_read(&Role::Dba));
+        assert!(store.can_read(&Role::System));
     }
 }

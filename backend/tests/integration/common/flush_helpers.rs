@@ -7,16 +7,16 @@
 //! - Verifying job completion metrics
 
 use super::TestServer;
-use std::path::PathBuf;
+use kalamdb_commons::models::StorageId;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
 /// Execute a flush job synchronously for testing
 ///
-/// This bypasses the JobManager and directly calls flush_job.execute(),
-/// which is useful in test environments where background tokio tasks
-/// may not execute properly.
+/// Uses execute_tracked() which handles job tracking via FlushExecutor.
+/// This is useful in test environments for direct flush execution.
 ///
 /// # Arguments
 ///
@@ -31,17 +31,19 @@ pub async fn execute_flush_synchronously(
     server: &TestServer,
     namespace: &str,
     table_name: &str,
-) -> Result<kalamdb_core::flush::FlushJobResult, String> {
+) -> Result<kalamdb_core::tables::base_flush::FlushJobResult, String> {
+    use kalamdb_commons::models::{NamespaceId as ModelNamespaceId, TableName as ModelTableName};
     use kalamdb_core::catalog::{NamespaceId, TableName};
-    use kalamdb_core::flush::UserTableFlushJob;
+    use kalamdb_core::tables::user_tables::UserTableFlushJob;
+    use kalamdb_store::StorageBackend;
 
     // Get table definition from kalam_sql
     let kalam_sql = &server.kalam_sql;
-
     let namespace_id = NamespaceId::from(namespace);
-    let table_name_typed = TableName::from(table_name);
+    let table_name_id = TableName::from(table_name);
+
     let table_def = kalam_sql
-        .get_table_definition(&namespace_id, &table_name_typed)
+        .get_table_definition(&namespace_id, &table_name_id)
         .map_err(|e| format!("Failed to get table definition: {}", e))?
         .ok_or_else(|| format!("Table {}.{} not found", namespace, table_name))?;
 
@@ -62,15 +64,24 @@ pub async fn execute_flush_synchronously(
         )
         .map_err(|e| format!("Failed to parse Arrow schema: {}", e))?;
 
+    let table_meta = kalam_sql
+        .scan_all_tables()
+        .map_err(|e| format!("Failed to scan tables: {}", e))?
+        .into_iter()
+        .find(|t| t.namespace.as_str() == namespace && t.table_name.as_str() == table_name)
+        .ok_or_else(|| format!("Table metadata not found for {}.{}", namespace, table_name))?;
+
     // Create storage backend and user table store
-    let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+    let backend: Arc<dyn StorageBackend> =
         Arc::new(kalamdb_store::RocksDBBackend::new(server.db.clone()));
-    let user_table_store = Arc::new(kalamdb_core::stores::UserTableStore::new(backend));
+    let model_namespace = ModelNamespaceId::new(namespace);
+    let model_table = ModelTableName::new(table_name);
+    let user_table_store = Arc::new(kalamdb_core::tables::new_user_table_store(
+        backend.clone(),
+        &model_namespace,
+        &model_table,
+    ));
 
-    // Get storage_id from table definition and convert to String
-    let storage_id = table_def.storage_id.to_string();
-
-    // Create flush job
     let namespace_id = NamespaceId::from(namespace);
     let table_name_id = TableName::from(table_name);
 
@@ -84,16 +95,72 @@ pub async fn execute_flush_synchronously(
         namespace_id,
         table_name_id,
         arrow_schema.schema,
-        storage_id,
+        table_meta.storage_location.clone(),
     )
     .with_storage_registry(storage_registry);
 
-    // Execute flush synchronously
-    let result = flush_job
-        .execute()
-        .map_err(|e| format!("Flush execution failed: {}", e))?;
+    flush_job
+        .execute_tracked()
+        .map_err(|e| format!("Flush execution failed: {}", e))
+}
 
-    Ok(result)
+/// Execute a shared table flush job synchronously.
+pub async fn execute_shared_flush_synchronously(
+    server: &TestServer,
+    namespace: &str,
+    table_name: &str,
+) -> Result<kalamdb_core::tables::base_flush::FlushJobResult, String> {
+    use kalamdb_core::catalog::{NamespaceId, TableName};
+    use kalamdb_core::tables::shared_tables::SharedTableFlushJob;
+    use kalamdb_core::tables::SharedTableStore;
+    use kalamdb_store::StorageBackend;
+
+    let kalam_sql = &server.kalam_sql;
+    let namespace_id = NamespaceId::from(namespace);
+    let table_name_id = TableName::from(table_name);
+
+    let table_def = kalam_sql
+        .get_table_definition(&namespace_id, &table_name_id)
+        .map_err(|e| format!("Failed to get table definition: {}", e))?
+        .ok_or_else(|| format!("Table {}.{} not found", namespace, table_name))?;
+
+    if table_def.schema_history.is_empty() {
+        return Err(format!(
+            "No schema history found for table '{}.{}'",
+            namespace, table_name
+        ));
+    }
+
+    let latest_schema_version = &table_def.schema_history[table_def.schema_history.len() - 1];
+
+    let table_meta = kalam_sql
+        .scan_all_tables()
+        .map_err(|e| format!("Failed to scan tables: {}", e))?
+        .into_iter()
+        .find(|t| t.namespace.as_str() == namespace && t.table_name.as_str() == table_name)
+        .ok_or_else(|| format!("Table metadata not found for {}.{}", namespace, table_name))?;
+
+    let arrow_schema =
+        kalamdb_core::schema::arrow_schema::ArrowSchemaWithOptions::from_json_string(
+            &latest_schema_version.arrow_schema_json,
+        )
+        .map_err(|e| format!("Failed to parse Arrow schema: {}", e))?;
+
+    let backend: Arc<dyn StorageBackend> =
+        Arc::new(kalamdb_store::RocksDBBackend::new(server.db.clone()));
+    let shared_table_store = Arc::new(SharedTableStore::new(backend, "shared_tables"));
+
+    let flush_job = SharedTableFlushJob::new(
+        shared_table_store.clone(),
+        namespace_id,
+        table_name_id,
+        arrow_schema.schema,
+        table_meta.storage_location.clone(),
+    );
+
+    flush_job
+        .execute_tracked()
+        .map_err(|e| format!("Shared table flush execution failed: {}", e))
 }
 
 /// Wait for a flush job to complete and verify it succeeded
@@ -206,48 +273,29 @@ pub async fn wait_for_flush_job_completion(
     }
 }
 
-/// Check if Parquet files exist for a user table
-///
-/// # Arguments
-///
-/// * `namespace` - Namespace name
-/// * `table_name` - Table name
-/// * `user_id` - User ID
-///
-/// # Returns
-///
-/// Vector of Parquet file paths found
-pub fn check_user_parquet_files(namespace: &str, table_name: &str, user_id: &str) -> Vec<PathBuf> {
-    let storage_path = PathBuf::from("./data")
-        .join(user_id)
-        .join("tables")
-        .join(namespace)
-        .join(table_name);
-
-    check_parquet_files_in_path(&storage_path)
+/// Check if Parquet files exist for a user table.
+pub fn check_user_parquet_files(
+    server: &TestServer,
+    namespace: &str,
+    table_name: &str,
+    user_id: &str,
+) -> Vec<PathBuf> {
+    let storage_path =
+        resolve_user_table_storage_path(server, namespace, table_name, Some(user_id));
+    list_parquet_files(&storage_path)
 }
 
-/// Check if Parquet files exist for a shared table
-///
-/// # Arguments
-///
-/// * `namespace` - Namespace name
-/// * `table_name` - Table name
-///
-/// # Returns
-///
-/// Vector of Parquet file paths found
-pub fn check_shared_parquet_files(namespace: &str, table_name: &str) -> Vec<PathBuf> {
-    let storage_path = PathBuf::from("./data")
-        .join("shared")
-        .join(namespace)
-        .join(table_name);
-
-    check_parquet_files_in_path(&storage_path)
+/// Check if Parquet files exist for a shared table.
+pub fn check_shared_parquet_files(
+    server: &TestServer,
+    namespace: &str,
+    table_name: &str,
+) -> Vec<PathBuf> {
+    let storage_path = resolve_shared_table_storage_path(server, namespace, table_name);
+    list_parquet_files(&storage_path)
 }
 
-/// Check for Parquet files in a specific path
-fn check_parquet_files_in_path(storage_path: &PathBuf) -> Vec<PathBuf> {
+fn list_parquet_files(storage_path: &Path) -> Vec<PathBuf> {
     let mut parquet_files = Vec::new();
 
     if storage_path.exists() {
@@ -255,8 +303,8 @@ fn check_parquet_files_in_path(storage_path: &PathBuf) -> Vec<PathBuf> {
             for entry in entries.flatten() {
                 if let Some(extension) = entry.path().extension() {
                     if extension == "parquet" {
-                        parquet_files.push(entry.path());
                         println!("  ✓ Found Parquet file: {}", entry.path().display());
+                        parquet_files.push(entry.path());
                     }
                 }
             }
@@ -326,6 +374,7 @@ pub fn verify_parquet_files_exist(
         "  ✓ All {} Parquet files verified successfully",
         parquet_files.len()
     );
+
     Ok(())
 }
 
@@ -346,6 +395,7 @@ pub fn verify_parquet_files_exist(
 ///
 /// Vector of Parquet file paths found
 pub async fn wait_for_parquet_files(
+    server: &TestServer,
     namespace: &str,
     table_name: &str,
     user_id: &str,
@@ -356,7 +406,7 @@ pub async fn wait_for_parquet_files(
     let check_interval = Duration::from_millis(200);
 
     loop {
-        let parquet_files = check_user_parquet_files(namespace, table_name, user_id);
+        let parquet_files = check_user_parquet_files(server, namespace, table_name, user_id);
 
         if parquet_files.len() >= expected_min {
             println!(
@@ -378,6 +428,70 @@ pub async fn wait_for_parquet_files(
 
         sleep(check_interval).await;
     }
+}
+
+fn resolve_user_table_storage_path(
+    server: &TestServer,
+    namespace: &str,
+    table_name: &str,
+    user_id: Option<&str>,
+) -> PathBuf {
+    let storage = server
+        .kalam_sql
+        .get_storage(&StorageId::new("local"))
+        .expect("Failed to get local storage")
+        .expect("Local storage configuration missing");
+
+    let user_id_value = user_id.unwrap_or("");
+    let mut relative = storage
+        .user_tables_template
+        .replace("{namespace}", namespace)
+        .replace("{tableName}", table_name)
+        .replace("{userId}", user_id_value)
+        .replace("{shard}", "")
+        .replace("${user_id}", user_id_value);
+
+    if relative.starts_with('/') {
+        relative = relative.trim_start_matches('/').to_string();
+    }
+
+    let base = if storage.base_directory.is_empty() {
+        server.storage_root()
+    } else {
+        PathBuf::from(&storage.base_directory)
+    };
+
+    base.join(relative)
+}
+
+fn resolve_shared_table_storage_path(
+    server: &TestServer,
+    namespace: &str,
+    table_name: &str,
+) -> PathBuf {
+    let storage = server
+        .kalam_sql
+        .get_storage(&StorageId::new("local"))
+        .expect("Failed to get local storage")
+        .expect("Local storage configuration missing");
+
+    let mut relative = storage
+        .shared_tables_template
+        .replace("{namespace}", namespace)
+        .replace("{tableName}", table_name)
+        .replace("{shard}", "");
+
+    if relative.starts_with('/') {
+        relative = relative.trim_start_matches('/').to_string();
+    }
+
+    let base = if storage.base_directory.is_empty() {
+        server.storage_root()
+    } else {
+        PathBuf::from(&storage.base_directory)
+    };
+
+    base.join(relative)
 }
 
 /// Extract job_id from FLUSH TABLE response message

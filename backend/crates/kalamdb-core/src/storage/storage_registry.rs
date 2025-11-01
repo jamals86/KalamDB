@@ -5,7 +5,6 @@
 use crate::error::KalamDbError;
 use kalamdb_commons::models::{StorageConfig, StorageId, StorageType};
 use kalamdb_sql::{KalamSql, Storage};
-use std::convert::TryFrom;
 use std::sync::Arc;
 
 /// Registry for managing storage backends
@@ -300,7 +299,7 @@ impl StorageRegistry {
         }
 
         // T169b: Step 2 - If table.use_user_storage=true, query user.storage_mode
-        let user = self
+        let _user = self
             .kalam_sql
             .get_user(user_id)
             .map_err(|e| KalamDbError::Other(format!("Failed to get user '{}': {}", user_id, e)))?
@@ -424,7 +423,7 @@ mod tests {
             .open()
             .expect("Failed to open RocksDB for storage registry tests");
 
-        let backend: Arc<dyn kalamdb_commons::storage::StorageBackend> =
+        let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(
             KalamSql::new(backend).expect("Failed to create KalamSQL for storage registry tests"),

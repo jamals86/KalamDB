@@ -42,7 +42,11 @@ log = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
 
+[build-dependencies]
+chrono = { workspace = true }
+
 [dev-dependencies]
 # Testing utilities
 actix-rt = { workspace = true }
 tempfile = { workspace = true }
+kalamdb-store = { path = "../kalamdb-store" }
