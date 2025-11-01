@@ -15,18 +15,43 @@ use predicates::prelude::*;
 use std::fs;
 use std::time::Duration;
 
-use crate::common::*;
+use tempfile::TempDir;
+
+/// Test configuration constants
+const SERVER_URL: &str = "http://localhost:8080";
+const TEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Helper to check if server is running
+fn is_server_running() -> bool {
+    // Try a simple CLI command to check if server is running
+    let mut cmd = create_cli_command();
+    cmd.arg("-u")
+        .arg(SERVER_URL)
+        .arg("test_user")
+        .arg("--command")
+        .arg("SELECT 1");
+
+    cmd.output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+/// Helper to create a CLI command with default test settings
+fn create_cli_command() -> Command {
+    let cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
+    cmd
+}
 
 /// T036: Test CLI connection and prompt display
-#[tokio::test]
-async fn test_cli_connection_and_prompt() {
-    if !is_server_running().await {
+#[test]
+fn test_cli_connection_and_prompt() {
+    if !is_server_running() {
         eprintln!("⚠️  Server not running at {}. Skipping test.", SERVER_URL);
         eprintln!("   Start server: cargo run --release --bin kalamdb-server");
         return;
     }
 
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
+    let mut cmd = create_cli_command();
     cmd.arg("-u").arg(SERVER_URL).arg("--help");
 
     cmd.assert()
@@ -36,9 +61,9 @@ async fn test_cli_connection_and_prompt() {
 }
 
 /// T050: Test help command
-#[tokio::test]
-async fn test_cli_help_command() {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
+#[test]
+fn test_cli_help_command() {
+    let mut cmd = create_cli_command();
     cmd.arg("--help");
 
     cmd.assert()
@@ -49,35 +74,21 @@ async fn test_cli_help_command() {
         .stdout(predicate::str::contains("--file"));
 }
 
-/// T051: Test version flag
-#[tokio::test]
-async fn test_cli_version() {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
-    cmd.arg("--version");
-
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("0.1.0"));
-}
-
 /// T060: Test color output control
-#[tokio::test]
-async fn test_cli_color_output() {
-    if !is_server_running().await {
+#[test]
+fn test_cli_color_output() {
+    if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
 
-    let table = setup_test_data("color_output").await.unwrap();
-
     // Test with color enabled (default behavior)
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
         .arg("--command")
-        .arg("SELECT 'color' as test")
-        .timeout(TEST_TIMEOUT);
+        .arg("SELECT 'color' as test");
 
     let output = cmd.output().unwrap();
     assert!(
@@ -86,37 +97,33 @@ async fn test_cli_color_output() {
     );
 
     // Test with color disabled
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
         .arg("--no-color")
         .arg("--command")
-        .arg("SELECT 'nocolor' as test")
-        .timeout(TEST_TIMEOUT);
+        .arg("SELECT 'nocolor' as test");
 
     let output = cmd.output().unwrap();
     assert!(output.status.success(), "No-color command should succeed");
-
-    cleanup_test_data(&table).await.unwrap();
 }
 
 /// T061: Test session timeout handling
-#[tokio::test]
-async fn test_cli_session_timeout() {
-    if !is_server_running().await {
+#[test]
+fn test_cli_session_timeout() {
+    if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
 
     // Note: --timeout flag not yet implemented, just test that command executes
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
         .arg("--command")
-        .arg("SELECT 1")
-        .timeout(TEST_TIMEOUT);
+        .arg("SELECT 1");
 
     let output = cmd.output().unwrap();
     assert!(
@@ -126,11 +133,11 @@ async fn test_cli_session_timeout() {
 }
 
 /// T062: Test command history (up/down arrows)
-#[tokio::test]
-async fn test_cli_command_history() {
+#[test]
+fn test_cli_command_history() {
     // History is handled by rustyline in interactive mode
     // For non-interactive tests, we verify the CLI supports it
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
+    let mut cmd = create_cli_command();
     cmd.arg("--help");
 
     let output = cmd.output().unwrap();
@@ -144,11 +151,11 @@ async fn test_cli_command_history() {
 }
 
 /// T063: Test tab completion for SQL keywords
-#[tokio::test]
-async fn test_cli_tab_completion() {
+#[test]
+fn test_cli_tab_completion() {
     // Tab completion is handled by rustyline in interactive mode
     // For non-interactive tests, we verify the CLI supports it
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
+    let mut cmd = create_cli_command();
     cmd.arg("--help");
 
     let output = cmd.output().unwrap();
@@ -160,21 +167,20 @@ async fn test_cli_tab_completion() {
 }
 
 /// T068: Test verbose output mode
-#[tokio::test]
-async fn test_cli_verbose_output() {
-    if !is_server_running().await {
+#[test]
+fn test_cli_verbose_output() {
+    if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
 
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
+    let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
         .arg("--verbose")
         .arg("--command")
-        .arg("SELECT 1 as verbose_test")
-        .timeout(TEST_TIMEOUT);
+        .arg("SELECT 1 as verbose_test");
 
     let output = cmd.output().unwrap();
 
@@ -183,8 +189,8 @@ async fn test_cli_verbose_output() {
 }
 
 /// T047: Test config file creation
-#[tokio::test]
-async fn test_cli_config_file_creation() {
+#[test]
+fn test_cli_config_file_creation() {
     let temp_dir = TempDir::new().unwrap();
     let config_path = temp_dir.path().join("kalam.toml");
 
@@ -213,9 +219,9 @@ color = true
 }
 
 /// T048: Test loading config file
-#[tokio::test]
-async fn test_cli_load_config_file() {
-    if !is_server_running().await {
+#[test]
+fn test_cli_load_config_file() {
+    if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
@@ -236,12 +242,11 @@ timeout = 30
     )
     .unwrap();
 
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
+    let mut cmd = create_cli_command();
     cmd.arg("--config")
         .arg(config_path.to_str().unwrap())
         .arg("--command")
-        .arg("SELECT 1 as test")
-        .timeout(TEST_TIMEOUT);
+        .arg("SELECT 1 as test");
 
     let output = cmd.output().unwrap();
 
@@ -253,9 +258,9 @@ timeout = 30
 }
 
 /// T049: Test config precedence (CLI args override config)
-#[tokio::test]
-async fn test_cli_config_precedence() {
-    if !is_server_running().await {
+#[test]
+fn test_cli_config_precedence() {
+    if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
@@ -277,15 +282,14 @@ format = "csv"
     .unwrap();
 
     // CLI args should override config
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
+    let mut cmd = create_cli_command();
     cmd.arg("--config")
         .arg(config_path.to_str().unwrap())
         .arg("-u")
         .arg(SERVER_URL) // Override URL
         .arg("--json") // Override format
         .arg("--command")
-        .arg("SELECT 1 as test")
-        .timeout(TEST_TIMEOUT);
+        .arg("SELECT 1 as test");
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);

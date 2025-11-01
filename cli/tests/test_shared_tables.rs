@@ -9,8 +9,6 @@
 //! - Cross-user table permissions
 //! - Table sharing functionality
 
-use crate::common::*;
-
 /// Placeholder test for shared table functionality
 /// TODO: Implement comprehensive shared table access control tests
 /// when shared table features are fully implemented

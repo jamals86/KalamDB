@@ -3,11 +3,14 @@
 //! This module organizes CLI tests into logical groups for better maintainability
 //! and parallel test execution.
 
-pub mod common;
-pub mod user_tables;
-pub mod shared_tables;
-pub mod cli;
-pub mod flush;
-pub mod subscribe;
-pub mod auth;
-pub mod admin;
+pub mod helpers {
+    pub mod common;
+}
+
+pub mod test_user_tables;
+pub mod test_shared_tables;
+pub mod test_cli;
+pub mod test_flush;
+pub mod test_subscribe;
+pub mod test_auth;
+pub mod test_admin;

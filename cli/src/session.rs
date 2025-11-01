@@ -1293,6 +1293,45 @@ impl CLISession {
             )),
         }
     }
+
+    /// Subscribe to a table or live query via command line
+    ///
+    /// This is similar to the interactive \subscribe command but designed for
+    /// command-line usage where the subscription runs until interrupted.
+    pub async fn subscribe(&mut self, query: &str) -> Result<()> {
+        let config = SubscriptionConfig::new(query);
+        self.run_subscription(config).await
+    }
+
+    /// Unsubscribe from active subscription via command line
+    ///
+    /// Since subscriptions run in a blocking loop, this method sends a signal
+    /// to cancel the active subscription. In practice, this would need to be
+    /// called from a different thread/context than the running subscription.
+    pub async fn unsubscribe(&mut self, _subscription_id: &str) -> Result<()> {
+        // For command-line usage, we can't easily interrupt a running subscription
+        // from the same process. This would require a more complex signaling mechanism.
+        // For now, inform the user how to cancel subscriptions.
+        println!("To unsubscribe from an active subscription, use Ctrl+C in the terminal");
+        println!("where the subscription is running, or kill the process.");
+        Ok(())
+    }
+
+    /// List active subscriptions via command line
+    ///
+    /// Since subscriptions are managed per CLI session and run in blocking mode,
+    /// this method informs about the current subscription state.
+    pub async fn list_subscriptions(&mut self) -> Result<()> {
+        // In the current architecture, subscriptions are managed per session
+        // and there's no global subscription registry. We can only report
+        // on the current session's subscription state.
+        println!("Subscription management:");
+        println!("  • Subscriptions run in blocking mode per CLI session");
+        println!("  • Use Ctrl+C to cancel active subscriptions");
+        println!("  • Each CLI instance can have at most one active subscription");
+        println!("  • No persistent subscription registry is currently implemented");
+        Ok(())
+    }
 }
 
 /// Rustyline helper with autocomplete (no highlighting for performance)

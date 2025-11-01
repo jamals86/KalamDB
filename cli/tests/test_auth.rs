@@ -10,12 +10,74 @@
 //! - Credential rotation and deletion
 //! - Admin operations with proper authentication
 
+//! Integration tests for authentication and authorization
+//!
+//! **Implements T052-T054, T110-T113**: Authentication, credential management, and access control
+//!
+//! These tests validate:
+//! - JWT authentication with valid/invalid tokens
+//! - Localhost authentication bypass
+//! - Credential storage and security
+//! - Multiple instance management
+//! - Credential rotation and deletion
+//! - Admin operations with proper authentication
+
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
 use std::time::Duration;
 
-use crate::common::*;
+use reqwest;
+use serde_json::json;
+use tempfile::TempDir;
+use tokio;
+
+/// Test configuration constants
+const SERVER_URL: &str = "http://localhost:8080";
+const TEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Helper to check if server is running
+async fn is_server_running() -> bool {
+    // Try a simple SQL query instead of health endpoint
+    reqwest::Client::new()
+        .post(format!("{}/v1/api/sql", SERVER_URL))
+        .json(&json!({ "sql": "SELECT 1" }))
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+/// Helper to execute SQL with authentication
+async fn execute_sql_as(
+    username: &str,
+    password: &str,
+    sql: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{}/v1/api/sql", SERVER_URL))
+        .basic_auth(username, Some(password))
+        .json(&json!({ "sql": sql }))
+        .send()
+        .await?;
+
+    let body = response.text().await?;
+    let parsed: serde_json::Value = serde_json::from_str(&body)?;
+    Ok(parsed)
+}
+
+/// Helper to execute SQL as root user (empty password for localhost)
+async fn execute_sql_as_root(sql: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    execute_sql_as("root", "", sql).await
+}
+
+/// Helper to create a CLI command with default test settings
+fn create_cli_command() -> Command {
+    let cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
+    cmd
+}
 
 /// T052: Test JWT authentication with valid token
 #[tokio::test]

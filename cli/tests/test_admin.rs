@@ -9,11 +9,154 @@
 //! - Administrative SQL operations
 //! - Namespace and table management
 
+//! Integration tests for administrative operations
+//!
+//! **Implements T041-T042, T055-T058**: Administrative commands and system operations
+//!
+//! These tests validate:
+//! - List tables and describe table commands
+//! - Batch file execution
+//! - Server health checks
+//! - Administrative SQL operations
+//! - Namespace and table management
+
 use assert_cmd::Command;
 use std::fs;
 use std::time::Duration;
 
-use crate::common::*;
+use reqwest;
+use serde_json::json;
+use tempfile::TempDir;
+use tokio;
+
+/// Test configuration constants
+const SERVER_URL: &str = "http://localhost:8080";
+const TEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Helper to check if server is running
+async fn is_server_running() -> bool {
+    // Try a simple SQL query instead of health endpoint
+    reqwest::Client::new()
+        .post(format!("{}/v1/api/sql", SERVER_URL))
+        .json(&json!({ "sql": "SELECT 1" }))
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+/// Helper to execute SQL via HTTP (for test setup)
+async fn execute_sql(sql: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{}/v1/api/sql", SERVER_URL))
+        .basic_auth("root", Some(""))
+        .json(&json!({ "sql": sql }))
+        .send()
+        .await?;
+
+    let body = response.text().await?;
+    let parsed: serde_json::Value = serde_json::from_str(&body)?;
+
+    if parsed["status"] != "success" {
+        return Err(format!("SQL failed: {}", body).into());
+    }
+    Ok(())
+}
+
+/// Helper to execute SQL with authentication
+async fn execute_sql_as(
+    username: &str,
+    password: &str,
+    sql: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{}/v1/api/sql", SERVER_URL))
+        .basic_auth(username, Some(password))
+        .json(&json!({ "sql": sql }))
+        .send()
+        .await?;
+
+    let body = response.text().await?;
+    let parsed: serde_json::Value = serde_json::from_str(&body)?;
+    Ok(parsed)
+}
+
+/// Helper to execute SQL as root user (empty password for localhost)
+async fn execute_sql_as_root(sql: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    execute_sql_as("root", "", sql).await
+}
+
+/// Helper to setup test namespace and table with unique name per test
+async fn setup_test_data(test_name: &str) -> Result<String, Box<dyn std::error::Error>> {
+    // Use test-specific table name to avoid conflicts
+    let table_name = format!("messages_{}", test_name);
+    let namespace = "test_cli";
+
+    // Longer delay to avoid race conditions between tests
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    // Try to drop table first if it exists
+    let drop_sql = format!("DROP TABLE IF EXISTS {}.{}", namespace, table_name);
+    let _ = execute_sql(&drop_sql).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    // Create namespace (don't drop it - let it persist across tests)
+    match execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await {
+        Ok(_) => {
+            // Namespace created successfully
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+        Err(e) if e.to_string().contains("already exists") => {
+            // Namespace exists, that's ok
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        }
+        Err(e) => return Err(e),
+    }
+
+    // Create test table using USER TABLE
+    let create_sql = format!(
+        r#"CREATE USER TABLE {}.{} (
+            id INT AUTO_INCREMENT,
+            content VARCHAR NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) FLUSH ROWS 10"#,
+        namespace, table_name
+    );
+
+    match execute_sql(&create_sql).await {
+        Ok(_) => {}
+        Err(e) if e.to_string().contains("already exists") => {
+            // Table exists, drop and recreate to ensure clean state
+            execute_sql(&drop_sql).await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            execute_sql(&create_sql).await?;
+        }
+        Err(e) => return Err(e),
+    }
+
+    // Small delay after table creation
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    Ok(format!("{}.{}", namespace, table_name))
+}
+
+/// Helper to cleanup test data
+async fn cleanup_test_data(table_full_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // Delete the table
+    let drop_sql = format!("DROP TABLE IF EXISTS {}", table_full_name);
+    let _ = execute_sql(&drop_sql).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    Ok(())
+}
+
+/// Helper to create a CLI command with default test settings
+fn create_cli_command() -> Command {
+    let cmd = Command::new(env!("CARGO_BIN_EXE_kalam"));
+    cmd
+}
 
 /// T041: Test list tables command (using SELECT from system.tables)
 #[tokio::test]

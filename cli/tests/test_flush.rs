@@ -7,33 +7,45 @@
 //! - Data persistence after flush operations
 //! - Flush command error handling
 
-use crate::common::*;
+use assert_cmd::Command;
+use std::time::Duration;
+
+use crate::helpers::common::*;
 
 /// T059: Test explicit flush command
-#[tokio::test]
-async fn test_cli_explicit_flush() {
-    if !is_server_running().await {
+#[test]
+fn test_cli_explicit_flush() {
+    if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
     }
 
-    let table = setup_test_data("explicit_flush").await.unwrap();
+    let table_name = generate_unique_table("explicit_flush");
+    let namespace = "test_cli";
+    let full_table_name = format!("{}.{}", namespace, table_name);
 
-    // Insert some data first
-    execute_sql(&format!(
+    // Setup table via CLI
+    let _ = execute_sql_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_via_cli(&format!(
+        r#"CREATE USER TABLE {} (
+            id INT AUTO_INCREMENT,
+            content VARCHAR NOT NULL
+        ) FLUSH ROWS 10"#,
+        full_table_name
+    ));
+
+    // Insert some data first via CLI
+    let _ = execute_sql_via_cli(&format!(
         "INSERT INTO {} (content) VALUES ('Flush Test')",
-        table
-    ))
-    .await
-    .unwrap();
+        full_table_name
+    ));
 
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
         .arg("test_user")
         .arg("--command")
-        .arg(&format!("FLUSH TABLE {}", table))
-        .timeout(TEST_TIMEOUT);
+        .arg(&format!("FLUSH TABLE {}", full_table_name));
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -56,5 +68,6 @@ async fn test_cli_explicit_flush() {
         stderr
     );
 
-    cleanup_test_data(&table).await.unwrap();
+    // Cleanup
+    let _ = execute_sql_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
 }

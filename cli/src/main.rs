@@ -124,6 +124,19 @@ struct Cli {
     /// List all stored credential instances
     #[arg(long = "list-instances")]
     list_instances: bool,
+
+    // Subscription management commands
+    /// Subscribe to a table or live query
+    #[arg(long = "subscribe")]
+    subscribe: Option<String>,
+
+    /// Unsubscribe from a subscription
+    #[arg(long = "unsubscribe")]
+    unsubscribe: Option<String>,
+
+    /// List active subscriptions
+    #[arg(long = "list-subscriptions")]
+    list_subscriptions: bool,
 }
 
 #[tokio::main]
@@ -225,6 +238,79 @@ async fn main() -> Result<()> {
             CLIError::ConfigurationError(format!("Failed to save credentials: {}", e))
         })?;
         println!("Saved credentials for instance '{}'", cli.instance);
+        return Ok(());
+    }
+
+    // Handle subscription management commands
+    if cli.list_subscriptions || cli.subscribe.is_some() || cli.unsubscribe.is_some() {
+        // Load configuration
+        let config = CLIConfiguration::load(&cli.config)?;
+
+        // Determine server URL (similar logic as below)
+        let server_url = match (cli.url.clone(), cli.host.clone()) {
+            (Some(url), _) => url,
+            (None, Some(host)) => format!("http://{}:{}", host, cli.port),
+            (None, None) => {
+                // Try to get from stored credentials first
+                if let Some(creds) = credential_store
+                    .get_credentials(&cli.instance)
+                    .map_err(|e| {
+                        CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
+                    })?
+                {
+                    let creds_url = creds.get_server_url();
+                    if creds_url.starts_with("http://") || creds_url.starts_with("https://") {
+                        creds_url.to_string()
+                    } else {
+                        "http://localhost:8080".to_string()
+                    }
+                } else {
+                    config
+                        .server
+                        .as_ref()
+                        .and_then(|s| s.url.clone())
+                        .unwrap_or_else(|| "http://localhost:8080".to_string())
+                }
+            }
+        };
+
+        // Determine authentication
+        let auth = if let Some(token) = cli
+            .token
+            .or_else(|| config.auth.as_ref().and_then(|a| a.jwt_token.clone()))
+        {
+            AuthProvider::jwt_token(token)
+        } else if let (Some(username), Some(password)) = (cli.username.clone(), cli.password.clone()) {
+            AuthProvider::basic_auth(username, password)
+        } else if let Some(creds) = credential_store
+            .get_credentials(&cli.instance)
+            .map_err(|e| CLIError::ConfigurationError(format!("Failed to load credentials: {}", e)))?
+        {
+            AuthProvider::basic_auth(creds.username, creds.password)
+        } else if is_localhost_url(&server_url) {
+            AuthProvider::basic_auth("root".to_string(), String::new())
+        } else {
+            AuthProvider::None
+        };
+
+        let mut session = CLISession::with_auth_and_instance(
+            server_url,
+            auth,
+            OutputFormat::Table,
+            !cli.no_color,
+            Some(cli.instance.clone()),
+            Some(credential_store),
+        )
+        .await?;
+
+        if cli.list_subscriptions {
+            session.list_subscriptions().await?;
+        } else if let Some(query) = cli.subscribe {
+            session.subscribe(&query).await?;
+        } else if let Some(subscription_id) = cli.unsubscribe {
+            session.unsubscribe(&subscription_id).await?;
+        }
+
         return Ok(());
     }
 
