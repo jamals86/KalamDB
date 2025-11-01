@@ -590,7 +590,10 @@ async fn test_cli_flush_table() {
 
         // Requery current job status
         let refetch = execute_sql_as_root(&jobs_query).await.unwrap();
-        let rows = refetch["results"][0]["rows"].as_array().cloned().unwrap_or_default();
+        let rows = refetch["results"][0]["rows"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         if let Some(updated) = rows.get(0) {
             // Shadow 'job' binding by reassigning serialized map
             // Note: using direct indexing to keep diff small
@@ -603,7 +606,11 @@ async fn test_cli_flush_table() {
     };
 
     // Verify job completed successfully (do not accept 'running')
-    assert_eq!(final_status, "completed", "Flush job did not complete successfully (status: {})", final_status);
+    assert_eq!(
+        final_status, "completed",
+        "Flush job did not complete successfully (status: {})",
+        final_status
+    );
 
     // If job is completed, verify it has results
     if final_status == "completed" {

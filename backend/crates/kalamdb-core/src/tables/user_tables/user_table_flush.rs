@@ -217,7 +217,8 @@ impl UserTableFlushJob {
                     let name = field.name();
                     // Only handle known generated columns here
                     if name == "id" {
-                        let missing = !obj.contains_key(name) || obj.get(name).map(|v| v.is_null()).unwrap_or(true);
+                        let missing = !obj.contains_key(name)
+                            || obj.get(name).map(|v| v.is_null()).unwrap_or(true);
                         if missing && !field.is_nullable() {
                             use datafusion::arrow::datatypes::DataType;
                             match field.data_type() {
@@ -225,11 +226,18 @@ impl UserTableFlushJob {
                                     if let Ok(parsed) = row_id_from_key.parse::<i64>() {
                                         obj.insert(name.to_string(), serde_json::json!(parsed));
                                     } else {
-                                        obj.insert(name.to_string(), serde_json::json!(generate_numeric_id()));
+                                        obj.insert(
+                                            name.to_string(),
+                                            serde_json::json!(generate_numeric_id()),
+                                        );
                                     }
                                 }
                                 DataType::Utf8 => {
-                                    let to_set = if !row_id_from_key.is_empty() { row_id_from_key.clone() } else { generate_numeric_id().to_string() };
+                                    let to_set = if !row_id_from_key.is_empty() {
+                                        row_id_from_key.clone()
+                                    } else {
+                                        generate_numeric_id().to_string()
+                                    };
                                     obj.insert(name.to_string(), serde_json::json!(to_set));
                                 }
                                 _ => {
@@ -238,7 +246,8 @@ impl UserTableFlushJob {
                             }
                         }
                     } else if name == "created_at" {
-                        let missing = !obj.contains_key(name) || obj.get(name).map(|v| v.is_null()).unwrap_or(true);
+                        let missing = !obj.contains_key(name)
+                            || obj.get(name).map(|v| v.is_null()).unwrap_or(true);
                         if missing && !field.is_nullable() {
                             use datafusion::arrow::datatypes::DataType;
                             let now_ms = chrono::Utc::now().timestamp_millis();
@@ -247,7 +256,10 @@ impl UserTableFlushJob {
                                     obj.insert(name.to_string(), serde_json::json!(now_ms));
                                 }
                                 DataType::Utf8 => {
-                                    obj.insert(name.to_string(), serde_json::json!(chrono::Utc::now().to_rfc3339()));
+                                    obj.insert(
+                                        name.to_string(),
+                                        serde_json::json!(chrono::Utc::now().to_rfc3339()),
+                                    );
                                 }
                                 DataType::Timestamp(_, _) => {
                                     // Builder expects millis for TsMs

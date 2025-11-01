@@ -281,6 +281,9 @@ mod tests {
         // This would require a full integration test setup
         // For now, we verify the error response structure
         let error = AuthError::MissingAuthorization("Missing authorization header".to_string());
-        assert_eq!(format!("{}", error), "Missing authorization header: Missing authorization header");
+        assert_eq!(
+            format!("{}", error),
+            "Missing authorization header: Missing authorization header"
+        );
     }
 }

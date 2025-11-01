@@ -1,13 +1,13 @@
 //! Schema definition for system.storages table
 //!
 //! Provides Arrow schema for the storages table with 10 fields.
-//! 
+//!
 //! Phase 4 (Column Ordering): Uses storages_table_definition().to_arrow_schema()
 //! to ensure consistent column ordering via ordinal_position field.
 
+use crate::tables::system::system_table_definitions::storages_table_definition;
 use datafusion::arrow::datatypes::SchemaRef;
 use std::sync::OnceLock;
-use crate::tables::system::system_table_definitions::storages_table_definition;
 
 /// Cached schema for system.storages table
 static STORAGES_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();

@@ -863,6 +863,7 @@ pub struct FlushPolicyDef {
 // ============================================================================
 // DEPRECATED: Legacy schema types - DO NOT USE
 // ============================================================================
+//
 // These types are kept for backward compatibility during migration.
 // Use schemas::TableDefinition, schemas::ColumnDefinition instead.
 // See specs/008-schema-consolidation for migration details.
@@ -896,6 +897,7 @@ pub struct SchemaVersion {
     pub arrow_schema_json: String,
 }
 
+#[allow(deprecated)]
 impl TableDefinition {
     /// DEPRECATED: Use schemas::TableDefinition::from_arrow_schema() instead.
     #[deprecated(

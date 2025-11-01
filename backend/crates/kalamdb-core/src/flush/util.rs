@@ -1,18 +1,18 @@
 //! Flush utilities shared by user and shared table flushers.
 
 use crate::error::KalamDbError;
+use base64::{engine::general_purpose, Engine as _};
+use chrono::Timelike;
 use datafusion::arrow::array::{
-    Array, ArrayData, ArrayRef, BinaryBuilder, BooleanBuilder, Date32Builder,
-    Decimal128Builder, FixedSizeBinaryBuilder, FixedSizeListArray, FixedSizeListBuilder,
-    Float32Builder, Float64Builder, Int16Builder, Int32Builder, Int64Builder, StringBuilder,
+    Array, ArrayData, ArrayRef, BinaryBuilder, BooleanBuilder, Date32Builder, Decimal128Builder,
+    FixedSizeBinaryBuilder, FixedSizeListArray, FixedSizeListBuilder, Float32Builder,
+    Float64Builder, Int16Builder, Int32Builder, Int64Builder, StringBuilder,
     Time64MicrosecondBuilder, TimestampMillisecondBuilder,
 };
 use datafusion::arrow::datatypes::{DataType, Field, SchemaRef, TimeUnit};
 use datafusion::arrow::record_batch::RecordBatch;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
-use chrono::Timelike;
-use base64::{engine::general_purpose, Engine as _};
 
 /// Build an Arrow RecordBatch from JSON rows based on the provided schema.
 /// TODO: Improve this to use streaming instead of loading all rows into memory
@@ -80,8 +80,11 @@ impl JsonBatchBuilder {
                 DataType::Decimal128(precision, scale) => {
                     // DECIMAL with precision and scale
                     ColBuilder::Decimal128 {
-                        builder: Decimal128Builder::new().with_precision_and_scale(*precision, *scale as i8)
-                            .map_err(|e| KalamDbError::Other(format!("Invalid decimal params: {}", e)))?,
+                        builder: Decimal128Builder::new()
+                            .with_precision_and_scale(*precision, *scale as i8)
+                            .map_err(|e| {
+                                KalamDbError::Other(format!("Invalid decimal params: {}", e))
+                            })?,
                         precision: *precision,
                         scale: *scale as u8,
                     }
@@ -259,16 +262,17 @@ impl JsonBatchBuilder {
                     if let Some(v) = v {
                         if let Some(s) = v.as_str() {
                             // Accept "base64:..." or "hex:..." or attempt auto-detect base64; fallback to raw UTF-8 bytes
-                            let bytes: Option<Vec<u8>> = if let Some(rest) = s.strip_prefix("base64:") {
-                                general_purpose::STANDARD.decode(rest).ok()
-                            } else if let Some(rest) = s.strip_prefix("hex:") {
-                                hex::decode(rest).ok()
-                            } else {
-                                general_purpose::STANDARD.decode(s).ok().or_else(|| {
-                                    // Fallback: raw bytes of the string
-                                    Some(s.as_bytes().to_vec())
-                                })
-                            };
+                            let bytes: Option<Vec<u8>> =
+                                if let Some(rest) = s.strip_prefix("base64:") {
+                                    general_purpose::STANDARD.decode(rest).ok()
+                                } else if let Some(rest) = s.strip_prefix("hex:") {
+                                    hex::decode(rest).ok()
+                                } else {
+                                    general_purpose::STANDARD.decode(s).ok().or_else(|| {
+                                        // Fallback: raw bytes of the string
+                                        Some(s.as_bytes().to_vec())
+                                    })
+                                };
 
                             if let Some(bytes) = bytes {
                                 b.append_value(bytes.as_slice());
@@ -356,7 +360,11 @@ impl JsonBatchBuilder {
                         b.append_null();
                     }
                 }
-                ColBuilder::Decimal128 { builder, precision, scale } => {
+                ColBuilder::Decimal128 {
+                    builder,
+                    precision,
+                    scale,
+                } => {
                     if let Some(v) = v {
                         // Parse decimal from number or string
                         let decimal_value: Option<i128> = if let Some(n) = v.as_f64() {
@@ -402,7 +410,9 @@ impl JsonBatchBuilder {
                             if arr.len() as i32 == *size {
                                 let mut all_ok = true;
                                 for el in arr {
-                                    if let Some(fv) = el.as_f64().or_else(|| el.as_i64().map(|i| i as f64)) {
+                                    if let Some(fv) =
+                                        el.as_f64().or_else(|| el.as_i64().map(|i| i as f64))
+                                    {
                                         builder.values().append_value(fv as f32);
                                     } else {
                                         all_ok = false;
@@ -415,7 +425,11 @@ impl JsonBatchBuilder {
                                     // Pad the remainder with zeros to satisfy fixed-size child length
                                     let already = arr
                                         .iter()
-                                        .take_while(|el| el.as_f64().or_else(|| el.as_i64().map(|i| i as f64)).is_some())
+                                        .take_while(|el| {
+                                            el.as_f64()
+                                                .or_else(|| el.as_i64().map(|i| i as f64))
+                                                .is_some()
+                                        })
                                         .count();
                                     for _ in already..(*size as usize) {
                                         builder.values().append_value(0.0);
@@ -462,9 +476,7 @@ impl JsonBatchBuilder {
                 ColBuilder::F64(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::Bool(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::TsMsNoTz(mut b) => Arc::new(b.finish()) as ArrayRef,
-                ColBuilder::TsMsUtc(mut b) => {
-                    Arc::new(b.finish().with_timezone("UTC")) as ArrayRef
-                }
+                ColBuilder::TsMsUtc(mut b) => Arc::new(b.finish().with_timezone("UTC")) as ArrayRef,
                 ColBuilder::Date32(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::Time64Us(mut b) => Arc::new(b.finish()) as ArrayRef,
                 ColBuilder::Binary(mut b) => Arc::new(b.finish()) as ArrayRef,

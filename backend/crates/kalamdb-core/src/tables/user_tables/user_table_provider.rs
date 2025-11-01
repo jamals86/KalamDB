@@ -467,10 +467,7 @@ impl UserTableProvider {
     ///
     /// Reads all Parquet files for the current user from the storage directory
     /// and converts them to JSON for merging with RocksDB data.
-    async fn scan_parquet_files(
-        &self,
-        schema: &SchemaRef,
-    ) -> DataFusionResult<Vec<JsonValue>> {
+    async fn scan_parquet_files(&self, schema: &SchemaRef) -> DataFusionResult<Vec<JsonValue>> {
         use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use std::fs;
         use std::path::Path;
@@ -499,7 +496,8 @@ impl UserTableProvider {
                 }
                 _ => {
                     // Fallback to template substitution if registry lookup fails
-                    self.table_metadata.storage_location
+                    self.table_metadata
+                        .storage_location
                         .replace("${user_id}", self.current_user_id.as_str())
                         .replace("{userId}", self.current_user_id.as_str())
                         .replace("{namespace}", self.namespace_id().as_str())
@@ -509,7 +507,8 @@ impl UserTableProvider {
             }
         } else {
             // No registry available - use template substitution (legacy)
-            self.table_metadata.storage_location
+            self.table_metadata
+                .storage_location
                 .replace("${user_id}", self.current_user_id.as_str())
                 .replace("{userId}", self.current_user_id.as_str())
                 .replace("{namespace}", self.namespace_id().as_str())
@@ -537,9 +536,7 @@ impl UserTableProvider {
                 DataFusionError::Execution(format!("Failed to read storage directory: {}", e))
             })?
             .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry.path().extension().and_then(|s| s.to_str()) == Some("parquet")
-            })
+            .filter(|entry| entry.path().extension().and_then(|s| s.to_str()) == Some("parquet"))
             .map(|entry| entry.path())
             .collect();
 
@@ -554,7 +551,7 @@ impl UserTableProvider {
         // Read each Parquet file
         for parquet_file in parquet_files {
             log::debug!("Reading Parquet file: {:?}", parquet_file);
-            
+
             let file = fs::File::open(&parquet_file).map_err(|e| {
                 DataFusionError::Execution(format!(
                     "Failed to open Parquet file {:?}: {}",
@@ -585,7 +582,7 @@ impl UserTableProvider {
                     ))
                 })?;
 
-                                // Convert Arrow batch to JSON rows
+                // Convert Arrow batch to JSON rows
                 let json_rows = arrow_batch_to_json(&batch, true).map_err(|e| {
                     DataFusionError::Execution(format!("Arrow to JSON conversion failed: {}", e))
                 })?;
@@ -597,7 +594,7 @@ impl UserTableProvider {
                         if !obj.contains_key("_deleted") {
                             obj.insert("_deleted".to_string(), JsonValue::Bool(false));
                         }
-                        
+
                         // Ensure _updated field exists (use current time as fallback)
                         if !obj.contains_key("_updated") {
                             let now = chrono::Utc::now().to_rfc3339();

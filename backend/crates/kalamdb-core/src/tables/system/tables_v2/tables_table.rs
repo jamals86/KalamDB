@@ -2,13 +2,13 @@
 //!
 //! This module defines the Arrow schema for the system.tables table.
 //! Uses OnceLock for zero-overhead static schema caching.
-//! 
+//!
 //! Phase 4 (Column Ordering): Uses tables_table_definition().to_arrow_schema()
 //! to ensure consistent column ordering via ordinal_position field.
 
+use crate::tables::system::system_table_definitions::tables_table_definition;
 use datafusion::arrow::datatypes::SchemaRef;
 use std::sync::OnceLock;
-use crate::tables::system::system_table_definitions::tables_table_definition;
 
 /// Static schema cache for the tables table
 static TABLES_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
@@ -21,7 +21,7 @@ impl TablesTableSchema {
     ///
     /// Uses OnceLock to ensure the schema is created exactly once and reused
     /// across all providers without synchronization overhead.
-    /// 
+    ///
     /// Schema fields (in ordinal_position order):
     /// - table_id: Utf8 (primary key)
     /// - table_name: Utf8
@@ -71,7 +71,7 @@ mod tests {
         let schema = TablesTableSchema::schema();
         // Schema built from TableDefinition, verify field count and names are correct
         assert_eq!(schema.fields().len(), 12);
-        
+
         // Verify fields exist (order guaranteed by TableDefinition's ordinal_position)
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
         assert!(field_names.contains(&"table_id"));

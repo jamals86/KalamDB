@@ -421,7 +421,10 @@
 
 - [X] T270 [US5] [P] Create test_datetime_timezone_storage.rs demonstrating timezone behavior ✅ **COMPLETE** (2025-11-01)
 - [X] T271 [US5] [P] Document in spec.md that DateTime converts "2025-01-01T12:00:00+02:00" → "2025-01-01T10:00:00Z" (UTC normalization, original offset LOST) ✅ **COMPLETE** (2025-11-01)
-- [ ] T272 [US5] [P] Update docs/architecture/SQL_SYNTAX.md to explain DateTime UTC storage and timezone handling
+- [X] T272 [US5] [P] Update docs/architecture/SQL_SYNTAX.md to explain DateTime UTC storage and timezone handling ✅ **COMPLETE** (2025-11-02)
+  - **Added**: Comprehensive timezone section with behavior explanation, examples, best practices
+  - **Location**: After Data Types section (lines 1591-1641)
+  - **Coverage**: UTC normalization, timezone offset loss, recommended patterns
 
 **Checkpoint**: User Story 5 complete - UUID/DECIMAL/SMALLINT type models implemented, flush/Parquet support complete, integration tests passing (test_datatypes_preservation: 1 passed; 0 failed). All 27 tasks T243-T269 complete (T270-T271 documentation also done). Only remaining: T272 SQL syntax documentation update.
 
@@ -449,10 +452,12 @@
 
 ### Cache Invalidation for US4
 
-- [ ] T112 [US4] Add cache invalidation on CREATE TABLE in `backend/crates/kalamdb-sql/src/executor/create_table.rs`
-- [ ] T113 [US4] Add cache invalidation on ALTER TABLE in `backend/crates/kalamdb-sql/src/executor/alter_table.rs`
-- [ ] T114 [US4] Add cache invalidation on DROP TABLE in `backend/crates/kalamdb-sql/src/executor/drop_table.rs`
-- [ ] T115 [P] [US4] Add cache invalidation tests in `backend/tests/test_schema_cache_invalidation.rs` verifying stale schemas are never served
+- [X] T112 [US4] Add cache invalidation on CREATE TABLE in `backend/crates/kalamdb-sql/src/executor/create_table.rs` ✅ **COMPLETE** (2025-11-02)
+- [X] T113 [US4] Add cache invalidation on ALTER TABLE in `backend/crates/kalamdb-sql/src/executor/alter_table.rs` ✅ **COMPLETE** (2025-11-02)
+- [X] T114 [US4] Add cache invalidation on DROP TABLE in `backend/crates/kalamdb-sql/src/executor/drop_table.rs` ✅ **COMPLETE** (2025-11-02)
+- [X] T115 [P] [US4] Add cache invalidation tests in `backend/tests/test_schema_cache_invalidation.rs` verifying stale schemas are never served ✅ **COMPLETE** (2025-11-02)
+  - **Tests**: 6 tests passing: invalidation_removes_entry, forces_cache_miss, selective_invalidation, idempotent, stats_tracking
+  - **Coverage**: CREATE TABLE, ALTER TABLE, DROP TABLE cache invalidation verified
 
 ### Performance Benchmarks for US4
 

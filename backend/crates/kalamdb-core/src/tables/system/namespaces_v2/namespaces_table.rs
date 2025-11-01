@@ -1,13 +1,13 @@
 //! Schema definition for system.namespaces table
 //!
 //! Provides Arrow schema for the namespaces table with 5 fields.
-//! 
+//!
 //! Phase 4 (Column Ordering): Uses namespaces_table_definition().to_arrow_schema()
 //! to ensure consistent column ordering via ordinal_position field.
 
+use crate::tables::system::system_table_definitions::namespaces_table_definition;
 use datafusion::arrow::datatypes::SchemaRef;
 use std::sync::OnceLock;
-use crate::tables::system::system_table_definitions::namespaces_table_definition;
 
 /// Cached schema for system.namespaces table
 static NAMESPACES_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();

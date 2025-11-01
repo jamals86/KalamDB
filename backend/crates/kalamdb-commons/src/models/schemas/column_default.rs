@@ -4,9 +4,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 /// Represents the default value for a column
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum ColumnDefault {
     /// No default value - column must be specified in INSERT
+    #[default]
     None,
 
     /// Literal value as JSON (supports all KalamDataTypes)
@@ -79,12 +80,6 @@ impl ColumnDefault {
                 }
             }
         }
-    }
-}
-
-impl Default for ColumnDefault {
-    fn default() -> Self {
-        ColumnDefault::None
     }
 }
 

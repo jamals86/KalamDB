@@ -575,7 +575,10 @@ pub fn live_queries_table_definition() -> TableDefinition {
             true,
             false,
             ColumnDefault::None,
-            Some("Live query identifier (format: {user_id}-{conn_id}-{table}-{query_id})".to_string()),
+            Some(
+                "Live query identifier (format: {user_id}-{conn_id}-{table}-{query_id})"
+                    .to_string(),
+            ),
         ),
         ColumnDefinition::new(
             "connection_id",

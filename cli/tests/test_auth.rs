@@ -63,9 +63,7 @@ fn test_cli_invalid_token() {
     // Either outcome is acceptable
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        output.status.success()
-            || stderr.contains("auth")
-            || stderr.contains("token"),
+        output.status.success() || stderr.contains("auth") || stderr.contains("token"),
         "Should handle invalid token appropriately"
     );
 }

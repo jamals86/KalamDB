@@ -238,7 +238,10 @@ impl SubscriptionListener {
     }
 
     /// Try to read a line with a timeout (uses polling approach)
-    pub fn try_read_line(&mut self, timeout: Duration) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    pub fn try_read_line(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
         if let Some(ref rx) = self.line_receiver {
             match rx.recv_timeout(timeout) {
                 Ok(Ok(line)) => {
@@ -274,7 +277,7 @@ impl SubscriptionListener {
                         return Ok(line);
                     }
                 }
-                Ok(None) => break, // EOF
+                Ok(None) => break,  // EOF
                 Err(_) => continue, // Timeout on this read, try again
             }
         }
@@ -311,7 +314,7 @@ pub fn start_subscription_listener(
                 Ok(Some(line)) => {
                     let _ = event_sender.send(line);
                 }
-                Ok(None) => break, // EOF
+                Ok(None) => break,  // EOF
                 Err(_) => continue, // Timeout, try again
             }
         }

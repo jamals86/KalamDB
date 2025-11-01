@@ -1592,6 +1592,54 @@ KalamDB supports all DataFusion data types:
 - `TIMESTAMP` supports time zones (stored in UTC)
 - `JSON` is stored as TEXT (parse/validate in application)
 
+### DATETIME and TIMESTAMP Timezone Behavior
+
+**Important**: KalamDB normalizes all `DATETIME` and `TIMESTAMP` values to UTC for storage. **Original timezone offsets are NOT preserved.**
+
+**Behavior**:
+- Input with timezone offset → **Converted to UTC** → Stored without offset
+- Input without timezone → Treated as **local time** → Stored as-is
+- On retrieval → Returned as UTC timestamp (no timezone info)
+
+**Examples**:
+
+```sql
+-- Input: '2025-01-01T12:00:00+02:00' (Berlin time, noon)
+-- Stored: '2025-01-01T10:00:00Z' (UTC, 10:00 AM)
+-- Retrieved: '2025-01-01T10:00:00' (no +00:00 suffix)
+
+-- Input: '2025-01-01T12:00:00' (no timezone specified)
+-- Stored: '2025-01-01T12:00:00' (assumed UTC or local time)
+-- Retrieved: '2025-01-01T12:00:00'
+```
+
+**Best Practices**:
+1. **Always specify timezone offsets** in DATETIME literals: `'2025-01-01T12:00:00+02:00'`
+2. **Store all times in UTC** at the application layer if timezone preservation is needed
+3. **Use a separate column** to store original timezone if required: `user_timezone TEXT`
+
+**Example with Timezone Handling**:
+
+```sql
+CREATE USER TABLE app.events (
+  id BIGINT DEFAULT SNOWFLAKE_ID(),
+  event_time DATETIME NOT NULL,        -- Stored in UTC
+  user_timezone TEXT,                   -- Store original timezone separately
+  description TEXT
+);
+
+-- Insert with explicit timezone (Berlin)
+INSERT INTO app.events (event_time, user_timezone, description) VALUES
+  ('2025-01-01T14:00:00+01:00', 'Europe/Berlin', 'Meeting scheduled');
+
+-- Query: event_time is now '2025-01-01T13:00:00' (UTC)
+-- Use user_timezone column to convert back to local time in application
+```
+
+**Testing Timezone Behavior**:
+
+See `backend/tests/test_datetime_timezone_storage.rs` for comprehensive timezone handling tests demonstrating UTC normalization.
+
 ---
 
 ## System Columns

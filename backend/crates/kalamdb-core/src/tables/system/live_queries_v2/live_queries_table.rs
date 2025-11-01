@@ -1,13 +1,13 @@
 //! System.live_queries table schema
 //!
 //! Defines the Arrow schema for the system.live_queries table.
-//! 
+//!
 //! Phase 4 (Column Ordering): Uses live_queries_table_definition().to_arrow_schema()
 //! to ensure consistent column ordering via ordinal_position field.
 
+use crate::tables::system::system_table_definitions::live_queries_table_definition;
 use datafusion::arrow::datatypes::SchemaRef;
 use std::sync::OnceLock;
-use crate::tables::system::system_table_definitions::live_queries_table_definition;
 
 /// Cached schema for system.live_queries table
 static LIVE_QUERIES_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();

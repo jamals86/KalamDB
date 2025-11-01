@@ -363,10 +363,7 @@ impl AutoCompleter {
                     }
                     for table in &self.tables {
                         if table.to_uppercase().starts_with(&input_upper) {
-                            results.push(StyledPair::new(
-                                table.clone(),
-                                CompletionCategory::Table,
-                            ));
+                            results.push(StyledPair::new(table.clone(), CompletionCategory::Table));
                         }
                     }
                 }

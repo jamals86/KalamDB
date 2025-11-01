@@ -47,13 +47,13 @@ fn test_subscription_listener_functionality() {
     let mut received_lines = Vec::new();
     let timeout = Duration::from_secs(3);
     let start = std::time::Instant::now();
-    
+
     for _ in 0..10 {
         if start.elapsed() > timeout {
             println!("Timeout reached after {} seconds", timeout.as_secs());
             break;
         }
-        
+
         match listener.try_read_line(Duration::from_millis(500)) {
             Ok(Some(line)) => {
                 println!("Received line: {}", line);

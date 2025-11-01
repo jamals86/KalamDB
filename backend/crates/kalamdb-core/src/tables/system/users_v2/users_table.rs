@@ -58,7 +58,7 @@ mod tests {
         let schema = UsersTableSchema::schema();
         // Schema built from TableDefinition, verify field count and names are correct
         assert_eq!(schema.fields().len(), 13);
-        
+
         // Verify fields exist (order guaranteed by TableDefinition's ordinal_position)
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
         assert!(field_names.contains(&"user_id"));

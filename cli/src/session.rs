@@ -109,17 +109,7 @@ impl CLISession {
         format: OutputFormat,
         color: bool,
     ) -> Result<Self> {
-        Self::with_auth_and_instance(
-            server_url,
-            auth,
-            format,
-            color,
-            None,
-            None,
-            None,
-            true,
-        )
-        .await
+        Self::with_auth_and_instance(server_url, auth, format, color, None, None, None, true).await
     }
 
     /// Create a new CLI session with AuthProvider, instance name, and credential store
@@ -691,8 +681,7 @@ impl CLISession {
             pb.finish_and_clear();
             resp
         } else {
-            self
-                .client
+            self.client
                 .execute_query("SELECT name FROM system.namespaces ORDER BY name")
                 .await
         };
@@ -745,7 +734,10 @@ impl CLISession {
                     if let Some(name) = name_opt {
                         table_names.push(name.to_string());
                         if let Some(ns) = ns_opt {
-                            ns_map.entry(ns.to_string()).or_default().push(name.to_string());
+                            ns_map
+                                .entry(ns.to_string())
+                                .or_default()
+                                .push(name.to_string());
                         }
                     }
                 }
@@ -1223,12 +1215,9 @@ impl CLISession {
             "{}{}{}",
             "║ ".bright_blue().bold(),
             "Commands & Shortcuts".white().bold(),
-            format!(
-                "{}",
-                "                                                 ║"
-            )
-            .bright_blue()
-            .bold()
+            format!("{}", "                                                 ║")
+                .bright_blue()
+                .bold()
         );
         println!(
             "{}",
@@ -1275,7 +1264,10 @@ impl CLISession {
             ("\\subscribe <SQL>", "Start live query"),
         ];
         for i in 0..left.len().max(right.len()) {
-            let l = left.get(i).map(|(a, b)| format!("{:<18} {:<18}", a.cyan(), b)).unwrap_or_else(|| "".into());
+            let l = left
+                .get(i)
+                .map(|(a, b)| format!("{:<18} {:<18}", a.cyan(), b))
+                .unwrap_or_else(|| "".into());
             let r = right
                 .get(i)
                 .map(|(a, b)| format!("{:<18} {:<18}", a.cyan(), b))

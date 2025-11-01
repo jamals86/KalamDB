@@ -2951,6 +2951,12 @@ impl SqlExecutor {
                 .await?;
             }
 
+            // T112: Invalidate schema cache for newly created table
+            if let Some(schema_cache) = &self.schema_cache {
+                let table_id = TableId::from_strings(&namespace_id.as_str(), &table_name.as_str());
+                schema_cache.invalidate(&table_id);
+            }
+
             Ok(ExecutionResult::Success(
                 "User table created successfully".to_string(),
             ))
@@ -3021,6 +3027,12 @@ impl SqlExecutor {
                     default_user_id,
                 )
                 .await?;
+            }
+
+            // T112: Invalidate schema cache for newly created table
+            if let Some(schema_cache) = &self.schema_cache {
+                let table_id = TableId::from_strings(&namespace_id.as_str(), &table_name.as_str());
+                schema_cache.invalidate(&table_id);
             }
 
             Ok(ExecutionResult::Success(
@@ -3124,6 +3136,13 @@ impl SqlExecutor {
                     .await?;
                 }
 
+                // T112: Invalidate schema cache for newly created table
+                if let Some(schema_cache) = &self.schema_cache {
+                    let table_id =
+                        TableId::from_strings(&namespace_id.as_str(), &table_name.as_str());
+                    schema_cache.invalidate(&table_id);
+                }
+
                 Ok(ExecutionResult::Success(
                     "Table created successfully".to_string(),
                 ))
@@ -3206,6 +3225,13 @@ impl SqlExecutor {
                     .await?;
                 }
 
+                // T112: Invalidate schema cache for newly created table
+                if let Some(schema_cache) = &self.schema_cache {
+                    let table_id =
+                        TableId::from_strings(&namespace_id.as_str(), &table_name.as_str());
+                    schema_cache.invalidate(&table_id);
+                }
+
                 Ok(ExecutionResult::Success(
                     "Table created successfully".to_string(),
                 ))
@@ -3276,6 +3302,11 @@ impl SqlExecutor {
             kalam_sql
                 .update_table(&table)
                 .map_err(|e| KalamDbError::Other(format!("Failed to update table: {}", e)))?;
+
+            // T113: Invalidate schema cache after ALTER TABLE
+            if let Some(schema_cache) = &self.schema_cache {
+                schema_cache.invalidate(&table_id);
+            }
 
             self.log_audit_event(
                 &ctx,
@@ -3373,6 +3404,11 @@ impl SqlExecutor {
                 stmt.namespace_id.as_str(),
                 stmt.table_name.as_str()
             )));
+        }
+
+        // T114: Invalidate schema cache after DROP TABLE
+        if let Some(schema_cache) = &self.schema_cache {
+            schema_cache.invalidate(&table_identifier);
         }
 
         let deletion_result = result.unwrap();

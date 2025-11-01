@@ -156,7 +156,6 @@ fn test_cli_json_output_format() {
         .arg("root")
         .arg("--password")
         .arg("")
-        
         .arg("--json")
         .arg("--command")
         .arg(&format!(
@@ -213,7 +212,6 @@ fn test_cli_csv_output_format() {
         .arg("root")
         .arg("--password")
         .arg("")
-        
         .arg("--csv")
         .arg("--command")
         .arg(&format!(
@@ -270,7 +268,6 @@ fn test_cli_multiline_query() {
         .arg("root")
         .arg("--password")
         .arg("")
-        
         .arg("--command")
         .arg(&multi_line_query);
 
@@ -300,7 +297,6 @@ fn test_cli_query_with_comments() {
         .arg("root")
         .arg("--password")
         .arg("")
-        
         .arg("--command")
         .arg(query_simple);
 
@@ -327,7 +323,6 @@ fn test_cli_empty_query() {
         .arg("root")
         .arg("--password")
         .arg("")
-        
         .arg("--command")
         .arg("   ");
 
@@ -378,7 +373,6 @@ fn test_cli_result_pagination() {
         .arg("root")
         .arg("--password")
         .arg("")
-        
         .arg("--command")
         .arg(&format!("SELECT * FROM {}", full_table_name));
 

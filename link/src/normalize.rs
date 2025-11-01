@@ -54,11 +54,13 @@ fn sort_columns(columns: &[String], preferred: &[&str]) -> Vec<String> {
 pub fn normalize_query_response(sql: &str, resp: &mut QueryResponse) {
     for result in &mut resp.results {
         let cols = &result.columns;
-        if cols.is_empty() { continue; }
+        if cols.is_empty() {
+            continue;
+        }
 
         // Prefer SQL hint, but fall back to column shape heuristic
-        let is_system_tables = sql.to_lowercase().contains("from system.tables")
-            || looks_like_system_tables(cols);
+        let is_system_tables =
+            sql.to_lowercase().contains("from system.tables") || looks_like_system_tables(cols);
 
         if is_system_tables {
             result.columns = sort_columns(cols, SYSTEM_TABLES_ORDER);

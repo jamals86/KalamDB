@@ -320,7 +320,7 @@ mod tests {
     // NOTE: These unit tests are disabled because they require full KalamDB setup
     // including RocksDB, SqlExecutor, and authentication middleware.
     // SQL execution is thoroughly tested in integration tests (backend/tests/).
-    
+
     #[ignore]
     #[actix_rt::test]
     async fn test_execute_sql_endpoint() {

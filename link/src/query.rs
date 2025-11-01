@@ -1,11 +1,11 @@
 //! SQL query execution with HTTP transport.
 
+use crate::normalize::normalize_query_response;
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
     models::{QueryRequest, QueryResponse},
 };
-use crate::normalize::normalize_query_response;
 
 /// Handles SQL query execution via HTTP.
 #[derive(Clone)]

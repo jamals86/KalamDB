@@ -4,16 +4,18 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-use chrono::{Duration, TimeZone, Utc};
 use arrow::array::Array; // for is_valid()
 use base64::{engine::general_purpose, Engine as _};
+use chrono::{Duration, TimeZone, Utc};
 use datafusion::catalog::memory::MemorySchemaProvider;
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableType};
 use kalamdb_commons::models::types::KalamDataType;
 use kalamdb_commons::{NamespaceId, TableId, TableName};
 use kalamdb_core::system_table_registration::register_system_tables;
 use kalamdb_core::tables::user_tables::user_table_flush::UserTableFlushJob;
-use kalamdb_core::tables::user_tables::user_table_store::{new_user_table_store, UserTableRow, UserTableRowId};
+use kalamdb_core::tables::user_tables::user_table_store::{
+    new_user_table_store, UserTableRow, UserTableRowId,
+};
 use kalamdb_store::{EntityStoreV2, RocksDBBackend};
 use rocksdb::DB;
 use tempfile::TempDir;
@@ -22,13 +24,17 @@ use tempfile::TempDir;
 async fn test_datatypes_preservation_values() {
     // Setup temp RocksDB and output dir
     let temp = TempDir::new().expect("Failed to create temp dir");
-    let db = Arc::new(DB::open_default(temp.path().join("rocksdb").to_str().unwrap()).expect("Failed to create RocksDB"));
+    let db = Arc::new(
+        DB::open_default(temp.path().join("rocksdb").to_str().unwrap())
+            .expect("Failed to create RocksDB"),
+    );
     let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
 
     // Register system tables (schema store not strictly required here, but keep consistent)
     let system_schema = Arc::new(MemorySchemaProvider::new());
     let (_jobs_provider, schema_store, _schema_cache) =
-        register_system_tables(&system_schema, backend.clone()).expect("register_system_tables failed");
+        register_system_tables(&system_schema, backend.clone())
+            .expect("register_system_tables failed");
 
     // Create a user table schema covering all types
     let ns = NamespaceId::from("ns_types");
@@ -52,7 +58,14 @@ async fn test_datatypes_preservation_values() {
         ColumnDefinition::simple("emb", 14, KalamDataType::Embedding(4)),
         // P0 datatypes (UUID, DECIMAL, SMALLINT)
         ColumnDefinition::simple("uuid_val", 15, KalamDataType::Uuid),
-        ColumnDefinition::simple("decimal_val", 16, KalamDataType::Decimal { precision: 10, scale: 2 }),
+        ColumnDefinition::simple(
+            "decimal_val",
+            16,
+            KalamDataType::Decimal {
+                precision: 10,
+                scale: 2,
+            },
+        ),
         ColumnDefinition::simple("smallint_val", 17, KalamDataType::SmallInt),
         // System columns typically exist; include them explicitly for the flush path
         ColumnDefinition::simple("_updated", 18, KalamDataType::Timestamp),
@@ -69,7 +82,9 @@ async fn test_datatypes_preservation_values() {
     .expect("Failed to create table definition");
 
     // Store table definition (not strictly used by the job, but keeps catalog consistent)
-    schema_store.put(&table_id, &table_def).expect("Failed to store table definition");
+    schema_store
+        .put(&table_id, &table_def)
+        .expect("Failed to store table definition");
 
     // Arrow schema for the job
     let arrow_schema = table_def
@@ -94,20 +109,22 @@ async fn test_datatypes_preservation_values() {
         let f = (i as f32) / 7.0 - 0.5;
         let s = format!("row-{}", i);
         let ts = (base_ts + Duration::seconds(i as i64)).timestamp_millis();
-        let date_str = (base_date + Duration::days(i as i64)).format("%Y-%m-%d").to_string();
+        let date_str = (base_date + Duration::days(i as i64))
+            .format("%Y-%m-%d")
+            .to_string();
         let dt_str = (base_ts + Duration::minutes(i as i64)).to_rfc3339();
         let time_str = format!("12:34:{:02}.{:06}", (i % 60), (i * 137) % 1_000_000);
         let json_str = format!("{{\"k\":{}}}", i);
         let bytes: Vec<u8> = (0..8).map(|j| ((i + j) % 256) as u8).collect();
-        let bytes_b64 = format!("base64:{}", general_purpose::STANDARD.encode(bytes.as_slice()));
+        let bytes_b64 = format!(
+            "base64:{}",
+            general_purpose::STANDARD.encode(bytes.as_slice())
+        );
         let emb = vec![i as f32, i as f32 + 0.5, -(i as f32), 1.0];
-        
+
         // P0 datatype values
         // UUID: generate deterministic RFC 4122 formatted UUIDs
-        let uuid_str = format!(
-            "550e8400-e29b-41d4-a716-446655{:06x}",
-            i % 0x1000000
-        );
+        let uuid_str = format!("550e8400-e29b-41d4-a716-446655{:06x}", i % 0x1000000);
         // DECIMAL: generate monetary values like $1234.56 (precision=10, scale=2)
         let decimal_val = ((i as i64) * 100 + 1234_56) as f64 / 100.0;
         // SMALLINT: cover edge cases (-32768, 0, 32767)
@@ -156,10 +173,7 @@ async fn test_datatypes_preservation_values() {
 
     // Define a storage output path template using ${user_id}
     let output_base = temp.path().join("parquet_out");
-    let template = format!(
-        "{}/{{}}/{{}}/${{user_id}}",
-        output_base.to_string_lossy()
-    );
+    let template = format!("{}/{{}}/{{}}/${{user_id}}", output_base.to_string_lossy());
     // Fill namespace/table placeholders (simple string replace)
     let template = template
         .replacen("{}", ns.as_str(), 1)
@@ -175,12 +189,23 @@ async fn test_datatypes_preservation_values() {
     );
 
     let result = job.execute_tracked().expect("flush job failed");
-    assert_eq!(result.rows_flushed as usize, row_count, "unexpected rows_flushed");
-    assert_eq!(result.parquet_files.len(), 1, "expected one parquet file (single user)");
+    assert_eq!(
+        result.rows_flushed as usize, row_count,
+        "unexpected rows_flushed"
+    );
+    assert_eq!(
+        result.parquet_files.len(),
+        1,
+        "expected one parquet file (single user)"
+    );
 
     // Parquet file should exist
     let parquet_path = Path::new(&result.parquet_files[0]);
-    assert!(parquet_path.exists(), "parquet file not found: {:?}", parquet_path);
+    assert!(
+        parquet_path.exists(),
+        "parquet file not found: {:?}",
+        parquet_path
+    );
 
     // Read back using Parquet reader and verify a few representative values across types
     {
@@ -201,35 +226,55 @@ async fn test_datatypes_preservation_values() {
             let uuid_field = schema.field_with_name("uuid_val").unwrap();
             let decimal_field = schema.field_with_name("decimal_val").unwrap();
             let smallint_field = schema.field_with_name("smallint_val").unwrap();
-            
+
             // Timestamp should have no timezone
             assert!(
-                matches!(ts_field.data_type(), arrow::datatypes::DataType::Timestamp(arrow::datatypes::TimeUnit::Millisecond, None)),
-                "Timestamp field should have no timezone, got {:?}", ts_field.data_type()
+                matches!(
+                    ts_field.data_type(),
+                    arrow::datatypes::DataType::Timestamp(
+                        arrow::datatypes::TimeUnit::Millisecond,
+                        None
+                    )
+                ),
+                "Timestamp field should have no timezone, got {:?}",
+                ts_field.data_type()
             );
-            
+
             // DateTime should have UTC timezone
             assert!(
                 matches!(dt_field.data_type(), arrow::datatypes::DataType::Timestamp(arrow::datatypes::TimeUnit::Millisecond, Some(tz)) if tz.as_ref() == "UTC"),
-                "DateTime field should have UTC timezone, got {:?}", dt_field.data_type()
+                "DateTime field should have UTC timezone, got {:?}",
+                dt_field.data_type()
             );
-            
+
             // UUID should be FixedSizeBinary(16)
             assert!(
-                matches!(uuid_field.data_type(), arrow::datatypes::DataType::FixedSizeBinary(16)),
-                "UUID field should be FixedSizeBinary(16), got {:?}", uuid_field.data_type()
+                matches!(
+                    uuid_field.data_type(),
+                    arrow::datatypes::DataType::FixedSizeBinary(16)
+                ),
+                "UUID field should be FixedSizeBinary(16), got {:?}",
+                uuid_field.data_type()
             );
-            
+
             // DECIMAL should be Decimal128(10, 2)
             assert!(
-                matches!(decimal_field.data_type(), arrow::datatypes::DataType::Decimal128(10, 2)),
-                "DECIMAL field should be Decimal128(10, 2), got {:?}", decimal_field.data_type()
+                matches!(
+                    decimal_field.data_type(),
+                    arrow::datatypes::DataType::Decimal128(10, 2)
+                ),
+                "DECIMAL field should be Decimal128(10, 2), got {:?}",
+                decimal_field.data_type()
             );
-            
+
             // SMALLINT should be Int16
             assert!(
-                matches!(smallint_field.data_type(), arrow::datatypes::DataType::Int16),
-                "SMALLINT field should be Int16, got {:?}", smallint_field.data_type()
+                matches!(
+                    smallint_field.data_type(),
+                    arrow::datatypes::DataType::Int16
+                ),
+                "SMALLINT field should be Int16, got {:?}",
+                smallint_field.data_type()
             );
 
             // Minimal field checks for a sample of rows in this batch
@@ -309,7 +354,8 @@ async fn test_datatypes_preservation_values() {
                 .downcast_ref::<arrow::array::Int16Array>()
                 .unwrap();
 
-            for row in 0..batch.num_rows().min(5) { // sample subset per batch
+            for row in 0..batch.num_rows().min(5) {
+                // sample subset per batch
                 let id = id_arr.value(row);
                 let i_usize = id as usize;
 
@@ -334,13 +380,11 @@ async fn test_datatypes_preservation_values() {
                 };
                 let exp_bytes: Vec<u8> = (0..8).map(|j| ((i_usize + j) % 256) as u8).collect();
                 let exp_emb = [i_usize as f32, i_usize as f32 + 0.5, -(i_usize as f32), 1.0];
-                
+
                 // P0 datatype expected values
                 let exp_uuid_bytes = {
-                    let uuid_str = format!(
-                        "550e8400-e29b-41d4-a716-446655{:06x}",
-                        i_usize % 0x1000000
-                    );
+                    let uuid_str =
+                        format!("550e8400-e29b-41d4-a716-446655{:06x}", i_usize % 0x1000000);
                     let clean = uuid_str.replace("-", "");
                     hex::decode(clean).expect("hex decode uuid")
                 };
@@ -357,25 +401,62 @@ async fn test_datatypes_preservation_values() {
 
                 assert_eq!(b_arr.value(row), exp_b, "bool mismatch for id={}", id);
                 assert_eq!(i_arr.value(row), exp_i, "int mismatch for id={}", id);
-                assert!((d_arr.value(row) - exp_d).abs() < 1e-9, "double mismatch for id={}", id);
-                assert!((f_arr.value(row) - exp_f).abs() < 1e-6, "float mismatch for id={}", id);
+                assert!(
+                    (d_arr.value(row) - exp_d).abs() < 1e-9,
+                    "double mismatch for id={}",
+                    id
+                );
+                assert!(
+                    (f_arr.value(row) - exp_f).abs() < 1e-6,
+                    "float mismatch for id={}",
+                    id
+                );
                 assert_eq!(s_arr.value(row), exp_s, "text mismatch for id={}", id);
                 assert_eq!(ts_arr.value(row), exp_ts, "ts(ms) mismatch for id={}", id);
-                assert_eq!(date_arr.value(row), exp_date_days, "date(days) mismatch for id={}", id);
-                assert_eq!(dt_arr.value(row), exp_dt_ms, "datetime(ms) mismatch for id={}", id);
-                assert_eq!(time_arr.value(row), exp_time_us, "time(us) mismatch for id={}", id);
+                assert_eq!(
+                    date_arr.value(row),
+                    exp_date_days,
+                    "date(days) mismatch for id={}",
+                    id
+                );
+                assert_eq!(
+                    dt_arr.value(row),
+                    exp_dt_ms,
+                    "datetime(ms) mismatch for id={}",
+                    id
+                );
+                assert_eq!(
+                    time_arr.value(row),
+                    exp_time_us,
+                    "time(us) mismatch for id={}",
+                    id
+                );
                 let got_bytes = bytes_arr.value(row);
-                assert_eq!(got_bytes, exp_bytes.as_slice(), "bytes mismatch for id={}", id);
-                
+                assert_eq!(
+                    got_bytes,
+                    exp_bytes.as_slice(),
+                    "bytes mismatch for id={}",
+                    id
+                );
+
                 // P0 datatype assertions
                 let got_uuid = uuid_arr.value(row);
-                assert_eq!(got_uuid, exp_uuid_bytes.as_slice(), "UUID mismatch for id={}", id);
-                
+                assert_eq!(
+                    got_uuid,
+                    exp_uuid_bytes.as_slice(),
+                    "UUID mismatch for id={}",
+                    id
+                );
+
                 let got_decimal = decimal_arr.value(row);
                 assert_eq!(got_decimal, exp_decimal, "DECIMAL mismatch for id={}", id);
-                
+
                 let got_smallint = smallint_arr.value(row);
-                assert_eq!(got_smallint, exp_smallint, "SMALLINT mismatch for id={}", id);
+                assert_eq!(
+                    got_smallint, exp_smallint,
+                    "SMALLINT mismatch for id={}",
+                    id
+                );
 
                 // Embedding: extract fixed-size list item values
                 if emb_arr.is_valid(row) {
@@ -394,7 +475,12 @@ async fn test_datatypes_preservation_values() {
                         vals.value(start + 3),
                     ];
                     for k in 0..4 {
-                        assert!((got[k] - exp_emb[k]).abs() < 1e-6, "embedding[{}] mismatch for id={}", k, id);
+                        assert!(
+                            (got[k] - exp_emb[k]).abs() < 1e-6,
+                            "embedding[{}] mismatch for id={}",
+                            k,
+                            id
+                        );
                     }
                 } else {
                     panic!("embedding null for id={}", id);
@@ -416,5 +502,9 @@ async fn test_datatypes_preservation_values() {
         .map(|e| e.path())
         .filter(|p| p.extension().map(|s| s == "parquet").unwrap_or(false))
         .collect();
-    assert!(!parquet_files.is_empty(), "no parquet files found in {:?}", user_dir);
+    assert!(
+        !parquet_files.is_empty(),
+        "no parquet files found in {:?}",
+        user_dir
+    );
 }

@@ -40,7 +40,10 @@ fn test_basic_table_creation_and_access() {
     let namespace = "test_shared";
 
     // Create namespace first
-    let _ = common::execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = common::execute_sql_as_root_via_cli(&format!(
+        "CREATE NAMESPACE IF NOT EXISTS {}",
+        namespace
+    ));
 
     // Create test table
     let create_sql = format!(

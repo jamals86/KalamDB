@@ -47,14 +47,16 @@ fn test_cli_live_query_basic() {
     // Try to read with timeout instead of blocking forever
     let timeout = Duration::from_secs(3);
     let result = listener.wait_for_event("Initial Message", timeout);
-    
+
     listener.stop().unwrap();
     cleanup_test_table(&table).unwrap();
-    
+
     if result.is_ok() {
         println!("✓ Received expected subscription data");
     } else {
-        println!("⚠️  Subscription started but no data received (may be expected for this test setup)");
+        println!(
+            "⚠️  Subscription started but no data received (may be expected for this test setup)"
+        );
     }
 }
 
