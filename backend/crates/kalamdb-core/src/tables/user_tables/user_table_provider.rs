@@ -218,9 +218,12 @@ impl UserTableProvider {
     /// # Returns
     /// The generated row ID
     pub fn insert_row(&self, row_data: JsonValue) -> Result<String, KalamDbError> {
-        // Apply DEFAULTS and auto-generated columns for direct inserts (parity with SQL INSERT)
+        // Apply generated columns FIRST (id, created_at), then defaults and validation.
+        // This ensures NOT NULL id/created_at are present even if not specified by caller.
         let mut rows = vec![row_data];
-        // Evaluate DEFAULT expressions (Snowflake IDs, timestamps, etc.)
+        self.prepare_insert_rows(&mut rows)
+            .map_err(KalamDbError::InvalidOperation)?;
+
         for row in rows.iter_mut() {
             UserTableInsertHandler::apply_defaults_and_validate(
                 row,
@@ -229,9 +232,6 @@ impl UserTableProvider {
                 &self.current_user_id,
             )?;
         }
-        // Populate auto-increment IDs and timestamps when missing
-        self.prepare_insert_rows(&mut rows)
-            .map_err(KalamDbError::InvalidOperation)?;
 
         // At this point there is exactly one row
         let finalized = rows.into_iter().next().expect("row must exist");
@@ -253,7 +253,11 @@ impl UserTableProvider {
     /// Vector of generated row IDs
     pub fn insert_batch(&self, rows: Vec<JsonValue>) -> Result<Vec<String>, KalamDbError> {
         let mut rows = rows;
-        // Evaluate DEFAULT expressions (Snowflake IDs, timestamps, etc.)
+        // Populate generated columns FIRST
+        self.prepare_insert_rows(&mut rows)
+            .map_err(KalamDbError::InvalidOperation)?;
+
+        // Then evaluate DEFAULTs and validate NOT NULL
         for row in rows.iter_mut() {
             UserTableInsertHandler::apply_defaults_and_validate(
                 row,
@@ -262,9 +266,6 @@ impl UserTableProvider {
                 &self.current_user_id,
             )?;
         }
-        // Populate auto-increment IDs and timestamps when missing
-        self.prepare_insert_rows(&mut rows)
-            .map_err(KalamDbError::InvalidOperation)?;
 
         self.insert_handler.insert_batch(
             self.namespace_id(),

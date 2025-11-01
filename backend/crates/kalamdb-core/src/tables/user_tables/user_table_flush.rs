@@ -189,8 +189,77 @@ impl UserTableFlushJob {
         rows: &[(Vec<u8>, JsonValue)],
     ) -> Result<RecordBatch, KalamDbError> {
         let mut builder = crate::flush::util::JsonBatchBuilder::new(self.schema.clone())?;
-        for (_, row) in rows {
-            builder.push_object_row(row)?;
+
+        // Helper: fill id/created_at if missing and non-nullable according to schema
+        fn generate_numeric_id() -> i64 {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            use std::time::{SystemTime, UNIX_EPOCH};
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            let c = COUNTER.fetch_add(1, Ordering::SeqCst) % 4096; // 12 bits
+            let id = now_ms.saturating_mul(1000).saturating_add(c);
+            id as i64
+        }
+
+        for (key_bytes, row) in rows.iter() {
+            // Parse row_id from the composite key to backfill primary key if missing
+            let key_str = String::from_utf8_lossy(key_bytes).to_string();
+            let (_user_from_key, row_id_from_key) = match self.parse_user_key(&key_str) {
+                Ok((u, r)) => (u, r),
+                Err(_) => (String::new(), String::new()),
+            };
+            let mut patched = row.clone();
+            if let Some(obj) = patched.as_object_mut() {
+                for field in self.schema.fields() {
+                    let name = field.name();
+                    // Only handle known generated columns here
+                    if name == "id" {
+                        let missing = !obj.contains_key(name) || obj.get(name).map(|v| v.is_null()).unwrap_or(true);
+                        if missing && !field.is_nullable() {
+                            use datafusion::arrow::datatypes::DataType;
+                            match field.data_type() {
+                                DataType::Int64 => {
+                                    if let Ok(parsed) = row_id_from_key.parse::<i64>() {
+                                        obj.insert(name.to_string(), serde_json::json!(parsed));
+                                    } else {
+                                        obj.insert(name.to_string(), serde_json::json!(generate_numeric_id()));
+                                    }
+                                }
+                                DataType::Utf8 => {
+                                    let to_set = if !row_id_from_key.is_empty() { row_id_from_key.clone() } else { generate_numeric_id().to_string() };
+                                    obj.insert(name.to_string(), serde_json::json!(to_set));
+                                }
+                                _ => {
+                                    // Unsupported id type; leave as is to surface error clearly
+                                }
+                            }
+                        }
+                    } else if name == "created_at" {
+                        let missing = !obj.contains_key(name) || obj.get(name).map(|v| v.is_null()).unwrap_or(true);
+                        if missing && !field.is_nullable() {
+                            use datafusion::arrow::datatypes::DataType;
+                            let now_ms = chrono::Utc::now().timestamp_millis();
+                            match field.data_type() {
+                                DataType::Int64 => {
+                                    obj.insert(name.to_string(), serde_json::json!(now_ms));
+                                }
+                                DataType::Utf8 => {
+                                    obj.insert(name.to_string(), serde_json::json!(chrono::Utc::now().to_rfc3339()));
+                                }
+                                DataType::Timestamp(_, _) => {
+                                    // Builder expects millis for TsMs
+                                    obj.insert(name.to_string(), serde_json::json!(now_ms));
+                                }
+                                _ => { /* leave as null */ }
+                            }
+                        }
+                    }
+                }
+            }
+            builder.push_object_row(&patched)?;
         }
         builder.finish()
     }
@@ -309,7 +378,7 @@ impl TableFlush for UserTableFlushJob {
             rows_scanned += 1;
 
             // Decode row
-            let user_table_row: crate::models::UserTableRow =
+            let user_table_row: crate::tables::user_tables::user_table_store::UserTableRow =
                 match serde_json::from_slice(&value_bytes) {
                     Ok(v) => v,
                     Err(e) => {
@@ -329,7 +398,10 @@ impl TableFlush for UserTableFlushJob {
             }
 
             // Convert to JSON value and inject system columns
-            let mut row_data = JsonValue::Object(user_table_row.fields);
+            let mut row_data = match user_table_row.fields {
+                serde_json::Value::Object(map) => JsonValue::Object(map),
+                other => other,
+            };
             if let Some(obj) = row_data.as_object_mut() {
                 obj.insert(
                     "_updated".to_string(),
@@ -432,6 +504,23 @@ impl TableFlush for UserTableFlushJob {
                     error_messages.push(error_msg);
                 }
             }
+        }
+
+        // If any user flush failed, treat the entire job as failed (per SQL spec)
+        if !error_messages.is_empty() {
+            let summary = format!(
+                "One or more user partitions failed to flush ({} errors). Rows flushed before failure: {}. First error: {}",
+                error_messages.len(),
+                total_rows_flushed,
+                error_messages.get(0).cloned().unwrap_or_else(|| "unknown error".to_string())
+            );
+            log::error!(
+                "❌ User table flush failed: table={}.{} — {}",
+                self.namespace_id.as_str(),
+                self.table_name.as_str(),
+                summary
+            );
+            return Err(KalamDbError::Other(summary));
         }
 
         log::info!(

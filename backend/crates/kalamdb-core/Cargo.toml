@@ -58,6 +58,10 @@ once_cell = { workspace = true }
 # Regular expressions
 regex = { workspace = true }
 
+# Binary encoding helpers
+base64 = { workspace = true }
+hex = { workspace = true }
+
 [dev-dependencies]
 # Testing utilities
 tempfile = { workspace = true }

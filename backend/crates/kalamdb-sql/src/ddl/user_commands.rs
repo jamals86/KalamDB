@@ -93,10 +93,8 @@ impl CreateUserStatement {
                 Some(extract_quoted_keyword_value(&normalized, "PASSWORD")?)
             }
             AuthType::OAuth => {
-                // Support optional credentials JSON immediately after OAUTH keyword:
-                // CREATE USER 'u' WITH OAUTH '{"provider":"google","subject":"id"}' ROLE user
-                // If not provided, leave None (executor will enforce and return a helpful error)
-                extract_quoted_keyword_value(&normalized, "OAUTH").ok()
+                // OAuth users don't have passwords in SQL (credentials managed externally)
+                None
             }
             AuthType::Internal => None,
         };
@@ -313,10 +311,12 @@ mod tests {
     fn test_parse_create_user_with_oauth() {
         let sql = "CREATE USER 'oauth_user' WITH OAUTH ROLE viewer EMAIL 'user@example.com'";
         let result = CreateUserStatement::parse(sql);
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
         let stmt = result.unwrap();
         assert_eq!(stmt.username, "oauth_user");
         assert_eq!(stmt.auth_type, AuthType::OAuth);
+        eprintln!("Password (should be None): {:?}", stmt.password);
+        eprintln!("Email (should be Some): {:?}", stmt.email);
         assert_eq!(stmt.password, None);
         assert_eq!(stmt.role, Role::User); // viewer maps to User
         assert_eq!(stmt.email, Some("user@example.com".to_string()));

@@ -124,6 +124,12 @@ fn test_cli_batch_file_execution() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let sql_file = temp_dir.path().join("test.sql");
 
+    // Cleanup first in case namespace/table exists from previous run
+    let _ = execute_sql_as_root_via_cli("DROP TABLE IF EXISTS batch_test.items");
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let _ = execute_sql_as_root_via_cli("DROP NAMESPACE IF EXISTS batch_test CASCADE");
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
     std::fs::write(
         &sql_file,
         r#"CREATE NAMESPACE batch_test;

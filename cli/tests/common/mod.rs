@@ -166,7 +166,9 @@ pub fn cleanup_test_table(table_full_name: &str) -> Result<(), Box<dyn std::erro
 /// Subscription listener for testing real-time events via CLI
 pub struct SubscriptionListener {
     child: Child,
-    stdout_reader: BufReader<std::process::ChildStdout>,
+    stdout_reader: Option<BufReader<std::process::ChildStdout>>,
+    line_receiver: Option<std_mpsc::Receiver<Result<String, String>>>,
+    reader_thread: Option<thread::JoinHandle<()>>,
 }
 
 impl SubscriptionListener {
@@ -182,21 +184,78 @@ impl SubscriptionListener {
             .spawn()?;
 
         let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
-        let stdout_reader = BufReader::new(stdout);
+        let mut stdout_reader = BufReader::new(stdout);
+
+        // Start a background thread to read lines with ability to timeout
+        let (tx, rx) = std_mpsc::channel();
+        let reader_thread = thread::spawn(move || {
+            loop {
+                let mut line = String::new();
+                match stdout_reader.read_line(&mut line) {
+                    Ok(0) => {
+                        // EOF
+                        let _ = tx.send(Ok("".to_string()));
+                        break;
+                    }
+                    Ok(_) => {
+                        if tx.send(Ok(line.trim().to_string())).is_err() {
+                            break; // Receiver dropped
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(e.to_string()));
+                        break;
+                    }
+                }
+            }
+        });
 
         Ok(Self {
             child,
-            stdout_reader,
+            stdout_reader: None,
+            line_receiver: Some(rx),
+            reader_thread: Some(reader_thread),
         })
     }
 
     /// Read next line from subscription output
     pub fn read_line(&mut self) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        let mut line = String::new();
-        match self.stdout_reader.read_line(&mut line) {
-            Ok(0) => Ok(None), // EOF
-            Ok(_) => Ok(Some(line.trim().to_string())),
-            Err(e) => Err(e.into()),
+        if let Some(ref rx) = self.line_receiver {
+            match rx.recv() {
+                Ok(Ok(line)) => {
+                    if line.is_empty() {
+                        Ok(None) // EOF
+                    } else {
+                        Ok(Some(line))
+                    }
+                }
+                Ok(Err(e)) => Err(e.into()),
+                Err(_) => Ok(None), // Channel closed
+            }
+        } else {
+            Err("Listener not initialized properly".into())
+        }
+    }
+
+    /// Try to read a line with a timeout (uses polling approach)
+    pub fn try_read_line(&mut self, timeout: Duration) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        if let Some(ref rx) = self.line_receiver {
+            match rx.recv_timeout(timeout) {
+                Ok(Ok(line)) => {
+                    if line.is_empty() {
+                        Ok(None) // EOF
+                    } else {
+                        Ok(Some(line))
+                    }
+                }
+                Ok(Err(e)) => Err(e.into()),
+                Err(std_mpsc::RecvTimeoutError::Timeout) => {
+                    Err("Timeout waiting for subscription data".into())
+                }
+                Err(std_mpsc::RecvTimeoutError::Disconnected) => Ok(None),
+            }
+        } else {
+            Err("Listener not initialized properly".into())
         }
     }
 
@@ -209,15 +268,14 @@ impl SubscriptionListener {
         let start = std::time::Instant::now();
 
         while start.elapsed() < timeout {
-            let mut line = String::new();
-            match self.stdout_reader.read_line(&mut line) {
-                Ok(0) => break, // EOF
-                Ok(_) => {
+            match self.try_read_line(Duration::from_millis(100)) {
+                Ok(Some(line)) => {
                     if line.contains(pattern) {
-                        return Ok(line.trim().to_string());
+                        return Ok(line);
                     }
                 }
-                Err(_) => break,
+                Ok(None) => break, // EOF
+                Err(_) => continue, // Timeout on this read, try again
             }
         }
 
@@ -249,13 +307,12 @@ pub fn start_subscription_listener(
         };
 
         loop {
-            let mut line = String::new();
-            match listener.stdout_reader.read_line(&mut line) {
-                Ok(0) => break, // EOF
-                Ok(_) => {
-                    let _ = event_sender.send(line.trim().to_string());
+            match listener.try_read_line(Duration::from_millis(100)) {
+                Ok(Some(line)) => {
+                    let _ = event_sender.send(line);
                 }
-                Err(_) => break,
+                Ok(None) => break, // EOF
+                Err(_) => continue, // Timeout, try again
             }
         }
     });

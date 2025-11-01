@@ -86,8 +86,10 @@ Also check that registering ctaalogs are done in one place and one session, we s
 85) Jobs model add NamespaceId type
 86) Make node_id: String, into NodeId type
 87) implement a service which answer these kind of things: fn get_memory_usage_mb() and will be used in stats/jobs memory/cpu and other places when needed
-
-
+89) When deleting a namespace check if all tables are deleted, re-create the namespace again and check if the tables still exists there, and try to cvreate the same table again and check if it works correctly
+90) Create/alter table support table doesnt return the actual rows affected count
+91) If i set the logging to info inside config.toml i still see debug logs: level = "info"
+92) Check the datatypes converting between rust to arrow datatypes and to rocksdb its named json i dont want to use json for this, i want fast serdes for datatypes, maybe util.rs need to manage both serialize from parquet to arrow arrow to parquet both wys currently its located inside flush folder
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):

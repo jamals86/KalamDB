@@ -7,7 +7,7 @@ use crate::error::KalamDbError;
 use crate::tables::system::schemas::SchemaCache as TableSchemaCache;
 use crate::tables::system::SystemTableProviderExt;
 use async_trait::async_trait;
-use datafusion::arrow::array::{ArrayRef, Float64Builder, StringBuilder};
+use datafusion::arrow::array::{ArrayRef, StringBuilder};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::datasource::{TableProvider, TableType};

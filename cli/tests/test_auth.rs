@@ -49,6 +49,7 @@ fn test_cli_invalid_token() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg("http://localhost:8080")
+        .arg("--username")
         .arg("test_user")
         .arg("--token")
         .arg("invalid.jwt.token")
@@ -60,10 +61,11 @@ fn test_cli_invalid_token() {
 
     // May succeed on localhost (auth bypass) or fail with auth error
     // Either outcome is acceptable
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success()
-            || String::from_utf8_lossy(&output.stderr).contains("auth")
-            || String::from_utf8_lossy(&output.stderr).contains("token"),
+            || stderr.contains("auth")
+            || stderr.contains("token"),
         "Should handle invalid token appropriately"
     );
 }

@@ -380,8 +380,8 @@ mod tests {
             access: None,
         };
 
-        assert!(!store.can_read(&Role::User));
-        assert!(!store.can_read(&Role::Service));
+        assert!(!store.can_read(&Role::User)); // Regular users cannot read system tables
+        assert!(store.can_read(&Role::Service)); // Service accounts CAN read for operational telemetry
         assert!(store.can_read(&Role::Dba));
         assert!(store.can_read(&Role::System));
     }
