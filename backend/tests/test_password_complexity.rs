@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Tests for password complexity enforcement.
 
 use kalamdb_commons::{models::UserName, AuthType, Role, StorageId, StorageMode, UserId};

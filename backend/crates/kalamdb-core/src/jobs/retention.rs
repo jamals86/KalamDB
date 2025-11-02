@@ -117,7 +117,7 @@ mod tests {
 
     use crate::catalog::NamespaceId;
     use kalamdb_commons::system::Job;
-    use kalamdb_commons::{JobId, JobType};
+    use kalamdb_commons::{JobId, JobType, NodeId};
     use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
@@ -151,7 +151,7 @@ mod tests {
             JobId::new("old-completed"),
             JobType::Flush,
             NamespaceId::new("default"),
-            "node-1".to_string(),
+            NodeId::from("node-1"),
         )
         .complete(Some("Success".to_string()));
         old_job.created_at = old_time;
@@ -163,7 +163,7 @@ mod tests {
             JobId::new("recent-completed"),
             JobType::Flush,
             NamespaceId::new("default"),
-            "node-1".to_string(),
+            NodeId::from("node-1"),
         )
         .complete(Some("Success".to_string()));
 
@@ -195,7 +195,7 @@ mod tests {
             JobId::new("old-failed"),
             JobType::Backup,
             NamespaceId::new("default"),
-            "node-1".to_string(),
+            NodeId::from("node-1"),
         )
         .fail("Disk full".to_string());
         failed_job.created_at = failed_time;
@@ -225,7 +225,7 @@ mod tests {
             JobId::new("very-old-failed"),
             JobType::Cleanup,
             NamespaceId::new("default"),
-            "node-1".to_string(),
+            NodeId::from("node-1"),
         )
         .fail("Error".to_string());
         very_old_failed.created_at = very_old_time;
@@ -255,7 +255,7 @@ mod tests {
             JobId::new("old-running"),
             JobType::Cleanup,
             NamespaceId::new("default"),
-            "node-1".to_string(),
+            NodeId::from("node-1"),
         );
         old_running.created_at = old_running_time;
         old_running.started_at = Some(old_running_time);

@@ -66,6 +66,7 @@ pub use models::{
     JobType,
     LiveQueryId,
     NamespaceId,
+        NodeId,
     Role,
     StorageId,
     StorageMode,

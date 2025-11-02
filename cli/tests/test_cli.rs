@@ -13,10 +13,8 @@
 mod common;
 use common::*;
 
-use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
-use std::time::Duration;
 
 /// T036: Test CLI connection and prompt display
 #[test]

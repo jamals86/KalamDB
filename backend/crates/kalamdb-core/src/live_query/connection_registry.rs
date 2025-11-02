@@ -6,11 +6,12 @@
 use crate::error::KalamDbError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fmt;
 
 // Re-export from kalamdb-commons
 pub use kalamdb_commons::models::UserId;
 pub use kalamdb_commons::models::{ConnectionId, LiveId};
+pub use kalamdb_commons::NodeId;
+use kalamdb_commons::TableName;
 
 /// Type alias for sending live query notifications to WebSocket clients
 ///
@@ -38,32 +39,6 @@ pub trait LiveIdExt {
 impl LiveIdExt for LiveId {
     fn from_string_kalam(s: &str) -> Result<LiveId, KalamDbError> {
         LiveId::from_string(s).map_err(KalamDbError::InvalidOperation)
-    }
-}
-
-/// Node identifier for cluster deployments
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct NodeId(pub String);
-
-impl NodeId {
-    pub fn new(id: String) -> Self {
-        Self(id)
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl AsRef<str> for NodeId {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for NodeId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
     }
 }
 
@@ -133,10 +108,10 @@ impl UserConnectionSocket {
     }
 
     /// Get live queries for a specific table
-    pub fn live_queries_for_table(&self, table_name: &str) -> Vec<&LiveQuery> {
+    pub fn live_queries_for_table(&self, table_name: &TableName) -> Vec<&LiveQuery> {
         self.live_queries
             .values()
-            .filter(|lq| lq.live_id.table_name == table_name)
+            .filter(|lq| lq.live_id.table_name() == table_name.as_str())
             .collect()
     }
 }
@@ -245,7 +220,7 @@ impl LiveQueryRegistry {
     pub fn get_subscriptions_for_table(
         &self,
         user_id: &UserId,
-        table_name: &str,
+        table_name: &TableName,
     ) -> Vec<&LiveQuery> {
         if let Some(user_connections) = self.users.get(user_id) {
             user_connections
@@ -319,7 +294,7 @@ mod tests {
     #[test]
     fn test_connection_id_parse() {
         let conn_id = ConnectionId::from_string("user123-conn_abc").unwrap();
-        assert_eq!(conn_id.user_id, "user123");
+        assert_eq!(conn_id.user_id.as_str(), "user123");
         assert_eq!(conn_id.unique_conn_id, "conn_abc");
     }
 
@@ -336,7 +311,7 @@ mod tests {
     #[test]
     fn test_live_id_parse() {
         let live_id = LiveId::from_string("user123-conn_abc-messages-q1").unwrap();
-        assert_eq!(live_id.connection_id.user_id, "user123");
+        assert_eq!(live_id.connection_id.user_id.as_str(), "user123");
         assert_eq!(live_id.connection_id.unique_conn_id, "conn_abc");
         assert_eq!(live_id.table_name, "messages");
         assert_eq!(live_id.query_id, "q1");
@@ -412,7 +387,8 @@ mod tests {
             .register_subscription(&user_id, live_query2)
             .unwrap();
 
-        let messages_subs = registry.get_subscriptions_for_table(&user_id, "messages");
+        let messages = TableName::new("messages");
+        let messages_subs = registry.get_subscriptions_for_table(&user_id, &messages);
         assert_eq!(messages_subs.len(), 1);
         assert_eq!(messages_subs[0].live_id.table_name(), "messages");
     }
@@ -498,7 +474,7 @@ mod tests {
 
         socket.add_live_query(live_query);
 
-        let table_queries = socket.live_queries_for_table("messages");
+    let table_queries = socket.live_queries_for_table(&TableName::new("messages"));
         assert_eq!(table_queries.len(), 1);
 
         let removed = socket.remove_live_query(&live_id);

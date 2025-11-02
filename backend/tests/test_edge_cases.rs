@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Integration tests for edge cases in authentication and authorization
 //!
 //! Tests:

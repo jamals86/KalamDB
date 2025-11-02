@@ -25,7 +25,7 @@ pub fn new_jobs_store(backend: Arc<dyn StorageBackend>) -> JobsStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{JobStatus, JobType, NamespaceId, Role, TableName};
+    use kalamdb_commons::{JobStatus, JobType, NamespaceId, NodeId, Role, TableName};
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_store::CrossUserTableStore;
     use kalamdb_store::EntityStoreV2 as EntityStore;
@@ -50,7 +50,7 @@ mod tests {
             created_at: 1000,
             started_at: Some(1000),
             completed_at: None,
-            node_id: "server-01".to_string(),
+            node_id: NodeId::from("server-01"),
             error_message: None,
         }
     }

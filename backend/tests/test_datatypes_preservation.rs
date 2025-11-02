@@ -73,8 +73,8 @@ async fn test_datatypes_preservation_values() {
     ];
 
     let table_def = TableDefinition::new_with_defaults(
-        ns.as_str(),
-        tbl_name.as_str(),
+        ns.clone(),
+        tbl_name.clone(),
         TableType::User,
         columns,
         Some("datatype preservation table".into()),

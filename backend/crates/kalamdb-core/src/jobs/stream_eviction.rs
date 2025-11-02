@@ -13,7 +13,7 @@ use crate::error::KalamDbError;
 use crate::jobs::{JobExecutor, JobResult};
 use crate::stores::system_table::SharedTableStoreExt;
 use crate::tables::StreamTableStore;
-use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::models::{NamespaceId, NodeId, TableName};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
@@ -25,14 +25,14 @@ pub struct StreamEvictionConfig {
     /// Interval between eviction runs (seconds)
     pub eviction_interval_secs: u64,
     /// Node identifier for job registration
-    pub node_id: String,
+    pub node_id: NodeId,
 }
 
 impl Default for StreamEvictionConfig {
     fn default() -> Self {
         Self {
             eviction_interval_secs: 60, // Run every minute
-            node_id: "node-1".to_string(),
+            node_id: NodeId::default(),
         }
     }
 }
@@ -334,7 +334,7 @@ mod tests {
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(Arc::clone(&backend)));
-        let job_executor = Arc::new(JobExecutor::new(jobs_provider, "test-node".to_string()));
+    let job_executor = Arc::new(JobExecutor::new(jobs_provider, NodeId::from("test-node")));
 
         let eviction_job =
             StreamEvictionJob::with_defaults(Arc::clone(&stream_store), kalam_sql, job_executor);
@@ -362,18 +362,18 @@ mod tests {
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(Arc::clone(&backend)));
-        let job_executor = Arc::new(JobExecutor::new(jobs_provider, "test-node".to_string()));
+        let job_executor = Arc::new(JobExecutor::new(jobs_provider, NodeId::from("test-node")));
 
         let config = StreamEvictionConfig {
             eviction_interval_secs: 30,
-            node_id: "custom-node".to_string(),
+              node_id: NodeId::from("custom-node"),
         };
 
         let eviction_job =
             StreamEvictionJob::new(stream_store, kalam_sql, job_executor, config.clone());
 
         assert_eq!(eviction_job.config().eviction_interval_secs, 30);
-        assert_eq!(eviction_job.config().node_id, "custom-node");
+    assert_eq!(eviction_job.config().node_id, NodeId::from("custom-node"));
     }
 
     #[test]

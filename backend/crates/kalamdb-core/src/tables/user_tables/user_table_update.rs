@@ -212,7 +212,7 @@ impl UserTableUpdateHandler {
 mod tests {
     use super::*;
     use crate::tables::user_tables::user_table_store::{
-        new_user_table_store, UserTableRow, UserTableRowId,
+        new_user_table_store, UserTableRow,
     };
     use crate::tables::UserTableStore;
     use kalamdb_store::test_utils::InMemoryBackend;
@@ -238,7 +238,6 @@ mod tests {
 
         // Insert initial row
         let initial_data = serde_json::json!({"name": "Alice", "age": 30});
-        let key = UserTableRowId::new(user_id.clone(), row_id);
         let row = UserTableRow {
             row_id: row_id.to_string(),
             user_id: user_id.as_str().to_string(),
@@ -309,7 +308,7 @@ mod tests {
         let user_id = UserId::new("user123".to_string());
 
         // Insert initial rows
-        let key1 = UserTableRowId::new(user_id.clone(), "row1");
+        
         let row1 = UserTableRow {
             row_id: "row1".to_string(),
             user_id: user_id.as_str().to_string(),
@@ -327,7 +326,7 @@ mod tests {
         )
         .unwrap();
 
-        let key2 = UserTableRowId::new(user_id.clone(), "row2");
+        
         let row2 = UserTableRow {
             row_id: "row2".to_string(),
             user_id: user_id.as_str().to_string(),
@@ -390,7 +389,7 @@ mod tests {
         let row_id = "row1";
 
         // Insert initial row
-        let key = UserTableRowId::new(user_id.clone(), row_id);
+        
         let row = UserTableRow {
             row_id: row_id.to_string(),
             user_id: user_id.as_str().to_string(),
@@ -443,7 +442,7 @@ mod tests {
         let user2 = UserId::new("user2".to_string());
 
         // Insert rows for different users
-        let key1 = UserTableRowId::new(user1.clone(), "row1");
+        
         let row1 = UserTableRow {
             row_id: "row1".to_string(),
             user_id: user1.as_str().to_string(),
@@ -461,7 +460,7 @@ mod tests {
         )
         .unwrap();
 
-        let key2 = UserTableRowId::new(user2.clone(), "row1");
+        
         let row2 = UserTableRow {
             row_id: "row1".to_string(),
             user_id: user2.as_str().to_string(),
@@ -511,7 +510,7 @@ mod tests {
         let user_id = UserId::new("user123".to_string());
 
         // Insert initial row
-        let key = UserTableRowId::new(user_id.clone(), "row1");
+        
         let row = UserTableRow {
             row_id: "row1".to_string(),
             user_id: user_id.as_str().to_string(),

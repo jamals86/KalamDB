@@ -69,8 +69,8 @@ async fn test_cache_invalidation_removes_entry() {
     ];
 
     let table_def = TableDefinition::new(
-        "default",
-        "test_table",
+        kalamdb_commons::NamespaceId::new("default"),
+        kalamdb_commons::TableName::new("test_table"),
         TableType::User,
         columns,
         TableOptions::user(),
@@ -129,8 +129,8 @@ async fn test_cache_invalidation_forces_cache_miss() {
     )];
 
     let table_def = TableDefinition::new(
-        "default",
-        "test_table",
+        kalamdb_commons::NamespaceId::new("default"),
+        kalamdb_commons::TableName::new("test_table"),
         TableType::User,
         columns,
         TableOptions::user(),
@@ -190,8 +190,8 @@ async fn test_selective_invalidation_preserves_other_entries() {
         )];
 
         let table_def = TableDefinition::new(
-            "default",
-            &format!("test_table_{}", i),
+            kalamdb_commons::NamespaceId::new("default"),
+            kalamdb_commons::TableName::new(format!("test_table_{}", i)),
             TableType::User,
             columns,
             TableOptions::user(),
@@ -261,8 +261,8 @@ async fn test_invalidation_idempotent() {
     )];
 
     let table_def = TableDefinition::new(
-        "default",
-        "test_table",
+        kalamdb_commons::NamespaceId::new("default"),
+        kalamdb_commons::TableName::new("test_table"),
         TableType::User,
         columns,
         TableOptions::user(),
@@ -309,8 +309,8 @@ async fn test_cache_stats_track_invalidation_behavior() {
     )];
 
     let table_def = TableDefinition::new(
-        "default",
-        "test_table",
+        kalamdb_commons::NamespaceId::new("default"),
+        kalamdb_commons::TableName::new("test_table"),
         TableType::User,
         columns,
         TableOptions::user(),

@@ -10,7 +10,7 @@
 use crate::error::KalamDbError;
 use crate::tables::system::JobsTableProvider;
 use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, TableName};
+use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, NodeId, TableName};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -24,7 +24,7 @@ pub enum JobResult {
 /// Job executor that manages job lifecycle and metrics
 pub struct JobExecutor {
     jobs_provider: Arc<JobsTableProvider>,
-    node_id: String,
+    node_id: NodeId,
 }
 
 impl JobExecutor {
@@ -33,7 +33,7 @@ impl JobExecutor {
     /// # Arguments
     /// * `jobs_provider` - Provider for system.jobs table
     /// * `node_id` - Unique identifier for this node
-    pub fn new(jobs_provider: Arc<JobsTableProvider>, node_id: String) -> Self {
+    pub fn new(jobs_provider: Arc<JobsTableProvider>, node_id: NodeId) -> Self {
         Self {
             jobs_provider,
             node_id,
@@ -119,7 +119,7 @@ impl JobExecutor {
         let trace = format!(
             "Job executed in {:.2}s on node {}",
             duration.as_secs_f64(),
-            self.node_id
+              self.node_id.as_str()
         );
 
         // T102: Update job with completion status and metrics
@@ -258,7 +258,7 @@ impl JobExecutor {
 
     /// Get the node ID for this executor
     pub fn node_id(&self) -> &str {
-        &self.node_id
+           self.node_id.as_str()
     }
 }
 
@@ -278,7 +278,7 @@ mod tests {
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.adapter().backend()));
-        let executor = JobExecutor::new(jobs_provider, "test-node-1".to_string());
+        let executor = JobExecutor::new(jobs_provider, NodeId::from("test-node-1"));
         (executor, temp_dir)
     }
 
@@ -440,7 +440,7 @@ mod tests {
             .get_job(&JobId::new("test-job-6"))
             .unwrap()
             .unwrap();
-        assert_eq!(job.node_id, "test-node-1");
+        assert_eq!(job.node_id, NodeId::from("test-node-1"));
     }
 
     #[test]

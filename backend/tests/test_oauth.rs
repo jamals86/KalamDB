@@ -1,3 +1,4 @@
+#![allow(unused_imports, dead_code, deprecated)]
 //! Integration tests for OAuth authentication (Phase 10, User Story 8)
 //!
 //! Tests:
@@ -268,7 +269,7 @@ async fn test_oauth_auto_provision_disabled_by_default() {
     use kalamdb_auth::AuthService;
 
     // Create AuthService with default settings
-    let auth_service = AuthService::new(
+    let _auth_service = AuthService::new(
         "test-secret".to_string(),
         vec![],
         true,       // allow_remote_access

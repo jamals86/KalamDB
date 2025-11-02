@@ -82,12 +82,12 @@ async fn test_flush_table_persists_job() {
     let (_executor, _temp_dir, kalam_sql) = setup_test_environment().await;
 
     // Create a job directly using the Jobs API
-    use kalamdb_commons::{JobId, JobType, NamespaceId, TableName};
+    use kalamdb_commons::{JobId, JobType, NamespaceId, NodeId, TableName};
     let job = kalamdb_commons::system::Job::new(
         JobId::new("test-flush-123"),
         JobType::Flush,
         NamespaceId::new("app"),
-        "node-1".to_string(),
+        NodeId::new("node-1".to_string()),
     )
     .with_table_name(TableName::new("app.conversations"));
 

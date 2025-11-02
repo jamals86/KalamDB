@@ -24,7 +24,7 @@ pub fn new_tables_store(backend: Arc<dyn StorageBackend>) -> TablesStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{NamespaceId, Role, StorageId, TableAccess, TableName, TableType};
+    use kalamdb_commons::{NamespaceId, Role, StorageId, TableName, TableType};
     use kalamdb_store::test_utils::InMemoryBackend;
     use kalamdb_store::CrossUserTableStore;
     use kalamdb_store::EntityStoreV2 as EntityStore;
@@ -34,7 +34,7 @@ mod tests {
         new_tables_store(backend)
     }
 
-    fn create_test_table(table_id: &str, table_name: &str) -> SystemTable {
+    fn create_test_table(_table_id: &str, table_name: &str) -> SystemTable {
         SystemTable {
             table_id: kalamdb_commons::TableId::new(
                 NamespaceId::new("default"),

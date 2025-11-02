@@ -11,7 +11,6 @@
 
 mod common;
 use common::*;
-use serde_json::json;
 use std::time::Duration;
 
 /// Test configuration constants

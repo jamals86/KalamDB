@@ -51,7 +51,7 @@ use datafusion::prelude::SessionContext;
 use datafusion::sql::sqlparser;
 use kalamdb_auth::password::{self, PasswordPolicy};
 use kalamdb_commons::models::{
-    AuditLogId, NamespaceId as CommonNamespaceId, StorageId, TableId, UserName,
+    AuditLogId, NamespaceId as CommonNamespaceId, NodeId, StorageId, TableId, UserName,
 };
 use kalamdb_commons::system::{AuditLogEntry, Namespace};
 use kalamdb_commons::{JobStatus, Role, TableAccess};
@@ -164,8 +164,8 @@ pub struct SqlExecutor {
 /// UPDATE statement parsed info
 #[derive(Debug)]
 struct UpdateInfo {
-    namespace: String,
-    table: String,
+    namespace: NamespaceId,
+    table: TableName,
     set_values: Vec<(String, serde_json::Value)>,
     where_clause: String,
 }
@@ -173,8 +173,8 @@ struct UpdateInfo {
 /// DELETE statement parsed info
 #[derive(Debug)]
 struct DeleteInfo {
-    namespace: String,
-    table: String,
+    namespace: NamespaceId,
+    table: TableName,
     where_clause: String,
 }
 
@@ -198,6 +198,14 @@ impl SqlExecutor {
         stream_table_service: Arc<StreamTableService>,
     ) -> Self {
         let session_factory = DataFusionSessionFactory::default();
+
+        // Ensure we always have a SessionContext configured with KalamDB defaults
+        // If the provided context doesn't have the 'kalam' catalog, create one that does
+        let session_context = if session_context.catalog("kalam").is_some() {
+            session_context
+        } else {
+            Arc::new(session_factory.create_session())
+        };
 
         Self {
             namespace_service,
@@ -1757,7 +1765,7 @@ impl SqlExecutor {
             storage_id: StorageId::from(stmt.storage_id.clone()),
             storage_name: stmt.storage_name,
             description: stmt.description,
-            storage_type: stmt.storage_type,
+            storage_type: stmt.storage_type.to_string(),
             base_directory: stmt.base_directory,
             credentials: normalized_credentials,
             shared_tables_template: stmt.shared_tables_template,
@@ -2052,7 +2060,7 @@ impl SqlExecutor {
             JobId::new(job_id.clone()),
             JobType::Flush,
             stmt.namespace.clone(),
-            format!("node-{}", std::process::id()),
+              NodeId::from(format!("node-{}", std::process::id())),
         )
         .with_table_name(kalamdb_commons::TableName::new(format!(
             "{}.{}",
@@ -2269,7 +2277,7 @@ impl SqlExecutor {
                 JobId::new(job_id.clone()),
                 JobType::Flush,
                 table.namespace.clone(),
-                format!("node-{}", std::process::id()),
+                 NodeId::from(format!("node-{}", std::process::id())),
             )
             .with_table_name(TableName::new(format!(
                 "{}.{}",
@@ -3278,8 +3286,9 @@ impl SqlExecutor {
 
             let table_id =
                 TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
+            let table_id_str = table_id.to_string();
             let mut table = kalam_sql
-                .get_table(table_id.as_ref())
+                .get_table(&table_id_str)
                 .map_err(|e| KalamDbError::Other(format!("Failed to get table: {}", e)))?
                 .ok_or_else(|| {
                     KalamDbError::table_not_found(format!(
@@ -3442,14 +3451,14 @@ impl SqlExecutor {
         let update_info = self.parse_update_statement(sql)?;
 
         // Check write permissions for shared tables
-        let table_name = format!("{}.{}", update_info.namespace, update_info.table);
+        let table_name = format!("{}.{}", update_info.namespace.as_str(), update_info.table.as_str());
         let mut table_refs = std::collections::HashSet::new();
         table_refs.insert(table_name.clone());
         self.check_write_permissions(user_id, &Some(table_refs))?;
 
         // Special-case: limited UPDATE support for system.users (restore user via deleted_at = NULL)
-        if update_info.namespace.eq_ignore_ascii_case("system")
-            && update_info.table.eq_ignore_ascii_case("users")
+        if update_info.namespace.as_str().eq_ignore_ascii_case("system")
+            && update_info.table.as_str().eq_ignore_ascii_case("users")
         {
             // Only admins can update system tables
             let ctx = self.create_execution_context(user_id)?;
@@ -3500,7 +3509,7 @@ impl SqlExecutor {
             .unwrap_or_else(|| UserId::from("anonymous"));
 
         // For UPDATE, only load the table being updated
-        let table_name = format!("{}.{}", update_info.namespace, update_info.table);
+        let table_name = format!("{}.{}", update_info.namespace.as_str(), update_info.table.as_str());
         let mut table_refs = std::collections::HashSet::new();
         table_refs.insert(table_name);
 
@@ -3511,7 +3520,7 @@ impl SqlExecutor {
         // Get table provider from the appropriate session
         let table_ref = datafusion::sql::TableReference::parse_str(&format!(
             "{}.{}",
-            update_info.namespace, update_info.table
+            update_info.namespace.as_str(), update_info.table.as_str()
         ));
         let table_provider = session
             .table_provider(table_ref)
@@ -3579,7 +3588,7 @@ impl SqlExecutor {
             .as_ref()
             .ok_or_else(|| KalamDbError::InvalidOperation("Store not configured".to_string()))?;
         let all_rows =
-            SharedTableStoreExt::scan(store.as_ref(), &update_info.namespace, &update_info.table)
+            SharedTableStoreExt::scan(store.as_ref(), update_info.namespace.as_str(), update_info.table.as_str())
                 .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         // Filter rows by WHERE clause (simple evaluation: col = 'value')
@@ -3629,7 +3638,7 @@ impl SqlExecutor {
         let delete_info = self.parse_delete_statement(sql)?;
 
         // Check write permissions for shared tables
-        let table_name = format!("{}.{}", delete_info.namespace, delete_info.table);
+        let table_name = format!("{}.{}", delete_info.namespace.as_str(), delete_info.table.as_str());
         let mut table_refs = std::collections::HashSet::new();
         table_refs.insert(table_name.clone());
         self.check_write_permissions(user_id, &Some(table_refs))?;
@@ -3640,7 +3649,7 @@ impl SqlExecutor {
             .unwrap_or_else(|| UserId::from("anonymous"));
 
         // For DELETE, only load the table being deleted from
-        let table_name = format!("{}.{}", delete_info.namespace, delete_info.table);
+        let table_name = format!("{}.{}", delete_info.namespace.as_str(), delete_info.table.as_str());
         let mut table_refs = std::collections::HashSet::new();
         table_refs.insert(table_name);
 
@@ -3651,7 +3660,7 @@ impl SqlExecutor {
         // Get table provider from the appropriate session
         let table_ref = datafusion::sql::TableReference::parse_str(&format!(
             "{}.{}",
-            delete_info.namespace, delete_info.table
+            delete_info.namespace.as_str(), delete_info.table.as_str()
         ));
         let table_provider = session
             .table_provider(table_ref)
@@ -3746,7 +3755,7 @@ impl SqlExecutor {
             .shared_table_store
             .as_ref()
             .ok_or_else(|| KalamDbError::InvalidOperation("Store not configured".to_string()))?
-            .scan(&delete_info.namespace, &delete_info.table)
+            .scan(delete_info.namespace.as_str(), delete_info.table.as_str())
             .map_err(|e| KalamDbError::Other(format!("Scan failed: {}", e)))?;
 
         // Filter rows by WHERE clause - support both '=' and 'IN'
@@ -3909,8 +3918,8 @@ impl SqlExecutor {
         }
 
         Ok(UpdateInfo {
-            namespace,
-            table,
+            namespace: NamespaceId::new(namespace),
+            table: TableName::new(table),
             set_values,
             where_clause,
         })
@@ -3929,8 +3938,8 @@ impl SqlExecutor {
             .ok_or_else(|| KalamDbError::InvalidSql(format!("Invalid DELETE syntax: {}", sql)))?;
 
         Ok(DeleteInfo {
-            namespace: captures[1].to_string(),
-            table: captures[2].to_string(),
+            namespace: NamespaceId::new(captures[1].to_string()),
+            table: TableName::new(captures[2].to_string()),
             where_clause: captures[3].to_string(),
         })
     }

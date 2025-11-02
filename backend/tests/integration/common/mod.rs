@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Common test utilities for KalamDB integration tests.
 //!
 //! This module provides a comprehensive test harness for integration testing:

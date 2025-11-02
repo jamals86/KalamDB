@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 /// Integration tests for T125-T127: System User Initialization
 ///
 /// Tests that the database creates a default system user on first startup

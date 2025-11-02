@@ -12,6 +12,7 @@
 use crate::catalog::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
+use crate::live_query::NodeId;
 use crate::storage::{ParquetWriter, StorageRegistry};
 use crate::stores::system_table::UserTableStoreExt;
 use crate::tables::base_flush::{FlushExecutor, FlushJobResult, TableFlush};
@@ -50,7 +51,7 @@ pub struct UserTableFlushJob {
     storage_registry: Option<Arc<StorageRegistry>>,
 
     /// Node ID for job tracking
-    node_id: String,
+        node_id: NodeId,
 
     /// Optional LiveQueryManager for flush notifications
     live_query_manager: Option<Arc<LiveQueryManager>>,
@@ -65,7 +66,7 @@ impl UserTableFlushJob {
         schema: SchemaRef,
         storage_location: String,
     ) -> Self {
-        let node_id = format!("node-{}", std::process::id());
+            let node_id = NodeId::from(format!("node-{}", std::process::id()));
         Self {
             store,
             namespace_id,
@@ -593,8 +594,8 @@ impl TableFlush for UserTableFlushJob {
         self.live_query_manager.as_ref()
     }
 
-    fn node_id(&self) -> String {
-        self.node_id.clone()
+        fn node_id(&self) -> NodeId {
+            self.node_id.clone()
     }
 }
 

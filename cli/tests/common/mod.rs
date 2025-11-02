@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports)]
 use assert_cmd;
 use std::io::{BufRead, BufReader};
 use std::process::Command;

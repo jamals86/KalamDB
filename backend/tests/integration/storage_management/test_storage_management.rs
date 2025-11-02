@@ -1,3 +1,4 @@
+#![allow(non_snake_case)]
 //! Integration tests for Storage Management functionality
 //!
 //! Tests comprehensive storage management operations:

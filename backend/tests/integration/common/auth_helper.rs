@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Authentication test helpers for integration tests.
 //!
 //! This module provides utilities for testing authentication flows:

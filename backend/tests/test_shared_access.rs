@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Integration tests for User Story 4: Shared Table Access Control
 //!
 //! Tests Phase 6 requirements:

@@ -37,8 +37,8 @@ async fn test_select_star_returns_columns_in_ordinal_order() {
     ];
 
     let table_def = TableDefinition::new_with_defaults(
-        test_namespace.to_string(),
-        "test_table",
+        test_namespace.clone(),
+        TableName::new("test_table"),
         TableType::User,
         columns_out_of_order,
         None,
@@ -103,8 +103,8 @@ async fn test_alter_table_add_column_assigns_next_ordinal() {
     ];
 
     let mut table_def = TableDefinition::new_with_defaults(
-        test_namespace.to_string(),
-        "test_table",
+        test_namespace.clone(),
+        TableName::new("test_table"),
         TableType::User,
         initial_columns,
         None,
@@ -163,8 +163,8 @@ async fn test_alter_table_drop_column_preserves_ordinals() {
     ];
 
     let mut table_def = TableDefinition::new_with_defaults(
-        test_namespace.to_string(),
-        "test_table",
+        test_namespace.clone(),
+        TableName::new("test_table"),
         TableType::User,
         initial_columns,
         None,

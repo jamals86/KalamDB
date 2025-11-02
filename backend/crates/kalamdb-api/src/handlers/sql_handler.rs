@@ -315,7 +315,6 @@ mod tests {
     use super::*;
     use crate::rate_limiter::RateLimiter;
     use actix_web::{test, App};
-    use jsonwebtoken::Algorithm;
 
     // NOTE: These unit tests are disabled because they require full KalamDB setup
     // including RocksDB, SqlExecutor, and authentication middleware.

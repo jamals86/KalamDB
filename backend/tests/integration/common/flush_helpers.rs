@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Helper utilities for flush testing
 //!
 //! This module provides utilities for:

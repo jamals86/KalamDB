@@ -29,7 +29,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::LiveQueryManager;
 use chrono::Utc;
 use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobId, JobType};
+use kalamdb_commons::{JobId, JobType, NodeId};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -188,8 +188,8 @@ pub trait TableFlush: Send + Sync {
     ///
     /// Override to customize node identification.
     /// Default uses process ID.
-    fn node_id(&self) -> String {
-        format!("node-{}", std::process::id())
+        fn node_id(&self) -> NodeId {
+            NodeId::from(format!("node-{}", std::process::id()))
     }
 
     /// Generate unique job ID
@@ -481,6 +481,6 @@ mod tests {
         };
 
         let node_id = job.node_id();
-        assert!(node_id.starts_with("node-"));
+        assert!(node_id.as_str().starts_with("node-"));
     }
 }

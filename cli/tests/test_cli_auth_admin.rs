@@ -12,6 +12,7 @@
 //! cargo test --test test_cli_auth_admin -- --test-threads=1
 //! ```
 //TODO: Remove this since we have most of the tests covered by the integration tests
+#![allow(unused_imports)]
 mod common;
 use assert_cmd::Command;
 use common::*;

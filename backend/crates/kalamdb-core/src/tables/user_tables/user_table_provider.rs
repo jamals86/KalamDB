@@ -468,7 +468,7 @@ impl UserTableProvider {
     ///
     /// Reads all Parquet files for the current user from the storage directory
     /// and converts them to JSON for merging with RocksDB data.
-    async fn scan_parquet_files(&self, schema: &SchemaRef) -> DataFusionResult<Vec<JsonValue>> {
+    async fn scan_parquet_files(&self, _schema: &SchemaRef) -> DataFusionResult<Vec<JsonValue>> {
         use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use std::fs;
         use std::path::Path;

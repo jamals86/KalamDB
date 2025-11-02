@@ -14,7 +14,7 @@
 use crate::catalog::{NamespaceId, TableType};
 use crate::error::KalamDbError;
 use crate::services::backup_service::BackupManifest;
-use kalamdb_commons::models::{JobId, JobStatus, JobType};
+use kalamdb_commons::models::{JobId, JobStatus, JobType, NodeId};
 use kalamdb_sql::{Job, KalamSql};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -568,7 +568,7 @@ impl RestoreService {
             created_at: now_ms,
             started_at: Some(now_ms),
             completed_at: None,
-            node_id: "local".to_string(),
+                node_id: NodeId::from("local"),
             error_message: None,
         };
 

@@ -13,7 +13,7 @@
 
 use crate::catalog::{NamespaceId, TableType};
 use crate::error::KalamDbError;
-use kalamdb_commons::models::{JobId, JobStatus, JobType};
+use kalamdb_commons::models::{JobId, JobStatus, JobType, NodeId};
 use kalamdb_sql::{Job, KalamSql, Namespace, Table, TableSchema};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -469,7 +469,7 @@ impl BackupService {
             created_at: now_ms,
             started_at: Some(now_ms),
             completed_at: None,
-            node_id: "local".to_string(),
+                node_id: NodeId::from("local"),
             error_message: None,
         };
 

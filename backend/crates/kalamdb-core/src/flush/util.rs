@@ -317,7 +317,7 @@ impl JsonBatchBuilder {
                             if cleaned.len() == 32 {
                                 if let Ok(bytes) = hex::decode(&cleaned) {
                                     if bytes.len() == 16 {
-                                        b.append_value(&bytes);
+                                        let _ = b.append_value(&bytes);
                                     } else {
                                         b.append_null();
                                     }
@@ -346,7 +346,7 @@ impl JsonBatchBuilder {
                                     }
                                 }
                                 if ok {
-                                    b.append_value(bytes);
+                                    let _ = b.append_value(bytes);
                                 } else {
                                     b.append_null();
                                 }

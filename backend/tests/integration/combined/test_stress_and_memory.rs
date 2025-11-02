@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Integration tests for stress testing and memory leak detection
 //!
 //! This module contains comprehensive stress tests to verify system stability

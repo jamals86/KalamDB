@@ -316,7 +316,7 @@ async fn test_password_security_e2e() {
 
     // Verify old password no longer works
     let test_sql = "SELECT 1".to_string();
-    let response = server
+    let _response = server
         .execute_sql_as_user(&test_sql, user.id.as_str())
         .await;
     // Note: This test may need adjustment based on how password changes are implemented

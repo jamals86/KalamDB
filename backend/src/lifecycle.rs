@@ -14,7 +14,7 @@ use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
 use kalamdb_core::jobs::JobManager;
-use kalamdb_core::live_query::{LiveQueryManager, NodeId};
+use kalamdb_core::live_query::LiveQueryManager;
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
     UserTableService,
@@ -161,16 +161,16 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     // Create job manager first
     let job_manager = Arc::new(TokioJobManager::new());
 
-    // Live query manager (per-node)
-    let node_id = NodeId::new(format!("{}:{}", config.server.host, config.server.port));
+    // Live query manager (per-node) - use configured node_id
+    let node_id = kalamdb_commons::NodeId::new(config.server.node_id.clone());
     let live_query_manager = Arc::new(LiveQueryManager::new(
         kalam_sql.clone(),
-        node_id,
+        node_id.clone(),
         Some(user_table_store.clone()),
         Some(shared_table_store.clone()),
         Some(stream_table_store.clone()),
     ));
-    info!("LiveQueryManager initialized");
+    info!("LiveQueryManager initialized with node_id: {}", node_id);
 
     let sql_executor = Arc::new(
         SqlExecutor::new(
@@ -233,7 +233,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     // Job executor for stream eviction
     let job_executor = Arc::new(JobExecutor::new(
         jobs_provider.clone(),
-        format!("{}:{}", config.server.host, config.server.port),
+           node_id.clone(),
     ));
 
     // Stream eviction job and scheduler

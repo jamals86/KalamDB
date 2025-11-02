@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Integration tests for SQL-based user management commands
 //!
 //! Tests CREATE USER, ALTER USER, and DROP USER SQL commands with:

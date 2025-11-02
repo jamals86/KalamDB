@@ -10,6 +10,7 @@ use crate::live_query::filter::FilterPredicate;
 use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::{StreamTableStore, UserTableStore};
 use chrono::DateTime;
+use kalamdb_commons::TableName;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -118,15 +119,15 @@ impl InitialDataFetcher {
     /// InitialDataResult with rows and metadata
     pub async fn fetch_initial_data(
         &self,
-        live_id: &crate::live_query::connection_registry::LiveId,
-        table_name: &str,
+        _live_id: &crate::live_query::connection_registry::LiveId,
+        table_name: &TableName,
         table_type: TableType,
         options: InitialDataOptions,
         filter: Option<Arc<FilterPredicate>>,
     ) -> Result<InitialDataResult, KalamDbError> {
         log::info!(
             "fetch_initial_data called: table={}, type={:?}, limit={}, since={:?}",
-            table_name,
+            table_name.as_str(),
             table_type,
             options.limit,
             options.since_timestamp
@@ -271,10 +272,10 @@ impl InitialDataFetcher {
     /// (namespace_id, table_name)
     fn parse_table_name(
         &self,
-        table_name: &str,
+        table_name: &TableName,
         table_type: TableType,
     ) -> Result<(String, String), KalamDbError> {
-        let parts: Vec<&str> = table_name.split('.').collect();
+        let parts: Vec<&str> = table_name.as_str().split('.').collect();
 
         if parts.len() != 2 {
             return Err(KalamDbError::Other(format!(
@@ -306,7 +307,7 @@ impl InitialDataFetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::user_tables::user_table_store::{new_user_table_store, UserTableRow, UserTableRowId};
+    use crate::tables::user_tables::user_table_store::{new_user_table_store, UserTableRow};
     use kalamdb_commons::models::{NamespaceId, TableName};
     use kalamdb_commons::models::{ConnectionId as ConnId, LiveId as CommonsLiveId};
     use kalamdb_store::test_utils::InMemoryBackend;
@@ -350,7 +351,7 @@ mod tests {
     #[test]
     fn test_parse_user_table_name() {
         let fetcher = InitialDataFetcher::default();
-        let result = fetcher.parse_table_name("app.messages", TableType::User);
+        let result = fetcher.parse_table_name(&TableName::new("app.messages"), TableType::User);
 
         assert!(result.is_ok());
         let (namespace, table) = result.unwrap();
@@ -361,7 +362,7 @@ mod tests {
     #[test]
     fn test_parse_shared_table_name() {
         let fetcher = InitialDataFetcher::default();
-        let result = fetcher.parse_table_name("public.announcements", TableType::Shared);
+        let result = fetcher.parse_table_name(&TableName::new("public.announcements"), TableType::Shared);
 
         assert!(result.is_ok());
         let (namespace, table) = result.unwrap();
@@ -372,7 +373,7 @@ mod tests {
     #[test]
     fn test_parse_invalid_user_table_name() {
         let fetcher = InitialDataFetcher::default();
-        let result = fetcher.parse_table_name("invalid.format.table", TableType::User);
+        let result = fetcher.parse_table_name(&TableName::new("invalid.format.table"), TableType::User);
 
         assert!(result.is_err());
     }
@@ -380,7 +381,7 @@ mod tests {
     #[test]
     fn test_parse_invalid_shared_table_name() {
         let fetcher = InitialDataFetcher::default();
-        let result = fetcher.parse_table_name("announcements", TableType::Shared);
+        let result = fetcher.parse_table_name(&TableName::new("announcements"), TableType::Shared);
 
         assert!(result.is_err());
     }
@@ -413,7 +414,7 @@ mod tests {
 
         // Fetch initial data (default options: last 100)
         let res = fetcher
-            .fetch_initial_data(&live, &format!("{}.{}", ns.as_str(), tbl.as_str()), TableType::User, InitialDataOptions::last(100), None)
+            .fetch_initial_data(&live, &TableName::new(format!("{}.{}", ns.as_str(), tbl.as_str())), TableType::User, InitialDataOptions::last(100), None)
             .await
             .expect("initial fetch");
 

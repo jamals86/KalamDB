@@ -3,7 +3,7 @@
 //! This test verifies that when a DateTime with timezone offset (like "2025-01-01T12:00:00+02:00")
 //! is stored, the timezone information is preserved correctly.
 
-use chrono::{DateTime, FixedOffset, TimeZone, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 
 #[test]
 fn test_datetime_with_timezone_offset_parsing() {

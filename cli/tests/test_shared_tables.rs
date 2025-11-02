@@ -8,6 +8,7 @@
 //! - Restricted table access control
 //! - Cross-user table permissions
 //! - Table sharing functionality
+#![allow(unused_imports, dead_code)]
 
 mod common;
 use common::*;

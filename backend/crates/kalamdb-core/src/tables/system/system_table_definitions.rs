@@ -13,6 +13,7 @@
 //! kalamdb-commons, ensuring consistency across the codebase.
 
 use kalamdb_commons::models::TableId;
+use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_commons::schemas::{
     ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
 };
@@ -164,8 +165,8 @@ pub fn users_table_definition() -> TableDefinition {
     ];
 
     TableDefinition::new(
-        "system",
-        "users",
+        NamespaceId::new("system"),
+        TableName::new("users"),
         TableType::System,
         columns,
         TableOptions::system(),
@@ -339,8 +340,8 @@ pub fn jobs_table_definition() -> TableDefinition {
     ];
 
     TableDefinition::new(
-        "system",
-        "jobs",
+        NamespaceId::new("system"),
+        TableName::new("jobs"),
         TableType::System,
         columns,
         TableOptions::system(),
@@ -412,8 +413,8 @@ pub fn namespaces_table_definition() -> TableDefinition {
     ];
 
     TableDefinition::new(
-        "system",
-        "namespaces",
+        NamespaceId::new("system"),
+        TableName::new("namespaces"),
         TableType::System,
         columns,
         TableOptions::system(),
@@ -540,8 +541,8 @@ pub fn storages_table_definition() -> TableDefinition {
     ];
 
     TableDefinition::new(
-        "system",
-        "storages",
+        NamespaceId::new("system"),
+        TableName::new("storages"),
         TableType::System,
         columns,
         TableOptions::system(),
@@ -693,8 +694,8 @@ pub fn live_queries_table_definition() -> TableDefinition {
     ];
 
     TableDefinition::new(
-        "system",
-        "live_queries",
+        NamespaceId::new("system"),
+        TableName::new("live_queries"),
         TableType::System,
         columns,
         TableOptions::system(),
@@ -843,8 +844,8 @@ pub fn tables_table_definition() -> TableDefinition {
     ];
 
     TableDefinition::new(
-        "system",
-        "tables",
+        NamespaceId::new("system"),
+        TableName::new("tables"),
         TableType::System,
         columns,
         TableOptions::system(),
@@ -916,8 +917,8 @@ pub fn table_schemas_table_definition() -> TableDefinition {
     ];
 
     TableDefinition::new(
-        "system",
-        "table_schemas",
+        NamespaceId::new("system"),
+        TableName::new("table_schemas"),
         TableType::System,
         columns,
         TableOptions::system(),
@@ -957,8 +958,8 @@ mod tests {
     #[test]
     fn test_users_table_definition() {
         let def = users_table_definition();
-        assert_eq!(def.namespace_id, "system");
-        assert_eq!(def.table_name, "users");
+    assert_eq!(def.namespace_id.as_str(), "system");
+    assert_eq!(def.table_name.as_str(), "users");
         assert_eq!(def.table_type, TableType::System);
         assert_eq!(def.columns.len(), 13);
         assert_eq!(def.columns[0].column_name, "user_id");
@@ -973,7 +974,7 @@ mod tests {
         // Verify all tables are in system namespace
         for (table_id, def) in all_tables {
             assert_eq!(table_id.namespace_id().as_str(), "system");
-            assert_eq!(def.namespace_id, "system");
+            assert_eq!(def.namespace_id.as_str(), "system");
             assert_eq!(def.table_type, TableType::System);
         }
     }
@@ -981,8 +982,8 @@ mod tests {
     #[test]
     fn test_table_schemas_definition() {
         let def = table_schemas_table_definition();
-        assert_eq!(def.namespace_id, "system");
-        assert_eq!(def.table_name, "table_schemas");
+    assert_eq!(def.namespace_id.as_str(), "system");
+    assert_eq!(def.table_name.as_str(), "table_schemas");
         assert_eq!(def.columns.len(), 5);
         assert_eq!(def.columns[2].column_name, "table_definition");
         assert_eq!(def.columns[2].data_type, KalamDataType::Json);

@@ -7,7 +7,7 @@ use crate::{AuditLogEntry, Job, LiveQuery, Namespace, Storage, Table, TableSchem
 use anyhow::{anyhow, Result};
 use kalamdb_commons::models::AuditLogId;
 use kalamdb_commons::schemas::TableDefinition;
-use kalamdb_commons::{StoragePartition, SystemTable};
+use kalamdb_commons::{StoragePartition, SystemTable, TableId};
 use kalamdb_store::{EntityStoreV2, StorageBackend};
 use std::sync::Arc;
 
@@ -188,7 +188,7 @@ impl StorageAdapter {
 
                         Ok(Some(TableSchema {
                             schema_id: format!("{}:{}", table_id, def.schema_version),
-                            table_id: table_id.to_string(),
+                            table_id: TableId::from_strings(namespace_id, table_name),
                             version: def.schema_version as i32,
                             arrow_schema: latest_schema_ver.arrow_schema_json.clone(),
                             created_at: def.created_at.timestamp_millis(),
@@ -208,7 +208,7 @@ impl StorageAdapter {
 
                         Ok(Some(TableSchema {
                             schema_id: format!("{}:{}", table_id, v),
-                            table_id: table_id.to_string(),
+                            table_id: TableId::from_strings(namespace_id, table_name),
                             version: v,
                             arrow_schema: schema_ver.arrow_schema_json.clone(),
                             created_at: schema_ver.created_at.timestamp_millis(),

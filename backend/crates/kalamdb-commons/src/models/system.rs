@@ -45,11 +45,11 @@
 //!     deleted_at: None,
 //! };
 //! ```
-use crate::{
-    models::{JobId, LiveQueryId, TableId, UserName},
-    schemas::TableType,
-    AuthType, JobStatus, JobType, NamespaceId, Role, StorageId, StorageMode, TableAccess,
-    TableName, UserId,
+use super::{
+    JobId, LiveQueryId, NamespaceId, NodeId, Role, StorageId, TableId, TableName, UserId, UserName,
+};
+use crate::models::{
+    schemas::TableType, AuthType, JobStatus, JobType, StorageMode, TableAccess,
 };
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
@@ -170,7 +170,8 @@ pub struct Job {
     pub created_at: i64,           // Unix timestamp in milliseconds
     pub started_at: Option<i64>,   // Unix timestamp in milliseconds
     pub completed_at: Option<i64>, // Unix timestamp in milliseconds
-    pub node_id: String,
+        #[bincode(with_serde)]
+        pub node_id: NodeId,
     pub error_message: Option<String>,
 }
 
@@ -180,7 +181,7 @@ impl Job {
         job_id: JobId,
         job_type: JobType,
         namespace_id: NamespaceId,
-        node_id: String,
+        node_id: NodeId,
     ) -> Self {
         let now = chrono::Utc::now().timestamp_millis();
         Self {
@@ -634,8 +635,8 @@ pub struct UserTableCounter {
 /// Table schema version in system_table_schemas table
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TableSchema {
-    pub schema_id: String, // PK
-    pub table_id: String,
+    pub schema_id: String, // PK (composite: table_id + version)
+    pub table_id: TableId,
     pub version: i32,
     pub arrow_schema: String, // Arrow schema as JSON
     pub created_at: i64,
@@ -687,7 +688,7 @@ mod tests {
             created_at: 1730000000000,
             started_at: Some(1730000000000),
             completed_at: Some(1730000300000),
-            node_id: "server-01".to_string(),
+            node_id: NodeId::from("server-01"),
             error_message: None,
         };
 
@@ -813,7 +814,7 @@ mod tests {
             JobId::new("job_123"),
             JobType::Flush,
             NamespaceId::new("default"),
-            "server-01".to_string(),
+              NodeId::from("server-01"),
         )
         .with_table_name(TableName::new("events"))
         .with_parameters(r#"["param1", "param2"]"#.to_string());
@@ -829,7 +830,7 @@ mod tests {
             JobId::new("job_123"),
             JobType::Flush,
             NamespaceId::new("default"),
-            "server-01".to_string(),
+              NodeId::from("server-01"),
         );
 
         assert_eq!(job.status, JobStatus::Running);

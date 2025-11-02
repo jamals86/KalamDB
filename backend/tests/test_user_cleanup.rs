@@ -159,7 +159,7 @@ async fn test_cleanup_job_logging() {
 
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(server.db.clone()));
     let jobs_provider = Arc::new(JobsTableProvider::new(backend));
-    let job_executor = JobExecutor::new(jobs_provider, "test-node".to_string());
+    let job_executor = JobExecutor::new(jobs_provider, kalamdb_commons::NodeId::new("test-node".to_string()));
 
     let job_id = "user-cleanup-test-job".to_string();
     let result = job_executor

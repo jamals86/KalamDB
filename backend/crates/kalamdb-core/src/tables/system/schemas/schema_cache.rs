@@ -254,6 +254,7 @@ mod tests {
     use super::*;
     use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
     use kalamdb_commons::types::KalamDataType;
+    use kalamdb_commons::{NamespaceId, TableName};
 
     fn create_test_schema(table_name: &str) -> TableDefinition {
         let columns = vec![
@@ -279,8 +280,8 @@ mod tests {
             ),
         ];
         TableDefinition::new(
-            "default",
-            table_name,
+            NamespaceId::new("default"),
+            TableName::new(table_name),
             TableType::User,
             columns,
             TableOptions::user(),

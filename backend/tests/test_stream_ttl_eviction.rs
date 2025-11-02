@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables)]
 //! Integration test for stream table TTL eviction and SELECT queries
 //!
 //! This test verifies that:

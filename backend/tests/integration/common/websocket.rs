@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! WebSocket test utilities for KalamDB integration tests.
 //!
 //! This module provides helpers for testing WebSocket-based live queries:

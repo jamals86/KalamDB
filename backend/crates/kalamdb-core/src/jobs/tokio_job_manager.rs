@@ -63,6 +63,7 @@ use super::job_manager::{JobInfo, JobManager, JobStatus};
 use crate::error::KalamDbError;
 use async_trait::async_trait;
 use chrono::Utc;
+use kalamdb_commons::{JobId, JobType};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio::task::JoinHandle;
@@ -137,8 +138,8 @@ impl JobManager for TokioJobManager {
 
         // Create job info
         let info = JobInfo {
-            job_id: job_id.clone(),
-            job_type: job_type.clone(),
+            job_id: JobId::new(job_id.clone()),
+            job_type: JobType::from_str(&job_type).unwrap_or(JobType::Cleanup), // Parse job type
             status: JobStatus::Running,
             start_time: Utc::now(),
             end_time: None,

@@ -382,8 +382,8 @@ mod tests {
         assert_eq!(shard1, shard2);
 
         // Different keys map to different shards (usually)
-        let shard_a = strategy.get_shard("userA", 8);
-        let shard_b = strategy.get_shard("userB", 8);
+        let _shard_a = strategy.get_shard("userA", 8);
+        let _shard_b = strategy.get_shard("userB", 8);
         // Not guaranteed to be different, but likely
     }
 

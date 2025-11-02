@@ -207,8 +207,8 @@ mod tests {
         )];
 
         let table_def = TableDefinition::new(
-            namespace,
-            table,
+            NamespaceId::new(namespace),
+            TableName::new(table),
             TableType::User,
             columns,
             TableOptions::user(),

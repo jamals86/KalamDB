@@ -41,6 +41,9 @@ pub struct ServerSettings {
     /// API version prefix for endpoints (default: "v1")
     #[serde(default = "default_api_version")]
     pub api_version: String,
+    /// Unique node identifier for this server instance (default: "node1")
+    #[serde(default = "default_node_id")]
+    pub node_id: String,
 }
 
 /// Storage settings
@@ -432,6 +435,10 @@ fn default_api_version() -> String {
     "v1".to_string()
 }
 
+fn default_node_id() -> String {
+    "node1".to_string()
+}
+
 fn default_flush_job_shutdown_timeout() -> u32 {
     300 // 5 minutes (T158j)
 }
@@ -769,6 +776,7 @@ impl ServerConfig {
                 port: 8080,
                 workers: 0,
                 api_version: default_api_version(),
+                node_id: default_node_id(),
             },
             storage: StorageSettings {
                 rocksdb_path: "./data/rocksdb".to_string(),

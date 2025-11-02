@@ -13,7 +13,6 @@ use crate::error::KalamDbError;
 use crate::stores::system_table::SharedTableStoreExt;
 use crate::tables::StreamTableStore;
 use datafusion::arrow::datatypes::Schema;
-use kalamdb_commons::models::StorageId;
 use kalamdb_sql::ddl::CreateTableStatement;
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
@@ -172,8 +171,8 @@ impl StreamTableService {
 
         // Create NEW TableDefinition directly
         let table_def = TableDefinition::new(
-            stmt.namespace_id.as_str(),
-            stmt.table_name.as_str(),
+            stmt.namespace_id.clone(),
+            stmt.table_name.clone(),
             kalamdb_commons::schemas::TableType::Stream,
             columns,
             table_options,

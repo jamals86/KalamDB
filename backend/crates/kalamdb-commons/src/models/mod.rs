@@ -29,6 +29,7 @@
 
 mod audit_log_id;
 mod namespace_id;
+mod node_id;
 mod storage_id;
 pub mod system;
 mod table_name;
@@ -48,6 +49,7 @@ pub mod types;
 
 pub use audit_log_id::AuditLogId;
 pub use namespace_id::NamespaceId;
+pub use node_id::NodeId;
 pub use storage_id::StorageId;
 pub use table_name::TableName;
 pub use user_id::UserId;

@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Integration tests for HTTP Basic Authentication
 //!
 //! These tests verify the authentication middleware works correctly:

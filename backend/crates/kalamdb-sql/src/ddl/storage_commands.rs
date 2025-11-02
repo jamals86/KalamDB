@@ -6,6 +6,7 @@
 //! - DROP STORAGE: Remove a storage backend
 //! - SHOW STORAGES: List all registered storages
 
+use kalamdb_commons::{StorageId, models::StorageType};
 use serde::{Deserialize, Serialize};
 
 /// CREATE STORAGE command
@@ -34,10 +35,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CreateStorageStatement {
     /// Unique storage identifier
-    pub storage_id: String, //TODO: use StorageId type
+    pub storage_id: StorageId,
 
     /// Storage type: 'filesystem' or 's3'
-    pub storage_type: String,
+    pub storage_type: StorageType,
 
     /// Human-readable storage name
     pub storage_name: String,
@@ -131,8 +132,8 @@ impl CreateStorageStatement {
                 .unwrap_or_else(|_| "".to_string());
 
         Ok(CreateStorageStatement {
-            storage_id,
-            storage_type,
+            storage_id: StorageId::new(storage_id),
+            storage_type: StorageType::from(storage_type.as_str()),
             storage_name,
             description,
             base_directory,
@@ -302,8 +303,8 @@ mod tests {
         "#;
 
         let stmt = CreateStorageStatement::parse(sql).unwrap();
-        assert_eq!(stmt.storage_id, "local");
-        assert_eq!(stmt.storage_type, "filesystem");
+        assert_eq!(stmt.storage_id, StorageId::new("local"));
+        assert_eq!(stmt.storage_type, StorageType::Filesystem);
         assert_eq!(stmt.storage_name, "Local Storage");
         assert_eq!(
             stmt.description,
@@ -331,8 +332,8 @@ mod tests {
         "#;
 
         let stmt = CreateStorageStatement::parse(sql).unwrap();
-        assert_eq!(stmt.storage_id, "s3_prod");
-        assert_eq!(stmt.storage_type, "s3");
+        assert_eq!(stmt.storage_id, StorageId::new("s3_prod"));
+        assert_eq!(stmt.storage_type, StorageType::S3);
         assert_eq!(stmt.base_directory, "s3://my-bucket/");
         assert_eq!(stmt.description, None);
         assert_eq!(

@@ -17,7 +17,7 @@ use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
-use kalamdb_commons::models::{JobId, JobStatus, JobType};
+use kalamdb_commons::models::{JobId, JobStatus, JobType, NodeId};
 use kalamdb_sql::{Job, KalamSql};
 use std::fs;
 use std::path::Path;
@@ -445,7 +445,7 @@ impl TableDeletionService {
             created_at: now_ms,
             started_at: Some(now_ms),
             completed_at: None,
-            node_id: "localhost".to_string(), // TODO: Get actual node ID
+                node_id: NodeId::from("localhost"), // TODO: Get actual node ID
             error_message: None,
         };
 

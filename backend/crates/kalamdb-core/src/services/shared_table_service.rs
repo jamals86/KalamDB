@@ -294,8 +294,9 @@ impl SharedTableService {
         stmt: &CreateTableStatement,
         schema: &Arc<Schema>,
     ) -> Result<(), KalamDbError> {
-        use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions};
+        use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, SchemaVersion};
         use kalamdb_commons::types::{KalamDataType, FromArrowType};
+        use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 
         // Extract columns directly from Arrow schema
         let columns: Vec<ColumnDefinition> = schema
@@ -336,14 +337,20 @@ impl SharedTableService {
         let table_options = TableOptions::shared();
 
         // Create NEW TableDefinition directly
-        let table_def = TableDefinition::new(
-            stmt.namespace_id.as_str(),
-            stmt.table_name.as_str(),
+        let mut table_def = TableDefinition::new(
+            stmt.namespace_id.clone(),
+            stmt.table_name.clone(),
             kalamdb_commons::schemas::TableType::Shared,
             columns,
             table_options,
             None, // table_comment
         ).map_err(|e| KalamDbError::SchemaError(e))?;
+
+        // Initialize schema history with version 1 entry (Initial schema)
+        let schema_json = ArrowSchemaWithOptions::new(schema.clone())
+            .to_json_string()
+            .map_err(|e| KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e)))?;
+        table_def.schema_history.push(SchemaVersion::initial(schema_json));
 
         // Single atomic write to information_schema_tables
         self.kalam_sql

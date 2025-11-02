@@ -459,7 +459,7 @@ impl UserTableInsertHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::user_tables::user_table_store::{new_user_table_store, UserTableStore};
+    use crate::tables::user_tables::user_table_store::new_user_table_store;
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn setup_test_handler() -> UserTableInsertHandler {

@@ -183,7 +183,7 @@ impl SystemTableProviderExt for TablesTableProvider {
 mod tests {
     use super::*;
     use kalamdb_commons::{
-        NamespaceId, StorageId, TableAccess, TableId, TableName, TableType as KalamTableType,
+        NamespaceId, StorageId, TableId, TableName, TableType as KalamTableType,
     };
     use kalamdb_store::test_utils::InMemoryBackend;
 
@@ -192,7 +192,7 @@ mod tests {
         TablesTableProvider::new(backend)
     }
 
-    fn create_test_table(table_id: &str, table_name: &str) -> SystemTable {
+    fn create_test_table(_table_id: &str, table_name: &str) -> SystemTable {
         SystemTable {
             table_id: TableId::new(NamespaceId::new("default"), TableName::new(table_name)),
             table_name: TableName::new(table_name),

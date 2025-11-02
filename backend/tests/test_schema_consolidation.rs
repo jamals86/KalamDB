@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Integration tests for Phase 15 (008-schema-consolidation)
 //!
 //! Tests the consolidated schema infrastructure:
@@ -254,14 +255,8 @@ async fn test_internal_api_schema_matches_describe_table() {
 
     // Verify the API schema has expected structure
     assert!(!api_schema.columns.is_empty(), "Schema should have columns");
-    assert_eq!(
-        api_schema.table_name, "users",
-        "Table name should be 'users'"
-    );
-    assert_eq!(
-        api_schema.namespace_id, "system",
-        "Namespace should be 'system'"
-    );
+    assert_eq!(api_schema.table_name.as_str(), "users", "Table name should be 'users'");
+    assert_eq!(api_schema.namespace_id.as_str(), "system", "Namespace should be 'system'");
 
     // Verify all columns have correct ordinal positions (1-indexed)
     for (idx, column) in api_schema.columns.iter().enumerate() {
@@ -334,8 +329,8 @@ async fn test_cache_invalidation_on_alter_table() {
     ];
 
     let table_def_v1 = TableDefinition::new_with_defaults(
-        test_namespace.to_string(),
-        "test_table",
+        test_namespace.clone(),
+        TableName::new("test_table"),
         kalamdb_commons::models::schemas::TableType::User,
         columns_v1.clone(),
         None,
@@ -391,8 +386,8 @@ async fn test_cache_invalidation_on_alter_table() {
     ];
 
     let table_def_v2 = TableDefinition::new_with_defaults(
-        test_namespace.to_string(),
-        "test_table",
+        test_namespace.clone(),
+        TableName::new("test_table"),
         kalamdb_commons::models::schemas::TableType::User,
         columns_v2.clone(),
         None,

@@ -22,7 +22,7 @@ use crate::stores::system_table::UserTableStoreExt;
 use crate::tables::UserTableStore;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use kalamdb_commons::models::StorageId;
-use kalamdb_sql::ddl::{CreateTableStatement, FlushPolicy as DdlFlushPolicy};
+use kalamdb_sql::ddl::CreateTableStatement;
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
 
@@ -246,8 +246,9 @@ impl UserTableService {
         stmt: &CreateTableStatement,
         schema: &Arc<Schema>,
     ) -> Result<(), KalamDbError> {
-        use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions};
+        use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, SchemaVersion};
         use kalamdb_commons::types::{KalamDataType, FromArrowType};
+        use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 
         // Extract columns directly from Arrow schema
         let columns: Vec<ColumnDefinition> = schema
@@ -288,14 +289,23 @@ impl UserTableService {
         let table_options = TableOptions::user();
 
         // Create NEW TableDefinition directly
-        let table_def = TableDefinition::new(
-            stmt.namespace_id.as_str(),
-            stmt.table_name.as_str(),
+        let mut table_def = TableDefinition::new(
+            stmt.namespace_id.clone(),
+            stmt.table_name.clone(),
             kalamdb_commons::schemas::TableType::User,
             columns,
             table_options,
             None, // table_comment
         ).map_err(|e| KalamDbError::SchemaError(e))?;
+
+        // Initialize schema history with version 1 entry (Initial schema)
+        // Serialize Arrow schema (including any options if needed)
+        let schema_json = ArrowSchemaWithOptions::new(schema.clone())
+            .to_json_string()
+            .map_err(|e| KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e)))?;
+
+        // Push initial schema version (v1)
+        table_def.schema_history.push(SchemaVersion::initial(schema_json));
 
         // Single atomic write to information_schema_tables
         self.kalam_sql
