@@ -1,6 +1,7 @@
 // Logging module
 use colored::*;
 use log::{Level, LevelFilter};
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -19,7 +20,12 @@ fn format_level_colored(level: Level) -> ColoredString {
 /// Initialize logging based on configuration
 /// Console pattern (colored): [timestamp] [LEVEL] - thread - module:line - message
 /// File pattern (plain): [timestamp] [LEVEL] [thread - module:line] - message
-pub fn init_logging(level: &str, file_path: &str, log_to_console: bool) -> anyhow::Result<()> {
+pub fn init_logging(
+    level: &str,
+    file_path: &str,
+    log_to_console: bool,
+    target_levels: Option<&HashMap<String, String>>,
+) -> anyhow::Result<()> {
     // Parse log level
     let level_filter = parse_log_level(level)?;
 
@@ -36,14 +42,34 @@ pub fn init_logging(level: &str, file_path: &str, log_to_console: bool) -> anyho
 
     if log_to_console {
         // Setup dual logging: colored console + plain file
-        let base_config = fern::Dispatch::new()
+        let mut base_config = fern::Dispatch::new()
             .level(level_filter)
             // Filter out noisy third-party debug logs
-            .level_for("sqlparser", LevelFilter::Debug)
-            .level_for("datafusion", LevelFilter::Debug)
-            .level_for("arrow", LevelFilter::Debug)
-            .level_for("parquet", LevelFilter::Debug)
-            .level_for("object_store", LevelFilter::Debug);
+            //actix_server
+            .level_for("actix_server", LevelFilter::Warn)
+            .level_for("sqlparser", LevelFilter::Info)
+            .level_for("datafusion", LevelFilter::Info)
+            .level_for("datafusion_optimizer", LevelFilter::Info)
+            .level_for("datafusion_datasource", LevelFilter::Info)
+            .level_for("arrow", LevelFilter::Info)
+            .level_for("parquet", LevelFilter::Info)
+            .level_for("object_store", LevelFilter::Info);
+
+        // Apply per-target overrides from configuration (if any)
+        if let Some(map) = target_levels {
+            for (target, lvl) in map.iter() {
+                if let Ok(parsed) = parse_log_level(lvl) {
+                    // fern::level_for expects a 'static str; leak the config string (tiny, one-time)
+                    let target_static: &'static str = Box::leak(target.clone().into_boxed_str());
+                    base_config = base_config.level_for(target_static, parsed);
+                } else {
+                    eprintln!(
+                        "Ignoring invalid log level '{}' for target '{}' in config",
+                        lvl, target
+                    );
+                }
+            }
+        }
 
         // Console output with colors
         let console_config = fern::Dispatch::new()
@@ -94,7 +120,7 @@ pub fn init_logging(level: &str, file_path: &str, log_to_console: bool) -> anyho
         );
     } else {
         // File only output without colors
-        fern::Dispatch::new()
+        let mut file_only = fern::Dispatch::new()
             .level(level_filter)
             .format(|out, message, record| {
                 out.finish(format_args!(
@@ -106,9 +132,24 @@ pub fn init_logging(level: &str, file_path: &str, log_to_console: bool) -> anyho
                     record.line().unwrap_or(0),
                     message
                 ))
-            })
-            .chain(log_file)
-            .apply()?;
+            });
+
+        // Apply per-target overrides from configuration (if any)
+        if let Some(map) = target_levels {
+            for (target, lvl) in map.iter() {
+                if let Ok(parsed) = parse_log_level(lvl) {
+                    let target_static: &'static str = Box::leak(target.clone().into_boxed_str());
+                    file_only = file_only.level_for(target_static, parsed);
+                } else {
+                    eprintln!(
+                        "Ignoring invalid log level '{}' for target '{}' in config",
+                        lvl, target
+                    );
+                }
+            }
+        }
+
+        file_only.chain(log_file).apply()?;
     }
 
     Ok(())

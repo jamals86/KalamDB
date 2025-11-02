@@ -231,6 +231,7 @@ impl TestServer {
         let shared_table_service = Arc::new(SharedTableService::new(
             shared_table_store.clone(),
             kalam_sql.clone(),
+            "./data/storage".to_string(),
         ));
         let stream_table_service = Arc::new(StreamTableService::new(
             stream_table_store.clone(),
@@ -276,6 +277,10 @@ impl TestServer {
         // Initialize StorageRegistry for template validation
         let storage_registry = Arc::new(kalamdb_core::storage::StorageRegistry::new(
             kalam_sql.clone(),
+            storage_base_path
+                .to_str()
+                .unwrap_or("./data/storage")
+                .to_string(),
         ));
 
         // Initialize JobManager for FLUSH TABLE support

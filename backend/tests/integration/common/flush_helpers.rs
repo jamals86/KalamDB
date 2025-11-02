@@ -89,6 +89,11 @@ pub async fn execute_flush_synchronously(
     // Create storage registry (needed for path resolution)
     let storage_registry = Arc::new(kalamdb_core::storage::StorageRegistry::new(
         server.kalam_sql.clone(),
+        server
+            .storage_base_path
+            .to_str()
+            .unwrap_or("./data/storage")
+            .to_string(),
     ));
 
     let flush_job = UserTableFlushJob::new(
@@ -154,6 +159,11 @@ pub async fn execute_shared_flush_synchronously(
     // Create storage registry (needed for template-based path resolution)
     let storage_registry = Arc::new(kalamdb_core::storage::StorageRegistry::new(
         server.kalam_sql.clone(),
+        server
+            .storage_base_path
+            .to_str()
+            .unwrap_or("./data/storage")
+            .to_string(),
     ));
 
     let flush_job = SharedTableFlushJob::new(

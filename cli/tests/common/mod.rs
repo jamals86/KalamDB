@@ -178,6 +178,11 @@ impl SubscriptionListener {
         let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"))
             .arg("-u")
             .arg(SERVER_URL)
+            .arg("--username")
+            .arg("root")
+            .arg("--password")
+            .arg("")
+            .arg("--no-spinner")  // Disable animations and banner messages
             .arg("--subscribe")
             .arg(query)
             .stdout(Stdio::piped())

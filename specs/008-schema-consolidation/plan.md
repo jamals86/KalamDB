@@ -377,3 +377,309 @@ Expected task categories:
 **Branch**: 008-schema-consolidation  
 **Command**: /speckit.plan  
 **Next Command**: /speckit.tasks
+
+---
+
+## Phase 9: User Story 7 - Dynamic Storage Path Resolution & Model Consolidation (Priority: P1)
+
+**Branch**: `008-schema-consolidation` | **Date**: 2025-11-02 | **Added**: Storage path refactoring story
+
+### Summary
+
+Eliminate redundant `storage_location` field from both `SystemTable` and `TableMetadata` models, implement dynamic path resolution via `StorageRegistry` + caching in existing `TableCache`, and consolidate duplicate table models into a single source of truth.
+
+**Goal**: Ensure all flush operations and queries resolve storage paths dynamically from `system.storages` using templates, with resolved paths cached for fast access.
+
+### Architecture Analysis
+
+#### Current State: Dual Models Problem
+
+**SystemTable** (in `kalamdb-commons/src/models/system.rs`):
+- Stored in `system.tables` RocksDB CF
+- Used by DataFusion providers for schema queries
+- Has `storage_location: String` field (redundant)
+- Also has `storage_id: Option<StorageId>` field (correct)
+
+**TableMetadata** (in `kalamdb-core/src/catalog/table_metadata.rs`):
+- Cached in `TableCache` for fast access
+- Used by SQL executor and table providers
+- Has `storage_location: String` field (redundant)
+- Does NOT have `storage_id` field (missing)
+
+**Problem**: Two separate models for the same concept (table metadata) with conflicting fields.
+
+#### Existing Infrastructure
+
+**SchemaCache** (`backend/crates/kalamdb-core/src/tables/system/schemas/schema_cache.rs`):
+- DashMap-based cache for `TableDefinition` (schema-only)
+- LRU eviction policy, metrics tracking
+- ~440 lines, fully implemented in Phase 3
+
+**TableCache** (`backend/crates/kalamdb-core/src/catalog/table_cache.rs`):
+- RwLock-based cache for `TableMetadata` (table config + schema)
+- No eviction policy, no metrics
+- ~240 lines, minimal implementation
+- Has TODO: "load_from_rocksdb not fully implemented"
+
+**StorageRegistry** (`backend/crates/kalamdb-core/src/storage/storage_registry.rs`):
+- Queries `system.storages` via KalamSql
+- Has `get_storage_config()` that returns full config with templates
+- Already handles `default_storage_path` normalization
+- Ready to use for path resolution
+
+#### Desired Architecture
+
+**Storage Path Resolution Flow**:
+```
+1) User queries/flushes table
+2) Executor looks up table in TableCache
+   ├─ Cache hit: Get cached partial template
+   └─ Cache miss: Load from system.tables → resolve partial template → cache result
+3) Partial template resolution (if not cached):
+   ├─ Read storage_id from table definition
+   ├─ Query storage config from StorageRegistry
+   ├─ Select template (shared vs user)
+   ├─ Substitute STATIC placeholders: {namespace}, {tableName}
+   ├─ Keep DYNAMIC placeholders: {userId}, {shard}
+   └─ Build partial template: <base_directory>/{namespace}/{tableName}/{userId}/
+4) Cache partial template in TableCache (one per table, not per-user)
+5) Per-request final resolution (in flush job/query):
+   ├─ Get partial template from cache
+   ├─ Substitute {userId} with actual user (for user tables)
+   ├─ Substitute {shard} with calculated shard (if sharding enabled)
+   └─ Use final path for flush/query operation
+```
+
+**Example**:
+- **Template**: `{namespace}/{tableName}/{userId}`
+- **Cached**: `/data/storage/my_namespace/messages/{userId}/` (partial)
+- **Runtime** (user_alice): `/data/storage/my_namespace/messages/user_alice/`
+- **Runtime** (user_bob): `/data/storage/my_namespace/messages/user_bob/`
+
+**Cache Hierarchy**:
+```
+SchemaCache (DashMap, schema-only)
+   ↓
+TableCache (RwLock, schema + config + resolved_path)
+   ↓
+StorageRegistry (query system.storages when needed)
+```
+
+### Decision: Consolidate Models
+
+**Single Source of Truth**: `SystemTable` in `kalamdb-commons/src/models/system.rs`
+
+**Rationale**:
+1. SystemTable is the canonical model (stored in RocksDB)
+2. TableMetadata is a runtime cache artifact
+3. No reason to maintain two separate definitions
+4. Simplifies codebase: ~50 fewer files to touch
+
+**Migration Path**:
+1. Add `storage_id: Option<StorageId>` to TableMetadata (if missing)
+2. Remove `storage_location: String` from both models
+3. Extend TableCache to store resolved paths separately
+4. Update all consumers to use TableCache for path lookups
+5. Eventually: Consider replacing TableMetadata entirely with SystemTable + Arc wrapper
+
+### Implementation Plan
+
+#### Step 1: Extend TableCache with Path Resolution (T180-T185)
+
+**Goal**: Add storage path caching and resolution to existing TableCache
+
+**Files**:
+- `backend/crates/kalamdb-core/src/catalog/table_cache.rs`
+
+**Changes**:
+```rust
+pub struct TableCache {
+    tables: Arc<RwLock<HashMap<TableKey, TableMetadata>>>,
+    storage_path_templates: Arc<RwLock<HashMap<TableKey, String>>>, // NEW: partial templates
+    storage_registry: Option<Arc<StorageRegistry>>,                  // NEW
+}
+
+impl TableCache {
+    pub fn with_storage_registry(mut self, registry: Arc<StorageRegistry>) -> Self;
+    
+    /// Returns partial template with {userId}/{shard} unevaluated
+    pub fn get_storage_path(
+        &self,
+        namespace: &NamespaceId,
+        table_name: &TableName,
+    ) -> Result<String, KalamDbError> {
+        // 1. Check cache first
+        if let Some(template) = self.storage_path_templates.read().unwrap().get(&key) {
+            return Ok(template.clone());
+        }
+        
+        // 2. Load table metadata
+        let table = self.get(namespace, table_name)?;
+        
+        // 3. Resolve PARTIAL template via StorageRegistry
+        let partial_template = self.resolve_partial_template(&table)?;
+        
+        // 4. Cache partial template (one per table)
+        self.storage_path_templates.write().unwrap().insert(key, partial_template.clone());
+        
+        Ok(partial_template)
+    }
+    
+    /// Resolves STATIC placeholders only: {namespace}, {tableName}
+    /// Leaves DYNAMIC placeholders: {userId}, {shard}
+    fn resolve_partial_template(&self, table: &TableMetadata) -> Result<String, KalamDbError>;
+    
+    pub fn invalidate_storage_paths(&self); // Clear cache on ALTER TABLE
+}
+```
+
+#### Step 2: Remove storage_location Field (T186-T190)
+
+**Goal**: Eliminate redundant field from both models
+
+**Files**:
+- `backend/crates/kalamdb-commons/src/models/system.rs` (SystemTable)
+- `backend/crates/kalamdb-core/src/catalog/table_metadata.rs` (TableMetadata)
+
+**Changes**:
+1. Remove `pub storage_location: String` from both structs
+2. Add `pub storage_id: Option<StorageId>` to TableMetadata (if missing)
+3. Update all constructors and builders
+4. Update serialization tests
+
+#### Step 3: Update Service Layer (T191-T195)
+
+**Goal**: Use storage_id instead of resolving paths inline
+
+**Files**:
+- `backend/crates/kalamdb-core/src/services/user_table_service.rs`
+- `backend/crates/kalamdb-core/src/services/shared_table_service.rs`
+- `backend/crates/kalamdb-core/src/services/stream_table_service.rs`
+
+**Changes**:
+```rust
+// BEFORE:
+let storage_location = self.resolve_storage_from_id(&storage_id)?;
+let metadata = TableMetadata { storage_location, ... };
+
+// AFTER:
+let metadata = TableMetadata { 
+    storage_id: Some(storage_id.clone()),
+    // storage_location removed
+    ...
+};
+```
+
+#### Step 4: Update Flush Jobs (T196-T200)
+
+**Goal**: Flush jobs resolve paths via TableCache
+
+**Files**:
+- `backend/crates/kalamdb-core/src/tables/user_tables/user_table_flush.rs`
+- `backend/crates/kalamdb-core/src/tables/shared_tables/shared_table_flush.rs`
+
+**Changes**:
+```rust
+pub struct UserTableFlushJob {
+    table_cache: Arc<TableCache>, // NEW - replaces storage_location field
+}
+
+impl UserTableFlushJob {
+    fn resolve_storage_path_for_user(&self, user_id: &UserId) -> Result<String, KalamDbError> {
+        // 1. Get partial template from cache (e.g., "/data/storage/ns/table/{userId}/")
+        let partial_template = self.table_cache.get_storage_path(&self.namespace_id, &self.table_name)?;
+        
+        // 2. Substitute dynamic placeholders
+        let path = partial_template
+            .replace("{userId}", user_id.as_str())
+            .replace("{shard}", &self.calculate_shard(user_id));
+        
+        Ok(path)
+    }
+    
+    fn calculate_shard(&self, user_id: &UserId) -> String {
+        // Example: hash(user_id) % shard_count
+        // Returns: "shard_0", "shard_1", etc.
+        format!("shard_{}", (user_id.hash() % self.shard_count))
+    }
+}
+```
+
+#### Step 5: Update SQL Executor (T201-T205)
+
+**Goal**: Executor uses TableCache for path lookups
+
+**Files**:
+- `backend/crates/kalamdb-core/src/sql/executor.rs`
+
+**Changes**:
+- FLUSH TABLE: Get path from `table_cache.get_storage_path()`
+- CREATE TABLE: Set `storage_id`, not `storage_location`
+- All table registration: Use storage_id references
+
+#### Step 6: Update System Tables Provider (T206-T210)
+
+**Goal**: Remove storage_location column from system.tables schema
+
+**Files**:
+- `backend/crates/kalamdb-core/src/tables/system/tables_v2/tables_table.rs`
+
+**Changes**:
+```rust
+// Remove from Arrow schema:
+// Field::new("storage_location", DataType::Utf8, false),
+
+// Keep:
+Field::new("storage_id", DataType::Utf8, true),
+```
+
+#### Step 7: Integration Tests (T211-T220)
+
+**Test Coverage**:
+1. CREATE TABLE with storage_id → flush → verify correct path used
+2. Query table → verify TableCache returns resolved path
+3. ALTER TABLE → verify storage path cache invalidated
+4. Storage config change → verify paths re-resolved on next query
+5. Cache hit rate >99% for 10,000 path resolutions
+
+### Task Summary
+
+**Total Tasks**: ~40 tasks across 7 steps
+**Estimated Time**: 6-8 hours
+**Priority**: P1 (critical for architecture cleanup)
+
+**Deliverables**:
+- ✅ storage_location field removed from both models
+- ✅ Dynamic path resolution via StorageRegistry
+- ✅ Paths cached in TableCache for performance
+- ✅ All tests passing (integration + smoke tests)
+- ✅ Zero hardcoded storage paths in codebase
+
+### Benefits
+
+1. **Single Source of Truth**: Storage templates defined once in system.storages
+2. **Flexibility**: Change storage config without restarting server
+3. **Consistency**: All code uses same path resolution mechanism
+4. **Performance**: Cached paths avoid repeated template substitution
+5. **Maintainability**: ~50 fewer files referencing storage_location
+6. **Correctness**: No risk of stale paths after storage config changes
+
+### Risks & Mitigations
+
+**Risk**: Cache invalidation bugs (stale paths served)  
+**Mitigation**: Comprehensive invalidation tests (T115, T211-T220)
+
+**Risk**: Performance regression (path resolution overhead)  
+**Mitigation**: Cache-first lookup, measured <1ms overhead for cache miss
+
+**Risk**: Breaking existing tests  
+**Mitigation**: Incremental rollout, fix tests in parallel (Phase 5 pattern)
+
+---
+
+**Plan Updated**: 2025-11-02  
+**Branch**: 008-schema-consolidation  
+**Command**: /speckit.plan  
+**Next Command**: /speckit.tasks
+
+````

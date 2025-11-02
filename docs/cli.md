@@ -12,6 +12,7 @@ The Kalam CLI is an interactive terminal client for KalamDB, providing a rich SQ
 - [Credential Management](#credential-management)
 - [Configuration](#configuration)
 - [Examples](#examples)
+- [Smoke Tests](#smoke-tests)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Tips & Tricks](#tips--tricks)
 
@@ -433,6 +434,62 @@ kalam> SELECT * FROM sensor_data WHERE temperature > 100;
 
 ---
 
+## Smoke Tests
+
+Fast end-to-end checks that your server and CLI are wired correctly. The suite covers:
+
+- User table subscription lifecycle
+- Shared table CRUD
+- System tables and user lifecycle
+- Stream table subscription
+- User table row-level security (per-user isolation)
+
+Requirements:
+
+- Server running at http://localhost:8080 (tests will skip if it’s not available)
+- Subscriptions are supported only for user and stream tables (not shared tables)
+
+Run options:
+
+1) From the CLI folder using the helper script
+
+```bash
+cd cli
+./run_integration_tests.sh smoke
+```
+
+2) Directly with Cargo (filter matches the smoke test binary and names)
+
+```bash
+cargo test -p kalam-cli smoke -- --test-threads=1 --nocapture
+```
+
+Run individual tests (examples):
+
+```bash
+# User table subscription lifecycle
+cargo test -p kalam-cli smoke_user_table_subscription_lifecycle -- --nocapture
+
+# Shared table CRUD
+cargo test -p kalam-cli smoke_shared_table_crud -- --nocapture
+
+# System tables + user lifecycle
+cargo test -p kalam-cli smoke_system_tables_and_user_lifecycle -- --nocapture
+
+# Stream table subscription
+cargo test -p kalam-cli smoke_stream_table_subscription -- --nocapture
+
+# User table RLS (per-user isolation)
+cargo test -p kalam-cli smoke_user_table_rls_isolation -- --nocapture
+```
+
+Notes:
+
+- Tests are tolerant of output formatting and will skip cleanly when the server isn’t running.
+- Default server URL for tests is http://localhost:8080.
+
+---
+
 ## Keyboard Shortcuts
 
 ### Line Editing
@@ -629,7 +686,7 @@ kalam --csv
 
 ## Related Documentation
 
-- [API Reference](API_REFERENCE.md) - REST API documentation
+- [API Examples (Bruno collection)](API-Kalam/) - REST API request examples
 - [SQL Syntax](architecture/SQL_SYNTAX.md) - Complete SQL syntax guide
 - [WebSocket Protocol](architecture/WEBSOCKET_PROTOCOL.md) - Real-time subscription details
 - [Development Setup](build/DEVELOPMENT_SETUP.md) - Build and development guide

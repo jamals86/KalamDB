@@ -46,6 +46,7 @@ async fn setup_executor(enforce_complexity: bool) -> (SqlExecutor, TempDir, Arc<
     let shared_table_service = Arc::new(SharedTableService::new(
         shared_table_store.clone(),
         kalam_sql.clone(),
+        "./data/storage".to_string(),
     ));
     let stream_table_service = Arc::new(StreamTableService::new(
         stream_table_store.clone(),

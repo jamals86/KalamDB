@@ -446,7 +446,6 @@ pub struct SystemTable {
     pub namespace: NamespaceId,
     pub table_type: TableType,
     pub created_at: i64, // Unix timestamp in milliseconds
-    pub storage_location: String,
     pub storage_id: Option<StorageId>,
     pub use_user_storage: bool,
     pub flush_policy: String, // JSON
@@ -724,7 +723,6 @@ mod tests {
             namespace: NamespaceId::new("default"),
             table_type: TableType::User,
             created_at: 1730000000000,
-            storage_location: "/data/tables".to_string(),
             storage_id: Some(StorageId::new("storage_1")),
             use_user_storage: false,
             flush_policy: "{}".to_string(),

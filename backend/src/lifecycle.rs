@@ -83,8 +83,8 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
             storage_type: "filesystem".to_string(),
             base_directory: "".to_string(),
             credentials: None,
-            shared_tables_template: "{namespace}/{tableName}".to_string(),
-            user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
+            shared_tables_template: config.storage.shared_tables_template.clone(),
+            user_tables_template: config.storage.user_tables_template.clone(),
             created_at: now,
             updated_at: now,
         };
@@ -108,6 +108,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     let shared_table_service = Arc::new(SharedTableService::new(
         shared_table_store.clone(),
         kalam_sql.clone(),
+        config.storage.default_storage_path.clone(),
     ));
     let stream_table_service = Arc::new(StreamTableService::new(
         stream_table_store.clone(),
@@ -156,7 +157,10 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     );
 
     // Storage registry and SQL executor
-    let storage_registry = Arc::new(StorageRegistry::new(kalam_sql.clone()));
+    let storage_registry = Arc::new(StorageRegistry::new(
+        kalam_sql.clone(),
+        config.storage.default_storage_path.clone(),
+    ));
 
     // Create job manager first
     let job_manager = Arc::new(TokioJobManager::new());

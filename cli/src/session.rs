@@ -923,21 +923,27 @@ impl CLISession {
         let ws_url_display = config.ws_url.clone();
         let requested_id = config.id.clone();
 
-        println!("Starting subscription for query: {}", sql_display);
-        if let Some(ref ws_url) = ws_url_display {
-            println!("WebSocket endpoint: {}", ws_url);
+        // Suppress banner messages when running non-interactively (for test/automation)
+        // Only print to stderr so stdout remains clean for data consumption
+        if self.animations {
+            eprintln!("Starting subscription for query: {}", sql_display);
+            if let Some(ref ws_url) = ws_url_display {
+                eprintln!("WebSocket endpoint: {}", ws_url);
+            }
+            if let Some(ref id) = requested_id {
+                eprintln!("Requested subscription ID: {}", id);
+            }
+            eprintln!("Press Ctrl+C to unsubscribe and return to CLI\n");
         }
-        if let Some(ref id) = requested_id {
-            println!("Requested subscription ID: {}", id);
-        }
-        println!("Press Ctrl+C to unsubscribe and return to CLI\n");
 
         let mut subscription = self.client.subscribe_with_config(config).await?;
 
-        println!(
-            "Subscription established (ID: {})",
-            subscription.subscription_id()
-        );
+        if self.animations {
+            eprintln!(
+                "Subscription established (ID: {})",
+                subscription.subscription_id()
+            );
+        }
 
         // Set up Ctrl+C handler for graceful unsubscribe
         let ctrl_c = tokio::signal::ctrl_c();

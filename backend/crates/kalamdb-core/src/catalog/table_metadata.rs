@@ -4,26 +4,27 @@
 
 use crate::flush::FlushPolicy;
 use chrono::{DateTime, Utc};
-use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::models::{NamespaceId, StorageId, TableName};
 use kalamdb_commons::schemas::TableType;
 use serde::{Deserialize, Serialize};
 
 /// Table metadata entity
 ///
-/// Contains all metadata for a table, including its type, namespace, storage location,
+/// Contains all metadata for a table, including its type, namespace, storage reference,
 /// and flush policy.
 ///
 /// # Examples
 ///
 /// ```
 /// use kalamdb_core::catalog::{TableMetadata, TableName, TableType, NamespaceId};
+/// use kalamdb_commons::models::StorageId;
 /// use kalamdb_core::flush::FlushPolicy;
 ///
 /// let metadata = TableMetadata::new(
 ///     TableName::new("messages"),
 ///     TableType::User,
 ///     NamespaceId::new("app"),
-///     "/data/${user_id}/messages".to_string(),
+///     Some(StorageId::new("local")),
 /// );
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,8 +41,9 @@ pub struct TableMetadata {
     /// When the table was created
     pub created_at: DateTime<Utc>,
 
-    /// Storage location (path template or location reference name)
-    pub storage_location: String,
+    /// Reference to storage configuration in system.storages
+    /// Used to resolve storage path templates dynamically via TableCache
+    pub storage_id: Option<StorageId>,
 
     /// When to flush buffered data to Parquet
     pub flush_policy: FlushPolicy,
@@ -64,14 +66,14 @@ impl TableMetadata {
         table_name: TableName,
         table_type: TableType,
         namespace: NamespaceId,
-        storage_location: String,
+        storage_id: Option<StorageId>,
     ) -> Self {
         Self {
             table_name,
             table_type,
             namespace,
             created_at: Utc::now(),
-            storage_location,
+            storage_id,
             flush_policy: FlushPolicy::default(),
             schema_version: 1,
             deleted_retention_hours: None,

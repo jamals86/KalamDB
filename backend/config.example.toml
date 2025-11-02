@@ -26,7 +26,17 @@ rocksdb_path = "./data/rocksdb"
 
 # Default storage path for 'local' storage (when base_directory='')
 # Used for table flushes to Parquet files (default: "./data/storage")
+# Default base path for flushed Parquet files (relative paths resolve from server CWD)
 default_storage_path = "./data/storage"
+
+# Templates for table storage paths (used by 'local' storage)
+# Available placeholders: {namespace}, {tableName}, {userId}
+# Final paths: {default_storage_path}/{template}
+# Examples:
+#   Shared table: ./data/storage/myapp/products
+#   User table: ./data/storage/myapp/preferences/user123
+shared_tables_template = "{namespace}/{tableName}"
+user_tables_template = "{namespace}/{tableName}/{userId}"
 
 # Enable Write-Ahead Log for durability (default: true)
 enable_wal = true

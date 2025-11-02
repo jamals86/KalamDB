@@ -327,14 +327,31 @@ impl UserTableStoreExt<UserTableRowId, UserTableRow>
 
     fn scan_all(
         &self,
-        _namespace_id: &str,
-        _table_name: &str,
+        namespace_id: &str,
+        table_name: &str,
     ) -> std::result::Result<Vec<(String, UserTableRow)>, KalamDbError> {
-        let results = EntityStore::scan_all(self)?;
-        Ok(results
-            .into_iter()
-            .map(|(key, row)| (String::from_utf8_lossy(key.as_ref()).to_string(), row))
-            .collect())
+        // Construct the correct partition name for this specific user table
+        // Format: "user_{namespace}:{table}"
+        let partition_name = format!("user_{}:{}", namespace_id, table_name);
+        let partition = kalamdb_store::Partition::new(partition_name);
+        
+        // Use the backend's scan method to scan all rows in this table's partition
+        let iter = self.backend.scan(&partition, None, None).map_err(|e| {
+            KalamDbError::Other(format!("Failed to scan user table partition: {}", e))
+        })?;
+        
+        let mut results = Vec::new();
+        for (key_bytes, value_bytes) in iter {
+            // Deserialize the row using JSON (matching EntityStore default)
+            let row: UserTableRow = serde_json::from_slice(&value_bytes).map_err(|e| {
+                KalamDbError::Other(format!("Failed to deserialize user table row: {}", e))
+            })?;
+            
+            let key_str = String::from_utf8_lossy(&key_bytes).to_string();
+            results.push((key_str, row));
+        }
+        
+        Ok(results)
     }
 
     fn create_column_family(
@@ -780,7 +797,11 @@ impl SharedTableStoreExt<StreamTableRowId, StreamTableRow>
         _namespace_id: &str,
         _table_name: &str,
     ) -> std::result::Result<(), KalamDbError> {
-        // Column family creation is handled by the backend
+        // Ensure the underlying partition/column family exists for stream tables
+        let partition = kalamdb_store::Partition::new(self.partition.clone());
+        self.backend
+            .create_partition(&partition)
+            .map_err(|e| KalamDbError::Other(format!("Failed to create partition: {}", e)))?;
         Ok(())
     }
 

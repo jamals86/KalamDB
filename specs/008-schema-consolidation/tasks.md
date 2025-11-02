@@ -539,13 +539,261 @@
   - **Result**: 605 integration tests passed, 12 failed
   - **Failed**: Pre-existing issues in OAuth, shared access, unified types (unrelated to Phase 7)
   - **Total Passing**: 1,665 tests (1,060 library + 605 integration)
-- [ ] T145 Run SDK test suite: `cd link/sdks/typescript && npm test` and verify all tests pass
 - [ ] T146 [P] Verify all Success Criteria from spec.md are met (SC-001 to SC-014)
 - [ ] T147 [P] Run quickstart.md validation steps end-to-end
 - [ ] T148 Create PR description summarizing changes, migration steps, performance improvements
 - [ ] T149 Request code review from team
 
 **Checkpoint**: ✅ Code quality complete (T126-T130), ✅ Testing complete (T143-T144, 1,665 tests passing), ⏳ Documentation and final validation remaining (T137-T142, T145-T149)
+
+---
+
+## Phase 8: User Story 6 - CLI Smoke Tests Group (Priority: P0)
+
+**Goal**: Provide a fast, reliable smoke test group runnable from the CLI to validate a server’s basic end-to-end functionality. The group name is "smoke" (referenced as "smoke-test" in tooling where needed). Tests are kept small, deterministic, and cover core scenarios: namespaces, shared tables, subscriptions, CRUD, system tables, users, and stream tables.
+
+**Independent Test**: Run only the smoke group (under 1 minute) against a running server and verify all checks pass.
+
+### Test Runner and Layout
+
+- All smoke tests live under `cli/tests/smoke/` as separate files with `smoke_test_*.rs` naming
+- Tests can be filtered by the group name `smoke` via the CLI integration runner (to be added)
+- Tests assume a reachable KalamDB server (configurable via env; default: `http://127.0.0.1:8080`)
+
+### Smoke Tests Coverage
+
+- Test 1: User table with subscription lifecycle
+  0) Create a namespace
+  1) Create a user table
+  2) Insert rows into this table
+  3) Subscribe to this table
+  4) Verify new Insert/Update/Delete events are emitted to the open subscription
+  6) A SELECT returns rows reflecting the applied changes
+  7) Flush this table and verify the job in `system.jobs`
+
+- Test 2: Shared table CRUD
+  0) Create a namespace
+  1) Create a shared table
+  2) Insert rows
+  3) SELECT and verify all rows are present
+  4) DELETE one row
+  5) UPDATE one row
+  6) SELECT again and verify contents reflect the changes
+  7) DROP TABLE and verify the table is actually deleted
+
+- Test 3: System tables and user lifecycle
+  1) SELECT from each system table: `system.jobs`, `system.users`, `system.live_queries`, `system.tables`, `system.namespaces` and verify at least one row is returned (where applicable)
+  2) CREATE USER, then SELECT to verify it’s present
+  3) DELETE USER, then SELECT to verify it’s removed (or appears as soft-deleted based on policy)
+  4) FLUSH ALL TABLES and verify a corresponding job is added in `system.jobs`
+
+- Test 4: Stream table subscription
+  1) Ensure stream tables are enabled
+  2) Create a namespace and a stream table
+  3) Subscribe to it
+  4) Insert data into the stream table
+  5) Verify the subscription receives the inserted data
+
+- Test 5: User table per-user isolation (RLS)
+  0) As root: create a namespace (or reuse a unique per-run namespace)
+  1) As root: create a user table
+  2) As root: insert several rows into this user table
+  3) Create a new regular (non-admin) user with password
+  4) Login to the CLI as the regular user
+  5) As regular user: insert multiple rows, update one row, delete one row, then SELECT all
+  6) Verify: (a) regular user can insert into the user table, (b) CLI login succeeds, (c) SELECT shows only rows inserted/updated/deleted by this user (does NOT show root’s rows)
+
+### Tasks
+
+- [X] T601 (US6) Add "smoke" group support to the CLI integration test runner (`cli/run_integration_tests.sh`) and document env/config (server URL, auth)
+- [ ] T602 (US6) Create `cli/tests/smoke/smoke_test_user_subscription.rs` implementing Smoke Test 1
+- [ ] T603 (US6) Create `cli/tests/smoke/smoke_test_shared_crud.rs` implementing Smoke Test 2
+- [ ] T604 (US6) Create `cli/tests/smoke/smoke_test_system_and_users.rs` implementing Smoke Test 3
+- [ ] T605 (US6) Create `cli/tests/smoke/smoke_test_stream_subscription.rs` implementing Smoke Test 4
+- [ ] T606 (US6) Update CLI docs (`docs/cli.md`) to describe the `smoke` group and how to run it locally or in CI
+- [ ] T607 (US6) Wire `smoke` group into CI (optional) for PR validation without running full suites
+- [ ] T608 (US6) Ensure tests are idempotent and isolated (unique namespace per run; cleanup on success/failure)
+- [ ] T609 (US6) Add short timeout and clear error messages for flake triage (subscription awaits with bounded time)
+- [ ] T610 (US6) Verify `cargo test -p kalam-cli -- smoke` (or runner alias) executes only the smoke tests and passes end-to-end
+
+- [X] T611 (US6) Create `cli/tests/smoke/smoke_test_user_table_rls.rs` implementing Smoke Test 5 (user table per-user isolation)
+- [X] T612 (US6) Ensure CLI test harness supports login as arbitrary user (credentials via env/flags) for smoke tests
+- [ ] T613 (US6) Update `docs/cli.md` with quickstart for logging in as a regular user and running smoke tests
+
+**Checkpoint**: `smoke` group exists, runs fast (<1 min), validates core functionality end-to-end via CLI against a running server.
+
+Note: Subscriptions are supported for user and stream tables only; shared tables do not support subscriptions.
+
+---
+
+## Phase 9: User Story 7 - Dynamic Storage Path Resolution & Model Consolidation (Priority: P1)
+
+**Goal**: Eliminate redundant `storage_location` field, implement dynamic path resolution via `StorageRegistry` + caching in `TableCache`, consolidate duplicate table models
+
+**Independent Test**: Create table with storage_id → flush → verify correct path used from template resolution
+
+**Architecture**: Tables reference `storage_id` → lookup `system.storages` → resolve template → cache path in `TableCache` → use for flush/query
+
+### Analysis & Design Phase
+
+- [ ] T180 [US7] Analyze current TableCache vs SchemaCache architecture and determine consolidation strategy
+- [ ] T181 [US7] Document path resolution flow: table → storage_id → system.storages → template → cached path
+- [ ] T182 [US7] Identify all locations where storage_location is currently used (~50 files from grep)
+- [ ] T183 [US7] Design TableCache extension API: get_storage_path(), invalidate_storage_paths(), with_storage_registry()
+
+### TableCache Extension (Caching Layer)
+
+- [ ] T184 [P] [US7] Add `storage_paths: Arc<RwLock<HashMap<TableKey, String>>>` field to TableCache in `backend/crates/kalamdb-core/src/catalog/table_cache.rs`
+- [ ] T185 [P] [US7] Add `storage_registry: Option<Arc<StorageRegistry>>` field to TableCache
+- [ ] T186 [US7] Implement `with_storage_registry(registry: Arc<StorageRegistry>)` builder method
+- [ ] T187 [US7] Implement `get_storage_path(namespace, table_name)` with cache-first lookup and fallback to resolve_storage_path()
+  - Returns partially-resolved template with {userId}/{shard} still as placeholders
+  - Caller (flush job/query) must substitute dynamic placeholders per-request
+- [ ] T188 [P] [US7] Implement private `resolve_storage_path(table: &TableMetadata)` helper that:
+  - Extracts storage_id from table
+  - Calls `storage_registry.get_storage_config(storage_id)`
+  - Selects template (shared_tables_template vs user_tables_template based on table_type)
+  - Substitutes STATIC placeholders only: {namespace}, {tableName}
+  - Leaves DYNAMIC placeholders unevaluated: {userId}, {shard} (evaluated per-request)
+  - Returns: `<base_directory>/<partial_template>/` with {userId}/{shard} still as placeholders
+- [ ] T189 [P] [US7] Implement `invalidate_storage_paths()` to clear cached paths (called on ALTER TABLE)
+- [ ] T190 [US7] Add unit tests for TableCache path resolution (cache hit, cache miss, invalidation)
+
+### Model Consolidation Phase
+
+- [ ] T191 [P] [US7] Remove `pub storage_location: String` from SystemTable in `backend/crates/kalamdb-commons/src/models/system.rs`
+- [ ] T192 [P] [US7] Remove `pub storage_location: String` from TableMetadata in `backend/crates/kalamdb-core/src/catalog/table_metadata.rs`
+- [ ] T193 [P] [US7] Add `pub storage_id: Option<StorageId>` to TableMetadata (if not present)
+- [ ] T194 [P] [US7] Update SystemTable serialization tests to remove storage_location field
+- [ ] T195 [US7] Update TableMetadata constructors and builders to accept storage_id instead of storage_location
+- [ ] T196 [US7] Run `cargo build` to identify all compilation errors from field removal
+
+### Service Layer Updates
+
+- [ ] T197 [US7] Update UserTableService in `backend/crates/kalamdb-core/src/services/user_table_service.rs` to set storage_id instead of storage_location when creating tables
+- [ ] T198 [US7] Update SharedTableService in `backend/crates/kalamdb-core/src/services/shared_table_service.rs` similarly
+- [ ] T199 [US7] Update StreamTableService in `backend/crates/kalamdb-core/src/services/stream_table_service.rs` to not set storage_location (streams don't use Parquet)
+- [ ] T200 [P] [US7] Remove old `resolve_storage_from_id()` helper methods that return storage_location strings
+- [ ] T201 [US7] Verify all table creation flows use storage_id references
+
+### Flush Job Updates
+
+- [ ] T202 [US7] Update UserTableFlushJob in `backend/crates/kalamdb-core/src/tables/user_tables/user_table_flush.rs`:
+  - Remove `storage_location: String` field
+  - Add `table_cache: Arc<TableCache>` field
+  - Implement `resolve_storage_path_for_user(user_id)` that:
+    1. Gets partially-resolved template from `table_cache.get_storage_path()`
+    2. Substitutes {userId} with actual user_id value
+    3. Substitutes {shard} if present (e.g., user_id hash mod shard_count)
+    4. Returns final path for this specific user
+- [ ] T203 [US7] Update SharedTableFlushJob in `backend/crates/kalamdb-core/src/tables/shared_tables/shared_table_flush.rs`:
+  - Remove `storage_location: String` field
+  - Add `table_cache: Arc<TableCache>` field
+  - Implement `resolve_storage_path()` using `table_cache.get_storage_path()`
+- [ ] T204 [P] [US7] Update flush job constructors to accept `table_cache` instead of `storage_location`
+- [ ] T205 [P] [US7] Update all flush job creation sites (SQL executor, job scheduler) to pass table_cache
+- [ ] T206 [US7] Verify flush operations write to correct paths (integration test)
+
+### SQL Executor Updates
+
+- [ ] T207 [US7] Update FLUSH TABLE implementation in `backend/crates/kalamdb-core/src/sql/executor.rs` to create flush jobs with table_cache
+- [ ] T208 [US7] Update CREATE TABLE implementation to set storage_id field instead of resolving path inline
+- [ ] T209 [US7] Update table registration logic to not populate storage_location
+- [ ] T210 [P] [US7] Search executor.rs for all `storage_location` references: `git grep "storage_location" backend/crates/kalamdb-core/src/sql/executor.rs` and update each
+- [ ] T211 [US7] Verify FLUSH TABLE queries work end-to-end with dynamic path resolution
+
+### System Tables Provider Updates
+
+- [ ] T212 [US7] Update TablesTableProvider schema in `backend/crates/kalamdb-core/src/tables/system/tables_v2/tables_table.rs`:
+  - Remove `Field::new("storage_location", DataType::Utf8, false)` from Arrow schema
+  - Keep `Field::new("storage_id", DataType::Utf8, true)`
+- [ ] T213 [P] [US7] Update scan() method to not include storage_location in RecordBatch
+- [ ] T214 [P] [US7] Update all test assertions that check system.tables columns
+- [ ] T215 [US7] Verify `SELECT * FROM system.tables` returns correct columns (no storage_location)
+
+### Backup/Restore Services
+
+- [ ] T216 [US7] Update BackupService in `backend/crates/kalamdb-core/src/services/backup_service.rs` to resolve paths via TableCache
+- [ ] T217 [US7] Update RestoreService in `backend/crates/kalamdb-core/src/services/restore_service.rs` similarly
+- [ ] T218 [US7] Update TableDeletionService in `backend/crates/kalamdb-core/src/services/table_deletion_service.rs` to use TableCache for path lookups
+- [ ] T219 [P] [US7] Verify backup/restore operations use correct storage paths
+- [ ] T220 [US7] Verify DROP TABLE cleans up files from correct location
+
+### Integration Testing
+
+- [ ] T221 [P] [US7] Write test in `backend/tests/test_storage_path_resolution.rs` verifying CREATE TABLE with storage_id → flush → path matches template
+- [ ] T222 [P] [US7] Write test verifying query table → TableCache returns resolved path with cache hit
+- [ ] T223 [P] [US7] Write test verifying ALTER TABLE → invalidate_storage_paths() → next query re-resolves path
+- [ ] T224 [P] [US7] Write test verifying storage config change → paths updated on next table access (no server restart)
+- [ ] T225 [P] [US7] Write test verifying cache hit rate >99% for 10,000 get_storage_path() calls
+- [ ] T226 [P] [US7] Write test verifying user table path substitutes {userId} correctly:
+  - TableCache returns: `/data/storage/my_ns/messages/{userId}/`
+  - Flush job for user_alice substitutes: `/data/storage/my_ns/messages/user_alice/`
+  - Flush job for user_bob substitutes: `/data/storage/my_ns/messages/user_bob/`
+  - Verify cache stores partial template (not per-user paths)
+- [ ] T227 [P] [US7] Write test verifying shared table path uses shared_tables_template
+- [ ] T228 [US7] Run full integration test suite: `cargo test --workspace` and verify 100% pass rate
+
+### Smoke Test Verification
+
+- [ ] T229 [US7] Run CLI smoke tests: `cargo test -p kalam-cli --test smoke -- --nocapture`
+- [ ] T230 [US7] Verify smoke_test_user_subscription works with dynamic path resolution
+- [ ] T231 [US7] Verify smoke_test_shared_crud writes to correct storage location
+- [ ] T232 [US7] Verify smoke_test_user_table_rls isolates user data correctly
+- [ ] T233 [US7] Check flush job logs for correct Parquet paths: `grep "Writing Parquet file" logs/*.log`
+
+### Final Validation
+
+- [ ] T234 [P] [US7] Run `git grep "storage_location" backend/` and verify only comments/docs remain
+- [ ] T235 [P] [US7] Run `cargo clippy --workspace -- -D warnings` and fix any new warnings
+- [ ] T236 [US7] Update AGENTS.md with storage path resolution architecture
+- [ ] T237 [P] [US7] Update docs/architecture/SQL_SYNTAX.md with storage template examples
+- [ ] T238 [US7] Write migration guide: `docs/migration/009-storage-path-resolution.md`
+- [ ] T239 [US7] Benchmark path resolution overhead: cache hit <100μs, cache miss <5ms
+- [ ] T240 [US7] Run full test suite one final time and confirm 100% pass rate
+
+**Checkpoint**: ✅ storage_location field removed, dynamic path resolution working, all tests passing, cache hit rate >99%
+
+**Phase 9 Summary**:
+- **Total Tasks**: 60 (T180-T240)
+- **Estimated Time**: 8-10 hours
+- **Dependencies**: Requires Phase 1-6 complete (foundation, EntityStore, caching infrastructure)
+- **Deliverables**:
+  - ✅ Zero `storage_location` references in code
+  - ✅ Dynamic path resolution via StorageRegistry + TableCache
+  - ✅ Template substitution: {namespace}, {tableName}, {userId}, {shard}
+  - ✅ Cached paths for performance (>99% hit rate)
+  - ✅ All tests passing (1,665+ tests)
+  - ✅ Documentation updated
+
+**Architecture After Phase 9**:
+```
+User queries table
+    ↓
+SqlExecutor → TableCache.get_storage_path(namespace, table_name)
+    ↓ (cache miss)
+TableCache → StorageRegistry.get_storage_config(storage_id)
+    ↓
+StorageRegistry queries system.storages
+    ↓
+Partial template resolution: <base>/{namespace}/{tableName}/{userId}/{shard}
+    ├─ STATIC placeholders substituted: {namespace}, {tableName}
+    └─ DYNAMIC placeholders kept: {userId}, {shard}
+    ↓
+Cached partial template: /data/storage/my_ns/messages/{userId}/
+    ↓
+Per-request substitution (in flush job/query):
+    ├─ {userId} → user_alice
+    └─ {shard} → calculated shard value
+    ↓
+Final path: /data/storage/my_ns/messages/user_alice/
+```
+
+**Why Partial Resolution?**
+- `{userId}` varies per-request (multi-tenant user tables)
+- `{shard}` varies per-request (sharding strategy)
+- `{namespace}` and `{tableName}` are table-level constants (safe to cache)
+- Cache stores one partial template per table (not per-user explosion)
 
 ---
 
@@ -669,19 +917,32 @@ Once US1 + US2 complete:
 - **Phase 4 (US2)**: 22 tasks ✅ COMPLETE
 - **Phase 5 (US3)**: 30 tasks ✅ COMPLETE (includes 6 new CLI-specific tests)
 - **Phase 6 (US4)**: 19 tasks ✅ COMPLETE (includes system.stats virtual table + \stats CLI command)
+- **Phase 5a (US5)**: 27 tasks ✅ COMPLETE (P0 datatypes: UUID, DECIMAL, SMALLINT + timezone docs)
 - **Phase 7 (Polish)**: 24 tasks ⏳ IN PROGRESS
   - ✅ Code Quality (T126-T130): 5/5 complete
   - ✅ Memory Profiling (T131-T136): Deferred for performance optimization phase
   - ⏳ Documentation (T137-T142): 0/6 complete
   - ✅ Testing (T143-T144): 2/2 complete (1,665 tests passing)
   - ⏳ Final Validation (T145-T149): 0/5 complete
+- **Phase 9 (US7 - Storage Path Resolution)**: 61 tasks ⏳ NOT STARTED
+  - Analysis & Design (T180-T183): 4 tasks
+  - TableCache Extension (T184-T190): 7 tasks
+  - Model Consolidation (T191-T196): 6 tasks
+  - Service Layer (T197-T201): 5 tasks
+  - Flush Jobs (T202-T206): 5 tasks
+  - SQL Executor (T207-T211): 5 tasks
+  - System Tables Provider (T212-T215): 4 tasks
+  - Backup/Restore (T216-T220): 5 tasks
+  - Integration Tests (T221-T228): 8 tasks
+  - Smoke Tests (T229-T233): 5 tasks
+  - Final Validation (T234-T240): 7 tasks
 
-**Total**: 157 tasks (8 new tasks added for type-safe TableOptions)
+**Total**: 218 tasks (61 new tasks added for storage path resolution)
 
 **Completed**: 145 tasks (Phases 1-6 complete, Phase 7 code quality & testing complete)
-**Progress**: 92% complete (145/157 tasks)
+**Progress**: 67% complete (145/218 tasks)
 
-**Remaining**: 12 tasks (documentation updates and final PR preparation)
+**Remaining**: 73 tasks (12 for Phase 7 polish, 61 for Phase 9 storage path resolution)
 
 ### Parallel Execution Opportunities
 

@@ -426,7 +426,7 @@ impl SqlExecutor {
             table_name.clone(),
             table_type,
             namespace_id.clone(),
-            String::new(), // Storage location will be loaded from metadata
+            Some(StorageId::new("local")), // Default storage
         );
 
         match table_type {
@@ -1190,7 +1190,7 @@ impl SqlExecutor {
                 namespace: namespace_id.clone(),
                 created_at: chrono::DateTime::from_timestamp_millis(table.created_at)
                     .unwrap_or_else(chrono::Utc::now),
-                storage_location: table.storage_location.clone(),
+                storage_id: table.storage_id.clone(),
                 flush_policy: serde_json::from_str(&table.flush_policy).unwrap_or_default(),
                 schema_version: table.schema_version as u32,
                 deleted_retention_hours: if table.deleted_retention_hours > 0 {
@@ -1287,7 +1287,7 @@ impl SqlExecutor {
                 namespace: namespace_id.clone(),
                 created_at: chrono::DateTime::from_timestamp_millis(table.created_at)
                     .unwrap_or_else(chrono::Utc::now),
-                storage_location: table.storage_location.clone(),
+                storage_id: table.storage_id.clone(),
                 flush_policy: serde_json::from_str(&table.flush_policy).unwrap_or_default(),
                 schema_version: table.schema_version as u32,
                 deleted_retention_hours: if table.deleted_retention_hours > 0 {
@@ -1412,7 +1412,7 @@ impl SqlExecutor {
                 namespace: namespace_id.clone(),
                 created_at: chrono::DateTime::from_timestamp_millis(table.created_at)
                     .unwrap_or_else(chrono::Utc::now),
-                storage_location: table.storage_location.clone(),
+                storage_id: table.storage_id.clone(),
                 flush_policy: serde_json::from_str(&table.flush_policy).unwrap_or_default(),
                 schema_version: table.schema_version as u32,
                 deleted_retention_hours: if table.deleted_retention_hours > 0 {
@@ -2093,14 +2093,14 @@ impl SqlExecutor {
             namespace_id,
             table_name.clone(),
             arrow_schema.schema,
-            table.storage_location.clone(),
+            table.storage_id.as_ref().map(|s| s.as_str()).unwrap_or("local").to_string(), // TODO: Phase 9 - use TableCache for dynamic path resolution
         )
         .with_storage_registry(storage_registry.clone());
 
         // Clone necessary data for the async task
         let namespace_str = stmt.namespace.clone();
         let table_name_str = stmt.table_name.clone();
-        let storage_location_clone = table.storage_location.clone();
+        let storage_id_str = table.storage_id.as_ref().map(|s| s.as_str()).unwrap_or("local").to_string();
         let jobs_provider_clone = jobs_provider.clone();
 
         // Spawn async flush task via JobManager
@@ -2136,10 +2136,10 @@ impl SqlExecutor {
                     Ok(flush_result) => {
                         let users_count = flush_result.metadata.users_count().unwrap_or(0);
                         job_record = job_record.complete(Some(format!(
-                            "Flushed {} rows for {} users. Storage location: {}. Parquet files: {}",
+                            "Flushed {} rows for {} users. Storage ID: {}. Parquet files: {}",
                             flush_result.rows_flushed,
                             users_count,
-                            storage_location_clone,
+                            storage_id_str,
                             flush_result.parquet_files.len()
                         )));
                         log::info!(
@@ -2171,10 +2171,10 @@ impl SqlExecutor {
                 Ok(flush_result) => {
                     let users_count = flush_result.metadata.users_count().unwrap_or(0);
                     Ok(format!(
-                        "Flushed {} rows for {} users. Storage location: {}. Parquet files: {}",
+                        "Flushed {} rows for {} users. Storage ID: {}. Parquet files: {}",
                         flush_result.rows_flushed,
                         users_count,
-                        storage_location_clone,
+                        storage_id_str,
                         flush_result.parquet_files.len()
                     ))
                 }
@@ -2926,7 +2926,6 @@ impl SqlExecutor {
                     namespace: namespace_id.clone(),
                     table_type: TableType::User,
                     created_at: chrono::Utc::now().timestamp_millis(),
-                    storage_location: metadata.storage_location.clone(),
                     storage_id: Some(storage_id.clone()),
                     use_user_storage: stmt_use_user_storage,
                     flush_policy: serde_json::to_string(&flush_policy.clone().unwrap_or_default())
@@ -3006,7 +3005,6 @@ impl SqlExecutor {
                     namespace: namespace_id.clone(),
                     table_type: TableType::Stream,
                     created_at: chrono::Utc::now().timestamp_millis(),
-                    storage_location: metadata.storage_location.clone(),
                     storage_id: Some(StorageId::from("local")), // Stream tables always use local storage
                     use_user_storage: false, // Stream tables don't support user storage
                     flush_policy: serde_json::to_string(&metadata.flush_policy)
@@ -3109,7 +3107,6 @@ impl SqlExecutor {
                         namespace: namespace_id.clone(),
                         table_type: TableType::Shared,
                         created_at: chrono::Utc::now().timestamp_millis(),
-                        storage_location: metadata.storage_location.clone(),
                         storage_id: Some(storage_id.clone()),
                         use_user_storage: false, // Shared tables don't support user storage
                         flush_policy: flush_policy_json,
@@ -3202,7 +3199,6 @@ impl SqlExecutor {
                         namespace: namespace_id.clone(),
                         table_type: TableType::Shared,
                         created_at: chrono::Utc::now().timestamp_millis(),
-                        storage_location: metadata.storage_location.clone(),
                         storage_id: Some(storage_id.clone()),
                         use_user_storage: false,
                         flush_policy: flush_policy_json,
@@ -4172,7 +4168,7 @@ impl SqlExecutor {
                     table.table_name.to_string(),
                     table.namespace.to_string(),
                     format!("{:?}", table.table_type),
-                    table.storage_location.to_string(),
+                    table.storage_id.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "local".to_string()),
                     table.flush_policy.to_string(),
                     schema_version_str,
                     retention_hours_str,
@@ -4363,7 +4359,7 @@ impl SqlExecutor {
             ("namespace", table.namespace.as_str().to_string()),
             ("table_type", format!("{:?}", table.table_type)),
             ("schema_version", table.schema_version.to_string()),
-            ("storage_location", table.storage_location.clone()),
+            ("storage_id", table.storage_id.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "local".to_string())),
             ("created_at", created_at_str),
             ("buffered_rows", buffered_rows.to_string()),
             ("last_flush_rows", last_flush_rows.to_string()),
@@ -4609,6 +4605,7 @@ mod tests {
         let shared_table_service = Arc::new(crate::services::SharedTableService::new(
             shared_table_store.clone(),
             kalam_sql.clone(),
+            "./data/storage".to_string(),
         ));
         let stream_table_store = Arc::new(crate::tables::new_stream_table_store(
             &NamespaceId::new("default"),
@@ -4726,6 +4723,7 @@ mod tests {
         let shared_table_service = Arc::new(crate::services::SharedTableService::new(
             shared_table_store.clone(),
             kalam_sql.clone(),
+            "./data/storage".to_string(),
         ));
         let stream_table_store = Arc::new(crate::tables::new_stream_table_store(
             &NamespaceId::new("default"),
@@ -4758,7 +4756,6 @@ mod tests {
             namespace: "app".into(),
             table_type: kalamdb_commons::schemas::TableType::Stream,
             created_at: chrono::Utc::now().timestamp_millis(),
-            storage_location: String::new(),
             storage_id: Some(StorageId::new("local")),
             use_user_storage: false,
             flush_policy: String::new(),

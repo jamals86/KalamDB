@@ -148,6 +148,52 @@ The type system must support essential datatypes required for modern database ap
 
 ---
 
+### User Story 6 - CLI Smoke Tests Group (Priority: P0)
+
+Operators and developers need a lightning-fast way to verify a running server provides basic functionality. Provide a dedicated CLI smoke test group named `smoke` (referenced as "smoke-test" in tooling where needed) that covers namespaces, shared tables, subscriptions, CRUD, system tables, users, stream tables, and per-user isolation for user tables.
+
+Why this priority: Early detection of regressions saves time. A minimal, deterministic suite reduces friction for contributors and CI.
+
+Independent Test: Run only the smoke group against a running server (local or remote). Complete in under 1 minute, with clear pass/fail output.
+
+Acceptance Scenarios:
+
+Test 1: User table with subscription lifecycle
+1. Given a clean server, when a namespace is created, then it succeeds
+2. When a user table is created, then it succeeds
+3. When rows are inserted into the user table, then inserts succeed
+4. When subscribing to this user table, then a subscription opens successfully
+5. Then new insert/update/delete operations emit corresponding events to the subscription
+6. When selecting from the table, then results reflect the applied changes
+7. When flushing the user table, then a corresponding job is visible in `system.jobs`
+
+Test 2: Shared table CRUD
+1. Given a new namespace and shared table, when rows are inserted, then a select returns all rows
+2. When a row is deleted and another updated, then a select returns rows reflecting these changes
+3. When the table is dropped, then selecting or listing shows it was deleted
+
+Test 3: System tables and user lifecycle
+1. When selecting from each system table (`system.jobs`, `system.users`, `system.live_queries`, `system.tables`, `system.namespaces`), then at least one row is returned where applicable
+2. When a new user is created, then selecting from `system.users` shows the user
+3. When the user is deleted, then selection shows it removed or soft-deleted per policy
+4. When issuing a FLUSH ALL TABLES command, then a job is recorded in `system.jobs`
+
+Test 4: Stream table subscription
+1. Given stream tables are enabled, when a namespace and stream table are created, then subscription to the stream table opens
+2. When rows are inserted into the stream table, then the subscription receives those rows
+
+Test 5: User table per-user isolation (RLS)
+1. Given a root user creates a namespace and a user table, when root inserts several rows, then those rows exist under root’s ownership
+2. When a new regular (non-admin) user is created and the CLI logs in as this user, then authentication succeeds
+3. When the regular user inserts multiple rows, updates one row, deletes one row, and then selects all from the user table, then the results include only this user’s rows and changes (root’s rows are not visible)
+4. And the regular user is allowed to insert into the user table (no permission errors)
+
+Implementation notes:
+- Group name: `smoke`; test modules/files prefixed with `smoke_test_` under `cli/tests/smoke/`
+- Runner: CLI integration runner can filter by group `smoke`; configurable server URL via env (defaults to local)
+- Deterministic: unique namespace per run, bounded timeouts for subscriptions, cleanup on failure/success
+- Subscriptions are supported for user and stream tables; shared tables do not support subscriptions
+
 ### Edge Cases
 
 - **Schema Evolution**: What happens when querying old schema versions after multiple ALTER TABLE operations? System must support schema_history array in TableDefinition to retrieve historical schemas.
@@ -478,9 +524,6 @@ These features may be considered for future releases after Alpha.
 **Note**: This is an unreleased version - breaking changes are acceptable, no backward compatibility needed. Clean slate approach.
 
 1. **Phase 1**: Create new schema models in \`kalamdb-commons/src/models/schemas/\` (KalamDataType, TableDefinition, ColumnDefinition) with bincode/serde derives, comprehensive documentation
-
-2. **Phase 2**: Implement EntityStore<TableId, TableDefinition> in kalamdb-store with secondary indexes, write integration tests for Story 1
-
 3. **Phase 3**: Implement type conversion functions and caching infrastructure (memory-bounded DashMap), profile for memory efficiency
 
 4. **Phase 4**: Refactor kalamdb-sql parser to use new models and assign ordinal_position correctly, write integration tests for Story 2

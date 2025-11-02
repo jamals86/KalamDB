@@ -31,6 +31,7 @@ use std::sync::Arc;
 pub struct SharedTableService {
     shared_table_store: Arc<SharedTableStore>,
     kalam_sql: Arc<KalamSql>,
+    default_storage_path: String,
 }
 
 impl SharedTableService {
@@ -39,10 +40,16 @@ impl SharedTableService {
     /// # Arguments
     /// * `shared_table_store` - Storage backend for shared tables
     /// * `kalam_sql` - KalamSQL instance for metadata storage
-    pub fn new(shared_table_store: Arc<SharedTableStore>, kalam_sql: Arc<KalamSql>) -> Self {
+    /// * `default_storage_path` - Default path for 'local' storage (from config.toml)
+    pub fn new(
+        shared_table_store: Arc<SharedTableStore>,
+        kalam_sql: Arc<KalamSql>,
+        default_storage_path: String,
+    ) -> Self {
         Self {
             shared_table_store,
             kalam_sql,
+            default_storage_path,
         }
     }
 
@@ -133,9 +140,7 @@ impl SharedTableService {
         let schema = stmt.schema.clone();
 
         // Resolve storage location from storage_id (defaulting to 'local')
-        // NOTE: For now, shared table storage is hardcoded to "/data/shared" as per tests/spec.
-        // When full storage templating is enabled, this can be revisited to use
-        // storage.shared_tables_template combined with base_directory.
+        // Uses config.default_storage_path (default: "./data/storage") when base_directory is empty
         let storage_id = stmt
             .storage_id
             .as_ref()
@@ -144,22 +149,25 @@ impl SharedTableService {
 
         let storage_location = match self.kalam_sql.get_storage(&storage_id) {
             Ok(Some(cfg)) => {
-                // If base_directory is empty, default to "/data"; else use configured base
+                // If base_directory is empty, use configured default_storage_path
                 let base = if cfg.base_directory.trim().is_empty() {
-                    "/data".to_string()
+                    self.default_storage_path.trim_end_matches('/').to_string()
                 } else {
                     cfg.base_directory.trim_end_matches('/').to_string()
                 };
                 format!("{}/shared", base)
             }
-            Ok(None) => "/data/shared".to_string(),
+            Ok(None) => {
+                // No storage config found, fall back to default
+                format!("{}/shared", self.default_storage_path.trim_end_matches('/'))
+            }
             Err(e) => {
                 // Fall back to default and surface a warning via error type
                 log::warn!(
                     "Falling back to default shared storage due to get_storage error: {}",
                     e
                 );
-                "/data/shared".to_string()
+                format!("{}/shared", self.default_storage_path.trim_end_matches('/'))
             }
         };
 
@@ -409,7 +417,11 @@ mod tests {
         let kalam_sql =
             Arc::new(KalamSql::new(Arc::new(RocksDBBackend::new(test_db.db.clone()))).unwrap());
 
-        let service = SharedTableService::new(shared_table_store, kalam_sql);
+        let service = SharedTableService::new(
+            shared_table_store,
+            kalam_sql,
+            "./data/storage".to_string(),
+        );
         (service, test_db)
     }
 
@@ -446,7 +458,7 @@ mod tests {
         assert_eq!(metadata.table_name.as_str(), "config");
         assert_eq!(metadata.table_type, TableType::Shared);
         assert_eq!(metadata.namespace.as_str(), "app");
-        assert_eq!(metadata.storage_location, "/data/shared");
+        assert_eq!(metadata.storage_location, "./data/storage/shared");
     }
 
     #[test]
@@ -475,7 +487,7 @@ mod tests {
         assert!(result.is_ok());
 
         let (metadata, _was_created) = result.unwrap();
-        assert_eq!(metadata.storage_location, "/data/shared");
+        assert_eq!(metadata.storage_location, "./data/storage/shared");
     }
 
     #[test]
