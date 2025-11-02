@@ -20,12 +20,36 @@ pub enum ArrowConversionError {
 }
 
 /// Trait for converting to Arrow DataType
+///
+/// # Example
+///
+/// ```
+/// use kalamdb_commons::models::types::{KalamDataType, ToArrowType};
+/// use arrow_schema::DataType as ArrowDataType;
+///
+/// let kalam_type = KalamDataType::Decimal { precision: 10, scale: 2 };
+/// let arrow_type = kalam_type.to_arrow_type().unwrap();
+///
+/// assert_eq!(arrow_type, ArrowDataType::Decimal128(10, 2));
+/// ```
 pub trait ToArrowType {
     /// Convert to Arrow DataType
     fn to_arrow_type(&self) -> Result<ArrowDataType, ArrowConversionError>;
 }
 
 /// Trait for converting from Arrow DataType
+///
+/// # Example
+///
+/// ```
+/// use kalamdb_commons::models::types::{KalamDataType, FromArrowType};
+/// use arrow_schema::DataType as ArrowDataType;
+///
+/// let arrow_type = ArrowDataType::Float64;
+/// let kalam_type = KalamDataType::from_arrow_type(&arrow_type).unwrap();
+///
+/// assert_eq!(kalam_type, KalamDataType::Double);
+/// ```
 pub trait FromArrowType {
     /// Convert from Arrow DataType
     fn from_arrow_type(arrow_type: &ArrowDataType) -> Result<Self, ArrowConversionError>

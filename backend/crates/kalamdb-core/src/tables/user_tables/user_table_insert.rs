@@ -16,7 +16,7 @@ use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId}
 use crate::tables::UserTableStore;
 use arrow::datatypes::Schema;
 use chrono::Utc;
-use kalamdb_commons::models::ColumnDefault;
+use kalamdb_commons::schemas::ColumnDefault;
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -347,7 +347,7 @@ impl UserTableInsertHandler {
             }
 
             let value_present = row_obj.contains_key(column_name);
-            let value_is_null = row_obj.get(column_name).map_or(false, |v| v.is_null());
+            let value_is_null = row_obj.get(column_name).is_some_and(|v| v.is_null());
 
             // T535: Detect omitted columns and apply DEFAULT
             if !value_present || value_is_null {
@@ -398,7 +398,7 @@ impl UserTableInsertHandler {
         user_id: &UserId,
     ) -> Result<JsonValue, KalamDbError> {
         match default_spec {
-            ColumnDefault::FunctionCall(func_name) => {
+            ColumnDefault::FunctionCall { name: func_name, .. } => {
                 let func_upper = func_name.to_uppercase();
 
                 match func_upper.as_str() {
@@ -444,10 +444,9 @@ impl UserTableInsertHandler {
                     }
                 }
             }
-            ColumnDefault::Literal(literal_str) => {
-                // Return literal value as-is
-                // Try to parse as JSON, fallback to string
-                serde_json::from_str(literal_str).or_else(|_| Ok(json!(literal_str)))
+            ColumnDefault::Literal(literal_value) => {
+                // Return literal value as-is (it's already a serde_json::Value)
+                Ok(literal_value.clone())
             }
             ColumnDefault::None => {
                 // No default - return NULL
@@ -601,7 +600,7 @@ mod tests {
         let mut column_defaults = HashMap::new();
         column_defaults.insert(
             "created_at".to_string(),
-            ColumnDefault::FunctionCall("NOW".to_string()),
+            ColumnDefault::function("NOW", vec![]),
         );
 
         let mut row_data = json!({ "id": 123 });
@@ -634,7 +633,7 @@ mod tests {
         let mut column_defaults = HashMap::new();
         column_defaults.insert(
             "id".to_string(),
-            ColumnDefault::FunctionCall("SNOWFLAKE_ID".to_string()),
+            ColumnDefault::function("SNOWFLAKE_ID", vec![]),
         );
 
         let mut row_data = json!({ "name": "test" });
@@ -666,7 +665,7 @@ mod tests {
         let mut column_defaults = HashMap::new();
         column_defaults.insert(
             "id".to_string(),
-            ColumnDefault::FunctionCall("UUID_V7".to_string()),
+            ColumnDefault::function("UUID_V7", vec![]),
         );
 
         let mut row_data = json!({ "name": "test" });
@@ -700,7 +699,7 @@ mod tests {
         let mut column_defaults = HashMap::new();
         column_defaults.insert(
             "id".to_string(),
-            ColumnDefault::FunctionCall("ULID".to_string()),
+            ColumnDefault::function("ULID", vec![]),
         );
 
         let mut row_data = json!({ "name": "test" });
@@ -733,7 +732,7 @@ mod tests {
         let mut column_defaults = HashMap::new();
         column_defaults.insert(
             "owner".to_string(),
-            ColumnDefault::FunctionCall("CURRENT_USER".to_string()),
+            ColumnDefault::function("CURRENT_USER", vec![]),
         );
 
         let mut row_data = json!({ "id": 123 });
@@ -850,7 +849,7 @@ mod tests {
         let mut column_defaults = HashMap::new();
         column_defaults.insert(
             "created_at".to_string(),
-            ColumnDefault::FunctionCall("NOW".to_string()),
+            ColumnDefault::function("NOW", vec![]),
         );
 
         let mut row_data = json!({ "id": 123 }); // 'created_at' omitted but has DEFAULT
@@ -880,7 +879,7 @@ mod tests {
         let mut column_defaults = HashMap::new();
         column_defaults.insert(
             "value".to_string(),
-            ColumnDefault::FunctionCall("UNKNOWN_FUNC".to_string()),
+            ColumnDefault::function("UNKNOWN_FUNC", vec![]),
         );
 
         let mut row_data = json!({ "id": 123 });

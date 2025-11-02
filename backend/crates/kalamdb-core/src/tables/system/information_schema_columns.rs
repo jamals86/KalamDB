@@ -54,9 +54,9 @@ impl InformationSchemaColumnsProvider {
         let mut table_name_values = Vec::new();
         let mut column_name_values = Vec::new();
         let mut ordinal_position_values = Vec::new();
-        let mut data_type_values = Vec::new();
+        let mut data_type_values: Vec<String> = Vec::new();
         let mut is_nullable_values = Vec::new();
-        let mut column_default_values = Vec::new();
+        let mut column_default_values: Vec<Option<String>> = Vec::new();
         let mut is_primary_key_values = Vec::new();
 
         for table_def in tables {
@@ -66,9 +66,16 @@ impl InformationSchemaColumnsProvider {
                 table_name_values.push(table_def.table_name.to_string());
                 column_name_values.push(column.column_name.clone());
                 ordinal_position_values.push(column.ordinal_position);
-                data_type_values.push(column.data_type.clone());
+                // Convert KalamDataType to string
+                data_type_values.push(format!("{:?}", column.data_type));
                 is_nullable_values.push(column.is_nullable);
-                column_default_values.push(column.column_default.clone());
+                // Convert ColumnDefault to Option<String>
+                let default_str = match &column.default_value {
+                    kalamdb_commons::schemas::ColumnDefault::None => None,
+                    kalamdb_commons::schemas::ColumnDefault::Literal(val) => Some(val.to_string()),
+                    kalamdb_commons::schemas::ColumnDefault::FunctionCall { name, .. } => Some(format!("{}()", name)),
+                };
+                column_default_values.push(default_str);
                 is_primary_key_values.push(column.is_primary_key);
             }
         }

@@ -330,7 +330,7 @@ impl CLISession {
             .trim_start_matches("wss://");
 
         let host = without_scheme
-            .split(|c| c == '/' || c == '?')
+            .split(['/', '?'])
             .next()
             .unwrap_or(without_scheme);
 
@@ -386,7 +386,7 @@ impl CLISession {
             ">".to_string()
         };
 
-        let parts = vec![status, brand_with_profile, identity];
+        let parts = [status, brand_with_profile, identity];
         let body = parts.join(" ");
         format!("{} {} ", body, arrow)
     }
@@ -688,7 +688,7 @@ impl CLISession {
 
         if let Ok(ns_resp) = namespaces_res {
             let mut namespaces = Vec::new();
-            if let Some(result) = ns_resp.results.get(0) {
+            if let Some(result) = ns_resp.results.first() {
                 if let Some(rows) = &result.rows {
                     for row in rows {
                         if let Some(ns) = row.get("name").and_then(|v| v.as_str()) {
@@ -726,7 +726,7 @@ impl CLISession {
         let mut table_names = Vec::new();
         let mut ns_map: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
-        if let Some(result) = response.results.get(0) {
+        if let Some(result) = response.results.first() {
             if let Some(rows) = &result.rows {
                 for row in rows {
                     let name_opt = row.get("table_name").and_then(|v| v.as_str());
@@ -774,7 +774,7 @@ impl CLISession {
                 )
                 .await
         } {
-            if let Some(result) = column_response.results.get(0) {
+            if let Some(result) = column_response.results.first() {
                 if let Some(rows) = &result.rows {
                     let mut column_map: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -1215,7 +1215,7 @@ impl CLISession {
             "{}{}{}",
             "║ ".bright_blue().bold(),
             "Commands & Shortcuts".white().bold(),
-            format!("{}", "                                                 ║")
+            "                                                 ║".to_string()
                 .bright_blue()
                 .bold()
         );
@@ -1228,15 +1228,15 @@ impl CLISession {
 
         // Basics
         println!("{}", "║  Basics".bright_blue().bold());
-        println!("{}", "║    • Write SQL; end with ';' to run".to_string());
+        println!("{}", "║    • Write SQL; end with ';' to run");
         println!(
             "{}{}",
-            "║    • Autocomplete: keywords, namespaces, tables, columns  ".to_string(),
+            "║    • Autocomplete: keywords, namespaces, tables, columns  ",
             "(Tab)".dimmed()
         );
         println!(
             "{}",
-            "║    • Inline hints and SQL highlighting enabled".to_string()
+            "║    • Inline hints and SQL highlighting enabled"
         );
 
         // Meta-commands (two columns)
@@ -1247,22 +1247,18 @@ impl CLISession {
                 .bold()
         );
         println!("{}", "║  Meta-Commands".bright_blue().bold());
-        let left = vec![
-            ("\\help, \\?", "Show this help"),
+        let left = [("\\help, \\?", "Show this help"),
             ("\\quit, \\q", "Exit CLI"),
             ("\\info", "Session info"),
             ("\\connect <url>", "Connect to server"),
             ("\\config", "Show config"),
-            ("\\format <type>", "table|json|csv"),
-        ];
-        let right = vec![
-            ("\\dt", "List tables"),
+            ("\\format <type>", "table|json|csv")];
+        let right = [("\\dt", "List tables"),
             ("\\d <table>", "Describe table"),
             ("\\stats", "System stats"),
             ("\\health", "Health check"),
             ("\\refresh-tables", "Refresh autocomplete"),
-            ("\\subscribe <SQL>", "Start live query"),
-        ];
+            ("\\subscribe <SQL>", "Start live query")];
         for i in 0..left.len().max(right.len()) {
             let l = left
                 .get(i)
@@ -1284,19 +1280,16 @@ impl CLISession {
         );
         println!("{}", "║  Credentials".bright_blue().bold());
         println!(
-            "║    {:<24} {}",
-            "\\show-credentials".cyan(),
-            "Show stored credentials"
+            "║    {:<24} Show stored credentials",
+            "\\show-credentials".cyan()
         );
         println!(
-            "║    {:<24} {}",
-            "\\update-credentials <u> <p>".cyan(),
-            "Update credentials"
+            "║    {:<24} Update credentials",
+            "\\update-credentials <u> <p>".cyan()
         );
         println!(
-            "║    {:<24} {}",
-            "\\delete-credentials".cyan(),
-            "Delete stored credentials"
+            "║    {:<24} Delete stored credentials",
+            "\\delete-credentials".cyan()
         );
 
         // Tips & examples
@@ -1729,7 +1722,7 @@ impl SqlHighlighter {
             }
         } else {
             let mut escaped = false;
-            while let Some(next) = iter.next() {
+            for next in iter.by_ref() {
                 literal.push(next);
                 if escaped {
                     escaped = false;

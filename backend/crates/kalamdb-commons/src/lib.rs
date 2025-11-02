@@ -72,10 +72,10 @@ pub use models::{
     TableAccess,
     TableId,
     TableName,
-    TableType,
     UserId,
     UserName,
 };
+pub use schemas::TableType;
 pub use storage::{Operation, Partition, StorageBackend, StorageError};
 pub use string_interner::{intern, stats as interner_stats, SystemColumns, SYSTEM_COLUMNS};
 pub use system_tables::{StoragePartition, SystemTable};

@@ -99,22 +99,41 @@ impl InformationSchemaTablesProvider {
             table_names.append_value(&table_def.table_name);
 
             // table_type: Convert KalamDB type to SQL standard
+            use kalamdb_commons::schemas::TableType;
             let standard_type = match table_def.table_type {
-                crate::catalog::TableType::User | crate::catalog::TableType::Shared => "BASE TABLE",
-                crate::catalog::TableType::System => "SYSTEM VIEW",
-                crate::catalog::TableType::Stream => "STREAM TABLE",
+                TableType::User | TableType::Shared => "BASE TABLE",
+                TableType::System => "SYSTEM VIEW",
+                TableType::Stream => "STREAM TABLE",
             };
             table_types.append_value(standard_type);
 
-            // KalamDB-specific columns
-            table_ids.append_value(&table_def.table_id);
-            created_ats.push(table_def.created_at);
-            updated_ats.push(table_def.updated_at);
+            // KalamDB-specific columns - synthesize from NEW schema
+            // table_id: synthesize from namespace + table_name
+            let synthetic_table_id = format!("{}.{}", table_def.namespace_id, table_def.table_name);
+            table_ids.append_value(&synthetic_table_id);
+            
+            // Convert DateTime<Utc> to i64 timestamp (milliseconds since epoch)
+            created_ats.push(table_def.created_at.timestamp_millis());
+            updated_ats.push(table_def.updated_at.timestamp_millis());
+            
             schema_versions.push(table_def.schema_version);
-            storage_ids.append_value(&table_def.storage_id);
-            use_user_storages.push(table_def.use_user_storage);
-            deleted_retention_hours_vec.push(table_def.deleted_retention_hours);
-            ttl_seconds_vec.push(table_def.ttl_seconds);
+            
+            // storage_id: use "default" as placeholder
+            storage_ids.append_value("default");
+            
+            // use_user_storage: default to false
+            use_user_storages.push(false);
+            
+            // deleted_retention_hours: not in NEW schema
+            deleted_retention_hours_vec.push(None);
+            
+            // ttl_seconds: extract from StreamTableOptions if present
+            use kalamdb_commons::schemas::TableOptions;
+            let ttl = match &table_def.table_options {
+                TableOptions::Stream(opts) => Some(opts.ttl_seconds),
+                _ => None,
+            };
+            ttl_seconds_vec.push(ttl);
         }
 
         let batch = RecordBatch::try_new(

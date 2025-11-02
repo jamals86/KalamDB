@@ -11,10 +11,10 @@ use std::sync::Arc;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TableDefinition {
     /// Namespace ID (e.g., "default", "user_123")
-    pub namespace_id: String,
+    pub namespace_id: String, //TODO: Use a NamespaceId type
 
     /// Table name (case-sensitive)
-    pub table_name: String,
+    pub table_name: String, //TODO: Use a TableName type
 
     /// Table type (USER, SHARED, STREAM, SYSTEM)
     pub table_type: TableType,
@@ -44,6 +44,33 @@ pub struct TableDefinition {
 
 impl TableDefinition {
     /// Create a new table definition
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use kalamdb_commons::models::schemas::{TableDefinition, ColumnDefinition, TableType, TableOptions};
+    /// use kalamdb_commons::models::types::KalamDataType;
+    ///
+    /// let columns = vec![
+    ///     ColumnDefinition::primary_key("id", 1, KalamDataType::Uuid),
+    ///     ColumnDefinition::simple("name", 2, KalamDataType::Text),
+    ///     ColumnDefinition::simple("age", 3, KalamDataType::Int),
+    /// ];
+    ///
+    /// let table = TableDefinition::new(
+    ///     "my_namespace",
+    ///     "users",
+    ///     TableType::User,
+    ///     columns,
+    ///     TableOptions::user(),
+    ///     Some("User accounts table".into()),
+    /// ).unwrap();
+    ///
+    /// assert_eq!(table.namespace_id, "my_namespace");
+    /// assert_eq!(table.table_name, "users");
+    /// assert_eq!(table.columns.len(), 3);
+    /// assert_eq!(table.schema_version, 1);
+    /// ```
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         namespace_id: impl Into<String>,

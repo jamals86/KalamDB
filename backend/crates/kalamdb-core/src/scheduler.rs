@@ -352,9 +352,9 @@ impl FlushScheduler {
 
         match &*state {
             SchedulerState::Running(_) => {
-                return Err(KalamDbError::Other(
+                Err(KalamDbError::Other(
                     "Scheduler is already running".to_string(),
-                ));
+                ))
             }
             SchedulerState::Stopped => {
                 // Start background task

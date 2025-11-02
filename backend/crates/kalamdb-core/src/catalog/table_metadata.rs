@@ -4,7 +4,8 @@
 
 use crate::flush::FlushPolicy;
 use chrono::{DateTime, Utc};
-use kalamdb_commons::models::{NamespaceId, TableName, TableType};
+use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::schemas::TableType;
 use serde::{Deserialize, Serialize};
 
 /// Table metadata entity

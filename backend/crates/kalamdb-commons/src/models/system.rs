@@ -45,24 +45,14 @@
 //!     deleted_at: None,
 //! };
 //! ```
-
 use crate::{
     models::{JobId, LiveQueryId, TableId, UserName},
+    schemas::TableType,
     AuthType, JobStatus, JobType, NamespaceId, Role, StorageId, StorageMode, TableAccess,
-    TableName, TableType, UserId,
+    TableName, UserId,
 };
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
-
-/// User entity for system.users table.
-///
-/// Represents a user account with authentication credentials and metadata.
-///
-/// ## Fields
-/// - `id`: Unique user identifier
-/// - `username`: Unique username for login
-/// - `password_hash`: Bcrypt hash of password (for password auth type)
-/// - `role`: User role (User, Service, Dba, System)
 /// - `email`: Optional email address
 /// - `auth_type`: Authentication method (Password, OAuth, Internal)
 /// - `auth_data`: JSON blob for auth-specific data (e.g., OAuth provider/subject)
@@ -443,6 +433,11 @@ impl Namespace {
 ///     deleted_retention_hours: 24,
 /// };
 /// ```
+///
+/// Note:
+/// - SystemTable is the registry metadata for a table (IDs, namespace, storage, access, lifecycle).
+/// - `schemas::TableDefinition` defines the logical columnar schema and table options (columns, PKs, TTL, etc.).
+/// - They are complementary, not interchangeable. SystemTable references the active `schema_version` of the logical TableDefinition.
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct SystemTable {
     pub table_id: TableId,
@@ -460,6 +455,9 @@ pub struct SystemTable {
     /// NULL for USER and SYSTEM tables (they have different access control)
     pub access_level: Option<TableAccess>,
 }
+
+/// Alias for clarity when referring to registry metadata
+pub type TableMetadata = SystemTable;
 
 /// Storage configuration in system_storages table
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -128,27 +128,27 @@ async fn extract_basic_auth(
             // Localhost system user: can authenticate without password if hash is empty
             if user.password_hash.is_empty() {
                 // Passwordless localhost auth for system user
-                return Ok(AuthenticatedRequest {
+                Ok(AuthenticatedRequest {
                     user_id: user.id.clone(),
                     role: user.role,
                     username: user.username.to_string(),
-                });
+                })
             } else {
                 // Verify password if set
                 if password::verify_password(&password_plain, &user.password_hash)
                     .await
                     .unwrap_or(false)
                 {
-                    return Ok(AuthenticatedRequest {
+                    Ok(AuthenticatedRequest {
                         user_id: user.id.clone(),
                         role: user.role,
                         username: user.username.to_string(),
-                    });
+                    })
                 } else {
                     warn!("Invalid password for system user: {}", username);
-                    return Err(AuthError::InvalidCredentials(
+                    Err(AuthError::InvalidCredentials(
                         "Invalid username or password".to_string(),
-                    ));
+                    ))
                 }
             }
         } else {
@@ -171,16 +171,16 @@ async fn extract_basic_auth(
                 .await
                 .unwrap_or(false)
             {
-                return Ok(AuthenticatedRequest {
+                Ok(AuthenticatedRequest {
                     user_id: user.id.clone(),
                     role: user.role,
                     username: user.username.to_string(),
-                });
+                })
             } else {
                 warn!("Invalid password for remote system user: {}", username);
-                return Err(AuthError::InvalidCredentials(
+                Err(AuthError::InvalidCredentials(
                     "Invalid username or password".to_string(),
-                ));
+                ))
             }
         }
     } else {
@@ -190,22 +190,22 @@ async fn extract_basic_auth(
                 .await
                 .unwrap_or(false)
             {
-                return Ok(AuthenticatedRequest {
+                Ok(AuthenticatedRequest {
                     user_id: user.id.clone(),
                     role: user.role,
                     username: user.username.to_string(),
-                });
+                })
             } else {
                 warn!("Invalid password for user: {}", username);
-                return Err(AuthError::InvalidCredentials(
+                Err(AuthError::InvalidCredentials(
                     "Invalid username or password".to_string(),
-                ));
+                ))
             }
         } else {
             // User has no password set - deny access
-            return Err(AuthError::InvalidCredentials(
+            Err(AuthError::InvalidCredentials(
                 "Invalid username or password".to_string(),
-            ));
+            ))
         }
     }
 }

@@ -8,7 +8,8 @@
 
 use crate::ddl::DdlResult;
 
-use kalamdb_commons::models::{NamespaceId, TableName, TableType};
+use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::schemas::TableType;
 
 /// Table categories supported by DROP TABLE statements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

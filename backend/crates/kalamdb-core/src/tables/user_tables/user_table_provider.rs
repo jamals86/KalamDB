@@ -26,7 +26,8 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::{models::ColumnDefault, Role};
+use kalamdb_commons::schemas::ColumnDefault;
+use kalamdb_commons::Role;
 use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
 use std::any::Any;
@@ -140,7 +141,7 @@ impl UserTableProvider {
         if schema.field_with_name("id").is_ok() {
             defaults.insert(
                 "id".to_string(),
-                ColumnDefault::FunctionCall("SNOWFLAKE_ID".to_string()),
+                ColumnDefault::function("SNOWFLAKE_ID", vec![]),
             );
         }
         defaults
@@ -566,7 +567,7 @@ impl UserTableProvider {
                 ))
             })?;
 
-            let mut reader = builder.build().map_err(|e| {
+            let reader = builder.build().map_err(|e| {
                 DataFusionError::Execution(format!(
                     "Failed to build Parquet reader for {:?}: {}",
                     parquet_file, e
@@ -574,7 +575,7 @@ impl UserTableProvider {
             })?;
 
             // Read all batches from this file
-            while let Some(batch_result) = reader.next() {
+            for batch_result in reader {
                 let batch = batch_result.map_err(|e| {
                     DataFusionError::Execution(format!(
                         "Failed to read batch from {:?}: {}",
@@ -773,7 +774,7 @@ impl TableProvider for UserTableProvider {
 
             // Populate auto-increment IDs when missing
             self.prepare_insert_rows(&mut json_rows)
-                .map_err(|e| DataFusionError::Execution(e))?;
+                .map_err(DataFusionError::Execution)?;
 
             // Insert each row using the insert_batch method
             // This automatically handles user_id scoping

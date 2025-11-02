@@ -128,49 +128,57 @@ impl StreamTableService {
         stmt: &CreateTableStatement,
         schema: &Arc<Schema>,
     ) -> Result<(), KalamDbError> {
-        use kalamdb_commons::models::{SchemaVersion, TableDefinition};
+        use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions};
+        use kalamdb_commons::types::{KalamDataType, FromArrowType};
 
-        // Extract columns from schema with ordinal positions
-        let columns = TableDefinition::extract_columns_from_schema(
-            schema.as_ref(),
-            &stmt.column_defaults,
-            stmt.primary_key_column.as_deref(),
-        );
+        // Extract columns directly from Arrow schema
+        let columns: Vec<ColumnDefinition> = schema
+            .fields()
+            .iter()
+            .enumerate()
+            .map(|(idx, field)| {
+                let column_name = field.name().clone();
+                let is_primary_key = stmt.primary_key_column
+                    .as_ref()
+                    .map(|pk| pk.as_str() == column_name.as_str())
+                    .unwrap_or(false);
+                
+                // Convert Arrow DataType to KalamDataType
+                let data_type = KalamDataType::from_arrow_type(field.data_type())
+                    .unwrap_or(KalamDataType::Text);
+                
+                // Get default value from statement
+                let default_value = stmt.column_defaults
+                    .get(column_name.as_str())
+                    .cloned()
+                    .unwrap_or(kalamdb_commons::schemas::ColumnDefault::None);
+                
+                ColumnDefinition::new(
+                    column_name,
+                    (idx + 1) as u32,
+                    data_type,
+                    field.is_nullable(),
+                    is_primary_key,
+                    false, // is_partition_key
+                    default_value,
+                    None, // column_comment
+                )
+            })
+            .collect();
 
-        // Serialize Arrow schema for history
-        let arrow_schema_json =
-            TableDefinition::serialize_arrow_schema(schema.as_ref()).map_err(|e| {
-                KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
-            })?;
+        // Build table options with TTL from statement
+        let ttl_seconds = stmt.ttl_seconds.unwrap_or(86400); // Default 24h if not specified
+        let table_options = TableOptions::stream(ttl_seconds);
 
-        // Build complete table definition
-        // Stream tables don't have flush policies (no Parquet persistence)
-        let now_millis = chrono::Utc::now().timestamp_millis();
-        let table_def = TableDefinition {
-            table_id: format!(
-                "{}:{}",
-                stmt.namespace_id.as_str(),
-                stmt.table_name.as_str()
-            ),
-            table_name: stmt.table_name.clone(),
-            namespace_id: stmt.namespace_id.clone(),
-            table_type: TableType::Stream,
-            created_at: now_millis,
-            updated_at: now_millis,
-            schema_version: 1,
-            storage_id: StorageId::from("local"), // Stream tables don't use external storage
-            use_user_storage: false,
-            flush_policy: None,            // Stream tables don't flush to Parquet
-            deleted_retention_hours: None, // Stream tables don't have soft deletes
-            ttl_seconds: stmt.ttl_seconds,
+        // Create NEW TableDefinition directly
+        let table_def = TableDefinition::new(
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str(),
+            kalamdb_commons::schemas::TableType::Stream,
             columns,
-            schema_history: vec![SchemaVersion {
-                version: 1,
-                created_at: now_millis,
-                changes: format!("Initial stream table schema. TTL: {:?}s", stmt.ttl_seconds),
-                arrow_schema_json,
-            }],
-        };
+            table_options,
+            None, // table_comment
+        ).map_err(|e| KalamDbError::SchemaError(e))?;
 
         // Single atomic write to information_schema_tables
         self.kalam_sql

@@ -27,7 +27,7 @@ pub trait ConnectionIdExt {
 
 impl ConnectionIdExt for ConnectionId {
     fn from_string_kalam(s: &str) -> Result<ConnectionId, KalamDbError> {
-        ConnectionId::from_string(s).map_err(|e| KalamDbError::InvalidOperation(e))
+        ConnectionId::from_string(s).map_err(KalamDbError::InvalidOperation)
     }
 }
 
@@ -37,7 +37,7 @@ pub trait LiveIdExt {
 
 impl LiveIdExt for LiveId {
     fn from_string_kalam(s: &str) -> Result<LiveId, KalamDbError> {
-        LiveId::from_string(s).map_err(|e| KalamDbError::InvalidOperation(e))
+        LiveId::from_string(s).map_err(KalamDbError::InvalidOperation)
     }
 }
 

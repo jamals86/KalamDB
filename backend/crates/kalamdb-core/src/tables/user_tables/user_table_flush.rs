@@ -441,7 +441,7 @@ impl TableFlush for UserTableFlushJob {
             // Group by user_id
             rows_by_user
                 .entry(user_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push((key_bytes, row_data));
 
             if rows_scanned % 1000 == 0 {
@@ -524,7 +524,7 @@ impl TableFlush for UserTableFlushJob {
                 "One or more user partitions failed to flush ({} errors). Rows flushed before failure: {}. First error: {}",
                 error_messages.len(),
                 total_rows_flushed,
-                error_messages.get(0).cloned().unwrap_or_else(|| "unknown error".to_string())
+                error_messages.first().cloned().unwrap_or_else(|| "unknown error".to_string())
             );
             log::error!(
                 "❌ User table flush failed: table={}.{} — {}",

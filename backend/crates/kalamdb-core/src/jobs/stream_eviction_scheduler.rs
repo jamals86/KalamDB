@@ -59,9 +59,9 @@ impl StreamEvictionScheduler {
 
         match *state {
             SchedulerState::Running(_) => {
-                return Err(KalamDbError::Other(
+                Err(KalamDbError::Other(
                     "Stream eviction scheduler already running".to_string(),
-                ));
+                ))
             }
             SchedulerState::Stopped => {
                 let eviction_job = Arc::clone(&self.eviction_job);

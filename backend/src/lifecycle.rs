@@ -345,7 +345,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     create_default_system_user(kalam_sql.clone()).await?;
 
     // Security warning: Check if remote access is enabled with empty root password
-    check_remote_access_security(&config, kalam_sql.clone()).await?;
+    check_remote_access_security(config, kalam_sql.clone()).await?;
 
     Ok(ApplicationComponents {
         session_factory,

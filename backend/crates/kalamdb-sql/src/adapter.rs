@@ -4,9 +4,9 @@
 
 // Import all system models from the crate root (which re-exports from commons)
 use crate::{AuditLogEntry, Job, LiveQuery, Namespace, Storage, Table, TableSchema, User};
-// use kalamdb_commons::models::TableDefinition; // Unused
 use anyhow::{anyhow, Result};
 use kalamdb_commons::models::AuditLogId;
+use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_commons::{StoragePartition, SystemTable};
 use kalamdb_store::{EntityStoreV2, StorageBackend};
 use std::sync::Arc;
@@ -191,7 +191,7 @@ impl StorageAdapter {
                             table_id: table_id.to_string(),
                             version: def.schema_version as i32,
                             arrow_schema: latest_schema_ver.arrow_schema_json.clone(),
-                            created_at: def.created_at,
+                            created_at: def.created_at.timestamp_millis(),
                             changes: serde_json::to_string(&latest_schema_ver.changes)
                                 .unwrap_or_else(|_| "[]".to_string()),
                         }))
@@ -211,7 +211,7 @@ impl StorageAdapter {
                             table_id: table_id.to_string(),
                             version: v,
                             arrow_schema: schema_ver.arrow_schema_json.clone(),
-                            created_at: schema_ver.created_at,
+                            created_at: schema_ver.created_at.timestamp_millis(),
                             changes: serde_json::to_string(&schema_ver.changes)
                                 .unwrap_or_else(|_| "[]".to_string()),
                         }))
@@ -353,7 +353,7 @@ impl StorageAdapter {
     /// Ok(()) on success, error on failure
     pub fn upsert_table_definition(
         &self,
-        table_def: &kalamdb_commons::models::TableDefinition,
+        table_def: &TableDefinition,
     ) -> Result<()> {
         let p = StoragePartition::InformationSchemaTables.partition();
         let key = format!("{}:{}", table_def.namespace_id, table_def.table_name);
@@ -375,12 +375,12 @@ impl StorageAdapter {
         &self,
         namespace_id: &str,
         table_name: &str,
-    ) -> Result<Option<kalamdb_commons::models::TableDefinition>> {
+    ) -> Result<Option<TableDefinition>> {
         let p = StoragePartition::InformationSchemaTables.partition();
         let key = format!("{}:{}", namespace_id, table_name);
         match self.backend.get(&p.into(), key.as_bytes())? {
             Some(value) => {
-                let table_def: kalamdb_commons::models::TableDefinition =
+                let table_def: TableDefinition =
                     serde_json::from_slice(&value)?;
                 Ok(Some(table_def))
             }
@@ -399,7 +399,7 @@ impl StorageAdapter {
     pub fn scan_table_definitions(
         &self,
         namespace_id: &str,
-    ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
+    ) -> Result<Vec<TableDefinition>> {
         let p = StoragePartition::InformationSchemaTables.partition();
         let prefix = format!("{}:", namespace_id);
         let mut tables = Vec::new();
@@ -418,7 +418,7 @@ impl StorageAdapter {
     /// Vector of all TableDefinition in the database
     pub fn scan_all_table_definitions(
         &self,
-    ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
+    ) -> Result<Vec<TableDefinition>> {
         let p = StoragePartition::InformationSchemaTables.partition();
         let iter = self.backend.scan(&p.into(), None, None)?;
         let mut tables = Vec::new();

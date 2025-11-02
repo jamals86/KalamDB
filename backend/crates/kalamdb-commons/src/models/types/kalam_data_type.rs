@@ -129,7 +129,7 @@ impl KalamDataType {
 
     /// Validate EMBEDDING dimension is within allowed range
     pub fn validate_embedding_dimension(dim: usize) -> Result<(), String> {
-        if dim < 1 || dim > 8192 {
+        if !(1..=8192).contains(&dim) {
             Err(format!(
                 "EMBEDDING dimension must be between 1 and 8192, got {}",
                 dim
@@ -141,7 +141,7 @@ impl KalamDataType {
 
     /// Validate DECIMAL precision and scale
     pub fn validate_decimal_params(precision: u8, scale: u8) -> Result<(), String> {
-        if precision < 1 || precision > 38 {
+        if !(1..=38).contains(&precision) {
             return Err(format!(
                 "DECIMAL precision must be between 1 and 38, got {}",
                 precision

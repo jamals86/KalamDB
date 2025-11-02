@@ -546,7 +546,7 @@ mod tests {
             table_id: table_id.clone(),
             table_name: TableName::new("test_table"),
             namespace: NamespaceId::new("test_ns"),
-            table_type: TableType::from(table_type),
+            table_type: TableType::from_str(table_type).unwrap(),
             created_at: chrono::Utc::now().timestamp_millis(),
             storage_location: "/tmp/test".to_string(),
             storage_id: Some(StorageId::new("local")),

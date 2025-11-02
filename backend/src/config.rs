@@ -194,6 +194,7 @@ pub struct UserManagementSettings {
 
 /// Shutdown settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct ShutdownSettings {
     /// Flush job timeout settings
     pub flush: ShutdownFlushSettings,
@@ -279,6 +280,7 @@ pub struct OAuthSettings {
 
 /// OAuth providers configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct OAuthProvidersSettings {
     #[serde(default)]
     pub google: OAuthProviderConfig,
@@ -327,15 +329,6 @@ impl Default for OAuthSettings {
     }
 }
 
-impl Default for OAuthProvidersSettings {
-    fn default() -> Self {
-        Self {
-            google: OAuthProviderConfig::default(),
-            github: OAuthProviderConfig::default(),
-            azure: OAuthProviderConfig::default(),
-        }
-    }
-}
 
 impl Default for OAuthProviderConfig {
     fn default() -> Self {
@@ -421,13 +414,6 @@ impl Default for UserManagementSettings {
     }
 }
 
-impl Default for ShutdownSettings {
-    fn default() -> Self {
-        Self {
-            flush: ShutdownFlushSettings::default(),
-        }
-    }
-}
 
 impl Default for ShutdownFlushSettings {
     fn default() -> Self {

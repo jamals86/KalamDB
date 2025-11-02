@@ -46,7 +46,7 @@ fn sort_columns(columns: &[String], preferred: &[&str]) -> Vec<String> {
         }
     }
     listed.sort_by_key(|c| order_index.get(c.as_str()).copied().unwrap_or(usize::MAX));
-    listed.extend(unlisted.into_iter());
+    listed.extend(unlisted);
     listed
 }
 

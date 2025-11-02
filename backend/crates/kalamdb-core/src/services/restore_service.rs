@@ -517,7 +517,7 @@ impl RestoreService {
 
         // Delete tables
         for table in &manifest.tables {
-            if let Err(e) = self.kalam_sql.delete_table(&table.table_id.to_string()) {
+            if let Err(e) = self.kalam_sql.delete_table(table.table_id.as_ref()) {
                 log::error!("Failed to delete table '{}': {}", table.table_name, e);
             }
         }

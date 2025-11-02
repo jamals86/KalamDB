@@ -524,7 +524,7 @@ impl SqlExecutor {
         storage_id: Option<StorageId>,
     ) -> Result<StorageId, KalamDbError> {
         // T167a: Default to 'local' if not specified
-        let storage_id = storage_id.unwrap_or_else(|| StorageId::local());
+        let storage_id = storage_id.unwrap_or_else(StorageId::local);
 
         // T167b & T167c: Validate storage_id exists in system.storages (NOT NULL enforcement)
         if let Some(kalam_sql) = &self.kalam_sql {
@@ -633,17 +633,17 @@ impl SqlExecutor {
             | SqlStatement::AlterStorage
             | SqlStatement::DropStorage
             | SqlStatement::KillJob => {
-                return Err(KalamDbError::Unauthorized(format!(
+                Err(KalamDbError::Unauthorized(format!(
                     "Admin privileges required to execute {}",
                     sql.lines().next().unwrap_or("this statement")
-                )));
+                )))
             }
 
             // User management requires admin privileges (except for self-modification)
             SqlStatement::CreateUser | SqlStatement::DropUser => {
-                return Err(KalamDbError::Unauthorized(
+                Err(KalamDbError::Unauthorized(
                     "Admin privileges required for user management".to_string(),
-                ));
+                ))
             }
 
             // ALTER USER allowed for self (changing own password), admin for others
@@ -651,16 +651,16 @@ impl SqlExecutor {
                 // Extract username from ALTER USER statement
                 // For now, we'll allow it and let the execute_alter_user method do the check
                 // TODO: Parse and verify user is modifying their own account
-                return Ok(());
+                Ok(())
             }
 
             // Namespace DDL requires admin privileges
             SqlStatement::CreateNamespace
             | SqlStatement::AlterNamespace
             | SqlStatement::DropNamespace => {
-                return Err(KalamDbError::Unauthorized(
+                Err(KalamDbError::Unauthorized(
                     "Admin privileges required for namespace operations".to_string(),
-                ));
+                ))
             }
 
             // Read-only operations on system tables are allowed for all authenticated users
@@ -669,7 +669,7 @@ impl SqlExecutor {
             | SqlStatement::ShowStorages
             | SqlStatement::ShowStats
             | SqlStatement::DescribeTable => {
-                return Ok(());
+                Ok(())
             }
 
             // CREATE TABLE, DROP TABLE, FLUSH TABLE, ALTER TABLE - check table ownership in execute methods
@@ -679,7 +679,7 @@ impl SqlExecutor {
             | SqlStatement::FlushTable
             | SqlStatement::FlushAllTables => {
                 // Table-level authorization will be checked in the execution methods
-                return Ok(());
+                Ok(())
             }
 
             // SELECT, INSERT, UPDATE, DELETE - check table access in execution
@@ -689,7 +689,7 @@ impl SqlExecutor {
             | SqlStatement::Delete => {
                 // Query-level authorization will be enforced by using per-user sessions
                 // User tables are filtered by user_id in UserTableProvider
-                return Ok(());
+                Ok(())
             }
 
             // Subscriptions, transactions, and other operations allowed for all users
@@ -698,12 +698,12 @@ impl SqlExecutor {
             | SqlStatement::BeginTransaction
             | SqlStatement::CommitTransaction
             | SqlStatement::RollbackTransaction => {
-                return Ok(());
+                Ok(())
             }
 
             SqlStatement::Unknown => {
                 // Unknown statements will fail in execute anyway
-                return Ok(());
+                Ok(())
             }
         }
     }
@@ -1181,7 +1181,7 @@ impl SqlExecutor {
                 table_type: TableType::Shared,
                 namespace: namespace_id.clone(),
                 created_at: chrono::DateTime::from_timestamp_millis(table.created_at)
-                    .unwrap_or_else(|| chrono::Utc::now()),
+                    .unwrap_or_else(chrono::Utc::now),
                 storage_location: table.storage_location.clone(),
                 flush_policy: serde_json::from_str(&table.flush_policy).unwrap_or_default(),
                 schema_version: table.schema_version as u32,
@@ -1278,7 +1278,7 @@ impl SqlExecutor {
                 table_type: TableType::User,
                 namespace: namespace_id.clone(),
                 created_at: chrono::DateTime::from_timestamp_millis(table.created_at)
-                    .unwrap_or_else(|| chrono::Utc::now()),
+                    .unwrap_or_else(chrono::Utc::now),
                 storage_location: table.storage_location.clone(),
                 flush_policy: serde_json::from_str(&table.flush_policy).unwrap_or_default(),
                 schema_version: table.schema_version as u32,
@@ -1403,7 +1403,7 @@ impl SqlExecutor {
                 table_type: TableType::Stream,
                 namespace: namespace_id.clone(),
                 created_at: chrono::DateTime::from_timestamp_millis(table.created_at)
-                    .unwrap_or_else(|| chrono::Utc::now()),
+                    .unwrap_or_else(chrono::Utc::now),
                 storage_location: table.storage_location.clone(),
                 flush_policy: serde_json::from_str(&table.flush_policy).unwrap_or_default(),
                 schema_version: table.schema_version as u32,
@@ -1664,7 +1664,7 @@ impl SqlExecutor {
     ) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::ShowStoragesStatement;
 
-        let _stmt = ShowStoragesStatement::parse(sql).map_err(|e| KalamDbError::InvalidSql(e))?;
+        let _stmt = ShowStoragesStatement::parse(sql).map_err(KalamDbError::InvalidSql)?;
 
         let kalam_sql = self
             .kalam_sql
@@ -1710,9 +1710,9 @@ impl SqlExecutor {
 
         // Check if storage already exists
         let storage_id = StorageId::from(stmt.storage_id.as_str());
-        if let Some(_) = kalam_sql
+        if (kalam_sql
             .get_storage(&storage_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to check storage: {}", e)))?
+            .map_err(|e| KalamDbError::Other(format!("Failed to check storage: {}", e)))?).is_some()
         {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Storage '{}' already exists",
@@ -1954,7 +1954,7 @@ impl SqlExecutor {
 
         let table = tables
             .iter()
-            .find(|t| &t.namespace == &stmt.namespace && &t.table_name == &stmt.table_name)
+            .find(|t| t.namespace == stmt.namespace && t.table_name == stmt.table_name)
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table '{}.{}' does not exist",
@@ -2243,7 +2243,7 @@ impl SqlExecutor {
 
         let user_tables: Vec<_> = tables
             .iter()
-            .filter(|t| &t.namespace == &stmt.namespace && t.table_type == TableType::User)
+            .filter(|t| t.namespace == stmt.namespace && t.table_type == TableType::User)
             .collect();
 
         if user_tables.is_empty() {
@@ -2768,14 +2768,14 @@ impl SqlExecutor {
             .map_err(|e| {
                 KalamDbError::Other(format!(
                     "Failed to unregister live query {}: {}",
-                    stmt.live_id.to_string(),
+                    stmt.live_id,
                     e
                 ))
             })?;
 
         Ok(ExecutionResult::Success(format!(
             "Live query {} terminated",
-            stmt.live_id.to_string()
+            stmt.live_id
         )))
     }
 
@@ -2888,7 +2888,7 @@ impl SqlExecutor {
                 .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
             // Verify this is actually a USER table
-            if stmt.table_type != kalamdb_commons::models::TableType::User {
+            if stmt.table_type != kalamdb_commons::schemas::TableType::User {
                 return Err(KalamDbError::InvalidSql(
                     "Expected CREATE USER TABLE statement".to_string(),
                 ));
@@ -2913,7 +2913,7 @@ impl SqlExecutor {
             // Insert into system.tables via KalamSQL
             if let Some(kalam_sql) = &self.kalam_sql {
                 let table = kalamdb_sql::Table {
-                    table_id: TableId::from_strings(&namespace_id.as_str(), &table_name.as_str()),
+                    table_id: TableId::from_strings(namespace_id.as_str(), table_name.as_str()),
                     table_name: table_name.clone(),
                     namespace: namespace_id.clone(),
                     table_type: TableType::User,
@@ -2953,7 +2953,7 @@ impl SqlExecutor {
 
             // T112: Invalidate schema cache for newly created table
             if let Some(schema_cache) = &self.schema_cache {
-                let table_id = TableId::from_strings(&namespace_id.as_str(), &table_name.as_str());
+                let table_id = TableId::from_strings(namespace_id.as_str(), table_name.as_str());
                 schema_cache.invalidate(&table_id);
             }
 
@@ -2976,7 +2976,7 @@ impl SqlExecutor {
                 .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
             // Verify this is actually a STREAM table
-            if stmt.table_type != kalamdb_commons::models::TableType::Stream {
+            if stmt.table_type != kalamdb_commons::schemas::TableType::Stream {
                 return Err(KalamDbError::InvalidSql(
                     "Expected CREATE STREAM TABLE statement".to_string(),
                 ));
@@ -2993,7 +2993,7 @@ impl SqlExecutor {
             // Insert into system.tables via KalamSQL
             if let Some(kalam_sql) = &self.kalam_sql {
                 let table = kalamdb_sql::Table {
-                    table_id: TableId::from_strings(&namespace_id.as_str(), &table_name.as_str()),
+                    table_id: TableId::from_strings(namespace_id.as_str(), table_name.as_str()),
                     table_name: table_name.clone(),
                     namespace: namespace_id.clone(),
                     table_type: TableType::Stream,
@@ -3031,7 +3031,7 @@ impl SqlExecutor {
 
             // T112: Invalidate schema cache for newly created table
             if let Some(schema_cache) = &self.schema_cache {
-                let table_id = TableId::from_strings(&namespace_id.as_str(), &table_name.as_str());
+                let table_id = TableId::from_strings(namespace_id.as_str(), table_name.as_str());
                 schema_cache.invalidate(&table_id);
             }
 
@@ -3051,7 +3051,7 @@ impl SqlExecutor {
                 .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
             // Verify this is actually a SHARED table
-            if stmt.table_type != kalamdb_commons::models::TableType::Shared {
+            if stmt.table_type != kalamdb_commons::schemas::TableType::Shared {
                 return Err(KalamDbError::InvalidSql(
                     "Expected CREATE SHARED TABLE statement".to_string(),
                 ));
@@ -3066,7 +3066,7 @@ impl SqlExecutor {
 
             // Extract storage_id and access_level before stmt is moved
             let stmt_storage_id = stmt.storage_id.clone();
-            let stmt_access_level = stmt.access_level.clone();
+            let stmt_access_level = stmt.access_level;
 
             // Validate and resolve storage_id
             let storage_id = self.validate_storage_id(stmt_storage_id)?;
@@ -3094,8 +3094,8 @@ impl SqlExecutor {
 
                     let table = kalamdb_sql::Table {
                         table_id: TableId::from_strings(
-                            &namespace_id.as_str(),
-                            &table_name.as_str(),
+                            namespace_id.as_str(),
+                            table_name.as_str(),
                         ),
                         table_name: table_name.clone(),
                         namespace: namespace_id.clone(),
@@ -3139,7 +3139,7 @@ impl SqlExecutor {
                 // T112: Invalidate schema cache for newly created table
                 if let Some(schema_cache) = &self.schema_cache {
                     let table_id =
-                        TableId::from_strings(&namespace_id.as_str(), &table_name.as_str());
+                        TableId::from_strings(namespace_id.as_str(), table_name.as_str());
                     schema_cache.invalidate(&table_id);
                 }
 
@@ -3171,7 +3171,7 @@ impl SqlExecutor {
 
             // Extract storage_id and access_level before stmt is moved
             let stmt_storage_id = stmt.storage_id.clone();
-            let stmt_access_level = stmt.access_level.clone();
+            let stmt_access_level = stmt.access_level;
 
             // Validate and resolve storage_id
             let storage_id = self.validate_storage_id(stmt_storage_id)?;
@@ -3187,8 +3187,8 @@ impl SqlExecutor {
 
                     let table = kalamdb_sql::Table {
                         table_id: TableId::from_strings(
-                            &namespace_id.as_str(),
-                            &table_name.as_str(),
+                            namespace_id.as_str(),
+                            table_name.as_str(),
                         ),
                         table_name: table_name.clone(),
                         namespace: namespace_id.clone(),
@@ -3228,7 +3228,7 @@ impl SqlExecutor {
                 // T112: Invalidate schema cache for newly created table
                 if let Some(schema_cache) = &self.schema_cache {
                     let table_id =
-                        TableId::from_strings(&namespace_id.as_str(), &table_name.as_str());
+                        TableId::from_strings(namespace_id.as_str(), table_name.as_str());
                     schema_cache.invalidate(&table_id);
                 }
 
@@ -3279,12 +3279,12 @@ impl SqlExecutor {
             let table_id =
                 TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
             let mut table = kalam_sql
-                .get_table(&table_id.to_string())
+                .get_table(table_id.as_ref())
                 .map_err(|e| KalamDbError::Other(format!("Failed to get table: {}", e)))?
                 .ok_or_else(|| {
                     KalamDbError::table_not_found(format!(
                         "Table '{}' not found",
-                        table_id.to_string()
+                        table_id
                     ))
                 })?;
 
@@ -3296,7 +3296,7 @@ impl SqlExecutor {
             }
 
             // Update the table's access_level (already TableAccess enum)
-            table.access_level = Some(access_level.clone());
+            table.access_level = Some(*access_level);
 
             // Persist the change
             kalam_sql
@@ -3358,7 +3358,7 @@ impl SqlExecutor {
             TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
 
         let actual_table_type = if let Some(kalam_sql) = &self.kalam_sql {
-            match kalam_sql.get_table(&table_identifier.to_string()) {
+            match kalam_sql.get_table(table_identifier.as_ref()) {
                 Ok(Some(table)) => table.table_type,
                 Ok(None) => requested_table_type,
                 Err(_) => requested_table_type,
@@ -3461,7 +3461,7 @@ impl SqlExecutor {
 
             // Expect WHERE username = '...'
             let (where_col, where_val) = self.parse_simple_where(&update_info.where_clause)?;
-            if where_col.to_ascii_lowercase() != "username" {
+            if !where_col.eq_ignore_ascii_case("username") {
                 return Err(KalamDbError::InvalidSql(
                     "Only WHERE username = '...' is supported for system.users".to_string(),
                 ));
@@ -3469,7 +3469,7 @@ impl SqlExecutor {
 
             // Only support SET deleted_at = NULL (restore user)
             if update_info.set_values.len() != 1
-                || update_info.set_values[0].0.to_ascii_lowercase() != "deleted_at"
+                || !update_info.set_values[0].0.eq_ignore_ascii_case("deleted_at")
                 || !update_info.set_values[0].1.is_null()
             {
                 return Err(KalamDbError::InvalidOperation(
@@ -4364,7 +4364,6 @@ impl SqlExecutor {
 
         let (stat_names, stat_values): (Vec<&str>, Vec<String>) = metrics
             .into_iter()
-            .map(|(name, value)| (name, value))
             .unzip();
 
         let statistic_array: ArrayRef = Arc::new(StringArray::from(stat_names));
@@ -4748,7 +4747,7 @@ mod tests {
             table_id: TableId::new(NamespaceId::new("app"), TableName::new("events")),
             table_name: "events".into(),
             namespace: "app".into(),
-            table_type: kalamdb_commons::models::TableType::Stream,
+            table_type: kalamdb_commons::schemas::TableType::Stream,
             created_at: chrono::Utc::now().timestamp_millis(),
             storage_location: String::new(),
             storage_id: Some(StorageId::new("local")),

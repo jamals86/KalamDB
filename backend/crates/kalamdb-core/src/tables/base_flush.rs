@@ -35,6 +35,7 @@ use std::sync::Arc;
 
 /// Metadata for user table flush operations
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Default)]
 pub struct UserTableFlushMetadata {
     /// Number of unique users whose data was flushed
     pub users_count: usize,
@@ -43,28 +44,16 @@ pub struct UserTableFlushMetadata {
     pub errors: Vec<String>,
 }
 
-impl Default for UserTableFlushMetadata {
-    fn default() -> Self {
-        Self {
-            users_count: 0,
-            errors: Vec::new(),
-        }
-    }
-}
 
 /// Metadata for shared table flush operations
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Default)]
 pub struct SharedTableFlushMetadata {
     /// Additional context (reserved for future use)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
 }
 
-impl Default for SharedTableFlushMetadata {
-    fn default() -> Self {
-        Self { context: None }
-    }
-}
 
 /// Flush metadata for different table types
 ///

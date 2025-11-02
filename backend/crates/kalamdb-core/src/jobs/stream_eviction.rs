@@ -13,7 +13,8 @@ use crate::error::KalamDbError;
 use crate::jobs::{JobExecutor, JobResult};
 use crate::stores::system_table::SharedTableStoreExt;
 use crate::tables::StreamTableStore;
-use kalamdb_commons::models::{NamespaceId, TableName, TableType};
+use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::schemas::TableType;
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
 use std::time::Duration;
@@ -113,12 +114,23 @@ impl StreamEvictionJob {
                     ))
                 })?;
 
-            // Skip tables without TTL configured
-            let ttl_seconds = match table_def.and_then(|def| def.ttl_seconds) {
-                Some(ttl) => ttl,
+            // Skip tables without TTL configured (extract from table_options)
+            let ttl_seconds = match table_def {
+                Some(def) => {
+                    if let kalamdb_commons::schemas::TableOptions::Stream(stream_opts) = &def.table_options {
+                        stream_opts.ttl_seconds
+                    } else {
+                        log::warn!(
+                            "Table {}.{} is not a STREAM table, skipping eviction",
+                            table_meta.namespace,
+                            table_meta.table_name
+                        );
+                        continue;
+                    }
+                }
                 None => {
                     log::trace!(
-                        "Stream table {}.{} has no TTL configured, skipping eviction",
+                        "Stream table {}.{} definition not found, skipping eviction",
                         table_meta.namespace,
                         table_meta.table_name
                     );

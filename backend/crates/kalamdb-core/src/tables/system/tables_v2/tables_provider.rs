@@ -95,7 +95,7 @@ impl TablesTableProvider {
         let mut access_levels = StringBuilder::new();
 
         for (_key, table) in tables {
-            table_ids.append_value(&table.table_id.to_string());
+            table_ids.append_value(&table.table_id);
             table_names.append_value(table.table_name.as_str());
             namespaces.append_value(table.namespace.as_str());
             table_types.append_value(table.table_type.as_str());

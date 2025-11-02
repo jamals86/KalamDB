@@ -35,6 +35,29 @@ pub struct ColumnDefinition {
 
 impl ColumnDefinition {
     /// Create a new column definition
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use kalamdb_commons::models::schemas::{ColumnDefinition, ColumnDefault};
+    /// use kalamdb_commons::models::types::KalamDataType;
+    ///
+    /// let column = ColumnDefinition::new(
+    ///     "user_id",
+    ///     1,
+    ///     KalamDataType::Uuid,
+    ///     false,  // not nullable
+    ///     true,   // is primary key
+    ///     false,  // not partition key
+    ///     ColumnDefault::None,
+    ///     Some("Primary key for users table".into()),
+    /// );
+    ///
+    /// assert_eq!(column.column_name, "user_id");
+    /// assert_eq!(column.data_type, KalamDataType::Uuid);
+    /// assert!(!column.is_nullable);
+    /// assert!(column.is_primary_key);
+    /// ```
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         column_name: impl Into<String>,
@@ -59,6 +82,20 @@ impl ColumnDefinition {
     }
 
     /// Create a simple column with minimal configuration
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use kalamdb_commons::models::schemas::ColumnDefinition;
+    /// use kalamdb_commons::models::types::KalamDataType;
+    ///
+    /// let column = ColumnDefinition::simple("email", 2, KalamDataType::Utf8);
+    ///
+    /// assert_eq!(column.column_name, "email");
+    /// assert_eq!(column.ordinal_position, 2);
+    /// assert!(column.is_nullable);
+    /// assert!(!column.is_primary_key);
+    /// ```
     pub fn simple(
         column_name: impl Into<String>,
         ordinal_position: u32,

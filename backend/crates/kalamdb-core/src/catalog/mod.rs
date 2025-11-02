@@ -15,4 +15,5 @@ pub use table_cache::TableCache;
 pub use table_metadata::TableMetadata;
 
 // Re-export common types from kalamdb_commons for convenience
-pub use kalamdb_commons::models::{NamespaceId, TableName, TableType, UserId};
+pub use kalamdb_commons::models::{NamespaceId, TableName, UserId};
+pub use kalamdb_commons::schemas::TableType;

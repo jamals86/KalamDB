@@ -69,8 +69,8 @@ impl UserTableService {
         TableMetadata::validate_table_name(stmt.table_name.as_str())
             .map_err(KalamDbError::InvalidOperation)?;
 
-        let namespace_id_core = NamespaceId::from(stmt.namespace_id.clone());
-        let table_name_core = TableName::from(stmt.table_name.clone());
+        let namespace_id_core = stmt.namespace_id.clone();
+        let table_name_core = stmt.table_name.clone();
 
         // Check if table already exists
         if self.table_exists(&namespace_id_core, &table_name_core)? {
@@ -101,7 +101,7 @@ impl UserTableService {
         if !modified_stmt.column_defaults.contains_key("id") {
             modified_stmt.column_defaults.insert(
                 "id".to_string(),
-                kalamdb_commons::models::ColumnDefault::FunctionCall("SNOWFLAKE_ID".to_string()),
+                kalamdb_commons::schemas::ColumnDefault::function("SNOWFLAKE_ID", vec![]),
             );
         }
 
@@ -246,70 +246,56 @@ impl UserTableService {
         stmt: &CreateTableStatement,
         schema: &Arc<Schema>,
     ) -> Result<(), KalamDbError> {
-        use kalamdb_commons::models::{FlushPolicyDef, SchemaVersion, TableDefinition};
+        use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions};
+        use kalamdb_commons::types::{KalamDataType, FromArrowType};
 
-        // Extract columns from schema with ordinal positions
-        let columns = TableDefinition::extract_columns_from_schema(
-            schema.as_ref(),
-            &stmt.column_defaults,
-            stmt.primary_key_column.as_deref(),
-        );
+        // Extract columns directly from Arrow schema
+        let columns: Vec<ColumnDefinition> = schema
+            .fields()
+            .iter()
+            .enumerate()
+            .map(|(idx, field)| {
+                let column_name = field.name().clone();
+                let is_primary_key = stmt.primary_key_column
+                    .as_ref()
+                    .map(|pk| pk.as_str() == column_name.as_str())
+                    .unwrap_or(false);
+                
+                // Convert Arrow DataType to KalamDataType
+                let data_type = KalamDataType::from_arrow_type(field.data_type())
+                    .unwrap_or(KalamDataType::Text);
+                
+                // Get default value from statement
+                let default_value = stmt.column_defaults
+                    .get(column_name.as_str())
+                    .cloned()
+                    .unwrap_or(kalamdb_commons::schemas::ColumnDefault::None);
+                
+                ColumnDefinition::new(
+                    column_name,
+                    (idx + 1) as u32,
+                    data_type,
+                    field.is_nullable(),
+                    is_primary_key,
+                    false, // is_partition_key
+                    default_value,
+                    None, // column_comment
+                )
+            })
+            .collect();
 
-        // Serialize Arrow schema for history
-        let arrow_schema_json =
-            TableDefinition::serialize_arrow_schema(schema.as_ref()).map_err(|e| {
-                KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
-            })?;
+        // Build table options (USER tables use default options)
+        let table_options = TableOptions::user();
 
-        // Build flush policy definition
-        let flush_policy_def = stmt.flush_policy.as_ref().map(|policy| match policy {
-            DdlFlushPolicy::RowLimit { row_limit } => FlushPolicyDef {
-                row_threshold: Some(*row_limit as u64),
-                interval_seconds: None,
-            },
-            DdlFlushPolicy::TimeInterval { interval_seconds } => FlushPolicyDef {
-                row_threshold: None,
-                interval_seconds: Some(*interval_seconds as u64),
-            },
-            DdlFlushPolicy::Combined {
-                row_limit,
-                interval_seconds,
-            } => FlushPolicyDef {
-                row_threshold: Some(*row_limit as u64),
-                interval_seconds: Some(*interval_seconds as u64),
-            },
-        });
-
-        // Build complete table definition
-        let now_millis = chrono::Utc::now().timestamp_millis();
-        let table_def = TableDefinition {
-            table_id: format!(
-                "{}:{}",
-                stmt.namespace_id.as_str(),
-                stmt.table_name.as_str()
-            ),
-            table_name: stmt.table_name.clone(),
-            namespace_id: stmt.namespace_id.clone(),
-            table_type: TableType::User,
-            created_at: now_millis,
-            updated_at: now_millis,
-            schema_version: 1,
-            storage_id: stmt
-                .storage_id
-                .clone()
-                .unwrap_or_else(|| StorageId::from("local")),
-            use_user_storage: stmt.use_user_storage,
-            flush_policy: flush_policy_def,
-            deleted_retention_hours: stmt.deleted_retention_hours,
-            ttl_seconds: stmt.ttl_seconds,
+        // Create NEW TableDefinition directly
+        let table_def = TableDefinition::new(
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str(),
+            kalamdb_commons::schemas::TableType::User,
             columns,
-            schema_history: vec![SchemaVersion {
-                version: 1,
-                created_at: now_millis,
-                changes: "Initial schema".to_string(),
-                arrow_schema_json,
-            }],
-        };
+            table_options,
+            None, // table_comment
+        ).map_err(|e| KalamDbError::SchemaError(e))?;
 
         // Single atomic write to information_schema_tables
         self.kalam_sql

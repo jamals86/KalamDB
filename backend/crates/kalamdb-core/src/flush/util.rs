@@ -81,7 +81,7 @@ impl JsonBatchBuilder {
                     // DECIMAL with precision and scale
                     ColBuilder::Decimal128 {
                         builder: Decimal128Builder::new()
-                            .with_precision_and_scale(*precision, *scale as i8)
+                            .with_precision_and_scale(*precision, *scale)
                             .map_err(|e| {
                                 KalamDbError::Other(format!("Invalid decimal params: {}", e))
                             })?,
@@ -285,7 +285,7 @@ impl JsonBatchBuilder {
                             let mut buf: Vec<u8> = Vec::with_capacity(arr.len());
                             for el in arr {
                                 if let Some(n) = el.as_i64() {
-                                    if n >= 0 && n <= 255 {
+                                    if (0..=255).contains(&n) {
                                         buf.push(n as u8);
                                     } else {
                                         ok = false;
@@ -334,7 +334,7 @@ impl JsonBatchBuilder {
                                 let mut ok = true;
                                 for (i, el) in arr.iter().enumerate() {
                                     if let Some(n) = el.as_i64() {
-                                        if n >= 0 && n <= 255 {
+                                        if (0..=255).contains(&n) {
                                             bytes[i] = n as u8;
                                         } else {
                                             ok = false;
@@ -346,7 +346,7 @@ impl JsonBatchBuilder {
                                     }
                                 }
                                 if ok {
-                                    b.append_value(&bytes);
+                                    b.append_value(bytes);
                                 } else {
                                     b.append_null();
                                 }
@@ -420,7 +420,7 @@ impl JsonBatchBuilder {
                                     }
                                 }
                                 if all_ok {
-                                    let _ = builder.append(true);
+                                    builder.append(true);
                                 } else {
                                     // Pad the remainder with zeros to satisfy fixed-size child length
                                     let already = arr
@@ -434,28 +434,28 @@ impl JsonBatchBuilder {
                                     for _ in already..(*size as usize) {
                                         builder.values().append_value(0.0);
                                     }
-                                    let _ = builder.append(false);
+                                    builder.append(false);
                                 }
                             } else {
                                 // Wrong length: append zeros and mark null
                                 for _ in 0..(*size as usize) {
                                     builder.values().append_value(0.0);
                                 }
-                                let _ = builder.append(false);
+                                builder.append(false);
                             }
                         } else {
                             // Not an array: append zeros and mark null
                             for _ in 0..(*size as usize) {
                                 builder.values().append_value(0.0);
                             }
-                            let _ = builder.append(false);
+                            builder.append(false);
                         }
                     } else {
                         // Null: append zeros and mark null
                         for _ in 0..(*size as usize) {
                             builder.values().append_value(0.0);
                         }
-                        let _ = builder.append(false);
+                        builder.append(false);
                     }
                 }
             }
