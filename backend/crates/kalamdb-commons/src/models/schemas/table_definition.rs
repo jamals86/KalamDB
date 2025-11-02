@@ -1,6 +1,7 @@
 //! Table definition - single source of truth for table schemas
 
 use crate::models::schemas::{ColumnDefinition, SchemaVersion, TableOptions, TableType};
+use crate::{NamespaceId, TableName};
 use crate::models::types::{ArrowConversionError, ToArrowType};
 use arrow_schema::{Field, Schema as ArrowSchema};
 use chrono::{DateTime, Utc};
@@ -11,10 +12,10 @@ use std::sync::Arc;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TableDefinition {
     /// Namespace ID (e.g., "default", "user_123")
-    pub namespace_id: String, //TODO: Use a NamespaceId type
+    pub namespace_id: NamespaceId,
 
     /// Table name (case-sensitive)
-    pub table_name: String, //TODO: Use a TableName type
+    pub table_name: TableName,
 
     /// Table type (USER, SHARED, STREAM, SYSTEM)
     pub table_type: TableType,
@@ -58,23 +59,23 @@ impl TableDefinition {
     /// ];
     ///
     /// let table = TableDefinition::new(
-    ///     "my_namespace",
-    ///     "users",
+    ///     kalamdb_commons::NamespaceId::new("my_namespace"),
+    ///     kalamdb_commons::TableName::new("users"),
     ///     TableType::User,
     ///     columns,
     ///     TableOptions::user(),
     ///     Some("User accounts table".into()),
     /// ).unwrap();
     ///
-    /// assert_eq!(table.namespace_id, "my_namespace");
-    /// assert_eq!(table.table_name, "users");
+    /// assert_eq!(table.namespace_id, kalamdb_commons::NamespaceId::new("my_namespace"));
+    /// assert_eq!(table.table_name, kalamdb_commons::TableName::new("users"));
     /// assert_eq!(table.columns.len(), 3);
     /// assert_eq!(table.schema_version, 1);
     /// ```
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        namespace_id: impl Into<String>,
-        table_name: impl Into<String>,
+        namespace_id: NamespaceId,
+        table_name: TableName,
         table_type: TableType,
         columns: Vec<ColumnDefinition>,
         table_options: TableOptions,
@@ -84,8 +85,8 @@ impl TableDefinition {
         let now = Utc::now();
 
         Ok(Self {
-            namespace_id: namespace_id.into(),
-            table_name: table_name.into(),
+            namespace_id,
+            table_name,
             table_type,
             columns: columns_sorted,
             schema_version: 1,
@@ -99,8 +100,8 @@ impl TableDefinition {
 
     /// Create a new table with default options for the table type
     pub fn new_with_defaults(
-        namespace_id: impl Into<String>,
-        table_name: impl Into<String>,
+        namespace_id: NamespaceId,
+        table_name: TableName,
         table_type: TableType,
         columns: Vec<ColumnDefinition>,
         table_comment: Option<String>,
@@ -112,14 +113,7 @@ impl TableDefinition {
             TableType::System => TableOptions::system(),
         };
 
-        Self::new(
-            namespace_id,
-            table_name,
-            table_type,
-            columns,
-            table_options,
-            table_comment,
-        )
+        Self::new(namespace_id, table_name, table_type, columns, table_options, table_comment)
     }
 
     /// Validate and sort columns by ordinal_position
@@ -214,7 +208,7 @@ impl TableDefinition {
 
     /// Get fully qualified table name (namespace.table)
     pub fn qualified_name(&self) -> String {
-        format!("{}.{}", self.namespace_id, self.table_name)
+        format!("{}.{}", self.namespace_id.as_str(), self.table_name.as_str())
     }
 
     /// Add a column (for ALTER TABLE ADD COLUMN)
@@ -258,6 +252,7 @@ impl TableDefinition {
 mod tests {
     use super::*;
     use crate::models::types::KalamDataType;
+    use crate::{NamespaceId, TableName};
 
     fn sample_columns() -> Vec<ColumnDefinition> {
         vec![
@@ -270,8 +265,8 @@ mod tests {
     #[test]
     fn test_new_table_definition() {
         let table = TableDefinition::new(
-            "default",
-            "users",
+            NamespaceId::new("default"),
+            TableName::new("users"),
             TableType::User,
             sample_columns(),
             TableOptions::user(),
@@ -279,8 +274,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(table.namespace_id, "default");
-        assert_eq!(table.table_name, "users");
+        assert_eq!(table.namespace_id, NamespaceId::new("default"));
+        assert_eq!(table.table_name, TableName::new("users"));
         assert_eq!(table.table_type, TableType::User);
         assert_eq!(table.columns.len(), 3);
         assert_eq!(table.schema_version, 1);
@@ -290,8 +285,8 @@ mod tests {
     #[test]
     fn test_new_with_defaults() {
         let table = TableDefinition::new_with_defaults(
-            "default",
-            "events",
+            NamespaceId::new("default"),
+            TableName::new("events"),
             TableType::Stream,
             sample_columns(),
             None,
@@ -317,8 +312,8 @@ mod tests {
         ];
 
         let table = TableDefinition::new(
-            "default",
-            "users",
+            NamespaceId::new("default"),
+            TableName::new("users"),
             TableType::User,
             columns,
             TableOptions::user(),
@@ -340,8 +335,8 @@ mod tests {
         ];
 
         let result = TableDefinition::new(
-            "default",
-            "test",
+            NamespaceId::new("default"),
+            TableName::new("test"),
             TableType::User,
             columns,
             TableOptions::user(),
@@ -360,8 +355,8 @@ mod tests {
         ];
 
         let result = TableDefinition::new(
-            "default",
-            "test",
+            NamespaceId::new("default"),
+            TableName::new("test"),
             TableType::User,
             columns,
             TableOptions::user(),
@@ -375,8 +370,8 @@ mod tests {
     #[test]
     fn test_to_arrow_schema() {
         let table = TableDefinition::new(
-            "default",
-            "users",
+            NamespaceId::new("default"),
+            TableName::new("users"),
             TableType::User,
             sample_columns(),
             TableOptions::user(),
@@ -394,8 +389,8 @@ mod tests {
     #[test]
     fn test_add_schema_version() {
         let mut table = TableDefinition::new(
-            "default",
-            "users",
+            NamespaceId::new("default"),
+            TableName::new("users"),
             TableType::User,
             sample_columns(),
             TableOptions::user(),
@@ -414,8 +409,8 @@ mod tests {
     #[test]
     fn test_get_schema_at_version() {
         let mut table = TableDefinition::new(
-            "default",
-            "users",
+            NamespaceId::new("default"),
+            TableName::new("users"),
             TableType::User,
             sample_columns(),
             TableOptions::user(),
@@ -435,8 +430,8 @@ mod tests {
     #[test]
     fn test_add_column() {
         let mut table = TableDefinition::new(
-            "default",
-            "users",
+            NamespaceId::new("default"),
+            TableName::new("users"),
             TableType::User,
             sample_columns(),
             TableOptions::user(),
@@ -454,8 +449,8 @@ mod tests {
     #[test]
     fn test_drop_column() {
         let mut table = TableDefinition::new(
-            "default",
-            "users",
+            NamespaceId::new("default"),
+            TableName::new("users"),
             TableType::User,
             sample_columns(),
             TableOptions::user(),
@@ -476,8 +471,8 @@ mod tests {
     fn test_table_options_type_safety() {
         // Test USER table options
         let user_table = TableDefinition::new(
-            "default",
-            "users",
+            NamespaceId::new("default"),
+            TableName::new("users"),
             TableType::User,
             sample_columns(),
             TableOptions::user(),
@@ -489,8 +484,8 @@ mod tests {
 
         // Test STREAM table options
         let stream_table = TableDefinition::new(
-            "default",
-            "events",
+            NamespaceId::new("default"),
+            TableName::new("events"),
             TableType::Stream,
             sample_columns(),
             TableOptions::stream(3600),
@@ -506,8 +501,8 @@ mod tests {
 
         // Test SHARED table options
         let shared_table = TableDefinition::new(
-            "default",
-            "categories",
+            NamespaceId::new("default"),
+            TableName::new("categories"),
             TableType::Shared,
             sample_columns(),
             TableOptions::shared(),
@@ -526,8 +521,8 @@ mod tests {
     #[test]
     fn test_set_options() {
         let mut table = TableDefinition::new(
-            "default",
-            "events",
+            NamespaceId::new("default"),
+            TableName::new("events"),
             TableType::Stream,
             sample_columns(),
             TableOptions::stream(3600),
