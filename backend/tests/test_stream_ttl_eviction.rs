@@ -40,7 +40,7 @@ async fn test_stream_table_ttl_eviction_with_select() {
         TableName::new("test_events"),
         TableType::Stream,
         NamespaceId::new("test"),
-        "local".to_string(),
+    Some(kalamdb_commons::models::StorageId::new("local")),
     );
 
     let provider = Arc::new(StreamTableProvider::new(
@@ -142,7 +142,7 @@ async fn test_stream_table_select_with_projection() {
         TableName::new("events"),
         TableType::Stream,
         NamespaceId::new("test"),
-        "local".to_string(),
+    Some(kalamdb_commons::models::StorageId::new("local")),
     );
 
     let provider = Arc::new(StreamTableProvider::new(
@@ -206,7 +206,7 @@ async fn test_stream_table_select_with_limit() {
         TableName::new("events"),
         TableType::Stream,
         NamespaceId::new("test"),
-        "local".to_string(),
+    Some(kalamdb_commons::models::StorageId::new("local")),
     );
 
     let provider = Arc::new(StreamTableProvider::new(

@@ -54,9 +54,7 @@ Future:
     - Has a deep design for how they should be and also update TASKS.MD and the design here
 
 
-62) ✅ DONE - Add test to flush table and check if the job persisted and completed with results correctly (implemented in test_cli_flush_table and test_cli_flush_all_tables with system.jobs verification)
 63) check for each system table if the results returned cover all the columns defined in the TableSchema
-64) ✅ DONE - Add test to flush all and check if the job persisted and completed with results correctly (implemented in test_cli_flush_all_tables with system.jobs verification for multiple tables)
 65) Add tests to cover the droping table and cleanup inside jobs table as well
 66) Make sure actions like: drop/export/import/flush is having jobs rows when they finishes (TODO: Also check what kind of jobs we have)
 67) test each role the actions he can do and cannot do, to cover the rbac system well, this should be done from the cli
@@ -89,14 +87,15 @@ Also check that registering ctaalogs are done in one place and one session, we s
 91) If i set the logging to info inside config.toml i still see debug logs: level = "info"
 92) Check the datatypes converting between rust to arrow datatypes and to rocksdb its named json i dont want to use json for this, i want fast serdes for datatypes, maybe util.rs need to manage both serialize from parquet to arrow arrow to parquet both wys currently its located inside flush folder
 93) Add a new dataType which preserve the timezone info when storing timestamp with timezone
-94) [2025-11-01 23:49:37.806] [WARN ] - actix-rt|system:0|arbiter:9 - kalamdb_core::services::table_deletion_service:254 - Storage path does not exist: {namespace}/{tableName}/{userId}
 95) while: [2025-11-01 23:55:16.242] [INFO ] - main - kalamdb_server::lifecycle:413 - Waiting up to 300s for active flush jobs to complete...
 display what active jobs we are waiting on
 96) IMPORTANT - Can we support a full timestamp with nanosecond precision? _updated column currently is in milliseconds only: 2025-11-02T13:45:17.592
 97) check if we have duplicates backend/crates/kalamdb-commons/src/constants.rs and backend/crates/kalamdb-commons/src/system_tables.rs both have system table names defined
 98) IMPORTANT - If no primary key found for a table then we will add our own system column _id to be primary key with snowflake id, make sure this is implemented everywhere correctly
 If the user already specified primary key then we dont do that, the _id we add also should check if the id is indeed unique as well
-
+99) We are still using NodeId::from(format!("node-{}", std::process::id())) in multiple places we should use the same nodeId from config or context everywhere
+100) JobId need to be shorter its now using timestamp and uuid which is too long, we can use namespace-table-timestamp or even a snowflake id
+101) 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.

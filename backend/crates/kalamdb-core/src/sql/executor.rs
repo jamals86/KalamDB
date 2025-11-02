@@ -2060,6 +2060,7 @@ impl SqlExecutor {
             JobId::new(job_id.clone()),
             JobType::Flush,
             stmt.namespace.clone(),
+                    //TODO: Use the nodeId from global config or context
               NodeId::from(format!("node-{}", std::process::id())),
         )
         .with_table_name(kalamdb_commons::TableName::new(format!(
@@ -2088,14 +2089,19 @@ impl SqlExecutor {
             &stmt.table_name,
         ));
 
+        // Phase 9: Create TableCache for dynamic path resolution
+        let table_cache = Arc::new(
+            crate::catalog::TableCache::new()
+                .with_storage_registry(storage_registry.clone())
+        );
+
         let flush_job = crate::flush::UserTableFlushJob::new(
             table_store,
             namespace_id,
             table_name.clone(),
             arrow_schema.schema,
-            table.storage_id.as_ref().map(|s| s.as_str()).unwrap_or("local").to_string(), // TODO: Phase 9 - use TableCache for dynamic path resolution
-        )
-        .with_storage_registry(storage_registry.clone());
+            table_cache, // Phase 9 - dynamic path resolution via TableCache
+        );
 
         // Clone necessary data for the async task
         let namespace_str = stmt.namespace.clone();
@@ -2277,6 +2283,7 @@ impl SqlExecutor {
                 JobId::new(job_id.clone()),
                 JobType::Flush,
                 table.namespace.clone(),
+                        //TODO: Use the nodeId from global config or context
                  NodeId::from(format!("node-{}", std::process::id())),
             )
             .with_table_name(TableName::new(format!(
@@ -2916,7 +2923,7 @@ impl SqlExecutor {
             // Validate and resolve storage_id
             let storage_id = self.validate_storage_id(stmt_storage_id)?;
 
-            let metadata = self.user_table_service.create_table(stmt)?;
+            let _metadata = self.user_table_service.create_table(stmt)?;
 
             // Insert into system.tables via KalamSQL
             if let Some(kalam_sql) = &self.kalam_sql {
@@ -3077,7 +3084,7 @@ impl SqlExecutor {
             // Validate and resolve storage_id
             let storage_id = self.validate_storage_id(stmt_storage_id)?;
 
-            let (metadata, was_created) = self.shared_table_service.create_table(stmt)?;
+            let (_metadata, was_created) = self.shared_table_service.create_table(stmt)?;
             log::debug!(
                 "CREATE SHARED TABLE: was_created={}, table_name={}",
                 was_created,
@@ -3181,7 +3188,7 @@ impl SqlExecutor {
             // Validate and resolve storage_id
             let storage_id = self.validate_storage_id(stmt_storage_id)?;
 
-            let (metadata, was_created) = self.shared_table_service.create_table(stmt)?;
+            let (_metadata, was_created) = self.shared_table_service.create_table(stmt)?;
 
             if was_created {
                 if let Some(kalam_sql) = &self.kalam_sql {

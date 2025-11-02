@@ -10,18 +10,19 @@
 //! - Only implements unique logic: multi-file flush grouped by user_id
 
 use crate::catalog::{NamespaceId, TableName, UserId};
+use crate::catalog::TableCache;
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::live_query::NodeId;
-use crate::storage::{ParquetWriter, StorageRegistry};
+use crate::storage::ParquetWriter;
 use crate::stores::system_table::UserTableStoreExt;
 use crate::tables::base_flush::{FlushExecutor, FlushJobResult, TableFlush};
 use crate::tables::UserTableStore;
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use kalamdb_commons::models::StorageType;
 use serde_json::Value as JsonValue;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -43,15 +44,11 @@ pub struct UserTableFlushJob {
     /// Arrow schema for the table
     schema: SchemaRef,
 
-    /// Storage location template (may contain ${user_id})
-    /// DEPRECATED: Use storage_registry instead (T170)
-    storage_location: String,
-
-    /// Storage registry for dynamic storage resolution (T170)
-    storage_registry: Option<Arc<StorageRegistry>>,
+    /// TableCache for dynamic storage path resolution (Phase 9 - T202)
+    table_cache: Arc<TableCache>,
 
     /// Node ID for job tracking
-        node_id: NodeId,
+    node_id: NodeId,
 
     /// Optional LiveQueryManager for flush notifications
     live_query_manager: Option<Arc<LiveQueryManager>>,
@@ -64,25 +61,19 @@ impl UserTableFlushJob {
         namespace_id: NamespaceId,
         table_name: TableName,
         schema: SchemaRef,
-        storage_location: String,
+        table_cache: Arc<TableCache>,
     ) -> Self {
-            let node_id = NodeId::from(format!("node-{}", std::process::id()));
+        //TODO: Use the nodeId from global config or context
+        let node_id = NodeId::from(format!("node-{}", std::process::id()));
         Self {
             store,
             namespace_id,
             table_name,
             schema,
-            storage_location,
-            storage_registry: None,
+            table_cache,
             node_id,
             live_query_manager: None,
         }
-    }
-
-    /// Set the StorageRegistry for dynamic storage resolution (builder pattern)
-    pub fn with_storage_registry(mut self, registry: Arc<StorageRegistry>) -> Self {
-        self.storage_registry = Some(registry);
-        self
     }
 
     /// Set the LiveQueryManager for flush notifications (builder pattern)
@@ -98,54 +89,37 @@ impl UserTableFlushJob {
         FlushExecutor::execute_with_tracking(self, self.namespace_id.clone())
     }
 
-    /// Substitute ${user_id} in storage path template (DEPRECATED)
-    fn substitute_user_id_in_path(&self, user_id: &UserId) -> String {
-        self.storage_location
-            .replace("${user_id}", user_id.as_str())
-    }
-
-    /// Resolve storage path for a user using StorageRegistry (T170-T170c)
+    /// Resolve storage path for a specific user (Phase 9 - T202)
+    ///
+    /// Gets the partially-resolved template from TableCache and substitutes {userId}.
+    /// This implements the two-stage resolution:
+    /// 1. TableCache has already resolved {namespace}, {tableName} (cached)
+    /// 2. This method resolves {userId} per-request (dynamic)
+    ///
+    /// # Arguments
+    /// * `user_id` - The user ID to substitute into the template
+    ///
+    /// # Returns
+    /// Tuple of (full_path, optional_credentials)
     fn resolve_storage_path_for_user(
         &self,
         user_id: &UserId,
     ) -> Result<(String, Option<JsonValue>), KalamDbError> {
-        if let Some(ref registry) = self.storage_registry {
-            let storage = registry
-                .get_storage_config("local")?
-                .ok_or_else(|| KalamDbError::NotFound("Storage 'local' not found".to_string()))?;
+        // Get partially-resolved template from TableCache (Phase 9)
+        // Template has {namespace}, {tableName} already substituted but {userId} remains
+        let partial_template = self.table_cache.get_storage_path(
+            &self.namespace_id,
+            &self.table_name,
+        )?;
 
-            let path = storage
-                .user_tables_template()
-                .replace("{namespace}", self.namespace_id.as_str())
-                .replace("{tableName}", self.table_name.as_str())
-                .replace("{userId}", user_id.as_str())
-                .replace("{shard}", "");
+        // Substitute dynamic placeholders per-request
+        let full_path = partial_template
+            .replace("{userId}", user_id.as_str())
+            .replace("{shard}", ""); // TODO: Implement sharding logic if needed
 
-            let full_path = if storage.base_directory().is_empty() {
-                path
-            } else {
-                format!(
-                    "{}/{}",
-                    storage.base_directory().trim_end_matches('/'),
-                    path.trim_start_matches('/')
-                )
-            };
-
-            let credentials = if matches!(storage.storage_type(), StorageType::S3) {
-                match storage.credentials() {
-                    Some(raw) => Some(serde_json::from_str::<JsonValue>(raw).map_err(|e| {
-                        KalamDbError::Other(format!("Invalid S3 credentials JSON: {}", e))
-                    })?),
-                    None => None,
-                }
-            } else {
-                None
-            };
-
-            Ok((full_path, credentials))
-        } else {
-            Ok((self.substitute_user_id_in_path(user_id), None))
-        }
+        // For now, we return None for credentials as they'll be handled by ParquetWriter
+        // Future work: Extend TableCache to include credential resolution
+        Ok((full_path, None))
     }
 
     /// Generate batch filename with ISO 8601 timestamp

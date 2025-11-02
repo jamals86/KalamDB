@@ -14,7 +14,7 @@
 use crate::catalog::TableMetadata;
 use crate::error::KalamDbError;
 use crate::storage::StorageRegistry;
-use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::models::{NamespaceId, StorageId, TableName};
 use kalamdb_commons::schemas::TableType;
 use kalamdb_sql::KalamSql;
 use std::collections::HashMap;
@@ -233,16 +233,16 @@ impl TableCache {
         })?;
 
         // Extract storage_id from table metadata
-        let storage_id = table.storage_id.clone().unwrap_or_else(|| StorageId::new("local"));
-        
-        // Query storage config from system.storages
-        let storage_config = registry
-            .get_storage_config(&storage_id)?
-            .ok_or_else(|| {
-                KalamDbError::Other(format!("Storage config not found: {}", storage_id))
-            })?;
+    let storage_id = table.storage_id.clone().unwrap_or_else(|| StorageId::new("local"));
+    
+    // Query storage config from system.storages
+    let storage_config = registry
+        .get_storage_config(storage_id.as_str())?
+        .ok_or_else(|| {
+            KalamDbError::Other(format!("Storage config not found: {}", storage_id))
+        })?;
 
-        // Select template based on table type
+    // Select template based on table type
         let template = match table.table_type {
             TableType::User => &storage_config.user_tables_template,
             TableType::Shared | TableType::System => &storage_config.shared_tables_template,

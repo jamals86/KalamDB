@@ -9,11 +9,11 @@
 //! - Uses `FlushExecutor::execute_with_tracking()` for common workflow
 //! - Only implements unique logic: single-file flush for all rows
 
-use crate::catalog::{NamespaceId, TableName};
+use crate::catalog::{NamespaceId, TableCache, TableName};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::live_query::NodeId;
-use crate::storage::{ParquetWriter, StorageRegistry};
+use crate::storage::ParquetWriter;
 use crate::stores::system_table::SharedTableStoreExt;
 use crate::tables::base_flush::{FlushExecutor, FlushJobResult, TableFlush};
 use crate::tables::shared_tables::shared_table_store::SharedTableRow;
@@ -42,11 +42,8 @@ pub struct SharedTableFlushJob {
     /// Arrow schema for the table
     schema: SchemaRef,
 
-    /// Storage location (single path, no ${user_id} templating)
-    storage_location: String,
-
-    /// Optional storage registry for resolving shared table paths
-    storage_registry: Option<Arc<StorageRegistry>>,
+    /// TableCache for dynamic storage path resolution (Phase 9)
+    table_cache: Arc<TableCache>,
 
     /// Node ID for job tracking
     node_id: NodeId,
@@ -62,25 +59,19 @@ impl SharedTableFlushJob {
         namespace_id: NamespaceId,
         table_name: TableName,
         schema: SchemaRef,
-        storage_location: String,
+        table_cache: Arc<TableCache>,
     ) -> Self {
-            let node_id = NodeId::from(format!("node-{}", std::process::id()));
+        //TODO: Use the nodeId from global config or context
+        let node_id = NodeId::from(format!("node-{}", std::process::id()));
         Self {
             store,
             namespace_id,
             table_name,
             schema,
-            storage_location,
-            storage_registry: None,
+            table_cache,
             node_id,
             live_query_manager: None,
         }
-    }
-
-    /// Set the StorageRegistry for dynamic path resolution
-    pub fn with_storage_registry(mut self, registry: Arc<StorageRegistry>) -> Self {
-        self.storage_registry = Some(registry);
-        self
     }
 
     /// Set the live query manager for this flush job (builder pattern)
@@ -157,16 +148,16 @@ impl TableFlush for SharedTableFlushJob {
                 );
                 KalamDbError::Other(format!("Failed to scan rows: {}", e))
             })?;
-
+        
         let mut rows: Vec<(Vec<u8>, JsonValue)> = Vec::new();
-        let mut scanned = 0usize;
+        let mut scanned: usize = 0;
 
         while let Some(Ok((key_bytes, value_bytes))) = iter.next() {
             scanned += 1;
 
-            // Decode and filter soft-deleted rows
+            // Decode row
             let row: SharedTableRow = match serde_json::from_slice(&value_bytes) {
-                Ok(r) => r,
+                Ok(v) => v,
                 Err(e) => {
                     log::warn!(
                         "Skipping row due to deserialization error (table={}.{}): {}",
@@ -178,6 +169,7 @@ impl TableFlush for SharedTableFlushJob {
                 }
             };
 
+            // Skip soft-deleted rows
             if row._deleted {
                 continue;
             }
@@ -232,34 +224,12 @@ impl TableFlush for SharedTableFlushJob {
         // Convert rows to RecordBatch
         let batch = self.rows_to_record_batch(&rows)?;
 
-        // Determine output path: prefer resolving via StorageRegistry templates
+        // Determine output path via TableCache templates (Phase 9)
         let batch_filename = self.generate_batch_filename();
-
-        let table_dir = if let Some(registry) = &self.storage_registry {
-            // Resolve {base}/{shared}/{namespace}/{tableName}
-            let storage = registry
-                .get_storage_config("local")?
-                .ok_or_else(|| KalamDbError::NotFound("Storage 'local' not found".to_string()))?;
-
-            let rel = storage
-                .shared_tables_template()
-                .replace("{namespace}", self.namespace_id.as_str())
-                .replace("{tableName}", self.table_name.as_str())
-                .replace("{shard}", "");
-
-            if storage.base_directory().is_empty() {
-                PathBuf::from(rel)
-            } else {
-                PathBuf::from(format!(
-                    "{}/{}",
-                    storage.base_directory().trim_end_matches('/'),
-                    rel.trim_start_matches('/')
-                ))
-            }
-        } else {
-            // Back-compat: use provided storage_location as directory
-            PathBuf::from(&self.storage_location)
-        };
+        let partial = self
+            .table_cache
+            .get_storage_path(&self.namespace_id, &self.table_name)?;
+        let table_dir = PathBuf::from(partial.replace("{shard}", ""));
         let output_path = table_dir.join(&batch_filename);
 
         // Ensure directory exists
@@ -276,18 +246,7 @@ impl TableFlush for SharedTableFlushJob {
         );
 
         let writer = ParquetWriter::new(output_path.to_str().unwrap());
-        writer
-            .write(self.schema.clone(), vec![batch])
-            .map_err(|e| {
-                log::error!(
-                    "❌ Failed to write Parquet file for shared table={}.{}, path={}: {}",
-                    self.namespace_id.as_str(),
-                    self.table_name.as_str(),
-                    output_path.display(),
-                    e
-                );
-                e
-            })?;
+        writer.write(self.schema.clone(), vec![batch])?;
 
         log::info!(
             "✅ Flushed {} rows for shared table={}.{} to {}",
@@ -360,8 +319,8 @@ impl TableFlush for SharedTableFlushJob {
         self.live_query_manager.as_ref()
     }
 
-        fn node_id(&self) -> NodeId {
-            self.node_id.clone()
+    fn node_id(&self) -> NodeId {
+        self.node_id.clone()
     }
 }
 
@@ -387,7 +346,7 @@ mod tests {
             namespace_id,
             table_name,
             schema,
-            "/tmp/test".to_string(),
+            Arc::new(TableCache::new()),
         );
 
         let filename = job.generate_batch_filename();
@@ -411,7 +370,7 @@ mod tests {
             namespace_id,
             table_name,
             schema,
-            "/tmp/test".to_string(),
+            Arc::new(TableCache::new()),
         );
 
         assert_eq!(job.table_identifier(), "test_ns.test_table");

@@ -86,7 +86,6 @@ impl TablesTableProvider {
         let mut namespaces = StringBuilder::new();
         let mut table_types = StringBuilder::new();
         let mut created_ats = Vec::new();
-        let mut storage_locations = StringBuilder::new();
         let mut storage_ids = StringBuilder::new();
         let mut use_user_storages = Vec::new();
         let mut flush_policies = StringBuilder::new();
@@ -100,7 +99,6 @@ impl TablesTableProvider {
             namespaces.append_value(table.namespace.as_str());
             table_types.append_value(table.table_type.as_str());
             created_ats.push(Some(table.created_at));
-            storage_locations.append_value(&table.storage_location);
             storage_ids.append_option(table.storage_id.as_ref().map(|s| s.as_str()));
             use_user_storages.push(Some(table.use_user_storage));
             flush_policies.append_value(&table.flush_policy);
@@ -117,7 +115,6 @@ impl TablesTableProvider {
                 Arc::new(namespaces.finish()) as ArrayRef,
                 Arc::new(table_types.finish()) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
-                Arc::new(storage_locations.finish()) as ArrayRef,
                 Arc::new(storage_ids.finish()) as ArrayRef,
                 Arc::new(BooleanArray::from(use_user_storages)) as ArrayRef,
                 Arc::new(flush_policies.finish()) as ArrayRef,
@@ -199,7 +196,6 @@ mod tests {
             namespace: NamespaceId::new("default"),
             table_type: KalamTableType::User,
             created_at: 1000,
-            storage_location: "/data".to_string(),
             storage_id: Some(StorageId::new("local")),
             use_user_storage: false,
             flush_policy: "{}".to_string(),

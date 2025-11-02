@@ -105,19 +105,14 @@ impl UserTableService {
             );
         }
 
-        // 4. Storage location resolution - use storage_id to get the path template
-        let default_storage = StorageId::local();
-        let storage_id = modified_stmt
-            .storage_id
-            .as_ref()
-            .unwrap_or(&default_storage);
-        let storage_location = self.resolve_storage_from_id(storage_id)?;
+        // 4. Storage location resolution - handled dynamically via TableCache in flush jobs
+        // storage_id is stored in table metadata for later path resolution
 
         // 5. Save complete table definition to information_schema_tables (atomic write)
         self.save_table_definition(&modified_stmt, &schema)?;
 
         // 5. Create RocksDB column family for this table
-        // This ensures the table is ready for data operations immediately after creation
+    // This ensures the table is ready for data operations immediately after creation
         self.user_table_store
             .create_column_family(namespace_id_core.as_str(), table_name_core.as_str())
             .map_err(|e| {
@@ -135,7 +130,7 @@ impl UserTableService {
             table_type: TableType::User,
             namespace: namespace_id_core.clone(),
             created_at: chrono::Utc::now(),
-            storage_location,
+            storage_id: Some(modified_stmt.storage_id.clone().unwrap_or_else(|| StorageId::new("local"))),
             flush_policy: modified_stmt
                 .flush_policy
                 .clone()
@@ -212,24 +207,6 @@ impl UserTableService {
         }
 
         Ok(Arc::new(Schema::new(fields)))
-    }
-
-    /// Resolve storage location from storage_id
-    ///
-    /// Gets the user table template path from the storage in system.storages
-    fn resolve_storage_from_id(&self, storage_id: &StorageId) -> Result<String, KalamDbError> {
-        // Get the storage location from system.storages via KalamSQL
-        let storage = self
-            .kalam_sql
-            .get_storage(storage_id)
-            .map_err(|e| {
-                KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e))
-            })?
-            .ok_or_else(|| KalamDbError::NotFound(format!("Storage '{}' not found", storage_id)))?;
-
-        // For user tables, we use the user_tables_template from the storage
-        // The template should be in the format: "{namespace}/users/{tableName}/{shard}/{userId}/"
-        Ok(storage.user_tables_template)
     }
 
     /// Create and save table definition to information_schema_tables.

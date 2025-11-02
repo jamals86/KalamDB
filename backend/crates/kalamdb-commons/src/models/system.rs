@@ -448,7 +448,7 @@ pub struct SystemTable {
     pub created_at: i64, // Unix timestamp in milliseconds
     pub storage_id: Option<StorageId>,
     pub use_user_storage: bool,
-    pub flush_policy: String, // JSON
+    pub flush_policy: String, // JSON TODO: Why not use a struct here?
     pub schema_version: i32,
     pub deleted_retention_hours: i32,
     /// Access level for SHARED tables (public, private, restricted)

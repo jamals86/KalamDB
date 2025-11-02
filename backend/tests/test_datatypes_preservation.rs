@@ -12,6 +12,10 @@ use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableT
 use kalamdb_commons::models::types::KalamDataType;
 use kalamdb_commons::{NamespaceId, TableId, TableName};
 use kalamdb_core::system_table_registration::register_system_tables;
+use kalamdb_core::catalog::{TableCache, TableMetadata as CoreTableMetadata};
+use kalamdb_core::storage::StorageRegistry;
+use kalamdb_commons::models::StorageId;
+use kalamdb_sql::KalamSql;
 use kalamdb_core::tables::user_tables::user_table_flush::UserTableFlushJob;
 use kalamdb_core::tables::user_tables::user_table_store::{
     new_user_table_store, UserTableRow, UserTableRowId,
@@ -171,13 +175,46 @@ async fn test_datatypes_preservation_values() {
         store.put(&key, &row).expect("insert row failed");
     }
 
-    // Define a storage output path template using ${user_id}
+    // Configure TableCache with StorageRegistry and insert table metadata
+    // Output base directory for Parquet files
     let output_base = temp.path().join("parquet_out");
-    let template = format!("{}/{{}}/{{}}/${{user_id}}", output_base.to_string_lossy());
-    // Fill namespace/table placeholders (simple string replace)
-    let template = template
-        .replacen("{}", ns.as_str(), 1)
-        .replacen("{}", tbl_name.as_str(), 1);
+
+    // Initialize KalamSql backed by the same RocksDB
+    let kalam_sql = Arc::new(KalamSql::new(backend.clone()).expect("init KalamSQL"));
+
+    // Insert a 'local' storage pointing to output_base as default base and a user template
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let storage = kalamdb_commons::system::Storage {
+        storage_id: StorageId::new("local"),
+        storage_name: "Local".to_string(),
+        description: Some("Test local storage".to_string()),
+        storage_type: "filesystem".to_string(),
+        base_directory: "".to_string(), // use default from StorageRegistry
+        credentials: None,
+        shared_tables_template: "{namespace}/{tableName}".to_string(),
+        user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
+        created_at: now_ms,
+        updated_at: now_ms,
+    };
+    kalam_sql
+        .insert_storage(&storage)
+        .expect("insert storage config");
+
+    // Build TableCache bound to a StorageRegistry that uses output_base as default path
+    let registry = Arc::new(StorageRegistry::new(
+        kalam_sql.clone(),
+        output_base.to_string_lossy().into_owned(),
+    ));
+    let table_cache = Arc::new(TableCache::new().with_storage_registry(registry));
+
+    // Insert table metadata into cache with storage_id=local
+    let table_meta = CoreTableMetadata::new(
+        tbl_name.clone().into(),
+        kalamdb_core::catalog::TableType::User,
+        ns.clone().into(),
+        Some(StorageId::new("local")),
+    );
+    table_cache.insert(table_meta);
 
     // Execute flush job
     let job = UserTableFlushJob::new(
@@ -185,7 +222,7 @@ async fn test_datatypes_preservation_values() {
         ns.clone(),
         tbl_name.clone(),
         arrow_schema.clone(),
-        template.clone(),
+        table_cache.clone(),
     );
 
     let result = job.execute_tracked().expect("flush job failed");

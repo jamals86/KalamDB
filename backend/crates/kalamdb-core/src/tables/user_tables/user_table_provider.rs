@@ -221,7 +221,11 @@ impl UserTableProvider {
     ///
     /// Applies ${user_id} substitution to the table's storage location
     pub fn user_storage_location(&self) -> String {
-        self.substitute_user_id_in_path(&self.table_metadata.storage_location)
+        // TODO: Phase 9 - Use TableCache for dynamic path resolution
+        let storage_path = self.table_metadata.storage_id.as_ref()
+            .map(|s| s.as_str())
+            .unwrap_or("local");
+        self.substitute_user_id_in_path(storage_path)
     }
 
     /// Insert a single row into this user table
@@ -493,32 +497,37 @@ impl UserTableProvider {
                             storage.base_directory().trim_end_matches('/'),
                             path.trim_start_matches('/')
                         )
-                    }
-                }
-                _ => {
-                    // Fallback to template substitution if registry lookup fails
-                    self.table_metadata
-                        .storage_location
-                        .replace("${user_id}", self.current_user_id.as_str())
-                        .replace("{userId}", self.current_user_id.as_str())
-                        .replace("{namespace}", self.namespace_id().as_str())
-                        .replace("{tableName}", self.table_name().as_str())
-                        .replace("{shard}", "")
                 }
             }
-        } else {
-            // No registry available - use template substitution (legacy)
-            self.table_metadata
-                .storage_location
-                .replace("${user_id}", self.current_user_id.as_str())
-                .replace("{userId}", self.current_user_id.as_str())
-                .replace("{namespace}", self.namespace_id().as_str())
-                .replace("{tableName}", self.table_name().as_str())
-                .replace("{shard}", "")
-        };
+            _ => {
+                // Fallback to template substitution if registry lookup fails
+                // TODO: Phase 9 - Use storage_id instead of storage_location
+                let storage_path_str = self.table_metadata.storage_id.as_ref()
+                    .map(|s| s.as_str())
+                    .unwrap_or("local");
+                storage_path_str
+                    .replace("${user_id}", self.current_user_id.as_str())
+                    .replace("{userId}", self.current_user_id.as_str())
+                    .replace("{namespace}", self.namespace_id().as_str())
+                    .replace("{tableName}", self.table_name().as_str())
+                    .replace("{shard}", "")
+            }
+        }
+    } else {
+        // No registry available - use template substitution (legacy)
+        // TODO: Phase 9 - Use storage_id instead of storage_location
+        let storage_path_str = self.table_metadata.storage_id.as_ref()
+            .map(|s| s.as_str())
+            .unwrap_or("local");
+        storage_path_str
+            .replace("${user_id}", self.current_user_id.as_str())
+            .replace("{userId}", self.current_user_id.as_str())
+            .replace("{namespace}", self.namespace_id().as_str())
+            .replace("{tableName}", self.table_name().as_str())
+            .replace("{shard}", "")
+    };
 
-        let storage_dir = Path::new(&storage_path);
-
+    let storage_dir = Path::new(&storage_path);
         log::debug!(
             "Scanning Parquet files in: {} (exists: {})",
             storage_path,
@@ -799,6 +808,7 @@ mod tests {
     };
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use datafusion::execution::context::SessionContext;
+    use kalamdb_commons::models::StorageId;
     use kalamdb_store::test_utils::TestDb;
     use serde_json::json;
 
@@ -816,20 +826,21 @@ mod tests {
         ]))
     }
 
-    fn create_test_metadata() -> TableMetadata {
-        TableMetadata {
-            table_name: TableName::new("messages"),
-            table_type: TableType::User,
-            namespace: NamespaceId::new("chat"),
-            created_at: Utc::now(),
-            storage_location: "s3://bucket/users/${user_id}/messages/".to_string(),
-            flush_policy: FlushPolicy::row_limit(1000).unwrap(),
-            schema_version: 1,
-            deleted_retention_hours: Some(720),
-        }
-    }
 
-    #[test]
+    fn create_test_metadata() -> TableMetadata {
+    TableMetadata {
+        table_name: TableName::new("messages"),
+        table_type: TableType::User,
+        namespace: NamespaceId::new("chat"),
+        created_at: Utc::now(),
+        storage_id: Some(StorageId::new("s3://bucket/users/${user_id}/messages/")),
+        flush_policy: FlushPolicy::row_limit(1000).unwrap(),
+        schema_version: 1,
+        deleted_retention_hours: Some(720),
+    }
+}
+
+#[test]
     fn test_user_table_provider_creation() {
         let store = create_test_db();
         let schema = create_test_schema();

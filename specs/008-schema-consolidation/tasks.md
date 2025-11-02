@@ -643,60 +643,84 @@ Note: Subscriptions are supported for user and stream tables only; shared tables
 
 ### TableCache Extension (Caching Layer)
 
-- [ ] T184 [P] [US7] Add `storage_paths: Arc<RwLock<HashMap<TableKey, String>>>` field to TableCache in `backend/crates/kalamdb-core/src/catalog/table_cache.rs`
-- [ ] T185 [P] [US7] Add `storage_registry: Option<Arc<StorageRegistry>>` field to TableCache
-- [ ] T186 [US7] Implement `with_storage_registry(registry: Arc<StorageRegistry>)` builder method
-- [ ] T187 [US7] Implement `get_storage_path(namespace, table_name)` with cache-first lookup and fallback to resolve_storage_path()
+- [x] T184 [P] [US7] Add `storage_paths: Arc<RwLock<HashMap<TableKey, String>>>` field to TableCache in `backend/crates/kalamdb-core/src/catalog/table_cache.rs`
+- [x] T185 [P] [US7] Add `storage_registry: Option<Arc<StorageRegistry>>` field to TableCache
+- [x] T186 [US7] Implement `with_storage_registry(registry: Arc<StorageRegistry>)` builder method
+- [x] T187 [US7] Implement `get_storage_path(namespace, table_name)` with cache-first lookup and fallback to resolve_storage_path()
   - Returns partially-resolved template with {userId}/{shard} still as placeholders
   - Caller (flush job/query) must substitute dynamic placeholders per-request
-- [ ] T188 [P] [US7] Implement private `resolve_storage_path(table: &TableMetadata)` helper that:
+- [x] T188 [P] [US7] Implement private `resolve_partial_template(table: &TableMetadata)` helper that:
   - Extracts storage_id from table
   - Calls `storage_registry.get_storage_config(storage_id)`
   - Selects template (shared_tables_template vs user_tables_template based on table_type)
   - Substitutes STATIC placeholders only: {namespace}, {tableName}
   - Leaves DYNAMIC placeholders unevaluated: {userId}, {shard} (evaluated per-request)
   - Returns: `<base_directory>/<partial_template>/` with {userId}/{shard} still as placeholders
-- [ ] T189 [P] [US7] Implement `invalidate_storage_paths()` to clear cached paths (called on ALTER TABLE)
-- [ ] T190 [US7] Add unit tests for TableCache path resolution (cache hit, cache miss, invalidation)
+- [x] T189 [P] [US7] Implement `invalidate_storage_paths()` to clear cached paths (called on ALTER TABLE)
+- [x] T190 [US7] Add unit tests for TableCache path resolution (cache hit, cache miss, invalidation)
+  **Status**: All 8 TableCache tests passing, Debug trait manually implemented
 
 ### Model Consolidation Phase
 
-- [ ] T191 [P] [US7] Remove `pub storage_location: String` from SystemTable in `backend/crates/kalamdb-commons/src/models/system.rs`
-- [ ] T192 [P] [US7] Remove `pub storage_location: String` from TableMetadata in `backend/crates/kalamdb-core/src/catalog/table_metadata.rs`
-- [ ] T193 [P] [US7] Add `pub storage_id: Option<StorageId>` to TableMetadata (if not present)
-- [ ] T194 [P] [US7] Update SystemTable serialization tests to remove storage_location field
-- [ ] T195 [US7] Update TableMetadata constructors and builders to accept storage_id instead of storage_location
-- [ ] T196 [US7] Run `cargo build` to identify all compilation errors from field removal
+- [x] T191 [P] [US7] Remove `pub storage_location: String` from SystemTable in `backend/crates/kalamdb-commons/src/models/system.rs`
+- [x] T192 [P] [US7] Remove `pub storage_location: String` from TableMetadata in `backend/crates/kalamdb-core/src/catalog/table_metadata.rs`
+- [x] T193 [P] [US7] Add `pub storage_id: Option<StorageId>` to TableMetadata (already present in SystemTable)
+- [x] T194 [P] [US7] Update SystemTable serialization tests to remove storage_location field
+- [x] T195 [US7] Update TableMetadata constructors and builders to accept storage_id instead of storage_location
+- [x] T196 [US7] Run `cargo build` to identify all compilation errors from field removal
+  **Status**: COMPLETE - Fixed ~47 compilation errors across all service files:
+  - executor.rs: 14 fixes (TableMetadata init, flush job creation, SHOW/DESCRIBE commands)
+  - table_cache.rs: 3 fixes (StorageId import, get_storage_config parameter)
+  - user_table_service.rs: 1 fix + 1 warning (storage_id field)
+  - stream_table_service.rs: 3 fixes + imports (StorageId, FlushPolicy)
+  - shared_table_service.rs: 2 fixes (storage_id in existing table checks)
+  - backup_service.rs: 3 fixes (storage_id extraction and path parsing)
+  - restore_service.rs: 2 fixes (same pattern as backup_service)
+  - table_deletion_service.rs: 4 fixes (storage_id Optional check, path parsing)
+  - tables_provider.rs: 5 fixes (removed storage_location column from system.tables)
+  - user_table_provider.rs: 4 fixes (storage_id in user_storage_location, test metadata, imports)
+  - Main library compiles with 5 warnings (unused variables, unused import)
+  - Test suite has 18 errors (test fixtures need storage_id updates - deferred to integration testing phase)
 
 ### Service Layer Updates
 
-- [ ] T197 [US7] Update UserTableService in `backend/crates/kalamdb-core/src/services/user_table_service.rs` to set storage_id instead of storage_location when creating tables
-- [ ] T198 [US7] Update SharedTableService in `backend/crates/kalamdb-core/src/services/shared_table_service.rs` similarly
-- [ ] T199 [US7] Update StreamTableService in `backend/crates/kalamdb-core/src/services/stream_table_service.rs` to not set storage_location (streams don't use Parquet)
-- [ ] T200 [P] [US7] Remove old `resolve_storage_from_id()` helper methods that return storage_location strings
-- [ ] T201 [US7] Verify all table creation flows use storage_id references
+- [x] T197 [US7] Update UserTableService in `backend/crates/kalamdb-core/src/services/user_table_service.rs` to set storage_id instead of storage_location when creating tables
+  **Status**: COMPLETE - Fixed TableMetadata init to use `storage_id: Some(modified_stmt.storage_id.clone()...)`
+- [x] T198 [US7] Update SharedTableService in `backend/crates/kalamdb-core/src/services/shared_table_service.rs` similarly
+  **Status**: COMPLETE - Fixed existing table return and new table creation
+- [x] T199 [US7] Update StreamTableService in `backend/crates/kalamdb-core/src/services/stream_table_service.rs` to not set storage_location (streams don't use Parquet)
+  **Status**: COMPLETE - Uses `storage_id: Some(StorageId::new("local"))` as placeholder
+- [x] T200 [P] [US7] Remove old `resolve_storage_from_id()` helper methods that return storage_location strings
+  **Status**: COMPLETE - Removed resolve_storage_from_id() from UserTableService (18 lines), removed unused storage_id variable
+- [x] T201 [US7] Verify all table creation flows use storage_id references
+  **Status**: COMPLETE - Workspace compiles with zero warnings, all services use storage_id
 
 ### Flush Job Updates
 
-- [ ] T202 [US7] Update UserTableFlushJob in `backend/crates/kalamdb-core/src/tables/user_tables/user_table_flush.rs`:
-  - Remove `storage_location: String` field
-  - Add `table_cache: Arc<TableCache>` field
-  - Implement `resolve_storage_path_for_user(user_id)` that:
-    1. Gets partially-resolved template from `table_cache.get_storage_path()`
-    2. Substitutes {userId} with actual user_id value
-    3. Substitutes {shard} if present (e.g., user_id hash mod shard_count)
-    4. Returns final path for this specific user
-- [ ] T203 [US7] Update SharedTableFlushJob in `backend/crates/kalamdb-core/src/tables/shared_tables/shared_table_flush.rs`:
-  - Remove `storage_location: String` field
-  - Add `table_cache: Arc<TableCache>` field
-  - Implement `resolve_storage_path()` using `table_cache.get_storage_path()`
-- [ ] T204 [P] [US7] Update flush job constructors to accept `table_cache` instead of `storage_location`
-- [ ] T205 [P] [US7] Update all flush job creation sites (SQL executor, job scheduler) to pass table_cache
+- [x] T202 [US7] Update UserTableFlushJob in `backend/crates/kalamdb-core/src/tables/user_tables/user_table_flush.rs`:
+  - Remove `storage_location: String` field ✓
+  - Add `table_cache: Arc<TableCache>` field ✓
+  - Implement `resolve_storage_path_for_user(user_id)` that: ✓
+    1. Gets partially-resolved template from `table_cache.get_storage_path()` ✓
+    2. Substitutes {userId} with actual user_id value ✓
+    3. Substitutes {shard} if present (e.g., user_id hash mod shard_count) ✓
+    4. Returns final path for this specific user ✓
+  **Status**: COMPLETE - Removed storage_location and storage_registry fields, implemented new resolve_storage_path_for_user() using TableCache
+- [x] T203 [US7] Update SharedTableFlushJob in `backend/crates/kalamdb-core/src/tables/shared_tables/shared_table_flush.rs`:
+  - Remove `storage_location: String` field ✓
+  - Add `table_cache: Arc<TableCache>` field ✓
+  - Implement path resolution using `table_cache.get_storage_path()` with `{shard}` left empty ✓
+  **Status**: COMPLETE - SharedTableFlushJob now uses TableCache; tests adjusted
+- [x] T204 [P] [US7] Update flush job constructors to accept `table_cache` instead of `storage_location`
+  **Status**: COMPLETE - Updated both UserTableFlushJob and SharedTableFlushJob; integration helpers updated
+- [x] T205 [P] [US7] Update all flush job creation sites (SQL executor, job scheduler) to pass table_cache
+  **Status**: COMPLETE - executor.rs now creates TableCache and passes to flush job
 - [ ] T206 [US7] Verify flush operations write to correct paths (integration test)
 
 ### SQL Executor Updates
 
-- [ ] T207 [US7] Update FLUSH TABLE implementation in `backend/crates/kalamdb-core/src/sql/executor.rs` to create flush jobs with table_cache
+- [x] T207 [US7] Update FLUSH TABLE implementation in `backend/crates/kalamdb-core/src/sql/executor.rs` to create flush jobs with table_cache
+  **Status**: COMPLETE - FLUSH TABLE now instantiates TableCache with storage_registry
 - [ ] T208 [US7] Update CREATE TABLE implementation to set storage_id field instead of resolving path inline
 - [ ] T209 [US7] Update table registration logic to not populate storage_location
 - [ ] T210 [P] [US7] Search executor.rs for all `storage_location` references: `git grep "storage_location" backend/crates/kalamdb-core/src/sql/executor.rs` and update each

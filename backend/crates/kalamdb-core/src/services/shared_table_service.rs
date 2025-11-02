@@ -114,7 +114,7 @@ impl SharedTableService {
                             0,
                         )
                         .unwrap_or_else(chrono::Utc::now),
-                        storage_location: existing_table.storage_location,
+                        storage_id: existing_table.storage_id.clone(),
                         flush_policy: serde_json::from_str(&existing_table.flush_policy)
                             .unwrap_or_default(),
                         schema_version: existing_table.schema_version as u32,
@@ -209,7 +209,7 @@ impl SharedTableService {
             table_type: TableType::Shared,
             namespace: stmt.namespace_id.clone(),
             created_at: chrono::Utc::now(),
-            storage_location,
+            storage_id: Some(stmt.storage_id.clone().unwrap_or_else(|| StorageId::new("local"))),
             flush_policy,
             schema_version: 1,
             deleted_retention_hours: stmt.deleted_retention_hours,

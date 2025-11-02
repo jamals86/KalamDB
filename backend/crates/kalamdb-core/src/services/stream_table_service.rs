@@ -10,9 +10,11 @@
 
 use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType};
 use crate::error::KalamDbError;
+use crate::flush::FlushPolicy;
 use crate::stores::system_table::SharedTableStoreExt;
 use crate::tables::StreamTableStore;
 use datafusion::arrow::datatypes::Schema;
+use kalamdb_commons::models::StorageId;
 use kalamdb_sql::ddl::CreateTableStatement;
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
@@ -104,8 +106,8 @@ impl StreamTableService {
             table_type: TableType::Stream,
             namespace: stmt.namespace_id.clone(),
             created_at: chrono::Utc::now(),
-            storage_location: String::new(), // Stream tables don't use Parquet storage
-            flush_policy: crate::flush::FlushPolicy::RowLimit { row_limit: 0 }, // No flush for stream tables
+            storage_id: Some(StorageId::new("local")), // Stream tables always use local storage
+            flush_policy: FlushPolicy::RowLimit { row_limit: 0 }, // No flush for stream tables
             schema_version: 1,
             deleted_retention_hours: None, // Stream tables don't have soft deletes
         };

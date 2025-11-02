@@ -188,8 +188,9 @@ pub trait TableFlush: Send + Sync {
     ///
     /// Override to customize node identification.
     /// Default uses process ID.
-        fn node_id(&self) -> NodeId {
-            NodeId::from(format!("node-{}", std::process::id()))
+    fn node_id(&self) -> NodeId {
+        //TODO: Use the nodeId from global config or context
+        NodeId::from(format!("node-{}", std::process::id()))
     }
 
     /// Generate unique job ID

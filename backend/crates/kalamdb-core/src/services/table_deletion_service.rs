@@ -148,18 +148,18 @@ impl TableDeletionService {
             return Err(e);
         }
 
-        // Step 6: Update storage location usage count (T172)
-        if !table.storage_location.is_empty() {
-            if let Err(e) = self.decrement_storage_usage(&table.storage_location) {
-                log::warn!("Failed to decrement storage usage count: {}", e);
-                // Don't fail the operation for this
-            }
+
+    // Step 6: Update storage location usage count (T172)
+    // TODO: Phase 9 - Update to use storage_id and StorageRegistry
+    if let Some(storage_id) = &table.storage_id {
+        if let Err(e) = self.decrement_storage_usage(storage_id.as_str()) {
+            log::warn!("Failed to decrement storage usage count: {}", e);
+            // Don't fail the operation for this
         }
+    }
 
-        // Step 7: Complete job successfully (T174)
-        self.complete_deletion_job(&job_id, files_deleted, bytes_freed)?;
-
-        Ok(Some(TableDeletionResult {
+    // Step 7: Complete job successfully (T174)
+    self.complete_deletion_job(&job_id, files_deleted, bytes_freed)?;        Ok(Some(TableDeletionResult {
             files_deleted,
             bytes_freed,
             table_type,
@@ -242,22 +242,23 @@ impl TableDeletionService {
         table: &kalamdb_sql::Table,
         table_type: &TableType,
     ) -> Result<(usize, u64), KalamDbError> {
-        // Stream tables don't have Parquet files
-        if matches!(table_type, TableType::Stream) {
-            return Ok((0, 0));
-        }
+    // Stream tables don't have Parquet files
+    if matches!(table_type, TableType::Stream) {
+        return Ok((0, 0));
+    }
 
-        let storage_path = Path::new(&table.storage_location);
+    // TODO: Phase 9 - Use TableCache for dynamic path resolution
+    let storage_path_str = table.storage_id.as_ref().map(|s| s.as_str()).unwrap_or("local");
+    let storage_path = Path::new(storage_path_str);
 
-        // Check if path exists
-        if !storage_path.exists() {
-            log::warn!("Storage path does not exist: {}", table.storage_location);
-            return Ok((0, 0));
-        }
+    // Check if path exists
+    if !storage_path.exists() {
+        log::warn!("Storage path does not exist: {}", storage_path_str);
+        return Ok((0, 0));
+    }
 
-        let mut files_deleted = 0;
-        let mut bytes_freed = 0u64;
-
+    let mut files_deleted = 0;
+    let mut bytes_freed = 0u64;
         match table_type {
             TableType::User => {
                 // User tables: iterate directories and delete batch-*.parquet files
