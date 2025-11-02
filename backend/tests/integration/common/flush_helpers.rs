@@ -151,13 +151,19 @@ pub async fn execute_shared_flush_synchronously(
         Arc::new(kalamdb_store::RocksDBBackend::new(server.db.clone()));
     let shared_table_store = Arc::new(SharedTableStore::new(backend, "shared_tables"));
 
+    // Create storage registry (needed for template-based path resolution)
+    let storage_registry = Arc::new(kalamdb_core::storage::StorageRegistry::new(
+        server.kalam_sql.clone(),
+    ));
+
     let flush_job = SharedTableFlushJob::new(
         shared_table_store.clone(),
         namespace_id,
         table_name_id,
         arrow_schema.schema,
         table_meta.storage_location.clone(),
-    );
+    )
+    .with_storage_registry(storage_registry);
 
     flush_job
         .execute_tracked()

@@ -92,7 +92,7 @@ Also check that registering ctaalogs are done in one place and one session, we s
 94) [2025-11-01 23:49:37.806] [WARN ] - actix-rt|system:0|arbiter:9 - kalamdb_core::services::table_deletion_service:254 - Storage path does not exist: {namespace}/{tableName}/{userId}
 95) while: [2025-11-01 23:55:16.242] [INFO ] - main - kalamdb_server::lifecycle:413 - Waiting up to 300s for active flush jobs to complete...
 display what active jobs we are waiting on
-
+96) IMPORTANT - Can we support a full timestamp with nanosecond precision? _updated column currently is in milliseconds only: 2025-11-02T13:45:17.592
 
 
 

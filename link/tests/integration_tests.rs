@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Integration tests for kalam-link library
 //!
 //! These tests verify the kalam-link API against a running server.

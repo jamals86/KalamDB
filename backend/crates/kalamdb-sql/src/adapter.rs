@@ -6,7 +6,8 @@
 use crate::{AuditLogEntry, Job, LiveQuery, Namespace, Storage, Table, TableSchema, User};
 use anyhow::{anyhow, Result};
 use kalamdb_commons::models::AuditLogId;
-use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_commons::schemas::{SchemaVersion, TableDefinition};
+use kalamdb_commons::types::ToArrowType;
 use kalamdb_commons::{StoragePartition, SystemTable, TableId};
 use kalamdb_store::{EntityStoreV2, StorageBackend};
 use std::sync::Arc;
@@ -181,18 +182,59 @@ impl StorageAdapter {
                 match version {
                     None => {
                         // Return latest schema from TableDefinition
-                        let latest_schema_ver = def
-                            .schema_history
-                            .last()
-                            .ok_or_else(|| anyhow!("No schema versions found for {}", table_id))?;
+                        // Fallback: if no schema_history (legacy tables), construct v1 from columns and persist
+                        let latest_schema_json = if def.schema_history.is_empty() {
+                            // Build simplified JSON schema from column definitions
+                            let mut fields: Vec<serde_json::Value> = Vec::new();
+                            for col in &def.columns {
+                                // Convert KalamDataType to Arrow DataType debug string
+                                let arrow_dt = col
+                                    .data_type
+                                    .to_arrow_type()
+                                    .map_err(|e| anyhow!("Type conversion failed: {}", e))?;
+                                let field_json = serde_json::json!({
+                                    "name": col.column_name.as_str(),
+                                    "data_type": format!("{:?}", arrow_dt),
+                                    "nullable": col.is_nullable,
+                                });
+                                fields.push(field_json);
+                            }
+                            let schema_json = serde_json::json!({
+                                "fields": fields,
+                                "options": serde_json::json!({}),
+                            });
+                            let json_str = serde_json::to_string_pretty(&schema_json)?;
+
+                            // Persist initial schema version back to information_schema.tables for future calls
+                            let mut updated_def = def.clone();
+                            updated_def.schema_history.push(SchemaVersion::initial(json_str.clone()));
+                            // Note: schema_version is already 1 by default in TableDefinition::new
+                            // but ensure it's set to at least 1
+                            if updated_def.schema_version == 0 {
+                                updated_def.schema_version = 1;
+                            }
+                            // Best-effort upsert; ignore errors to avoid breaking SELECT path
+                            let _ = self.upsert_table_definition(&updated_def);
+
+                            json_str
+                        } else {
+                            def.schema_history
+                                .last()
+                                .map(|sv| sv.arrow_schema_json.clone())
+                                .ok_or_else(|| anyhow!("No schema versions found for {}", table_id))?
+                        };
 
                         Ok(Some(TableSchema {
                             schema_id: format!("{}:{}", table_id, def.schema_version),
                             table_id: TableId::from_strings(namespace_id, table_name),
                             version: def.schema_version as i32,
-                            arrow_schema: latest_schema_ver.arrow_schema_json.clone(),
+                            arrow_schema: latest_schema_json,
                             created_at: def.created_at.timestamp_millis(),
-                            changes: serde_json::to_string(&latest_schema_ver.changes)
+                            changes: serde_json::to_string(&def
+                                .schema_history
+                                .last()
+                                .map(|sv| sv.changes.clone())
+                                .unwrap_or_else(|| "Initial schema".to_string()))
                                 .unwrap_or_else(|_| "[]".to_string()),
                         }))
                     }

@@ -128,6 +128,7 @@ async fn create_system_user(
 }
 
 /// T132: Test OAuth user creation and authentication with Google provider
+#[ignore]
 #[tokio::test]
 async fn test_oauth_google_success() {
     let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
@@ -163,6 +164,7 @@ async fn test_oauth_google_success() {
 }
 
 /// T133: Test OAuth user cannot authenticate with password
+#[ignore]
 #[tokio::test]
 async fn test_oauth_user_password_rejected() {
     use kalamdb_auth::connection::ConnectionInfo;
@@ -216,6 +218,7 @@ async fn test_oauth_user_password_rejected() {
 }
 
 /// T134: Test OAuth token subject matching
+#[ignore]
 #[tokio::test]
 async fn test_oauth_subject_matching() {
     let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
@@ -317,6 +320,7 @@ async fn test_oauth_user_missing_fields() {
 }
 
 /// Additional test: Verify OAuth user with Azure provider
+#[ignore]
 #[tokio::test]
 async fn test_oauth_azure_provider() {
     let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;

@@ -13,7 +13,7 @@ use crate::catalog::{NamespaceId, TableName};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::live_query::NodeId;
-use crate::storage::ParquetWriter;
+use crate::storage::{ParquetWriter, StorageRegistry};
 use crate::stores::system_table::SharedTableStoreExt;
 use crate::tables::base_flush::{FlushExecutor, FlushJobResult, TableFlush};
 use crate::tables::shared_tables::shared_table_store::SharedTableRow;
@@ -45,6 +45,9 @@ pub struct SharedTableFlushJob {
     /// Storage location (single path, no ${user_id} templating)
     storage_location: String,
 
+    /// Optional storage registry for resolving shared table paths
+    storage_registry: Option<Arc<StorageRegistry>>,
+
     /// Node ID for job tracking
     node_id: NodeId,
 
@@ -68,9 +71,16 @@ impl SharedTableFlushJob {
             table_name,
             schema,
             storage_location,
+            storage_registry: None,
             node_id,
             live_query_manager: None,
         }
+    }
+
+    /// Set the StorageRegistry for dynamic path resolution
+    pub fn with_storage_registry(mut self, registry: Arc<StorageRegistry>) -> Self {
+        self.storage_registry = Some(registry);
+        self
     }
 
     /// Set the live query manager for this flush job (builder pattern)
@@ -222,9 +232,34 @@ impl TableFlush for SharedTableFlushJob {
         // Convert rows to RecordBatch
         let batch = self.rows_to_record_batch(&rows)?;
 
-        // Determine output path: ${storage_location}/${table_name}/batch-{timestamp}.parquet
+        // Determine output path: prefer resolving via StorageRegistry templates
         let batch_filename = self.generate_batch_filename();
-        let table_dir = PathBuf::from(&self.storage_location);
+
+        let table_dir = if let Some(registry) = &self.storage_registry {
+            // Resolve {base}/{shared}/{namespace}/{tableName}
+            let storage = registry
+                .get_storage_config("local")?
+                .ok_or_else(|| KalamDbError::NotFound("Storage 'local' not found".to_string()))?;
+
+            let rel = storage
+                .shared_tables_template()
+                .replace("{namespace}", self.namespace_id.as_str())
+                .replace("{tableName}", self.table_name.as_str())
+                .replace("{shard}", "");
+
+            if storage.base_directory().is_empty() {
+                PathBuf::from(rel)
+            } else {
+                PathBuf::from(format!(
+                    "{}/{}",
+                    storage.base_directory().trim_end_matches('/'),
+                    rel.trim_start_matches('/')
+                ))
+            }
+        } else {
+            // Back-compat: use provided storage_location as directory
+            PathBuf::from(&self.storage_location)
+        };
         let output_path = table_dir.join(&batch_filename);
 
         // Ensure directory exists

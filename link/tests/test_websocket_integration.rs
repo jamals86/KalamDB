@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! WebSocket Integration Tests for kalam-link
 //!
 //! These tests verify WebSocket connectivity, subscriptions, and real-time updates
