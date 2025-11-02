@@ -152,13 +152,13 @@ mod tests {
             TableName::new("messages"),
             TableType::User,
             NamespaceId::new("app"),
-            "/data/${user_id}/messages".to_string(),
+            Some(StorageId::new("local")),
         );
 
         assert_eq!(metadata.table_name.as_str(), "messages");
         assert_eq!(metadata.table_type, TableType::User);
         assert_eq!(metadata.namespace.as_str(), "app");
-        assert_eq!(metadata.storage_location, "/data/${user_id}/messages");
+        assert_eq!(metadata.storage_id, Some(StorageId::new("local")));
         assert_eq!(metadata.schema_version, 1);
         assert!(metadata.deleted_retention_hours.is_none());
     }
@@ -183,7 +183,7 @@ mod tests {
             TableName::new("messages"),
             TableType::User,
             NamespaceId::new("app"),
-            "/data".to_string(),
+            Some(StorageId::new("local")),
         );
 
         assert_eq!(metadata.column_family_name(), "user_table:app:messages");
@@ -195,7 +195,7 @@ mod tests {
             TableName::new("events"),
             TableType::Shared,
             NamespaceId::new("analytics"),
-            "/data".to_string(),
+            Some(StorageId::new("local")),
         );
 
         assert_eq!(
@@ -213,7 +213,7 @@ mod tests {
             TableName::new("test"),
             TableType::User,
             NamespaceId::new("app"),
-            "/data".to_string(),
+            Some(StorageId::new("local")),
         )
         .with_flush_policy(policy.clone());
 
@@ -226,7 +226,7 @@ mod tests {
             TableName::new("test"),
             TableType::User,
             NamespaceId::new("app"),
-            "/data".to_string(),
+            Some(StorageId::new("local")),
         )
         .with_deleted_retention(72);
 
@@ -239,7 +239,7 @@ mod tests {
             TableName::new("test"),
             TableType::User,
             NamespaceId::new("app"),
-            "/data".to_string(),
+            Some(StorageId::new("local")),
         );
 
         assert_eq!(metadata.schema_version, 1);

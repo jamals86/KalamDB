@@ -712,7 +712,6 @@ pub fn live_queries_table_definition() -> TableDefinition {
 /// - namespace TEXT NOT NULL
 /// - table_type TEXT NOT NULL
 /// - created_at TIMESTAMP NOT NULL
-/// - storage_location TEXT NOT NULL
 /// - storage_id TEXT (nullable)
 /// - use_user_storage BOOLEAN NOT NULL
 /// - flush_policy TEXT NOT NULL
@@ -772,18 +771,8 @@ pub fn tables_table_definition() -> TableDefinition {
             Some("Table creation timestamp".to_string()),
         ),
         ColumnDefinition::new(
-            "storage_location",
-            6,
-            KalamDataType::Text,
-            false,
-            false,
-            false,
-            ColumnDefault::None,
-            Some("Storage location path".to_string()),
-        ),
-        ColumnDefinition::new(
             "storage_id",
-            7,
+            6,
             KalamDataType::Text,
             true, // NULLABLE
             false,
@@ -793,7 +782,7 @@ pub fn tables_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "use_user_storage",
-            8,
+            7,
             KalamDataType::Boolean,
             false,
             false,
@@ -803,7 +792,7 @@ pub fn tables_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "flush_policy",
-            9,
+            8,
             KalamDataType::Text,
             false,
             false,
@@ -813,7 +802,7 @@ pub fn tables_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "schema_version",
-            10,
+            9,
             KalamDataType::Int,
             false,
             false,
@@ -823,7 +812,7 @@ pub fn tables_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "deleted_retention_hours",
-            11,
+            10,
             KalamDataType::Int,
             false,
             false,
@@ -833,7 +822,7 @@ pub fn tables_table_definition() -> TableDefinition {
         ),
         ColumnDefinition::new(
             "access_level",
-            12,
+            11,
             KalamDataType::Text,
             true, // NULLABLE
             false,

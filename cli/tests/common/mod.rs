@@ -164,6 +164,105 @@ pub fn cleanup_test_table(table_full_name: &str) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+/// Parse job ID from FLUSH TABLE output
+/// 
+/// Expected format: "Flush started for table 'namespace.table'. Job ID: flush-table-123-uuid"
+pub fn parse_job_id_from_flush_output(output: &str) -> Result<String, Box<dyn std::error::Error>> {
+    // Look for pattern: "Job ID: <job_id>" or "Job IDs: [<id1>, <id2>]"
+    if let Some(single_match) = output.strip_prefix("Flush started for table '")
+        .and_then(|s| s.split("Job ID: ").nth(1))
+        .map(|s| s.trim().to_string())
+    {
+        return Ok(single_match);
+    }
+    
+    Err(format!("Failed to parse job ID from FLUSH output: {}", output).into())
+}
+
+/// Parse multiple job IDs from FLUSH ALL TABLES output
+/// 
+/// Expected format: "Flush started for N table(s) in namespace 'ns'. Job IDs: [id1, id2, id3]"
+pub fn parse_job_ids_from_flush_all_output(output: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    // Look for pattern: "Job IDs: [id1, id2, id3]"
+    if let Some(ids_str) = output.split("Job IDs: [").nth(1) {
+        if let Some(ids_part) = ids_str.split(']').next() {
+            let job_ids: Vec<String> = ids_part
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            
+            if !job_ids.is_empty() {
+                return Ok(job_ids);
+            }
+        }
+    }
+    
+    Err(format!("Failed to parse job IDs from FLUSH ALL output: {}", output).into())
+}
+
+/// Verify that a job has completed successfully
+/// 
+/// Polls system.jobs table until the job reaches 'completed' status or timeout occurs.
+/// Returns an error if the job fails or times out.
+pub fn verify_job_completed(job_id: &str, timeout: Duration) -> Result<(), Box<dyn std::error::Error>> {
+    let start = std::time::Instant::now();
+    let poll_interval = Duration::from_millis(300);
+    
+    loop {
+        if start.elapsed() > timeout {
+            return Err(format!(
+                "Timeout waiting for job {} to complete after {:?}",
+                job_id, timeout
+            ).into());
+        }
+        
+        // Query system.jobs for this specific job
+        let query = format!(
+            "SELECT job_id, status, error_message FROM system.jobs WHERE job_id = '{}'",
+            job_id
+        );
+        
+        match execute_sql_as_root_via_cli(&query) {
+            Ok(output) => {
+                // Check if output contains the job and its status
+                if output.contains("completed") {
+                    return Ok(());
+                }
+                
+                if output.contains("failed") {
+                    // Try to extract error message if present
+                    return Err(format!(
+                        "Job {} failed. Query output: {}",
+                        job_id, output
+                    ).into());
+                }
+                
+                // Job might still be running or pending, continue polling
+            }
+            Err(e) => {
+                // If we can't query the jobs table, that's an error
+                return Err(format!(
+                    "Failed to query system.jobs for job {}: {}",
+                    job_id, e
+                ).into());
+            }
+        }
+        
+        std::thread::sleep(poll_interval);
+    }
+}
+
+/// Verify that multiple jobs have all completed successfully
+/// 
+/// Convenience wrapper for verifying multiple jobs from FLUSH ALL TABLES
+pub fn verify_jobs_completed(job_ids: &[String], timeout: Duration) -> Result<(), Box<dyn std::error::Error>> {
+    for job_id in job_ids {
+        verify_job_completed(job_id, timeout)?;
+    }
+    Ok(())
+}
+
 /// Subscription listener for testing real-time events via CLI
 pub struct SubscriptionListener {
     child: Child,

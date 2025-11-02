@@ -549,7 +549,6 @@ mod tests {
             namespace: NamespaceId::new("test_ns"),
             table_type: TableType::from_str(table_type).unwrap(),
             created_at: chrono::Utc::now().timestamp_millis(),
-            storage_location: "/tmp/test".to_string(),
             storage_id: Some(StorageId::new("local")),
             use_user_storage: false,
             flush_policy: "{}".to_string(),

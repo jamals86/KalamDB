@@ -182,37 +182,20 @@ async fn test_datatypes_preservation_values() {
     // Initialize KalamSql backed by the same RocksDB
     let kalam_sql = Arc::new(KalamSql::new(backend.clone()).expect("init KalamSQL"));
 
-    // Insert a 'local' storage pointing to output_base as default base and a user template
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    let storage = kalamdb_commons::system::Storage {
-        storage_id: StorageId::new("local"),
-        storage_name: "Local".to_string(),
-        description: Some("Test local storage".to_string()),
-        storage_type: "filesystem".to_string(),
-        base_directory: "".to_string(), // use default from StorageRegistry
-        credentials: None,
-        shared_tables_template: "{namespace}/{tableName}".to_string(),
-        user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
-        created_at: now_ms,
-        updated_at: now_ms,
-    };
-    kalam_sql
-        .insert_storage(&storage)
-        .expect("insert storage config");
-
     // Build TableCache bound to a StorageRegistry that uses output_base as default path
+    // When storage_id is not found or empty, it falls back to this default base
     let registry = Arc::new(StorageRegistry::new(
         kalam_sql.clone(),
         output_base.to_string_lossy().into_owned(),
     ));
     let table_cache = Arc::new(TableCache::new().with_storage_registry(registry));
 
-    // Insert table metadata into cache with storage_id=local
+    // Insert table metadata into cache with storage_id=None (will use default fallback path)
     let table_meta = CoreTableMetadata::new(
         tbl_name.clone().into(),
         kalamdb_core::catalog::TableType::User,
         ns.clone().into(),
-        Some(StorageId::new("local")),
+        None, // No explicit storage_id, will use default fallback
     );
     table_cache.insert(table_meta);
 

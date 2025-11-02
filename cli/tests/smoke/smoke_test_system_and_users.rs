@@ -61,15 +61,41 @@ fn smoke_system_tables_and_user_lifecycle() {
         users_out2
     );
 
-    // 4) FLUSH ALL TABLES should enqueue a job
-    // Create a test namespace first since FLUSH ALL TABLES requires an existing namespace
+    // 4) FLUSH ALL TABLES should enqueue jobs and complete successfully
+    // Create a test namespace and user table first
     let test_ns = "smoke_test_flush";
     let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", test_ns));
-    let _ = execute_sql_as_root_via_cli(&format!("FLUSH ALL TABLES IN {}", test_ns)).expect("flush all tables in namespace should succeed");
-    let jobs = execute_sql_as_root_via_cli("SELECT * FROM system.jobs LIMIT 1")
-        .expect("jobs query should succeed after flush all tables");
-    assert!(
-        !jobs.trim().is_empty(),
-        "jobs table should not be empty after flush all tables"
+    
+    // Create a user table to flush
+    let test_table = format!("{}.test_flush_table", test_ns);
+    let create_table_sql = format!(
+        "CREATE USER TABLE {} (id INT, value VARCHAR) FLUSH ROWS 100",
+        test_table
     );
+    execute_sql_as_root_via_cli(&create_table_sql)
+        .expect("create test table should succeed");
+    
+    // Insert some data
+    let insert_sql = format!("INSERT INTO {} (id, value) VALUES (1, 'test')", test_table);
+    execute_sql_as_root_via_cli(&insert_sql)
+        .expect("insert should succeed");
+    
+    // Now flush all tables in the namespace
+    let flush_output = execute_sql_as_root_via_cli(&format!("FLUSH ALL TABLES IN {}", test_ns))
+        .expect("flush all tables in namespace should succeed");
+    
+    println!("[FLUSH ALL] Output: {}", flush_output);
+    
+    // Parse job IDs from flush all output
+    let job_ids = parse_job_ids_from_flush_all_output(&flush_output)
+        .expect("should parse job IDs from FLUSH ALL output");
+    
+    println!("[FLUSH ALL] Job IDs: {:?}", job_ids);
+    assert!(!job_ids.is_empty(), "should have at least one job ID");
+    
+    // Verify all jobs complete successfully (10 second timeout each)
+    verify_jobs_completed(&job_ids, std::time::Duration::from_secs(10))
+        .expect("all flush jobs should complete successfully");
+    
+    println!("[FLUSH ALL] All jobs completed successfully");
 }

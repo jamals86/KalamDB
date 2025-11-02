@@ -513,6 +513,7 @@ mod tests {
     use super::*;
     use crate::catalog::TableType;
     use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+    use kalamdb_commons::StorageId;
     use kalamdb_store::test_utils::{InMemoryBackend, TestDb};
 
     fn create_test_provider() -> (SharedTableProvider, TestDb) {
@@ -534,7 +535,7 @@ mod tests {
             table_type: TableType::Shared,
             namespace: NamespaceId::new("app"),
             created_at: chrono::Utc::now(),
-            storage_location: "/data/shared".to_string(),
+            storage_id: Some(StorageId::new("local")),
             flush_policy: crate::flush::FlushPolicy::RowLimit { row_limit: 1000 },
             schema_version: 1,
             deleted_retention_hours: Some(24),

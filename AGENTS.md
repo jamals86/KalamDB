@@ -156,6 +156,15 @@ cargo test -p kalamdb-sql
 - **Storage Abstraction**: Use `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>` (except in kalamdb-store)
 
 ## Recent Changes
+- 2025-11-02: **Phase 9: Dynamic Storage Path Resolution** - Completed storage path resolution architecture:
+  - **Eliminated storage_location Field**: Removed redundant field from TableMetadata and SystemTable
+  - **Two-Stage Template Resolution**: TableCache caches partial templates ({namespace}/{tableName}); flush jobs resolve dynamic placeholders ({userId}/{shard}) per-request
+  - **TableCache Extension**: Added storage_path_templates HashMap, get_storage_path(), resolve_partial_template(), invalidate_storage_paths()
+  - **Flush Job Refactoring**: UserTableFlushJob and SharedTableFlushJob now use Arc<TableCache> for path resolution
+  - **Schema Update**: Removed storage_location from system.tables (12→11 columns), renumbered ordinals 6-11
+  - **Test Fixes**: Updated 50+ test fixtures and assertions to use storage_id instead of storage_location
+  - **Build Status**: Workspace compiles cleanly with zero errors/warnings
+  - **Files Modified**: table_cache.rs, user_table_flush.rs, shared_table_flush.rs, system_table_definitions.rs, tables_table.rs, tables_provider.rs, executor.rs, all service tests
 - 2025-11-01: **Phase 4 Column Ordering Investigation** - Discovered and partially fixed incomplete Phase 4 implementation:
   - **Issue**: Phase 4 marked complete but SELECT * returned random column order each query
   - **Root Cause**: System table providers used hardcoded Arrow schemas instead of TableDefinition.to_arrow_schema()

@@ -403,12 +403,12 @@ impl Namespace {
 /// - `namespace`: Namespace ID
 /// - `table_type`: Type of table (USER, SHARED, STREAM, SYSTEM)
 /// - `created_at`: Unix timestamp in milliseconds when table was created
-/// - `storage_location`: Storage location path
-/// - `storage_id`: Optional storage configuration ID
+/// - `storage_id`: Optional storage configuration ID (references system.storages)
 /// - `use_user_storage`: Whether to use user-specific storage
 /// - `flush_policy`: Flush policy configuration (JSON)
 /// - `schema_version`: Current schema version
 /// - `deleted_retention_hours`: Hours to retain deleted rows
+/// - `access_level`: Access level for shared tables (PUBLIC, PRIVATE, RESTRICTED)
 ///
 /// ## Serialization
 /// - **RocksDB**: Bincode (compact binary format)
@@ -426,12 +426,12 @@ impl Namespace {
 ///     namespace: NamespaceId::new("default"),
 ///     table_type: TableType::User,
 ///     created_at: 1730000000000,
-///     storage_location: "/data/tables".to_string(),
 ///     storage_id: Some(StorageId::new("storage_1")),
 ///     use_user_storage: false,
 ///     flush_policy: "{}".to_string(),
 ///     schema_version: 1,
 ///     deleted_retention_hours: 24,
+///     access_level: None,
 /// };
 /// ```
 ///

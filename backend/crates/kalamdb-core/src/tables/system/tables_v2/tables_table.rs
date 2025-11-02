@@ -28,7 +28,6 @@ impl TablesTableSchema {
     /// - namespace: Utf8
     /// - table_type: Utf8
     /// - created_at: Timestamp(Millisecond, None)
-    /// - storage_location: Utf8
     /// - storage_id: Utf8 (nullable)
     /// - use_user_storage: Boolean
     /// - flush_policy: Utf8
@@ -70,7 +69,7 @@ mod tests {
     fn test_tables_table_schema() {
         let schema = TablesTableSchema::schema();
         // Schema built from TableDefinition, verify field count and names are correct
-        assert_eq!(schema.fields().len(), 12);
+        assert_eq!(schema.fields().len(), 11);
 
         // Verify fields exist (order guaranteed by TableDefinition's ordinal_position)
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
@@ -79,7 +78,6 @@ mod tests {
         assert!(field_names.contains(&"namespace"));
         assert!(field_names.contains(&"table_type"));
         assert!(field_names.contains(&"created_at"));
-        assert!(field_names.contains(&"storage_location"));
         assert!(field_names.contains(&"storage_id"));
         assert!(field_names.contains(&"use_user_storage"));
         assert!(field_names.contains(&"flush_policy"));

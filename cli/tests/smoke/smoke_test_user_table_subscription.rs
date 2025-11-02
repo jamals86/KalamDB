@@ -104,16 +104,24 @@ fn smoke_user_table_subscription_lifecycle() {
     let changes_joined = change_lines.join("\n");
     assert!(changes_joined.contains(sub_val), "expected change event containing '{}' within 5s; got: {}", sub_val, changes_joined);
 
-    // 6) Flush the user table and expect success; verify jobs table not empty
+    // 6) Flush the user table and verify job completes successfully
     let flush_sql = format!("FLUSH TABLE {}", full);
-    execute_sql_as_root_via_cli(&flush_sql).expect("flush should succeed for user table");
-
-    let jobs = execute_sql_as_root_via_cli("SELECT * FROM system.jobs LIMIT 1")
-        .expect("select jobs should succeed after flush");
-    assert!(
-        !jobs.trim().is_empty(),
-        "jobs output should not be empty after flush"
-    );
+    let flush_output = execute_sql_as_root_via_cli(&flush_sql)
+        .expect("flush should succeed for user table");
+    
+    println!("[FLUSH] Output: {}", flush_output);
+    
+    // Parse job ID from flush output
+    let job_id = parse_job_id_from_flush_output(&flush_output)
+        .expect("should parse job_id from FLUSH output");
+    
+    println!("[FLUSH] Job ID: {}", job_id);
+    
+    // Verify the job completes successfully (10 second timeout)
+    verify_job_completed(&job_id, std::time::Duration::from_secs(10))
+        .expect("flush job should complete successfully");
+    
+    println!("[FLUSH] Job {} completed successfully", job_id);
 
     // Stop subscription
     listener.stop().ok();
