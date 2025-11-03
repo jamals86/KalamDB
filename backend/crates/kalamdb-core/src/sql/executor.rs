@@ -158,6 +158,8 @@ pub struct SqlExecutor {
     // Phase 15 (008-schema-consolidation): Schema store and cache for DESCRIBE TABLE
     schema_store: Option<Arc<crate::tables::system::schemas::TableSchemaStore>>,
     schema_cache: Option<Arc<crate::tables::system::schemas::SchemaCache>>,
+    // Phase 9: Shared table cache for storage path resolution
+    table_cache: Option<Arc<crate::catalog::TableCache>>,
     enforce_password_complexity: bool,
 }
 
@@ -227,12 +229,19 @@ impl SqlExecutor {
             live_query_manager: None,
             schema_store: None,
             schema_cache: None,
+            table_cache: None, // Phase 9: Initialize table cache (will be set via with_storage_registry)
             enforce_password_complexity: false,
         }
     }
 
     /// Set the storage registry (optional, for storage template validation)
     pub fn with_storage_registry(mut self, registry: Arc<crate::storage::StorageRegistry>) -> Self {
+        // Phase 9: Initialize TableCache with StorageRegistry for path resolution
+        let table_cache = Arc::new(
+            crate::catalog::TableCache::new()
+                .with_storage_registry(registry.clone())
+        );
+        self.table_cache = Some(table_cache);
         self.storage_registry = Some(registry);
         self
     }
@@ -428,6 +437,17 @@ impl SqlExecutor {
             namespace_id.clone(),
             Some(StorageId::new("local")), // Default storage
         );
+
+        // Phase 9: Add table to cache for path resolution
+        if let Some(ref cache) = self.table_cache {
+            cache.insert(table_metadata.clone());
+            log::debug!(
+                "Added table to cache: {}.{} (type: {:?})",
+                namespace_id.as_str(),
+                table_name.as_str(),
+                table_type
+            );
+        }
 
         match table_type {
             TableType::User => {
@@ -1987,11 +2007,6 @@ impl SqlExecutor {
             .as_ref()
             .ok_or_else(|| KalamDbError::Other("JobManager not initialized".to_string()))?;
 
-        let storage_registry = self
-            .storage_registry
-            .as_ref()
-            .ok_or_else(|| KalamDbError::Other("StorageRegistry not initialized".to_string()))?;
-
         let jobs_provider = self.jobs_table_provider.clone();
 
         // T21: Check if a flush job is already running for this table
@@ -2089,18 +2104,19 @@ impl SqlExecutor {
             &stmt.table_name,
         ));
 
-        // Phase 9: Create TableCache for dynamic path resolution
-        let table_cache = Arc::new(
-            crate::catalog::TableCache::new()
-                .with_storage_registry(storage_registry.clone())
-        );
+        // Phase 9: Use shared TableCache for dynamic path resolution
+        let table_cache = self.table_cache.as_ref()
+            .ok_or_else(|| KalamDbError::Other(
+                "TableCache not initialized - call with_storage_registry()".to_string()
+            ))?
+            .clone();
 
         let flush_job = crate::flush::UserTableFlushJob::new(
             table_store,
             namespace_id,
             table_name.clone(),
             arrow_schema.schema,
-            table_cache, // Phase 9 - dynamic path resolution via TableCache
+            table_cache, // Phase 9 - dynamic path resolution via shared TableCache
         );
 
         // Clone necessary data for the async task

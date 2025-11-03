@@ -1,6 +1,6 @@
 Future:
-1) Alter a table and move it';s storage from storage_id to different one
-2) Support changing stream table TTL via ALTER TABLE
+1) LOW PRIORITY - Alter a table and move it's storage from storage_id to different one
+2) LOW PRIORITY - Support changing stream table TTL via ALTER TABLE
 3) Combine all the subscription logic for stream/user tables into one code base
 6) Make sure _updated timestamp include also nanosecond precision
 7) when reading --file todo-app.sql from the cli ignore the lines with -- since they are comments, and create a test to cover this case
@@ -101,6 +101,14 @@ If the user already specified primary key then we dont do that, the _id we add a
 [2025-11-03 00:11:52.004] [ERROR] - actix-rt|system:0|arbiter:8 - kalamdb_core::sql::executor:2161 - Flush job failed: job_id=flush-user_smoke_1762121503280-1762121512003-11e214e9-6b12-4115-9a8f-f378eed85f43, error=One or more user partitions failed to flush (1 errors). Rows flushed before failure: 0. First error: Failed to flush 3 rows for user sys_root: Table not found in cache: smoke_ns_1762121503280.user_smoke_1762121503280
 
 
+102) CLI Tests common - Verify that we have a timeout set while we wait for the subscription changes/notifications
+103) Check to see any libraries/dependencies not needed and rmeove them, check each one of the dependencies
+104) backend\crates\kalamdb-core\src\tables\system\tables_v2 is not needed anymore we have schemas which stores the tables/columns, all should be located in the new folder: backend\crates\kalamdb-core\src\tables\system\schemas
+105) when we have Waiting up to 300s for active flush jobs to complete... and the user click CTRL+C again it will force the stopping and mark those jobs as failed with the right error
+
+
+
+
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.
 	2.	Temp Indexing: On each row insert/update, serialize embeddings into a temporary .hnsw file under /tmp/kalamdb/{namespace}/{table}/{column}-hot_index.hnsw for fast incremental indexing.
@@ -111,8 +119,8 @@ Here’s the updated 5-line spec with embedding storage inside Parquet and manag
 
 
 IMPORTANT:
-1) Schema information_schema
-2) Datatypes for columns
+1) Done - Schema information_schema
+2) Done - Datatypes for columns
 3) Parametrized Queries
 
 Key Findings

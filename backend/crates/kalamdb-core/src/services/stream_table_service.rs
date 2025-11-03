@@ -280,7 +280,7 @@ mod tests {
         assert_eq!(metadata.table_name.as_str(), "events");
         assert_eq!(metadata.table_type, TableType::Stream);
         assert_eq!(metadata.namespace.as_str(), "app");
-        assert_eq!(metadata.storage_id, None); // Stream tables don't use Parquet storage
+        assert_eq!(metadata.storage_id, Some(StorageId::new("local"))); // Stream tables use local storage (Phase 9)
         assert!(metadata.deleted_retention_hours.is_none()); // Stream tables don't have soft deletes
     }
 

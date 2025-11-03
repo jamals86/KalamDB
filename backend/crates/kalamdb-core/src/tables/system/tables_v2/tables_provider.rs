@@ -262,7 +262,7 @@ mod tests {
         // Scan
         let batch = provider.scan_all_tables().unwrap();
         assert_eq!(batch.num_rows(), 3);
-        assert_eq!(batch.num_columns(), 12);
+        assert_eq!(batch.num_columns(), 11); // Phase 9: removed storage_location column
     }
 
     #[tokio::test]

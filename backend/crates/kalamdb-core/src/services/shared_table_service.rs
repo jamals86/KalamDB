@@ -458,7 +458,7 @@ mod tests {
         assert_eq!(metadata.table_name.as_str(), "config");
         assert_eq!(metadata.table_type, TableType::Shared);
         assert_eq!(metadata.namespace.as_str(), "app");
-        assert_eq!(metadata.storage_id, None); // Default storage
+        assert_eq!(metadata.storage_id, Some(StorageId::new("local"))); // Default storage (Phase 9)
     }
 
     #[test]
@@ -487,7 +487,7 @@ mod tests {
         assert!(result.is_ok());
 
         let (metadata, _was_created) = result.unwrap();
-        assert_eq!(metadata.storage_id, None); // Default storage
+        assert_eq!(metadata.storage_id, Some(StorageId::new("local"))); // Default storage (Phase 9)
     }
 
     #[test]

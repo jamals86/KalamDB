@@ -192,10 +192,30 @@ impl TableCache {
 
         // 2. Cache miss - load table metadata
         let table = self.get(namespace, table_name).ok_or_else(|| {
+            // Enhanced error message for debugging (Phase 9)
+            let tables_lock = self.tables.read().unwrap();
+            let cached_tables: Vec<String> = tables_lock
+                .keys()
+                .map(|(ns, tbl)| format!("{}.{}", ns.as_str(), tbl.as_str()))
+                .collect();
+            
+            let debug_info = if cached_tables.is_empty() {
+                "Cache is empty (no tables loaded)".to_string()
+            } else if cached_tables.len() <= 10 {
+                format!("Tables in cache: [{}]", cached_tables.join(", "))
+            } else {
+                format!(
+                    "Cache contains {} tables. First 10: [{}]",
+                    cached_tables.len(),
+                    cached_tables.iter().take(10).cloned().collect::<Vec<_>>().join(", ")
+                )
+            };
+            
             KalamDbError::Other(format!(
-                "Table not found in cache: {}.{}",
+                "Table not found in cache: {}.{}. {}",
                 namespace.as_str(),
-                table_name.as_str()
+                table_name.as_str(),
+                debug_info
             ))
         })?;
 

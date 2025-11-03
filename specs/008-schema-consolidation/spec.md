@@ -194,6 +194,64 @@ Implementation notes:
 - Deterministic: unique namespace per run, bounded timeouts for subscriptions, cleanup on failure/success
 - Subscriptions are supported for user and stream tables; shared tables do not support subscriptions
 
+---
+
+### User Story 7 - Cache Consolidation for Memory Efficiency (Priority: P1)
+
+**Status**: Identified during Phase 9 completion (2025-11-03)
+
+Developers need a single unified cache for all table-related data instead of maintaining two separate caches that store overlapping information. Currently, TableCache (path resolution) and SchemaCache (schema queries) duplicate ~50% of data, require synchronized updates, and risk consistency bugs. The system must consolidate both caches into a single SchemaCache with CachedTableData that contains all table metadata, schema definitions, and storage path templates.
+
+**Why this priority**: This is critical technical debt that wastes memory, increases code complexity, and creates maintenance burden. Eliminating redundant caching frees memory for actual data, simplifies code (~1,200 lines deleted), and prevents cache synchronization bugs. This directly improves system reliability and resource efficiency.
+
+**Independent Test**: Can be fully tested by running CREATE/ALTER/DROP TABLE operations and verifying single cache serves all use cases (DESCRIBE TABLE, FLUSH TABLE, schema queries) with >99% hit rate and <100μs latency. Memory profiling should show ~50% reduction in cache memory usage compared to dual-cache baseline.
+
+**Acceptance Scenarios**:
+
+1. **Given** a table is created with full schema definition, **When** querying via DESCRIBE TABLE and FLUSH TABLE, **Then** both operations use the same SchemaCache instance (not separate TableCache and SchemaCache)
+
+2. **Given** CachedTableData contains table_id (with namespace + table_name), table_type, storage_id, storage_path_template, and schema (TableDefinition), **When** accessing any table metadata, **Then** all data is retrieved from single DashMap lookup
+
+3. **Given** TableId already contains NamespaceId and TableName internally, **When** looking up table by name, **Then** create TableId from (namespace, table_name) and use direct O(1) cache lookup (no reverse index needed)
+
+4. **Given** storage path template is cached with partial resolution ({namespace}/{tableName} substituted, {userId}/{shard} remaining), **When** flush job resolves dynamic placeholders, **Then** template comes from CachedTableData.storage_path_template field (not separate storage_paths map)
+
+5. **Given** ALTER TABLE modifies table schema, **When** invalidating cache, **Then** single invalidate(&table_id) call removes entry from SchemaCache (no need to invalidate both TableCache and SchemaCache)
+
+6. **Given** memory profiling before and after consolidation, **When** measuring cache memory usage, **Then** unified SchemaCache uses ~50% less memory than TableCache + SchemaCache combined
+
+7. **Given** old TableCache (catalog/table_cache.rs, 516 lines) and old SchemaCache (tables/system/schemas/schema_cache.rs, 443 lines) and TableMetadata (catalog/table_metadata.rs, 252 lines), **When** replaced with unified SchemaCache, **Then** ~1,200 lines of duplicate code deleted
+
+8. **Given** concurrent access from multiple threads, **When** reading/writing to SchemaCache, **Then** DashMap provides lock-free concurrent access with no deadlocks
+
+**Architecture Change**:
+```rust
+// OLD: Two separate caches
+TableCache: HashMap<(NamespaceId, TableName), TableMetadata> + storage_path_templates
+SchemaCache: DashMap<TableId, Arc<TableDefinition>>
+
+// NEW: Single unified cache
+SchemaCache: DashMap<TableId, Arc<CachedTableData>>
+
+struct CachedTableData {
+    table_id: TableId,                    // Contains (namespace, table_name)
+    table_type: TableType,
+    storage_id: Option<StorageId>,
+    storage_path_template: String,        // Cached partial template
+    schema: Arc<TableDefinition>,         // Full schema with columns
+    // ... other metadata
+}
+```
+
+**Benefits**:
+- **Memory Efficiency**: ~50% reduction in cache memory usage
+- **Code Simplicity**: ~1,200 lines of duplicate code deleted
+- **Consistency**: Single source of truth eliminates sync bugs
+- **Performance**: Single cache lookup instead of potentially two
+- **Maintainability**: One cache implementation to test and evolve
+
+---
+
 ### Edge Cases
 
 - **Schema Evolution**: What happens when querying old schema versions after multiple ALTER TABLE operations? System must support schema_history array in TableDefinition to retrieve historical schemas.
@@ -341,6 +399,8 @@ Implementation notes:
 - **FR-TEST-011**: System MUST provide integration test suite for User Story 3 (Test Suite Completion) validating end-to-end workflows with consolidated schemas
 
 - **FR-TEST-012**: System MUST provide integration test suite for User Story 4 (Schema Caching) measuring cache hit rates and performance under concurrent load
+
+- **FR-TEST-013**: System MUST provide integration test suite for User Story 7 (Cache Consolidation) verifying single unified cache serves all use cases (DESCRIBE TABLE, FLUSH TABLE, schema queries) with >99% hit rate, <100μs latency, and ~50% memory reduction vs dual-cache baseline
 
 #### Code Refactoring (FR-REFACTOR)
 
