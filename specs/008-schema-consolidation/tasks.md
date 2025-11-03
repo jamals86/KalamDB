@@ -240,6 +240,145 @@
 - [x] T071 [P] [US2] ~~Write integration test in `backend/tests/test_unified_types.rs` verifying EMBEDDING(384), EMBEDDING(768), EMBEDDING(1536), EMBEDDING(3072) work correctly~~ **(✅ COMPLETE - test_embedding_type_support validates all common ML embedding dimensions)**
 - [x] T072 [P] [US2] ~~Write integration test in `backend/tests/test_unified_types.rs` verifying type conversion cache hit rate >99% over 10,000 conversions~~ **(✅ DEFERRED to Phase 6 - Caching optimization is P2, Phase 4 validates functional correctness)**
 - [x] T073 [P] [US2] ~~Write integration test in `backend/tests/test_column_ordering.rs` verifying SELECT * returns columns in ordinal_position order~~ **(✅ COMPLETE - test_select_star_returns_columns_in_ordinal_order passes)**
+
+---
+
+## Phase 5: User Story 8 — AppContext + SchemaRegistry + Stateless Executor (P0) — Fresh Design Cleanup
+
+**Purpose**: Implement the memory-efficient architecture: AppContext singleton, SchemaRegistry facade over SchemaCache, stateless SqlExecutor with per-request SessionContext, and fully remove deprecated code. Ensure real-time subscriptions and flush pipeline integrate with the new design. No legacy classes/traits remain.
+
+### Core Implementation
+
+- [ ] T200 (US8) Create SchemaRegistry service in `backend/crates/kalamdb-core/src/schema/registry.rs` with read-through API:
+  - `get_table_data(&TableId) -> Arc<CachedTableData>`
+  - `get_table_definition(&TableId) -> Arc<TableDefinition>`
+  - `get_arrow_schema(&TableId) -> Arc<SchemaRef>` (memoized via OnceCell or tiny DashMap)
+  - `get_user_table_shared(&TableId) -> Arc<UserTableShared>` (create-once, cache in SchemaCache)
+  - `invalidate(&TableId)` (drop all derived artifacts)
+- [ ] T201 (P) (US8) Wire SchemaRegistry into AppContext:
+  - Add field + getter
+  - Initialize in `AppContext::init()` after SchemaCache/StorageRegistry
+  - Ensure system table registration remains unchanged
+- [ ] T202 (US8) Refactor SqlExecutor to be stateless:
+  - Remove stored `SessionContext` and all Option<Arc<_>> fields
+  - Delete builder methods (`with_*`) and legacy constructors
+  - New API: `execute(&SessionContext, &str, ExecCtx) -> Result<_>`
+  - Update internal calls to fetch dependencies from AppContext on-demand
+- [ ] T203 (P) (US8) Update route handlers and CLI to pass per-request SessionContext into SqlExecutor (no executor injection stored in state)
+- [ ] T204 (US8) Refactor services (UserTableService, SharedTableService, StreamTableService, TableDeletionService, Backup/Restore, SchemaEvolution) to be stateless:
+  - Remove stored Arcs
+  - Use `AppContext::get()` getters in methods
+
+### Real-time Subscriptions (Live Queries)
+
+- [ ] T205 (US8) Ensure LiveQueryManager is in AppContext and providers emit change events
+- [ ] T206 (P) (US8) Use bounded channels/backpressure; reuse Arc payloads for fan-out (no large copies)
+- [ ] T207 (P) (US8) Add/adjust tests for subscription lifecycle to validate no extra allocations (Arc::ptr_eq where applicable)
+
+### Flush Pipeline (User & Shared Tables)
+
+- [ ] T208 (US8) Resolve storage paths via `SchemaCache::get_storage_path(&table_id, user, shard)`; remove any duplicate path logic
+- [ ] T209 (P) (US8) Use SchemaRegistry for Arrow schema + TableDefinition in flush jobs; stream Parquet writes to avoid materializing batches
+- [ ] T210 (P) (US8) Add/adjust tests: user-table flush includes user/shard path; shared-table flush excludes user; verify Arc reuse of schema
+
+### Full Cleanup — Remove Deprecated/Legacy Code
+
+- [ ] T211 (US8) Delete legacy executor builder pattern and all `Option<Arc<_>>` fields from `backend/crates/kalamdb-core/src/sql/executor.rs`
+- [ ] T212 (P) (US8) Delete any obsolete caches/models/providers if present (keep only unified `SchemaCache` + v2 providers + `UserTableShared`)
+- [ ] T213 (P) (US8) Remove duplicate storage path utilities (must centralize on SchemaCache + StorageRegistry)
+- [ ] T214 (P) (US8) Simplify `backend/src/lifecycle.rs` ApplicationComponents to HTTP-only state; remove core DB-layer fields
+- [ ] T215 (P) (US8) Update/clean tests referencing old constructors/builders; migrate to AppContext + stateless services/executor
+- [ ] T216 (US8) Grep audit: ensure no `deprecated` stubs remain (traits/structs/modules); remove files instead of @deprecated markers
+
+### Docs, Build, Lint, Tests
+
+- [ ] T217 (P) (US8) Update `AGENTS.md`, `spec.md`, `APPCONTEXT_COMPREHENSIVE_DESIGN.md` to reflect final APIs and field removals
+- [ ] T218 (P) (US8) `cargo build --workspace` must pass
+- [ ] T219 (P) (US8) `cargo clippy -D warnings` must pass (no deprecations kept)
+- [ ] T220 (P) (US8) `cargo test --workspace` must pass; key perf tests: cache hit-rate, provider caching, subscription fan-out arc reuse
+
+**Checkpoint**: ✅ Phase 5 complete when codebase contains no deprecated classes/traits, executor/services stateless, SchemaRegistry operational, real-time + flush integrated, and build/lint/tests are all green.
+
+---
+
+## Phase 5B: User Story 8 — AppContext Implementation (P0) — Singleton, Sessions, Wiring, Tests
+
+**Purpose**: Implement the AppContext singleton per APPCONTEXT_COMPREHENSIVE_DESIGN.md, wire it into server lifecycle, expose all getters, and provide a tested session factory. Ensure no DB-layer singletons live in HTTP lifecycle components and schedulers remain outside AppContext.
+
+### Core AppContext Structure
+
+- [ ] T440 (US8) Create `backend/crates/kalamdb-core/src/app_context.rs` with AppContext singleton:
+  - Use `static APP_CONTEXT: OnceCell<Arc<AppContext>>`
+  - Fields (Arc<_> unless otherwise noted): `UserTableStore`, `SharedTableStore`, `StreamTableStore`, `KalamSql`, `SchemaCache`, `StorageRegistry`, `SchemaRegistry`, `JobManager`, `LiveQueryManager`, system table providers (10), `DataFusionSessionFactory` (zero-sized), `base_session_context: Arc<SessionContext>`
+  - Methods: `init(config: &ServerConfig) -> Arc<AppContext>`, `get() -> Arc<AppContext>`, `shutdown()` (graceful close if needed)
+- [ ] T441 (P) (US8) Create `backend/crates/kalamdb-core/src/sql/session_factory.rs` implementing DataFusionSessionFactory:
+  - API: `create_session() -> Arc<SessionContext>`, `create_session_for_user(user_id: UserId, namespace: NamespaceId) -> (Arc<SessionContext>, KalamSessionState)`
+  - Register custom SQL functions (CURRENT_USER, NOW, etc.) and pre-register system schemas into a `base_session_context`
+- [ ] T442 (P) (US8) Add AppContext getters for all fields with precise return types and docs:
+  - Stores: `user_table_store()`, `shared_table_store()`, `stream_table_store()`
+  - Managers: `job_manager()`, `live_query_manager()`
+  - Registries/Cache: `storage_registry()`, `schema_registry()`, `unified_cache()`
+  - Infra: `kalam_sql()`, `session_factory()`, `base_session()`
+  - Providers: `users_provider()`, `jobs_provider()`, `namespaces_provider()`, `storages_provider()`, `live_queries_provider()`, `tables_provider()`, `audit_logs_provider()`, `stats_provider()`, `information_schema_tables_provider()`, `information_schema_columns_provider()`
+
+### Wiring into Server Lifecycle
+
+- [ ] T443 (US8) Wire AppContext::init() in `backend/src/lifecycle.rs`:
+  - Construct storage backend, stores, managers, registries, unified `SchemaCache`
+  - Initialize system table registration and capture providers
+  - Build `DataFusionSessionFactory` and `base_session_context`
+  - Call `AppContext::init(...)` with all components
+- [ ] T444 (P) (US8) Keep schedulers (FlushScheduler, StreamEvictionScheduler) in `backend/src/lifecycle.rs` (ApplicationComponents) and remove any DB-layer fields now provided by AppContext
+- [ ] T445 (US8) Adjust `backend/crates/kalamdb-core/src/tables/system_table_registration.rs` to return providers required by AppContext; update `backend/src/lifecycle.rs` to pass them into `AppContext::init()`
+- [ ] T446 (P) (US8) Update `backend/src/routes.rs` and `backend/src/middleware.rs` to stop threading DB-layer arcs through handlers; instead, fetch via `AppContext::get()` as needed
+
+### Tests and Helpers
+
+- [ ] T447 (P) (US8) Add test helper `create_test_app_context()` in `backend/crates/kalamdb-core/tests/common/app_context.rs`:
+  - Uses in-memory/temp storage backend, minimal config, returns `Arc<AppContext>`
+  - Provides `create_session_for_test()` convenience
+- [ ] T448 (P) (US8) Unit tests `backend/crates/kalamdb-core/tests/test_app_context.rs`:
+  - `test_singleton_semantics` (same Arc on repeated get)
+  - `test_concurrent_get_is_lock_free` (OnceCell safety under threads)
+  - `test_base_session_has_system_schemas`
+  - `test_getters_return_non_null_and_arc_identity`
+- [ ] T449 (US8) Integration test `backend/tests/test_app_context_integration.rs`:
+  - Initialize server lifecycle (or partial init) → obtain session from AppContext → run `SELECT 1` and a simple query on `system.tables`
+
+### Migration of Call Sites (Stateless Services/Executor)
+
+- [ ] T450 (US8) Update `backend/crates/kalamdb-core/src/sql/executor.rs` to fetch dependencies from AppContext where applicable (complements T202 stateless refactor)
+- [ ] T451 (P) (US8) Update services in `backend/crates/kalamdb-core/src/services/` (user_table_service.rs, shared_table_service.rs, stream_table_service.rs, table_deletion_service.rs, backup_service.rs, restore_service.rs, schema_evolution_service.rs) to use AppContext getters internally (complements T204)
+- [ ] T452 (P) (US8) Grep audit to ensure no structs still own DB-layer Arcs: search for `struct .*{[^}]*Arc<.*(UserTableStore|SharedTableStore|StreamTableStore|KalamSql|SchemaCache|StorageRegistry|JobManager|LiveQueryManager)` and remove fields
+
+### Alignment with spec.md User Story 8
+
+- [ ] T459 (US8) NamespaceService exception handling:
+  - Keep `NamespaceService` as a small injected dependency where needed (as documented)
+  - Ensure lifecycle constructs it once and passes it only where explicitly required (e.g., SqlExecutor), while the service itself pulls internal deps (KalamSql) from AppContext
+- [ ] T460 (P) (US8) Provider change-event emission audit:
+  - Verify `UserTableAccess`, `SharedTableProvider`, and `StreamTableProvider` emit change events to `LiveQueryManager`
+  - Add a minimal test or instrumentation flag to validate fan-out occurs without extra allocations
+- [ ] T461 (P) (US8) RLS and CURRENT_USER wiring:
+  - Ensure `create_session_for_user()` sets up CURRENT_USER and any role/namespace context needed for row-level security checks
+  - Add a unit/integration test that demonstrates per-user isolation via CURRENT_USER()
+- [ ] T462 (P) (US8) Route and middleware DI cleanup:
+  - Remove any remaining dependency injection of stores/managers into route handlers
+  - Replace with `AppContext::get()` lookups and confirm via grep that no DB-layer Arcs are threaded through HTTP layers
+
+### Documentation and Observability
+
+- [ ] T453 (P) (US8) Update `AGENTS.md` with AppContext section (fields, getters, session usage); link to file paths
+- [ ] T454 (P) (US8) Update `specs/008-schema-consolidation/APPCONTEXT_COMPREHENSIVE_DESIGN.md` to reflect implementation status and code locations
+- [ ] T455 (P) (US8) Extend `system.stats` to include `app_context_inited` (bool) and counts for stores/managers/providers
+
+### Quality Gates
+
+- [ ] T456 (P) (US8) `cargo build --workspace` must pass after wiring
+- [ ] T457 (P) (US8) `cargo clippy -D warnings` must pass
+- [ ] T458 (P) (US8) `cargo test --workspace` green for units; integration tests that require server may be conditionally ignored
+
+**Checkpoint**: ✅ Phase 5B complete when AppContext is implemented with full getters, server lifecycle initializes it once, schedulers remain outside, services/executor compile using getters, tests validate singleton behavior, and build/lint/tests pass.
 - [x] T074 [P] [US2] ~~Write integration test in `backend/tests/test_column_ordering.rs` verifying ALTER TABLE ADD COLUMN preserves existing ordinal_position~~ **(✅ COMPLETE - test_alter_table_add_column_assigns_next_ordinal passes)**
 - [x] T075 [P] [US2] ~~Write integration test in `backend/tests/test_column_ordering.rs` verifying ALTER TABLE DROP COLUMN doesn't renumber remaining columns~~ **(✅ COMPLETE - test_alter_table_drop_column_preserves_ordinals passes)**
 - [x] T076 [US2] ~~Run `cargo test -p kalamdb-core --test test_unified_types --test test_column_ordering` and verify 100% pass rate~~ **(✅ COMPLETE - All 23 integration tests passing: 3 unified_types + 4 column_ordering + 6 schema_consolidation + 10 system table tests)**

@@ -2,8 +2,32 @@
 
 **Feature Branch**: `008-schema-consolidation`  
 **Created**: November 1, 2025  
+**Updated**: November 3, 2025 (Added User Story 8 - AppContext Consolidation)  
 **Status**: Draft  
 **Input**: User description: "Schema consolidation and unified data type system with comprehensive test fixing for Alpha release readiness"
+
+## 🚨 Critical Addition: AppContext Architectural Refactoring
+
+**User Story 8 (P0)** addresses a fundamental architectural issue discovered during Phase 10 analysis:
+
+**Problem**: Multiple Arc-wrapped instances of the same resources (KalamSql, stores, managers) are created and passed through layers, causing:
+- ~70% wasted memory (3× UserTableStore, 3× SharedTableStore, 2× KalamSql per request)
+- Constructor pollution (10+ parameter constructors, 8+ builder methods)
+- Test complexity (50+ lines of boilerplate per test)
+- Maintenance burden (adding a dependency requires updating 5+ files)
+
+**Solution**: AppContext singleton pattern
+- Single source of truth for all shared resources
+- Zero-parameter service constructors (stateless services)
+- 2-parameter SqlExecutor constructor (down from 10+ with 8 builders)
+- 2-line test setup (down from 50+ lines)
+- ~800 net lines of code removed
+
+**Impact**: This is a **P0 critical refactoring** that will save significant development effort in the future. While it requires touching ~40 files, the long-term benefits far outweigh the short-term cost. All existing tests will pass after refactoring - behavior is identical, only the wiring changes.
+
+**Timeline**: 4 days (well-defined phases with clear deliverables)
+
+See **User Story 8** below for complete implementation plan.
 
 ## Clarifications
 
@@ -581,6 +605,239 @@ The following are explicitly **not** included in this feature:
 
 These features may be considered for future releases after Alpha.
 
+---
+
+## User Story 8 - Application Context Consolidation (Priority: P0)
+
+**Status**: Critical architectural refactoring (2025-11-03)
+
+Developers need a single source of truth for shared application state instead of passing duplicate Arc-wrapped dependencies through multiple layers. Currently, KalamCore, SqlExecutor, and ApplicationComponents each maintain their own copies of stores, services, and managers, leading to ~70% redundant Arc allocations, complex constructor signatures, and maintenance burden. The system must consolidate all shared resources into a single AppContext singleton that provides global access to stores, services, and managers.
+
+**Why this priority**: This is **foundational infrastructure debt** that blocks efficient development:
+- **Memory Waste**: Multiple Arc wrappers for same instances (3× UserTableStore, 3× SharedTableStore, 2× KalamSql per request)
+- **API Pollution**: 10+ parameter constructors, 15+ `with_*()` builder methods on SqlExecutor
+- **Code Duplication**: Same initialization logic in lifecycle.rs, tests, and examples
+- **Testing Pain**: Every test must manually wire 10+ dependencies instead of calling AppContext::init()
+- **Maintenance Burden**: Adding a new shared resource requires updating 5+ files
+
+**Independent Test**: Can be fully tested by running existing test suite with AppContext-based architecture and verifying:
+1. All tests pass without modification (same behavior)
+2. Constructor calls reduced from 10+ params to 0-2 params
+3. Memory profiling shows ~70% reduction in Arc allocations
+4. Build time improves due to simpler dependency graphs
+
+**Acceptance Scenarios**:
+
+1. **Given** AppContext is initialized once at application startup, **When** any component needs access to stores or services, **Then** it calls AppContext::get() instead of storing its own Arc references
+
+2. **Given** AppContext contains all shared resources (KalamSql, UserTableStore, SharedTableStore, StreamTableStore, StorageBackend, LiveQueryManager, JobManager), **When** a service needs a dependency, **Then** it retrieves it from AppContext without constructor injection
+
+3. **Given** SqlExecutor is refactored to use AppContext, **When** creating a new SqlExecutor, **Then** constructor requires only 2 parameters (NamespaceService, SessionContext) instead of 10+ parameters and 8+ with_*() calls
+
+4. **Given** Services (UserTableService, SharedTableService, StreamTableService) are refactored, **When** creating service instances, **Then** services become stateless singletons with zero-parameter constructors (all state comes from AppContext)
+
+5. **Given** lifecycle.rs initialization, **When** bootstrapping application, **Then** AppContext::init(backend) is called once, and all subsequent components use AppContext::get()
+
+6. **Given** test setup code, **When** creating test fixtures, **Then** single create_test_app_context() call replaces 50+ lines of setup boilerplate
+
+7. **Given** memory profiling before and after AppContext refactoring, **When** measuring Arc allocation count for 1000 requests, **Then** Arc allocations reduce by ~70% (from 11,000 to ~3,300)
+
+8. **Given** ApplicationComponents struct in lifecycle.rs, **When** refactored to use AppContext, **Then** ApplicationComponents only contains HTTP-layer state (JwtAuth, RateLimiter, server handles) not core stores/services
+
+9. **Given** AppContext uses OnceCell for thread-safe singleton initialization, **When** multiple threads call AppContext::get() concurrently, **Then** all threads receive same Arc<AppContext> reference with no race conditions
+
+10. **Given** AppContext exposes getter methods for each resource, **When** components access resources, **Then** getters return Arc<T> clones (cheap reference count increment, zero allocation)
+
+**Architecture Change**:
+```rust
+// OLD: Multiple layers of Arc wrappers, complex constructors
+KalamCore { user_table_store, shared_table_store, stream_table_store }
+ApplicationComponents { session_factory, sql_executor, jwt_auth, rate_limiter, flush_scheduler, live_query_manager, stream_eviction_scheduler, rocks_db_adapter }
+SqlExecutor::new(namespace_service, session_context, user_table_service, shared_table_service, stream_table_service)
+    .with_table_deletion_service(...)
+    .with_storage_registry(...)
+    .with_job_manager(...)
+    .with_live_query_manager(...)
+    .with_stores(user_table_store, shared_table_store, stream_table_store, kalam_sql)
+    .with_password_complexity(...)
+    .with_storage_backend(...)
+    .with_schema_store(...)
+// Every component stores Arc<Store>, Arc<Service>, Arc<Manager>
+
+// NEW: Single AppContext singleton, minimal constructors
+AppContext::init(backend)?;  // Called once at startup
+let ctx = AppContext::get(); // Get global singleton anywhere
+
+SqlExecutor::new(namespace_service, session_context) // 2 params only
+UserTableService::new() // 0 params, stateless
+SharedTableService::new() // 0 params, stateless
+
+// Inside implementation:
+impl UserTableService {
+    pub fn create_table(&self, stmt: CreateTableStatement) -> Result<()> {
+        let ctx = AppContext::get();
+        let store = ctx.user_table_store();  // Arc<UserTableStore>
+        let kalam_sql = ctx.kalam_sql();     // Arc<KalamSql>
+        // Use stores without storing them as fields
+    }
+}
+```
+
+**Visual Architecture**:
+```
+BEFORE (Current):
+┌─────────────────────────────────────────────────────────────┐
+│ ApplicationComponents                                       │
+├─────────────────────────────────────────────────────────────┤
+│ - session_factory: Arc<DataFusionSessionFactory>           │
+│ - sql_executor: Arc<SqlExecutor>                           │
+│ - jwt_auth: Arc<JwtAuth>                                   │
+│ - rate_limiter: Arc<RateLimiter>                           │
+│ - flush_scheduler: Arc<FlushScheduler>                     │
+│ - live_query_manager: Arc<LiveQueryManager>                │
+│ - stream_eviction_scheduler: Arc<StreamEvictionScheduler>  │
+│ - rocks_db_adapter: Arc<RocksDbAdapter>                    │
+└─────────────────────────────────────────────────────────────┘
+           │
+           ├──────────────────────────────────────────┐
+           ▼                                          ▼
+┌─────────────────────────────┐    ┌──────────────────────────────┐
+│ SqlExecutor (17 fields!)    │    │ Services (each has stores)   │
+├─────────────────────────────┤    ├──────────────────────────────┤
+│ - user_table_store          │    │ UserTableService             │
+│ - shared_table_store        │    │ - kalam_sql: Arc<...>        │
+│ - stream_table_store        │    │ - user_table_store: Arc<...> │
+│ - kalam_sql                 │    │                              │
+│ - storage_backend           │    │ SharedTableService           │
+│ - jobs_table_provider       │    │ - kalam_sql: Arc<...>        │
+│ - users_table_provider      │    │ - shared_table_store: Arc<>  │
+│ - storage_registry          │    │                              │
+│ - job_manager               │    │ StreamTableService           │
+│ - live_query_manager        │    │ - kalam_sql: Arc<...>        │
+│ - schema_store              │    │ - stream_table_store: Arc<>  │
+│ - unified_cache             │    │                              │
+│ - table_deletion_service    │    └──────────────────────────────┘
+│ - ...                       │
+└─────────────────────────────┘
+
+PROBLEM: Same resources (KalamSql, stores) duplicated 3-4 times!
+         Each request allocates 11+ Arc instances
+         Constructor takes 10+ parameters + 8 .with_*() calls
+
+
+AFTER (AppContext):
+┌─────────────────────────────────────────────────────────────┐
+│ AppContext (Global Singleton)                               │
+├─────────────────────────────────────────────────────────────┤
+│ CORE STORES:                                                │
+│ - kalam_sql: Arc<KalamSql>                    ◄────────────┐│
+│ - user_table_store: Arc<UserTableStore>       ◄──────────┐ ││
+│ - shared_table_store: Arc<SharedTableStore>   ◄────────┐ │ ││
+│ - stream_table_store: Arc<StreamTableStore>   ◄──────┐ │ │ ││
+│ - storage_backend: Arc<dyn StorageBackend>           │ │ │ ││
+│                                                      │ │ │ ││
+│ MANAGERS:                                            │ │ │ ││
+│ - job_manager: Arc<dyn JobManager>                   │ │ │ ││
+│ - live_query_manager: Arc<LiveQueryManager>          │ │ │ ││
+│                                                      │ │ │ ││
+│ REGISTRIES & CACHES:                                 │ │ │ ││
+│ - storage_registry: Arc<StorageRegistry>             │ │ │ ││
+│ - unified_cache: Arc<SchemaCache>                    │ │ │ ││
+│                                                      │ │ │ ││
+│ SYSTEM PROVIDERS:                                    │ │ │ ││
+│ - jobs_provider: Arc<JobsTableProvider>              │ │ │ ││
+│ - users_provider: Arc<UsersTableProvider>            │ │ │ ││
+│ - schema_store: Arc<TableSchemaStore>                │ │ │ ││
+└──────────────────────────────────────────────────────┼─┼─┼─┼┘
+                                                       │ │ │ │
+         ┌─────────────────────────────────────────────┘ │ │ │
+         │                         ┌─────────────────────┘ │ │
+         │                         │           ┌───────────┘ │
+         │                         │           │     ┌───────┘
+         ▼                         ▼           ▼     ▼
+┌──────────────────┐  ┌──────────────────────────────────────┐
+│ SqlExecutor      │  │ Services (Stateless)                 │
+├──────────────────┤  ├──────────────────────────────────────┤
+│ - namespace      │  │ UserTableService::new()   (0 params) │
+│ - session        │  │   fn create_table() {                │
+│ (2 fields only!) │  │     let ctx = AppContext::get();     │
+└──────────────────┘  │     let store = ctx.user_table_...() │
+                      │   }                                  │
+┌──────────────────┐  │                                      │
+│ ApplicationComp  │  │ SharedTableService::new() (0 params) │
+├──────────────────┤  │ StreamTableService::new() (0 params) │
+│ - jwt_auth       │  │ TableDeletionService::new() (0 param)│
+│ - rate_limiter   │  └──────────────────────────────────────┘
+│ - flush_sched    │
+│ - stream_evict   │  BENEFIT: Every service/component gets
+│ (4 fields only!) │           resources from AppContext
+└──────────────────┘           → Zero duplication
+                               → Clean constructors
+                               → Easy testing
+```
+
+**Benefits**:
+- **Memory Efficiency**: ~70% reduction in Arc allocations (3× stores → 1× shared)
+- **Code Simplicity**: Constructors go from 10+ params to 0-2 params
+- **Test Simplicity**: Single create_test_app_context() helper for all tests
+- **Maintainability**: Add new resource in 1 place (AppContext), all code gets access
+- **Type Safety**: Singleton ensures exactly one instance, compile-time guarantee
+- **Thread Safety**: OnceCell provides atomic initialization, no race conditions
+
+**Migration Impact**:
+- **Files Modified**: ~40 files (lifecycle.rs, executor.rs, all services, all tests)
+- **Breaking Changes**: All service constructors, SqlExecutor API, test helpers
+- **Lines Added**: ~400 (AppContext + getters + docs)
+- **Lines Removed**: ~1,200 (duplicate Arc fields, builder methods, test boilerplate)
+- **Net Reduction**: ~800 lines of code
+
+---
+
+### User Story 8.1 – SchemaRegistry (P0): thin service over SchemaCache
+
+Problem
+- Callers need a single entry point to retrieve table schema and derived artifacts (Arrow schema, UserTableShared), with read-through behavior to the authoritative store. The low-level SchemaCache is excellent for concurrency, but it doesn’t orchestrate fetch-on-miss, derivations, or invalidation policy.
+
+Decision
+- Keep SchemaCache as the low-level, lock-free cache. Introduce SchemaRegistry as a tiny, memory-efficient facade that coordinates storage, caching, derivations, and invalidation.
+
+Responsibilities (all zero-copy via Arc):
+- get_table_data(TableId) -> Arc<CachedTableData>
+- get_table_definition(TableId) -> Arc<TableDefinition>
+- get_arrow_schema(TableId) -> Arc<datafusion::arrow::datatypes::SchemaRef>
+- get_user_table_shared(TableId) -> Arc<UserTableShared> (create once; cache in SchemaCache)
+- invalidate(TableId) on ALTER/DROP (evicts data + derived artifacts)
+- resolve_storage_path(TableId, Option<UserId>, Option<u32>) -> String (delegates to SchemaCache)
+
+Implementation sketch
+```rust
+pub struct SchemaRegistry {
+    cache: Arc<SchemaCache>,
+    system_store: Arc<TableSchemaStore>, // or Arc<dyn SystemTableStore<TableId, TableDefinition>>
+}
+
+impl SchemaRegistry {
+    pub async fn get_table_data(&self, id: &TableId) -> Result<Arc<CachedTableData>, KalamDbError> { /* read-through */ }
+    pub async fn get_table_definition(&self, id: &TableId) -> Result<Arc<TableDefinition>, KalamDbError> { /* Arc clone of inner */ }
+    pub async fn get_arrow_schema(&self, id: &TableId) -> Result<Arc<SchemaRef>, KalamDbError> { /* memoize derived */ }
+    pub async fn get_user_table_shared(&self, id: &TableId) -> Result<Arc<UserTableShared>, KalamDbError> { /* create-once */ }
+    pub fn invalidate(&self, id: &TableId) { self.cache.invalidate(id) }
+}
+```
+
+Memory/Perf notes
+- Single copy per table for heavy artifacts (definition, Arrow schema, UserTableShared). Callers only get Arc clones.
+- Derived Arrow schema memoized via OnceCell inside CachedTableData or a tiny DashMap keyed by TableId.
+- Hot-path operations remain O(1) DashMap lookups; no blocking locks.
+
+AppContext
+- Include Arc<SchemaRegistry> alongside Arc<SchemaCache>. Most callers use SchemaRegistry; internal tight loops can still use SchemaCache directly.
+
+Adoption plan
+- Phase 1: Implement SchemaRegistry and wire into AppContext (no call-site changes yet).
+- Phase 2: Migrate providers/services/executor to use SchemaRegistry for schema/derived artifacts.
+- Phase 3: Route all invalidation through SchemaRegistry; keep SchemaCache API available for advanced internals.
+
 ## Dependencies
 
 ### Internal Dependencies
@@ -597,25 +854,942 @@ These features may be considered for future releases after Alpha.
 - **Serde Serialization**: Schema models must support serde serialization for storage and API responses
 - **Bincode Serialization**: TableDefinition must support bincode for efficient EntityStore persistence
 - **DashMap Crate**: Lock-free HashMap for schema caching (already in dependencies)
+- **Once Cell Crate**: Thread-safe singleton initialization for AppContext (already in dependencies via tokio)
 
 ### Refactoring Sequence
 
 **Note**: This is an unreleased version - breaking changes are acceptable, no backward compatibility needed. Clean slate approach.
 
 1. **Phase 1**: Create new schema models in \`kalamdb-commons/src/models/schemas/\` (KalamDataType, TableDefinition, ColumnDefinition) with bincode/serde derives, comprehensive documentation
+2. **Phase 2**: Create AppContext singleton in \`kalamdb-core/src/app_context.rs\` with all shared resources (KalamSql, stores, managers, services) and introduce \`SchemaRegistry\` layered over \`SchemaCache\`
 3. **Phase 3**: Implement type conversion functions and caching infrastructure (memory-bounded DashMap), profile for memory efficiency
 
 4. **Phase 4**: Refactor kalamdb-sql parser to use new models and assign ordinal_position correctly, write integration tests for Story 2
 
 5. **Phase 5**: Update DataFusion table providers to sort columns by ordinal_position for SELECT *, verify column ordering tests
 
-6. **Phase 6**: Refactor kalamdb-core and kalamdb-api to consume schemas from EntityStore, remove ALL old model code immediately (no gradual deprecation)
+6. **Phase 6**: Refactor services to use AppContext instead of constructor injection (UserTableService, SharedTableService, StreamTableService, TableDeletionService)
 
-7. **Phase 7**: Fix all failing tests using new infrastructure, write integration tests for Story 3
+7. **Phase 7**: Refactor SqlExecutor to use AppContext, eliminate builder pattern with 8+ with_*() methods
 
-8. **Phase 8**: Implement schema caching with performance validation, write integration tests for Story 4
+8. **Phase 8**: Refactor lifecycle.rs and ApplicationComponents to use AppContext, remove redundant Arc fields
 
-9. **Phase 9**: Memory profiling and leak detection (valgrind/heaptrack), documentation review, final cleanup
+9. **Phase 9**: Update all tests to use create_test_app_context() helper, remove duplicate test setup code
+
+10. **Phase 10**: Fix all failing tests using new infrastructure, write integration tests for Stories 2-3
+
+11. **Phase 11**: Implement schema caching with performance validation, write integration tests for Story 4
+
+12. **Phase 12**: Memory profiling and leak detection (valgrind/heaptrack), verify ~70% Arc allocation reduction, documentation review, final cleanup
+
+## Implementation Plan: User Story 8 - AppContext Consolidation
+
+### Phase 1: AppContext Core Structure (Day 1 - 2 hours)
+
+**Goal**: Create AppContext singleton with all shared resources
+
+**Files to Create**:
+- `backend/crates/kalamdb-core/src/app_context.rs` (~300 lines)
+
+**Implementation**:
+```rust
+use std::sync::Arc;
+use once_cell::sync::OnceCell;
+
+/// Global application context (singleton)
+///
+/// Central repository for ALL shared application resources:
+/// - Stores (user tables, shared tables, stream tables)
+/// - Services (namespace, user table, shared table, stream table, deletion, backup, restore)
+/// - Managers (jobs, live queries)
+/// - Providers (all system table providers)
+/// - Registries (storage)
+/// - Caches (unified schema cache)
+/// - Factories (DataFusion session factory)
+/// - Schedulers (flush, stream eviction)
+pub struct AppContext {
+    // ============================================================================
+    // CORE DATABASE INFRASTRUCTURE
+    // ============================================================================
+    
+    /// KalamSQL adapter for system table access
+    pub(crate) kalam_sql: Arc<KalamSql>,
+    
+    /// Generic storage backend (RocksDB implementation)
+    pub(crate) storage_backend: Arc<dyn StorageBackend>,
+    
+    // ============================================================================
+    // TABLE STORES (EntityStore-based)
+    // ============================================================================
+    
+    /// User table store (per-user data isolation)
+    pub(crate) user_table_store: Arc<UserTableStore>,
+    
+    /// Shared table store (global data across namespace)
+    pub(crate) shared_table_store: Arc<SharedTableStore>,
+    
+    /// Stream table store (ephemeral event storage)
+    pub(crate) stream_table_store: Arc<StreamTableStore>,
+    
+    // ============================================================================
+    // DATAFUSION SESSION MANAGEMENT
+    // ============================================================================
+    
+    /// DataFusion session factory (creates SessionContext with custom functions)
+    pub(crate) session_factory: Arc<DataFusionSessionFactory>,
+    
+    /// Global base SessionContext with system schema registered
+    /// Used as template for creating per-request sessions
+    pub(crate) base_session_context: Arc<SessionContext>,
+    
+    // ============================================================================
+    // SYSTEM TABLE PROVIDERS (EntityStore v2)
+    // ============================================================================
+    
+    /// Users table provider (system.users)
+    pub(crate) users_provider: Arc<UsersTableProvider>,
+    
+    /// Jobs table provider (system.jobs)
+    pub(crate) jobs_provider: Arc<JobsTableProvider>,
+    
+    /// Namespaces table provider (system.namespaces)
+    pub(crate) namespaces_provider: Arc<NamespacesTableProvider>,
+    
+    /// Storages table provider (system.storages)
+    pub(crate) storages_provider: Arc<StoragesTableProvider>,
+    
+    /// Live queries table provider (system.live_queries)
+    pub(crate) live_queries_provider: Arc<LiveQueriesTableProvider>,
+    
+    /// Tables table provider (system.tables)
+    pub(crate) tables_provider: Arc<TablesTableProvider>,
+    
+    /// Audit logs table provider (system.audit_logs)
+    pub(crate) audit_logs_provider: Arc<AuditLogsTableProvider>,
+    
+    /// Stats virtual table provider (system.stats)
+    pub(crate) stats_provider: Arc<StatsTableProvider>,
+    
+    /// Information schema tables provider (information_schema.tables)
+    pub(crate) info_schema_tables_provider: Arc<InformationSchemaTablesProvider>,
+    
+    /// Information schema columns provider (information_schema.columns)
+    pub(crate) info_schema_columns_provider: Arc<InformationSchemaColumnsProvider>,
+    
+    // ============================================================================
+    // SCHEMA MANAGEMENT
+    // ============================================================================
+    
+    /// Table schema store (information_schema.tables EntityStore)
+    pub(crate) schema_store: Arc<TableSchemaStore>,
+    
+    /// Unified schema cache (Phase 10: replaces TableCache + SchemaCache)
+    pub(crate) unified_cache: Arc<SchemaCache>,
+    
+    // ============================================================================
+    // MANAGERS
+    // ============================================================================
+    
+    /// Job manager (background task execution)
+    pub(crate) job_manager: Arc<dyn JobManager>,
+    
+    /// Live query manager (WebSocket subscriptions)
+    pub(crate) live_query_manager: Arc<LiveQueryManager>,
+    
+    // ============================================================================
+    // REGISTRIES
+    // ============================================================================
+    
+    /// Storage registry (storage path template resolution)
+    pub(crate) storage_registry: Arc<StorageRegistry>,
+    
+    // ============================================================================
+    // SCHEDULERS (HTTP layer, not core DB)
+    // ============================================================================
+    // Note: FlushScheduler and StreamEvictionScheduler stay in ApplicationComponents
+    // because they need to be stopped during shutdown (HTTP lifecycle management)
+    
+    // ============================================================================
+    // CONFIGURATION
+    // ============================================================================
+    
+    /// Node ID for distributed coordination
+    pub(crate) node_id: NodeId,
+    
+    /// Default storage path
+    pub(crate) default_storage_path: String,
+}
+
+static APP_CONTEXT: OnceCell<Arc<AppContext>> = OnceCell::new();
+
+impl AppContext {
+    /// Initialize global context (call once at startup)
+    pub fn init(
+        backend: Arc<dyn StorageBackend>,
+        node_id: NodeId,
+        config: AppContextConfig,
+    ) -> Result<Arc<Self>, KalamDbError> {
+        // Initialize KalamSql
+        let kalam_sql = Arc::new(KalamSql::new(backend.clone())?);
+        
+        // Initialize stores (using KalamCore pattern)
+        let core = KalamCore::new(backend.clone())?;
+        
+        // Initialize DataFusion session factory and base context
+        let session_factory = Arc::new(DataFusionSessionFactory::new()?);
+        let base_session = session_factory.create_session();
+        
+        // Register system schema with base context (used as template)
+        let catalog = base_session.catalog("kalam")
+            .ok_or_else(|| KalamDbError::Other("kalam catalog not found".into()))?;
+        catalog.register_schema("system", config.system_schema.clone())?;
+        
+        // Initialize managers
+        let job_manager = Arc::new(TokioJobManager::new());
+        let live_query_manager = Arc::new(LiveQueryManager::new(
+            kalam_sql.clone(),
+            node_id.clone(),
+            Some(core.user_table_store.clone()),
+            Some(core.shared_table_store.clone()),
+            Some(core.stream_table_store.clone()),
+        ));
+        
+        // Initialize registry and cache
+        let storage_registry = Arc::new(StorageRegistry::new(
+            kalam_sql.clone(),
+            config.default_storage_path.clone(),
+        ));
+        let unified_cache = Arc::new(SchemaCache::new(
+            config.cache_size,
+            Some(storage_registry.clone()),
+        ));
+        
+        // Register ALL system tables and get providers
+        let (
+            users_provider,
+            jobs_provider,
+            namespaces_provider,
+            storages_provider,
+            live_queries_provider,
+            tables_provider,
+            audit_logs_provider,
+            stats_provider,
+            info_schema_tables_provider,
+            info_schema_columns_provider,
+            schema_store,
+        ) = crate::system_table_registration::register_all_system_tables(
+            &config.system_schema,
+            backend.clone(),
+        )?;
+        
+        let ctx = Arc::new(AppContext {
+            // Core infrastructure
+            kalam_sql,
+            storage_backend: backend,
+            
+            // Table stores
+            user_table_store: core.user_table_store,
+            shared_table_store: core.shared_table_store,
+            stream_table_store: core.stream_table_store,
+            
+            // DataFusion
+            session_factory,
+            base_session_context: Arc::new(base_session),
+            
+            // System table providers
+            users_provider,
+            jobs_provider,
+            namespaces_provider,
+            storages_provider,
+            live_queries_provider,
+            tables_provider,
+            audit_logs_provider,
+            stats_provider,
+            info_schema_tables_provider,
+            info_schema_columns_provider,
+            
+            // Schema management
+            schema_store,
+            unified_cache,
+            
+            // Managers
+            job_manager,
+            live_query_manager,
+            
+            // Registries
+            storage_registry,
+            
+            // Configuration
+            node_id,
+            default_storage_path: config.default_storage_path,
+        });
+        
+        APP_CONTEXT.set(ctx.clone())
+            .map_err(|_| KalamDbError::Other("AppContext already initialized".into()))?;
+        
+        Ok(ctx)
+    }
+    
+    /// Get global context (panics if not initialized)
+    pub fn get() -> Arc<Self> {
+        APP_CONTEXT.get()
+            .expect("AppContext not initialized - call AppContext::init() first")
+            .clone()
+    }
+    
+    /// Try to get global context (returns None if not initialized)
+    pub fn try_get() -> Option<Arc<Self>> {
+        APP_CONTEXT.get().cloned()
+    }
+    
+    // Getter methods (return cheap Arc clones)
+    
+    // Core infrastructure
+    pub fn kalam_sql(&self) -> Arc<KalamSql> { self.kalam_sql.clone() }
+    pub fn storage_backend(&self) -> Arc<dyn StorageBackend> { self.storage_backend.clone() }
+    
+    // Table stores
+    pub fn user_table_store(&self) -> Arc<UserTableStore> { self.user_table_store.clone() }
+    pub fn shared_table_store(&self) -> Arc<SharedTableStore> { self.shared_table_store.clone() }
+    pub fn stream_table_store(&self) -> Arc<StreamTableStore> { self.stream_table_store.clone() }
+    
+    // DataFusion
+    pub fn session_factory(&self) -> Arc<DataFusionSessionFactory> { self.session_factory.clone() }
+    pub fn base_session_context(&self) -> Arc<SessionContext> { self.base_session_context.clone() }
+    
+    /// Create a new per-request SessionContext (clones base context with fresh runtime config)
+    pub fn create_session(&self) -> Arc<SessionContext> {
+        Arc::new(self.session_factory.create_session())
+    }
+    
+    /// Create a session with user context (registers CURRENT_USER() function)
+    pub fn create_session_for_user(&self, user_id: UserId, namespace_id: NamespaceId) -> (Arc<SessionContext>, KalamSessionState) {
+        let (ctx, state) = self.session_factory.create_session_for_user(user_id, namespace_id);
+        (Arc::new(ctx), state)
+    }
+    
+    // System table providers
+    pub fn users_provider(&self) -> Arc<UsersTableProvider> { self.users_provider.clone() }
+    pub fn jobs_provider(&self) -> Arc<JobsTableProvider> { self.jobs_provider.clone() }
+    pub fn namespaces_provider(&self) -> Arc<NamespacesTableProvider> { self.namespaces_provider.clone() }
+    pub fn storages_provider(&self) -> Arc<StoragesTableProvider> { self.storages_provider.clone() }
+    pub fn live_queries_provider(&self) -> Arc<LiveQueriesTableProvider> { self.live_queries_provider.clone() }
+    pub fn tables_provider(&self) -> Arc<TablesTableProvider> { self.tables_provider.clone() }
+    pub fn audit_logs_provider(&self) -> Arc<AuditLogsTableProvider> { self.audit_logs_provider.clone() }
+    pub fn stats_provider(&self) -> Arc<StatsTableProvider> { self.stats_provider.clone() }
+    pub fn info_schema_tables_provider(&self) -> Arc<InformationSchemaTablesProvider> { self.info_schema_tables_provider.clone() }
+    pub fn info_schema_columns_provider(&self) -> Arc<InformationSchemaColumnsProvider> { self.info_schema_columns_provider.clone() }
+    
+    // Schema management
+    pub fn schema_store(&self) -> Arc<TableSchemaStore> { self.schema_store.clone() }
+    pub fn unified_cache(&self) -> Arc<SchemaCache> { self.unified_cache.clone() }
+    
+    // Managers
+    pub fn job_manager(&self) -> Arc<dyn JobManager> { self.job_manager.clone() }
+    pub fn live_query_manager(&self) -> Arc<LiveQueryManager> { self.live_query_manager.clone() }
+    
+    // Registries
+    pub fn storage_registry(&self) -> Arc<StorageRegistry> { self.storage_registry.clone() }
+    
+    // Configuration
+    pub fn node_id(&self) -> &NodeId { &self.node_id }
+    pub fn default_storage_path(&self) -> &str { &self.default_storage_path }
+}
+
+/// Configuration for AppContext initialization
+pub struct AppContextConfig {
+    pub default_storage_path: String,
+    pub cache_size: usize,
+    pub system_schema: Arc<MemorySchemaProvider>,
+}
+```
+
+**Tests**:
+- `test_app_context_init_once()` - Verify singleton initialization
+- `test_app_context_get_panics_if_not_init()` - Verify panic behavior
+- `test_app_context_getters()` - Verify all getters return valid Arc
+- `test_app_context_thread_safe()` - Verify concurrent access
+
+**Deliverable**: AppContext compiles, tests pass
+
+---
+
+### Phase 2: Refactor Services (Day 1 - 3 hours)
+
+**Goal**: Make services stateless, use AppContext for dependencies
+
+**Files to Modify**:
+- `backend/crates/kalamdb-core/src/services/user_table_service.rs`
+- `backend/crates/kalamdb-core/src/services/shared_table_service.rs`
+- `backend/crates/kalamdb-core/src/services/stream_table_service.rs`
+- `backend/crates/kalamdb-core/src/services/table_deletion_service.rs`
+- `backend/crates/kalamdb-core/src/services/namespace_service.rs`
+
+**Before**:
+```rust
+pub struct UserTableService {
+    kalam_sql: Arc<KalamSql>,
+    user_table_store: Arc<UserTableStore>,
+}
+
+impl UserTableService {
+    pub fn new(kalam_sql: Arc<KalamSql>, user_table_store: Arc<UserTableStore>) -> Self {
+        Self { kalam_sql, user_table_store }
+    }
+}
+```
+
+**After**:
+```rust
+pub struct UserTableService;
+
+impl UserTableService {
+    pub fn new() -> Self {
+        Self
+    }
+    
+    pub fn create_table(&self, stmt: CreateTableStatement) -> Result<(), KalamDbError> {
+        let ctx = AppContext::get();
+        let kalam_sql = ctx.kalam_sql();
+        let user_table_store = ctx.user_table_store();
+        
+        // Use kalam_sql and user_table_store without storing them
+        // ... existing logic unchanged ...
+    }
+}
+```
+
+**Pattern**: For each service:
+1. Remove all Arc<Store> and Arc<Manager> fields
+2. Make `new()` take zero parameters
+3. Call `AppContext::get()` at start of each method
+4. Extract needed resources via getters
+
+**Tests**: Update service tests to use AppContext:
+```rust
+fn create_test_service() -> UserTableService {
+    UserTableService::new()  // No params needed!
+}
+```
+
+**Deliverable**: All 5 services refactored, tests pass
+
+---
+
+### Phase 3: Refactor SqlExecutor (Day 2 - 4 hours)
+
+**Goal**: Simplify SqlExecutor constructor, eliminate builder pattern
+
+**Files to Modify**:
+- `backend/crates/kalamdb-core/src/sql/executor.rs` (~5000 lines)
+
+**Before** (current nightmare):
+```rust
+pub struct SqlExecutor {
+    namespace_service: Arc<NamespaceService>,
+    session_context: Arc<SessionContext>,
+    user_table_service: Arc<UserTableService>,
+    shared_table_service: Arc<SharedTableService>,
+    stream_table_service: Arc<StreamTableService>,
+    table_deletion_service: Option<Arc<TableDeletionService>>,
+    user_table_store: Option<Arc<UserTableStore>>,
+    shared_table_store: Option<Arc<SharedTableStore>>,
+    stream_table_store: Option<Arc<StreamTableStore>>,
+    kalam_sql: Option<Arc<KalamSql>>,
+    storage_backend: Option<Arc<dyn StorageBackend>>,
+    jobs_table_provider: Option<Arc<JobsTableProvider>>,
+    users_table_provider: Option<Arc<UsersTableProvider>>,
+    storage_registry: Option<Arc<StorageRegistry>>,
+    job_manager: Option<Arc<dyn JobManager>>,
+    live_query_manager: Option<Arc<LiveQueryManager>>,
+    schema_store: Option<Arc<TableSchemaStore>>,
+    unified_cache: Option<Arc<SchemaCache>>,
+    // ... 17 fields total!
+}
+```
+
+**After** (clean):
+```rust
+pub struct SqlExecutor {
+    namespace_service: Arc<NamespaceService>,
+    session_context: Arc<SessionContext>,
+    session_factory: DataFusionSessionFactory,
+    enforce_password_complexity: bool,  // Config-only field
+}
+
+impl SqlExecutor {
+    pub fn new(
+        namespace_service: Arc<NamespaceService>,
+        session_context: Arc<SessionContext>,
+    ) -> Self {
+        Self {
+            namespace_service,
+            session_context,
+            session_factory: DataFusionSessionFactory::default(),
+            enforce_password_complexity: false,
+        }
+    }
+    
+    pub fn with_password_complexity(mut self, enforce: bool) -> Self {
+        self.enforce_password_complexity = enforce;
+        self
+    }
+    
+    // All 8 other with_*() methods DELETED
+    
+    pub async fn execute(&self, sql: &str, exec_ctx: ExecutionContext) -> Result<ExecutionResult> {
+        let ctx = AppContext::get();
+        
+        // Get resources as needed
+        let kalam_sql = ctx.kalam_sql();
+        let user_table_store = ctx.user_table_store();
+        let job_manager = ctx.job_manager();
+        // ... etc
+        
+        // Existing logic unchanged
+    }
+}
+```
+
+**Changes**:
+1. Remove 13 Option<Arc<T>> fields
+2. Remove 8 with_*() builder methods
+3. Add AppContext::get() calls in execute() and other methods
+4. Keep only NamespaceService and SessionContext (not available globally)
+
+**Tests**: Update executor tests:
+```rust
+fn create_test_executor() -> SqlExecutor {
+    let ns_service = Arc::new(NamespaceService::new(AppContext::get().kalam_sql()));
+    let session = Arc::new(create_session());
+    SqlExecutor::new(ns_service, session)  // Clean!
+}
+```
+
+**Deliverable**: SqlExecutor simplified, 477 tests still pass
+
+---
+
+### Phase 3A: Stateless SqlExecutor (memory-focused revision)
+
+To further reduce per-request memory and ensure no accidental session retention inside the executor, adopt a stateless executor pattern.
+
+Key changes:
+- Remove SessionContext field from SqlExecutor; do not store per-request state inside the executor.
+- All methods accept a reference to the caller-provided SessionContext.
+- Keep SqlExecutor as a lightweight, shareable service (one Arc in AppContext or constructed on-demand).
+
+Revised API (illustrative):
+```rust
+pub struct SqlExecutor;
+
+impl SqlExecutor {
+    pub fn new() -> Self { SqlExecutor }
+
+    pub async fn execute(
+        &self,
+        session: &SessionContext,
+        sql: &str,
+        exec_ctx: ExecutionContext,
+    ) -> Result<ExecutionResult> {
+        let ctx = AppContext::get();
+        // Fetch shared dependencies on-demand
+        let _kalam_sql = ctx.kalam_sql();
+        let _user_store = ctx.user_table_store();
+        let _job_mgr = ctx.job_manager();
+        // ... existing logic unchanged ...
+        todo!()
+    }
+}
+```
+
+Per-request footprint:
+- Only the SessionContext and minimal per-request provider wrappers (UserTableAccess) are allocated.
+- SqlExecutor is shared and stateless → zero growth per request.
+
+Rationale:
+- We already require a per-request SessionContext for CURRENT_USER-bound UDFs and RLS.
+- Stateless executor prevents cross-request state leaks and cuts memory.
+
+Adoption:
+- Route handlers/tests create a per-request SessionContext via SessionFactory and pass it to SqlExecutor::execute().
+
+---
+
+### Phase 4: Refactor lifecycle.rs (Day 2 - 2 hours)
+
+**Goal**: Use AppContext in bootstrap, simplify ApplicationComponents
+
+**Files to Modify**:
+- `backend/src/lifecycle.rs` (~500 lines)
+
+**Before**:
+```rust
+pub struct ApplicationComponents {
+    pub session_factory: Arc<DataFusionSessionFactory>,
+    pub sql_executor: Arc<SqlExecutor>,
+    pub jwt_auth: Arc<JwtAuth>,
+    pub rate_limiter: Arc<RateLimiter>,
+    pub flush_scheduler: Arc<FlushScheduler>,
+    pub live_query_manager: Arc<LiveQueryManager>,
+    pub stream_eviction_scheduler: Arc<StreamEvictionScheduler>,
+    pub rocks_db_adapter: Arc<RocksDbAdapter>,
+}
+
+pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
+    // 200+ lines of initialization
+    let kalam_sql = Arc::new(KalamSql::new(backend.clone())?);
+    let core = KalamCore::new(backend.clone())?;
+    let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
+    // ... 50 more lines ...
+}
+```
+
+**After**:
+```rust
+pub struct ApplicationComponents {
+    // Only HTTP-layer state (not core database state)
+    pub jwt_auth: Arc<JwtAuth>,
+    pub rate_limiter: Arc<RateLimiter>,
+    pub flush_scheduler: Arc<FlushScheduler>,
+    pub stream_eviction_scheduler: Arc<StreamEvictionScheduler>,
+}
+
+pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
+    // Initialize RocksDB
+    let db = init_rocksdb(&config)?;
+    let backend = Arc::new(RocksDBBackend::new(db));
+    
+    // Create DataFusion session for system table registration
+    let session_factory = DataFusionSessionFactory::new()?;
+    let session = session_factory.create_session();
+    let system_schema = Arc::new(MemorySchemaProvider::new());
+    
+    // Register system schema with DataFusion
+    let catalog = session.catalog("kalam").expect("kalam catalog");
+    catalog.register_schema("system", system_schema.clone())?;
+    
+    // Initialize AppContext (ONE call, all resources)
+    let node_id = NodeId::new(config.server.node_id.clone());
+    let ctx = AppContext::init(
+        backend,
+        node_id,
+        AppContextConfig {
+            default_storage_path: config.storage.default_storage_path.clone(),
+            cache_size: 10000,
+            system_schema,
+        },
+    )?;
+    
+    // Seed default storage (uses AppContext)
+    seed_default_storage(config)?;
+    
+    // Create HTTP-layer components
+    let jwt_auth = Arc::new(JwtAuth::new(config.auth.jwt_secret.clone(), Algorithm::HS256));
+    let rate_limiter = Arc::new(RateLimiter::with_config(/* ... */));
+    let flush_scheduler = Arc::new(FlushScheduler::new(
+        ctx.job_manager(),
+        Duration::from_secs(5),
+    ).with_jobs_provider(ctx.jobs_provider()));
+    
+    let stream_eviction_scheduler = Arc::new(StreamEvictionScheduler::new(/* ... */));
+    
+    // Start schedulers
+    flush_scheduler.start().await?;
+    stream_eviction_scheduler.start().await?;
+    
+    Ok(ApplicationComponents {
+        jwt_auth,
+        rate_limiter,
+        flush_scheduler,
+        stream_eviction_scheduler,
+    })
+}
+```
+
+**Changes**:
+1. Remove session_factory, sql_executor, live_query_manager, rocks_db_adapter from ApplicationComponents
+2. Initialize AppContext with single call
+3. Create SqlExecutor in route handlers on-demand (it's now cheap!)
+4. Simplify bootstrap by ~100 lines
+
+**Deliverable**: Server starts, all HTTP endpoints work
+
+---
+
+### Phase 5: Refactor Tests (Day 3 - 3 hours)
+
+**Goal**: Create test utility, update all tests
+
+**Files to Create**:
+- `backend/crates/kalamdb-core/src/test_utils.rs` (~150 lines)
+
+**Implementation**:
+```rust
+use once_cell::sync::OnceCell;
+
+static TEST_CONTEXT: OnceCell<Arc<AppContext>> = OnceCell::new();
+
+/// Create or get test AppContext (singleton per test process)
+pub fn create_test_app_context() -> Arc<AppContext> {
+    TEST_CONTEXT.get_or_init(|| {
+        let test_db = TestDb::new(&[
+            "system_users",
+            "system_tables",
+            "information_schema_tables",
+            "user_tables",
+            "shared_tables",
+            "stream_tables",
+        ]).expect("Failed to create test DB");
+        
+        let backend = Arc::new(RocksDBBackend::new(test_db.db));
+        let session_factory = DataFusionSessionFactory::new().unwrap();
+        let session = session_factory.create_session();
+        let system_schema = Arc::new(MemorySchemaProvider::new());
+        
+        session.catalog("kalam").unwrap()
+            .register_schema("system", system_schema.clone()).unwrap();
+        
+        AppContext::init(
+            backend,
+            NodeId::new("test-node"),
+            AppContextConfig {
+                default_storage_path: "/tmp/test".into(),
+                cache_size: 1000,
+                system_schema,
+            },
+        ).expect("Failed to init test AppContext")
+    }).clone()
+}
+
+/// Reset test context (for tests that need clean state)
+pub fn reset_test_context() {
+    // Note: Can't actually reset OnceCell, so tests must be idempotent
+    // or use unique identifiers (namespaces, table names)
+}
+```
+
+**Files to Update** (~30 test files):
+- `backend/crates/kalamdb-core/src/services/user_table_service.rs`
+- `backend/crates/kalamdb-core/src/services/shared_table_service.rs`
+- `backend/crates/kalamdb-core/src/services/stream_table_service.rs`
+- `backend/crates/kalamdb-core/src/sql/executor.rs`
+- `backend/tests/*.rs` (all integration tests)
+
+**Pattern**:
+```rust
+// Before (50 lines):
+fn create_test_service() -> (UserTableService, TestDb) {
+    let test_db = TestDb::new(&["system_tables", "user_tables"]).unwrap();
+    let backend = Arc::new(RocksDBBackend::new(test_db.db.clone()));
+    let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
+    let user_table_store = Arc::new(UserTableStore::new(backend, "user_tables"));
+    let service = UserTableService::new(kalam_sql, user_table_store);
+    (service, test_db)
+}
+
+// After (2 lines):
+fn create_test_service() -> UserTableService {
+    create_test_app_context();  // Ensure initialized
+    UserTableService::new()
+}
+```
+
+**Deliverable**: All tests updated, pass with new pattern
+
+---
+
+### Phase 6: Update Route Handlers (Day 3 - 2 hours)
+
+**Goal**: Simplify route handler initialization
+
+**Files to Modify**:
+- `backend/src/routes.rs`
+- `backend/crates/kalamdb-api/src/routes/sql.rs`
+- `backend/crates/kalamdb-api/src/routes/ws.rs`
+
+**Before**:
+```rust
+async fn execute_sql(
+    sql_executor: web::Data<Arc<SqlExecutor>>,
+    // ... other params
+) -> Result<HttpResponse> {
+    // Use injected sql_executor
+}
+```
+
+**After**:
+```rust
+async fn execute_sql(
+    // No sql_executor injection needed!
+    // ... other params
+) -> Result<HttpResponse> {
+    let ctx = AppContext::get();
+    
+    // Create SqlExecutor on demand (cheap now!)
+    let ns_service = Arc::new(NamespaceService::new(ctx.kalam_sql()));
+    let session_factory = DataFusionSessionFactory::new()?;
+    let session = Arc::new(session_factory.create_session());
+    let sql_executor = SqlExecutor::new(ns_service, session);
+    
+    // Or even better: make SqlExecutor a method on AppContext
+    let sql_executor = ctx.create_sql_executor()?;
+}
+```
+
+**Alternative** (add to AppContext):
+```rust
+impl AppContext {
+    pub fn create_sql_executor(&self) -> Result<SqlExecutor> {
+        let ns_service = Arc::new(NamespaceService::new(self.kalam_sql()));
+        let session_factory = DataFusionSessionFactory::new()?;
+        let session = Arc::new(session_factory.create_session());
+        Ok(SqlExecutor::new(ns_service, session))
+    }
+}
+```
+
+**Deliverable**: Route handlers simplified, server works
+
+---
+
+### Phase 7: Documentation & Cleanup (Day 4 - 2 hours)
+
+**Goal**: Document pattern, clean up old code
+
+**Tasks**:
+1. Add comprehensive docs to `app_context.rs` (examples, thread safety notes)
+2. Update AGENTS.md with AppContext pattern
+3. Delete KalamCore struct (merged into AppContext)
+4. Delete ApplicationComponents old fields
+5. Run clippy, fix all warnings
+6. Run memory profiler, verify Arc reduction
+
+**Documentation**:
+```rust
+/// # AppContext - Global Application State Singleton
+///
+/// AppContext provides centralized access to all shared application resources:
+/// - Database stores (user tables, shared tables, stream tables)
+/// - Managers (jobs, live queries)
+/// - Caches (unified schema cache)
+/// - System table providers
+///
+/// # Thread Safety
+/// AppContext uses OnceCell for thread-safe singleton initialization.
+/// Multiple threads can call `get()` concurrently - all receive the same instance.
+///
+/// # Usage Pattern
+/// ```
+/// // In main.rs or lifecycle.rs (called once):
+/// let ctx = AppContext::init(backend, node_id, config)?;
+///
+/// // Anywhere else in the code:
+/// let ctx = AppContext::get();
+/// let store = ctx.user_table_store();  // Arc<UserTableStore>
+/// ```
+///
+/// # Memory Efficiency
+/// Before AppContext: 3× Arc<UserTableStore> per request (SqlExecutor + Service + Handler)
+/// After AppContext: 1× Arc<UserTableStore> shared globally (70% reduction)
+```
+
+**Deliverable**: Docs complete, old code removed
+
+---
+
+### Testing Strategy
+
+**Unit Tests** (per phase):
+- Phase 1: AppContext initialization, getters, thread safety
+- Phase 2: Services work with AppContext
+- Phase 3: SqlExecutor simplified constructor
+- Phase 5: Test utilities work correctly
+
+**Integration Tests** (end-to-end):
+- All existing backend tests pass (477 tests)
+- All CLI tests pass
+- All WASM SDK tests pass
+- Server starts and accepts requests
+- Concurrent request handling works
+
+**Performance Tests**:
+- Memory profiling: Verify ~70% Arc reduction
+- Benchmark: AppContext::get() latency (<1μs)
+- Load test: 1000 concurrent requests, stable memory
+
+**Rollback Plan**:
+If critical bugs found:
+1. Each phase is a separate commit
+2. Can revert to previous phase
+3. AppContext is additive - doesn't break existing code until services are refactored
+
+---
+
+### Success Metrics
+
+**Code Metrics**:
+- [ ] Lines removed: ~1,200 (builder methods, Arc fields, test boilerplate)
+- [ ] Lines added: ~400 (AppContext + docs)
+- [ ] Net reduction: ~800 lines
+- [ ] Files modified: ~40
+- [ ] Constructor params reduced: 10+ params → 0-2 params (>80% reduction)
+
+**Performance Metrics**:
+- [ ] Arc allocations: 70% reduction (11,000 → 3,300 for 1000 requests)
+- [ ] AppContext::get() latency: <1μs
+- [ ] Memory usage: Stable under load (no leaks)
+- [ ] Test suite time: <5% slower (AppContext initialization overhead)
+
+**Quality Metrics**:
+- [ ] All 477 kalamdb-core tests pass
+- [ ] All CLI tests pass
+- [ ] All WASM SDK tests pass
+- [ ] Zero clippy warnings
+- [ ] Zero unsafe code in AppContext
+
+---
+
+---
+
+### Recommended Execution Order
+
+Given the interdependencies, here's the optimal execution sequence:
+
+**Week 1: Foundation**
+- Day 1-2: **User Story 8 Phase 1-2** (AppContext + Services + SchemaRegistry) - Foundation for everything
+- Day 3-4: **User Story 8 Phase 3-4** (SqlExecutor + lifecycle.rs) - Core architecture
+
+**Week 2: Integration & Testing**  
+- Day 1-2: **User Story 8 Phase 5-7** (Tests + Documentation) - Stabilize AppContext
+- Day 3-4: **User Story 1** (Schema Consolidation) - Build on stable foundation
+- Day 5: **User Story 2** (Unified Data Types) - Parallel with US1
+
+**Week 3: Quality & Performance**
+- Day 1-2: **User Story 3** (Test Suite Completion) - Fix all tests
+- Day 3: **User Story 4** (Schema Caching) - Performance optimization
+- Day 4: **User Story 7** (Cache Consolidation) - Final memory optimization
+- Day 5: **User Story 5** (P0 Datatypes) - Critical missing types
+
+**Week 4: Validation**
+- Day 1-2: **User Story 6** (CLI Smoke Tests) - End-to-end validation
+- Day 3-4: Integration testing, performance profiling, documentation
+- Day 5: Alpha release preparation
+
+**Why This Order**:
+1. AppContext first eliminates the "wiring hell" that would make subsequent refactoring painful
+2. Schema consolidation builds on stable AppContext foundation
+3. Data types integrate with consolidated schemas
+4. Tests validate everything works together
+5. Caching optimizes the validated system
+6. Smoke tests prove production readiness
+
+**Parallel Work Opportunities**:
+- User Story 2 (Data Types) can be developed in parallel with User Story 1 (Schemas)
+- User Story 5 (P0 Datatypes) can be prototyped while waiting for schema consolidation
+- Documentation can be written incrementally throughout
+
+---
 
 ## Notes
 
