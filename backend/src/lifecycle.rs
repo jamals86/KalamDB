@@ -101,25 +101,10 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     let stream_table_store = core.stream_table_store.clone();
 
     let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
-    let user_table_service = Arc::new(UserTableService::new(
-        kalam_sql.clone(),
-        user_table_store.clone(),
-    ));
-    let shared_table_service = Arc::new(SharedTableService::new(
-        shared_table_store.clone(),
-        kalam_sql.clone(),
-        config.storage.default_storage_path.clone(),
-    ));
-    let stream_table_service = Arc::new(StreamTableService::new(
-        stream_table_store.clone(),
-        kalam_sql.clone(),
-    ));
-    let table_deletion_service = Arc::new(TableDeletionService::new(
-        user_table_store.clone(),
-        shared_table_store.clone(),
-        stream_table_store.clone(),
-        kalam_sql.clone(),
-    ));
+    let user_table_service = Arc::new(UserTableService::new());
+    let shared_table_service = Arc::new(SharedTableService::new());
+    let stream_table_service = Arc::new(StreamTableService::new());
+    let table_deletion_service = Arc::new(TableDeletionService::new());
 
     // DataFusion session factory and base context
     let session_factory = Arc::new(DataFusionSessionFactory::new()?);
@@ -140,7 +125,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         .expect("Failed to register system schema");
 
     // Register all system tables using centralized function (EntityStore-based v2 providers)
-    let (jobs_provider, schema_store) =
+    let providers =
         kalamdb_core::system_table_registration::register_system_tables(
             &system_schema,
             backend.clone(),
@@ -156,14 +141,21 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         7
     );
 
-    // Storage registry and SQL executor
+    // Storage registry (needed before SchemaCache)
     let storage_registry = Arc::new(StorageRegistry::new(
         kalam_sql.clone(),
         config.storage.default_storage_path.clone(),
     ));
 
+    // Initialize SchemaCache (Phase 10 unified cache)
+    // Use default max_size of 1000 tables, pass storage_registry for path resolution
+    let schema_cache = Arc::new(kalamdb_core::catalog::SchemaCache::new(
+        1000,
+        Some(storage_registry.clone()),
+    ));
+
     // Create job manager first
-    let job_manager = Arc::new(TokioJobManager::new());
+    let job_manager: Arc<dyn JobManager> = Arc::new(TokioJobManager::new());
 
     // Live query manager (per-node) - use configured node_id
     let node_id = kalamdb_commons::NodeId::new(config.server.node_id.clone());
@@ -176,10 +168,32 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     ));
     info!("LiveQueryManager initialized with node_id: {}", node_id);
 
+    // Initialize AppContext singleton (Phase 5, T204)
+    let _app_context = kalamdb_core::app_context::AppContext::init(
+        schema_cache.clone(),
+        user_table_store.clone(),
+        shared_table_store.clone(),
+        stream_table_store.clone(),
+        kalam_sql.clone(),
+        backend.clone(),
+        providers.schema_store.clone(),
+        job_manager.clone(),
+        live_query_manager.clone(),
+        storage_registry.clone(),
+        session_factory.clone(),
+        session_context.clone(),
+        providers.users_provider.clone(),
+        providers.jobs_provider.clone(),
+        providers.namespaces_provider.clone(),
+        providers.storages_provider.clone(),
+        providers.live_queries_provider.clone(),
+        providers.tables_provider.clone(),
+    );
+    info!("AppContext initialized with all stores, managers, registries, and providers");
+
     let sql_executor = Arc::new(
         SqlExecutor::new(
             namespace_service.clone(),
-            session_context.clone(),
             user_table_service.clone(),
             shared_table_service.clone(),
             stream_table_service.clone(),
@@ -196,7 +210,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         )
         .with_password_complexity(config.auth.enforce_password_complexity)
         .with_storage_backend(backend.clone())
-        .with_schema_store(schema_store), // Phase 10: schema_cache is part of unified_cache now
+        .with_schema_store(providers.schema_store), // Phase 10: schema_cache is part of unified_cache now
     );
 
     info!(
@@ -231,12 +245,12 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     // Flush scheduler
     let flush_scheduler = Arc::new(
         FlushScheduler::new(job_manager.clone(), std::time::Duration::from_secs(5))
-            .with_jobs_provider(jobs_provider.clone()),
+            .with_jobs_provider(providers.jobs_provider.clone()),
     );
 
     // Job executor for stream eviction
     let job_executor = Arc::new(JobExecutor::new(
-        jobs_provider.clone(),
+        providers.jobs_provider.clone(),
            node_id.clone(),
     ));
 

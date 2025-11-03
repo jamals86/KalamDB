@@ -6,6 +6,7 @@
 pub mod arrow_schema;
 pub mod projection;
 pub mod system_columns;
+pub mod registry;
 
 pub use arrow_schema::ArrowSchemaWithOptions;
 pub use projection::{project_batch, schemas_compatible};

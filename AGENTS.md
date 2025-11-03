@@ -171,6 +171,30 @@ cargo test -p kalamdb-sql
     - Modified: executor.rs (user table registration uses cached UserTableShared pattern)
     - Tests: Updated 10 test functions to use create_test_user_table_shared() helper
   - **Memory Optimization**: Eliminates N × allocations → 1 shared instance per table (handlers, defaults cached once)
+- 2025-11-03: **Phase 5: AppContext + SchemaRegistry + Stateless Executor (T200-T202)** - ✅ **COMPLETE** (3/3 core tasks, 100%):
+  - **T200 SchemaRegistry**: Facade over SchemaCache with read-through API (backend/crates/kalamdb-core/src/schema/registry.rs)
+    - Methods: get_table_data(), get_table_definition(), get_arrow_schema() (memoized), get_user_table_shared(), invalidate()
+    - DashMap-based Arrow schema memoization for zero-allocation repeated access
+  - **T201 AppContext Wiring**: SchemaRegistry integrated into AppContext singleton (backend/crates/kalamdb-core/src/app_context.rs)
+    - Field: schema_registry: Arc<SchemaRegistry>
+    - Getter: schema_registry() -> Arc<SchemaRegistry>
+    - TODO: Remove direct schema_cache field after full migration (tracked in T204)
+  - **T202 Stateless SqlExecutor**: Removed stored SessionContext field, converted to per-request parameters
+    - **Refactored 25 Handler Methods**: All execute_* methods now take (&SessionContext, &str, &ExecutionContext) instead of (sql, Option<&UserId>)
+    - **Updated Methods**: execute_create_namespace, execute_show_namespaces, execute_show_tables, execute_alter_namespace, execute_drop_namespace, execute_show_storages, execute_create_storage, execute_alter_storage, execute_drop_storage, execute_describe_table, execute_show_table_stats, execute_create_table, execute_alter_table, execute_drop_table, execute_flush_table, execute_flush_all_tables, execute_create_user, execute_alter_user, execute_drop_user, execute_kill_job, execute_kill_live_query, execute_subscribe, execute_update, execute_delete, execute_datafusion_query_with_tables
+    - **Constructor Simplified**: SqlExecutor::new() takes 4 params (removed session_context parameter)
+    - **Helper Methods**: register_table_with_datafusion() now takes session parameter
+    - **ExecutionContext Pattern**: Replaced self.create_execution_context(user_id)? with direct exec_ctx parameter usage
+    - **Authorization Updates**: Changed ctx.is_admin() → exec_ctx.is_admin(), ctx.user_role → exec_ctx.user_role, user_id → exec_ctx.user_id
+    - **Test Updates**: Created create_test_session() and create_test_exec_ctx() helpers, updated 6 test methods
+  - **Build Status**: kalamdb-core compiles cleanly with 9 warnings (unused imports/variables only)
+  - **Files Modified**: 
+    - backend/crates/kalamdb-core/src/sql/executor.rs (4,953 lines - main refactor)
+    - backend/crates/kalamdb-core/src/schema/registry.rs (import fix)
+    - Test helpers and 6 executor test methods updated
+  - **Architecture Benefits**: Memory-efficient (no stored session), thread-safe (stateless), easier testing (per-request mocks)
+  - **Next Steps**: T203 (route handler updates), T204 (stateless services), T211-T220 (cleanup + quality gates)
+  - **Documentation**: See PHASE5_T202_STATELESS_EXECUTOR_SUMMARY.md for detailed implementation notes
 - 2025-11-02: **Phase 10 & Phase 3B: Provider Consolidation** - ✅ **COMPLETE** (42/47 tasks, 89.4%):
   - **Phase 3B (T323-T326)**: All provider refactors complete - UserTableProvider, StreamTableProvider, SharedTableProvider now use TableProviderCore
   - **Provider Field Consolidation**: Replaced individual fields (table_id, unified_cache, schema) with single `core: TableProviderCore` struct

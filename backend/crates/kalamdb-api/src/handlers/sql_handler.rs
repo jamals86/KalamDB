@@ -6,7 +6,7 @@ use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::{extract_auth, AuthenticatedUser};
 use kalamdb_commons::models::UserId;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
-use kalamdb_core::sql::executor::{ExecutionMetadata, ExecutionResult, SqlExecutor};
+use kalamdb_core::sql::executor::{ExecutionContext, ExecutionMetadata, ExecutionResult, SqlExecutor};
 use log::warn;
 use std::sync::Arc;
 use std::time::Instant;
@@ -104,15 +104,13 @@ pub async fn execute_sql_v1(
         }
     };
 
-    let user_id = auth_result.user_id;
-
     // Rate limiting: Check if user can execute query
     if let Some(ref limiter) = rate_limiter {
-        if !limiter.check_query_rate(&user_id) {
+        if !limiter.check_query_rate(&auth_result.user_id) {
             let took_ms = start_time.elapsed().as_millis() as u64;
             warn!(
                 "Rate limit exceeded for user: {} (queries per second)",
-                user_id.as_str()
+                auth_result.user_id.as_str()
             );
             return HttpResponse::TooManyRequests().json(SqlResponse::error(
                 "RATE_LIMIT_EXCEEDED",
@@ -176,7 +174,7 @@ pub async fn execute_sql_v1(
             sql,
             session_factory.get_ref(),
             sql_executor,
-            Some(&user_id),
+            &auth_result,
             Some(&execution_metadata),
         )
         .await
@@ -205,14 +203,20 @@ async fn execute_single_statement(
     sql: &str,
     session_factory: &Arc<DataFusionSessionFactory>,
     sql_executor: Option<&Arc<SqlExecutor>>,
-    user_id: Option<&UserId>,
+    auth: &kalamdb_auth::AuthenticatedRequest,
     metadata: Option<&ExecutionMetadata>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
+    // Create execution context from authenticated user
+    let exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role);
+    
     // If sql_executor is available, use it (production path)
     if let Some(sql_executor) = sql_executor {
+        // Create a per-request session
+        let session = session_factory.create_session();
+        
         // Execute through SqlExecutor (handles both custom DDL and DataFusion)
         match sql_executor
-            .execute_with_metadata(sql, user_id, metadata)
+            .execute_with_metadata(&session, sql, &exec_ctx, metadata)
             .await
         {
             Ok(result) => {
@@ -220,10 +224,10 @@ async fn execute_single_statement(
                 match result {
                     ExecutionResult::Success(message) => Ok(QueryResult::with_message(message)),
                     ExecutionResult::RecordBatch(batch) => {
-                        record_batch_to_query_result(vec![batch], user_id)
+                        record_batch_to_query_result(vec![batch], Some(&auth.user_id))
                     }
                     ExecutionResult::RecordBatches(batches) => {
-                        record_batch_to_query_result(batches, user_id)
+                        record_batch_to_query_result(batches, Some(&auth.user_id))
                     }
                     ExecutionResult::Subscription(subscription_data) => {
                         // Return subscription metadata as a special query result

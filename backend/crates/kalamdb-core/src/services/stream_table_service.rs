@@ -7,19 +7,20 @@
 //! - Metadata registration in system_tables via kalamdb-sql
 //! - Column family creation for stream_table:{namespace}:{table_name}
 //! - TTL and max_buffer configuration
+//!
+//! **REFACTORED (Phase 5, T205)**: Stateless service - fetches dependencies from AppContext
 
+use crate::app_context::AppContext;
 use crate::catalog::{NamespaceId, TableName};
 use crate::error::KalamDbError;
 // TODO: Phase 2b - Re-enable FlushPolicy when flushing is re-implemented
 // use crate::flush::FlushPolicy;
 use crate::stores::system_table::SharedTableStoreExt;
-use crate::tables::StreamTableStore;
 use datafusion::arrow::datatypes::Schema;
 use kalamdb_sql::ddl::CreateTableStatement;
-use kalamdb_sql::KalamSql;
 use std::sync::Arc;
 
-/// Stream table service
+/// Stream table service (stateless)
 ///
 /// Coordinates stream table creation across schema storage (RocksDB),
 /// column families, and metadata management.
@@ -29,22 +30,15 @@ use std::sync::Arc;
 /// - NO Parquet persistence (memory/RocksDB only)
 /// - TTL-based eviction
 /// - Optional ephemeral mode (only store if subscribers exist)
-pub struct StreamTableService {
-    stream_table_store: Arc<StreamTableStore>,
-    kalam_sql: Arc<KalamSql>,
-}
+///
+/// **Phase 5 Optimization**: Zero-sized struct - all dependencies fetched
+/// from AppContext::get() on demand.
+pub struct StreamTableService;
 
 impl StreamTableService {
-    /// Create a new stream table service
-    ///
-    /// # Arguments
-    /// * `stream_table_store` - Storage backend for stream tables
-    /// * `kalam_sql` - KalamSQL instance for metadata storage
-    pub fn new(stream_table_store: Arc<StreamTableStore>, kalam_sql: Arc<KalamSql>) -> Self {
-        Self {
-            stream_table_store,
-            kalam_sql,
-        }
+    /// Create a new stream table service (zero-sized)
+    pub fn new() -> Self {
+        Self
     }
 
     /// Create a stream table from a CREATE STREAM TABLE statement

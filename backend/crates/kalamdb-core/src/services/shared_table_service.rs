@@ -6,19 +6,20 @@
 //! - Metadata registration in system_tables via kalamdb-sql
 //! - Column family creation for shared_table:{namespace}:{table_name}
 //! - Flush policy configuration
+//!
+//! **REFACTORED (Phase 5, T205)**: Stateless service - fetches dependencies from AppContext
 
+use crate::app_context::AppContext;
 use crate::catalog::{NamespaceId, TableName};
 use crate::error::KalamDbError;
 use crate::flush::FlushPolicy;
 use crate::stores::system_table::SharedTableStoreExt;
-use crate::tables::SharedTableStore;
 use datafusion::arrow::datatypes::Schema;
 use kalamdb_commons::models::StorageId;
 use kalamdb_sql::ddl::{CreateTableStatement, FlushPolicy as DdlFlushPolicy};
-use kalamdb_sql::KalamSql;
 use std::sync::Arc;
 
-/// Shared table service
+/// Shared table service (stateless)
 ///
 /// Coordinates shared table creation across schema storage (RocksDB),
 /// column families, and metadata management.
@@ -28,29 +29,28 @@ use std::sync::Arc;
 /// - Accessible by all users in namespace (subject to permissions)
 /// - HAVE system columns (_updated, _deleted)
 /// - Support flush policies (RocksDB → Parquet)
-pub struct SharedTableService {
-    shared_table_store: Arc<SharedTableStore>,
-    kalam_sql: Arc<KalamSql>,
-    default_storage_path: String,
-}
+///
+/// **Phase 5 Optimization**: Zero-sized struct - all dependencies fetched
+/// from AppContext::get() on demand. No stored Arc<_> fields.
+pub struct SharedTableService;
 
 impl SharedTableService {
-    /// Create a new shared table service
-    ///
-    /// # Arguments
-    /// * `shared_table_store` - Storage backend for shared tables
-    /// * `kalam_sql` - KalamSQL instance for metadata storage
-    /// * `default_storage_path` - Default path for 'local' storage (from config.toml)
-    pub fn new(
-        shared_table_store: Arc<SharedTableStore>,
-        kalam_sql: Arc<KalamSql>,
-        default_storage_path: String,
+    /// Create a new shared table service (zero-sized)
+    pub fn new() -> Self {
+        Self
+    }
+    
+    /// Create a new shared table service (deprecated - use new())
+    /// 
+    /// **Deprecated**: This signature exists for backward compatibility during migration.
+    /// Use `SharedTableService::new()` instead. The parameters are ignored.
+    #[deprecated(since = "0.1.0", note = "Use SharedTableService::new() instead - service is now stateless")]
+    pub fn new_with_deps(
+        _shared_table_store: std::sync::Arc<crate::tables::SharedTableStore>,
+        _kalam_sql: std::sync::Arc<kalamdb_sql::KalamSql>,
+        _default_storage_path: String,
     ) -> Self {
-        Self {
-            shared_table_store,
-            kalam_sql,
-            default_storage_path,
-        }
+        Self
     }
 
     /// Create a shared table from a CREATE SHARED TABLE statement
@@ -89,8 +89,9 @@ impl SharedTableService {
                 );
 
                 // Get existing table from system.tables
-                let existing_table = self
-                    .kalam_sql
+                let ctx = AppContext::get();
+                let kalam_sql = ctx.kalam_sql();
+                let _existing_table = kalam_sql
                     .get_table(&table_id)
                     .map_err(|e| {
                         KalamDbError::Other(format!("Failed to get existing table: {}", e))
@@ -115,34 +116,34 @@ impl SharedTableService {
         let schema = stmt.schema.clone();
 
         // Resolve storage location from storage_id (defaulting to 'local')
-        // Uses config.default_storage_path (default: "./data/storage") when base_directory is empty
+        // Uses StorageRegistry which handles default_storage_path internally
         let storage_id = stmt
             .storage_id
             .as_ref()
             .cloned()
             .unwrap_or_else(StorageId::local);
 
-        let storage_location = match self.kalam_sql.get_storage(&storage_id) {
+        let ctx = AppContext::get();
+        let storage_registry = ctx.storage_registry();
+        
+        let storage_location = match storage_registry.get_storage(storage_id.as_str()) {
             Ok(Some(cfg)) => {
-                // If base_directory is empty, use configured default_storage_path
-                let base = if cfg.base_directory.trim().is_empty() {
-                    self.default_storage_path.trim_end_matches('/').to_string()
-                } else {
-                    cfg.base_directory.trim_end_matches('/').to_string()
-                };
-                format!("{}/shared", base)
+                // StorageRegistry already handles empty base_directory with default_storage_path
+                format!("{}/shared", cfg.base_directory.trim_end_matches('/'))
             }
             Ok(None) => {
-                // No storage config found, fall back to default
-                format!("{}/shared", self.default_storage_path.trim_end_matches('/'))
+                // No storage config found - get_storage already logs warning
+                // Use local storage default
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Storage '{}' not found",
+                    storage_id.as_str()
+                )));
             }
             Err(e) => {
-                // Fall back to default and surface a warning via error type
-                log::warn!(
-                    "Falling back to default shared storage due to get_storage error: {}",
+                return Err(KalamDbError::Other(format!(
+                    "Failed to get storage config: {}",
                     e
-                );
-                format!("{}/shared", self.default_storage_path.trim_end_matches('/'))
+                )));
             }
         };
 
@@ -163,7 +164,8 @@ impl SharedTableService {
 
         // Create RocksDB column family for this table
         // This ensures the table is ready for data operations immediately after creation
-        self.shared_table_store
+        let shared_table_store = ctx.shared_table_store();
+        shared_table_store
             .create_column_family(stmt.namespace_id.as_str(), stmt.table_name.as_str())
             .map_err(|e| {
                 KalamDbError::Other(format!(
@@ -325,7 +327,9 @@ impl SharedTableService {
         table_def.schema_history.push(SchemaVersion::initial(schema_json));
 
         // Single atomic write to information_schema_tables
-        self.kalam_sql
+        let ctx = AppContext::get();
+        let kalam_sql = ctx.kalam_sql();
+        kalam_sql
             .upsert_table_definition(&table_def)
             .map_err(|e| {
                 KalamDbError::Other(format!(
@@ -349,7 +353,9 @@ impl SharedTableService {
         namespace_id: &NamespaceId,
         table_name: &TableName,
     ) -> Result<bool, KalamDbError> {
-        match self.kalam_sql.get_table_definition(namespace_id, table_name) {
+        let ctx = AppContext::get();
+        let kalam_sql = ctx.kalam_sql();
+        match kalam_sql.get_table_definition(namespace_id, table_name) {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false),
             Err(e) => Err(KalamDbError::Other(e.to_string())),
@@ -375,17 +381,9 @@ mod tests {
         ])
         .unwrap();
 
-        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
-        let shared_table_store =
-            Arc::new(SharedTableStore::new(backend, "shared_table:app:config"));
-        let kalam_sql =
-            Arc::new(KalamSql::new(Arc::new(RocksDBBackend::new(test_db.db.clone()))).unwrap());
-
-        let service = SharedTableService::new(
-            shared_table_store,
-            kalam_sql,
-            "./data/storage".to_string(),
-        );
+        // Note: SharedTableService is now stateless and doesn't need dependencies
+        // AppContext would be initialized in a real test, but for unit tests we just create the service
+        let service = SharedTableService::new();
         (service, test_db)
     }
 

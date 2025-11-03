@@ -38,7 +38,7 @@ use crate::services::{
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::{new_user_table_store, SharedTableStore, StreamTableStore, UserTableStore};
-use crate::tables::{SharedTableProvider, StreamTableProvider, UserTableAccess};
+use crate::tables::{SharedTableProvider, StreamTableProvider};
 // All system tables now use EntityStore-based v2 providers
 use crate::tables::system::JobsTableProvider;
 use crate::tables::system::UsersTableProvider;
@@ -131,7 +131,6 @@ pub struct ExecutionMetadata {
 /// Executes SQL statements by dispatching to appropriate handlers
 pub struct SqlExecutor {
     namespace_service: Arc<NamespaceService>,
-    session_context: Arc<SessionContext>,
     user_table_service: Arc<UserTableService>,
     shared_table_service: Arc<SharedTableService>,
     stream_table_service: Arc<StreamTableService>,
@@ -192,24 +191,13 @@ impl SqlExecutor {
     /// Create a new SQL executor
     pub fn new(
         namespace_service: Arc<NamespaceService>,
-        session_context: Arc<SessionContext>,
         user_table_service: Arc<UserTableService>,
         shared_table_service: Arc<SharedTableService>,
         stream_table_service: Arc<StreamTableService>,
     ) -> Self {
         let session_factory = DataFusionSessionFactory::default();
-
-        // Ensure we always have a SessionContext configured with KalamDB defaults
-        // If the provided context doesn't have the 'kalam' catalog, create one that does
-        let session_context = if session_context.catalog("kalam").is_some() {
-            session_context
-        } else {
-            Arc::new(session_factory.create_session())
-        };
-
         Self {
             namespace_service,
-            session_context,
             user_table_service,
             shared_table_service,
             stream_table_service,
@@ -387,6 +375,7 @@ impl SqlExecutor {
     /// Register a table with DataFusion SessionContext
     async fn register_table_with_datafusion(
         &self,
+        session: &SessionContext,
         namespace_id: &NamespaceId,
         table_name: &TableName,
         table_type: TableType,
@@ -398,8 +387,7 @@ impl SqlExecutor {
         // Use the "kalam" catalog (configured in DataFusionSessionFactory)
         let catalog_name = "kalam";
 
-        let catalog = self
-            .session_context
+        let catalog = session
             .catalog(catalog_name)
             .ok_or_else(|| KalamDbError::Other(format!("Catalog '{}' not found", catalog_name)))?;
 
@@ -842,67 +830,68 @@ impl SqlExecutor {
     }
 
     /// Execute a SQL statement
+
+    /// New stateless API: requires &SessionContext to be passed in
     pub async fn execute(
         &self,
+        session: &SessionContext,
         sql: &str,
-        user_id: Option<&UserId>,
+        exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        self.execute_with_metadata(sql, user_id, None).await
+        self.execute_with_metadata(session, sql, exec_ctx, None).await
     }
 
     /// Execute a SQL statement with additional request metadata (e.g., client IP).
     pub async fn execute_with_metadata(
         &self,
+        session: &SessionContext,
         sql: &str,
-        user_id: Option<&UserId>,
+        exec_ctx: &ExecutionContext,
         metadata: Option<&ExecutionMetadata>,
     ) -> Result<ExecutionResult, KalamDbError> {
-        // Create execution context with user role
-        let ctx = self.create_execution_context(user_id)?;
-
         // Check authorization before executing
-        self.check_authorization(&ctx, sql)?;
+        self.check_authorization(exec_ctx, sql)?;
 
         // Classify the SQL statement and dispatch to appropriate handler
         match SqlStatement::classify(sql) {
-            SqlStatement::CreateNamespace => self.execute_create_namespace(sql).await,
-            SqlStatement::AlterNamespace => self.execute_alter_namespace(sql).await,
-            SqlStatement::DropNamespace => self.execute_drop_namespace(sql).await,
-            SqlStatement::ShowNamespaces => self.execute_show_namespaces(sql).await,
-            SqlStatement::CreateStorage => self.execute_create_storage(sql).await,
-            SqlStatement::AlterStorage => self.execute_alter_storage(sql).await,
-            SqlStatement::DropStorage => self.execute_drop_storage(sql).await,
-            SqlStatement::ShowStorages => self.execute_show_storages(sql, user_id).await,
-            SqlStatement::CreateTable => self.execute_create_table(sql, user_id).await,
-            SqlStatement::AlterTable => self.execute_alter_table(sql, user_id, metadata).await,
-            SqlStatement::DropTable => self.execute_drop_table(sql, user_id).await,
-            SqlStatement::ShowTables => self.execute_show_tables(sql).await,
-            SqlStatement::DescribeTable => self.execute_describe_table(sql).await,
-            SqlStatement::ShowStats => self.execute_show_table_stats(sql).await,
-            SqlStatement::FlushTable => self.execute_flush_table(sql, user_id).await,
-            SqlStatement::FlushAllTables => self.execute_flush_all_tables(sql, user_id).await,
-            SqlStatement::KillJob => self.execute_kill_job(sql).await,
-            SqlStatement::KillLiveQuery => self.execute_kill_live_query(sql).await,
+            SqlStatement::CreateNamespace => self.execute_create_namespace(session, sql, exec_ctx).await,
+            SqlStatement::AlterNamespace => self.execute_alter_namespace(session, sql, exec_ctx).await,
+            SqlStatement::DropNamespace => self.execute_drop_namespace(session, sql, exec_ctx).await,
+            SqlStatement::ShowNamespaces => self.execute_show_namespaces(session, sql, exec_ctx).await,
+            SqlStatement::CreateStorage => self.execute_create_storage(session, sql, exec_ctx).await,
+            SqlStatement::AlterStorage => self.execute_alter_storage(session, sql, exec_ctx).await,
+            SqlStatement::DropStorage => self.execute_drop_storage(session, sql, exec_ctx).await,
+            SqlStatement::ShowStorages => self.execute_show_storages(session, sql, exec_ctx).await,
+            SqlStatement::CreateTable => self.execute_create_table(session, sql, exec_ctx).await,
+            SqlStatement::AlterTable => self.execute_alter_table(session, sql, exec_ctx, metadata).await,
+            SqlStatement::DropTable => self.execute_drop_table(session, sql, exec_ctx).await,
+            SqlStatement::ShowTables => self.execute_show_tables(session, sql, exec_ctx).await,
+            SqlStatement::DescribeTable => self.execute_describe_table(session, sql, exec_ctx).await,
+            SqlStatement::ShowStats => self.execute_show_table_stats(session, sql, exec_ctx).await,
+            SqlStatement::FlushTable => self.execute_flush_table(session, sql, exec_ctx).await,
+            SqlStatement::FlushAllTables => self.execute_flush_all_tables(session, sql, exec_ctx).await,
+            SqlStatement::KillJob => self.execute_kill_job(session, sql, exec_ctx).await,
+            SqlStatement::KillLiveQuery => self.execute_kill_live_query(session, sql, exec_ctx).await,
             SqlStatement::BeginTransaction => self.execute_begin_transaction().await,
             SqlStatement::CommitTransaction => self.execute_commit_transaction().await,
             SqlStatement::RollbackTransaction => self.execute_rollback_transaction().await,
-            SqlStatement::Subscribe => self.execute_subscribe(sql).await,
-            SqlStatement::CreateUser => self.execute_create_user(sql, user_id, metadata).await,
-            SqlStatement::AlterUser => self.execute_alter_user(sql, user_id, metadata).await,
-            SqlStatement::DropUser => self.execute_drop_user(sql, user_id, metadata).await,
-            SqlStatement::Update => self.execute_update(sql, user_id).await,
-            SqlStatement::Delete => self.execute_delete(sql, user_id).await,
+            SqlStatement::Subscribe => self.execute_subscribe(session, sql, exec_ctx).await,
+            SqlStatement::CreateUser => self.execute_create_user(session, sql, exec_ctx, metadata).await,
+            SqlStatement::AlterUser => self.execute_alter_user(session, sql, exec_ctx, metadata).await,
+            SqlStatement::DropUser => self.execute_drop_user(session, sql, exec_ctx, metadata).await,
+            SqlStatement::Update => self.execute_update(session, sql, exec_ctx).await,
+            SqlStatement::Delete => self.execute_delete(session, sql, exec_ctx).await,
             SqlStatement::Insert => {
                 // Check write permissions for shared tables before executing
                 let referenced_tables = Self::extract_table_references(sql);
-                self.check_write_permissions(user_id, &referenced_tables)?;
-                self.execute_datafusion_query_with_tables(sql, user_id, referenced_tables)
+                self.check_write_permissions(Some(&exec_ctx.user_id), &referenced_tables)?;
+                self.execute_datafusion_query_with_tables(session, sql, exec_ctx, referenced_tables)
                     .await
             }
             SqlStatement::Select => {
                 // Extract referenced tables from SQL and load only those
                 let referenced_tables = Self::extract_table_references(sql);
-                self.execute_datafusion_query_with_tables(sql, user_id, referenced_tables)
+                self.execute_datafusion_query_with_tables(session, sql, exec_ctx, referenced_tables)
                     .await
             }
             SqlStatement::Unknown => Err(KalamDbError::InvalidSql(format!(
@@ -1694,18 +1683,11 @@ impl SqlExecutor {
     /// If table extraction fails, falls back to loading all tables.
     async fn execute_datafusion_query_with_tables(
         &self,
+        session: &SessionContext,
         sql: &str,
-        user_id: Option<&UserId>,
-        table_refs: Option<std::collections::HashSet<String>>,
+        _exec_ctx: &ExecutionContext,
+        _table_refs: Option<std::collections::HashSet<String>>,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let anonymous_user = UserId::from("anonymous");
-        let uid = user_id.unwrap_or(&anonymous_user);
-
-        // Create session with selective table loading
-        let session = self
-            .create_user_session_context(uid, table_refs.as_ref())
-            .await?;
-
         // Execute SQL via DataFusion
         let df = session.sql(sql).await.map_err(|e| {
             // Extract the root cause to avoid "Error planning query: Error during planning:" duplication
@@ -1737,7 +1719,7 @@ impl SqlExecutor {
     /// Execute query via DataFusion (legacy - loads all tables)
     ///
     /// Execute CREATE NAMESPACE
-    async fn execute_create_namespace(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_create_namespace(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let stmt = CreateNamespaceStatement::parse(sql)
             .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
         let created = self
@@ -1754,7 +1736,7 @@ impl SqlExecutor {
     }
 
     /// Execute SHOW NAMESPACES
-    async fn execute_show_namespaces(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_show_namespaces(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let _stmt = ShowNamespacesStatement::parse(sql)?;
         let namespaces = self.namespace_service.list()?;
 
@@ -1765,7 +1747,7 @@ impl SqlExecutor {
     }
 
     /// Execute SHOW TABLES
-    async fn execute_show_tables(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_show_tables(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let stmt = ShowTablesStatement::parse(sql)?;
 
         let kalam_sql = self
@@ -1797,8 +1779,9 @@ impl SqlExecutor {
     /// Execute SHOW STORAGES
     async fn execute_show_storages(
         &self,
+        _session: &SessionContext,
         sql: &str,
-        user_id: Option<&UserId>,
+        exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::ShowStoragesStatement;
 
@@ -1827,14 +1810,14 @@ impl SqlExecutor {
         });
 
         // Convert to RecordBatch
-        let mask_credentials = !Self::is_admin(user_id);
+        let mask_credentials = !exec_ctx.is_admin();
         let batch = Self::storages_to_record_batch(sorted_storages, mask_credentials)?;
 
         Ok(ExecutionResult::RecordBatch(batch))
     }
 
     /// Execute CREATE STORAGE
-    async fn execute_create_storage(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_create_storage(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::CreateStorageStatement;
 
         let stmt = CreateStorageStatement::parse(sql).map_err(|e| {
@@ -1916,7 +1899,7 @@ impl SqlExecutor {
     }
 
     /// Execute ALTER STORAGE
-    async fn execute_alter_storage(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_alter_storage(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::AlterStorageStatement;
 
         let stmt = AlterStorageStatement::parse(sql).map_err(|e| {
@@ -1973,7 +1956,7 @@ impl SqlExecutor {
     }
 
     /// Execute DROP STORAGE
-    async fn execute_drop_storage(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_drop_storage(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::DropStorageStatement;
 
         let stmt = DropStorageStatement::parse(sql).map_err(|e| {
@@ -2064,13 +2047,13 @@ impl SqlExecutor {
     /// The flush operation runs in the background via JobManager.
     async fn execute_flush_table(
         &self,
+        _session: &SessionContext,
         sql: &str,
-        user_id: Option<&UserId>,
+        exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::FlushTableStatement;
 
-        let ctx = self.create_execution_context(user_id)?;
-        if !matches!(ctx.user_role, Role::System | Role::Dba | Role::Service) {
+        if !matches!(exec_ctx.user_role, Role::System | Role::Dba | Role::Service) {
             return Err(KalamDbError::Unauthorized(
                 "Only service, dba, or system users can flush tables".to_string(),
             ));
@@ -2344,13 +2327,13 @@ impl SqlExecutor {
     /// array of job_ids (one per table).
     async fn execute_flush_all_tables(
         &self,
+        _session: &SessionContext,
         sql: &str,
-        user_id: Option<&UserId>,
+        exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::FlushAllTablesStatement;
 
-        let ctx = self.create_execution_context(user_id)?;
-        if !matches!(ctx.user_role, Role::System | Role::Dba | Role::Service) {
+        if !matches!(exec_ctx.user_role, Role::System | Role::Dba | Role::Service) {
             return Err(KalamDbError::Unauthorized(
                 "Only service, dba, or system users can flush tables".to_string(),
             ));
@@ -2451,7 +2434,7 @@ impl SqlExecutor {
     }
 
     /// Execute DESCRIBE TABLE
-    async fn execute_describe_table(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_describe_table(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let stmt = DescribeTableStatement::parse(sql)?;
 
         // T314: Use unified cache for schema information
@@ -2489,7 +2472,7 @@ impl SqlExecutor {
     }
 
     /// Execute SHOW STATS FOR TABLE
-    async fn execute_show_table_stats(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_show_table_stats(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let stmt = ShowTableStatsStatement::parse(sql)?;
 
         let kalam_sql = self
@@ -2526,7 +2509,7 @@ impl SqlExecutor {
     }
 
     /// Execute ALTER NAMESPACE
-    async fn execute_alter_namespace(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_alter_namespace(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let stmt = AlterNamespaceStatement::parse(sql)?;
         self.namespace_service
             .update_options(stmt.name.clone(), stmt.options)?;
@@ -2537,7 +2520,7 @@ impl SqlExecutor {
     }
 
     /// Execute DROP NAMESPACE
-    async fn execute_drop_namespace(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_drop_namespace(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let stmt = DropNamespaceStatement::parse(sql)?;
         let deleted = self
             .namespace_service
@@ -2555,8 +2538,9 @@ impl SqlExecutor {
     /// Execute CREATE USER
     async fn execute_create_user(
         &self,
+        _session: &SessionContext,
         sql: &str,
-        user_id: Option<&UserId>,
+        exec_ctx: &ExecutionContext,
         metadata: Option<&ExecutionMetadata>,
     ) -> Result<ExecutionResult, KalamDbError> {
         // Parse the CREATE USER statement
@@ -2564,8 +2548,7 @@ impl SqlExecutor {
             CreateUserStatement::parse(sql).map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
         // Authorization check: Only DBA and System roles can create users
-        let ctx = self.create_execution_context(user_id)?;
-        if !ctx.is_admin() {
+        if !exec_ctx.is_admin() {
             return Err(KalamDbError::PermissionDenied(
                 "Only DBA or System users can create users".to_string(),
             ));
@@ -2670,7 +2653,7 @@ impl SqlExecutor {
         }
 
         self.log_audit_event(
-            &ctx,
+            exec_ctx,
             "user.create",
             &stmt.username,
             json!({
@@ -2691,8 +2674,9 @@ impl SqlExecutor {
     /// Execute ALTER USER
     async fn execute_alter_user(
         &self,
+        _session: &SessionContext,
         sql: &str,
-        user_id: Option<&UserId>,
+        exec_ctx: &ExecutionContext,
         metadata: Option<&ExecutionMetadata>,
     ) -> Result<ExecutionResult, KalamDbError> {
         // Parse the ALTER USER statement
@@ -2700,8 +2684,7 @@ impl SqlExecutor {
             AlterUserStatement::parse(sql).map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
         // Authorization check: Only DBA and System roles can alter users
-        let ctx = self.create_execution_context(user_id)?;
-        if !ctx.is_admin() {
+        if !exec_ctx.is_admin() {
             return Err(KalamDbError::PermissionDenied(
                 "Only DBA or System users can alter users".to_string(),
             ));
@@ -2756,7 +2739,7 @@ impl SqlExecutor {
         users_provider.update_user(user)?;
 
         self.log_audit_event(
-            &ctx,
+            exec_ctx,
             "user.alter",
             &stmt.username,
             json!({ "changes": change_details }),
@@ -2772,8 +2755,9 @@ impl SqlExecutor {
     /// Execute DROP USER
     async fn execute_drop_user(
         &self,
+        _session: &SessionContext,
         sql: &str,
-        user_id: Option<&UserId>,
+        exec_ctx: &ExecutionContext,
         metadata: Option<&ExecutionMetadata>,
     ) -> Result<ExecutionResult, KalamDbError> {
         // Parse the DROP USER statement
@@ -2781,8 +2765,7 @@ impl SqlExecutor {
             DropUserStatement::parse(sql).map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
         // Authorization check: Only DBA and System roles can drop users
-        let ctx = self.create_execution_context(user_id)?;
-        if !ctx.is_admin() {
+        if !exec_ctx.is_admin() {
             return Err(KalamDbError::PermissionDenied(
                 "Only DBA or System users can drop users".to_string(),
             ));
@@ -2808,7 +2791,7 @@ impl SqlExecutor {
         }
 
         self.log_audit_event(
-            &ctx,
+            exec_ctx,
             "user.drop",
             &stmt.username,
             json!({ "soft_deleted": true }),
@@ -2822,7 +2805,7 @@ impl SqlExecutor {
     }
 
     /// Execute KILL JOB command
-    async fn execute_kill_job(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_kill_job(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::ddl::JobCommand;
 
         // Parse the KILL JOB command
@@ -2849,7 +2832,7 @@ impl SqlExecutor {
         )))
     }
 
-    async fn execute_kill_live_query(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_kill_live_query(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let manager = self.live_query_manager.as_ref().ok_or_else(|| {
             KalamDbError::InvalidOperation("Live query manager not configured".to_string())
         })?;
@@ -2879,7 +2862,7 @@ impl SqlExecutor {
     /// Returns metadata instructing the client to establish a WebSocket connection.
     /// This command does NOT execute a subscription directly - it returns information
     /// needed for the client to connect via WebSocket.
-    async fn execute_subscribe(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
+    async fn execute_subscribe(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::ddl::SubscribeStatement;
 
         // Parse the SUBSCRIBE TO command
@@ -2933,17 +2916,14 @@ impl SqlExecutor {
     /// Execute CREATE TABLE - determines table type from LOCATION and routes to appropriate service
     async fn execute_create_table(
         &self,
+        session: &SessionContext,
         sql: &str,
-        user_id: Option<&UserId>,
+        exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        // Determine caller role for RBAC checks
-        let ctx = self.create_execution_context(user_id)?;
         // Determine table type based on SQL keywords or LOCATION pattern
         let sql_upper = sql.to_uppercase();
         let namespace_id = crate::catalog::NamespaceId::new("default"); // TODO: Get from context
-        let default_user_id = user_id
-            .cloned()
-            .unwrap_or_else(|| crate::catalog::UserId::from("system"));
+        let default_user_id = exec_ctx.user_id.clone();
 
         // Check for TABLE_TYPE clause to determine table type
         let has_table_type_user = sql_upper.contains("TABLE_TYPE")
@@ -2958,7 +2938,7 @@ impl SqlExecutor {
             || has_table_type_user
         {
             // RBAC: Only roles permitted by policy can create USER tables
-            if !crate::auth::rbac::can_create_table(ctx.user_role, TableType::User) {
+            if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::User) {
                 return Err(KalamDbError::Unauthorized(
                     "Insufficient privileges to create USER tables".to_string(),
                 ));
@@ -3030,6 +3010,7 @@ impl SqlExecutor {
             if self.user_table_store.is_some() {
                 let dummy_user_id = crate::catalog::UserId::from("system");
                 self.register_table_with_datafusion(
+                    session,
                     &namespace_id,
                     &table_name,
                     crate::catalog::TableType::User,
@@ -3060,7 +3041,7 @@ impl SqlExecutor {
             || has_table_type_stream
         {
             // RBAC: Check permission for STREAM tables
-            if !crate::auth::rbac::can_create_table(ctx.user_role, TableType::Stream) {
+            if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::Stream) {
                 return Err(KalamDbError::Unauthorized(
                     "Insufficient privileges to create STREAM tables".to_string(),
                 ));
@@ -3115,6 +3096,7 @@ impl SqlExecutor {
             // Register with DataFusion if stores are configured
             if self.stream_table_store.is_some() {
                 self.register_table_with_datafusion(
+                    session,
                     &namespace_id,
                     &table_name,
                     crate::catalog::TableType::Stream,
@@ -3162,7 +3144,7 @@ impl SqlExecutor {
             ))
         } else if has_table_type_shared {
             // RBAC: Check permission for SHARED tables
-            if !crate::auth::rbac::can_create_table(ctx.user_role, TableType::Shared) {
+            if !crate::auth::rbac::can_create_table(exec_ctx.user_role, TableType::Shared) {
                 return Err(KalamDbError::Unauthorized(
                     "Insufficient privileges to create SHARED tables".to_string(),
                 ));
@@ -3248,6 +3230,7 @@ impl SqlExecutor {
                 // Register with DataFusion if stores are configured
                 if self.shared_table_store.is_some() {
                     self.register_table_with_datafusion(
+                        session,
                         &namespace_id,
                         &table_name,
                         crate::catalog::TableType::Shared,
@@ -3341,6 +3324,7 @@ impl SqlExecutor {
 
                 if self.shared_table_store.is_some() {
                     self.register_table_with_datafusion(
+                        session,
                         &namespace_id,
                         &table_name,
                         crate::catalog::TableType::Shared,
@@ -3377,14 +3361,12 @@ impl SqlExecutor {
     /// Execute ALTER TABLE
     async fn execute_alter_table(
         &self,
+        _session: &SessionContext,
         sql: &str,
-        user_id: Option<&UserId>,
+        exec_ctx: &ExecutionContext,
         metadata: Option<&ExecutionMetadata>,
     ) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::ddl::{AlterTableStatement, ColumnOperation};
-
-        // Create execution context for authorization
-        let ctx = self.create_execution_context(user_id)?;
 
         // Parse ALTER TABLE statement (use default namespace for now)
         let default_namespace = kalamdb_commons::NamespaceId::new("default");
@@ -3394,7 +3376,7 @@ impl SqlExecutor {
         // Handle SET ACCESS LEVEL operation
         if let ColumnOperation::SetAccessLevel { access_level } = &stmt.operation {
             // Only Service/Dba/System can modify access levels
-            if !matches!(ctx.user_role, Role::Service | Role::Dba | Role::System) {
+            if !matches!(exec_ctx.user_role, Role::Service | Role::Dba | Role::System) {
                 return Err(KalamDbError::Unauthorized(
                     "Only service, dba, or system users can modify table access levels".to_string(),
                 ));
@@ -3440,7 +3422,7 @@ impl SqlExecutor {
             }
 
             self.log_audit_event(
-                &ctx,
+                exec_ctx,
                 "table.set_access",
                 &format!(
                     "{}.{}",
@@ -3468,8 +3450,9 @@ impl SqlExecutor {
     /// Execute DROP TABLE
     async fn execute_drop_table(
         &self,
+        _session: &SessionContext,
         sql: &str,
-        user_id: Option<&UserId>,
+        exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         // Check if table deletion service is available
         let deletion_service = self.table_deletion_service.as_ref().ok_or_else(|| {
@@ -3483,7 +3466,6 @@ impl SqlExecutor {
         let stmt = DropTableStatement::parse(sql, &default_namespace)
             .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
 
-        let ctx = self.create_execution_context(user_id)?;
         let requested_table_type: TableType = stmt.table_type.into();
         let table_identifier =
             TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
@@ -3500,7 +3482,7 @@ impl SqlExecutor {
 
         // TODO: Track table ownership in system tables to determine is_owner accurately (#US3 follow-up)
         let is_owner = false;
-        if !crate::auth::rbac::can_delete_table(ctx.user_role, actual_table_type, is_owner) {
+        if !crate::auth::rbac::can_delete_table(exec_ctx.user_role, actual_table_type, is_owner) {
             return Err(KalamDbError::Unauthorized(
                 "Insufficient privileges to drop this table".to_string(),
             ));
@@ -3566,8 +3548,9 @@ impl SqlExecutor {
     /// Future: Use DataFusion's DML capabilities when available
     async fn execute_update(
         &self,
+        session: &SessionContext,
         sql: &str,
-        user_id: Option<&UserId>,
+        exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         // Parse UPDATE statement (basic parser for integration tests)
         let update_info = self.parse_update_statement(sql)?;
@@ -3576,15 +3559,14 @@ impl SqlExecutor {
         let table_name = format!("{}.{}", update_info.namespace.as_str(), update_info.table.as_str());
         let mut table_refs = std::collections::HashSet::new();
         table_refs.insert(table_name.clone());
-        self.check_write_permissions(user_id, &Some(table_refs))?;
+        self.check_write_permissions(Some(&exec_ctx.user_id), &Some(table_refs))?;
 
         // Special-case: limited UPDATE support for system.users (restore user via deleted_at = NULL)
         if update_info.namespace.as_str().eq_ignore_ascii_case("system")
             && update_info.table.as_str().eq_ignore_ascii_case("users")
         {
             // Only admins can update system tables
-            let ctx = self.create_execution_context(user_id)?;
-            if !ctx.is_admin() {
+            if !exec_ctx.is_admin() {
                 return Err(KalamDbError::Unauthorized(
                     "Only DBA or System users can update system tables".to_string(),
                 ));
@@ -3624,20 +3606,6 @@ impl SqlExecutor {
 
             return Ok(ExecutionResult::Success("Updated 1 user(s)".to_string()));
         }
-
-        // Create appropriate SessionContext based on user_id
-        let effective_user_id = user_id
-            .cloned()
-            .unwrap_or_else(|| UserId::from("anonymous"));
-
-        // For UPDATE, only load the table being updated
-        let table_name = format!("{}.{}", update_info.namespace.as_str(), update_info.table.as_str());
-        let mut table_refs = std::collections::HashSet::new();
-        table_refs.insert(table_name);
-
-        let session = self
-            .create_user_session_context(&effective_user_id, Some(&table_refs))
-            .await?;
 
         // Get table provider from the appropriate session
         let table_ref = datafusion::sql::TableReference::parse_str(&format!(
@@ -3753,8 +3721,9 @@ impl SqlExecutor {
     /// For user tables, creates per-user SessionContext to ensure data isolation
     async fn execute_delete(
         &self,
+        session: &SessionContext,
         sql: &str,
-        user_id: Option<&UserId>,
+        exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         // Parse DELETE statement
         let delete_info = self.parse_delete_statement(sql)?;
@@ -3763,21 +3732,7 @@ impl SqlExecutor {
         let table_name = format!("{}.{}", delete_info.namespace.as_str(), delete_info.table.as_str());
         let mut table_refs = std::collections::HashSet::new();
         table_refs.insert(table_name.clone());
-        self.check_write_permissions(user_id, &Some(table_refs))?;
-
-        // Create appropriate SessionContext based on user_id
-        let effective_user_id = user_id
-            .cloned()
-            .unwrap_or_else(|| UserId::from("anonymous"));
-
-        // For DELETE, only load the table being deleted from
-        let table_name = format!("{}.{}", delete_info.namespace.as_str(), delete_info.table.as_str());
-        let mut table_refs = std::collections::HashSet::new();
-        table_refs.insert(table_name);
-
-        let session = self
-            .create_user_session_context(&effective_user_id, Some(&table_refs))
-            .await?;
+        self.check_write_permissions(Some(&exec_ctx.user_id), &Some(table_refs))?;
 
         // Get table provider from the appropriate session
         let table_ref = datafusion::sql::TableReference::parse_str(&format!(
@@ -4744,7 +4699,6 @@ mod tests {
 
         SqlExecutor::new(
             namespace_service,
-            session_context,
             user_table_service,
             shared_table_service,
             stream_table_service,
@@ -4758,12 +4712,25 @@ mod tests {
         .with_storage_backend(backend)
     }
 
+    fn create_test_session() -> SessionContext {
+        SessionContext::new()
+    }
+
+    fn create_test_exec_ctx() -> ExecutionContext {
+        ExecutionContext::new(
+            UserId::from("test_user"),
+            Role::Dba,  // Use Dba role for tests to bypass permission checks
+        )
+    }
+
     #[tokio::test]
     async fn test_execute_create_namespace() {
         let executor = setup_test_executor();
+        let session = create_test_session();
+        let exec_ctx = create_test_exec_ctx();
 
         let result = executor
-            .execute("CREATE NAMESPACE app", None)
+            .execute(&session, "CREATE NAMESPACE app", &exec_ctx)
             .await
             .unwrap();
 
@@ -4778,18 +4745,20 @@ mod tests {
     #[tokio::test]
     async fn test_execute_show_namespaces() {
         let executor = setup_test_executor();
+        let session = create_test_session();
+        let exec_ctx = create_test_exec_ctx();
 
         // Create some namespaces
         executor
-            .execute("CREATE NAMESPACE app1", None)
+            .execute(&session, "CREATE NAMESPACE app1", &exec_ctx)
             .await
             .unwrap();
         executor
-            .execute("CREATE NAMESPACE app2", None)
+            .execute(&session, "CREATE NAMESPACE app2", &exec_ctx)
             .await
             .unwrap();
 
-        let result = executor.execute("SHOW NAMESPACES", None).await.unwrap();
+        let result = executor.execute(&session, "SHOW NAMESPACES", &exec_ctx).await.unwrap();
 
         match result {
             ExecutionResult::RecordBatch(batch) => {
@@ -4803,14 +4772,16 @@ mod tests {
     #[tokio::test]
     async fn test_execute_alter_namespace() {
         let executor = setup_test_executor();
+        let session = create_test_session();
+        let exec_ctx = create_test_exec_ctx();
 
         executor
-            .execute("CREATE NAMESPACE app", None)
+            .execute(&session, "CREATE NAMESPACE app", &exec_ctx)
             .await
             .unwrap();
 
         let result = executor
-            .execute("ALTER NAMESPACE app SET OPTIONS (enabled = true)", None)
+            .execute(&session, "ALTER NAMESPACE app SET OPTIONS (enabled = true)", &exec_ctx)
             .await
             .unwrap();
 
@@ -4867,7 +4838,6 @@ mod tests {
 
         let mut executor = SqlExecutor::new(
             namespace_service,
-            session_context,
             user_table_service,
             shared_table_service,
             stream_table_service,
@@ -4917,9 +4887,12 @@ mod tests {
         // Set cache in executor
         executor.unified_cache = Some(unified_cache);
 
+        let session = create_test_session();
+        let exec_ctx = create_test_exec_ctx();
+
         // Execute DESCRIBE TABLE
         let result = executor
-            .execute("DESCRIBE TABLE app.events", None)
+            .execute(&session, "DESCRIBE TABLE app.events", &exec_ctx)
             .await
             .unwrap();
 
@@ -4939,13 +4912,15 @@ mod tests {
     #[tokio::test]
     async fn test_execute_drop_namespace() {
         let executor = setup_test_executor();
+        let session = create_test_session();
+        let exec_ctx = create_test_exec_ctx();
 
         executor
-            .execute("CREATE NAMESPACE app", None)
+            .execute(&session, "CREATE NAMESPACE app", &exec_ctx)
             .await
             .unwrap();
 
-        let result = executor.execute("DROP NAMESPACE app", None).await.unwrap();
+        let result = executor.execute(&session, "DROP NAMESPACE app", &exec_ctx).await.unwrap();
 
         match result {
             ExecutionResult::Success(msg) => {
@@ -4958,9 +4933,11 @@ mod tests {
     #[tokio::test]
     async fn test_execute_drop_namespace_with_tables() {
         let executor = setup_test_executor();
+        let session = create_test_session();
+        let exec_ctx = create_test_exec_ctx();
 
         executor
-            .execute("CREATE NAMESPACE app", None)
+            .execute(&session, "CREATE NAMESPACE app", &exec_ctx)
             .await
             .unwrap();
 
@@ -4970,7 +4947,7 @@ mod tests {
             .increment_table_count("app")
             .unwrap();
 
-        let result = executor.execute("DROP NAMESPACE app", None).await;
+        let result = executor.execute(&session, "DROP NAMESPACE app", &exec_ctx).await;
         assert!(result.is_err());
     }
 }

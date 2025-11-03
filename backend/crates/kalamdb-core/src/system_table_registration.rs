@@ -18,6 +18,17 @@ use kalamdb_commons::system_tables::SystemTable;
 use kalamdb_store::entity_store::EntityStore;
 use std::sync::Arc;
 
+/// Return type for register_system_tables
+pub struct SystemTableProviders {
+    pub jobs_provider: Arc<JobsTableProvider>,
+    pub users_provider: Arc<UsersTableProvider>,
+    pub namespaces_provider: Arc<NamespacesTableProvider>,
+    pub storages_provider: Arc<StoragesTableProvider>,
+    pub live_queries_provider: Arc<LiveQueriesTableProvider>,
+    pub tables_provider: Arc<TablesTableProvider>,
+    pub schema_store: Arc<TableSchemaStore>,
+}
+
 /// Register all system tables with the provided schema
 ///
 /// This function registers all system tables (users, namespaces, tables,
@@ -32,7 +43,7 @@ use std::sync::Arc;
 /// * `storage_backend` - The storage backend for EntityStore-based providers
 ///
 /// # Returns
-/// * `(jobs_provider, schema_store)` - Tuple of jobs provider and schema store
+/// * `SystemTableProviders` - Struct containing all providers and schema store
 ///
 /// # Example
 /// ```no_run
@@ -43,13 +54,13 @@ use std::sync::Arc;
 ///
 /// # let backend: Arc<dyn kalamdb_store::StorageBackend> = unimplemented!("provide a StorageBackend");
 /// let system_schema = Arc::new(MemorySchemaProvider::new());
-/// let (jobs_provider, schema_store) = register_system_tables(&system_schema, backend)
+/// let providers = register_system_tables(&system_schema, backend)
 ///     .expect("Failed to register system tables");
 /// ```
 pub fn register_system_tables(
     system_schema: &Arc<MemorySchemaProvider>,
     storage_backend: Arc<dyn kalamdb_store::StorageBackend>,
-) -> Result<(Arc<JobsTableProvider>, Arc<TableSchemaStore>), String> {
+) -> Result<SystemTableProviders, String> {
     use kalamdb_store::storage_trait::Partition;
 
     // Create the system_table_schemas partition if it doesn't exist
@@ -74,36 +85,36 @@ pub fn register_system_tables(
     let storages_provider = Arc::new(StoragesTableProvider::new(storage_backend.clone()));
     let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(storage_backend.clone()));
 
-    // Register each system table using the SystemTable enum
+    // Register each system table using the SystemTable enum (clone Arcs before registration)
     system_schema
-        .register_table(SystemTable::Users.table_name().to_string(), users_provider)
+        .register_table(SystemTable::Users.table_name().to_string(), users_provider.clone())
         .map_err(|e| format!("Failed to register system.users: {}", e))?;
 
     system_schema
         .register_table(
             SystemTable::Namespaces.table_name().to_string(),
-            namespaces_provider,
+            namespaces_provider.clone(),
         )
         .map_err(|e| format!("Failed to register system.namespaces: {}", e))?;
 
     system_schema
         .register_table(
             SystemTable::Tables.table_name().to_string(),
-            tables_provider,
+            tables_provider.clone(),
         )
         .map_err(|e| format!("Failed to register system.tables: {}", e))?;
 
     system_schema
         .register_table(
             SystemTable::Storages.table_name().to_string(),
-            storages_provider,
+            storages_provider.clone(),
         )
         .map_err(|e| format!("Failed to register system.storages: {}", e))?;
 
     system_schema
         .register_table(
             SystemTable::LiveQueries.table_name().to_string(),
-            live_queries_provider,
+            live_queries_provider.clone(),
         )
         .map_err(|e| format!("Failed to register system.live_queries: {}", e))?;
 
@@ -122,7 +133,15 @@ pub fn register_system_tables(
         .register_table("stats".to_string(), stats_provider)
         .map_err(|e| format!("Failed to register system.stats: {}", e))?;
 
-    Ok((jobs_provider, schema_store))
+    Ok(SystemTableProviders {
+        jobs_provider,
+        users_provider,
+        namespaces_provider,
+        storages_provider,
+        live_queries_provider,
+        tables_provider,
+        schema_store,
+    })
 }
 
 #[cfg(test)]
@@ -174,16 +193,23 @@ mod tests {
         let system_schema = Arc::new(MemorySchemaProvider::new());
 
         // Register system tables
-        let (jobs_provider, schema_store) =
+        let providers =
             register_system_tables(&system_schema, backend)
                 .expect("Failed to register system tables");
 
         // Verify jobs provider is returned
-        assert!(Arc::strong_count(&jobs_provider) >= 1);
+        assert!(Arc::strong_count(&providers.jobs_provider) >= 1);
+        
+        // Verify all providers are returned
+        assert!(Arc::strong_count(&providers.users_provider) >= 1);
+        assert!(Arc::strong_count(&providers.namespaces_provider) >= 1);
+        assert!(Arc::strong_count(&providers.storages_provider) >= 1);
+        assert!(Arc::strong_count(&providers.live_queries_provider) >= 1);
+        assert!(Arc::strong_count(&providers.tables_provider) >= 1);
 
         // Verify all 7 system table schemas are in the store
         let system_namespace = NamespaceId::from("system");
-        let all_schemas = schema_store
+        let all_schemas = providers.schema_store
             .scan_namespace(&system_namespace)
             .expect("Failed to scan system namespace");
 
@@ -207,7 +233,7 @@ mod tests {
 
         for &table_name in &expected_table_names {
             let table_id = TableId::new(system_namespace.clone(), TableName::from(table_name));
-            let schema = schema_store
+            let schema = providers.schema_store
                 .get(&table_id)
                 .expect("Failed to get schema")
                 .unwrap_or_else(|| panic!("Schema not found for {}", table_name));
