@@ -140,7 +140,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         .expect("Failed to register system schema");
 
     // Register all system tables using centralized function (EntityStore-based v2 providers)
-    let (jobs_provider, schema_store, schema_cache) =
+    let (jobs_provider, schema_store) =
         kalamdb_core::system_table_registration::register_system_tables(
             &system_schema,
             backend.clone(),

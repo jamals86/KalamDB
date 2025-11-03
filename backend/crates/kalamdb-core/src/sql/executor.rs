@@ -2960,17 +2960,11 @@ impl SqlExecutor {
 
         // Check for TABLE_TYPE clause to determine table type
         let has_table_type_user = sql_upper.contains("TABLE_TYPE")
-            && (sql_upper.contains("TABLE_TYPE USER")
-                || sql_upper.contains("TABLE_TYPE 'USER'")
-                || sql_upper.contains("TABLE_TYPE \"USER\""));
+            && (sql_upper.contains("TABLE_TYPE USER"));
         let has_table_type_shared = sql_upper.contains("TABLE_TYPE")
-            && (sql_upper.contains("TABLE_TYPE SHARED")
-                || sql_upper.contains("TABLE_TYPE 'SHARED'")
-                || sql_upper.contains("TABLE_TYPE \"SHARED\""));
+            && (sql_upper.contains("TABLE_TYPE SHARED"));
         let has_table_type_stream = sql_upper.contains("TABLE_TYPE")
-            && (sql_upper.contains("TABLE_TYPE STREAM")
-                || sql_upper.contains("TABLE_TYPE 'STREAM'")
-                || sql_upper.contains("TABLE_TYPE \"STREAM\""));
+            && (sql_upper.contains("TABLE_TYPE STREAM"));
 
         if sql_upper.contains("USER TABLE")
             || sql_upper.contains("${USER_ID}")
@@ -3103,6 +3097,7 @@ impl SqlExecutor {
 
             let metadata = self.stream_table_service.create_table(stmt)?;
 
+            // TODO: In the future create the table and directly add it to the cache and read the Table from the cache itself
             // Insert into system.tables via KalamSQL
             if let Some(kalam_sql) = &self.kalam_sql {
                 let table = kalamdb_sql::Table {
@@ -4890,7 +4885,11 @@ mod tests {
             stream_table_store,
             kalam_sql.clone(),
         )
-        .with_storage_backend(backend);
+        .with_storage_backend(backend.clone())
+        .with_storage_registry(Arc::new(crate::storage::StorageRegistry::new(
+            kalam_sql.clone(),
+            "./data/storage".to_string(),
+        )));
 
         // Create a test stream table entry in system_tables
         let table = kalamdb_sql::Table {

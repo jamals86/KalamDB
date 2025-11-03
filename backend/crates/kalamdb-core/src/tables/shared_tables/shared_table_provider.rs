@@ -6,7 +6,7 @@
 //! - RocksDB buffer with Parquet persistence
 //! - Flush policy support (row/time/combined)
 
-use crate::catalog::{NamespaceId, TableMetadata, TableName};
+use crate::catalog::{NamespaceId, SchemaCache, TableName};
 use crate::error::KalamDbError;
 use crate::tables::arrow_json_conversion::{
     arrow_batch_to_json, json_rows_to_arrow_batch, validate_insert_rows,
@@ -37,14 +37,13 @@ use std::sync::Arc;
 ///
 /// **Key Difference from User Tables**: Single storage location (no ${user_id} templating)
 ///
-/// **Phase 10 Optimization**: Stores Arc<TableId> to avoid repeated allocations
-/// during cache lookups (created once at registration, reused for all queries).
+/// **Phase 10 Optimization**: Uses unified SchemaCache as single source of truth for table metadata
 pub struct SharedTableProvider {
     /// Composite table identifier (Phase 10: Arc for zero-allocation cache lookups)
     table_id: Arc<TableId>,
 
-    /// Table metadata (namespace, table name, type, etc.)
-    table_metadata: TableMetadata,
+    /// Unified cache reference (Phase 10: single source of truth for table metadata)
+    unified_cache: Arc<SchemaCache>,
 
     /// Arrow schema for the table (includes system columns)
     schema: SchemaRef,
@@ -56,7 +55,7 @@ pub struct SharedTableProvider {
 impl std::fmt::Debug for SharedTableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SharedTableProvider")
-            .field("table_metadata", &self.table_metadata)
+            .field("table_id", &self.table_id)
             .field("schema", &self.schema)
             .field("store", &"<SharedTableStore>")
             .finish()
@@ -68,18 +67,18 @@ impl SharedTableProvider {
     ///
     /// # Arguments
     /// * `table_id` - Arc<TableId> created once at registration (Phase 10: zero-allocation cache lookups)
-    /// * `table_metadata` - Table metadata (namespace, table name, type, etc.)
+    /// * `unified_cache` - Reference to unified SchemaCache for metadata lookups
     /// * `schema` - Arrow schema for the table (with system columns)
     /// * `store` - SharedTableStore for data operations
     pub fn new(
         table_id: Arc<TableId>,
-        table_metadata: TableMetadata,
+        unified_cache: Arc<SchemaCache>,
         schema: SchemaRef,
         store: Arc<SharedTableStore>,
     ) -> Self {
         Self {
             table_id,
-            table_metadata,
+            unified_cache,
             schema,
             store,
         }
@@ -89,19 +88,19 @@ impl SharedTableProvider {
     pub fn column_family_name(&self) -> String {
         format!(
             "shared_table:{}:{}",
-            self.table_metadata.namespace.as_str(),
-            self.table_metadata.table_name.as_str()
+            self.table_id.namespace_id().as_str(),
+            self.table_id.table_name().as_str()
         )
     }
 
     /// Get the namespace ID
     pub fn namespace_id(&self) -> &NamespaceId {
-        &self.table_metadata.namespace
+        self.table_id.namespace_id()
     }
 
     /// Get the table name
     pub fn table_name(&self) -> &TableName {
-        &self.table_metadata.table_name
+        self.table_id.table_name()
     }
 
     /// INSERT operation

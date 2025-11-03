@@ -3,8 +3,8 @@
 //! Provides runtime metrics as key-value pairs for observability.
 //! Initial implementation focuses on schema cache metrics.
 
+use crate::catalog::SchemaCache;
 use crate::error::KalamDbError;
-use crate::tables::system::schemas::SchemaCache as TableSchemaCache;
 use crate::tables::system::SystemTableProviderExt;
 use async_trait::async_trait;
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
@@ -43,7 +43,7 @@ impl StatsTableSchema {
 /// Virtual table that emits key-value metrics
 pub struct StatsTableProvider {
     schema: SchemaRef,
-    table_schema_cache: Option<Arc<TableSchemaCache>>, // optional, to avoid tight coupling
+    unified_cache: Option<Arc<SchemaCache>>, // unified schema cache from catalog
 }
 
 impl std::fmt::Debug for StatsTableProvider {
@@ -54,10 +54,10 @@ impl std::fmt::Debug for StatsTableProvider {
 
 impl StatsTableProvider {
     /// Create a new stats table provider
-    pub fn new(table_schema_cache: Option<Arc<TableSchemaCache>>) -> Self {
+    pub fn new(unified_cache: Option<Arc<SchemaCache>>) -> Self {
         Self {
             schema: StatsTableSchema::schema(),
-            table_schema_cache,
+            unified_cache,
         }
     }
 
@@ -66,10 +66,9 @@ impl StatsTableProvider {
         let mut names = StringBuilder::new();
         let mut values = StringBuilder::new();
 
-        // Schema cache metrics (TableDefinition cache)
-        if let Some(cache) = &self.table_schema_cache {
-            let (hits, misses, evictions, size) = cache.stats();
-            let hit_rate = cache.hit_rate();
+        // Schema cache metrics (unified cache from Phase 10)
+        if let Some(cache) = &self.unified_cache {
+            let (size, hits, misses, hit_rate) = cache.stats();
 
             names.append_value("schema_cache_hit_rate");
             values.append_value(format!("{:.6}", hit_rate));
@@ -82,9 +81,6 @@ impl StatsTableProvider {
 
             names.append_value("schema_cache_misses");
             values.append_value(misses.to_string());
-
-            names.append_value("schema_cache_evictions");
-            values.append_value(evictions.to_string());
         } else {
             names.append_value("schema_cache_hit_rate");
             values.append_value("N/A");

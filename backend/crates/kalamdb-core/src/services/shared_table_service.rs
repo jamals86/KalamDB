@@ -7,7 +7,7 @@
 //! - Column family creation for shared_table:{namespace}:{table_name}
 //! - Flush policy configuration
 
-use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType};
+use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::flush::FlushPolicy;
 use crate::stores::system_table::SharedTableStoreExt;
@@ -68,16 +68,12 @@ impl SharedTableService {
     /// * `stmt` - Parsed CREATE SHARED TABLE statement
     ///
     /// # Returns
-    /// Table metadata for the created shared table
-    /// Create a new shared table
-    ///
-    /// # Returns
-    /// * `Ok((metadata, was_created))` - Table metadata and whether it was newly created (false if IF NOT EXISTS and exists)
+    /// * `Ok(was_created)` - Whether the table was newly created (false if IF NOT EXISTS and exists)
     /// * `Err(KalamDbError)` - If creation failed
     pub fn create_table(
         &self,
         stmt: CreateTableStatement,
-    ) -> Result<(TableMetadata, bool), KalamDbError> {
+    ) -> Result<bool, KalamDbError> {
         // Validate table name
         self.validate_table_name(&stmt.table_name)?;
 
@@ -103,29 +99,8 @@ impl SharedTableService {
                         KalamDbError::NotFound(format!("Table {} not found", table_id))
                     })?;
 
-                // Return a minimal metadata object for the existing table
-                return Ok((
-                    TableMetadata {
-                        table_name: stmt.table_name.clone(),
-                        table_type: TableType::Shared,
-                        namespace: stmt.namespace_id.clone(),
-                        created_at: chrono::DateTime::from_timestamp(
-                            existing_table.created_at / 1000,
-                            0,
-                        )
-                        .unwrap_or_else(chrono::Utc::now),
-                        storage_id: existing_table.storage_id.clone(),
-                        flush_policy: serde_json::from_str(&existing_table.flush_policy)
-                            .unwrap_or_default(),
-                        schema_version: existing_table.schema_version as u32,
-                        deleted_retention_hours: if existing_table.deleted_retention_hours > 0 {
-                            Some(existing_table.deleted_retention_hours as u32)
-                        } else {
-                            None
-                        },
-                    },
-                    false,
-                )); // false = not newly created
+                // Table exists and IF NOT EXISTS was specified - return success without creating
+                return Ok(false); // false = not newly created
             } else {
                 return Err(KalamDbError::AlreadyExists(format!(
                     "Shared table {}.{} already exists",
@@ -203,19 +178,8 @@ impl SharedTableService {
         // The caller should use:
         // db.create_cf(format!("shared_table:{}:{}", namespace_id, table_name), &opts)
 
-        // Create and return table metadata
-        let metadata = TableMetadata {
-            table_name: stmt.table_name.clone(),
-            table_type: TableType::Shared,
-            namespace: stmt.namespace_id.clone(),
-            created_at: chrono::Utc::now(),
-            storage_id: Some(stmt.storage_id.clone().unwrap_or_else(|| StorageId::new("local"))),
-            flush_policy,
-            schema_version: 1,
-            deleted_retention_hours: stmt.deleted_retention_hours,
-        };
-
-        Ok((metadata, true)) // true = newly created
+        // Table created successfully
+        Ok(true) // true = newly created
     }
 
     /// Validate table name

@@ -8,7 +8,7 @@
 //! - Column family creation for stream_table:{namespace}:{table_name}
 //! - TTL and max_buffer configuration
 
-use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType};
+use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::flush::FlushPolicy;
 use crate::stores::system_table::SharedTableStoreExt;
@@ -53,7 +53,7 @@ impl StreamTableService {
     /// 1. Schema validation (NO auto-increment or system column injection)
     /// 2. Metadata registration in system_tables via kalamdb-sql
     /// 3. Schema storage in system_table_schemas via kalamdb-sql
-    /// 4. Table metadata creation
+    /// 4. Column family creation
     ///
     /// Note: Column family creation must be done separately on the DB instance.
     ///
@@ -61,10 +61,10 @@ impl StreamTableService {
     /// * `stmt` - Parsed CREATE STREAM TABLE statement
     ///
     /// # Returns
-    /// Table metadata for the created stream table
-    pub fn create_table(&self, stmt: CreateTableStatement) -> Result<TableMetadata, KalamDbError> {
+    /// Ok(()) if successful
+    pub fn create_table(&self, stmt: CreateTableStatement) -> Result<(), KalamDbError> {
         // Validate table name
-        TableMetadata::validate_table_name(stmt.table_name.as_str())
+        Self::validate_table_name(stmt.table_name.as_str())
             .map_err(KalamDbError::InvalidOperation)?;
 
         // Check if table already exists
@@ -100,19 +100,8 @@ impl StreamTableService {
             KalamDbError::InvalidOperation(format!("Failed to create column family: {}", e))
         })?;
 
-        // Create and return table metadata
-        let metadata = TableMetadata {
-            table_name: stmt.table_name.clone(),
-            table_type: TableType::Stream,
-            namespace: stmt.namespace_id.clone(),
-            created_at: chrono::Utc::now(),
-            storage_id: Some(StorageId::new("local")), // Stream tables always use local storage
-            flush_policy: FlushPolicy::RowLimit { row_limit: 0 }, // No flush for stream tables
-            schema_version: 1,
-            deleted_retention_hours: None, // Stream tables don't have soft deletes
-        };
-
-        Ok(metadata)
+        // Table created successfully
+        Ok(())
     }
 
     /// Create and save table definition to information_schema_tables.

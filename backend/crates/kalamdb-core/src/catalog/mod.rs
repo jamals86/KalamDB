@@ -10,8 +10,9 @@
 //!
 //! **Phase 10 Complete**: Unified SchemaCache replaces old dual-cache architecture
 //! - Deleted: table_cache.rs (516 lines) - old TableCache implementation
-//! - Deleted: table_metadata.rs (252 lines) - replaced by CachedTableData
 //! - Deleted: tables/system/schemas/schema_cache.rs (443 lines) - old system SchemaCache
+//! - Deleted: table_metadata.rs (252 lines) - replaced by CachedTableData
+//! - Single source of truth: CachedTableData in unified SchemaCache
 
 pub mod schema_cache; // Phase 10: Unified cache implementation
 

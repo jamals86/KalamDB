@@ -8,7 +8,7 @@
 //! - Hybrid RocksDB + Parquet querying
 
 use super::{UserTableDeleteHandler, UserTableInsertHandler, UserTableUpdateHandler};
-use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
+use crate::catalog::{NamespaceId, SchemaCache, TableName, TableType, UserId};
 use crate::error::KalamDbError;
 use crate::ids::SnowflakeGenerator;
 use crate::live_query::manager::LiveQueryManager;
@@ -46,14 +46,13 @@ static AUTO_ID_GENERATOR: Lazy<SnowflakeGenerator> = Lazy::new(|| SnowflakeGener
 /// - Hybrid RocksDB + Parquet scanning
 /// - Schema evolution support
 ///
-/// **Phase 10 Optimization**: Stores Arc<TableId> to avoid repeated allocations
-/// during cache lookups (created once at registration, reused for all queries).
+/// **Phase 10 Optimization**: Uses unified SchemaCache as single source of truth for table metadata
 pub struct UserTableProvider {
     /// Composite table identifier (Phase 10: Arc for zero-allocation cache lookups)
     table_id: Arc<TableId>,
 
-    /// Table metadata (namespace, table name, type, storage location, etc.)
-    table_metadata: TableMetadata,
+    /// Unified cache reference (Phase 10: single source of truth for table metadata)
+    unified_cache: Arc<SchemaCache>,
 
     /// Arrow schema for the table
     schema: SchemaRef,
@@ -89,7 +88,7 @@ pub struct UserTableProvider {
 impl std::fmt::Debug for UserTableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UserTableProvider")
-            .field("table_metadata", &self.table_metadata)
+            .field("table_id", &self.table_id)
             .field("schema", &self.schema)
             .field("current_user_id", &self.current_user_id)
             .field("access_role", &self.access_role)
@@ -102,14 +101,14 @@ impl UserTableProvider {
     ///
     /// # Arguments
     /// * `table_id` - Arc<TableId> created once at registration (Phase 10: zero-allocation cache lookups)
-    /// * `table_metadata` - Table metadata (namespace, table name, type, etc.)
+    /// * `unified_cache` - Reference to unified SchemaCache for metadata lookups
     /// * `schema` - Arrow schema for the table
     /// * `store` - UserTableStore for DML operations
     /// * `current_user_id` - Current user ID for data isolation
     /// * `access_role` - Role of the caller (determines access scope)
     pub fn new(
         table_id: Arc<TableId>,
-        table_metadata: TableMetadata,
+        unified_cache: Arc<SchemaCache>,
         schema: SchemaRef,
         store: Arc<UserTableStore>,
         current_user_id: UserId,
@@ -122,7 +121,7 @@ impl UserTableProvider {
 
         Self {
             table_id,
-            table_metadata,
+            unified_cache,
             schema,
             store,
             current_user_id,
@@ -184,22 +183,31 @@ impl UserTableProvider {
 
     /// Get the column family name for this table
     pub fn column_family_name(&self) -> String {
-        self.table_metadata.column_family_name()
+        format!(
+            "user_table:{}:{}",
+            self.table_id.namespace_id().as_str(),
+            self.table_id.table_name().as_str()
+        )
     }
 
     /// Get the namespace ID
     pub fn namespace_id(&self) -> &NamespaceId {
-        &self.table_metadata.namespace
+        self.table_id.namespace_id()
     }
 
     /// Get the table name
     pub fn table_name(&self) -> &TableName {
-        &self.table_metadata.table_name
+        self.table_id.table_name()
     }
 
     /// Get the table type
-    pub fn table_type(&self) -> &TableType {
-        &self.table_metadata.table_type
+    pub fn table_type(&self) -> TableType {
+        // Get from cache
+        if let Some(cached_data) = self.unified_cache.get(&*self.table_id) {
+            cached_data.table_type
+        } else {
+            TableType::User // Fallback (shouldn't happen if cache is properly initialized)
+        }
     }
 
     /// Get the current user ID
@@ -224,11 +232,15 @@ impl UserTableProvider {
     ///
     /// Applies ${user_id} substitution to the table's storage location
     pub fn user_storage_location(&self) -> String {
-        // TODO: Phase 9 - Use TableCache for dynamic path resolution
-        let storage_path = self.table_metadata.storage_id.as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("local");
-        self.substitute_user_id_in_path(storage_path)
+        // Get storage_id from cache
+        let storage_id_str = if let Some(cached_data) = self.unified_cache.get(&*self.table_id) {
+            cached_data.storage_id.as_ref()
+                .map(|s| s.as_str())
+                .unwrap_or("local")
+        } else {
+            "local" // Fallback
+        };
+        self.substitute_user_id_in_path(storage_id_str)
     }
 
     /// Insert a single row into this user table
@@ -504,11 +516,14 @@ impl UserTableProvider {
             }
             _ => {
                 // Fallback to template substitution if registry lookup fails
-                // TODO: Phase 9 - Use storage_id instead of storage_location
-                let storage_path_str = self.table_metadata.storage_id.as_ref()
-                    .map(|s| s.as_str())
-                    .unwrap_or("local");
-                storage_path_str
+                let storage_id_str = if let Some(cached_data) = self.unified_cache.get(&*self.table_id) {
+                    cached_data.storage_id.as_ref()
+                        .map(|s| s.as_str())
+                        .unwrap_or("local")
+                } else {
+                    "local" // Fallback
+                };
+                storage_id_str
                     .replace("${user_id}", self.current_user_id.as_str())
                     .replace("{userId}", self.current_user_id.as_str())
                     .replace("{namespace}", self.namespace_id().as_str())
@@ -518,9 +533,14 @@ impl UserTableProvider {
         }
     } else {
         // No registry available - use template substitution (legacy)
-        // TODO: Phase 9 - Use storage_id instead of storage_location
-        let storage_path_str = self.table_metadata.storage_id.as_ref()
-            .map(|s| s.as_str())
+        let storage_id_str = if let Some(cached_data) = self.unified_cache.get(&*self.table_id) {
+            cached_data.storage_id.as_ref()
+                .map(|s| s.as_str())
+                .unwrap_or("local")
+        } else {
+            "local" // Fallback
+        };
+        storage_id_str
             .unwrap_or("local");
         storage_path_str
             .replace("${user_id}", self.current_user_id.as_str())

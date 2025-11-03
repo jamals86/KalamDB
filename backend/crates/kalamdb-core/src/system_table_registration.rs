@@ -6,7 +6,7 @@
 use crate::tables::system::jobs_v2::JobsTableProvider;
 use crate::tables::system::live_queries_v2::LiveQueriesTableProvider;
 use crate::tables::system::namespaces_v2::NamespacesTableProvider;
-use crate::tables::system::schemas::{SchemaCache, TableSchemaStore};
+use crate::tables::system::schemas::TableSchemaStore;
 use crate::tables::system::storages_v2::StoragesTableProvider;
 use crate::tables::system::system_table_definitions::all_system_table_definitions;
 use crate::tables::system::tables_v2::TablesTableProvider;
@@ -32,7 +32,7 @@ use std::sync::Arc;
 /// * `storage_backend` - The storage backend for EntityStore-based providers
 ///
 /// # Returns
-/// * `(jobs_provider, schema_store, schema_cache)` - Tuple of jobs provider, schema store, and cache
+/// * `(jobs_provider, schema_store)` - Tuple of jobs provider and schema store
 ///
 /// # Example
 /// ```no_run
@@ -43,38 +43,27 @@ use std::sync::Arc;
 ///
 /// # let backend: Arc<dyn kalamdb_store::StorageBackend> = unimplemented!("provide a StorageBackend");
 /// let system_schema = Arc::new(MemorySchemaProvider::new());
-/// let (jobs_provider, schema_store, schema_cache) = register_system_tables(&system_schema, backend)
+/// let (jobs_provider, schema_store) = register_system_tables(&system_schema, backend)
 ///     .expect("Failed to register system tables");
 /// ```
 pub fn register_system_tables(
     system_schema: &Arc<MemorySchemaProvider>,
     storage_backend: Arc<dyn kalamdb_store::StorageBackend>,
-) -> Result<
-    (
-        Arc<JobsTableProvider>,
-        Arc<TableSchemaStore>,
-        Arc<SchemaCache>,
-    ),
-    String,
-> {
+) -> Result<(Arc<JobsTableProvider>, Arc<TableSchemaStore>), String> {
     use kalamdb_store::storage_trait::Partition;
 
     // Create the system_table_schemas partition if it doesn't exist
     let schemas_partition = Partition::new("system_table_schemas");
     let _ = storage_backend.create_partition(&schemas_partition); // Ignore error if already exists
 
-    // Initialize TableSchemaStore and SchemaCache
+    // Initialize TableSchemaStore (no separate cache - unified cache in SqlExecutor)
     let schema_store = Arc::new(TableSchemaStore::new(storage_backend.clone()));
-    let schema_cache = Arc::new(SchemaCache::new(1000)); // Cache up to 1000 schemas
 
     // Register all system table schema definitions in TableSchemaStore
     for (table_id, table_def) in all_system_table_definitions() {
         schema_store
             .put(&table_id, &table_def)
             .map_err(|e| format!("Failed to register schema for {}: {}", table_id, e))?;
-
-        // Pre-warm the cache with system table schemas
-        schema_cache.insert(table_id, table_def);
     }
 
     // Create all system table providers using EntityStore-based v2 implementations
@@ -126,12 +115,14 @@ pub fn register_system_tables(
         .map_err(|e| format!("Failed to register system.jobs: {}", e))?;
 
     // Register virtual system.stats table (observability)
-    let stats_provider = Arc::new(StatsTableProvider::new(Some(schema_cache.clone())));
+    // Note: No cache passed - StatsTableProvider will not show cache metrics
+    // Cache metrics are accessible via SqlExecutor's unified_cache (Phase 10)
+    let stats_provider = Arc::new(StatsTableProvider::new(None));
     system_schema
         .register_table("stats".to_string(), stats_provider)
         .map_err(|e| format!("Failed to register system.stats: {}", e))?;
 
-    Ok((jobs_provider, schema_store, schema_cache))
+    Ok((jobs_provider, schema_store))
 }
 
 #[cfg(test)]
@@ -183,7 +174,7 @@ mod tests {
         let system_schema = Arc::new(MemorySchemaProvider::new());
 
         // Register system tables
-        let (jobs_provider, schema_store, schema_cache) =
+        let (jobs_provider, schema_store) =
             register_system_tables(&system_schema, backend)
                 .expect("Failed to register system tables");
 
@@ -230,23 +221,7 @@ mod tests {
             );
         }
 
-        // Verify cache is populated
-        for &table_name in &[
-            "users",
-            "jobs",
-            "namespaces",
-            "storages",
-            "live_queries",
-            "tables",
-            "table_schemas",
-        ] {
-            let table_id = TableId::new(system_namespace.clone(), TableName::from(table_name));
-            let cached_schema = schema_cache.get(&table_id);
-            assert!(
-                cached_schema.is_some(),
-                "Schema for {} should be cached",
-                table_name
-            );
-        }
+        // Phase 10: No separate schema_cache - unified cache lives in SqlExecutor
+        // This test verifies schema_store persistence only
     }
 }

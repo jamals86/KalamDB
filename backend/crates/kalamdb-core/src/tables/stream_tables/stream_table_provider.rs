@@ -7,7 +7,7 @@
 //! - Optional ephemeral mode (only store if subscribers exist)
 //! - Real-time event delivery to subscribers
 
-use crate::catalog::{NamespaceId, TableMetadata, TableName};
+use crate::catalog::{NamespaceId, SchemaCache, TableName};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::stores::system_table::SharedTableStoreExt;
@@ -37,14 +37,13 @@ use std::sync::Arc;
 ///
 /// **Important**: Stream tables do NOT have system columns (_updated, _deleted)
 ///
-/// **Phase 10 Optimization**: Stores Arc<TableId> to avoid repeated allocations
-/// during cache lookups (created once at registration, reused for all queries).
+/// **Phase 10 Optimization**: Uses unified SchemaCache as single source of truth for table metadata
 pub struct StreamTableProvider {
     /// Composite table identifier (Phase 10: Arc for zero-allocation cache lookups)
     table_id: Arc<TableId>,
 
-    /// Table metadata (namespace, table name, type, etc.)
-    table_metadata: TableMetadata,
+    /// Unified cache reference (Phase 10: single source of truth for table metadata)
+    unified_cache: Arc<SchemaCache>,
 
     /// Arrow schema for the table (user-defined only, no system columns)
     schema: SchemaRef,
@@ -74,7 +73,7 @@ pub struct StreamTableProvider {
 impl std::fmt::Debug for StreamTableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StreamTableProvider")
-            .field("table_metadata", &self.table_metadata)
+            .field("table_id", &self.table_id)
             .field("retention_seconds", &self.retention_seconds)
             .field("ephemeral", &self.ephemeral)
             .field("max_buffer", &self.max_buffer)
@@ -87,7 +86,7 @@ impl StreamTableProvider {
     ///
     /// # Arguments
     /// * `table_id` - Arc<TableId> created once at registration (Phase 10: zero-allocation cache lookups)
-    /// * `table_metadata` - Table metadata (namespace, table name, type, etc.)
+    /// * `unified_cache` - Reference to unified SchemaCache for metadata lookups
     /// * `schema` - Arrow schema for the table (NO system columns)
     /// * `store` - StreamTableStore for event operations
     /// * `retention_seconds` - Optional TTL in seconds
@@ -95,7 +94,7 @@ impl StreamTableProvider {
     /// * `max_buffer` - Optional maximum buffer size
     pub fn new(
         table_id: Arc<TableId>,
-        table_metadata: TableMetadata,
+        unified_cache: Arc<SchemaCache>,
         schema: SchemaRef,
         store: Arc<StreamTableStore>,
         retention_seconds: Option<u32>,
@@ -104,7 +103,7 @@ impl StreamTableProvider {
     ) -> Self {
         Self {
             table_id,
-            table_metadata,
+            unified_cache,
             schema,
             store,
             retention_seconds,
