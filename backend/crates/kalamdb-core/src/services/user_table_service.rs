@@ -11,7 +11,7 @@
 //!
 //! **REFACTORED**: Migrating from system_table_schemas to information_schema.tables
 
-use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
+use crate::catalog::{NamespaceId, TableName, TableType, UserId};
 use crate::error::KalamDbError;
 // TODO: Phase 2b - FlushPolicy import will be needed again
 // use crate::flush::FlushPolicy;
@@ -63,10 +63,10 @@ impl UserTableService {
     /// * `stmt` - Parsed CREATE TABLE statement (USER table)
     ///
     /// # Returns
-    /// Table metadata for the created table
-    pub fn create_table(&self, stmt: CreateTableStatement) -> Result<TableMetadata, KalamDbError> {
+    /// Ok(()) on success
+    pub fn create_table(&self, stmt: CreateTableStatement) -> Result<(), KalamDbError> {
         // Validate table name
-        TableMetadata::validate_table_name(stmt.table_name.as_str())
+        Self::validate_table_name(stmt.table_name.as_str())
             .map_err(KalamDbError::InvalidOperation)?;
 
         let namespace_id_core = stmt.namespace_id.clone();
@@ -124,23 +124,8 @@ impl UserTableService {
                 ))
             })?;
 
-        // 6. Create and return table metadata
-        let metadata = TableMetadata {
-            table_name: table_name_core.clone(),
-            table_type: TableType::User,
-            namespace: namespace_id_core.clone(),
-            created_at: chrono::Utc::now(),
-            storage_id: Some(modified_stmt.storage_id.clone().unwrap_or_else(|| StorageId::new("local"))),
-            flush_policy: modified_stmt
-                .flush_policy
-                .clone()
-                .map(crate::flush::FlushPolicy::from)
-                .unwrap_or_default(),
-            schema_version: 1,
-            deleted_retention_hours: modified_stmt.deleted_retention_hours,
-        };
-
-        Ok(metadata)
+        // Return success - table metadata is now in cache via save_table_definition
+        Ok(())
     }
 
     /// Inject auto-increment field if not present
@@ -333,8 +318,43 @@ impl UserTableService {
     /// Substitute ${user_id} in path template
     ///
     /// Replaces ${user_id} with actual user ID in storage paths.
-    pub fn substitute_user_id(path_template: &str, user_id: &UserId) -> String {
-        path_template.replace("${user_id}", user_id.as_str())
+    pub fn substitute_user_id(path: &str, user_id: &UserId) -> String {
+        path.replace("${user_id}", user_id.as_str())
+    }
+
+    /// Validate table name
+    ///
+    /// # Rules
+    /// - Must start with lowercase letter or underscore
+    /// - Cannot be a SQL keyword
+    ///
+    /// # Arguments
+    /// * `name` - Table name to validate
+    ///
+    /// # Returns
+    /// Ok(()) if valid, error otherwise
+    fn validate_table_name(name: &str) -> Result<(), String> {
+        // Check first character
+        let first_char = name.chars().next().ok_or_else(|| {
+            "Table name cannot be empty".to_string()
+        })?;
+
+        if !first_char.is_lowercase() && first_char != '_' {
+            return Err(format!(
+                "Table name must start with lowercase letter or underscore: {}",
+                name
+            ));
+        }
+
+        // Check for SQL keywords
+        let keywords = [
+            "select", "insert", "update", "delete", "table", "from", "where",
+        ];
+        if keywords.contains(&name.to_lowercase().as_str()) {
+            return Err(format!("Table name cannot be a SQL keyword: {}", name));
+        }
+
+        Ok(())
     }
 }
 
@@ -434,5 +454,18 @@ mod tests {
         let user_id = UserId::new("user123");
         let result = UserTableService::substitute_user_id(path, &user_id);
         assert_eq!(result, "/data/user123/messages");
+    }
+
+    #[test]
+    fn test_validate_table_name() {
+        assert!(UserTableService::validate_table_name("users").is_ok());
+        assert!(UserTableService::validate_table_name("_private").is_ok());
+        assert!(UserTableService::validate_table_name("table_123").is_ok());
+        
+        // Should fail: starts with uppercase
+        assert!(UserTableService::validate_table_name("Users").is_err());
+        
+        // Should fail: SQL keyword
+        assert!(UserTableService::validate_table_name("select").is_err());
     }
 }

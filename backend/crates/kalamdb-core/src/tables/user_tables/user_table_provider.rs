@@ -457,14 +457,14 @@ impl UserTableProvider {
     }
 
     /// Flatten stored `UserTableRow` into a JSON object matching the logical schema.
-    fn flatten_row(metadata: &TableMetadata, data: UserTableRow) -> JsonValue {
+    fn flatten_row(&self, data: UserTableRow) -> JsonValue {
         let mut row = match data.fields {
             JsonValue::Object(map) => map,
             other => {
                 log::warn!(
                     "Unexpected non-object payload in user table row {}.{}; defaulting to empty object",
-                    metadata.namespace.as_str(),
-                    metadata.table_name.as_str()
+                    self.table_id.namespace_id().as_str(),
+                    self.table_id.table_name().as_str()
                 );
                 let mut map = serde_json::Map::new();
                 if !other.is_null() {
@@ -729,7 +729,7 @@ impl TableProvider for UserTableProvider {
         // Convert RocksDB rows to JSON for merging
         let rocksdb_json: Vec<JsonValue> = filtered_rows
             .into_iter()
-            .map(|(_id, data)| Self::flatten_row(&self.table_metadata, data))
+            .map(|(_id, data)| self.flatten_row(data))
             .collect();
 
         log::debug!("RocksDB rows: {}", rocksdb_json.len());

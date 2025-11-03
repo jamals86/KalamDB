@@ -28,7 +28,7 @@
 //! impossible because malicious input is treated as literal data values, not executable SQL.
 
 use crate::auth::rbac;
-use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
+use crate::catalog::{NamespaceId, TableName, TableType, UserId};
 use crate::error::KalamDbError;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 use crate::services::{
@@ -427,14 +427,6 @@ impl SqlExecutor {
             ))
         })?;
 
-        // Create minimal table metadata for registration
-        let table_metadata = crate::catalog::TableMetadata::new(
-            table_name.clone(),
-            table_type,
-            namespace_id.clone(),
-            Some(StorageId::new("local")), // Default storage
-        );
-
         // Phase 10: Table will be added to unified_cache in cache_table_metadata() 
         // after full metadata is available (T311-T314)
 
@@ -460,9 +452,14 @@ impl SqlExecutor {
                     table_name.clone(),
                 ));
 
+                // Get unified_cache for provider
+                let unified_cache = self.unified_cache.as_ref()
+                    .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
+                    .clone();
+
                 let provider = Arc::new(SharedTableProvider::new(
                     table_id,
-                    table_metadata,
+                    unified_cache,
                     schema,
                     store.clone(),
                 ));
@@ -496,9 +493,14 @@ impl SqlExecutor {
                     table_name.clone(),
                 ));
 
+                // Get unified_cache for provider
+                let unified_cache = self.unified_cache.as_ref()
+                    .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
+                    .clone();
+
                 let mut provider = StreamTableProvider::new(
                     table_id,
-                    table_metadata,
+                    unified_cache,
                     schema,
                     store.clone(),
                     None,  // retention_seconds - TODO: get from table metadata
@@ -1307,23 +1309,6 @@ impl SqlExecutor {
             })?;
             let schema = arrow_schema_with_opts.schema;
 
-            // Create metadata
-            let metadata = TableMetadata {
-                table_name: table_name.clone(),
-                table_type: TableType::Shared,
-                namespace: namespace_id.clone(),
-                created_at: chrono::DateTime::from_timestamp_millis(table.created_at)
-                    .unwrap_or_else(chrono::Utc::now),
-                storage_id: table.storage_id.clone(),
-                flush_policy: serde_json::from_str(&table.flush_policy).unwrap_or_default(),
-                schema_version: table.schema_version as u32,
-                deleted_retention_hours: if table.deleted_retention_hours > 0 {
-                    Some(table.deleted_retention_hours as u32)
-                } else {
-                    None
-                },
-            };
-
             // Get shared table store
             let store = self.shared_table_store.as_ref().ok_or_else(|| {
                 KalamDbError::InvalidOperation("SharedTableStore not configured".to_string())
@@ -1335,8 +1320,13 @@ impl SqlExecutor {
                 table_name.clone(),
             ));
 
+            // Get unified_cache for provider
+            let unified_cache = self.unified_cache.as_ref()
+                .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
+                .clone();
+
             // Create provider
-            let provider = Arc::new(SharedTableProvider::new(table_id, metadata, schema, store.clone()));
+            let provider = Arc::new(SharedTableProvider::new(table_id, unified_cache, schema, store.clone()));
 
             // Register with fully qualified name
             let qualified_name = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
@@ -1410,23 +1400,6 @@ impl SqlExecutor {
             })?;
             let schema = arrow_schema_with_opts.schema;
 
-            // Create metadata
-            let metadata = TableMetadata {
-                table_name: table_name.clone(),
-                table_type: TableType::User,
-                namespace: namespace_id.clone(),
-                created_at: chrono::DateTime::from_timestamp_millis(table.created_at)
-                    .unwrap_or_else(chrono::Utc::now),
-                storage_id: table.storage_id.clone(),
-                flush_policy: serde_json::from_str(&table.flush_policy).unwrap_or_default(),
-                schema_version: table.schema_version as u32,
-                deleted_retention_hours: if table.deleted_retention_hours > 0 {
-                    Some(table.deleted_retention_hours as u32)
-                } else {
-                    None
-                },
-            };
-
             // Create table-specific store with proper partition name
             // Instead of using the generic self.user_table_store, create a store
             // specific to this table with the correct column family name
@@ -1446,10 +1419,15 @@ impl SqlExecutor {
                 table_name.clone(),
             ));
 
+            // Get unified_cache for provider
+            let unified_cache = self.unified_cache.as_ref()
+                .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
+                .clone();
+
             // Create provider with the CURRENT user_id (critical for data isolation)
             let mut provider = UserTableProvider::new(
                 table_id,
-                metadata,
+                unified_cache,
                 schema,
                 table_store,
                 user_id.clone(),
@@ -1541,23 +1519,6 @@ impl SqlExecutor {
             })?;
             let schema = arrow_schema_with_opts.schema;
 
-            // Create metadata
-            let metadata = TableMetadata {
-                table_name: table_name.clone(),
-                table_type: TableType::Stream,
-                namespace: namespace_id.clone(),
-                created_at: chrono::DateTime::from_timestamp_millis(table.created_at)
-                    .unwrap_or_else(chrono::Utc::now),
-                storage_id: table.storage_id.clone(),
-                flush_policy: serde_json::from_str(&table.flush_policy).unwrap_or_default(),
-                schema_version: table.schema_version as u32,
-                deleted_retention_hours: if table.deleted_retention_hours > 0 {
-                    Some(table.deleted_retention_hours as u32)
-                } else {
-                    None
-                },
-            };
-
             // Get stream table store
             let store = self.stream_table_store.as_ref().ok_or_else(|| {
                 KalamDbError::InvalidOperation("StreamTableStore not configured".to_string())
@@ -1569,10 +1530,15 @@ impl SqlExecutor {
                 table_name.clone(),
             ));
 
+            // Get unified_cache for provider
+            let unified_cache = self.unified_cache.as_ref()
+                .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
+                .clone();
+
             // Create provider
             let mut provider = StreamTableProvider::new(
                 table_id,
-                metadata,
+                unified_cache,
                 schema,
                 store.clone(),
                 None,  // retention_seconds - TODO: get from table metadata
