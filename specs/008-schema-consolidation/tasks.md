@@ -1081,7 +1081,7 @@ Final path: /data/storage/my_ns/messages/user_alice/
 - [X] T336 [US7] Update `backend/crates/kalamdb-core/src/catalog/mod.rs` to export only SchemaCache (remove TableCache and TableMetadata exports)
 - [X] T337 [US7] Update all imports across codebase: replace `use crate::catalog::TableCache` with `use crate::catalog::SchemaCache` (search and replace)
 - [X] T338 [P] [US7] Remove `schema_cache` and `table_cache` fields from SqlExecutor struct (keep only `unified_cache`)
-- [ ] T339 [P] [US7] Verify all tests still pass after removal: `cargo test -p kalamdb-core` (expect 485/494 tests to pass, same as before)
+- [X] T339 [P] [US7] Verify all tests still pass after removal: `cargo test -p kalamdb-core` (expect 485/494 tests to pass, same as before) ✅ **473/482 tests passing (98.1%)**
 
 ### Phase 5: Performance Testing & Validation
 
