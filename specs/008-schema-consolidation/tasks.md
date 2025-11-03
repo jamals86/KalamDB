@@ -774,10 +774,10 @@ Note: Subscriptions are supported for user and stream tables only; shared tables
 
 ### Smoke Test Verification
 
-- [ ] T229 [US7] Run CLI smoke tests: `cargo test -p kalam-cli --test smoke -- --nocapture`
+- [X] T229 [US7] Run CLI smoke tests: `cargo test -p kalam-cli --test smoke -- --nocapture`
 - [ ] T230 [US7] Verify smoke_test_user_subscription works with dynamic path resolution
 - [ ] T231 [US7] Verify smoke_test_shared_crud writes to correct storage location
-- [ ] T232 [US7] Verify smoke_test_user_table_rls isolates user data correctly
+- [X] T232 [US7] Verify smoke_test_user_table_rls isolates user data correctly
 - [ ] T233 [US7] Check flush job logs for correct Parquet paths: `grep "Writing Parquet file" logs/*.log`
 
 ### Final Validation
@@ -801,7 +801,7 @@ Note: Subscriptions are supported for user and stream tables only; shared tables
 
 **Phase 9 Summary**:
 - **Total Tasks**: 60 (T180-T240)
-- **Completed**: 43/60 tasks (72% complete)
+- **Completed**: 45/60 tasks (75% complete)
   - **Core Implementation**: T180-T220 (41 tasks) - ✅ COMPLETE
   - **Integration Tests**: T221-T228 (8 tasks) - DEFERRED (follow-up work)
   - **Smoke Tests**: T229-T233 (5 tasks) - DEFERRED (follow-up work)

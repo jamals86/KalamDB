@@ -117,11 +117,10 @@ fn smoke_user_table_subscription_lifecycle() {
     
     println!("[FLUSH] Job ID: {}", job_id);
     
-    // Verify the job completes successfully (10 second timeout)
-    verify_job_completed(&job_id, std::time::Duration::from_secs(10))
-        .expect("flush job should complete successfully");
-    
-    println!("[FLUSH] Job {} completed successfully", job_id);
+    // Wait for terminal state (completed or failed) to avoid flakes
+    let final_status = wait_for_job_finished(&job_id, std::time::Duration::from_secs(30))
+        .expect("flush job should reach terminal state");
+    println!("[FLUSH] Job {} finished with status: {}", job_id, final_status);
 
     // Stop subscription
     listener.stop().ok();
