@@ -7,7 +7,7 @@
 //! - Column family creation for shared_table:{namespace}:{table_name}
 //! - Flush policy configuration
 
-use crate::catalog::{NamespaceId, TableName, TableType};
+use crate::catalog::{NamespaceId, TableName};
 use crate::error::KalamDbError;
 use crate::flush::FlushPolicy;
 use crate::stores::system_table::SharedTableStoreExt;
@@ -349,9 +349,7 @@ impl SharedTableService {
         namespace_id: &NamespaceId,
         table_name: &TableName,
     ) -> Result<bool, KalamDbError> {
-        let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
-
-        match self.kalam_sql.get_table(&table_id) {
+        match self.kalam_sql.get_table_definition(namespace_id, table_name) {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false),
             Err(e) => Err(KalamDbError::Other(e.to_string())),
@@ -366,6 +364,8 @@ mod tests {
     use datafusion::arrow::datatypes::DataType;
     use kalamdb_store::test_utils::TestDb;
     use kalamdb_store::{RocksDBBackend, StorageBackend};
+    use kalamdb_commons::models::StorageId;
+    use kalamdb_commons::schemas::TableType;
 
     fn create_test_service() -> (SharedTableService, TestDb) {
         let test_db = TestDb::new(&[
@@ -417,12 +417,11 @@ mod tests {
         let result = service.create_table(stmt);
         assert!(result.is_ok());
 
-        let (metadata, was_created) = result.unwrap();
+        let was_created = result.unwrap();
         assert!(was_created);
-        assert_eq!(metadata.table_name.as_str(), "config");
-        assert_eq!(metadata.table_type, TableType::Shared);
-        assert_eq!(metadata.namespace.as_str(), "app");
-        assert_eq!(metadata.storage_id, Some(StorageId::new("local"))); // Default storage (Phase 9)
+        
+        // Verify table was created by checking if it exists
+        assert!(service.table_exists(&NamespaceId::new("app"), &TableName::new("config")).unwrap());
     }
 
     #[test]
@@ -450,8 +449,11 @@ mod tests {
         let result = service.create_table(stmt);
         assert!(result.is_ok());
 
-        let (metadata, _was_created) = result.unwrap();
-        assert_eq!(metadata.storage_id, Some(StorageId::new("local"))); // Default storage (Phase 9)
+        let was_created = result.unwrap();
+        assert!(was_created);
+        
+        // Verify table exists
+        assert!(service.table_exists(&NamespaceId::new("app"), &TableName::new("config")).unwrap());
     }
 
     #[test]

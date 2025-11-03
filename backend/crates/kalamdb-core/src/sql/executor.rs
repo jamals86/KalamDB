@@ -64,7 +64,6 @@ use kalamdb_sql::ddl::{
 use kalamdb_sql::statement_classifier::SqlStatement;
 use kalamdb_sql::KalamSql;
 use kalamdb_sql::RocksDbAdapter;
-use kalamdb_store::entity_store::EntityStore;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -3060,8 +3059,9 @@ impl SqlExecutor {
             self.ensure_namespace_exists(&namespace_id)?;
             let schema = stmt.schema.clone();
             let retention_seconds = stmt.ttl_seconds.map(|t| t as u32);
+            let flush_policy = stmt.flush_policy.clone().map(crate::flush::FlushPolicy::from).unwrap_or_default();
 
-            let metadata = self.stream_table_service.create_table(stmt)?;
+            self.stream_table_service.create_table(stmt)?;
 
             // TODO: In the future create the table and directly add it to the cache and read the Table from the cache itself
             // Insert into system.tables via KalamSQL
@@ -3074,7 +3074,7 @@ impl SqlExecutor {
                     created_at: chrono::Utc::now().timestamp_millis(),
                     storage_id: Some(StorageId::from("local")), // Stream tables always use local storage
                     use_user_storage: false, // Stream tables don't support user storage
-                    flush_policy: serde_json::to_string(&metadata.flush_policy)
+                    flush_policy: serde_json::to_string(&flush_policy)
                         .unwrap_or_else(|_| "{}".to_string()),
                     schema_version: 1,
                     deleted_retention_hours: retention_seconds
@@ -3105,7 +3105,7 @@ impl SqlExecutor {
             // T311: Cache table metadata in unified SchemaCache
             let storage_id = StorageId::from("local"); // Stream tables always use local storage
             // Convert core FlushPolicy to DDL FlushPolicy for caching
-            let flush_policy_ddl = match &metadata.flush_policy {
+            let flush_policy_ddl = match &flush_policy {
                 crate::flush::FlushPolicy::RowLimit { row_limit } => {
                     Some(kalamdb_sql::ddl::FlushPolicy::RowLimit {
                         row_limit: *row_limit,
@@ -3171,7 +3171,7 @@ impl SqlExecutor {
             // Validate and resolve storage_id
             let storage_id = self.validate_storage_id(stmt_storage_id)?;
 
-            let (_metadata, was_created) = self.shared_table_service.create_table(stmt)?;
+            let was_created = self.shared_table_service.create_table(stmt)?;
             log::debug!(
                 "CREATE SHARED TABLE: was_created={}, table_name={}",
                 was_created,
@@ -3280,7 +3280,7 @@ impl SqlExecutor {
             // Validate and resolve storage_id
             let storage_id = self.validate_storage_id(stmt_storage_id)?;
 
-            let (_metadata, was_created) = self.shared_table_service.create_table(stmt)?;
+            let was_created = self.shared_table_service.create_table(stmt)?;
 
             if was_created {
                 if let Some(kalam_sql) = &self.kalam_sql {
@@ -4804,7 +4804,7 @@ mod tests {
     async fn test_describe_stream_table_shows_no_system_columns() {
         // Create test database with necessary column families
         let test_db =
-            TestDb::new(&["system_namespaces", "system_tables", "system_table_schemas"]).unwrap();
+            TestDb::new(&["system_namespaces", "system_tables", "system_table_schemas", "information_schema_tables"]).unwrap();
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
         let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
@@ -4838,7 +4838,12 @@ mod tests {
             kalam_sql.clone(),
         ));
 
-        let executor = SqlExecutor::new(
+        let storage_registry = Arc::new(crate::storage::StorageRegistry::new(
+            kalam_sql.clone(),
+            "./data/storage".to_string(),
+        ));
+
+        let mut executor = SqlExecutor::new(
             namespace_service,
             session_context,
             user_table_service,
@@ -4852,27 +4857,43 @@ mod tests {
             kalam_sql.clone(),
         )
         .with_storage_backend(backend.clone())
-        .with_storage_registry(Arc::new(crate::storage::StorageRegistry::new(
-            kalam_sql.clone(),
-            "./data/storage".to_string(),
-        )));
+        .with_storage_registry(storage_registry.clone());
 
-        // Create a test stream table entry in system_tables
-        let table = kalamdb_sql::Table {
-            table_id: TableId::new(NamespaceId::new("app"), TableName::new("events")),
-            table_name: "events".into(),
-            namespace: "app".into(),
-            table_type: kalamdb_commons::schemas::TableType::Stream,
-            created_at: chrono::Utc::now().timestamp_millis(),
-            storage_id: Some(StorageId::new("local")),
-            use_user_storage: false,
-            flush_policy: String::new(),
-            schema_version: 1,
-            deleted_retention_hours: 0,
-            access_level: None, // Test STREAM table doesn't use access_level
-        };
+        // Create and populate unified cache for DESCRIBE TABLE
+        let unified_cache = Arc::new(crate::catalog::SchemaCache::new(100, Some(storage_registry)));
+        
+        // Create a test stream table definition using TableDefinition
+        use kalamdb_commons::schemas::{TableDefinition, TableOptions};
+        use crate::catalog::CachedTableData;
+        
+        let table_def = TableDefinition::new(
+            NamespaceId::new("app"),
+            TableName::new("events"),
+            kalamdb_commons::schemas::TableType::Stream,
+            vec![], // Stream tables have no user-defined columns
+            TableOptions::stream(3600), // Default 1 hour TTL
+            None, // table_comment
+        ).unwrap();
 
-        kalam_sql.insert_table(&table).unwrap();
+        kalam_sql.upsert_table_definition(&table_def).unwrap();
+
+        // Populate cache with the table definition
+        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("events"));
+        let cached_data = CachedTableData::new(
+            table_id.clone(),
+            kalamdb_commons::schemas::TableType::Stream,
+            chrono::Utc::now(),
+            Some(StorageId::new("local")),
+            crate::flush::FlushPolicy::default(),
+            "./data/storage/stream".to_string(), // storage_path_template
+            1, // schema_version
+            None, // deleted_retention_hours
+            Arc::new(table_def),
+        );
+        unified_cache.insert(table_id, Arc::new(cached_data));
+
+        // Set cache in executor
+        executor.unified_cache = Some(unified_cache);
 
         // Execute DESCRIBE TABLE
         let result = executor
@@ -4880,41 +4901,14 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify stream table shows appropriate properties
+        // Verify stream table shows no user-defined columns
         match result {
             ExecutionResult::RecordBatch(batch) => {
-                assert_eq!(batch.num_columns(), 2);
-                assert!(batch.num_rows() > 0);
-
-                // Convert to string to check content
-                let properties_col = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-
-                let values_col = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap();
-
-                // Check that table_type is Stream
-                let mut found_stream_type = false;
-                let mut found_note = false;
-                for i in 0..batch.num_rows() {
-                    if properties_col.value(i) == "table_type" {
-                        assert_eq!(values_col.value(i), "Stream");
-                        found_stream_type = true;
-                    }
-                    if properties_col.value(i) == "note" {
-                        assert!(values_col.value(i).contains("NO _updated/_deleted"));
-                        assert!(values_col.value(i).contains("ephemeral"));
-                        found_note = true;
-                    }
-                }
-                assert!(found_stream_type, "Should show table_type = Stream");
-                assert!(found_note, "Should show note about NO system columns");
+                // Should have 8 columns (standard DESCRIBE TABLE schema)
+                assert_eq!(batch.num_columns(), 8);
+                
+                // Should have 0 rows (stream tables have no user-defined columns)
+                assert_eq!(batch.num_rows(), 0, "Stream tables should have no user-defined columns");
             }
             _ => panic!("Expected RecordBatch result"),
         }

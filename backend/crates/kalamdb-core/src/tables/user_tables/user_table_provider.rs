@@ -235,12 +235,12 @@ impl UserTableProvider {
         // Get storage_id from cache
         let storage_id_str = if let Some(cached_data) = self.unified_cache.get(&*self.table_id) {
             cached_data.storage_id.as_ref()
-                .map(|s| s.as_str())
-                .unwrap_or("local")
+                .map(|s| s.as_str().to_string())
+                .unwrap_or_else(|| "local".to_string())
         } else {
-            "local" // Fallback
+            "local".to_string() // Fallback
         };
-        self.substitute_user_id_in_path(storage_id_str)
+        self.substitute_user_id_in_path(&storage_id_str)
     }
 
     /// Insert a single row into this user table
@@ -518,10 +518,10 @@ impl UserTableProvider {
                 // Fallback to template substitution if registry lookup fails
                 let storage_id_str = if let Some(cached_data) = self.unified_cache.get(&*self.table_id) {
                     cached_data.storage_id.as_ref()
-                        .map(|s| s.as_str())
-                        .unwrap_or("local")
+                        .map(|s| s.as_str().to_string())
+                        .unwrap_or_else(|| "local".to_string())
                 } else {
-                    "local" // Fallback
+                    "local".to_string() // Fallback
                 };
                 storage_id_str
                     .replace("${user_id}", self.current_user_id.as_str())
@@ -535,14 +535,12 @@ impl UserTableProvider {
         // No registry available - use template substitution (legacy)
         let storage_id_str = if let Some(cached_data) = self.unified_cache.get(&*self.table_id) {
             cached_data.storage_id.as_ref()
-                .map(|s| s.as_str())
-                .unwrap_or("local")
+                .map(|s| s.as_str().to_string())
+                .unwrap_or_else(|| "local".to_string())
         } else {
-            "local" // Fallback
+            "local".to_string() // Fallback
         };
         storage_id_str
-            .unwrap_or("local");
-        storage_path_str
             .replace("${user_id}", self.current_user_id.as_str())
             .replace("{userId}", self.current_user_id.as_str())
             .replace("{namespace}", self.namespace_id().as_str())
@@ -857,29 +855,50 @@ mod tests {
         ))
     }
 
-    fn create_test_metadata() -> TableMetadata {
-    TableMetadata {
-        table_name: TableName::new("messages"),
-        table_type: TableType::User,
-        namespace: NamespaceId::new("chat"),
-        created_at: Utc::now(),
-        storage_id: Some(StorageId::new("s3://bucket/users/${user_id}/messages/")),
-        flush_policy: FlushPolicy::row_limit(1000).unwrap(),
-        schema_version: 1,
-        deleted_retention_hours: Some(720),
+    fn create_test_metadata() -> Arc<crate::catalog::SchemaCache> {
+        use crate::catalog::{CachedTableData, SchemaCache};
+        use kalamdb_commons::models::schemas::TableDefinition;
+
+        let cache = Arc::new(SchemaCache::new(0, None));
+
+        let table_id = TableId::new(NamespaceId::new("chat"), TableName::new("messages"));
+
+        let td: Arc<TableDefinition> = Arc::new(
+            TableDefinition::new_with_defaults(
+                NamespaceId::new("chat"),
+                TableName::new("messages"),
+                TableType::User,
+                vec![], // Empty columns for test
+                None,
+            ).unwrap()
+        );
+
+        let data = CachedTableData::new(
+            table_id.clone(),
+            TableType::User,
+            Utc::now(),
+            Some(StorageId::new("s3://bucket/users/${user_id}/messages/")),
+            FlushPolicy::row_limit(1000).unwrap(),
+            "/data/{namespace}/{tableName}/".to_string(),
+            1,
+            Some(720),
+            td,
+        );
+
+        cache.insert(table_id, Arc::new(data));
+        cache
     }
-}
 
     #[test]
     fn test_user_table_provider_creation() {
         let store = create_test_db();
         let schema = create_test_schema();
-        let metadata = create_test_metadata();
+        let unified_cache = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
         let provider = UserTableProvider::new(
             create_test_table_id(),
-            metadata.clone(),
+            unified_cache.clone(),
             schema.clone(),
             store.clone(),
             user_id.clone(),
@@ -889,7 +908,7 @@ mod tests {
         assert_eq!(provider.schema(), schema);
         assert_eq!(provider.namespace_id(), &NamespaceId::new("chat"));
         assert_eq!(provider.table_name(), &TableName::new("messages"));
-        assert_eq!(provider.table_type(), &TableType::User);
+    assert_eq!(provider.table_type(), TableType::User);
         assert_eq!(provider.current_user_id(), &user_id);
         assert_eq!(provider.column_family_name(), "user_table:chat:messages");
     }    #[test]

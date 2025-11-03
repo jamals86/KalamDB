@@ -986,10 +986,10 @@ Final path: /data/storage/my_ns/messages/user_alice/
 
 - [X] T309 [US7] Update SqlExecutor struct in `backend/crates/kalamdb-core/src/sql/executor.rs` to replace `table_cache` and `schema_cache` fields with single `schema_cache: Option<Arc<SchemaCache>>`
 - [X] T310 [US7] Update with_storage_registry() in executor.rs to initialize SchemaCache instead of TableCache
-- [ ] T311 [US7] Update register_table_provider() (CREATE TABLE path) to insert CachedTableData into schema_cache with both metadata and TableDefinition
+- [X] T311 [US7] Update register_table_provider() (CREATE TABLE path) to insert CachedTableData into schema_cache with both metadata and TableDefinition
 - [ ] T312 [P] [US7] Update execute_alter_table() in executor.rs to invalidate schema_cache entry on ALTER TABLE operations
-- [ ] T313 [P] [US7] Update execute_drop_table() in executor.rs to remove entry from schema_cache
-- [ ] T314 [US7] Update execute_describe_table() in executor.rs to use schema_cache.get() for schema lookups
+- [X] T313 [P] [US7] Update execute_drop_table() in executor.rs to remove entry from schema_cache
+- [X] T314 [US7] Update execute_describe_table() in executor.rs to use schema_cache.get() for schema lookups
 
 ### Phase 3: Update Table Providers with Arc<TableId>
 
@@ -997,16 +997,16 @@ Final path: /data/storage/my_ns/messages/user_alice/
   - Add `table_id: Arc<TableId>` field to struct
   - Update constructor to accept Arc<TableId> parameter (created once at registration)
   - Update all cache lookups to use `&*self.table_id` (zero allocation, deref Arc to &TableId)
-- [ ] T316 [US7] Update SharedTableProvider in `backend/crates/kalamdb-core/src/tables/shared_tables/shared_table_provider.rs`:
+- [X] T316 [US7] Update SharedTableProvider in `backend/crates/kalamdb-core/src/tables/shared_tables/shared_table_provider.rs`:
   - Add `table_id: Arc<TableId>` field to struct
   - Update constructor to accept Arc<TableId> parameter
   - Update flush job creation to pass Arc<TableId> instead of recreating from (namespace, table_name)
-- [ ] T317 [P] [US7] Update StreamTableProvider similarly (if applicable for path resolution)
-- [ ] T318 [US7] Update UserTableFlushJob in `backend/crates/kalamdb-core/src/tables/user_tables/user_table_flush.rs`:
+- [X] T317 [P] [US7] Update StreamTableProvider similarly (if applicable for path resolution)
+- [X] T318 [US7] Update UserTableFlushJob in `backend/crates/kalamdb-core/src/tables/user_tables/user_table_flush.rs`:
   - Add `table_id: Arc<TableId>` field (replaces namespace + table_name tuple)
   - Use schema_cache.get(&*table_id) instead of get_by_name(namespace, table_name)
   - Eliminates TableId::new() allocation on every flush operation
-- [ ] T319 [US7] Update SharedTableFlushJob in `backend/crates/kalamdb-core/src/tables/shared_tables/shared_table_flush.rs`:
+- [X] T319 [US7] Update SharedTableFlushJob in `backend/crates/kalamdb-core/src/tables/shared_tables/shared_table_flush.rs`:
   - Add `table_id: Arc<TableId>` field
   - Use schema_cache.get(&*table_id) for path resolution
 - [ ] T320 [P] [US7] Update TablesTableProvider in `backend/crates/kalamdb-core/src/tables/system/tables_v2/tables_provider.rs` to use schema_cache.get() for metadata
@@ -1075,12 +1075,12 @@ Final path: /data/storage/my_ns/messages/user_alice/
 
 ### Phase 4: Remove Old Cache Implementations
 
-- [ ] T333 [P] [US7] Delete `backend/crates/kalamdb-core/src/catalog/table_cache.rs` (516 lines removed)
-- [ ] T334 [P] [US7] Delete `backend/crates/kalamdb-core/src/tables/system/schemas/schema_cache.rs` (443 lines removed)
-- [ ] T335 [P] [US7] Delete `backend/crates/kalamdb-core/src/catalog/table_metadata.rs` (252 lines removed) - replaced by CachedTableData
-- [ ] T336 [US7] Update `backend/crates/kalamdb-core/src/catalog/mod.rs` to export only SchemaCache (remove TableCache and TableMetadata exports)
-- [ ] T337 [US7] Update all imports across codebase: replace `use crate::catalog::TableCache` with `use crate::catalog::SchemaCache` (search and replace)
-- [ ] T338 [P] [US7] Remove `schema_cache` and `table_cache` fields from SqlExecutor struct (keep only `unified_cache`)
+- [X] T333 [P] [US7] Delete `backend/crates/kalamdb-core/src/catalog/table_cache.rs` (516 lines removed)
+- [X] T334 [P] [US7] Delete `backend/crates/kalamdb-core/src/tables/system/schemas/schema_cache.rs` (443 lines removed)
+- [X] T335 [P] [US7] Delete `backend/crates/kalamdb-core/src/catalog/table_metadata.rs` (252 lines removed) - replaced by CachedTableData
+- [X] T336 [US7] Update `backend/crates/kalamdb-core/src/catalog/mod.rs` to export only SchemaCache (remove TableCache and TableMetadata exports)
+- [X] T337 [US7] Update all imports across codebase: replace `use crate::catalog::TableCache` with `use crate::catalog::SchemaCache` (search and replace)
+- [X] T338 [P] [US7] Remove `schema_cache` and `table_cache` fields from SqlExecutor struct (keep only `unified_cache`)
 - [ ] T339 [P] [US7] Verify all tests still pass after removal: `cargo test -p kalamdb-core` (expect 485/494 tests to pass, same as before)
 
 ### Phase 5: Performance Testing & Validation

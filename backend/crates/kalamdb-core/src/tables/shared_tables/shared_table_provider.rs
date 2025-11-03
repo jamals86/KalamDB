@@ -547,25 +547,45 @@ mod tests {
             Field::new("_deleted", DataType::Boolean, false),
         ]));
 
-        let metadata = TableMetadata {
-            table_name: TableName::new("config"),
-            table_type: TableType::Shared,
-            namespace: NamespaceId::new("app"),
-            created_at: chrono::Utc::now(),
-            storage_id: Some(StorageId::new("local")),
-            flush_policy: crate::flush::FlushPolicy::RowLimit { row_limit: 1000 },
-            schema_version: 1,
-            deleted_retention_hours: Some(24),
-        };
+        // Build unified cache with CachedTableData for tests
+        use crate::catalog::{CachedTableData, SchemaCache};
+        use kalamdb_commons::models::schemas::TableDefinition;
+
+        let unified_cache = Arc::new(SchemaCache::new(0, None));
+
+        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("config"));
+        let td: Arc<TableDefinition> = Arc::new(
+            TableDefinition::new_with_defaults(
+                NamespaceId::new("app"),
+                TableName::new("config"),
+                TableType::Shared,
+                vec![], // Empty columns for test
+                None,
+            ).unwrap()
+        );
+
+        let data = CachedTableData::new(
+            table_id.clone(),
+            TableType::Shared,
+            chrono::Utc::now(),
+            Some(StorageId::new("local")),
+            crate::flush::FlushPolicy::RowLimit { row_limit: 1000 },
+            "/data/{namespace}/{tableName}/".to_string(),
+            1,
+            Some(24),
+            td,
+        );
+
+        unified_cache.insert(table_id.clone(), Arc::new(data));
 
         let store = Arc::new(
             crate::tables::shared_tables::shared_table_store::new_shared_table_store(
                 Arc::new(InMemoryBackend::new()),
-                &metadata.namespace,
-                &metadata.table_name,
+                &table_id.namespace_id(),
+                &table_id.table_name(),
             ),
         );
-        let provider = SharedTableProvider::new(create_test_table_id(), metadata, schema, store);
+        let provider = SharedTableProvider::new(create_test_table_id(), unified_cache, schema, store);
 
         (provider, test_db)
     }

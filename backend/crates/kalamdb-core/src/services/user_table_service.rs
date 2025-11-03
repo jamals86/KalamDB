@@ -21,7 +21,6 @@ use crate::storage::column_family_manager::ColumnFamilyManager;
 use crate::stores::system_table::UserTableStoreExt;
 use crate::tables::UserTableStore;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use kalamdb_commons::models::StorageId;
 use kalamdb_sql::ddl::CreateTableStatement;
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
@@ -302,10 +301,7 @@ impl UserTableService {
         namespace: &NamespaceId,
         table_name: &TableName,
     ) -> Result<bool, KalamDbError> {
-        // Query system.tables using KalamSQL
-        let table_id = format!("{}:{}", namespace.as_str(), table_name.as_str());
-
-        match self.kalam_sql.get_table(&table_id) {
+        match self.kalam_sql.get_table_definition(namespace, table_name) {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false),
             Err(e) => Err(KalamDbError::Other(format!(
