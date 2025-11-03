@@ -121,46 +121,48 @@ pub fn init_test_app_context() -> Arc<TestDb> {
     let tables_provider = Arc::new(TablesTableProvider::new(storage_backend.clone()));
 
     // Initialize AppContext (only if not already done)
-    AppContext::init(
-        schema_cache,
-        user_table_store,
-        shared_table_store,
-        stream_table_store,
-        kalam_sql.clone(),
-        storage_backend.clone(),
-        schema_store,
-        job_manager,
-        live_query_manager,
-        storage_registry,
-        session_factory,
-        base_session_context,
-        users_provider,
-        jobs_provider,
-        namespaces_provider,
-        storages_provider.clone(),
-        live_queries_provider,
-        tables_provider,
-    );
+    if AppContext::try_get().is_none() {
+        AppContext::init(
+            schema_cache,
+            user_table_store,
+            shared_table_store,
+            stream_table_store,
+            kalam_sql.clone(),
+            storage_backend.clone(),
+            schema_store,
+            job_manager,
+            live_query_manager,
+            storage_registry,
+            session_factory,
+            base_session_context,
+            users_provider,
+            jobs_provider,
+            namespaces_provider,
+            storages_provider.clone(),
+            live_queries_provider,
+            tables_provider,
+        );
 
-    // Create default 'local' storage entry for tests
-    use kalamdb_commons::system::Storage;
-    use kalamdb_commons::models::StorageId;
-    let default_storage = Storage {
-        storage_id: StorageId::new("local"),
-        storage_name: "local".to_string(),
-        description: Some("Default local storage for tests".to_string()),
-        storage_type: "filesystem".to_string(),
-        base_directory: "data/storage/local".to_string(),
-        credentials: None,
-        shared_tables_template: "{namespace}/{tableName}".to_string(),
-        user_tables_template: "{namespace}/{tableName}/{userId}/{shard}".to_string(),
-        created_at: chrono::Utc::now().timestamp(),
-        updated_at: chrono::Utc::now().timestamp(),
-    };
-    
-    // Insert using KalamSql
-    if let Err(e) = kalam_sql.insert_storage(&default_storage) {
-        eprintln!("Warning: Failed to create default storage: {:?}", e);
+        // Create default 'local' storage entry for tests
+        use kalamdb_commons::system::Storage;
+        use kalamdb_commons::models::StorageId;
+        let default_storage = Storage {
+            storage_id: StorageId::new("local"),
+            storage_name: "local".to_string(),
+            description: Some("Default local storage for tests".to_string()),
+            storage_type: "filesystem".to_string(),
+            base_directory: "data/storage/local".to_string(),
+            credentials: None,
+            shared_tables_template: "{namespace}/{tableName}".to_string(),
+            user_tables_template: "{namespace}/{tableName}/{userId}/{shard}".to_string(),
+            created_at: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
+        };
+        
+        // Insert using KalamSql
+        if let Err(e) = kalam_sql.insert_storage(&default_storage) {
+            eprintln!("Warning: Failed to create default storage: {:?}", e);
+        }
     }
 
     test_db
