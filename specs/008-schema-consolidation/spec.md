@@ -15,6 +15,10 @@
 - Q: What access control should apply to schema operations (viewing and modifying table schemas)? → A: All authenticated users read-only - All users can view schemas, only DBA/system roles can modify (CREATE/ALTER/DROP)
 - Q: How should the system enforce the EMBEDDING dimension maximum of 8192? → A: Hard limit with validation error - Reject CREATE TABLE if EMBEDDING dimension > 8192 with clear error
 
+### Session 2025-11-03
+
+- Q: For Phase 10 cache consolidation, when table providers query/insert data, should TableId be recreated on each operation or stored with the provider? → A: Store at registration - TableId created once at table registration time and stored as Arc<TableId> in table provider struct (UserTableProvider, SharedTableProvider, etc.), eliminating repeated allocation. Cache lookups use Arc<TableId> reference (zero-copy), not recreating from (namespace, table_name) tuple on every query.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Single Source of Truth for Table Schemas (Priority: P1)
@@ -212,26 +216,36 @@ Developers need a single unified cache for all table-related data instead of mai
 
 2. **Given** CachedTableData contains table_id (with namespace + table_name), table_type, storage_id, storage_path_template, and schema (TableDefinition), **When** accessing any table metadata, **Then** all data is retrieved from single DashMap lookup
 
-3. **Given** TableId already contains NamespaceId and TableName internally, **When** looking up table by name, **Then** create TableId from (namespace, table_name) and use direct O(1) cache lookup (no reverse index needed)
+3. **Given** TableId already contains NamespaceId and TableName internally, **When** table provider is registered with DataFusion, **Then** TableId is created once and stored as Arc<TableId> in table provider struct (not recreated on every query)
 
-4. **Given** storage path template is cached with partial resolution ({namespace}/{tableName} substituted, {userId}/{shard} remaining), **When** flush job resolves dynamic placeholders, **Then** template comes from CachedTableData.storage_path_template field (not separate storage_paths map)
+4. **Given** table provider stores Arc<TableId>, **When** querying cache for table metadata or storage path, **Then** cache lookup uses Arc<TableId>::clone() (cheap reference count increment, zero allocation)
 
-5. **Given** ALTER TABLE modifies table schema, **When** invalidating cache, **Then** single invalidate(&table_id) call removes entry from SchemaCache (no need to invalidate both TableCache and SchemaCache)
+5. **Given** storage path template is cached with partial resolution ({namespace}/{tableName} substituted, {userId}/{shard} remaining), **When** flush job resolves dynamic placeholders, **Then** template comes from CachedTableData.storage_path_template field (not separate storage_paths map)
 
-6. **Given** memory profiling before and after consolidation, **When** measuring cache memory usage, **Then** unified SchemaCache uses ~50% less memory than TableCache + SchemaCache combined
+6. **Given** ALTER TABLE modifies table schema, **When** invalidating cache, **Then** single invalidate(&table_id) call removes entry from SchemaCache (no need to invalidate both TableCache and SchemaCache)
 
-7. **Given** old TableCache (catalog/table_cache.rs, 516 lines) and old SchemaCache (tables/system/schemas/schema_cache.rs, 443 lines) and TableMetadata (catalog/table_metadata.rs, 252 lines), **When** replaced with unified SchemaCache, **Then** ~1,200 lines of duplicate code deleted
+7. **Given** memory profiling before and after consolidation, **When** measuring cache memory usage, **Then** unified SchemaCache uses ~50% less memory than TableCache + SchemaCache combined
 
-8. **Given** concurrent access from multiple threads, **When** reading/writing to SchemaCache, **Then** DashMap provides lock-free concurrent access with no deadlocks
+8. **Given** old TableCache (catalog/table_cache.rs, 516 lines) and old SchemaCache (tables/system/schemas/schema_cache.rs, 443 lines) and TableMetadata (catalog/table_metadata.rs, 252 lines), **When** replaced with unified SchemaCache, **Then** ~1,200 lines of duplicate code deleted
+
+9. **Given** concurrent access from multiple threads, **When** reading/writing to SchemaCache, **Then** DashMap provides lock-free concurrent access with no deadlocks
+
+10. **Given** 10,000 queries to same table, **When** measuring TableId allocation count, **Then** only 1 TableId allocated at registration time (remaining 9,999 queries use Arc::clone with reference counting only)
 
 **Architecture Change**:
 ```rust
-// OLD: Two separate caches
+// OLD: Two separate caches with TableId recreated on every lookup
 TableCache: HashMap<(NamespaceId, TableName), TableMetadata> + storage_path_templates
 SchemaCache: DashMap<TableId, Arc<TableDefinition>>
+// Every query: TableId::new(namespace, table_name) → allocation
 
-// NEW: Single unified cache
+// NEW: Single unified cache with Arc<TableId> stored in providers
 SchemaCache: DashMap<TableId, Arc<CachedTableData>>
+
+struct UserTableProvider {
+    table_id: Arc<TableId>,  // Created once at registration, reused for all queries
+    // ... other fields
+}
 
 struct CachedTableData {
     table_id: TableId,                    // Contains (namespace, table_name)
@@ -241,6 +255,11 @@ struct CachedTableData {
     schema: Arc<TableDefinition>,         // Full schema with columns
     // ... other metadata
 }
+
+// Query path (zero allocations after registration):
+// 1. Table provider already has Arc<TableId>
+// 2. cache.get(&*table_id) → O(1) DashMap lookup, no allocation
+// 3. Return Arc<CachedTableData> → cheap Arc::clone()
 ```
 
 **Benefits**:

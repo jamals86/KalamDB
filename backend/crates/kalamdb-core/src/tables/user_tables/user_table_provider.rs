@@ -26,6 +26,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_commons::models::TableId; // Phase 10: Arc<TableId> optimization
 use kalamdb_commons::schemas::ColumnDefault;
 use kalamdb_commons::Role;
 use once_cell::sync::Lazy;
@@ -44,7 +45,13 @@ static AUTO_ID_GENERATOR: Lazy<SnowflakeGenerator> = Lazy::new(|| SnowflakeGener
 /// - DML operations (INSERT, UPDATE, DELETE)
 /// - Hybrid RocksDB + Parquet scanning
 /// - Schema evolution support
+///
+/// **Phase 10 Optimization**: Stores Arc<TableId> to avoid repeated allocations
+/// during cache lookups (created once at registration, reused for all queries).
 pub struct UserTableProvider {
+    /// Composite table identifier (Phase 10: Arc for zero-allocation cache lookups)
+    table_id: Arc<TableId>,
+
     /// Table metadata (namespace, table name, type, storage location, etc.)
     table_metadata: TableMetadata,
 
@@ -69,9 +76,6 @@ pub struct UserTableProvider {
     /// DELETE handler
     delete_handler: Arc<UserTableDeleteHandler>,
 
-    /// Parquet file paths for cold data (optional)
-    parquet_paths: Vec<String>,
-
     /// LiveQueryManager for WebSocket notifications
     live_query_manager: Option<Arc<LiveQueryManager>>,
 
@@ -89,7 +93,6 @@ impl std::fmt::Debug for UserTableProvider {
             .field("schema", &self.schema)
             .field("current_user_id", &self.current_user_id)
             .field("access_role", &self.access_role)
-            .field("parquet_paths", &self.parquet_paths)
             .finish()
     }
 }
@@ -98,19 +101,19 @@ impl UserTableProvider {
     /// Create a new user table provider
     ///
     /// # Arguments
+    /// * `table_id` - Arc<TableId> created once at registration (Phase 10: zero-allocation cache lookups)
     /// * `table_metadata` - Table metadata (namespace, table name, type, etc.)
     /// * `schema` - Arrow schema for the table
     /// * `store` - UserTableStore for DML operations
     /// * `current_user_id` - Current user ID for data isolation
     /// * `access_role` - Role of the caller (determines access scope)
-    /// * `parquet_paths` - Optional list of Parquet file paths for cold data
     pub fn new(
+        table_id: Arc<TableId>,
         table_metadata: TableMetadata,
         schema: SchemaRef,
         store: Arc<UserTableStore>,
         current_user_id: UserId,
         access_role: Role,
-        parquet_paths: Vec<String>,
     ) -> Self {
         let insert_handler = Arc::new(UserTableInsertHandler::new(store.clone()));
         let update_handler = Arc::new(UserTableUpdateHandler::new(store.clone()));
@@ -118,6 +121,7 @@ impl UserTableProvider {
         let column_defaults = Self::derive_column_defaults(&schema);
 
         Self {
+            table_id,
             table_metadata,
             schema,
             store,
@@ -126,7 +130,6 @@ impl UserTableProvider {
             insert_handler,
             update_handler,
             delete_handler,
-            parquet_paths,
             live_query_manager: None,
             column_defaults,
             storage_registry: None,
@@ -826,6 +829,13 @@ mod tests {
         ]))
     }
 
+    /// Phase 10: Create Arc<TableId> for test providers (avoids allocation on every cache lookup)
+    fn create_test_table_id() -> Arc<TableId> {
+        Arc::new(TableId::new(
+            NamespaceId::new("chat"),
+            TableName::new("messages"),
+        ))
+    }
 
     fn create_test_metadata() -> TableMetadata {
     TableMetadata {
@@ -840,7 +850,7 @@ mod tests {
     }
 }
 
-#[test]
+    #[test]
     fn test_user_table_provider_creation() {
         let store = create_test_db();
         let schema = create_test_schema();
@@ -848,12 +858,12 @@ mod tests {
         let user_id = UserId::new("user123".to_string());
 
         let provider = UserTableProvider::new(
+            create_test_table_id(),
             metadata.clone(),
             schema.clone(),
             store.clone(),
             user_id.clone(),
             Role::User,
-            vec![],
         );
 
         assert_eq!(provider.schema(), schema);
@@ -862,16 +872,14 @@ mod tests {
         assert_eq!(provider.table_type(), &TableType::User);
         assert_eq!(provider.current_user_id(), &user_id);
         assert_eq!(provider.column_family_name(), "user_table:chat:messages");
-    }
-
-    #[test]
+    }    #[test]
     fn test_substitute_user_id_in_path() {
         let store = create_test_db();
         let schema = create_test_schema();
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(metadata, schema, store, user_id, Role::User, vec![]);
+        let provider = UserTableProvider::new(create_test_table_id(), metadata, schema, store, user_id, Role::User);
 
         // Test ${user_id} substitution
         assert_eq!(
@@ -899,7 +907,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(metadata, schema, store, user_id, Role::User, vec![]);
+        let provider = UserTableProvider::new(create_test_table_id(), metadata, schema, store, user_id, Role::User);
 
         let prefix = provider.user_key_prefix();
         let expected = b"user123:".to_vec();
@@ -915,12 +923,12 @@ mod tests {
         let user_id = UserId::new("user123".to_string());
 
         let provider = UserTableProvider::new(
+            create_test_table_id(),
             metadata.clone(),
             schema.clone(),
             store.clone(),
             user_id.clone(),
             Role::User,
-            vec![],
         );
 
         let row = UserTableRow {
@@ -1004,7 +1012,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(metadata, schema, store, user_id, Role::User, vec![]);
+        let provider = UserTableProvider::new(create_test_table_id(), metadata, schema, store, user_id, Role::User);
 
         let row_data = json!({
             "content": "Hello, World!"
@@ -1024,7 +1032,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(metadata, schema, store, user_id, Role::User, vec![]);
+        let provider = UserTableProvider::new(create_test_table_id(), metadata, schema, store, user_id, Role::User);
 
         let rows = vec![
             json!({"content": "Message 1"}),
@@ -1047,7 +1055,7 @@ mod tests {
         let user_id = UserId::new("user123".to_string());
 
         let provider =
-            UserTableProvider::new(metadata, schema, store, user_id.clone(), Role::User, vec![]);
+            UserTableProvider::new(create_test_table_id(), metadata, schema, store, user_id.clone(), Role::User);
 
         let row_a = json!({"content": "Keep me"});
         let row_b = json!({"content": "Delete me"});
@@ -1104,7 +1112,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(metadata, schema, store, user_id, Role::User, vec![]);
+        let provider = UserTableProvider::new(create_test_table_id(), metadata, schema, store, user_id, Role::User);
 
         // Insert a row first
         let row_data = json!({"content": "Original"});
@@ -1124,7 +1132,7 @@ mod tests {
         let metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableProvider::new(metadata, schema, store, user_id, Role::User, vec![]);
+        let provider = UserTableProvider::new(create_test_table_id(), metadata, schema, store, user_id, Role::User);
 
         // Insert a row first
         let row_data = json!({"content": "To be deleted"});
@@ -1146,21 +1154,21 @@ mod tests {
         let user2_id = UserId::new("user2".to_string());
 
         let provider1 = UserTableProvider::new(
+            create_test_table_id(),
             metadata.clone(),
             schema.clone(),
             store.clone(),
             user1_id.clone(),
             Role::User,
-            vec![],
         );
 
         let provider2 = UserTableProvider::new(
+            create_test_table_id(),
             metadata,
             schema,
             store,
             user2_id.clone(),
             Role::User,
-            vec![],
         );
 
         // Insert data for user1
@@ -1186,3 +1194,7 @@ mod tests {
         assert_ne!(row_id_1, row_id_2);
     }
 }
+
+
+
+

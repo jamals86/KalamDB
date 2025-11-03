@@ -972,75 +972,293 @@ Final path: /data/storage/my_ns/messages/user_alice/
 
 ### Phase 1: Create New Unified SchemaCache
 
-- [ ] T300 [P] [US7] Create `backend/crates/kalamdb-core/src/catalog/schema_cache.rs` with unified design using DashMap<TableId, Arc<CachedTableData>>
-- [ ] T301 [P] [US7] Implement CachedTableData struct in schema_cache.rs with fields: table_id, table_type, created_at, storage_id, flush_policy, storage_path_template, schema_version, deleted_retention_hours, schema (Arc<TableDefinition>)
-- [ ] T302 [P] [US7] Implement SchemaCache::new(max_size, storage_registry) constructor
-- [ ] T303 [P] [US7] Implement get(&table_id) → Option<Arc<CachedTableData>> with LRU access tracking
-- [ ] T304 [P] [US7] Implement get_by_name(namespace, table_name) → Option<Arc<CachedTableData>> by creating TableId first
-- [ ] T305 [US7] Implement insert(table_id, data) with LRU eviction logic (evict oldest when exceeding max_size)
-- [ ] T306 [P] [US7] Implement invalidate(&table_id) to remove entry from cache
-- [ ] T307 [US7] Implement get_storage_path(table_id, user_id, shard) for dynamic placeholder resolution ({userId}, {shard})
-- [ ] T308 [P] [US7] Write unit tests in schema_cache.rs module: test_insert_and_get, test_get_by_name, test_lru_eviction, test_invalidate, test_storage_path_resolution, test_concurrent_access, test_metrics (15+ tests total)
+- [X] T300 [P] [US7] Create `backend/crates/kalamdb-core/src/catalog/schema_cache.rs` with unified design using DashMap<TableId, Arc<CachedTableData>>
+- [X] T301 [P] [US7] Implement CachedTableData struct in schema_cache.rs with fields: table_id, table_type, created_at, storage_id, flush_policy, storage_path_template, schema_version, deleted_retention_hours, schema (Arc<TableDefinition>)
+- [X] T302 [P] [US7] Implement SchemaCache::new(max_size, storage_registry) constructor
+- [X] T303 [P] [US7] Implement get(&table_id) → Option<Arc<CachedTableData>> with LRU access tracking
+- [X] T304 [P] [US7] Implement get_by_name(namespace, table_name) → Option<Arc<CachedTableData>> by creating TableId first
+- [X] T305 [US7] Implement insert(table_id, data) with LRU eviction logic (evict oldest when exceeding max_size)
+- [X] T306 [P] [US7] Implement invalidate(&table_id) to remove entry from cache
+- [X] T307 [US7] Implement get_storage_path(table_id, user_id, shard) for dynamic placeholder resolution ({userId}, {shard})
+- [X] T308 [P] [US7] Write unit tests in schema_cache.rs module: test_insert_and_get, test_get_by_name, test_lru_eviction, test_invalidate, test_storage_path_resolution, test_concurrent_access, test_metrics (15+ tests total)
 
 ### Phase 2: Update SqlExecutor Integration
 
-- [ ] T309 [US7] Update SqlExecutor struct in `backend/crates/kalamdb-core/src/sql/executor.rs` to replace `table_cache` and `schema_cache` fields with single `schema_cache: Option<Arc<SchemaCache>>`
-- [ ] T310 [US7] Update with_storage_registry() in executor.rs to initialize SchemaCache instead of TableCache
+- [X] T309 [US7] Update SqlExecutor struct in `backend/crates/kalamdb-core/src/sql/executor.rs` to replace `table_cache` and `schema_cache` fields with single `schema_cache: Option<Arc<SchemaCache>>`
+- [X] T310 [US7] Update with_storage_registry() in executor.rs to initialize SchemaCache instead of TableCache
 - [ ] T311 [US7] Update register_table_provider() (CREATE TABLE path) to insert CachedTableData into schema_cache with both metadata and TableDefinition
 - [ ] T312 [P] [US7] Update execute_alter_table() in executor.rs to invalidate schema_cache entry on ALTER TABLE operations
 - [ ] T313 [P] [US7] Update execute_drop_table() in executor.rs to remove entry from schema_cache
 - [ ] T314 [US7] Update execute_describe_table() in executor.rs to use schema_cache.get() for schema lookups
 
-### Phase 3: Update Flush Jobs and Consumers
+### Phase 3: Update Table Providers with Arc<TableId>
 
-- [ ] T315 [US7] Update UserTableFlushJob in `backend/crates/kalamdb-core/src/tables/user_tables/user_table_flush.rs` to use schema_cache.get_storage_path() instead of table_cache.get_storage_path()
-- [ ] T316 [US7] Update SharedTableFlushJob in `backend/crates/kalamdb-core/src/tables/shared_tables/shared_table_flush.rs` to use schema_cache.get_storage_path()
-- [ ] T317 [P] [US7] Update TablesTableProvider in `backend/crates/kalamdb-core/src/tables/system/tables_v2/tables_provider.rs` to use schema_cache.get() for metadata
-- [ ] T318 [P] [US7] Update system table registration in `backend/crates/kalamdb-core/src/system_table_registration.rs` to create single SchemaCache instance instead of both caches
-- [ ] T319 [P] [US7] Search and update all DESCRIBE TABLE code paths to use schema_cache (search: `git grep -r "schema_cache\|table_cache" backend/crates/kalamdb-core/`)
+- [X] T315 [US7] Update UserTableProvider in `backend/crates/kalamdb-core/src/tables/user_tables/user_table_provider.rs`:
+  - Add `table_id: Arc<TableId>` field to struct
+  - Update constructor to accept Arc<TableId> parameter (created once at registration)
+  - Update all cache lookups to use `&*self.table_id` (zero allocation, deref Arc to &TableId)
+- [ ] T316 [US7] Update SharedTableProvider in `backend/crates/kalamdb-core/src/tables/shared_tables/shared_table_provider.rs`:
+  - Add `table_id: Arc<TableId>` field to struct
+  - Update constructor to accept Arc<TableId> parameter
+  - Update flush job creation to pass Arc<TableId> instead of recreating from (namespace, table_name)
+- [ ] T317 [P] [US7] Update StreamTableProvider similarly (if applicable for path resolution)
+- [ ] T318 [US7] Update UserTableFlushJob in `backend/crates/kalamdb-core/src/tables/user_tables/user_table_flush.rs`:
+  - Add `table_id: Arc<TableId>` field (replaces namespace + table_name tuple)
+  - Use schema_cache.get(&*table_id) instead of get_by_name(namespace, table_name)
+  - Eliminates TableId::new() allocation on every flush operation
+- [ ] T319 [US7] Update SharedTableFlushJob in `backend/crates/kalamdb-core/src/tables/shared_tables/shared_table_flush.rs`:
+  - Add `table_id: Arc<TableId>` field
+  - Use schema_cache.get(&*table_id) for path resolution
+- [ ] T320 [P] [US7] Update TablesTableProvider in `backend/crates/kalamdb-core/src/tables/system/tables_v2/tables_provider.rs` to use schema_cache.get() for metadata
+- [ ] T321 [P] [US7] Update system table registration in `backend/crates/kalamdb-core/src/system_table_registration.rs`:
+  - Create SchemaCache instance (replaces both TableCache and SchemaCache)
+  - Create Arc<TableId> for each table at registration time
+  - Pass Arc<TableId> to table provider constructors
+- [ ] T322 [P] [US7] Search and update all DESCRIBE TABLE code paths to use schema_cache (search: `git grep -r "schema_cache\|table_cache" backend/crates/kalamdb-core/`)
+
+### Phase 3B: Common Provider Architecture & Memory Optimization
+
+**Goal**: Eliminate duplicate provider instances per user/stream and consolidate common provider logic
+
+**Memory Impact**: 
+- Before: N users × M tables = N×M provider instances in memory (massive waste!)
+- After: M tables = M provider instances in cache (ONE per table, shared across ALL users)
+- Expected Savings: ~99% reduction for workloads with many concurrent users
+
+- [ ] T323 [US7] Create `backend/crates/kalamdb-core/src/tables/base_table_provider.rs`:
+  - Define `BaseTableProvider` trait with `table_id()`, `schema()`, `table_type()` methods
+  - Create `TableProviderCore` struct with Arc<TableId>, TableType, SchemaRef, created_at, storage_id
+  - Implement helper methods: `namespace()`, `table_name()` (zero-allocation access via table_id)
+- [ ] T324 [US7] Refactor UserTableProvider to use TableProviderCore:
+  - Replace individual fields (table_metadata, schema, etc.) with `core: TableProviderCore`
+  - **REMOVE user-specific fields**: `current_user_id`, `access_role` (these will be passed per-request)
+  - Update constructor to accept TableProviderCore or build it from Arc<TableId>
+  - Add `scan_user(&self, user_id: &UserId, user_role: &Role, ...)` method accepting user context per-request
+  - Add `insert_user(&self, user_id: &UserId, user_role: &Role, ...)` method
+  - Implement `BaseTableProvider` trait
+- [ ] T325 [US7] Refactor StreamTableProvider to use TableProviderCore:
+  - Add `table_id: Arc<TableId>` field (currently missing!)
+  - Replace `table_metadata` with `core: TableProviderCore`
+  - Update constructor to accept Arc<TableId>
+  - Implement `BaseTableProvider` trait
+- [ ] T326 [US7] Refactor SharedTableProvider to use TableProviderCore (if not already using it):
+  - Add `table_id: Arc<TableId>` field
+  - Replace redundant metadata fields with `core: TableProviderCore`
+  - Implement `BaseTableProvider` trait
+- [ ] T327 [US7] Update SchemaCache to store Arc<dyn BaseTableProvider>:
+  - Modify CachedTableData to include `provider: Option<Arc<dyn BaseTableProvider>>` field
+  - Update insert() to cache provider instance alongside metadata
+  - Add get_provider(&table_id) → Option<Arc<dyn BaseTableProvider>> method
+  - Providers are created ONCE at table registration, reused for all queries
+- [ ] T328 [US7] Update execute_query() in executor.rs to use cached providers:
+  - Get provider from cache: `cache.get_provider(&table_id)?`
+  - For UserTables: Call `provider.scan_user(user_id, user_role, filters, projection, limit)`
+  - For StreamTables: Call provider methods directly (no user context needed)
+  - For SharedTables: Call provider methods directly
+  - **Eliminate**: Creating new provider instances per query
+- [ ] T329 [US7] Update CREATE TABLE paths to cache provider instances:
+  - After creating UserTableProvider, insert into cache: `cache.insert_provider(table_id, Arc::new(provider))`
+  - After creating StreamTableProvider, insert into cache
+  - After creating SharedTableProvider, insert into cache
+  - Ensure Arc<TableId> is created ONCE and shared between CachedTableData and Provider
+- [ ] T330 [P] [US7] Update all unit tests for UserTableProvider:
+  - Remove user-specific arguments from constructor calls
+  - Update test assertions to use scan_user() instead of direct scan()
+  - Add tests verifying ONE provider handles multiple users correctly
+- [ ] T331 [P] [US7] Update all unit tests for StreamTableProvider:
+  - Verify Arc<TableId> is stored and used correctly
+  - Ensure TableProviderCore fields are accessible
+- [ ] T332 [P] [US7] Update integration tests:
+  - Add test verifying provider caching: create table → query from user1 → query from user2 → verify same provider instance used
+  - Add test verifying memory efficiency: N users × 1 table = 1 provider in cache
+  - Add test verifying cache invalidation: DROP TABLE → provider removed from cache
 
 ### Phase 4: Remove Old Cache Implementations
 
-- [ ] T320 [P] [US7] Delete `backend/crates/kalamdb-core/src/catalog/table_cache.rs` (516 lines removed)
-- [ ] T321 [P] [US7] Delete `backend/crates/kalamdb-core/src/tables/system/schemas/schema_cache.rs` (443 lines removed)
-- [ ] T322 [P] [US7] Delete `backend/crates/kalamdb-core/src/catalog/table_metadata.rs` (252 lines removed) - replaced by CachedTableData
-- [ ] T323 [US7] Update `backend/crates/kalamdb-core/src/catalog/mod.rs` to export only SchemaCache (remove TableCache and TableMetadata exports)
-- [ ] T324 [US7] Update all imports across codebase: replace `use crate::catalog::TableCache` with `use crate::catalog::SchemaCache` (search and replace)
-- [ ] T325 [US7] Update all imports: replace `use crate::catalog::TableMetadata` with `use crate::catalog::schema_cache::CachedTableData`
-- [ ] T326 [US7] Verify `cargo build --workspace` succeeds after deletions with zero errors
+- [ ] T333 [P] [US7] Delete `backend/crates/kalamdb-core/src/catalog/table_cache.rs` (516 lines removed)
+- [ ] T334 [P] [US7] Delete `backend/crates/kalamdb-core/src/tables/system/schemas/schema_cache.rs` (443 lines removed)
+- [ ] T335 [P] [US7] Delete `backend/crates/kalamdb-core/src/catalog/table_metadata.rs` (252 lines removed) - replaced by CachedTableData
+- [ ] T336 [US7] Update `backend/crates/kalamdb-core/src/catalog/mod.rs` to export only SchemaCache (remove TableCache and TableMetadata exports)
+- [ ] T337 [US7] Update all imports across codebase: replace `use crate::catalog::TableCache` with `use crate::catalog::SchemaCache` (search and replace)
+- [ ] T338 [P] [US7] Remove `schema_cache` and `table_cache` fields from SqlExecutor struct (keep only `unified_cache`)
+- [ ] T339 [P] [US7] Verify all tests still pass after removal: `cargo test -p kalamdb-core` (expect 485/494 tests to pass, same as before)
 
-### Phase 5: Performance Testing and Validation
+### Phase 5: Performance Testing & Validation
 
-- [ ] T327 [P] [US7] Write integration test in `backend/tests/test_unified_cache.rs` verifying cache hit rate >99% over 10,000 operations (CREATE TABLE, DESCRIBE TABLE, FLUSH TABLE mix)
-- [ ] T328 [P] [US7] Write integration test in test_unified_cache.rs verifying cache hit latency <100μs (average of 1,000 cache hits)
-- [ ] T329 [P] [US7] Write integration test in test_unified_cache.rs verifying memory usage reduced by ~50% compared to dual-cache baseline (use std::mem::size_of)
-- [ ] T330 [P] [US7] Write integration test in test_unified_cache.rs verifying CREATE TABLE → DESCRIBE TABLE → FLUSH TABLE full workflow uses single cache
-- [ ] T331 [P] [US7] Write integration test in test_unified_cache.rs verifying ALTER TABLE invalidates cache correctly
-- [ ] T332 [P] [US7] Write integration test in test_unified_cache.rs verifying DROP TABLE removes from cache
-- [ ] T333 [P] [US7] Write integration test in test_unified_cache.rs verifying concurrent access from 10 threads (no deadlocks, correct results)
-- [ ] T334 [US7] Run full test suite: `cargo test --workspace` and verify all tests pass (target: 100% pass rate)
-- [ ] T335 [US7] Run storage path resolution tests: `cargo test -p kalamdb-core --test test_storage_path_resolution` and verify all 5 tests still pass
-- [ ] T336 [US7] Update `AGENTS.md` Recent Changes section with Phase 10 completion summary
+**Goal**: Verify unified cache achieves performance targets (>99% hit rate, <100μs latency, ~50% memory reduction)
 
-**Phase 10 Summary**:
-- **Total Tasks**: 37 (T300-T336)
-- **Estimated Time**: 7-11 hours
-- **Dependencies**: Requires Phase 9 complete (storage path resolution working)
-- **Deliverables**:
-  - ✅ Single unified SchemaCache replaces TableCache + SchemaCache
-  - ✅ CachedTableData contains all table metadata + schema + storage path template
-  - ✅ ~50% memory savings (1,200+ lines of duplicate code deleted)
-  - ✅ Simpler API (one cache instead of two)
-  - ✅ No cache consistency bugs (impossible to get out of sync)
-  - ✅ All tests passing with single cache
-  - ✅ Performance validated (>99% hit rate, <100μs latency)
+- [ ] T340 [P] [US7] Add benchmark test `bench_cache_hit_rate`:
+  - Create 1000 tables, query each 100 times
+  - Assert hit_rate() > 0.99 (>99% cache hits)
+  - Measure avg latency of get() calls: assert <100μs per lookup
+- [ ] T341 [P] [US7] Add benchmark test `bench_cache_memory_efficiency`:
+  - Create 1000 CachedTableData entries (simulate real table metadata size)
+  - Measure total memory footprint using `std::mem::size_of_val()`
+  - Assert lru_timestamps overhead <2% of total cache size (separate DashMap should be tiny)
+- [ ] T342 [P] [US7] Add benchmark test `bench_provider_caching`:
+  - Create 10 tables, simulate 100 users querying each table 10 times
+  - Assert only 10 provider instances exist (NOT 100 × 10 = 1000!)
+  - Measure Arc::clone() overhead vs new provider creation
+  - Assert >99% reduction in provider allocations
+- [ ] T343 [P] [US7] Add stress test `stress_concurrent_access`:
+  - Spawn 100 threads, each doing 1000 random cache operations (get, insert, invalidate)
+  - Assert no deadlocks, no panics, all operations complete in <10 seconds
+  - Verify metrics (hits/misses) are consistent across threads
+- [ ] T344 [P] [US7] Add integration test `test_cache_invalidation_on_drop_table`:
+  - CREATE TABLE → verify in cache
+  - DROP TABLE → verify removed from cache and lru_timestamps
+  - Query dropped table → verify cache miss, error returned
+- [ ] T345 [P] [US7] Add integration test `test_cache_invalidation_on_alter_table`:
+  - CREATE TABLE → verify initial schema cached
+  - ALTER TABLE ADD COLUMN → verify cache invalidated
+  - Query table → verify new schema fetched and cached
+- [ ] T346 [P] [US7] Run full test suite: `cargo test` (expect all existing tests to pass)
+- [ ] T347 [P] [US7] Update AGENTS.md with Phase 10 completion status:
+  - Document unified SchemaCache architecture
+  - Document LRU timestamp optimization (eliminated struct cloning)
+  - Document Arc<TableId> optimization (zero-allocation lookups)
+  - Document provider caching (ONE instance per table, not per user×table)
+  - Document ~50% memory reduction vs dual TableCache/SchemaCache
+  - Mark Phase 10 as ✅ COMPLETE with test results
 
-**Architecture After Phase 10**:
+### Phase 6: Advanced Memory Optimizations (Optional P2)
+
+**Goal**: Further reduce memory footprint via Arc<str> string interning for frequently-used identifiers
+
+**Rationale**: 
+- `UserId`, `NamespaceId`, `TableName`, `StorageId` currently use `String` (24 bytes + heap allocation)
+- `Arc<str>` is 16 bytes (pointer + vtable) with shared ownership, perfect for immutable identifiers
+- For 1000 tables × 100 users, this saves ~2.4MB of String allocations
+- Aligns with Rust best practices for shared, immutable string data
+
+**Performance Impact**:
+- **Memory**: ~30-40% reduction in identifier storage (24 → 16 bytes per ID)
+- **Cache Locality**: Better CPU cache utilization (smaller structs fit more per cache line)
+- **Clone Performance**: Arc::clone() is ~2× faster than String::clone() (atomic increment vs memcpy)
+- **Deduplication**: Multiple references to same ID (e.g., "user123") share ONE heap allocation
+
+- [ ] T348 [P2] [US7] Research Arc<str> vs String for immutable identifiers:
+  - Benchmark clone performance: `Arc<str>::clone()` vs `String::clone()` (expect ~2× faster)
+  - Measure memory overhead: 16 bytes (Arc) vs 24 bytes (String) + heap
+  - Test deduplication: 1000 refs to "user123" = 1 heap alloc (Arc) vs 1000 allocs (String)
+  - Document trade-offs: Arc requires atomic refcount ops, String is simpler
+- [ ] T349 [P2] [US7] Refactor `UserId` to use `Arc<str>` in `backend/crates/kalamdb-commons/src/models/user_id.rs`:
+  - Change field: `pub struct UserId(String)` → `pub struct UserId(Arc<str>)`
+  - Update `new()`: `Self(name.into())` → `Self(Arc::from(name.into()))`
+  - Update `as_str()`: Return `&str` via `self.0.as_ref()`
+  - Add `from_arc(arc: Arc<str>)` for zero-copy construction when Arc already exists
+  - Update Clone impl: Already derived, but now cheap (atomic increment)
+- [ ] T350 [P2] [US7] Refactor `NamespaceId` to use `Arc<str>` (same pattern as T349)
+- [ ] T351 [P2] [US7] Refactor `TableName` to use `Arc<str>` (same pattern as T349)
+- [ ] T352 [P2] [US7] Refactor `StorageId` to use `Arc<str>` (same pattern as T349)
+- [ ] T353 [P2] [US7] Update `TableId` to reference Arc-based fields:
+  - Fields remain: `pub namespace_id: NamespaceId, pub table_name: TableName`
+  - Clone becomes cheaper (2 atomic increments vs 2 String clones)
+  - Total size: 32 bytes (2×16) vs 48 bytes (2×24)
+- [ ] T354 [P2] [US7] Update all constructor call sites across codebase:
+  - Search: `UserId::new(`, `NamespaceId::new(`, `TableName::new(`, `StorageId::new(`
+  - Most calls unchanged (`.into()` still works)
+  - Add `from_arc()` where Arc already available (executor, cache, etc.)
+- [ ] T355 [P2] [US7] Add string interning pool for common IDs (optional enhancement):
+  - Create `IdInternPool` in kalamdb-core using `DashMap<String, Arc<str>>`
+  - Methods: `intern(s: &str) -> Arc<str>` (returns existing Arc or creates new)
+  - Pre-intern common system IDs: "system", "information_schema", "default"
+  - Use in constructors: `UserId::new()` calls `pool.intern()` instead of `Arc::from()`
+  - Expected savings: ~1000 duplicate "system" strings → 1 Arc<str> shared across all
+- [ ] T356 [P2] [US7] Benchmark Arc<str> migration:
+  - Measure TableId clone time: Before (String) vs After (Arc<str>)
+  - Measure TableId size: `std::mem::size_of::<TableId>()` (expect 48 → 32 bytes)
+  - Measure cache memory: 1000 tables × 100 refs (expect ~2.4MB savings)
+  - Measure constructor overhead: `Arc::from()` vs `String::from()` (expect +2-5ns per call, negligible)
+- [ ] T357 [P2] [US7] Update unit tests for Arc<str> types:
+  - Tests should still pass (API unchanged)
+  - Add test verifying Arc sharing: `arc1.as_ptr() == arc2.as_ptr()` when interned
+  - Add test verifying clone performance: `Arc::clone()` completes in <10ns
+- [ ] T358 [P2] [US7] Update AGENTS.md with Arc<str> optimization:
+  - Document memory savings (~30-40% for identifiers)
+  - Document performance impact (2× faster clones, better cache locality)
+  - Document when to use Arc<str> vs String (immutable shared vs mutable owned)
+
+### Phase 7: Schema Deduplication (Optional P2)
+
+**Goal**: Share Arrow schema objects across multiple tables with identical schemas
+
+**Rationale**:
+- Many user tables share identical schemas (e.g., all "messages" tables across namespaces)
+- Arrow Schema is ~200+ bytes per table (Field list, metadata, etc.)
+- For 1000 identical tables, this wastes ~200KB storing duplicate schemas
+- Arc<Schema> already exists, but each table creates its OWN Schema object
+
+**Current Architecture**:
+```rust
+// Each table creates its own Schema (duplicate data!)
+let schema1 = Arc::new(Schema::new(vec![Field::new("id", Int64), Field::new("name", Utf8)]));
+let schema2 = Arc::new(Schema::new(vec![Field::new("id", Int64), Field::new("name", Utf8)]));
+// schema1 != schema2 (different Arc pointers, identical data)
 ```
-User queries table
-    ↓
-SqlExecutor → SchemaCache.get(table_id)
-    ↓ (cache hit - O(1) DashMap lookup)
+
+**Optimized Architecture**:
+```rust
+// Schema pool deduplicates based on field list + metadata hash
+let schema1 = schema_pool.intern(vec![Field::new("id", Int64), Field::new("name", Utf8)]);
+let schema2 = schema_pool.intern(vec![Field::new("id", Int64), Field::new("name", Utf8)]);
+// schema1 == schema2 (SAME Arc pointer, shared data)
+```
+
+- [ ] T359 [P2] [US7] Create `SchemaPool` in `backend/crates/kalamdb-core/src/catalog/schema_pool.rs`:
+  - Field: `schemas: DashMap<u64, Arc<Schema>>` (keyed by schema hash)
+  - Method: `intern(fields: Vec<Field>, metadata: HashMap<String, String>) -> Arc<Schema>`
+  - Hash function: Hash field list (names + types + nullability) + metadata
+  - On collision: Compare actual schemas for equality (fallback to separate Arc if different)
+- [ ] T360 [P2] [US7] Integrate SchemaPool into SchemaCache:
+  - Add field: `schema_pool: Arc<SchemaPool>` to SchemaCache
+  - Update `insert()`: Call `schema_pool.intern()` before storing CachedTableData
+  - Benefit: Multiple tables with identical schemas share ONE Arc<Schema>
+- [ ] T361 [P2] [US7] Add metrics to SchemaPool:
+  - Count: Total schemas created
+  - Count: Total intern() calls
+  - Ratio: Deduplication rate (1 - created/calls)
+  - Example: 1000 calls, 10 created = 99% deduplication rate
+- [ ] T362 [P2] [US7] Benchmark schema deduplication:
+  - Create 1000 tables with 10 unique schemas (100 tables per schema)
+  - Measure memory: Before (1000 Schema objects) vs After (10 Schema objects)
+  - Expected savings: ~180KB (1000 × 200 bytes → 10 × 200 bytes)
+  - Measure intern() latency: Hash + lookup should be <1μs
+- [ ] T363 [P2] [US7] Update AGENTS.md with schema deduplication:
+  - Document ~90-99% memory savings for identical schemas
+  - Document hash collision handling (rare, graceful fallback)
+  - Note: Most effective for multi-tenant workloads (many users, same table structure)
+
+---
+
+**Phase 10 Summary**: 65 tasks total (was 49, added 16 for advanced optimizations)
+- Phase 1 (Cache Creation): T300-T308 (9 tasks) ✅ COMPLETE
+- Phase 2 (Executor Integration): T309-T314 (6 tasks) ⏳ 2/6 complete
+- Phase 3 (Provider Updates): T315-T322 (8 tasks) ⏳ 1/8 complete
+- Phase 3B (Provider Architecture): T323-T332 (10 tasks) ⏳ 0/10 complete
+- Phase 4 (Cleanup): T333-T339 (7 tasks) ⏳ 0/7 complete
+- Phase 5 (Testing): T340-T347 (8 tasks) ⏳ 0/8 complete
+- **Phase 6 (Arc<str> Optimization)**: T348-T358 (11 tasks) ⏳ **NEW** (P2 - Optional)
+- **Phase 7 (Schema Deduplication)**: T359-T363 (5 tasks) ⏳ **NEW** (P2 - Optional)
+
+**Expected Impact** (All Phases Combined):
+- **Memory**: 
+  - ~50% cache reduction (unified cache vs dual cache)
+  - ~99% provider reduction (one instance per table)
+  - ~30-40% identifier reduction (Arc<str> vs String)
+  - ~90-99% schema reduction (deduplication for identical schemas)
+  - **Total: ~75-85% overall memory reduction for Phase 10!**
+- **Performance**: 
+  - >99% cache hit rate, <100μs avg latency
+  - Zero allocations on cache hits (Arc::clone only)
+  - 2× faster identifier clones (Arc vs String)
+  - Better CPU cache locality (smaller structs)
+- **Code Quality**: 
+  - Single source of truth (unified cache)
+  - Shared provider instances (zero duplication)
+  - String interning (Rust best practice for immutable data)
+  - Schema deduplication (efficient multi-tenant architecture)
+- **Maintainability**: One cache, one provider per table, shared strings, shared schemas
 CachedTableData {
     table_id,           // TableId contains (namespace, table_name)
     table_type,         // User, Shared, System, Stream
@@ -1205,19 +1423,19 @@ Once US1 + US2 complete:
   - ✅ Integration Tests (T221-T228): 5/8 tasks complete (T224, T226 deferred - require full system.storages)
   - ✅ Smoke Tests (T229-T233): 5/5 tasks complete
   - ✅ Final Validation (T234-T240): 4/7 tasks complete (T237-T239 deferred - docs/benchmarks)
-- **Phase 10 (Cache Consolidation)**: 37 tasks ⏳ READY TO START
+- **Phase 10 (Cache Consolidation)**: 41 tasks ⏳ READY TO START
   - Phase 1: Create Unified SchemaCache (T300-T308): 9 tasks
   - Phase 2: SqlExecutor Integration (T309-T314): 6 tasks
-  - Phase 3: Update Consumers (T315-T319): 5 tasks
-  - Phase 4: Remove Old Caches (T320-T326): 7 tasks
-  - Phase 5: Performance Testing (T327-T336): 10 tasks
+  - Phase 3: Update Table Providers with Arc<TableId> (T315-T322): 8 tasks (includes Arc<TableId> optimization)
+  - Phase 4: Remove Old Caches (T323-T329): 7 tasks
+  - Phase 5: Performance Testing (T330-T340): 11 tasks (includes Arc<TableId> allocation test)
 
-**Total**: 254 tasks (37 tasks added in Phase 10)
+**Total**: 258 tasks (41 tasks in Phase 10, increased from 37 due to Arc<TableId> optimization)
 
 **Completed**: 145 tasks (Phases 1-6 complete, Phase 7 code quality & testing complete, Phase 9 complete)
-**Progress**: 57% complete (145/254 tasks)
+**Progress**: 56% complete (145/258 tasks)
 
-**Remaining**: 109 tasks (12 for Phase 7 polish, 37 for Phase 10 cache consolidation, 60 for Phase 9 if not counted as complete)
+**Remaining**: 113 tasks (12 for Phase 7 polish, 41 for Phase 10 cache consolidation, 60 for Phase 9 if not counted as complete)
 
 ### Parallel Execution Opportunities
 

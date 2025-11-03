@@ -106,6 +106,18 @@ If the user already specified primary key then we dont do that, the _id we add a
 104) backend\crates\kalamdb-core\src\tables\system\tables_v2 is not needed anymore we have schemas which stores the tables/columns, all should be located in the new folder: backend\crates\kalamdb-core\src\tables\system\schemas
 105) when we have Waiting up to 300s for active flush jobs to complete... and the user click CTRL+C again it will force the stopping and mark those jobs as failed with the right error
 
+106) IMPORTANT - Why are we creating a separate provider for each user? couldn't we have one provider which is shared for all user's per table? which we store once in the cache as well and use it and pass it the current UserId each time? (Check also stream tables)
+            // Create provider with the CURRENT user_id (critical for data isolation)
+            let mut provider = UserTableProvider::new(
+                table_id,
+                metadata,
+                schema,
+                table_store,
+                user_id.clone(),
+                user_role,
+                vec![], // parquet_paths - empty for now
+            );
+
 
 
 

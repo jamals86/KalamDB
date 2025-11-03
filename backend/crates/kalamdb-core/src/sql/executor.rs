@@ -157,8 +157,11 @@ pub struct SqlExecutor {
     live_query_manager: Option<Arc<crate::live_query::LiveQueryManager>>,
     // Phase 15 (008-schema-consolidation): Schema store and cache for DESCRIBE TABLE
     schema_store: Option<Arc<crate::tables::system::schemas::TableSchemaStore>>,
+    // Phase 10 (Cache Consolidation): Unified cache replaces both schema_cache and table_cache
+    unified_cache: Option<Arc<crate::catalog::SchemaCache>>,
+    // OLD Phase 15 cache - to be deleted after migration
     schema_cache: Option<Arc<crate::tables::system::schemas::SchemaCache>>,
-    // Phase 9: Shared table cache for storage path resolution
+    // OLD Phase 9 cache - to be deleted after migration
     table_cache: Option<Arc<crate::catalog::TableCache>>,
     enforce_password_complexity: bool,
 }
@@ -228,20 +231,28 @@ impl SqlExecutor {
             job_manager: None,
             live_query_manager: None,
             schema_store: None,
-            schema_cache: None,
-            table_cache: None, // Phase 9: Initialize table cache (will be set via with_storage_registry)
+            schema_cache: None, // OLD - to be deleted
+            table_cache: None, // OLD - to be deleted
+            unified_cache: None, // Phase 10: Initialize unified cache (will be set via with_storage_registry)
             enforce_password_complexity: false,
         }
     }
 
     /// Set the storage registry (optional, for storage template validation)
     pub fn with_storage_registry(mut self, registry: Arc<crate::storage::StorageRegistry>) -> Self {
-        // Phase 9: Initialize TableCache with StorageRegistry for path resolution
+        // Phase 10: Initialize unified SchemaCache instead of dual TableCache + SchemaCache
+        let unified_cache = Arc::new(
+            crate::catalog::SchemaCache::new(10000, Some(registry.clone()))
+        );
+        self.unified_cache = Some(unified_cache);
+        
+        // OLD Phase 9: Initialize TableCache for backward compatibility during migration
         let table_cache = Arc::new(
             crate::catalog::TableCache::new()
                 .with_storage_registry(registry.clone())
         );
         self.table_cache = Some(table_cache);
+        
         self.storage_registry = Some(registry);
         self
     }
@@ -1330,14 +1341,20 @@ impl SqlExecutor {
                 &table_name,
             ));
 
+            // Phase 10: Create Arc<TableId> once for zero-allocation cache lookups
+            let table_id = Arc::new(kalamdb_commons::models::TableId::new(
+                namespace_id.clone(),
+                table_name.clone(),
+            ));
+
             // Create provider with the CURRENT user_id (critical for data isolation)
             let mut provider = UserTableProvider::new(
+                table_id,
                 metadata,
                 schema,
                 table_store,
                 user_id.clone(),
                 user_role,
-                vec![], // parquet_paths - empty for now
             );
 
             // Wire through LiveQueryManager for WebSocket notifications
