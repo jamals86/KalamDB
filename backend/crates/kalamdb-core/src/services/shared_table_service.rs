@@ -373,16 +373,11 @@ mod tests {
     use kalamdb_commons::models::StorageId;
     use kalamdb_commons::schemas::TableType;
 
-    fn create_test_service() -> (SharedTableService, TestDb) {
-        let test_db = TestDb::new(&[
-            "shared_table:app:config",
-            "system_tables",
-            "information_schema_tables",
-        ])
-        .unwrap();
+    fn create_test_service() -> (SharedTableService, Arc<TestDb>) {
+        // Initialize AppContext for tests
+        let test_db = crate::test_helpers::init_test_app_context();
 
-        // Note: SharedTableService is now stateless and doesn't need dependencies
-        // AppContext would be initialized in a real test, but for unit tests we just create the service
+        // Create stateless service
         let service = SharedTableService::new();
         (service, test_db)
     }
@@ -413,6 +408,9 @@ mod tests {
         };
 
         let result = service.create_table(stmt);
+        if let Err(ref e) = result {
+            eprintln!("Error creating shared table: {:?}", e);
+        }
         assert!(result.is_ok());
 
         let was_created = result.unwrap();

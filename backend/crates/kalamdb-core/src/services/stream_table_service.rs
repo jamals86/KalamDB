@@ -84,9 +84,13 @@ impl StreamTableService {
         // Save complete table definition to information_schema_tables (atomic write)
         self.save_table_definition(&stmt, &schema)?;
 
+        // Fetch stream_table_store from AppContext
+        let ctx = AppContext::get();
+        let stream_table_store = ctx.stream_table_store();
+
         // Create the column family in RocksDB
         SharedTableStoreExt::create_column_family(
-            self.stream_table_store.as_ref(),
+            stream_table_store.as_ref(),
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str(),
         )
@@ -164,8 +168,12 @@ impl StreamTableService {
             None, // table_comment
         ).map_err(|e| KalamDbError::SchemaError(e))?;
 
+        // Fetch kalam_sql from AppContext
+        let ctx = AppContext::get();
+        let kalam_sql = ctx.kalam_sql();
+
         // Single atomic write to information_schema_tables
-        self.kalam_sql
+        kalam_sql
             .upsert_table_definition(&table_def)
             .map_err(|e| {
                 KalamDbError::Other(format!(
@@ -228,7 +236,11 @@ impl StreamTableService {
         namespace_id: &NamespaceId,
         table_name: &TableName,
     ) -> Result<bool, KalamDbError> {
-        match self.kalam_sql.get_table_definition(namespace_id, table_name) {
+        // Fetch kalam_sql from AppContext
+        let ctx = AppContext::get();
+        let kalam_sql = ctx.kalam_sql();
+
+        match kalam_sql.get_table_definition(namespace_id, table_name) {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false),
             Err(e) => Err(KalamDbError::Other(e.to_string())),
@@ -241,23 +253,14 @@ mod tests {
     use super::*;
     use datafusion::arrow::datatypes::{DataType, Field};
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{RocksDBBackend, StorageBackend};
-    use kalamdb_commons::models::StorageId;
     use kalamdb_commons::schemas::TableType;
 
-    fn create_test_service() -> (StreamTableService, TestDb) {
-        let test_db = TestDb::new(&[
-            "stream_table:app:events",
-            "system_tables",
-            "information_schema_tables",
-        ])
-        .unwrap();
+    fn create_test_service() -> (StreamTableService, Arc<TestDb>) {
+        // Initialize AppContext for tests
+        let test_db = crate::test_helpers::init_test_app_context();
 
-        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
-        let stream_table_store = Arc::new(StreamTableStore::new(backend.clone(), "stream_tables"));
-        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
-
-        let service = StreamTableService::new(stream_table_store, kalam_sql);
+        // StreamTableService is now zero-sized - no dependencies needed
+        let service = StreamTableService::new();
         (service, test_db)
     }
 

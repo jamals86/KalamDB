@@ -4668,46 +4668,16 @@ mod tests {
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
         let session_context = Arc::new(SessionContext::new());
 
-        // Initialize table services for tests using EntityStore implementations
-        let user_table_store = Arc::new(crate::tables::new_user_table_store(
-            backend.clone(),
-            &NamespaceId::new("default"),
-            &TableName::new("test"),
-        ));
-        let user_table_service = Arc::new(crate::services::UserTableService::new(
-            kalam_sql.clone(),
-            user_table_store.clone(),
-        ));
-        let shared_table_store = Arc::new(crate::tables::new_shared_table_store(
-            backend.clone(),
-            &NamespaceId::new("default"),
-            &TableName::new("test"),
-        ));
-        let shared_table_service = Arc::new(crate::services::SharedTableService::new(
-            shared_table_store.clone(),
-            kalam_sql.clone(),
-            "./data/storage".to_string(),
-        ));
-        let stream_table_store = Arc::new(crate::tables::new_stream_table_store(
-            &NamespaceId::new("default"),
-            &TableName::new("test"),
-        ));
-        let stream_table_service = Arc::new(crate::services::StreamTableService::new(
-            stream_table_store.clone(),
-            kalam_sql.clone(),
-        ));
+        // Initialize table services for tests (now zero-sized structs)
+        let user_table_service = Arc::new(crate::services::UserTableService::new());
+        let shared_table_service = Arc::new(crate::services::SharedTableService::new());
+        let stream_table_service = Arc::new(crate::services::StreamTableService::new());
 
         SqlExecutor::new(
             namespace_service,
             user_table_service,
             shared_table_service,
             stream_table_service,
-        )
-        .with_stores(
-            user_table_store,
-            shared_table_store,
-            stream_table_store,
-            kalam_sql,
         )
         .with_storage_backend(backend)
     }
@@ -4803,33 +4773,10 @@ mod tests {
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
         let session_context = Arc::new(SessionContext::new());
 
-        let user_table_store = Arc::new(crate::tables::new_user_table_store(
-            backend.clone(),
-            &NamespaceId::new("default"),
-            &TableName::new("test"),
-        ));
-        let user_table_service = Arc::new(crate::services::UserTableService::new(
-            kalam_sql.clone(),
-            user_table_store.clone(),
-        ));
-        let shared_table_store = Arc::new(crate::tables::new_shared_table_store(
-            backend.clone(),
-            &NamespaceId::new("default"),
-            &TableName::new("test"),
-        ));
-        let shared_table_service = Arc::new(crate::services::SharedTableService::new(
-            shared_table_store.clone(),
-            kalam_sql.clone(),
-            "./data/storage".to_string(),
-        ));
-        let stream_table_store = Arc::new(crate::tables::new_stream_table_store(
-            &NamespaceId::new("default"),
-            &TableName::new("test"),
-        ));
-        let stream_table_service = Arc::new(crate::services::StreamTableService::new(
-            stream_table_store.clone(),
-            kalam_sql.clone(),
-        ));
+        // Initialize table services for tests (now zero-sized structs)
+        let user_table_service = Arc::new(crate::services::UserTableService::new());
+        let shared_table_service = Arc::new(crate::services::SharedTableService::new());
+        let stream_table_service = Arc::new(crate::services::StreamTableService::new());
 
         let storage_registry = Arc::new(crate::storage::StorageRegistry::new(
             kalam_sql.clone(),
@@ -4841,12 +4788,6 @@ mod tests {
             user_table_service,
             shared_table_service,
             stream_table_service,
-        )
-        .with_stores(
-            user_table_store,
-            shared_table_store,
-            stream_table_store,
-            kalam_sql.clone(),
         )
         .with_storage_backend(backend.clone())
         .with_storage_registry(storage_registry.clone());

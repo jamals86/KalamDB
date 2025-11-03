@@ -221,6 +221,14 @@ impl AppContext {
         APP_CONTEXT.get().expect("AppContext not initialized").clone()
     }
 
+    /// Try to get the AppContext singleton without panicking
+    ///
+    /// Returns None if AppContext::init() has not been called yet.
+    /// Useful for tests that need to check if initialization is needed.
+    pub fn try_get() -> Option<Arc<AppContext>> {
+        APP_CONTEXT.get().map(|ctx| ctx.clone())
+    }
+
     // ===== Cache Getters =====
     
     /// Get the unified schema cache (Phase 10)
