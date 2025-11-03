@@ -5,14 +5,19 @@ meta {
 }
 
 post {
-  url: http://localhost:8080/api/sql
+  url: http://localhost:8080/v1/api/sql
   body: json
-  auth: none
+  auth: basic
 }
 
 headers {
   Content-Type: application/json
   X-USER-ID: jamal86
+}
+
+auth:basic {
+  username: root
+  password: 
 }
 
 body:json {

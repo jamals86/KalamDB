@@ -64,6 +64,7 @@
 use crate::error::KalamDbError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use kalamdb_commons::{JobId, JobType};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -87,9 +88,9 @@ pub enum JobStatus {
 #[derive(Debug, Clone)]
 pub struct JobInfo {
     /// Job ID
-    pub job_id: String,
+    pub job_id: JobId,
     /// Job type (e.g., "flush", "compact", "cleanup")
-    pub job_type: String,
+    pub job_type: JobType,
     /// Current status
     pub status: JobStatus,
     /// When the job was started

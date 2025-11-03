@@ -1,5 +1,6 @@
 //! SQL query execution with HTTP transport.
 
+use crate::normalize::normalize_query_response;
 use crate::{
     auth::AuthProvider,
     error::{KalamLinkError, Result},
@@ -49,7 +50,9 @@ impl QueryExecutor {
             match req_builder.send().await {
                 Ok(response) => {
                     if response.status().is_success() {
-                        let query_response: QueryResponse = response.json().await?;
+                        let mut query_response: QueryResponse = response.json().await?;
+                        // Enforce stable column ordering where applicable
+                        normalize_query_response(sql, &mut query_response);
                         return Ok(query_response);
                     } else {
                         let status = response.status();

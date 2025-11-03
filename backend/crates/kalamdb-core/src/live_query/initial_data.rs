@@ -10,6 +10,7 @@ use crate::live_query::filter::FilterPredicate;
 use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::{StreamTableStore, UserTableStore};
 use chrono::DateTime;
+use kalamdb_commons::TableName;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -89,6 +90,7 @@ pub struct InitialDataResult {
 }
 
 /// Service for fetching initial data when subscribing to live queries
+#[derive(Default)]
 pub struct InitialDataFetcher {
     user_table_store: Option<Arc<UserTableStore>>,
     stream_table_store: Option<Arc<StreamTableStore>>,
@@ -117,15 +119,15 @@ impl InitialDataFetcher {
     /// InitialDataResult with rows and metadata
     pub async fn fetch_initial_data(
         &self,
-        live_id: &crate::live_query::connection_registry::LiveId,
-        table_name: &str,
+        _live_id: &crate::live_query::connection_registry::LiveId,
+        table_name: &TableName,
         table_type: TableType,
         options: InitialDataOptions,
         filter: Option<Arc<FilterPredicate>>,
     ) -> Result<InitialDataResult, KalamDbError> {
         log::info!(
             "fetch_initial_data called: table={}, type={:?}, limit={}, since={:?}",
-            table_name,
+            table_name.as_str(),
             table_type,
             options.limit,
             options.since_timestamp
@@ -154,9 +156,12 @@ impl InitialDataFetcher {
                     )
                 })?;
 
-                let user_id = live_id.connection_id().user_id();
+                // IMPORTANT: Scan all rows for the table, not just the current
+                // connection's user_id. Filtering by user (if present) is enforced
+                // by the compiled predicate below. This ensures admins and broad
+                // subscriptions receive the correct initial snapshot.
                 let mut rows = Vec::new();
-                for (_row_id, row) in store.scan_user(&namespace, &table, user_id).map_err(|e| {
+                for (_key, row) in store.scan_all(&namespace, &table).map_err(|e| {
                     KalamDbError::Other(format!(
                         "Failed to scan user table {}.{}: {}",
                         namespace, table, e
@@ -267,10 +272,10 @@ impl InitialDataFetcher {
     /// (namespace_id, table_name)
     fn parse_table_name(
         &self,
-        table_name: &str,
+        table_name: &TableName,
         table_type: TableType,
     ) -> Result<(String, String), KalamDbError> {
-        let parts: Vec<&str> = table_name.split('.').collect();
+        let parts: Vec<&str> = table_name.as_str().split('.').collect();
 
         if parts.len() != 2 {
             return Err(KalamDbError::Other(format!(
@@ -298,18 +303,15 @@ impl InitialDataFetcher {
     }
 }
 
-impl Default for InitialDataFetcher {
-    fn default() -> Self {
-        Self {
-            user_table_store: None,
-            stream_table_store: None,
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tables::user_tables::user_table_store::{new_user_table_store, UserTableRow};
+    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{ConnectionId as ConnId, LiveId as CommonsLiveId};
+    use kalamdb_store::test_utils::InMemoryBackend;
+    use std::sync::Arc;
 
     #[test]
     fn test_initial_data_options_default() {
@@ -349,7 +351,7 @@ mod tests {
     #[test]
     fn test_parse_user_table_name() {
         let fetcher = InitialDataFetcher::default();
-        let result = fetcher.parse_table_name("app.messages", TableType::User);
+        let result = fetcher.parse_table_name(&TableName::new("app.messages"), TableType::User);
 
         assert!(result.is_ok());
         let (namespace, table) = result.unwrap();
@@ -360,7 +362,7 @@ mod tests {
     #[test]
     fn test_parse_shared_table_name() {
         let fetcher = InitialDataFetcher::default();
-        let result = fetcher.parse_table_name("public.announcements", TableType::Shared);
+        let result = fetcher.parse_table_name(&TableName::new("public.announcements"), TableType::Shared);
 
         assert!(result.is_ok());
         let (namespace, table) = result.unwrap();
@@ -371,7 +373,7 @@ mod tests {
     #[test]
     fn test_parse_invalid_user_table_name() {
         let fetcher = InitialDataFetcher::default();
-        let result = fetcher.parse_table_name("invalid.format.table", TableType::User);
+        let result = fetcher.parse_table_name(&TableName::new("invalid.format.table"), TableType::User);
 
         assert!(result.is_err());
     }
@@ -379,8 +381,43 @@ mod tests {
     #[test]
     fn test_parse_invalid_shared_table_name() {
         let fetcher = InitialDataFetcher::default();
-        let result = fetcher.parse_table_name("announcements", TableType::Shared);
+        let result = fetcher.parse_table_name(&TableName::new("announcements"), TableType::Shared);
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_user_table_initial_fetch_returns_rows() {
+        // Setup in-memory user table with one row (userA)
+        let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(InMemoryBackend::new());
+        let ns = NamespaceId::new("batch_test");
+        let tbl = TableName::new("items");
+        let store = Arc::new(new_user_table_store(backend, &ns, &tbl));
+
+        let row = UserTableRow {
+            row_id: "1".to_string(),
+            user_id: "userA".to_string(),
+            fields: serde_json::json!({"id": 1, "name": "Item One"}),
+            _updated: "2025-11-01T21:49:30.045Z".to_string(),
+            _deleted: false,
+        };
+        
+        // Use UserTableStoreExt::put with explicit trait qualification
+        UserTableStoreExt::put(&*store, ns.as_str(), tbl.as_str(), "userA", "1", &row).expect("put row");
+
+        // Build fetcher with user table store
+        let fetcher = InitialDataFetcher::new(Some(store), None);
+
+        // LiveId for connection user 'root' (distinct from row.user_id)
+        let conn = ConnId::new("root".to_string(), "conn1".to_string());
+        let live = CommonsLiveId::new(conn, format!("{}.{}", ns.as_str(), tbl.as_str()), "q1".to_string());
+
+        // Fetch initial data (default options: last 100)
+        let res = fetcher
+            .fetch_initial_data(&live, &TableName::new(format!("{}.{}", ns.as_str(), tbl.as_str())), TableType::User, InitialDataOptions::last(100), None)
+            .await
+            .expect("initial fetch");
+
+        assert_eq!(res.rows.len(), 1, "Expected one row in initial snapshot");
     }
 }

@@ -91,7 +91,6 @@ impl ScalarUDFImpl for UuidV7Function {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::array::Array;
     use datafusion::logical_expr::ScalarUDF;
     use std::collections::HashSet;
 

@@ -1,6 +1,7 @@
 // Configuration module
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Main server configuration
@@ -41,6 +42,9 @@ pub struct ServerSettings {
     /// API version prefix for endpoints (default: "v1")
     #[serde(default = "default_api_version")]
     pub api_version: String,
+    /// Unique node identifier for this server instance (default: "node1")
+    #[serde(default = "default_node_id")]
+    pub node_id: String,
 }
 
 /// Storage settings
@@ -50,6 +54,12 @@ pub struct StorageSettings {
     /// Default path for 'local' storage when base_directory='' (T164a)
     #[serde(default = "default_storage_path")]
     pub default_storage_path: String,
+    /// Template for shared table paths (placeholders: {namespace}, {tableName})
+    #[serde(default = "default_shared_tables_template")]
+    pub shared_tables_template: String,
+    /// Template for user table paths (placeholders: {namespace}, {tableName}, {userId})
+    #[serde(default = "default_user_tables_template")]
+    pub user_tables_template: String,
     #[serde(default = "default_true")]
     pub enable_wal: bool,
     #[serde(default = "default_compression")]
@@ -110,6 +120,14 @@ pub struct LoggingSettings {
     pub log_to_console: bool,
     #[serde(default = "default_log_format")]
     pub format: String,
+    /// Optional per-target log level overrides (e.g., datafusion="info", arrow="warn")
+    /// Configure via a TOML table:
+    /// [logging.targets]
+    /// datafusion = "info"
+    /// arrow = "warn"
+    /// parquet = "warn"
+    #[serde(default)]
+    pub targets: HashMap<String, String>,
 }
 
 /// Performance settings
@@ -194,6 +212,7 @@ pub struct UserManagementSettings {
 
 /// Shutdown settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct ShutdownSettings {
     /// Flush job timeout settings
     pub flush: ShutdownFlushSettings,
@@ -279,6 +298,7 @@ pub struct OAuthSettings {
 
 /// OAuth providers configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct OAuthProvidersSettings {
     #[serde(default)]
     pub google: OAuthProviderConfig,
@@ -327,15 +347,6 @@ impl Default for OAuthSettings {
     }
 }
 
-impl Default for OAuthProvidersSettings {
-    fn default() -> Self {
-        Self {
-            google: OAuthProviderConfig::default(),
-            github: OAuthProviderConfig::default(),
-            azure: OAuthProviderConfig::default(),
-        }
-    }
-}
 
 impl Default for OAuthProviderConfig {
     fn default() -> Self {
@@ -421,13 +432,6 @@ impl Default for UserManagementSettings {
     }
 }
 
-impl Default for ShutdownSettings {
-    fn default() -> Self {
-        Self {
-            flush: ShutdownFlushSettings::default(),
-        }
-    }
-}
 
 impl Default for ShutdownFlushSettings {
     fn default() -> Self {
@@ -446,6 +450,10 @@ fn default_api_version() -> String {
     "v1".to_string()
 }
 
+fn default_node_id() -> String {
+    "node1".to_string()
+}
+
 fn default_flush_job_shutdown_timeout() -> u32 {
     300 // 5 minutes (T158j)
 }
@@ -459,7 +467,15 @@ fn default_compression() -> String {
 }
 
 fn default_storage_path() -> String {
-    "./data/storage".to_string() // T164a: Default path for 'local' storage
+    "./data/storage".to_string() // Default dev path; normalized to absolute at runtime
+}
+
+fn default_shared_tables_template() -> String {
+    "{namespace}/{tableName}".to_string()
+}
+
+fn default_user_tables_template() -> String {
+    "{namespace}/{tableName}/{userId}".to_string()
 }
 
 fn default_max_message_size() -> usize {
@@ -744,6 +760,19 @@ impl ServerConfig {
             ));
         }
 
+        // Validate per-target log levels if provided
+        let valid_levels = ["error", "warn", "info", "debug", "trace"];
+        for (target, level) in &self.logging.targets {
+            if !valid_levels.contains(&level.as_str()) {
+                return Err(anyhow::anyhow!(
+                    "Invalid log level '{}' for target '{}'. Must be one of: {}",
+                    level,
+                    target,
+                    valid_levels.join(", ")
+                ));
+            }
+        }
+
         // Validate message size limit
         if self.limits.max_message_size == 0 {
             return Err(anyhow::anyhow!("max_message_size cannot be 0"));
@@ -783,10 +812,13 @@ impl ServerConfig {
                 port: 8080,
                 workers: 0,
                 api_version: default_api_version(),
+                node_id: default_node_id(),
             },
             storage: StorageSettings {
                 rocksdb_path: "./data/rocksdb".to_string(),
                 default_storage_path: default_storage_path(),
+                shared_tables_template: default_shared_tables_template(),
+                user_tables_template: default_user_tables_template(),
                 enable_wal: true,
                 compression: "lz4".to_string(),
                 rocksdb: RocksDbSettings::default(),
@@ -801,6 +833,7 @@ impl ServerConfig {
                 file_path: "./logs/app.log".to_string(),
                 log_to_console: true,
                 format: "compact".to_string(),
+                targets: HashMap::new(),
             },
             performance: PerformanceSettings {
                 request_timeout: 30,

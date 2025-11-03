@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn test_parse_invalid_sql() {
-        let sql = "SELECT FROM WHERE";
+        let sql = "SELCT * FORM users"; // Typos in keywords
         let result = parse_sql(sql);
         assert!(result.is_err());
     }

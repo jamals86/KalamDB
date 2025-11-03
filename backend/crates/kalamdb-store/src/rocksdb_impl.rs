@@ -189,9 +189,19 @@ impl StorageBackend for RocksDBBackend {
             // 3. We're not accessing any column families during creation
             // 4. The Arc ensures the DB is valid for the duration of this call
             let db_ptr = Arc::as_ptr(&self.db) as *mut DB;
-            (*db_ptr)
-                .create_cf(partition.name(), &opts)
-                .map_err(|e| StorageError::IoError(e.to_string()))?;
+            match (*db_ptr).create_cf(partition.name(), &opts) {
+                Ok(()) => {}
+                Err(e) => {
+                    let msg = e.to_string();
+                    // Handle benign race: another thread created the CF between exists-check and create
+                    if msg.contains("Column family already exists")
+                        || msg.contains("column family already exists")
+                    {
+                        return Ok(());
+                    }
+                    return Err(StorageError::IoError(msg));
+                }
+            }
         }
 
         Ok(())

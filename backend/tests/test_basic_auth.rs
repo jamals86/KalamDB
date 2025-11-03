@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Integration tests for HTTP Basic Authentication
 //!
 //! These tests verify the authentication middleware works correctly:
@@ -56,9 +57,13 @@ async fn test_basic_auth_success() {
         .await;
 
     // Verify success
+    if let Err(e) = &result {
+        eprintln!("Authentication error: {:?}", e);
+    }
     assert!(
         result.is_ok(),
-        "Authentication should succeed with valid credentials"
+        "Authentication should succeed with valid credentials: {:?}",
+        result.as_ref().err()
     );
     let authenticated_user = result.unwrap();
     assert_eq!(authenticated_user.username, username);

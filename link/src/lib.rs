@@ -93,6 +93,8 @@
 
 pub mod error;
 pub mod models;
+#[cfg(feature = "tokio-runtime")]
+mod normalize;
 
 // Credential storage (available in both native and WASM)
 pub mod credentials;

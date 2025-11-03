@@ -1,6 +1,7 @@
+#![allow(dead_code, unused_imports)]
 use assert_cmd;
-use std::process::Command;
 use std::io::{BufRead, BufReader};
+use std::process::Command;
 use std::process::{Child, Stdio};
 use std::sync::mpsc as std_mpsc;
 use std::thread;
@@ -29,7 +30,7 @@ pub fn is_server_running() -> bool {
 /// Helper to execute SQL via CLI
 pub fn execute_sql_via_cli(sql: &str) -> Result<String, Box<dyn std::error::Error>> {
     let output = Command::new(env!("CARGO_BIN_EXE_kalam"))
-            .arg("-u")
+        .arg("-u")
         .arg(SERVER_URL)
         .arg("--command")
         .arg(sql)
@@ -38,14 +39,22 @@ pub fn execute_sql_via_cli(sql: &str) -> Result<String, Box<dyn std::error::Erro
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
-        Err(format!("CLI command failed: {}", String::from_utf8_lossy(&output.stderr)).into())
+        Err(format!(
+            "CLI command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into())
     }
 }
 
 /// Helper to execute SQL via CLI with authentication
-pub fn execute_sql_via_cli_as(username: &str, password: &str, sql: &str) -> Result<String, Box<dyn std::error::Error>> {
+pub fn execute_sql_via_cli_as(
+    username: &str,
+    password: &str,
+    sql: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let output = Command::new(env!("CARGO_BIN_EXE_kalam"))
-            .arg("-u")
+        .arg("-u")
         .arg(SERVER_URL)
         .arg("--username")
         .arg(username)
@@ -58,7 +67,11 @@ pub fn execute_sql_via_cli_as(username: &str, password: &str, sql: &str) -> Resu
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
-        Err(format!("CLI command failed: {}", String::from_utf8_lossy(&output.stderr)).into())
+        Err(format!(
+            "CLI command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into())
     }
 }
 
@@ -151,10 +164,162 @@ pub fn cleanup_test_table(table_full_name: &str) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+/// Parse job ID from FLUSH TABLE output
+/// 
+/// Expected format: "Flush started for table 'namespace.table'. Job ID: flush-table-123-uuid"
+pub fn parse_job_id_from_flush_output(output: &str) -> Result<String, Box<dyn std::error::Error>> {
+    // Robustly locate the "Job ID: <id>" fragment and extract only the ID token
+    if let Some(idx) = output.find("Job ID: ") {
+        let after = &output[idx + "Job ID: ".len()..];
+        // Take only the first line after the marker, then the first whitespace-delimited token
+        let first_line = after.lines().next().unwrap_or(after);
+        let id_token = first_line
+            .split_whitespace()
+            .next()
+            .ok_or("Missing job id token after 'Job ID: '")?;
+        return Ok(id_token.trim().to_string());
+    }
+
+    Err(format!("Failed to parse job ID from FLUSH output: {}", output).into())
+}
+
+/// Parse multiple job IDs from FLUSH ALL TABLES output
+/// 
+/// Expected format: "Flush started for N table(s) in namespace 'ns'. Job IDs: [id1, id2, id3]"
+pub fn parse_job_ids_from_flush_all_output(output: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    // Look for pattern: "Job IDs: [id1, id2, id3]"
+    if let Some(ids_str) = output.split("Job IDs: [").nth(1) {
+        if let Some(ids_part) = ids_str.split(']').next() {
+            let job_ids: Vec<String> = ids_part
+                .split(',')
+                .map(|s| s.trim())
+                .map(|s| s.split_whitespace().next().unwrap_or("").to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            
+            if !job_ids.is_empty() {
+                return Ok(job_ids);
+            }
+        }
+    }
+    
+    Err(format!("Failed to parse job IDs from FLUSH ALL output: {}", output).into())
+}
+
+/// Verify that a job has completed successfully
+/// 
+/// Polls system.jobs table until the job reaches 'completed' status or timeout occurs.
+/// Returns an error if the job fails or times out.
+pub fn verify_job_completed(job_id: &str, timeout: Duration) -> Result<(), Box<dyn std::error::Error>> {
+    let start = std::time::Instant::now();
+    let poll_interval = Duration::from_millis(200);
+    
+    loop {
+        if start.elapsed() > timeout {
+            return Err(format!(
+                "Timeout waiting for job {} to complete after {:?}",
+                job_id, timeout
+            ).into());
+        }
+        
+        // Query system.jobs for this specific job
+        let query = format!(
+            "SELECT job_id, status, error_message FROM system.jobs WHERE job_id = '{}'",
+            job_id
+        );
+        
+        match execute_sql_as_root_via_cli(&query) {
+            Ok(output) => {
+                // Check if output contains the job and its status
+                if output.to_lowercase().contains("completed") {
+                    return Ok(());
+                }
+                
+                if output.to_lowercase().contains("failed") {
+                    // Try to extract error message if present
+                    return Err(format!(
+                        "Job {} failed. Query output: {}",
+                        job_id, output
+                    ).into());
+                }
+                
+                // Job might still be running or pending, continue polling
+            }
+            Err(e) => {
+                // If we can't query the jobs table, that's an error
+                return Err(format!(
+                    "Failed to query system.jobs for job {}: {}",
+                    job_id, e
+                ).into());
+            }
+        }
+        
+        std::thread::sleep(poll_interval);
+    }
+}
+
+/// Verify that multiple jobs have all completed successfully
+/// 
+/// Convenience wrapper for verifying multiple jobs from FLUSH ALL TABLES
+pub fn verify_jobs_completed(job_ids: &[String], timeout: Duration) -> Result<(), Box<dyn std::error::Error>> {
+    for job_id in job_ids {
+        verify_job_completed(job_id, timeout)?;
+    }
+    Ok(())
+}
+
+/// Wait until a job reaches a terminal state (completed or failed)
+/// Returns the final lowercase status string ("completed" or "failed")
+pub fn wait_for_job_finished(job_id: &str, timeout: Duration) -> Result<String, Box<dyn std::error::Error>> {
+    let start = std::time::Instant::now();
+    let poll_interval = Duration::from_millis(250);
+
+    loop {
+        if start.elapsed() > timeout {
+            return Err(format!(
+                "Timeout waiting for job {} to finish after {:?}",
+                job_id, timeout
+            ).into());
+        }
+
+        let query = format!(
+            "SELECT job_id, status, error_message FROM system.jobs WHERE job_id = '{}'",
+            job_id
+        );
+
+        match execute_sql_as_root_via_cli(&query) {
+            Ok(output) => {
+                let lower = output.to_lowercase();
+                if lower.contains("completed") {
+                    return Ok("completed".to_string());
+                }
+                if lower.contains("failed") {
+                    return Ok("failed".to_string());
+                }
+            }
+            Err(e) => return Err(e),
+        }
+
+        std::thread::sleep(poll_interval);
+    }
+}
+
+/// Wait until all jobs reach a terminal state; returns a Vec of final statuses aligned with job_ids
+pub fn wait_for_jobs_finished(job_ids: &[String], timeout_per_job: Duration) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut statuses = Vec::with_capacity(job_ids.len());
+    for job_id in job_ids {
+        let status = wait_for_job_finished(job_id, timeout_per_job)?;
+        statuses.push(status);
+    }
+    Ok(statuses)
+}
+
 /// Subscription listener for testing real-time events via CLI
 pub struct SubscriptionListener {
     child: Child,
-    stdout_reader: BufReader<std::process::ChildStdout>,
+    stdout_reader: Option<BufReader<std::process::ChildStdout>>,
+    line_receiver: Option<std_mpsc::Receiver<Result<String, String>>>,
+    reader_thread: Option<thread::JoinHandle<()>>,
 }
 
 impl SubscriptionListener {
@@ -163,45 +328,113 @@ impl SubscriptionListener {
         let mut child = Command::new(env!("CARGO_BIN_EXE_kalam"))
             .arg("-u")
             .arg(SERVER_URL)
+            .arg("--username")
+            .arg("root")
+            .arg("--password")
+            .arg("")
+            .arg("--no-spinner")  // Disable animations and banner messages
             .arg("--subscribe")
             .arg(query)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
-            
+
         let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
-        let stdout_reader = BufReader::new(stdout);
+        let mut stdout_reader = BufReader::new(stdout);
+
+        // Start a background thread to read lines with ability to timeout
+        let (tx, rx) = std_mpsc::channel();
+        let reader_thread = thread::spawn(move || {
+            loop {
+                let mut line = String::new();
+                match stdout_reader.read_line(&mut line) {
+                    Ok(0) => {
+                        // EOF
+                        let _ = tx.send(Ok("".to_string()));
+                        break;
+                    }
+                    Ok(_) => {
+                        if tx.send(Ok(line.trim().to_string())).is_err() {
+                            break; // Receiver dropped
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(e.to_string()));
+                        break;
+                    }
+                }
+            }
+        });
 
         Ok(Self {
             child,
-            stdout_reader,
+            stdout_reader: None,
+            line_receiver: Some(rx),
+            reader_thread: Some(reader_thread),
         })
     }
 
     /// Read next line from subscription output
     pub fn read_line(&mut self) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        let mut line = String::new();
-        match self.stdout_reader.read_line(&mut line) {
-            Ok(0) => Ok(None), // EOF
-            Ok(_) => Ok(Some(line.trim().to_string())),
-            Err(e) => Err(e.into()),
+        if let Some(ref rx) = self.line_receiver {
+            match rx.recv() {
+                Ok(Ok(line)) => {
+                    if line.is_empty() {
+                        Ok(None) // EOF
+                    } else {
+                        Ok(Some(line))
+                    }
+                }
+                Ok(Err(e)) => Err(e.into()),
+                Err(_) => Ok(None), // Channel closed
+            }
+        } else {
+            Err("Listener not initialized properly".into())
+        }
+    }
+
+    /// Try to read a line with a timeout (uses polling approach)
+    pub fn try_read_line(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        if let Some(ref rx) = self.line_receiver {
+            match rx.recv_timeout(timeout) {
+                Ok(Ok(line)) => {
+                    if line.is_empty() {
+                        Ok(None) // EOF
+                    } else {
+                        Ok(Some(line))
+                    }
+                }
+                Ok(Err(e)) => Err(e.into()),
+                Err(std_mpsc::RecvTimeoutError::Timeout) => {
+                    Err("Timeout waiting for subscription data".into())
+                }
+                Err(std_mpsc::RecvTimeoutError::Disconnected) => Ok(None),
+            }
+        } else {
+            Err("Listener not initialized properly".into())
         }
     }
 
     /// Wait for a specific event pattern
-    pub fn wait_for_event(&mut self, pattern: &str, timeout: Duration) -> Result<String, Box<dyn std::error::Error>> {
+    pub fn wait_for_event(
+        &mut self,
+        pattern: &str,
+        timeout: Duration,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         let start = std::time::Instant::now();
 
         while start.elapsed() < timeout {
-            let mut line = String::new();
-            match self.stdout_reader.read_line(&mut line) {
-                Ok(0) => break, // EOF
-                Ok(_) => {
+            match self.try_read_line(Duration::from_millis(100)) {
+                Ok(Some(line)) => {
                     if line.contains(pattern) {
-                        return Ok(line.trim().to_string());
+                        return Ok(line);
                     }
                 }
-                Err(_) => break,
+                Ok(None) => break,  // EOF
+                Err(_) => continue, // Timeout on this read, try again
             }
         }
 
@@ -217,7 +450,9 @@ impl SubscriptionListener {
 }
 
 /// Helper to start a subscription listener in a background thread
-pub fn start_subscription_listener(query: &str) -> Result<std_mpsc::Receiver<String>, Box<dyn std::error::Error>> {
+pub fn start_subscription_listener(
+    query: &str,
+) -> Result<std_mpsc::Receiver<String>, Box<dyn std::error::Error>> {
     let (event_sender, event_receiver) = std_mpsc::channel();
     let query = query.to_string();
 
@@ -231,13 +466,12 @@ pub fn start_subscription_listener(query: &str) -> Result<std_mpsc::Receiver<Str
         };
 
         loop {
-            let mut line = String::new();
-            match listener.stdout_reader.read_line(&mut line) {
-                Ok(0) => break, // EOF
-                Ok(_) => {
-                    let _ = event_sender.send(line.trim().to_string());
+            match listener.try_read_line(Duration::from_millis(100)) {
+                Ok(Some(line)) => {
+                    let _ = event_sender.send(line);
                 }
-                Err(_) => break,
+                Ok(None) => break,  // EOF
+                Err(_) => continue, // Timeout, try again
             }
         }
     });

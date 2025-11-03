@@ -1,9 +1,13 @@
 //! Schema definition for system.namespaces table
 //!
 //! Provides Arrow schema for the namespaces table with 5 fields.
+//!
+//! Phase 4 (Column Ordering): Uses namespaces_table_definition().to_arrow_schema()
+//! to ensure consistent column ordering via ordinal_position field.
 
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use std::sync::{Arc, OnceLock};
+use crate::tables::system::system_table_definitions::namespaces_table_definition;
+use datafusion::arrow::datatypes::SchemaRef;
+use std::sync::OnceLock;
 
 /// Cached schema for system.namespaces table
 static NAMESPACES_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
@@ -14,7 +18,7 @@ pub struct NamespacesTableSchema;
 impl NamespacesTableSchema {
     /// Get the Arrow schema for system.namespaces table
     ///
-    /// Schema fields:
+    /// Schema fields (in ordinal_position order):
     /// - namespace_id: Utf8 (primary key)
     /// - name: Utf8
     /// - created_at: Timestamp(Millisecond, None)
@@ -23,20 +27,9 @@ impl NamespacesTableSchema {
     pub fn schema() -> SchemaRef {
         NAMESPACES_SCHEMA
             .get_or_init(|| {
-                Arc::new(Schema::new(vec![
-                    Field::new("namespace_id", DataType::Utf8, false),
-                    Field::new("name", DataType::Utf8, false),
-                    Field::new(
-                        "created_at",
-                        DataType::Timestamp(
-                            datafusion::arrow::datatypes::TimeUnit::Millisecond,
-                            None,
-                        ),
-                        false,
-                    ),
-                    Field::new("options", DataType::Utf8, true),
-                    Field::new("table_count", DataType::Int32, false),
-                ]))
+                namespaces_table_definition()
+                    .to_arrow_schema()
+                    .expect("Failed to convert namespaces TableDefinition to Arrow schema")
             })
             .clone()
     }

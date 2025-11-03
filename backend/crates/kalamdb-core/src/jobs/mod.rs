@@ -10,12 +10,14 @@
 //! ```rust,no_run
 //! use kalamdb_core::jobs::{JobExecutor, RetentionPolicy};
 //! use kalamdb_core::tables::system::JobsTableProvider;
-//! use kalamdb_sql::KalamSql;
+//! use kalamdb_store::test_utils::InMemoryBackend;
+//! use kalamdb_store::StorageBackend;
 //! use std::sync::Arc;
 //!
-//! # fn example(kalam_sql: Arc<KalamSql>) {
-//! let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.clone()));
-//! let executor = JobExecutor::new(Arc::clone(&jobs_provider), "node-1".to_string());
+//! # fn example() {
+//! let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+//! let jobs_provider = Arc::new(JobsTableProvider::new(backend));
+//! let executor = JobExecutor::new(Arc::clone(&jobs_provider), kalamdb_commons::NodeId::new("node-1".to_string()));
 //!
 //! // Execute a job
 //! let result = executor.execute_job(

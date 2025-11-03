@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Authentication test helpers for integration tests.
 //!
 //! This module provides utilities for testing authentication flows:
@@ -37,16 +38,44 @@ pub async fn create_test_user(
     password: &str,
     role: Role,
 ) -> User {
-    // Hash password using bcrypt
-    let password_hash =
-        bcrypt::hash(password, bcrypt::DEFAULT_COST).expect("Failed to hash password");
-
     let now = chrono::Utc::now().timestamp_millis();
 
-    let user = User {
-        id: UserId::new(format!("test_{}", username)),
+    // Use username as the user ID (not "test_{username}")
+    let user_id = UserId::new(username);
+
+    // Create user via SQL executor (bypassing HTTP layer)
+    let role_str = match role {
+        Role::User => "user",
+        Role::Service => "service",
+        Role::Dba => "dba",
+        Role::System => "system",
+    };
+
+    let create_user_sql = format!(
+        "CREATE USER '{}' WITH PASSWORD '{}' ROLE {} EMAIL '{}@example.com'",
+        username, password, role_str, username
+    );
+
+    // Use system user to create the user
+    let system_user_id = UserId::new("system");
+    let result = server
+        .sql_executor
+        .execute(&create_user_sql, Some(&system_user_id))
+        .await;
+
+    if let Err(e) = &result {
+        eprintln!("Failed to create test user '{}': {:?}", username, e);
+        eprintln!("SQL: {}", create_user_sql);
+        panic!("Failed to create test user: {:?}", e);
+    }
+
+    eprintln!("✓ Created test user: {}", username);
+
+    // Return user object for test verification
+    User {
+        id: user_id,
         username: username.into(),
-        password_hash,
+        password_hash: String::new(), // Not needed for tests
         role,
         email: Some(format!("{}@example.com", username)),
         auth_type: AuthType::Password,
@@ -57,15 +86,7 @@ pub async fn create_test_user(
         updated_at: now,
         last_seen: None,
         deleted_at: None,
-    };
-
-    // Insert user directly via KalamSQL
-    server
-        .kalam_sql
-        .insert_user(&user)
-        .expect("Failed to insert test user");
-
-    user
+    }
 }
 
 /// Create HTTP Basic Auth header value

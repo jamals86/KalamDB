@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Common test utilities for KalamDB integration tests.
 //!
 //! This module provides a comprehensive test harness for integration testing:
@@ -230,6 +231,7 @@ impl TestServer {
         let shared_table_service = Arc::new(SharedTableService::new(
             shared_table_store.clone(),
             kalam_sql.clone(),
+            "./data/storage".to_string(),
         ));
         let stream_table_service = Arc::new(StreamTableService::new(
             stream_table_store.clone(),
@@ -265,15 +267,20 @@ impl TestServer {
             .expect("Failed to register system schema");
 
         // Register all system tables using centralized function
-        let _jobs_provider = kalamdb_core::system_table_registration::register_system_tables(
-            &system_schema,
-            backend.clone(),
-        )
-        .expect("Failed to register system tables");
+        let (_jobs_provider, _schema_store) =
+            kalamdb_core::system_table_registration::register_system_tables(
+                &system_schema,
+                backend.clone(),
+            )
+            .expect("Failed to register system tables");
 
         // Initialize StorageRegistry for template validation
         let storage_registry = Arc::new(kalamdb_core::storage::StorageRegistry::new(
             kalam_sql.clone(),
+            storage_base_path
+                .to_str()
+                .unwrap_or("./data/storage")
+                .to_string(),
         ));
 
         // Initialize JobManager for FLUSH TABLE support
@@ -443,15 +450,30 @@ impl TestServer {
                     }
                     ExecutionResult::RecordBatches(batches) => {
                         // Convert multiple batches to JSON
-                        let results: Vec<_> = batches
-                            .iter()
-                            .map(|batch| record_batch_to_query_result(batch, mask_credentials))
-                            .collect();
-                        SqlResponse {
-                            status: "success".to_string(),
-                            results,
-                            took_ms: 0,
-                            error: None,
+                        if batches.is_empty() {
+                            // Return empty result with 0 rows instead of empty results array
+                            SqlResponse {
+                                status: "success".to_string(),
+                                results: vec![QueryResult {
+                                    rows: Some(vec![]),
+                                    row_count: 0,
+                                    columns: vec![],
+                                    message: None,
+                                }],
+                                took_ms: 0,
+                                error: None,
+                            }
+                        } else {
+                            let results: Vec<_> = batches
+                                .iter()
+                                .map(|batch| record_batch_to_query_result(batch, mask_credentials))
+                                .collect();
+                            SqlResponse {
+                                status: "success".to_string(),
+                                results,
+                                took_ms: 0,
+                                error: None,
+                            }
                         }
                     }
                     ExecutionResult::Subscription(subscription_data) => {
@@ -489,9 +511,15 @@ impl TestServer {
                     Ok(df) => match df.collect().await {
                         Ok(batches) => {
                             if batches.is_empty() {
+                                // Return empty result with 0 rows instead of empty results array
                                 SqlResponse {
                                     status: "success".to_string(),
-                                    results: vec![],
+                                    results: vec![QueryResult {
+                                        rows: Some(vec![]),
+                                        row_count: 0,
+                                        columns: vec![],
+                                        message: None,
+                                    }],
                                     took_ms: 0,
                                     error: None,
                                 }

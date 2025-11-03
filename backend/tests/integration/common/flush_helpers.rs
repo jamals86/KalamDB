@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Helper utilities for flush testing
 //!
 //! This module provides utilities for:
@@ -33,8 +34,9 @@ pub async fn execute_flush_synchronously(
     table_name: &str,
 ) -> Result<kalamdb_core::tables::base_flush::FlushJobResult, String> {
     use kalamdb_commons::models::{NamespaceId as ModelNamespaceId, TableName as ModelTableName};
-    use kalamdb_core::catalog::{NamespaceId, TableName};
+    use kalamdb_core::catalog::{NamespaceId, SchemaCache, TableName};
     use kalamdb_core::tables::user_tables::UserTableFlushJob;
+    use kalamdb_commons::models::TableId;
     use kalamdb_store::StorageBackend;
 
     // Get table definition from kalam_sql
@@ -64,12 +66,7 @@ pub async fn execute_flush_synchronously(
         )
         .map_err(|e| format!("Failed to parse Arrow schema: {}", e))?;
 
-    let table_meta = kalam_sql
-        .scan_all_tables()
-        .map_err(|e| format!("Failed to scan tables: {}", e))?
-        .into_iter()
-        .find(|t| t.namespace.as_str() == namespace && t.table_name.as_str() == table_name)
-        .ok_or_else(|| format!("Table metadata not found for {}.{}", namespace, table_name))?;
+    // Table metadata scan not needed for flush execution
 
     // Create storage backend and user table store
     let backend: Arc<dyn StorageBackend> =
@@ -88,16 +85,27 @@ pub async fn execute_flush_synchronously(
     // Create storage registry (needed for path resolution)
     let storage_registry = Arc::new(kalamdb_core::storage::StorageRegistry::new(
         server.kalam_sql.clone(),
+        server
+            .storage_base_path
+            .to_str()
+            .unwrap_or("./data/storage")
+            .to_string(),
     ));
 
+    let table_id = Arc::new(TableId::new(
+        model_namespace.clone(),
+        model_table.clone(),
+    ));
+    let unified_cache = Arc::new(SchemaCache::new(0, None));
+    
     let flush_job = UserTableFlushJob::new(
+        table_id,
         user_table_store.clone(),
         namespace_id,
         table_name_id,
-        arrow_schema.schema,
-        table_meta.storage_location.clone(),
-    )
-    .with_storage_registry(storage_registry);
+        arrow_schema.schema.clone(),
+        unified_cache,
+    );
 
     flush_job
         .execute_tracked()
@@ -111,6 +119,8 @@ pub async fn execute_shared_flush_synchronously(
     table_name: &str,
 ) -> Result<kalamdb_core::tables::base_flush::FlushJobResult, String> {
     use kalamdb_core::catalog::{NamespaceId, TableName};
+    use kalamdb_commons::models::{NamespaceId as ModelNamespaceId, TableName as ModelTableName, TableId};
+    use kalamdb_core::catalog::SchemaCache;
     use kalamdb_core::tables::shared_tables::SharedTableFlushJob;
     use kalamdb_core::tables::SharedTableStore;
     use kalamdb_store::StorageBackend;
@@ -133,12 +143,7 @@ pub async fn execute_shared_flush_synchronously(
 
     let latest_schema_version = &table_def.schema_history[table_def.schema_history.len() - 1];
 
-    let table_meta = kalam_sql
-        .scan_all_tables()
-        .map_err(|e| format!("Failed to scan tables: {}", e))?
-        .into_iter()
-        .find(|t| t.namespace.as_str() == namespace && t.table_name.as_str() == table_name)
-        .ok_or_else(|| format!("Table metadata not found for {}.{}", namespace, table_name))?;
+    // Table metadata scan not needed for flush execution
 
     let arrow_schema =
         kalamdb_core::schema::arrow_schema::ArrowSchemaWithOptions::from_json_string(
@@ -148,14 +153,33 @@ pub async fn execute_shared_flush_synchronously(
 
     let backend: Arc<dyn StorageBackend> =
         Arc::new(kalamdb_store::RocksDBBackend::new(server.db.clone()));
+    let model_namespace = ModelNamespaceId::new(namespace);
+    let model_table = ModelTableName::new(table_name);
     let shared_table_store = Arc::new(SharedTableStore::new(backend, "shared_tables"));
 
+    // Create storage registry and TableCache (needed for template-based path resolution)
+    let storage_registry = Arc::new(kalamdb_core::storage::StorageRegistry::new(
+        server.kalam_sql.clone(),
+        server
+            .storage_base_path
+            .to_str()
+            .unwrap_or("./data/storage")
+            .to_string(),
+    ));
+    
+    let table_id = Arc::new(TableId::new(
+        model_namespace,
+        model_table,
+    ));
+    let unified_cache = Arc::new(SchemaCache::new(0, None));
+    
     let flush_job = SharedTableFlushJob::new(
+        table_id,
         shared_table_store.clone(),
         namespace_id,
         table_name_id,
-        arrow_schema.schema,
-        table_meta.storage_location.clone(),
+        arrow_schema.schema.clone(),
+        unified_cache,
     );
 
     flush_job

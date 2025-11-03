@@ -13,7 +13,7 @@
 
 use crate::catalog::{NamespaceId, TableType};
 use crate::error::KalamDbError;
-use kalamdb_commons::models::{JobId, JobStatus, JobType};
+use kalamdb_commons::models::{JobId, JobStatus, JobType, NodeId};
 use kalamdb_sql::{Job, KalamSql, Namespace, Table, TableSchema};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -305,28 +305,30 @@ impl BackupService {
 
         // Parse storage location to find Parquet files
         // Format: ${storage_path}/${user_id}/batch-*.parquet
-        let storage_location = &table.storage_location;
+        // TODO: Phase 9 - Use TableCache for dynamic path resolution
+        let storage_id = table.storage_id.as_ref().map(|s| s.as_str()).unwrap_or("local");
 
-        // Extract storage path from location (assuming format like "local:data" or path)
-        let base_path = if storage_location.contains(':') {
-            let parts: Vec<&str> = storage_location.split(':').collect();
-            if parts.len() == 2 {
-                parts[1]
-            } else {
-                storage_location.as_str()
-            }
+        
+    // Extract storage path from location (assuming format like "local:data" or path)
+    let base_path = if storage_id.contains(':') {
+        let parts: Vec<&str> = storage_id.split(':').collect();
+        if parts.len() == 2 {
+            parts[1]
         } else {
-            storage_location.as_str()
-        };
+            storage_id
+        }
+    } else {
+        storage_id
+    };
 
-        // Create backup destination for this user table
-        let table_backup_dir = backup_dir
-            .join("user_tables")
-            .join(table.table_name.as_str());
+    // Create backup destination for this user table
+    let table_backup_dir = backup_dir
+        .join("user_tables")
+        .join(table.table_name.as_str());
 
-        // Find all user directories (pattern: ${base_path}/*/batch-*.parquet)
-        let base_dir = Path::new(base_path);
-        if !base_dir.exists() {
+    // Find all user directories (pattern: ${base_path}/*/batch-*.parquet)
+    let base_dir = Path::new(base_path);
+    if !base_dir.exists() {
             // No data files yet, just return
             return Ok((0, 0));
         }
@@ -368,16 +370,17 @@ impl BackupService {
         backup_dir: &Path,
     ) -> Result<(usize, u64), KalamDbError> {
         // Parse storage location
-        let storage_location = &table.storage_location;
-        let base_path = if storage_location.contains(':') {
-            let parts: Vec<&str> = storage_location.split(':').collect();
+        // TODO: Phase 9 - Use TableCache for dynamic path resolution
+        let storage_id = table.storage_id.as_ref().map(|s| s.as_str()).unwrap_or("local");
+        let base_path = if storage_id.contains(':') {
+            let parts: Vec<&str> = storage_id.split(':').collect();
             if parts.len() == 2 {
                 parts[1]
             } else {
-                storage_location.as_str()
+                storage_id
             }
         } else {
-            storage_location.as_str()
+            storage_id
         };
 
         // Shared table path format: ${storage_path}/shared/{table_name}/batch-*.parquet
@@ -469,7 +472,7 @@ impl BackupService {
             created_at: now_ms,
             started_at: Some(now_ms),
             completed_at: None,
-            node_id: "local".to_string(),
+                node_id: NodeId::from("local"),
             error_message: None,
         };
 

@@ -8,12 +8,13 @@
 //! - Column family creation for stream_table:{namespace}:{table_name}
 //! - TTL and max_buffer configuration
 
-use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType};
+use crate::catalog::{NamespaceId, TableName};
 use crate::error::KalamDbError;
+// TODO: Phase 2b - Re-enable FlushPolicy when flushing is re-implemented
+// use crate::flush::FlushPolicy;
 use crate::stores::system_table::SharedTableStoreExt;
 use crate::tables::StreamTableStore;
 use datafusion::arrow::datatypes::Schema;
-use kalamdb_commons::models::StorageId;
 use kalamdb_sql::ddl::CreateTableStatement;
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
@@ -52,7 +53,7 @@ impl StreamTableService {
     /// 1. Schema validation (NO auto-increment or system column injection)
     /// 2. Metadata registration in system_tables via kalamdb-sql
     /// 3. Schema storage in system_table_schemas via kalamdb-sql
-    /// 4. Table metadata creation
+    /// 4. Column family creation
     ///
     /// Note: Column family creation must be done separately on the DB instance.
     ///
@@ -60,10 +61,10 @@ impl StreamTableService {
     /// * `stmt` - Parsed CREATE STREAM TABLE statement
     ///
     /// # Returns
-    /// Table metadata for the created stream table
-    pub fn create_table(&self, stmt: CreateTableStatement) -> Result<TableMetadata, KalamDbError> {
+    /// Ok(()) if successful
+    pub fn create_table(&self, stmt: CreateTableStatement) -> Result<(), KalamDbError> {
         // Validate table name
-        TableMetadata::validate_table_name(stmt.table_name.as_str())
+        Self::validate_table_name(stmt.table_name.as_str())
             .map_err(KalamDbError::InvalidOperation)?;
 
         // Check if table already exists
@@ -99,19 +100,8 @@ impl StreamTableService {
             KalamDbError::InvalidOperation(format!("Failed to create column family: {}", e))
         })?;
 
-        // Create and return table metadata
-        let metadata = TableMetadata {
-            table_name: stmt.table_name.clone(),
-            table_type: TableType::Stream,
-            namespace: stmt.namespace_id.clone(),
-            created_at: chrono::Utc::now(),
-            storage_location: String::new(), // Stream tables don't use Parquet storage
-            flush_policy: crate::flush::FlushPolicy::RowLimit { row_limit: 0 }, // No flush for stream tables
-            schema_version: 1,
-            deleted_retention_hours: None, // Stream tables don't have soft deletes
-        };
-
-        Ok(metadata)
+        // Table created successfully
+        Ok(())
     }
 
     /// Create and save table definition to information_schema_tables.
@@ -128,49 +118,57 @@ impl StreamTableService {
         stmt: &CreateTableStatement,
         schema: &Arc<Schema>,
     ) -> Result<(), KalamDbError> {
-        use kalamdb_commons::models::{SchemaVersion, TableDefinition};
+        use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions};
+        use kalamdb_commons::types::{KalamDataType, FromArrowType};
 
-        // Extract columns from schema with ordinal positions
-        let columns = TableDefinition::extract_columns_from_schema(
-            schema.as_ref(),
-            &stmt.column_defaults,
-            stmt.primary_key_column.as_deref(),
-        );
+        // Extract columns directly from Arrow schema
+        let columns: Vec<ColumnDefinition> = schema
+            .fields()
+            .iter()
+            .enumerate()
+            .map(|(idx, field)| {
+                let column_name = field.name().clone();
+                let is_primary_key = stmt.primary_key_column
+                    .as_ref()
+                    .map(|pk| pk.as_str() == column_name.as_str())
+                    .unwrap_or(false);
+                
+                // Convert Arrow DataType to KalamDataType
+                let data_type = KalamDataType::from_arrow_type(field.data_type())
+                    .unwrap_or(KalamDataType::Text);
+                
+                // Get default value from statement
+                let default_value = stmt.column_defaults
+                    .get(column_name.as_str())
+                    .cloned()
+                    .unwrap_or(kalamdb_commons::schemas::ColumnDefault::None);
+                
+                ColumnDefinition::new(
+                    column_name,
+                    (idx + 1) as u32,
+                    data_type,
+                    field.is_nullable(),
+                    is_primary_key,
+                    false, // is_partition_key
+                    default_value,
+                    None, // column_comment
+                )
+            })
+            .collect();
 
-        // Serialize Arrow schema for history
-        let arrow_schema_json =
-            TableDefinition::serialize_arrow_schema(schema.as_ref()).map_err(|e| {
-                KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
-            })?;
+        // Build table options with TTL from statement
+        let ttl_seconds = stmt.ttl_seconds.unwrap_or(86400); // Default 24h if not specified
+        let table_options = TableOptions::stream(ttl_seconds);
 
-        // Build complete table definition
-        // Stream tables don't have flush policies (no Parquet persistence)
-        let now_millis = chrono::Utc::now().timestamp_millis();
-        let table_def = TableDefinition {
-            table_id: format!(
-                "{}:{}",
-                stmt.namespace_id.as_str(),
-                stmt.table_name.as_str()
-            ),
-            table_name: stmt.table_name.clone(),
-            namespace_id: stmt.namespace_id.clone(),
-            table_type: TableType::Stream,
-            created_at: now_millis,
-            updated_at: now_millis,
-            schema_version: 1,
-            storage_id: StorageId::from("local"), // Stream tables don't use external storage
-            use_user_storage: false,
-            flush_policy: None,            // Stream tables don't flush to Parquet
-            deleted_retention_hours: None, // Stream tables don't have soft deletes
-            ttl_seconds: stmt.ttl_seconds,
+        // Create NEW TableDefinition directly
+        let table_def = TableDefinition::new(
+            stmt.namespace_id.clone(),
+            stmt.table_name.clone(),
+            kalamdb_commons::schemas::TableType::Stream,
             columns,
-            schema_history: vec![SchemaVersion {
-                version: 1,
-                created_at: now_millis,
-                changes: format!("Initial stream table schema. TTL: {:?}s", stmt.ttl_seconds),
-                arrow_schema_json,
-            }],
-        };
+            table_options,
+            None, // table_comment
+        ).map_err(|e| KalamDbError::SchemaError(e))?;
 
         // Single atomic write to information_schema_tables
         self.kalam_sql
@@ -195,15 +193,48 @@ impl StreamTableService {
     ///
     /// **REPLACED BY**: save_table_definition() which writes to information_schema_tables
     ///
+    /// Validate table name
+    ///
+    /// # Rules
+    /// - Must start with lowercase letter or underscore
+    /// - Cannot be a SQL keyword
+    ///
+    /// # Arguments
+    /// * `name` - Table name to validate
+    ///
+    /// # Returns
+    /// Ok(()) if valid, error otherwise
+    fn validate_table_name(name: &str) -> Result<(), String> {
+        // Check first character
+        let first_char = name.chars().next().ok_or_else(|| {
+            "Table name cannot be empty".to_string()
+        })?;
+
+        if !first_char.is_lowercase() && first_char != '_' {
+            return Err(format!(
+                "Table name must start with lowercase letter or underscore: {}",
+                name
+            ));
+        }
+
+        // Check for SQL keywords
+        let keywords = [
+            "select", "insert", "update", "delete", "table", "from", "where",
+        ];
+        if keywords.contains(&name.to_lowercase().as_str()) {
+            return Err(format!("Table name cannot be a SQL keyword: {}", name));
+        }
+
+        Ok(())
+    }
+
     /// Check if a table already exists
     fn table_exists(
         &self,
         namespace_id: &NamespaceId,
         table_name: &TableName,
     ) -> Result<bool, KalamDbError> {
-        let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
-
-        match self.kalam_sql.get_table(&table_id) {
+        match self.kalam_sql.get_table_definition(namespace_id, table_name) {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false),
             Err(e) => Err(KalamDbError::Other(e.to_string())),
@@ -217,6 +248,8 @@ mod tests {
     use datafusion::arrow::datatypes::{DataType, Field};
     use kalamdb_store::test_utils::TestDb;
     use kalamdb_store::{RocksDBBackend, StorageBackend};
+    use kalamdb_commons::models::StorageId;
+    use kalamdb_commons::schemas::TableType;
 
     fn create_test_service() -> (StreamTableService, TestDb) {
         let test_db = TestDb::new(&[
@@ -267,12 +300,8 @@ mod tests {
         let result = service.create_table(stmt);
         assert!(result.is_ok());
 
-        let metadata = result.unwrap();
-        assert_eq!(metadata.table_name.as_str(), "events");
-        assert_eq!(metadata.table_type, TableType::Stream);
-        assert_eq!(metadata.namespace.as_str(), "app");
-        assert_eq!(metadata.storage_location, ""); // Stream tables don't use Parquet
-        assert!(metadata.deleted_retention_hours.is_none()); // Stream tables don't have soft deletes
+        // Verify table was created by checking if it exists
+        assert!(service.table_exists(&NamespaceId::new("app"), &TableName::new("events")).unwrap());
     }
 
     #[test]
@@ -304,9 +333,8 @@ mod tests {
         let result = service.create_table(stmt);
         assert!(result.is_ok());
 
-        // Verify metadata doesn't include system column configuration
-        let metadata = result.unwrap();
-        assert!(metadata.deleted_retention_hours.is_none());
+        // Verify table was created
+        assert!(service.table_exists(&NamespaceId::new("app"), &TableName::new("events")).unwrap());
     }
 
     #[test]

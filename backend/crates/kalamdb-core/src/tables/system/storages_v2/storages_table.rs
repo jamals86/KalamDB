@@ -1,9 +1,13 @@
 //! Schema definition for system.storages table
 //!
-//! Provides Arrow schema for the storages table with 11 fields.
+//! Provides Arrow schema for the storages table with 10 fields.
+//!
+//! Phase 4 (Column Ordering): Uses storages_table_definition().to_arrow_schema()
+//! to ensure consistent column ordering via ordinal_position field.
 
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use std::sync::{Arc, OnceLock};
+use crate::tables::system::system_table_definitions::storages_table_definition;
+use datafusion::arrow::datatypes::SchemaRef;
+use std::sync::OnceLock;
 
 /// Cached schema for system.storages table
 static STORAGES_SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
@@ -14,7 +18,7 @@ pub struct StoragesTableSchema;
 impl StoragesTableSchema {
     /// Get the Arrow schema for system.storages table
     ///
-    /// Schema fields:
+    /// Schema fields (in ordinal_position order):
     /// - storage_id: Utf8 (primary key)
     /// - storage_name: Utf8
     /// - description: Utf8 (nullable)
@@ -28,32 +32,9 @@ impl StoragesTableSchema {
     pub fn schema() -> SchemaRef {
         STORAGES_SCHEMA
             .get_or_init(|| {
-                Arc::new(Schema::new(vec![
-                    Field::new("storage_id", DataType::Utf8, false),
-                    Field::new("storage_name", DataType::Utf8, false),
-                    Field::new("description", DataType::Utf8, true),
-                    Field::new("storage_type", DataType::Utf8, false),
-                    Field::new("base_directory", DataType::Utf8, false),
-                    Field::new("credentials", DataType::Utf8, true),
-                    Field::new("shared_tables_template", DataType::Utf8, false),
-                    Field::new("user_tables_template", DataType::Utf8, false),
-                    Field::new(
-                        "created_at",
-                        DataType::Timestamp(
-                            datafusion::arrow::datatypes::TimeUnit::Millisecond,
-                            None,
-                        ),
-                        false,
-                    ),
-                    Field::new(
-                        "updated_at",
-                        DataType::Timestamp(
-                            datafusion::arrow::datatypes::TimeUnit::Millisecond,
-                            None,
-                        ),
-                        false,
-                    ),
-                ]))
+                storages_table_definition()
+                    .to_arrow_schema()
+                    .expect("Failed to convert storages TableDefinition to Arrow schema")
             })
             .clone()
     }

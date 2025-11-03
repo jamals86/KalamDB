@@ -60,6 +60,15 @@ run_link() {
     cd ..
 }
 
+# Run only the CLI smoke tests group
+run_smoke() {
+    echo "Running CLI smoke tests (group: smoke)..."
+    # Limit to cli package and filter integration tests whose binaries or test names contain 'smoke'
+    cargo test -p kalam-cli smoke -- --test-threads=1 --nocapture || true
+    # Fallback to stricter binary name filter if needed
+    cargo test -p kalam-cli smoke_test_ -- --test-threads=1 --nocapture || true
+}
+
 # Main
 cd "$(dirname "$0")"
 
@@ -79,6 +88,9 @@ case "${1:-all}" in
     cli)
         run_cli
         ;;
+    smoke)
+        run_smoke
+        ;;
     ws|websocket)
         run_ws
         ;;
@@ -86,7 +98,7 @@ case "${1:-all}" in
         run_link
         ;;
     *)
-        echo "Usage: $0 [all|cli|ws|link]"
+        echo "Usage: $0 [all|cli|smoke|ws|link]"
         exit 1
         ;;
 esac

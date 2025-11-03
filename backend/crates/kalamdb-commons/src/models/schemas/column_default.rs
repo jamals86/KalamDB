@@ -1,0 +1,145 @@
+//! Column default value specification
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+
+/// Represents the default value for a column
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub enum ColumnDefault {
+    /// No default value - column must be specified in INSERT
+    #[default]
+    None,
+
+    /// Literal value as JSON (supports all KalamDataTypes)
+    /// Examples: null, true, 42, "hello", [1.0, 2.0, 3.0]
+    Literal(JsonValue),
+
+    /// Function call with arguments
+    /// Examples: NOW(), UUID(), CURRENT_USER()
+    FunctionCall {
+        /// Function name (case-insensitive)
+        name: String,
+        /// Function arguments (empty for no-arg functions)
+        args: Vec<JsonValue>,
+    },
+}
+
+impl ColumnDefault {
+    /// Create a None default
+    pub fn none() -> Self {
+        ColumnDefault::None
+    }
+
+    /// Create a literal default from a JSON value
+    pub fn literal(value: JsonValue) -> Self {
+        ColumnDefault::Literal(value)
+    }
+
+    /// Create a function call default
+    pub fn function(name: impl Into<String>, args: Vec<JsonValue>) -> Self {
+        ColumnDefault::FunctionCall {
+            name: name.into(),
+            args,
+        }
+    }
+
+    /// Check if this is a None default
+    pub fn is_none(&self) -> bool {
+        matches!(self, ColumnDefault::None)
+    }
+
+    /// Get SQL representation for display
+    pub fn to_sql(&self) -> String {
+        match self {
+            ColumnDefault::None => "".to_string(),
+            ColumnDefault::Literal(value) => {
+                // Format JSON value as SQL literal
+                match value {
+                    JsonValue::Null => "NULL".to_string(),
+                    JsonValue::Bool(b) => b.to_string().to_uppercase(),
+                    JsonValue::Number(n) => n.to_string(),
+                    JsonValue::String(s) => format!("'{}'", s.replace('\'', "''")),
+                    JsonValue::Array(_) | JsonValue::Object(_) => {
+                        format!("'{}'", value.to_string().replace('\'', "''"))
+                    }
+                }
+            }
+            ColumnDefault::FunctionCall { name, args } => {
+                if args.is_empty() {
+                    format!("{}()", name.to_uppercase())
+                } else {
+                    let args_str = args
+                        .iter()
+                        .map(|arg| match arg {
+                            JsonValue::String(s) => format!("'{}'", s.replace('\'', "''")),
+                            other => other.to_string(),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{}({})", name.to_uppercase(), args_str)
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_none_default() {
+        let default = ColumnDefault::none();
+        assert!(default.is_none());
+        assert_eq!(default.to_sql(), "");
+    }
+
+    #[test]
+    fn test_literal_defaults() {
+        let cases = vec![
+            (json!(null), "NULL"),
+            (json!(true), "TRUE"),
+            (json!(false), "FALSE"),
+            (json!(42), "42"),
+            (json!(3.14), "3.14"),
+            (json!("hello"), "'hello'"),
+            (json!([1.0, 2.0, 3.0]), "'[1.0,2.0,3.0]'"),
+        ];
+
+        for (value, expected_sql) in cases {
+            let default = ColumnDefault::literal(value);
+            assert_eq!(default.to_sql(), expected_sql);
+        }
+    }
+
+    #[test]
+    fn test_function_call_defaults() {
+        // No-arg function
+        let default = ColumnDefault::function("NOW", vec![]);
+        assert_eq!(default.to_sql(), "NOW()");
+
+        // Function with args
+        let default = ColumnDefault::function("UUID_GENERATE", vec![json!("v4")]);
+        assert_eq!(default.to_sql(), "UUID_GENERATE('v4')");
+
+        // Function with multiple args
+        let default = ColumnDefault::function("CONCAT", vec![json!("prefix_"), json!("value")]);
+        assert_eq!(default.to_sql(), "CONCAT('prefix_', 'value')");
+    }
+
+    #[test]
+    fn test_serialization() {
+        let defaults = vec![
+            ColumnDefault::none(),
+            ColumnDefault::literal(json!(42)),
+            ColumnDefault::function("NOW", vec![]),
+        ];
+
+        for original in defaults {
+            let json = serde_json::to_string(&original).unwrap();
+            let decoded: ColumnDefault = serde_json::from_str(&json).unwrap();
+            assert_eq!(original, decoded);
+        }
+    }
+}

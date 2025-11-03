@@ -327,8 +327,9 @@ where
     /// ```
     fn can_read(&self, user_role: &Role) -> bool {
         match self.table_access() {
-            // System tables: admin-only
-            None => matches!(user_role, Role::Dba | Role::System),
+            // System tables: service and admin roles
+            // Service role is allowed read-only access to system tables for operational telemetry.
+            None => matches!(user_role, Role::Service | Role::Dba | Role::System),
 
             // Shared tables: check access level
             Some(TableAccess::Public) => true,
@@ -379,8 +380,8 @@ mod tests {
             access: None,
         };
 
-        assert!(!store.can_read(&Role::User));
-        assert!(!store.can_read(&Role::Service));
+        assert!(!store.can_read(&Role::User)); // Regular users cannot read system tables
+        assert!(store.can_read(&Role::Service)); // Service accounts CAN read for operational telemetry
         assert!(store.can_read(&Role::Dba));
         assert!(store.can_read(&Role::System));
     }

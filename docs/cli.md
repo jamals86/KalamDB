@@ -12,6 +12,7 @@ The Kalam CLI is an interactive terminal client for KalamDB, providing a rich SQ
 - [Credential Management](#credential-management)
 - [Configuration](#configuration)
 - [Examples](#examples)
+- [Smoke Tests](#smoke-tests)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Tips & Tricks](#tips--tricks)
 
@@ -140,9 +141,10 @@ Once connected, you can use both SQL statements and meta-commands (prefixed with
 
 #### Data Management
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `\flush` | Flush all data to disk | `\flush` |
+| Command | Alias | Description | Example |
+|---------|-------|-------------|---------|
+| `\flush` | | Flush all data to disk | `\flush` |
+| `\stats` | `\metrics` | Show cache statistics and system metrics | `\stats` |
 
 #### Streaming/Subscriptions
 
@@ -433,6 +435,62 @@ kalam> SELECT * FROM sensor_data WHERE temperature > 100;
 
 ---
 
+## Smoke Tests
+
+Fast end-to-end checks that your server and CLI are wired correctly. The suite covers:
+
+- User table subscription lifecycle
+- Shared table CRUD
+- System tables and user lifecycle
+- Stream table subscription
+- User table row-level security (per-user isolation)
+
+Requirements:
+
+- Server running at http://localhost:8080 (tests will skip if it’s not available)
+- Subscriptions are supported only for user and stream tables (not shared tables)
+
+Run options:
+
+1) From the CLI folder using the helper script
+
+```bash
+cd cli
+./run_integration_tests.sh smoke
+```
+
+2) Directly with Cargo (filter matches the smoke test binary and names)
+
+```bash
+cargo test -p kalam-cli smoke -- --test-threads=1 --nocapture
+```
+
+Run individual tests (examples):
+
+```bash
+# User table subscription lifecycle
+cargo test -p kalam-cli smoke_user_table_subscription_lifecycle -- --nocapture
+
+# Shared table CRUD
+cargo test -p kalam-cli smoke_shared_table_crud -- --nocapture
+
+# System tables + user lifecycle
+cargo test -p kalam-cli smoke_system_tables_and_user_lifecycle -- --nocapture
+
+# Stream table subscription
+cargo test -p kalam-cli smoke_stream_table_subscription -- --nocapture
+
+# User table RLS (per-user isolation)
+cargo test -p kalam-cli smoke_user_table_rls_isolation -- --nocapture
+```
+
+Notes:
+
+- Tests are tolerant of output formatting and will skip cleanly when the server isn’t running.
+- Default server URL for tests is http://localhost:8080.
+
+---
+
 ## Keyboard Shortcuts
 
 ### Line Editing
@@ -574,6 +632,125 @@ SELECT * FROM system.users WHERE last_seen > NOW() - INTERVAL 5 MINUTES;
 SELECT * FROM system.jobs WHERE status = 'running';
 ```
 
+### 11. Cache Statistics and System Metrics
+
+View real-time cache performance and system metrics using the `\stats` command (alias: `\metrics`):
+
+```bash
+# Show all cache statistics
+kalam> \stats
+
+# Or use the alias
+kalam> \metrics
+```
+
+**Expected Output**:
+
+```
+┌──────────────────────────┬──────────┐
+│ key                      │ value    │
+├──────────────────────────┼──────────┤
+│ schema_cache_hit_rate    │ 0.998    │
+│ schema_cache_size        │ 147      │
+│ schema_cache_hits        │ 98234    │
+│ schema_cache_misses      │ 201      │
+│ schema_cache_evictions   │ 0        │
+└──────────────────────────┴──────────┘
+```
+
+**Key Metrics Explained**:
+
+| Metric | Description | Target Value |
+|--------|-------------|--------------|
+| `schema_cache_hit_rate` | Percentage of schema lookups served from cache (0.0-1.0) | >0.99 (99%+) |
+| `schema_cache_size` | Current number of cached table schemas | ≤1000 |
+| `schema_cache_hits` | Total cache hit count (monotonic) | N/A |
+| `schema_cache_misses` | Total cache miss count (monotonic) | <1% of hits |
+| `schema_cache_evictions` | LRU evictions (when cache size exceeds 1000) | Low |
+
+**SQL Equivalent**:
+
+The `\stats` command is equivalent to:
+
+```sql
+SELECT * FROM system.stats ORDER BY key;
+```
+
+**Filtering Specific Metrics**:
+
+```sql
+-- View only cache-related stats
+SELECT * FROM system.stats WHERE key LIKE 'schema_cache%';
+
+-- Calculate hit ratio
+SELECT 
+  (SELECT value::FLOAT FROM system.stats WHERE key = 'schema_cache_hits') / 
+  ((SELECT value::FLOAT FROM system.stats WHERE key = 'schema_cache_hits') + 
+   (SELECT value::FLOAT FROM system.stats WHERE key = 'schema_cache_misses')) AS hit_ratio;
+```
+
+**Interpreting Results**:
+
+**Healthy System** (Expected):
+- ✅ `schema_cache_hit_rate` ≥ 0.99 (99%+)
+- ✅ `schema_cache_evictions` = 0 or very low
+- ✅ Cache misses <1% of hits
+
+**Performance Issues** (Investigate):
+- ⚠️ `schema_cache_hit_rate` < 0.90 (90%) - High table churn or cache too small
+- ⚠️ `schema_cache_evictions` growing rapidly - Cache size too small (>1000 tables)
+- ⚠️ Cache misses >10% of hits - Frequent schema changes (ALTER TABLE)
+
+**Example Monitoring Script**:
+
+```bash
+# Monitor cache hit rate every 10 seconds
+while true; do
+  echo "=== $(date) ==="
+  kalam -c "SELECT key, value FROM system.stats WHERE key = 'schema_cache_hit_rate'" --format table
+  sleep 10
+done
+```
+
+**Real-World Example**:
+
+```bash
+kalam> \stats
+
+┌──────────────────────────┬──────────┐
+│ key                      │ value    │
+├──────────────────────────┼──────────┤
+│ schema_cache_hit_rate    │ 0.992    │  # 99.2% hit rate (excellent)
+│ schema_cache_size        │ 247      │  # 247 tables cached
+│ schema_cache_hits        │ 1250482  │  # 1.25M hits
+│ schema_cache_misses      │ 10024    │  # 10K misses (0.8%)
+│ schema_cache_evictions   │ 0        │  # No evictions (cache not full)
+└──────────────────────────┴──────────┘
+
+# Analysis: System is performing optimally
+# - Hit rate 99.2% (above 99% target)
+# - Cache size 247 << 1000 (plenty of capacity)
+# - Zero evictions (LRU not triggered)
+```
+
+**Performance Tuning**:
+
+If cache hit rate is low, consider:
+
+1. **Reduce table churn**: Avoid frequent CREATE/DROP TABLE operations
+2. **Increase cache size**: Modify `SchemaCache::new(2000)` in backend code
+3. **Batch schema changes**: Group ALTER TABLE operations together
+
+**Future Metrics** (Roadmap):
+
+The `system.stats` table will expand to include:
+- `queries_per_second` - Query throughput
+- `avg_query_latency_ms` - Average query execution time
+- `memory_usage_bytes` - Total memory consumption
+- `cpu_usage_percent` - CPU utilization
+- `disk_space_used_bytes` - Storage usage
+- `active_connections` - Current WebSocket connections
+
 ---
 
 ## Troubleshooting
@@ -629,7 +806,7 @@ kalam --csv
 
 ## Related Documentation
 
-- [API Reference](API_REFERENCE.md) - REST API documentation
+- [API Examples (Bruno collection)](API-Kalam/) - REST API request examples
 - [SQL Syntax](architecture/SQL_SYNTAX.md) - Complete SQL syntax guide
 - [WebSocket Protocol](architecture/WEBSOCKET_PROTOCOL.md) - Real-time subscription details
 - [Development Setup](build/DEVELOPMENT_SETUP.md) - Build and development guide

@@ -479,34 +479,40 @@ impl AuthService {
         }
     }
 
-    fn spawn_last_seen_update(
-        adapter: Arc<RocksDbAdapter>,
-        mut user: kalamdb_commons::system::User,
-    ) {
-        let now = Utc::now();
-        if !Self::needs_last_seen_update(user.last_seen, now) {
-            return;
-        }
-
-        let new_timestamp = now.timestamp_millis();
-        user.last_seen = Some(new_timestamp);
-        user.updated_at = new_timestamp;
-        let user_id = user.id.clone();
+    fn spawn_last_seen_update(adapter: Arc<RocksDbAdapter>, user: kalamdb_commons::system::User) {
+        // Use username to fetch latest record from DB and update only once per day.
+        let username = user.username.as_str().to_string();
+        let username_for_log = username.clone();
 
         tokio::spawn(async move {
-            let uid = user_id.clone();
-            let update_result = task::spawn_blocking(move || adapter.update_user(&user)).await;
+            let update_result = task::spawn_blocking(move || {
+                let now = Utc::now();
+                // Fetch latest user record from database to avoid cache staleness
+                match adapter.get_user(&username) {
+                    Ok(Some(mut db_user)) => {
+                        if !AuthService::needs_last_seen_update(db_user.last_seen, now) {
+                            return Ok(()) as Result<(), String>;
+                        }
+                        let ts = now.timestamp_millis();
+                        db_user.last_seen = Some(ts);
+                        db_user.updated_at = ts;
+                        adapter.update_user(&db_user).map_err(|e| e.to_string())
+                    }
+                    Ok(None) => Ok(()), // User disappeared; nothing to update
+                    Err(e) => Err(e.to_string()),
+                }
+            })
+            .await;
+
             match update_result {
                 Ok(Ok(())) => {}
                 Ok(Err(err)) => warn!(
                     "Failed to persist last_seen for user {}: {}",
-                    uid.as_str(),
-                    err
+                    username_for_log, err
                 ),
                 Err(join_err) => warn!(
                     "Failed to schedule last_seen update for user {}: {}",
-                    uid.as_str(),
-                    join_err
+                    username_for_log, join_err
                 ),
             }
         });

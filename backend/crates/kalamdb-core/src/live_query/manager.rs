@@ -5,13 +5,14 @@
 
 use crate::error::KalamDbError;
 use crate::live_query::connection_registry::{
-    ConnectionId, LiveId, LiveQuery, LiveQueryOptions, LiveQueryRegistry, NodeId, UserId,
+    ConnectionId, LiveId, LiveQuery, LiveQueryOptions, LiveQueryRegistry, NodeId,
 };
 use crate::live_query::filter::FilterCache;
 use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::tables::system::LiveQueriesTableProvider;
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
-use kalamdb_commons::models::{NamespaceId, TableName, TableType};
+use kalamdb_commons::models::{NamespaceId, TableName, UserId};
+use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_commons::LiveQueryId;
 use kalamdb_sql::KalamSql;
@@ -144,24 +145,25 @@ impl LiveQueryManager {
         let live_id = LiveId::new(connection_id.clone(), canonical_table.clone(), query_id);
 
         // Auto-inject user_id filter for user tables (row-level security)
+        // Skip injection for admin/system users so they can observe all rows.
         if table_def.table_type == TableType::User {
             let user_id = connection_id.user_id();
-            let user_filter = format!("user_id = '{}'", user_id);
-
-            // Inject user_id filter into WHERE clause
-            where_clause = if let Some(existing_clause) = where_clause {
-                // Combine with existing filter: user_id = 'X' AND existing
-                Some(format!("{} AND {}", user_filter, existing_clause))
-            } else {
-                // No existing filter, just add user_id
-                Some(user_filter)
-            };
+            let is_admin_like = user_id.eq_ignore_ascii_case("root")
+                || user_id.eq_ignore_ascii_case("system");
+            if !is_admin_like {
+                let user_filter = format!("user_id = '{}'", user_id);
+                where_clause = if let Some(existing_clause) = where_clause {
+                    Some(format!("{} AND {}", user_filter, existing_clause))
+                } else {
+                    Some(user_filter)
+                };
+            }
         }
 
         // Compile and cache the filter if WHERE clause exists
         if let Some(clause) = where_clause {
             let resolved_clause =
-                Self::resolve_where_clause_placeholders(&clause, connection_id.user_id());
+                Self::resolve_where_clause_placeholders(&clause, &UserId::new(connection_id.user_id().to_string()));
             let mut filter_cache = self.filter_cache.write().await;
             filter_cache.insert(live_id.to_string(), &resolved_clause)?;
         }
@@ -208,8 +210,8 @@ impl LiveQueryManager {
         Ok(live_id)
     }
 
-    fn resolve_where_clause_placeholders(clause: &str, user_id: &str) -> String {
-        let replacement = format!("'{}'", user_id);
+    fn resolve_where_clause_placeholders(clause: &str, user_id: &UserId) -> String {
+        let replacement = format!("'{}'", user_id.as_str());
         clause
             .replace("CURRENT_USER()", &replacement)
             .replace("current_user()", &replacement)
@@ -284,7 +286,7 @@ impl LiveQueryManager {
                 self.initial_data_fetcher
                     .fetch_initial_data(
                         &live_id,
-                        &canonical_table,
+                        &TableName::new(canonical_table.clone()),
                         table_def.table_type,
                         fetch_options,
                         filter_predicate,
@@ -457,7 +459,7 @@ impl LiveQueryManager {
     pub async fn get_subscriptions_for_table(
         &self,
         user_id: &UserId,
-        table_name: &str,
+        table_name: &kalamdb_commons::TableName,
     ) -> Vec<LiveId> {
         let registry = self.registry.read().await;
         registry
@@ -470,17 +472,17 @@ impl LiveQueryManager {
     /// Get all subscriptions for a user
     pub async fn get_user_subscriptions(
         &self,
-        user_id: &str,
+        user_id: &UserId,
     ) -> Result<Vec<SystemLiveQuery>, KalamDbError> {
-        self.live_queries_provider.get_by_user_id(user_id)
+        self.live_queries_provider.get_by_user_id(user_id.as_str())
     }
 
     /// Get all subscriptions for a table
     pub async fn get_table_subscriptions(
         &self,
-        table_name: &str,
+        table_name: &TableName,
     ) -> Result<Vec<SystemLiveQuery>, KalamDbError> {
-        self.live_queries_provider.get_by_table_name(table_name)
+        self.live_queries_provider.get_by_table_name(table_name.as_str())
     }
 
     /// Get a specific live query
@@ -577,7 +579,7 @@ impl LiveQueryManager {
                         if live_id.table_name() == table_name {
                             log::info!(
                                 "📢 ✓ Table name MATCHED for live_id={}",
-                                live_id.to_string()
+                                live_id
                             );
                             // Check filter if one exists
                             if let Some(filter) = filter_cache.get(&live_id.to_string()) {
@@ -589,13 +591,13 @@ impl LiveQueryManager {
                                     }
                                     Ok(false) => {
                                         // Filter didn't match, skip this subscriber
-                                        log::trace!("Filter didn't match for live_id={}, skipping notification", live_id.to_string());
+                                        log::trace!("Filter didn't match for live_id={}, skipping notification", live_id);
                                     }
                                     Err(e) => {
                                         // Filter evaluation error, log and skip
                                         log::error!(
                                             "Filter evaluation error for live_id={}: {}",
-                                            live_id.to_string(),
+                                            live_id,
                                             e
                                         );
                                     }
@@ -604,7 +606,7 @@ impl LiveQueryManager {
                                 // No filter, notify all subscribers
                                 log::info!(
                                     "📢 No filter - adding subscriber live_id={}",
-                                    live_id.to_string()
+                                    live_id
                                 );
                                 ids.push(live_id.clone());
                             }
@@ -676,19 +678,19 @@ impl LiveQueryManager {
                 if let Err(e) = tx.send((live_id.clone(), notification)) {
                     log::error!(
                         "Failed to send notification to WebSocket client for live_id={}: {}",
-                        live_id.to_string(),
+                        live_id,
                         e
                     );
                 } else {
                     log::debug!(
                         "Notification sent to WebSocket client for live_id={}",
-                        live_id.to_string()
+                        live_id
                     );
                 }
             } else {
                 log::warn!(
                     "No notification sender found for live_id={}",
-                    live_id.to_string()
+                    live_id
                 );
             }
 
@@ -698,7 +700,7 @@ impl LiveQueryManager {
             #[cfg(debug_assertions)]
             eprintln!(
                 "Notified subscriber: live_id={}, change_type={:?}",
-                live_id.to_string(),
+                live_id,
                 change_notification.change_type
             );
         }
@@ -830,8 +832,9 @@ pub struct RegistryStats {
 mod tests {
     use super::*;
     use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
-    use kalamdb_commons::models::{ColumnDefinition, TableDefinition};
-    use kalamdb_commons::{NamespaceId, StorageId, TableName, TableType};
+    use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
+    use kalamdb_commons::types::KalamDataType;
+    use kalamdb_commons::{NamespaceId, TableName};
     use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
@@ -858,75 +861,67 @@ mod tests {
         ));
         let stream_table_store = Arc::new(new_stream_table_store(&test_namespace, &test_table));
 
-        // Create test tables in information_schema_tables
-        let messages_table = TableDefinition {
-            table_id: "user1:messages".to_string(),
-            table_name: TableName::new("messages"),
-            namespace_id: NamespaceId::new("user1"),
-            table_type: TableType::User,
-            created_at: 0,
-            updated_at: 0,
-            schema_version: 1,
-            storage_id: StorageId::local(),
-            use_user_storage: false,
-            flush_policy: None,
-            deleted_retention_hours: None,
-            ttl_seconds: None,
-            columns: vec![
-                ColumnDefinition {
-                    column_name: "id".to_string(),
-                    data_type: "INTEGER".to_string(),
-                    is_nullable: false,
-                    column_default: None,
-                    ordinal_position: 0,
-                    is_primary_key: true,
-                },
-                ColumnDefinition {
-                    column_name: "user_id".to_string(),
-                    data_type: "TEXT".to_string(),
-                    is_nullable: true,
-                    column_default: None,
-                    ordinal_position: 1,
-                    is_primary_key: false,
-                },
+        // Create test tables in information_schema_tables using NEW schema
+        let messages_table = TableDefinition::new(
+            NamespaceId::new("user1"),
+            TableName::new("messages"),
+            TableType::User,
+            vec![
+                ColumnDefinition::new(
+                    "id",
+                    1,
+                    KalamDataType::Int,
+                    false, // not nullable
+                    true,  // is primary key
+                    false,
+                    kalamdb_commons::schemas::ColumnDefault::None,
+                    None,
+                ),
+                ColumnDefinition::new(
+                    "user_id",
+                    2,
+                    KalamDataType::Text,
+                    true, // nullable
+                    false,
+                    false,
+                    kalamdb_commons::schemas::ColumnDefault::None,
+                    None,
+                ),
             ],
-            schema_history: vec![],
-        };
+            TableOptions::user(),
+            None,
+        ).unwrap();
         kalam_sql.upsert_table_definition(&messages_table).unwrap();
 
-        let notifications_table = TableDefinition {
-            table_id: "user1:notifications".to_string(),
-            table_name: TableName::new("notifications"),
-            namespace_id: NamespaceId::new("user1"),
-            table_type: TableType::User,
-            created_at: 0,
-            updated_at: 0,
-            schema_version: 1,
-            storage_id: StorageId::new("local"),
-            use_user_storage: false,
-            flush_policy: None,
-            deleted_retention_hours: None,
-            ttl_seconds: None,
-            columns: vec![
-                ColumnDefinition {
-                    column_name: "id".to_string(),
-                    data_type: "INTEGER".to_string(),
-                    is_nullable: false,
-                    column_default: None,
-                    ordinal_position: 0,
-                    is_primary_key: true,
-                },
-                ColumnDefinition {
-                    column_name: "user_id".to_string(),
-                    data_type: "TEXT".to_string(),
-                    is_nullable: true,
-                    column_default: None,
-                    ordinal_position: 1,
-                    is_primary_key: false,
-                },
+        let notifications_table = TableDefinition::new(
+            NamespaceId::new("user1"),
+            TableName::new("notifications"),
+            TableType::User,
+            vec![
+                ColumnDefinition::new(
+                    "id",
+                    1,
+                    KalamDataType::Int,
+                    false, // not nullable
+                    true,  // is primary key
+                    false,
+                    kalamdb_commons::schemas::ColumnDefault::None,
+                    None,
+                ),
+                ColumnDefinition::new(
+                    "user_id",
+                    2,
+                    KalamDataType::Text,
+                    true, // nullable
+                    false,
+                    false,
+                    kalamdb_commons::schemas::ColumnDefault::None,
+                    None,
+                ),
             ],
-            schema_history: vec![],
-        };
+            TableOptions::user(),
+            None,
+        ).unwrap();
         kalam_sql
             .upsert_table_definition(&notifications_table)
             .unwrap();
@@ -1041,13 +1036,13 @@ mod tests {
             .unwrap();
 
         let messages_subs = manager
-            .get_subscriptions_for_table(&user_id, "user1.messages")
+            .get_subscriptions_for_table(&user_id, &kalamdb_commons::TableName::new("user1.messages"))
             .await;
         assert_eq!(messages_subs.len(), 1);
         assert_eq!(messages_subs[0].table_name(), "user1.messages");
 
         let notif_subs = manager
-            .get_subscriptions_for_table(&user_id, "user1.notifications")
+            .get_subscriptions_for_table(&user_id, &kalamdb_commons::TableName::new("user1.notifications"))
             .await;
         assert_eq!(notif_subs.len(), 1);
         assert_eq!(notif_subs[0].table_name(), "user1.notifications");
@@ -1204,12 +1199,12 @@ mod tests {
 
         // Verify all subscriptions are tracked
         let messages_subs = manager
-            .get_subscriptions_for_table(&user_id, "user1.messages")
+            .get_subscriptions_for_table(&user_id, &kalamdb_commons::TableName::new("user1.messages"))
             .await;
         assert_eq!(messages_subs.len(), 2); // messages_query and messages_query2
 
         let notif_subs = manager
-            .get_subscriptions_for_table(&user_id, "user1.notifications")
+            .get_subscriptions_for_table(&user_id, &kalamdb_commons::TableName::new("user1.notifications"))
             .await;
         assert_eq!(notif_subs.len(), 1);
 

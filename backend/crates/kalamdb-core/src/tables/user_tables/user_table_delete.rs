@@ -240,7 +240,7 @@ impl UserTableDeleteHandler {
 mod tests {
     use super::*;
     use crate::tables::user_tables::user_table_store::{
-        new_user_table_store, UserTableRow, UserTableRowId,
+        new_user_table_store, UserTableRow,
     };
     use crate::tables::UserTableStore;
     use kalamdb_store::test_utils::InMemoryBackend;
@@ -266,7 +266,6 @@ mod tests {
         let row_id = "row1";
 
         // Insert initial row
-        let key = UserTableRowId::new(user_id.clone(), row_id.to_string());
         let entity = UserTableRow {
             row_id: row_id.to_string(),
             user_id: user_id.as_str().to_string(),

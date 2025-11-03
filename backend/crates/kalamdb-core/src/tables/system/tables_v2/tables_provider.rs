@@ -86,7 +86,6 @@ impl TablesTableProvider {
         let mut namespaces = StringBuilder::new();
         let mut table_types = StringBuilder::new();
         let mut created_ats = Vec::new();
-        let mut storage_locations = StringBuilder::new();
         let mut storage_ids = StringBuilder::new();
         let mut use_user_storages = Vec::new();
         let mut flush_policies = StringBuilder::new();
@@ -95,12 +94,11 @@ impl TablesTableProvider {
         let mut access_levels = StringBuilder::new();
 
         for (_key, table) in tables {
-            table_ids.append_value(&table.table_id.to_string());
+            table_ids.append_value(&table.table_id);
             table_names.append_value(table.table_name.as_str());
             namespaces.append_value(table.namespace.as_str());
             table_types.append_value(table.table_type.as_str());
             created_ats.push(Some(table.created_at));
-            storage_locations.append_value(&table.storage_location);
             storage_ids.append_option(table.storage_id.as_ref().map(|s| s.as_str()));
             use_user_storages.push(Some(table.use_user_storage));
             flush_policies.append_value(&table.flush_policy);
@@ -117,7 +115,6 @@ impl TablesTableProvider {
                 Arc::new(namespaces.finish()) as ArrayRef,
                 Arc::new(table_types.finish()) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
-                Arc::new(storage_locations.finish()) as ArrayRef,
                 Arc::new(storage_ids.finish()) as ArrayRef,
                 Arc::new(BooleanArray::from(use_user_storages)) as ArrayRef,
                 Arc::new(flush_policies.finish()) as ArrayRef,
@@ -183,7 +180,7 @@ impl SystemTableProviderExt for TablesTableProvider {
 mod tests {
     use super::*;
     use kalamdb_commons::{
-        NamespaceId, StorageId, TableAccess, TableId, TableName, TableType as KalamTableType,
+        NamespaceId, StorageId, TableId, TableName, TableType as KalamTableType,
     };
     use kalamdb_store::test_utils::InMemoryBackend;
 
@@ -192,14 +189,13 @@ mod tests {
         TablesTableProvider::new(backend)
     }
 
-    fn create_test_table(table_id: &str, table_name: &str) -> SystemTable {
+    fn create_test_table(_table_id: &str, table_name: &str) -> SystemTable {
         SystemTable {
             table_id: TableId::new(NamespaceId::new("default"), TableName::new(table_name)),
             table_name: TableName::new(table_name),
             namespace: NamespaceId::new("default"),
             table_type: KalamTableType::User,
             created_at: 1000,
-            storage_location: "/data".to_string(),
             storage_id: Some(StorageId::new("local")),
             use_user_storage: false,
             flush_policy: "{}".to_string(),
@@ -216,7 +212,7 @@ mod tests {
 
         provider.create_table(table.clone()).unwrap();
 
-        let retrieved = provider.get_table_by_id("table1").unwrap();
+        let retrieved = provider.get_table_by_id("default:conversations").unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.table_id.to_string(), "default:conversations");
@@ -234,7 +230,10 @@ mod tests {
         provider.update_table(table.clone()).unwrap();
 
         // Verify
-        let retrieved = provider.get_table_by_id("table1").unwrap().unwrap();
+        let retrieved = provider
+            .get_table_by_id("default:conversations")
+            .unwrap()
+            .unwrap();
         assert_eq!(retrieved.schema_version, 2);
     }
 
@@ -263,7 +262,7 @@ mod tests {
         // Scan
         let batch = provider.scan_all_tables().unwrap();
         assert_eq!(batch.num_rows(), 3);
-        assert_eq!(batch.num_columns(), 12);
+        assert_eq!(batch.num_columns(), 11); // Phase 9: removed storage_location column
     }
 
     #[tokio::test]

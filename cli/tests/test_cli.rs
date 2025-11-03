@@ -13,11 +13,8 @@
 mod common;
 use common::*;
 
-
-use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
-use std::time::Duration;
 
 /// T036: Test CLI connection and prompt display
 #[test]
@@ -63,7 +60,10 @@ fn test_cli_color_output() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("test_user")
+        .arg("--username")
+        .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--command")
         .arg("SELECT 'color' as test");
 
@@ -77,7 +77,10 @@ fn test_cli_color_output() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("test_user")
+        .arg("--username")
+        .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--no-color")
         .arg("--command")
         .arg("SELECT 'nocolor' as test");
@@ -98,7 +101,10 @@ fn test_cli_session_timeout() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("test_user")
+        .arg("--username")
+        .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--command")
         .arg("SELECT 1");
 
@@ -154,7 +160,10 @@ fn test_cli_verbose_output() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("test_user")
+        .arg("--username")
+        .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--verbose")
         .arg("--command")
         .arg("SELECT 1 as verbose_test");

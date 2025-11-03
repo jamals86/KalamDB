@@ -55,9 +55,28 @@ pub mod websocket;
 pub use constants::{COLUMN_FAMILIES, SYSTEM_TABLES};
 pub use errors::{CommonError, Result};
 pub use models::{
-    system, AuditLogId, AuthType, JobId, JobStatus, JobType, LiveQueryId, NamespaceId, Role,
-    StorageId, StorageMode, TableAccess, TableId, TableName, TableType, UserId, UserName,
+    // Phase 15 (008-schema-consolidation): Re-export schema types
+    schemas,
+    system,
+    types,
+    AuditLogId,
+    AuthType,
+    JobId,
+    JobStatus,
+    JobType,
+    LiveQueryId,
+    NamespaceId,
+        NodeId,
+    Role,
+    StorageId,
+    StorageMode,
+    TableAccess,
+    TableId,
+    TableName,
+    UserId,
+    UserName,
 };
+pub use schemas::TableType;
 pub use storage::{Operation, Partition, StorageBackend, StorageError};
 pub use string_interner::{intern, stats as interner_stats, SystemColumns, SYSTEM_COLUMNS};
 pub use system_tables::{StoragePartition, SystemTable};

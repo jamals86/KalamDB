@@ -34,6 +34,8 @@ pub enum Command {
     },
     DeleteCredentials,
     Info,
+    /// Show system statistics (from system.stats)
+    Stats,
     Unknown(String),
 }
 
@@ -76,6 +78,7 @@ impl CommandParser {
         match command {
             "\\quit" | "\\q" => Ok(Command::Quit),
             "\\help" | "\\?" => Ok(Command::Help),
+            "\\stats" | "\\metrics" => Ok(Command::Stats),
             "\\connect" | "\\c" => {
                 if args.is_empty() {
                     Err(CLIError::ParseError(
@@ -190,6 +193,13 @@ mod tests {
         let parser = CommandParser::new();
         let cmd = parser.parse("\\unknown").unwrap();
         assert_eq!(cmd, Command::Unknown("\\unknown".to_string()));
+    }
+
+    #[test]
+    fn test_parse_stats() {
+        let parser = CommandParser::new();
+        assert_eq!(parser.parse("\\stats").unwrap(), Command::Stats);
+        assert_eq!(parser.parse("\\metrics").unwrap(), Command::Stats);
     }
 
     #[test]

@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables)]
 //! Integration test for stream table TTL eviction and SELECT queries
 //!
 //! This test verifies that:
@@ -10,12 +11,14 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::datasource::TableProvider;
 use datafusion::execution::context::SessionState;
 use datafusion::prelude::*;
-use kalamdb_core::catalog::{NamespaceId, TableName, TableType};
-use kalamdb_core::tables::{StreamTableProvider, StreamTableStore};
+use kalamdb_core::catalog::{NamespaceId, SchemaCache, TableName};
+use kalamdb_core::tables::stream_tables::{StreamTableProvider, StreamTableStore};
+use kalamdb_commons::models::TableId;
 use kalamdb_store::test_utils::TestDb;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use chrono::Utc;
 
 #[tokio::test]
 async fn test_stream_table_ttl_eviction_with_select() {
@@ -35,15 +38,15 @@ async fn test_stream_table_ttl_eviction_with_select() {
     ]));
 
     // Create stream table provider with 1-second TTL
-    let table_metadata = kalamdb_core::catalog::TableMetadata::new(
-        TableName::new("test_events"),
-        TableType::Stream,
+    let table_id = Arc::new(TableId::new(
         NamespaceId::new("test"),
-        "local".to_string(),
-    );
-
+        TableName::new("test_events"),
+    ));
+    let unified_cache = Arc::new(SchemaCache::new(0, None));
+    
     let provider = Arc::new(StreamTableProvider::new(
-        table_metadata,
+        table_id,
+        unified_cache.clone(),
         schema.clone(),
         stream_store.clone(),
         Some(1), // 1-second TTL
@@ -137,15 +140,15 @@ async fn test_stream_table_select_with_projection() {
     ]));
 
     // Create stream table provider
-    let table_metadata = kalamdb_core::catalog::TableMetadata::new(
-        TableName::new("events"),
-        TableType::Stream,
+    let table_id = Arc::new(TableId::new(
         NamespaceId::new("test"),
-        "local".to_string(),
-    );
-
+        TableName::new("events"),
+    ));
+    let unified_cache = Arc::new(SchemaCache::new(0, None));
+    
     let provider = Arc::new(StreamTableProvider::new(
-        table_metadata,
+        table_id,
+        unified_cache.clone(),
         schema.clone(),
         stream_store.clone(),
         None, // No TTL for this test
@@ -201,15 +204,15 @@ async fn test_stream_table_select_with_limit() {
     ]));
 
     // Create stream table provider
-    let table_metadata = kalamdb_core::catalog::TableMetadata::new(
-        TableName::new("events"),
-        TableType::Stream,
+    let table_id = Arc::new(TableId::new(
         NamespaceId::new("test"),
-        "local".to_string(),
-    );
-
+        TableName::new("events"),
+    ));
+    let unified_cache = Arc::new(SchemaCache::new(0, None));
+    
     let provider = Arc::new(StreamTableProvider::new(
-        table_metadata,
+        table_id,
+        unified_cache.clone(),
         schema.clone(),
         stream_store.clone(),
         None,

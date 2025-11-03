@@ -12,9 +12,10 @@
 //! cargo test --test test_cli_auth_admin -- --test-threads=1
 //! ```
 //TODO: Remove this since we have most of the tests covered by the integration tests
+#![allow(unused_imports)]
 mod common;
-use common::*;
 use assert_cmd::Command;
+use common::*;
 use reqwest;
 use serde_json::json;
 use std::time::Duration;
@@ -575,16 +576,45 @@ async fn test_cli_flush_table() {
         "Job should reference correct table"
     );
 
-    // Verify job completed successfully
-    let job_status = job["status"].as_str().unwrap();
-    assert!(
-        job_status == "completed" || job_status == "running",
-        "Job status should be completed or running, got: {}",
-        job_status
+    // Actively poll until the job leaves 'running' (avoid false positives on stuck jobs)
+    use std::time::{Duration, Instant};
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let final_status = loop {
+        let status = job["status"].as_str().unwrap_or("");
+        if status != "running" {
+            break status.to_string();
+        }
+        if Instant::now() > deadline {
+            panic!("Timed out waiting for flush job to complete; last status was 'running'");
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        // Requery current job status
+        let refetch = execute_sql_as_root(&jobs_query).await.unwrap();
+        let rows = refetch["results"][0]["rows"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        if let Some(updated) = rows.get(0) {
+            // Shadow 'job' binding by reassigning serialized map
+            // Note: using direct indexing to keep diff small
+            if let Some(s) = updated["status"].as_str() {
+                if s != "running" {
+                    break s.to_string();
+                }
+            }
+        }
+    };
+
+    // Verify job completed successfully (do not accept 'running')
+    assert_eq!(
+        final_status, "completed",
+        "Flush job did not complete successfully (status: {})",
+        final_status
     );
 
     // If job is completed, verify it has results
-    if job_status == "completed" {
+    if final_status == "completed" {
         let result_str = job["result"].as_str().unwrap_or("");
         assert!(
             !result_str.is_empty() || result_str.contains("rows") || result_str.contains("Flushed"),

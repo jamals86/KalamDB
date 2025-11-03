@@ -14,7 +14,7 @@
 use crate::catalog::{NamespaceId, TableType};
 use crate::error::KalamDbError;
 use crate::services::backup_service::BackupManifest;
-use kalamdb_commons::models::{JobId, JobStatus, JobType};
+use kalamdb_commons::models::{JobId, JobStatus, JobType, NodeId};
 use kalamdb_sql::{Job, KalamSql};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -346,24 +346,23 @@ impl RestoreService {
             .join(table.table_name.as_str());
 
         if !table_backup_dir.exists() {
-            // No files to restore (empty table)
-            return Ok((0, 0));
-        }
+        // No files to restore (empty table)
+        return Ok((0, 0));
+    }
 
-        // Parse storage location to determine destination
-        let storage_location = &table.storage_location;
-        let base_path = if storage_location.contains(':') {
-            let parts: Vec<&str> = storage_location.split(':').collect();
-            if parts.len() == 2 {
-                parts[1]
-            } else {
-                storage_location.as_str()
-            }
+    // Parse storage location to determine destination
+    // TODO: Phase 9 - Use TableCache for dynamic path resolution
+    let storage_id = table.storage_id.as_ref().map(|s| s.as_str()).unwrap_or("local");
+    let base_path = if storage_id.contains(':') {
+        let parts: Vec<&str> = storage_id.split(':').collect();
+        if parts.len() == 2 {
+            parts[1]
         } else {
-            storage_location.as_str()
-        };
-
-        let mut files_count = 0;
+            storage_id
+        }
+    } else {
+        storage_id
+    };        let mut files_count = 0;
         let mut total_bytes = 0u64;
 
         // Iterate through user directories in backup
@@ -410,24 +409,23 @@ impl RestoreService {
             .join(table.table_name.as_str());
 
         if !table_backup_dir.exists() {
-            // No files to restore (empty table)
-            return Ok((0, 0));
-        }
+        // No files to restore (empty table)
+        return Ok((0, 0));
+    }
 
-        // Parse storage location
-        let storage_location = &table.storage_location;
-        let base_path = if storage_location.contains(':') {
-            let parts: Vec<&str> = storage_location.split(':').collect();
-            if parts.len() == 2 {
-                parts[1]
-            } else {
-                storage_location.as_str()
-            }
+    // Parse storage location
+    // TODO: Phase 9 - Use TableCache for dynamic path resolution
+    let storage_id = table.storage_id.as_ref().map(|s| s.as_str()).unwrap_or("local");
+    let base_path = if storage_id.contains(':') {
+        let parts: Vec<&str> = storage_id.split(':').collect();
+        if parts.len() == 2 {
+            parts[1]
         } else {
-            storage_location.as_str()
-        };
-
-        // Destination: ${storage_path}/shared/{table_name}/
+            storage_id
+        }
+    } else {
+        storage_id
+    };        // Destination: ${storage_path}/shared/{table_name}/
         let shared_dest_dir = PathBuf::from(base_path)
             .join("shared")
             .join(table.table_name.as_str());
@@ -517,7 +515,7 @@ impl RestoreService {
 
         // Delete tables
         for table in &manifest.tables {
-            if let Err(e) = self.kalam_sql.delete_table(&table.table_id.to_string()) {
+            if let Err(e) = self.kalam_sql.delete_table(table.table_id.as_ref()) {
                 log::error!("Failed to delete table '{}': {}", table.table_name, e);
             }
         }
@@ -568,7 +566,7 @@ impl RestoreService {
             created_at: now_ms,
             started_at: Some(now_ms),
             completed_at: None,
-            node_id: "local".to_string(),
+                node_id: NodeId::from("local"),
             error_message: None,
         };
 

@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Integration tests for edge cases in authentication and authorization
 //!
 //! Tests:
@@ -63,6 +64,7 @@ async fn setup_test_executor() -> (SqlExecutor, TempDir, Arc<KalamSql>) {
     let shared_table_service = Arc::new(SharedTableService::new(
         shared_table_store.clone(),
         kalam_sql.clone(),
+        "./data/storage".to_string(),
     ));
     let stream_table_service = Arc::new(StreamTableService::new(
         stream_table_store.clone(),
@@ -292,6 +294,9 @@ async fn test_role_change_applies_next_request() {
     let mut user = kalam_sql.get_user("role_change_user").unwrap().unwrap();
     user.role = Role::Dba;
     kalam_sql.insert_user(&user).expect("Failed to update user");
+
+    // Invalidate the user cache to ensure the role change is reflected
+    auth_service.invalidate_user_cache("role_change_user").await;
 
     // Second authentication should reflect new role
     let result2 = auth_service

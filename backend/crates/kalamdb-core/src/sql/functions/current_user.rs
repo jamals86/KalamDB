@@ -77,8 +77,7 @@ impl ScalarUDFImpl for CurrentUserFunction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::{NamespaceId, TableCache, UserId};
-    use datafusion::arrow::array::Array;
+    use crate::catalog::{NamespaceId, UserId};
     use datafusion::logical_expr::ScalarUDF;
 
     #[test]
@@ -92,8 +91,7 @@ mod tests {
     fn test_current_user_with_session_state() {
         let user_id = UserId::new("test_user".to_string());
         let namespace_id = NamespaceId::new("test_namespace".to_string());
-        let table_cache = TableCache::new();
-        let session_state = KalamSessionState::new(user_id.clone(), namespace_id, table_cache);
+        let session_state = KalamSessionState::new(user_id.clone(), namespace_id);
 
         let func_impl = CurrentUserFunction::with_session_state(&session_state);
         let func = ScalarUDF::new_from_impl(func_impl.clone());

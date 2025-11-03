@@ -6,9 +6,8 @@
 use crate::compatibility::map_sql_type_to_arrow;
 use crate::ddl::DdlResult;
 use arrow::datatypes::{Field, Schema};
-use kalamdb_commons::models::{
-    ColumnDefault, NamespaceId, StorageId, TableAccess, TableName, TableType,
-};
+use kalamdb_commons::models::{NamespaceId, StorageId, TableAccess, TableName};
+use kalamdb_commons::schemas::{ColumnDefault, TableType};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -383,16 +382,27 @@ impl CreateTableStatement {
                     ));
                 }
 
-                Ok(ColumnDefault::FunctionCall(func_name))
+                Ok(ColumnDefault::function(func_name, vec![]))
             }
 
             // Literal value: DEFAULT 'text', DEFAULT 42, DEFAULT TRUE
             Expr::Value(value_with_span) => {
-                let literal_str = match &value_with_span.value {
-                    sqlparser::ast::Value::SingleQuotedString(s) => s.clone(),
-                    sqlparser::ast::Value::DoubleQuotedString(s) => s.clone(),
-                    sqlparser::ast::Value::Number(n, _) => n.clone(),
-                    sqlparser::ast::Value::Boolean(b) => b.to_string(),
+                let literal_json = match &value_with_span.value {
+                    sqlparser::ast::Value::SingleQuotedString(s) => serde_json::Value::String(s.clone()),
+                    sqlparser::ast::Value::DoubleQuotedString(s) => serde_json::Value::String(s.clone()),
+                    sqlparser::ast::Value::Number(n, _) => {
+                        // Try to parse as number
+                        if let Ok(i) = n.parse::<i64>() {
+                            serde_json::Value::Number(serde_json::Number::from(i))
+                        } else if let Ok(f) = n.parse::<f64>() {
+                            serde_json::Number::from_f64(f)
+                                .map(serde_json::Value::Number)
+                                .unwrap_or_else(|| serde_json::Value::String(n.clone()))
+                        } else {
+                            serde_json::Value::String(n.clone())
+                        }
+                    }
+                    sqlparser::ast::Value::Boolean(b) => serde_json::Value::Bool(*b),
                     sqlparser::ast::Value::Null => return Ok(ColumnDefault::None),
                     _ => {
                         return Err(format!(
@@ -401,7 +411,7 @@ impl CreateTableStatement {
                         ))
                     }
                 };
-                Ok(ColumnDefault::Literal(literal_str))
+                Ok(ColumnDefault::literal(literal_json))
             }
 
             _ => Err(format!("Unsupported DEFAULT expression: {:?}", expr)),
@@ -539,7 +549,7 @@ impl CreateTableStatement {
         ];
 
         for (column_name, default_value) in &self.column_defaults {
-            if let ColumnDefault::FunctionCall(func_name) = default_value {
+            if let ColumnDefault::FunctionCall { name: func_name, .. } = default_value {
                 let func_upper = func_name.to_uppercase();
 
                 // T530: Validate function exists

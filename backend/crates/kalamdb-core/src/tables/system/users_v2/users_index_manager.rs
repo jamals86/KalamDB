@@ -92,10 +92,10 @@ impl UserIndexManager {
         // Handle deletion status changes
         let old_deleted_at = old_user
             .and_then(|u| u.deleted_at)
-            .and_then(|ts| DateTime::<Utc>::from_timestamp_millis(ts));
+            .and_then(DateTime::<Utc>::from_timestamp_millis);
         let new_deleted_at = new_user
             .deleted_at
-            .and_then(|ts| DateTime::<Utc>::from_timestamp_millis(ts));
+            .and_then(DateTime::<Utc>::from_timestamp_millis);
 
         if old_deleted_at.as_ref() != new_deleted_at.as_ref() {
             self.deleted_at_idx.update_user_deletion(

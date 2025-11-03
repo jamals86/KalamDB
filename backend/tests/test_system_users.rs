@@ -279,7 +279,7 @@ async fn test_global_remote_access_flag() {
     // 3. Verifying remote authentication succeeds due to global flag
 
     // For now, we verify the config exists and defaults to false
-    let server = TestServer::new().await;
+    let _server = TestServer::new().await;
 
     // The global flag is checked in AuthService::new()
     // Default should be false (localhost-only)

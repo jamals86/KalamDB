@@ -11,7 +11,7 @@
 //!
 //! **REFACTORED**: Migrating from system_table_schemas to information_schema.tables
 
-use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType, UserId};
+use crate::catalog::{NamespaceId, TableName, TableType, UserId};
 use crate::error::KalamDbError;
 // TODO: Phase 2b - FlushPolicy import will be needed again
 // use crate::flush::FlushPolicy;
@@ -21,8 +21,7 @@ use crate::storage::column_family_manager::ColumnFamilyManager;
 use crate::stores::system_table::UserTableStoreExt;
 use crate::tables::UserTableStore;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use kalamdb_commons::models::StorageId;
-use kalamdb_sql::ddl::{CreateTableStatement, FlushPolicy as DdlFlushPolicy};
+use kalamdb_sql::ddl::CreateTableStatement;
 use kalamdb_sql::KalamSql;
 use std::sync::Arc;
 
@@ -63,14 +62,14 @@ impl UserTableService {
     /// * `stmt` - Parsed CREATE TABLE statement (USER table)
     ///
     /// # Returns
-    /// Table metadata for the created table
-    pub fn create_table(&self, stmt: CreateTableStatement) -> Result<TableMetadata, KalamDbError> {
+    /// Ok(()) on success
+    pub fn create_table(&self, stmt: CreateTableStatement) -> Result<(), KalamDbError> {
         // Validate table name
-        TableMetadata::validate_table_name(stmt.table_name.as_str())
+        Self::validate_table_name(stmt.table_name.as_str())
             .map_err(KalamDbError::InvalidOperation)?;
 
-        let namespace_id_core = NamespaceId::from(stmt.namespace_id.clone());
-        let table_name_core = TableName::from(stmt.table_name.clone());
+        let namespace_id_core = stmt.namespace_id.clone();
+        let table_name_core = stmt.table_name.clone();
 
         // Check if table already exists
         if self.table_exists(&namespace_id_core, &table_name_core)? {
@@ -101,23 +100,18 @@ impl UserTableService {
         if !modified_stmt.column_defaults.contains_key("id") {
             modified_stmt.column_defaults.insert(
                 "id".to_string(),
-                kalamdb_commons::models::ColumnDefault::FunctionCall("SNOWFLAKE_ID".to_string()),
+                kalamdb_commons::schemas::ColumnDefault::function("SNOWFLAKE_ID", vec![]),
             );
         }
 
-        // 4. Storage location resolution - use storage_id to get the path template
-        let default_storage = StorageId::local();
-        let storage_id = modified_stmt
-            .storage_id
-            .as_ref()
-            .unwrap_or(&default_storage);
-        let storage_location = self.resolve_storage_from_id(storage_id)?;
+        // 4. Storage location resolution - handled dynamically via TableCache in flush jobs
+        // storage_id is stored in table metadata for later path resolution
 
         // 5. Save complete table definition to information_schema_tables (atomic write)
         self.save_table_definition(&modified_stmt, &schema)?;
 
         // 5. Create RocksDB column family for this table
-        // This ensures the table is ready for data operations immediately after creation
+    // This ensures the table is ready for data operations immediately after creation
         self.user_table_store
             .create_column_family(namespace_id_core.as_str(), table_name_core.as_str())
             .map_err(|e| {
@@ -129,23 +123,8 @@ impl UserTableService {
                 ))
             })?;
 
-        // 6. Create and return table metadata
-        let metadata = TableMetadata {
-            table_name: table_name_core.clone(),
-            table_type: TableType::User,
-            namespace: namespace_id_core.clone(),
-            created_at: chrono::Utc::now(),
-            storage_location,
-            flush_policy: modified_stmt
-                .flush_policy
-                .clone()
-                .map(crate::flush::FlushPolicy::from)
-                .unwrap_or_default(),
-            schema_version: 1,
-            deleted_retention_hours: modified_stmt.deleted_retention_hours,
-        };
-
-        Ok(metadata)
+        // Return success - table metadata is now in cache via save_table_definition
+        Ok(())
     }
 
     /// Inject auto-increment field if not present
@@ -214,24 +193,6 @@ impl UserTableService {
         Ok(Arc::new(Schema::new(fields)))
     }
 
-    /// Resolve storage location from storage_id
-    ///
-    /// Gets the user table template path from the storage in system.storages
-    fn resolve_storage_from_id(&self, storage_id: &StorageId) -> Result<String, KalamDbError> {
-        // Get the storage location from system.storages via KalamSQL
-        let storage = self
-            .kalam_sql
-            .get_storage(storage_id)
-            .map_err(|e| {
-                KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e))
-            })?
-            .ok_or_else(|| KalamDbError::NotFound(format!("Storage '{}' not found", storage_id)))?;
-
-        // For user tables, we use the user_tables_template from the storage
-        // The template should be in the format: "{namespace}/users/{tableName}/{shard}/{userId}/"
-        Ok(storage.user_tables_template)
-    }
-
     /// Create and save table definition to information_schema_tables.
     /// Replaces fragmented schema storage with single atomic write.
     ///
@@ -246,70 +207,66 @@ impl UserTableService {
         stmt: &CreateTableStatement,
         schema: &Arc<Schema>,
     ) -> Result<(), KalamDbError> {
-        use kalamdb_commons::models::{FlushPolicyDef, SchemaVersion, TableDefinition};
+        use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, SchemaVersion};
+        use kalamdb_commons::types::{KalamDataType, FromArrowType};
+        use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 
-        // Extract columns from schema with ordinal positions
-        let columns = TableDefinition::extract_columns_from_schema(
-            schema.as_ref(),
-            &stmt.column_defaults,
-            stmt.primary_key_column.as_deref(),
-        );
+        // Extract columns directly from Arrow schema
+        let columns: Vec<ColumnDefinition> = schema
+            .fields()
+            .iter()
+            .enumerate()
+            .map(|(idx, field)| {
+                let column_name = field.name().clone();
+                let is_primary_key = stmt.primary_key_column
+                    .as_ref()
+                    .map(|pk| pk.as_str() == column_name.as_str())
+                    .unwrap_or(false);
+                
+                // Convert Arrow DataType to KalamDataType
+                let data_type = KalamDataType::from_arrow_type(field.data_type())
+                    .unwrap_or(KalamDataType::Text);
+                
+                // Get default value from statement
+                let default_value = stmt.column_defaults
+                    .get(column_name.as_str())
+                    .cloned()
+                    .unwrap_or(kalamdb_commons::schemas::ColumnDefault::None);
+                
+                ColumnDefinition::new(
+                    column_name,
+                    (idx + 1) as u32,
+                    data_type,
+                    field.is_nullable(),
+                    is_primary_key,
+                    false, // is_partition_key
+                    default_value,
+                    None, // column_comment
+                )
+            })
+            .collect();
 
-        // Serialize Arrow schema for history
-        let arrow_schema_json =
-            TableDefinition::serialize_arrow_schema(schema.as_ref()).map_err(|e| {
-                KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
-            })?;
+        // Build table options (USER tables use default options)
+        let table_options = TableOptions::user();
 
-        // Build flush policy definition
-        let flush_policy_def = stmt.flush_policy.as_ref().map(|policy| match policy {
-            DdlFlushPolicy::RowLimit { row_limit } => FlushPolicyDef {
-                row_threshold: Some(*row_limit as u64),
-                interval_seconds: None,
-            },
-            DdlFlushPolicy::TimeInterval { interval_seconds } => FlushPolicyDef {
-                row_threshold: None,
-                interval_seconds: Some(*interval_seconds as u64),
-            },
-            DdlFlushPolicy::Combined {
-                row_limit,
-                interval_seconds,
-            } => FlushPolicyDef {
-                row_threshold: Some(*row_limit as u64),
-                interval_seconds: Some(*interval_seconds as u64),
-            },
-        });
-
-        // Build complete table definition
-        let now_millis = chrono::Utc::now().timestamp_millis();
-        let table_def = TableDefinition {
-            table_id: format!(
-                "{}:{}",
-                stmt.namespace_id.as_str(),
-                stmt.table_name.as_str()
-            ),
-            table_name: stmt.table_name.clone(),
-            namespace_id: stmt.namespace_id.clone(),
-            table_type: TableType::User,
-            created_at: now_millis,
-            updated_at: now_millis,
-            schema_version: 1,
-            storage_id: stmt
-                .storage_id
-                .clone()
-                .unwrap_or_else(|| StorageId::from("local")),
-            use_user_storage: stmt.use_user_storage,
-            flush_policy: flush_policy_def,
-            deleted_retention_hours: stmt.deleted_retention_hours,
-            ttl_seconds: stmt.ttl_seconds,
+        // Create NEW TableDefinition directly
+        let mut table_def = TableDefinition::new(
+            stmt.namespace_id.clone(),
+            stmt.table_name.clone(),
+            kalamdb_commons::schemas::TableType::User,
             columns,
-            schema_history: vec![SchemaVersion {
-                version: 1,
-                created_at: now_millis,
-                changes: "Initial schema".to_string(),
-                arrow_schema_json,
-            }],
-        };
+            table_options,
+            None, // table_comment
+        ).map_err(|e| KalamDbError::SchemaError(e))?;
+
+        // Initialize schema history with version 1 entry (Initial schema)
+        // Serialize Arrow schema (including any options if needed)
+        let schema_json = ArrowSchemaWithOptions::new(schema.clone())
+            .to_json_string()
+            .map_err(|e| KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e)))?;
+
+        // Push initial schema version (v1)
+        table_def.schema_history.push(SchemaVersion::initial(schema_json));
 
         // Single atomic write to information_schema_tables
         self.kalam_sql
@@ -344,10 +301,7 @@ impl UserTableService {
         namespace: &NamespaceId,
         table_name: &TableName,
     ) -> Result<bool, KalamDbError> {
-        // Query system.tables using KalamSQL
-        let table_id = format!("{}:{}", namespace.as_str(), table_name.as_str());
-
-        match self.kalam_sql.get_table(&table_id) {
+        match self.kalam_sql.get_table_definition(namespace, table_name) {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false),
             Err(e) => Err(KalamDbError::Other(format!(
@@ -360,8 +314,43 @@ impl UserTableService {
     /// Substitute ${user_id} in path template
     ///
     /// Replaces ${user_id} with actual user ID in storage paths.
-    pub fn substitute_user_id(path_template: &str, user_id: &UserId) -> String {
-        path_template.replace("${user_id}", user_id.as_str())
+    pub fn substitute_user_id(path: &str, user_id: &UserId) -> String {
+        path.replace("${user_id}", user_id.as_str())
+    }
+
+    /// Validate table name
+    ///
+    /// # Rules
+    /// - Must start with lowercase letter or underscore
+    /// - Cannot be a SQL keyword
+    ///
+    /// # Arguments
+    /// * `name` - Table name to validate
+    ///
+    /// # Returns
+    /// Ok(()) if valid, error otherwise
+    fn validate_table_name(name: &str) -> Result<(), String> {
+        // Check first character
+        let first_char = name.chars().next().ok_or_else(|| {
+            "Table name cannot be empty".to_string()
+        })?;
+
+        if !first_char.is_lowercase() && first_char != '_' {
+            return Err(format!(
+                "Table name must start with lowercase letter or underscore: {}",
+                name
+            ));
+        }
+
+        // Check for SQL keywords
+        let keywords = [
+            "select", "insert", "update", "delete", "table", "from", "where",
+        ];
+        if keywords.contains(&name.to_lowercase().as_str()) {
+            return Err(format!("Table name cannot be a SQL keyword: {}", name));
+        }
+
+        Ok(())
     }
 }
 
@@ -461,5 +450,18 @@ mod tests {
         let user_id = UserId::new("user123");
         let result = UserTableService::substitute_user_id(path, &user_id);
         assert_eq!(result, "/data/user123/messages");
+    }
+
+    #[test]
+    fn test_validate_table_name() {
+        assert!(UserTableService::validate_table_name("users").is_ok());
+        assert!(UserTableService::validate_table_name("_private").is_ok());
+        assert!(UserTableService::validate_table_name("table_123").is_ok());
+        
+        // Should fail: starts with uppercase
+        assert!(UserTableService::validate_table_name("Users").is_err());
+        
+        // Should fail: SQL keyword
+        assert!(UserTableService::validate_table_name("select").is_err());
     }
 }

@@ -360,7 +360,7 @@ impl KalamSql {
     /// Ok(()) on success, error on failure
     pub fn upsert_table_definition(
         &self,
-        table_def: &kalamdb_commons::models::TableDefinition,
+        table_def: &kalamdb_commons::schemas::TableDefinition,
     ) -> Result<()> {
         self.adapter.upsert_table_definition(table_def)
     }
@@ -378,7 +378,7 @@ impl KalamSql {
         &self,
         namespace_id: &NamespaceId,
         table_name: &TableName,
-    ) -> Result<Option<kalamdb_commons::models::TableDefinition>> {
+    ) -> Result<Option<kalamdb_commons::schemas::TableDefinition>> {
         self.adapter
             .get_table_definition(namespace_id.as_str(), table_name.as_str())
     }
@@ -394,7 +394,7 @@ impl KalamSql {
     pub fn scan_table_definitions(
         &self,
         namespace_id: &NamespaceId,
-    ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
+    ) -> Result<Vec<kalamdb_commons::schemas::TableDefinition>> {
         self.adapter.scan_table_definitions(namespace_id.as_str())
     }
 
@@ -404,7 +404,7 @@ impl KalamSql {
     /// Vector of all TableDefinition in the database
     pub fn scan_all_table_definitions(
         &self,
-    ) -> Result<Vec<kalamdb_commons::models::TableDefinition>> {
+    ) -> Result<Vec<kalamdb_commons::schemas::TableDefinition>> {
         self.adapter.scan_all_table_definitions()
     }
 }

@@ -24,6 +24,26 @@ async fn setup_test_executor() -> (SqlExecutor, TempDir, Arc<KalamSql>) {
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
     let kalam_sql = Arc::new(KalamSql::new(backend.clone()).expect("Failed to create KalamSQL"));
 
+    // Register default 'local' storage
+    let storage_base_path = temp_dir.path().join("storage");
+    std::fs::create_dir_all(&storage_base_path).expect("Failed to create storage base directory");
+    let now = chrono::Utc::now().timestamp_millis();
+    let default_storage = kalamdb_sql::Storage {
+        storage_id: StorageId::new("local"),
+        storage_name: "Local Filesystem".to_string(),
+        description: Some("Default local filesystem storage".to_string()),
+        storage_type: "filesystem".to_string(),
+        base_directory: storage_base_path.to_str().unwrap().to_string(),
+        credentials: None,
+        shared_tables_template: "shared/{namespace}/{tableName}".to_string(),
+        user_tables_template: "users/{userId}/tables/{namespace}/{tableName}".to_string(),
+        created_at: now,
+        updated_at: now,
+    };
+    kalam_sql
+        .insert_storage(&default_storage)
+        .expect("Failed to create default storage");
+
     let user_table_store = Arc::new(kalamdb_core::tables::new_user_table_store(
         backend.clone(),
         &kalamdb_commons::NamespaceId::new("test_ns"),
@@ -47,6 +67,7 @@ async fn setup_test_executor() -> (SqlExecutor, TempDir, Arc<KalamSql>) {
     let shared_table_service = Arc::new(SharedTableService::new(
         shared_table_store.clone(),
         kalam_sql.clone(),
+        "./data/storage".to_string(),
     ));
     let stream_table_service = Arc::new(StreamTableService::new(
         stream_table_store.clone(),
@@ -171,11 +192,11 @@ async fn test_audit_log_for_table_access_change() {
 
     executor
         .execute(
-            "CREATE TABLE analytics.events (id INT, value TEXT)",
+            "CREATE SHARED TABLE analytics.events (id INT, value TEXT) ACCESS LEVEL private",
             Some(&admin_id),
         )
         .await
-        .expect("CREATE TABLE failed");
+        .expect("CREATE SHARED TABLE failed");
 
     executor
         .execute(

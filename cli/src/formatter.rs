@@ -10,7 +10,10 @@ use serde_json::Value as JsonValue;
 use crate::{error::Result, session::OutputFormat};
 
 /// Maximum column width before truncation
-const MAX_COLUMN_WIDTH: usize = 50;
+const MAX_COLUMN_WIDTH: usize = 32;
+
+/// Minimum column width when resizing to fit the terminal
+const MIN_COLUMN_WIDTH: usize = 6;
 
 /// Formats query results for display
 pub struct OutputFormatter {
@@ -83,35 +86,70 @@ impl OutputFormatter {
 
         // Handle data results
         if let Some(ref rows) = result.rows {
-            let columns: Vec<String> = if rows.is_empty() {
+            // Always respect server-provided column order (from kalam-link)
+            // Fall back to deterministic alphabetical order if missing.
+            let columns: Vec<String> = if !result.columns.is_empty() {
                 result.columns.clone()
+            } else if rows.is_empty() {
+                vec![]
             } else {
-                rows[0].keys().cloned().collect()
+                let mut cols: Vec<String> = rows[0].keys().cloned().collect();
+                cols.sort();
+                cols
             };
 
             let terminal_width = Self::get_terminal_width();
 
-            // Calculate initial column widths
+            // Precompute string values once to avoid double formatting
+            let mut string_rows: Vec<Vec<String>> = Vec::with_capacity(rows.len());
             let mut col_widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
             for row in rows {
+                let mut srow: Vec<String> = Vec::with_capacity(columns.len());
                 for (i, col) in columns.iter().enumerate() {
                     let value = row
                         .get(col)
                         .map(|v| self.format_json_value(v))
                         .unwrap_or_else(|| "NULL".to_string());
                     col_widths[i] = col_widths[i].max(value.len());
+                    srow.push(value);
                 }
+                string_rows.push(srow);
             }
 
-            // Calculate total table width (columns + borders + padding)
-            let total_width: usize = col_widths.iter().sum::<usize>()
-                + (col_widths.len() * 3) // 2 spaces padding + 1 border per column
-                + 1; // Final border
-
-            // If table is too wide, apply truncation
-            if total_width > terminal_width {
+            let column_count = col_widths.len();
+            if column_count > 0 {
                 for width in col_widths.iter_mut() {
-                    *width = (*width).min(MAX_COLUMN_WIDTH);
+                    if *width > MAX_COLUMN_WIDTH {
+                        *width = MAX_COLUMN_WIDTH;
+                    }
+                }
+
+                let border_padding = column_count * 3 + 1;
+                let mut available = terminal_width.saturating_sub(border_padding);
+                if available < column_count {
+                    available = column_count;
+                }
+
+                let mut total_width = col_widths.iter().sum::<usize>();
+                while total_width > available {
+                    if let Some((idx, _)) = col_widths
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, width)| **width > MIN_COLUMN_WIDTH)
+                        .max_by_key(|(_, width)| *width)
+                    {
+                        col_widths[idx] -= 1;
+                    } else if let Some((idx, _)) = col_widths
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, width)| **width > 1)
+                        .max_by_key(|(_, width)| *width)
+                    {
+                        col_widths[idx] -= 1;
+                    } else {
+                        break;
+                    }
+                    total_width = col_widths.iter().sum();
                 }
             }
 
@@ -153,15 +191,11 @@ impl OutputFormatter {
             output.push('\n');
 
             // Data rows
-            for row in rows {
+            for srow in &string_rows {
                 output.push('│');
-                for (i, col) in columns.iter().enumerate() {
-                    let value = row
-                        .get(col)
-                        .map(|v| self.format_json_value(v))
-                        .unwrap_or_else(|| "NULL".to_string());
+                for (i, value) in srow.iter().enumerate() {
                     output.push(' ');
-                    let truncated = Self::truncate_value(&value, col_widths[i]);
+                    let truncated = Self::truncate_value(value, col_widths[i]);
                     output.push_str(&format!("{:width$}", truncated, width = col_widths[i]));
                     output.push(' ');
                     output.push('│');
@@ -181,7 +215,7 @@ impl OutputFormatter {
             }
             output.push('\n');
 
-            let row_count = rows.len();
+            let row_count = string_rows.len();
             let row_label = if row_count == 1 { "row" } else { "rows" };
             output.push_str(&format!("({} {})\n", row_count, row_label));
             // Add blank line for psql-style formatting
@@ -227,10 +261,14 @@ impl OutputFormatter {
             return Ok("".to_string());
         }
 
-        let first = &rows[0];
-
-        // Extract columns
-        let columns: Vec<String> = first.keys().cloned().collect();
+        // Extract columns (prefer server-provided order)
+        let columns: Vec<String> = if !result.columns.is_empty() {
+            result.columns.clone()
+        } else {
+            let mut cols: Vec<String> = rows[0].keys().cloned().collect();
+            cols.sort();
+            cols
+        };
 
         // Build CSV
         let mut output = columns.join(",") + "\n";

@@ -4,7 +4,7 @@
 //! Custom SQL functions (SNOWFLAKE_ID, UUID_V7, ULID, CURRENT_USER) are registered
 //! with each session for use in SELECT, WHERE, and DEFAULT clauses.
 
-use crate::catalog::{NamespaceId, TableCache, UserId};
+use crate::catalog::{NamespaceId, UserId};
 use crate::sql::functions::{
     CurrentUserFunction, SnowflakeIdFunction, UlidFunction, UuidV7Function,
 };
@@ -21,18 +21,14 @@ pub struct KalamSessionState {
 
     /// Current namespace
     pub namespace_id: NamespaceId,
-
-    /// Table metadata cache
-    pub table_cache: TableCache,
 }
 
 impl KalamSessionState {
     /// Create a new session state
-    pub fn new(user_id: UserId, namespace_id: NamespaceId, table_cache: TableCache) -> Self {
+    pub fn new(user_id: UserId, namespace_id: NamespaceId) -> Self {
         Self {
             user_id,
             namespace_id,
-            table_cache,
         }
     }
 }
@@ -66,14 +62,13 @@ impl DataFusionSessionFactory {
         &self,
         user_id: UserId,
         namespace_id: NamespaceId,
-        table_cache: TableCache,
     ) -> (SessionContext, KalamSessionState) {
         let config = SessionConfig::new()
             .with_information_schema(true)
             .with_default_catalog_and_schema("kalam", "default");
 
         let ctx = SessionContext::new_with_config(config);
-        let state = KalamSessionState::new(user_id.clone(), namespace_id, table_cache);
+        let state = KalamSessionState::new(user_id.clone(), namespace_id);
 
         // Register custom functions with user context for CURRENT_USER()
         self.register_custom_functions(&ctx, Some(&user_id));
@@ -108,9 +103,8 @@ impl DataFusionSessionFactory {
         // Register CURRENT_USER() function with user context if available
         let current_user_fn = if let Some(uid) = user_id {
             // Use a session state-aware version when we have full state
-            // For now, just use the user_id string directly
             let state =
-                KalamSessionState::new(uid.clone(), NamespaceId::new("default"), TableCache::new());
+                KalamSessionState::new(uid.clone(), NamespaceId::new("default"));
             CurrentUserFunction::with_session_state(&state)
         } else {
             CurrentUserFunction::new()
@@ -154,10 +148,9 @@ mod tests {
         let factory = DataFusionSessionFactory::new().unwrap();
         let user_id = UserId::new("user1");
         let namespace_id = NamespaceId::new("app");
-        let table_cache = TableCache::new();
 
         let (session, state) =
-            factory.create_session_for_user(user_id.clone(), namespace_id.clone(), table_cache);
+            factory.create_session_for_user(user_id.clone(), namespace_id.clone());
 
         // Verify session is created
         assert!(session.catalog("kalam").is_some());
@@ -171,9 +164,8 @@ mod tests {
     fn test_session_state() {
         let user_id = UserId::new("user1");
         let namespace_id = NamespaceId::new("app");
-        let table_cache = TableCache::new();
 
-        let state = KalamSessionState::new(user_id.clone(), namespace_id.clone(), table_cache);
+        let state = KalamSessionState::new(user_id.clone(), namespace_id.clone());
 
         assert_eq!(state.user_id, user_id);
         assert_eq!(state.namespace_id, namespace_id);

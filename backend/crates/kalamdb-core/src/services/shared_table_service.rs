@@ -7,7 +7,7 @@
 //! - Column family creation for shared_table:{namespace}:{table_name}
 //! - Flush policy configuration
 
-use crate::catalog::{NamespaceId, TableMetadata, TableName, TableType};
+use crate::catalog::{NamespaceId, TableName};
 use crate::error::KalamDbError;
 use crate::flush::FlushPolicy;
 use crate::stores::system_table::SharedTableStoreExt;
@@ -31,6 +31,7 @@ use std::sync::Arc;
 pub struct SharedTableService {
     shared_table_store: Arc<SharedTableStore>,
     kalam_sql: Arc<KalamSql>,
+    default_storage_path: String,
 }
 
 impl SharedTableService {
@@ -39,10 +40,16 @@ impl SharedTableService {
     /// # Arguments
     /// * `shared_table_store` - Storage backend for shared tables
     /// * `kalam_sql` - KalamSQL instance for metadata storage
-    pub fn new(shared_table_store: Arc<SharedTableStore>, kalam_sql: Arc<KalamSql>) -> Self {
+    /// * `default_storage_path` - Default path for 'local' storage (from config.toml)
+    pub fn new(
+        shared_table_store: Arc<SharedTableStore>,
+        kalam_sql: Arc<KalamSql>,
+        default_storage_path: String,
+    ) -> Self {
         Self {
             shared_table_store,
             kalam_sql,
+            default_storage_path,
         }
     }
 
@@ -61,16 +68,12 @@ impl SharedTableService {
     /// * `stmt` - Parsed CREATE SHARED TABLE statement
     ///
     /// # Returns
-    /// Table metadata for the created shared table
-    /// Create a new shared table
-    ///
-    /// # Returns
-    /// * `Ok((metadata, was_created))` - Table metadata and whether it was newly created (false if IF NOT EXISTS and exists)
+    /// * `Ok(was_created)` - Whether the table was newly created (false if IF NOT EXISTS and exists)
     /// * `Err(KalamDbError)` - If creation failed
     pub fn create_table(
         &self,
         stmt: CreateTableStatement,
-    ) -> Result<(TableMetadata, bool), KalamDbError> {
+    ) -> Result<bool, KalamDbError> {
         // Validate table name
         self.validate_table_name(&stmt.table_name)?;
 
@@ -96,29 +99,8 @@ impl SharedTableService {
                         KalamDbError::NotFound(format!("Table {} not found", table_id))
                     })?;
 
-                // Return a minimal metadata object for the existing table
-                return Ok((
-                    TableMetadata {
-                        table_name: stmt.table_name.clone(),
-                        table_type: TableType::Shared,
-                        namespace: stmt.namespace_id.clone(),
-                        created_at: chrono::DateTime::from_timestamp(
-                            existing_table.created_at / 1000,
-                            0,
-                        )
-                        .unwrap_or_else(chrono::Utc::now),
-                        storage_location: existing_table.storage_location,
-                        flush_policy: serde_json::from_str(&existing_table.flush_policy)
-                            .unwrap_or_default(),
-                        schema_version: existing_table.schema_version as u32,
-                        deleted_retention_hours: if existing_table.deleted_retention_hours > 0 {
-                            Some(existing_table.deleted_retention_hours as u32)
-                        } else {
-                            None
-                        },
-                    },
-                    false,
-                )); // false = not newly created
+                // Table exists and IF NOT EXISTS was specified - return success without creating
+                return Ok(false); // false = not newly created
             } else {
                 return Err(KalamDbError::AlreadyExists(format!(
                     "Shared table {}.{} already exists",
@@ -133,40 +115,39 @@ impl SharedTableService {
         let schema = stmt.schema.clone();
 
         // Resolve storage location from storage_id (defaulting to 'local')
+        // Uses config.default_storage_path (default: "./data/storage") when base_directory is empty
         let storage_id = stmt
             .storage_id
             .as_ref()
             .cloned()
             .unwrap_or_else(StorageId::local);
-        let storage_config = self
-            .kalam_sql
-            .get_storage(&storage_id)
-            .map_err(|e| {
-                KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e))
-            })?
-            .ok_or_else(|| KalamDbError::NotFound(format!("Storage '{}' not found", storage_id)))?;
 
-        let mut relative_path = storage_config
-            .shared_tables_template
-            .replace("{namespace}", stmt.namespace_id.as_str())
-            .replace("{tableName}", stmt.table_name.as_str())
-            .replace("{shard}", "");
-
-        if relative_path.starts_with('/') {
-            relative_path = relative_path.trim_start_matches('/').to_string();
-        }
-
-        let storage_location = if storage_config.base_directory.is_empty() {
-            relative_path
-        } else {
-            format!(
-                "{}/{}",
-                storage_config.base_directory.trim_end_matches('/'),
-                relative_path
-            )
+        let storage_location = match self.kalam_sql.get_storage(&storage_id) {
+            Ok(Some(cfg)) => {
+                // If base_directory is empty, use configured default_storage_path
+                let base = if cfg.base_directory.trim().is_empty() {
+                    self.default_storage_path.trim_end_matches('/').to_string()
+                } else {
+                    cfg.base_directory.trim_end_matches('/').to_string()
+                };
+                format!("{}/shared", base)
+            }
+            Ok(None) => {
+                // No storage config found, fall back to default
+                format!("{}/shared", self.default_storage_path.trim_end_matches('/'))
+            }
+            Err(e) => {
+                // Fall back to default and surface a warning via error type
+                log::warn!(
+                    "Falling back to default shared storage due to get_storage error: {}",
+                    e
+                );
+                format!("{}/shared", self.default_storage_path.trim_end_matches('/'))
+            }
         };
 
         // Validate no ${user_id} templating in shared table storage location
+        // TODO: We have a compiler for template strings; use that here for validation
         if storage_location.contains("${user_id}") {
             return Err(KalamDbError::InvalidOperation(
                 "Shared table storage location cannot contain ${user_id} template variable"
@@ -197,19 +178,8 @@ impl SharedTableService {
         // The caller should use:
         // db.create_cf(format!("shared_table:{}:{}", namespace_id, table_name), &opts)
 
-        // Create and return table metadata
-        let metadata = TableMetadata {
-            table_name: stmt.table_name.clone(),
-            table_type: TableType::Shared,
-            namespace: stmt.namespace_id.clone(),
-            created_at: chrono::Utc::now(),
-            storage_location,
-            flush_policy,
-            schema_version: 1,
-            deleted_retention_hours: stmt.deleted_retention_hours,
-        };
-
-        Ok((metadata, true)) // true = newly created
+        // Table created successfully
+        Ok(true) // true = newly created
     }
 
     /// Validate table name
@@ -296,73 +266,63 @@ impl SharedTableService {
         stmt: &CreateTableStatement,
         schema: &Arc<Schema>,
     ) -> Result<(), KalamDbError> {
-        use kalamdb_commons::models::{FlushPolicyDef, SchemaVersion, TableDefinition};
+        use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, SchemaVersion};
+        use kalamdb_commons::types::{KalamDataType, FromArrowType};
+        use crate::schema::arrow_schema::ArrowSchemaWithOptions;
 
-        // Extract columns from schema with ordinal positions
-        let columns = TableDefinition::extract_columns_from_schema(
-            schema.as_ref(),
-            &stmt.column_defaults,
-            stmt.primary_key_column.as_deref(),
-        );
+        // Extract columns directly from Arrow schema
+        let columns: Vec<ColumnDefinition> = schema
+            .fields()
+            .iter()
+            .enumerate()
+            .map(|(idx, field)| {
+                let column_name = field.name().clone();
+                let is_primary_key = stmt.primary_key_column
+                    .as_ref()
+                    .map(|pk| pk.as_str() == column_name.as_str())
+                    .unwrap_or(false);
+                
+                // Convert Arrow DataType to KalamDataType
+                let data_type = KalamDataType::from_arrow_type(field.data_type())
+                    .unwrap_or(KalamDataType::Text);
+                
+                // Get default value from statement
+                let default_value = stmt.column_defaults
+                    .get(column_name.as_str())
+                    .cloned()
+                    .unwrap_or(kalamdb_commons::schemas::ColumnDefault::None);
+                
+                ColumnDefinition::new(
+                    column_name,
+                    (idx + 1) as u32,
+                    data_type,
+                    field.is_nullable(),
+                    is_primary_key,
+                    false, // is_partition_key
+                    default_value,
+                    None, // column_comment
+                )
+            })
+            .collect();
 
-        // Serialize Arrow schema for history
-        let arrow_schema_json =
-            TableDefinition::serialize_arrow_schema(schema.as_ref()).map_err(|e| {
-                KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e))
-            })?;
+        // Build table options (SHARED tables use default options)
+        let table_options = TableOptions::shared();
 
-        // Build flush policy definition
-        let flush_policy_def = stmt.flush_policy.as_ref().map(|policy| match policy {
-            DdlFlushPolicy::RowLimit { row_limit } => FlushPolicyDef {
-                row_threshold: Some(*row_limit as u64),
-                interval_seconds: None,
-            },
-            DdlFlushPolicy::TimeInterval { interval_seconds } => FlushPolicyDef {
-                row_threshold: None,
-                interval_seconds: Some(*interval_seconds as u64),
-            },
-            DdlFlushPolicy::Combined {
-                row_limit,
-                interval_seconds,
-            } => FlushPolicyDef {
-                row_threshold: Some(*row_limit as u64),
-                interval_seconds: Some(*interval_seconds as u64),
-            },
-        });
-
-        // Build complete table definition
-        let now_millis = chrono::Utc::now().timestamp_millis();
-        let table_def = TableDefinition {
-            table_id: format!(
-                "{}:{}",
-                stmt.namespace_id.as_str(),
-                stmt.table_name.as_str()
-            ),
-            table_name: stmt.table_name.clone(),
-            namespace_id: stmt.namespace_id.clone(),
-            table_type: TableType::Shared,
-            created_at: now_millis,
-            updated_at: now_millis,
-            schema_version: 1,
-            storage_id: stmt
-                .storage_id
-                .clone()
-                .unwrap_or_else(|| StorageId::from("local")),
-            use_user_storage: stmt.use_user_storage,
-            flush_policy: flush_policy_def,
-            deleted_retention_hours: stmt.deleted_retention_hours,
-            ttl_seconds: stmt.ttl_seconds,
+        // Create NEW TableDefinition directly
+        let mut table_def = TableDefinition::new(
+            stmt.namespace_id.clone(),
+            stmt.table_name.clone(),
+            kalamdb_commons::schemas::TableType::Shared,
             columns,
-            schema_history: vec![SchemaVersion {
-                version: 1,
-                created_at: now_millis,
-                changes: format!(
-                    "Initial shared table schema. Deleted retention: {:?}h",
-                    stmt.deleted_retention_hours
-                ),
-                arrow_schema_json,
-            }],
-        };
+            table_options,
+            None, // table_comment
+        ).map_err(|e| KalamDbError::SchemaError(e))?;
+
+        // Initialize schema history with version 1 entry (Initial schema)
+        let schema_json = ArrowSchemaWithOptions::new(schema.clone())
+            .to_json_string()
+            .map_err(|e| KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e)))?;
+        table_def.schema_history.push(SchemaVersion::initial(schema_json));
 
         // Single atomic write to information_schema_tables
         self.kalam_sql
@@ -389,9 +349,7 @@ impl SharedTableService {
         namespace_id: &NamespaceId,
         table_name: &TableName,
     ) -> Result<bool, KalamDbError> {
-        let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
-
-        match self.kalam_sql.get_table(&table_id) {
+        match self.kalam_sql.get_table_definition(namespace_id, table_name) {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false),
             Err(e) => Err(KalamDbError::Other(e.to_string())),
@@ -406,6 +364,8 @@ mod tests {
     use datafusion::arrow::datatypes::DataType;
     use kalamdb_store::test_utils::TestDb;
     use kalamdb_store::{RocksDBBackend, StorageBackend};
+    use kalamdb_commons::models::StorageId;
+    use kalamdb_commons::schemas::TableType;
 
     fn create_test_service() -> (SharedTableService, TestDb) {
         let test_db = TestDb::new(&[
@@ -421,7 +381,11 @@ mod tests {
         let kalam_sql =
             Arc::new(KalamSql::new(Arc::new(RocksDBBackend::new(test_db.db.clone()))).unwrap());
 
-        let service = SharedTableService::new(shared_table_store, kalam_sql);
+        let service = SharedTableService::new(
+            shared_table_store,
+            kalam_sql,
+            "./data/storage".to_string(),
+        );
         (service, test_db)
     }
 
@@ -437,7 +401,7 @@ mod tests {
         let stmt = CreateTableStatement {
             table_name: TableName::new("config"),
             namespace_id: NamespaceId::new("app"),
-            table_type: kalamdb_commons::models::TableType::Shared,
+            table_type: kalamdb_commons::schemas::TableType::Shared,
             schema,
             column_defaults: std::collections::HashMap::new(),
             primary_key_column: None,
@@ -453,12 +417,11 @@ mod tests {
         let result = service.create_table(stmt);
         assert!(result.is_ok());
 
-        let (metadata, was_created) = result.unwrap();
+        let was_created = result.unwrap();
         assert!(was_created);
-        assert_eq!(metadata.table_name.as_str(), "config");
-        assert_eq!(metadata.table_type, TableType::Shared);
-        assert_eq!(metadata.namespace.as_str(), "app");
-        assert_eq!(metadata.storage_location, "/data/shared");
+        
+        // Verify table was created by checking if it exists
+        assert!(service.table_exists(&NamespaceId::new("app"), &TableName::new("config")).unwrap());
     }
 
     #[test]
@@ -470,7 +433,7 @@ mod tests {
         let stmt = CreateTableStatement {
             table_name: TableName::new("config"),
             namespace_id: NamespaceId::new("app"),
-            table_type: kalamdb_commons::models::TableType::Shared,
+            table_type: kalamdb_commons::schemas::TableType::Shared,
             schema,
             column_defaults: std::collections::HashMap::new(),
             primary_key_column: None,
@@ -486,8 +449,11 @@ mod tests {
         let result = service.create_table(stmt);
         assert!(result.is_ok());
 
-        let (metadata, _was_created) = result.unwrap();
-        assert_eq!(metadata.storage_location, "/data/shared");
+        let was_created = result.unwrap();
+        assert!(was_created);
+        
+        // Verify table exists
+        assert!(service.table_exists(&NamespaceId::new("app"), &TableName::new("config")).unwrap());
     }
 
     #[test]
@@ -499,7 +465,7 @@ mod tests {
         let stmt = CreateTableStatement {
             table_name: TableName::new("config"),
             namespace_id: NamespaceId::new("app"),
-            table_type: kalamdb_commons::models::TableType::Shared,
+            table_type: kalamdb_commons::schemas::TableType::Shared,
             schema,
             column_defaults: std::collections::HashMap::new(),
             primary_key_column: None,

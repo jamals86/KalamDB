@@ -180,8 +180,16 @@ impl FlushAllTablesStatement {
         let namespace = parsing::parse_optional_in_clause(&normalized, "FLUSH ALL TABLES")?
             .ok_or_else(|| "Expected FLUSH ALL TABLES IN namespace".to_string())?;
 
-        // Check for extra tokens
-        parsing::validate_no_extra_tokens(&normalized, 5, "FLUSH ALL TABLES IN")?;
+        // Check for extra tokens, supporting both "IN <ns>" and "IN NAMESPACE <ns>"
+        let normalized_upper = normalized.to_uppercase();
+        let has_namespace_keyword = normalized_upper.contains(" IN NAMESPACE ");
+        let expected_tokens = if has_namespace_keyword { 6 } else { 5 };
+        let command_for_error = if has_namespace_keyword {
+            "FLUSH ALL TABLES IN NAMESPACE"
+        } else {
+            "FLUSH ALL TABLES IN"
+        };
+        parsing::validate_no_extra_tokens(&normalized, expected_tokens, command_for_error)?;
 
         Ok(Self {
             namespace: NamespaceId::from(namespace),
@@ -236,6 +244,12 @@ mod tests {
     #[test]
     fn test_parse_flush_all_tables_with_semicolon() {
         let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN prod;").unwrap();
+        assert_eq!(stmt.namespace, NamespaceId::from("prod"));
+    }
+
+    #[test]
+    fn test_parse_flush_all_tables_in_namespace_keyword() {
+        let stmt = FlushAllTablesStatement::parse("FLUSH ALL TABLES IN NAMESPACE prod").unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("prod"));
     }
 

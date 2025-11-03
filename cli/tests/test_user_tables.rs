@@ -9,7 +9,6 @@
 //! - Empty queries and result pagination
 //! - Query result display and formatting
 
-
 mod common;
 use common::*;
 
@@ -47,6 +46,10 @@ fn test_cli_basic_query_execution() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
+        .arg("--username")
+        .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--command")
         .arg(&format!("SELECT * FROM {}", full_table_name));
 
@@ -95,6 +98,10 @@ fn test_cli_table_output_formatting() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
+        .arg("--username")
+        .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--command")
         .arg(&format!("SELECT * FROM {}", full_table_name));
 
@@ -145,7 +152,10 @@ fn test_cli_json_output_format() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("test_user")
+        .arg("--username")
+        .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--json")
         .arg("--command")
         .arg(&format!(
@@ -198,7 +208,10 @@ fn test_cli_csv_output_format() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("test_user")
+        .arg("--username")
+        .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--csv")
         .arg("--command")
         .arg(&format!(
@@ -243,12 +256,18 @@ fn test_cli_multiline_query() {
     ));
 
     // Multi-line query with newlines
-    let multi_line_query = format!("SELECT \n  id, \n  content \nFROM \n  {} \nLIMIT 5", full_table_name);
+    let multi_line_query = format!(
+        "SELECT \n  id, \n  content \nFROM \n  {} \nLIMIT 5",
+        full_table_name
+    );
 
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("test_user")
+        .arg("--username")
+        .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--command")
         .arg(&multi_line_query);
 
@@ -274,7 +293,10 @@ fn test_cli_query_with_comments() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("test_user")
+        .arg("--username")
+        .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--command")
         .arg(query_simple);
 
@@ -297,7 +319,10 @@ fn test_cli_empty_query() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("test_user")
+        .arg("--username")
+        .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--command")
         .arg("   ");
 
@@ -344,7 +369,10 @@ fn test_cli_result_pagination() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
-        .arg("test_user")
+        .arg("--username")
+        .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--command")
         .arg(&format!("SELECT * FROM {}", full_table_name));
 

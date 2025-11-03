@@ -1,6 +1,6 @@
 Future:
-1) Alter a table and move it';s storage from storage_id to different one
-2) Support changing stream table TTL via ALTER TABLE
+1) LOW PRIORITY - Alter a table and move it's storage from storage_id to different one
+2) LOW PRIORITY - Support changing stream table TTL via ALTER TABLE
 3) Combine all the subscription logic for stream/user tables into one code base
 6) Make sure _updated timestamp include also nanosecond precision
 7) when reading --file todo-app.sql from the cli ignore the lines with -- since they are comments, and create a test to cover this case
@@ -24,8 +24,6 @@ Future:
 26) Low Priority - Maybe instead of _updated we can use _seq which is a snowflake id for better syncing ability accross distributed nodes
 28) ✅ DONE (2025-10-27) - Namespace struct duplication - YES, was duplicated between kalamdb-core/catalog and kalamdb-commons/system. Now consolidated into single source of truth at `kalamdb-commons/src/models/system.rs`. Removed `kalamdb-core/src/catalog/namespace.rs`. All validation logic (validate_name, can_delete, increment/decrement_table_count) moved to the commons version.
 
-29) instead of pub struct SystemTable name it KalamTable
-30) Make sure the TableSchema which is stored cover everything in one model and not spread into multiple models
 31) SHOW STATS FOR TABLE app.messages; maybe this is better be implemented with information_Schemas tasks
 32) Do we have counter per userId per buffered rows? this will help us tune the select from user table to check if we even need to query the buffer in first place
 33) Add option for a specific user to download all his data this is done with an endpoint in rest api which will create a zip file with all his tables data in parquet format and then provide a link to download it
@@ -56,9 +54,7 @@ Future:
     - Has a deep design for how they should be and also update TASKS.MD and the design here
 
 
-62) ✅ DONE - Add test to flush table and check if the job persisted and completed with results correctly (implemented in test_cli_flush_table and test_cli_flush_all_tables with system.jobs verification)
 63) check for each system table if the results returned cover all the columns defined in the TableSchema
-64) ✅ DONE - Add test to flush all and check if the job persisted and completed with results correctly (implemented in test_cli_flush_all_tables with system.jobs verification for multiple tables)
 65) Add tests to cover the droping table and cleanup inside jobs table as well
 66) Make sure actions like: drop/export/import/flush is having jobs rows when they finishes (TODO: Also check what kind of jobs we have)
 67) test each role the actions he can do and cannot do, to cover the rbac system well, this should be done from the cli
@@ -80,12 +76,69 @@ Also check that registering ctaalogs are done in one place and one session, we s
 79) Need to scan the code to make it more lighweight and less dependencies, by doing that we can lower the file binary size and also memory consumption
 80) More integration tests inside cli tool which covers importing sql files with multiple statements
 81) CLI - add integration tests which cover a real-life use case for chat app with an ai where we have conversations and messages between users and ai agents, real-time streams for ai thinking/thoughts/typing/user online/offline status, and also flushing messages to parquet files and reloading them back
+82) make sure rocksdb is only used inside kalamdb-store
+83) Make sure the sql engine works on the schemas first and from there he can get the actual data of the tables
+84) Divide backend/crates/kalamdb-core/src/sql/executor.rs into multiple files for better maintainability
+85) Jobs model add NamespaceId type
+86) Make node_id: String, into NodeId type
+87) implement a service which answer these kind of things: fn get_memory_usage_mb() and will be used in stats/jobs memory/cpu and other places when needed
+89) When deleting a namespace check if all tables are deleted, re-create the namespace again and check if the tables still exists there, and try to cvreate the same table again and check if it works correctly
+90) Create/alter table support table doesnt return the actual rows affected count
+91) If i set the logging to info inside config.toml i still see debug logs: level = "info"
+92) Check the datatypes converting between rust to arrow datatypes and to rocksdb its named json i dont want to use json for this, i want fast serdes for datatypes, maybe util.rs need to manage both serialize from parquet to arrow arrow to parquet both wys currently its located inside flush folder
+93) Add a new dataType which preserve the timezone info when storing timestamp with timezone
+95) while: [2025-11-01 23:55:16.242] [INFO ] - main - kalamdb_server::lifecycle:413 - Waiting up to 300s for active flush jobs to complete...
+display what active jobs we are waiting on
+96) IMPORTANT - Can we support a full timestamp with nanosecond precision? _updated column currently is in milliseconds only: 2025-11-02T13:45:17.592
+97) check if we have duplicates backend/crates/kalamdb-commons/src/constants.rs and backend/crates/kalamdb-commons/src/system_tables.rs both have system table names defined
+98) IMPORTANT - If no primary key found for a table then we will add our own system column _id to be primary key with snowflake id, make sure this is implemented everywhere correctly
+If the user already specified primary key then we dont do that, the _id we add also should check if the id is indeed unique as well
+99) We are still using NodeId::from(format!("node-{}", std::process::id())) in multiple places we should use the same nodeId from config or context everywhere
+100) JobId need to be shorter its now using timestamp and uuid which is too long, we can use namespace-table-timestamp or even a snowflake id
+101) [2025-11-03 00:11:52.004] [ERROR] - actix-rt|system:0|arbiter:8 - kalamdb_core::tables::user_tables::user_table_flush:490 - Failed to flush 3 rows for user sys_root: Table not found in cache: smoke_ns_1762121503280.user_smoke_1762121503280. Rows kept in buffer.
+[2025-11-03 00:11:52.004] [ERROR] - actix-rt|system:0|arbiter:8 - kalamdb_core::tables::user_tables::user_table_flush:504 - ❌ User table flush failed: table=smoke_ns_1762121503280.user_smoke_1762121503280 — One or more user partitions failed to flush (1 errors). Rows flushed before failure: 0. First error: Failed to flush 3 rows for user sys_root: Table not found in cache: smoke_ns_1762121503280.user_smoke_1762121503280
+[2025-11-03 00:11:52.004] [ERROR] - actix-rt|system:0|arbiter:8 - kalamdb_core::tables::base_flush:348 - ❌ Flush failed: job_id=flush-smoke_ns_1762121503280-user_smoke_1762121503280-1762121512003, table=smoke_ns_1762121503280.user_smoke_1762121503280, duration_ms=0, error=One or more user partitions failed to flush (1 errors). Rows flushed before failure: 0. First error: Failed to flush 3 rows for user sys_root: Table not found in cache: smoke_ns_1762121503280.user_smoke_1762121503280
+[2025-11-03 00:11:52.004] [ERROR] - actix-rt|system:0|arbiter:8 - kalamdb_core::sql::executor:2161 - Flush job failed: job_id=flush-user_smoke_1762121503280-1762121512003-11e214e9-6b12-4115-9a8f-f378eed85f43, error=One or more user partitions failed to flush (1 errors). Rows flushed before failure: 0. First error: Failed to flush 3 rows for user sys_root: Table not found in cache: smoke_ns_1762121503280.user_smoke_1762121503280
+
+
+102) CLI Tests common - Verify that we have a timeout set while we wait for the subscription changes/notifications
+103) Check to see any libraries/dependencies not needed and rmeove them, check each one of the dependencies
+104) backend\crates\kalamdb-core\src\tables\system\tables_v2 is not needed anymore we have schemas which stores the tables/columns, all should be located in the new folder: backend\crates\kalamdb-core\src\tables\system\schemas
+105) when we have Waiting up to 300s for active flush jobs to complete... and the user click CTRL+C again it will force the stopping and mark those jobs as failed with the right error
+
+106) IMPORTANT - Why are we creating a separate provider for each user? couldn't we have one provider which is shared for all user's per table? which we store once in the cache as well and use it and pass it the current UserId each time? (Check also stream tables)
+            // Create provider with the CURRENT user_id (critical for data isolation)
+            let mut provider = UserTableProvider::new(
+                table_id,
+                metadata,
+                schema,
+                table_store,
+                user_id.clone(),
+                user_role,
+                vec![], // parquet_paths - empty for now
+            );
+
+107) Check if we can here combine this with our main cache: backend\crates\kalamdb-core\src\sql\schema_cache.rs, or if this needed anymore?
+
+
+
+
+Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
+	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.
+	2.	Temp Indexing: On each row insert/update, serialize embeddings into a temporary .hnsw file under /tmp/kalamdb/{namespace}/{table}/{column}-hot_index.hnsw for fast incremental indexing.
+	3.	Flush Behavior: During table flush, if {table}/{column}-index.hnsw doesn’t exist, create it from all embeddings in the Parquet batches; otherwise, load and append new vectors while marking any deleted rows in the index.
+	4.	Search Integration: Register a DataFusion scalar function vector_search(column, query_vector, top_k) that loads the HNSW index, filters out deleted entries, and returns nearest row IDs + distances.
+	5.	Job System Hook: Add an async background IndexUpdateJob triggered post-flush to merge temporary indexes, apply deletions, and update last_indexed_batch metadata for each table column.
+
 
 
 IMPORTANT:
-1) Schema information_schema
-2) Datatypes for columns
+1) Done - Schema information_schema
+2) Done - Datatypes for columns
 3) Parametrized Queries
+4) Support update/deleted as a separate join table per user by MAX(_updated)
+5) Storage files compaction
+
 
 Key Findings
 Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB column families yet, resulting in 0 rows flushed

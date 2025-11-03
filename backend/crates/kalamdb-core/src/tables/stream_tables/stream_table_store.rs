@@ -159,7 +159,7 @@ mod tests {
         let all_rows = store.scan_all().unwrap();
         let mut evicted = 0;
 
-        for (key, row) in all_rows {
+        for (_key, row) in all_rows {
             if let Some(ttl) = row.ttl_seconds {
                 if let Ok(inserted) = chrono::DateTime::parse_from_rfc3339(&row.inserted_at) {
                     let expiry = inserted + chrono::Duration::seconds(ttl as i64);

@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! Stress test utilities for concurrent load generation and monitoring
 //!
 //! This module provides reusable utilities for stress testing KalamDB:

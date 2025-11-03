@@ -1577,20 +1577,260 @@ KalamDB supports all DataFusion data types:
 | `BOOLEAN` | True/false | `true`, `false` |
 | `INT` / `INTEGER` | 32-bit signed integer | `42`, `-100` |
 | `BIGINT` | 64-bit signed integer | `9223372036854775807` |
+| `SMALLINT` | 16-bit signed integer | `-32768` to `32767` |
 | `FLOAT` | 32-bit floating point | `3.14` |
 | `DOUBLE` | 64-bit floating point | `2.718281828` |
+| `DECIMAL(p, s)` | Fixed-precision decimal | `DECIMAL(10, 2)` for money |
 | `TEXT` / `VARCHAR` | Variable-length string | `'Hello World'` |
+| `UUID` | 128-bit universally unique identifier | `'550e8400-e29b-41d4-a716-446655440000'` |
 | `TIMESTAMP` | Date and time | `'2025-10-20T15:30:00Z'`, `NOW()` |
 | `DATE` | Date only | `'2025-10-20'` |
 | `TIME` | Time only | `'15:30:00'` |
 | `INTERVAL` | Time duration | `INTERVAL '1 hour'`, `INTERVAL '7 days'` |
-| `BINARY` | Binary data | `X'DEADBEEF'` |
+| `BINARY` / `BYTES` | Binary data | `X'DEADBEEF'` |
 | `JSON` | JSON data (stored as TEXT) | `'{"key": "value"}'` |
+| `EMBEDDING(dimension)` | Fixed-size vector for AI/ML | `EMBEDDING(384)`, `EMBEDDING(768)` |
 
 **Notes**:
 - `TEXT` and `VARCHAR` are equivalent
 - `TIMESTAMP` supports time zones (stored in UTC)
 - `JSON` is stored as TEXT (parse/validate in application)
+- `DECIMAL(precision, scale)` - precision: 1-38 digits, scale ≤ precision
+- `UUID` stored as 16-byte FixedSizeBinary in Arrow/Parquet
+- `EMBEDDING(dimension)` - dimension: 1-8192 (common: 384, 768, 1536, 3072)
+
+### Modern Data Types (Added in v0.2.0)
+
+#### UUID - Universally Unique Identifiers
+
+**Description**: 128-bit identifier following RFC 4122 standard.
+
+**Storage**: 16 bytes (FixedSizeBinary(16) in Arrow/Parquet)
+
+**Usage**:
+```sql
+CREATE USER TABLE app.users (
+  user_id UUID PRIMARY KEY DEFAULT UUID_V7(),
+  email TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Insert with explicit UUID
+INSERT INTO app.users (user_id, email) VALUES 
+  ('550e8400-e29b-41d4-a716-446655440000', 'alice@example.com');
+
+-- UUID functions
+SELECT user_id FROM app.users WHERE user_id = UUID_V7();
+```
+
+#### DECIMAL - Fixed-Precision Numbers
+
+**Description**: Exact numeric type for financial calculations.
+
+**Format**: `DECIMAL(precision, scale)`
+- **precision**: Total digits (1-38)
+- **scale**: Decimal places (≤ precision)
+
+**Storage**: 16 bytes (Decimal128 in Arrow/Parquet)
+
+**Usage**:
+```sql
+CREATE SHARED TABLE app.products (
+  product_id BIGINT PRIMARY KEY,
+  price DECIMAL(10, 2),  -- Up to $99,999,999.99
+  tax_rate DECIMAL(5, 4), -- Up to 9.9999 (e.g., 0.0825 = 8.25%)
+  quantity INT
+);
+
+INSERT INTO app.products (product_id, price, tax_rate, quantity) VALUES
+  (1, 1234.56, 0.0825, 100);
+
+-- Exact arithmetic (no floating-point errors)
+SELECT product_id, price * (1 + tax_rate) AS total_price
+FROM app.products;
+```
+
+**Common Precision/Scale Combinations**:
+- `DECIMAL(10, 2)` - Money (up to $99,999,999.99)
+- `DECIMAL(19, 4)` - High-precision money
+- `DECIMAL(5, 4)` - Percentages/rates (0.0000 to 9.9999)
+
+#### SMALLINT - Space-Efficient Small Integers
+
+**Description**: 16-bit signed integer for small numeric values.
+
+**Range**: -32,768 to 32,767
+
+**Storage**: 2 bytes (Int16 in Arrow/Parquet)
+
+**Usage**:
+```sql
+CREATE USER TABLE app.tasks (
+  task_id BIGINT PRIMARY KEY,
+  priority SMALLINT,  -- -32768 to 32767
+  status_code SMALLINT,  -- e.g., 200, 404, 500
+  retry_count SMALLINT,
+  description TEXT
+);
+
+INSERT INTO app.tasks (task_id, priority, status_code, retry_count, description) VALUES
+  (1, 5, 200, 0, 'High priority task');
+
+-- Efficient storage for enums/status codes
+SELECT * FROM app.tasks WHERE status_code = 200 AND priority > 3;
+```
+
+#### EMBEDDING - Vector Storage for AI/ML
+
+**Description**: Fixed-size float32 vector for semantic search, embeddings, and ML applications.
+
+**Format**: `EMBEDDING(dimension)`
+- **dimension**: Vector size (1-8192)
+- Common dimensions: 384 (MiniLM), 768 (BERT), 1536 (OpenAI text-embedding-3-small), 3072 (OpenAI text-embedding-3-large)
+
+**Storage**: `dimension * 4` bytes (FixedSizeList<Float32> in Arrow/Parquet)
+
+**Usage**:
+```sql
+-- Create table with embeddings
+CREATE USER TABLE app.documents (
+  doc_id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+  content TEXT NOT NULL,
+  embedding EMBEDDING(384),  -- MiniLM sentence embeddings
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Insert document with embedding (from application)
+INSERT INTO app.documents (content, embedding) VALUES
+  ('KalamDB is a real-time database', ARRAY[0.123, -0.456, 0.789, ...]); -- 384 floats
+
+-- Query embeddings (typically for vector search in application layer)
+SELECT doc_id, content, embedding FROM app.documents WHERE doc_id = 123;
+```
+
+**Common Embedding Dimensions**:
+
+| Model | Dimension | Use Case |
+|-------|-----------|----------|
+| `all-MiniLM-L6-v2` | 384 | Fast semantic search |
+| `BERT-base` | 768 | General NLP tasks |
+| `OpenAI text-embedding-3-small` | 1536 | Production embeddings |
+| `OpenAI text-embedding-3-large` | 3072 | High-quality embeddings |
+| `Llama-2-7B` | 4096 | Large language models |
+
+**Performance Characteristics**:
+- **Storage**: EMBEDDING(384) = 1,536 bytes per row
+- **Parquet Compression**: ~30-50% reduction with SNAPPY
+- **Insert Performance**: Same as other column types (included in batch writes)
+- **Query Performance**: Full scan (vector search requires external index)
+
+**Integration with Vector Search**:
+
+KalamDB stores embeddings efficiently but does NOT provide built-in vector similarity search (cosine distance, dot product, etc.). For semantic search:
+
+1. **Store embeddings** in KalamDB EMBEDDING columns
+2. **Retrieve embeddings** via standard SQL queries
+3. **Perform similarity search** in application layer or external vector index (FAISS, Pinecone, Weaviate)
+
+**Example Workflow**:
+
+```rust
+// Application layer
+use kalamdb_client::KalamClient;
+
+// 1. Store document embeddings in KalamDB
+let embedding = model.encode("KalamDB is a real-time database"); // Vec<f32> with 384 dims
+client.execute("INSERT INTO app.documents (content, embedding) VALUES (?, ?)", 
+               &[content, embedding]).await?;
+
+// 2. Retrieve all embeddings for search
+let rows = client.query("SELECT doc_id, embedding FROM app.documents").await?;
+
+// 3. Compute cosine similarity in application
+let query_embedding = model.encode(user_query);
+let results = rows.iter()
+    .map(|row| (row.doc_id, cosine_similarity(&query_embedding, &row.embedding)))
+    .sorted_by(|(_, score1), (_, score2)| score2.partial_cmp(score1))
+    .take(10)
+    .collect();
+```
+
+**Future Enhancements** (Roadmap):
+- Native vector similarity functions: `COSINE_DISTANCE(emb1, emb2)`
+- HNSW index support for approximate nearest neighbor (ANN) search
+- Quantization (int8, binary) for memory efficiency
+- GPU-accelerated similarity computations
+
+**Best Practices**:
+1. **Normalize embeddings** to unit length before storage (enables dot product = cosine similarity)
+2. **Use appropriate dimension** for your model (don't over-provision)
+3. **Batch inserts** for multiple embeddings (use INSERT with multiple VALUES)
+4. **Separate table** for embeddings if not querying with document content
+5. **Compress Parquet files** with SNAPPY or ZSTD (30-50% size reduction)
+
+**Validation**:
+- **Dimension range**: 1 ≤ dimension ≤ 8192
+- **Array length**: Must match declared dimension exactly
+- **Value type**: Float32 (-3.4e38 to 3.4e38)
+
+**Errors**:
+```sql
+-- ❌ Invalid dimension (too large)
+CREATE USER TABLE app.docs (embedding EMBEDDING(10000));
+-- Error: EMBEDDING dimension must be between 1 and 8192
+
+-- ❌ Array length mismatch
+INSERT INTO app.docs (embedding) VALUES (ARRAY[0.1, 0.2]);  -- Expected 384 elements
+-- Error: Expected 384 floats, got 2
+```
+
+### DATETIME and TIMESTAMP Timezone Behavior
+
+**Important**: KalamDB normalizes all `DATETIME` and `TIMESTAMP` values to UTC for storage. **Original timezone offsets are NOT preserved.**
+
+**Behavior**:
+- Input with timezone offset → **Converted to UTC** → Stored without offset
+- Input without timezone → Treated as **local time** → Stored as-is
+- On retrieval → Returned as UTC timestamp (no timezone info)
+
+**Examples**:
+
+```sql
+-- Input: '2025-01-01T12:00:00+02:00' (Berlin time, noon)
+-- Stored: '2025-01-01T10:00:00Z' (UTC, 10:00 AM)
+-- Retrieved: '2025-01-01T10:00:00' (no +00:00 suffix)
+
+-- Input: '2025-01-01T12:00:00' (no timezone specified)
+-- Stored: '2025-01-01T12:00:00' (assumed UTC or local time)
+-- Retrieved: '2025-01-01T12:00:00'
+```
+
+**Best Practices**:
+1. **Always specify timezone offsets** in DATETIME literals: `'2025-01-01T12:00:00+02:00'`
+2. **Store all times in UTC** at the application layer if timezone preservation is needed
+3. **Use a separate column** to store original timezone if required: `user_timezone TEXT`
+
+**Example with Timezone Handling**:
+
+```sql
+CREATE USER TABLE app.events (
+  id BIGINT DEFAULT SNOWFLAKE_ID(),
+  event_time DATETIME NOT NULL,        -- Stored in UTC
+  user_timezone TEXT,                   -- Store original timezone separately
+  description TEXT
+);
+
+-- Insert with explicit timezone (Berlin)
+INSERT INTO app.events (event_time, user_timezone, description) VALUES
+  ('2025-01-01T14:00:00+01:00', 'Europe/Berlin', 'Meeting scheduled');
+
+-- Query: event_time is now '2025-01-01T13:00:00' (UTC)
+-- Use user_timezone column to convert back to local time in application
+```
+
+**Testing Timezone Behavior**:
+
+See `backend/tests/test_datetime_timezone_storage.rs` for comprehensive timezone handling tests demonstrating UTC normalization.
 
 ---
 

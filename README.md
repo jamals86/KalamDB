@@ -21,7 +21,9 @@ Faster operations. Lower infrastructure expenses. Zero waste.
 | **Concurrent Users** | Millions | Per-user table isolation enables horizontal scaling |
 | **Storage Tiers** | 2 | Hot (RocksDB) + Cold (Parquet) with automatic flushing |
 | **Table Types** | 3 | USER (isolated), SHARED (global), STREAM (ephemeral) |
-| **SQL Engine** | DataFusion 35.0 | Full SQL support with 100% standard compatibility |
+| **Data Types** | 16 | BOOLEAN, INT, BIGINT, DOUBLE, FLOAT, TEXT, TIMESTAMP, DATE, DATETIME, TIME, JSON, BYTES, EMBEDDING, UUID, DECIMAL, SMALLINT |
+| **Schema Cache** | >99% | DashMap-based concurrent schema caching with sub-100μs lookups |
+| **SQL Engine** | DataFusion 40.0 | Full SQL support with 100% standard compatibility |
 | **Storage Backends** | 4 | Local, S3, Azure Blob, Google Cloud Storage |
 | **Real-Time** | WebSocket | Live query subscriptions with change tracking |
 | **Auto-ID Generation** | 3 | SNOWFLAKE_ID, UUID_V7, ULID for distributed systems |
@@ -254,15 +256,35 @@ CREATE USER 'db_admin' WITH PASSWORD 'Admin789!' ROLE 'dba' EMAIL 'admin@company
 CREATE USER 'google_sync' WITH OAUTH PROVIDER 'google' SUBJECT 'sync@example.com' ROLE 'service';
 ```
 
-### **Schema Evolution with Backward Compatibility**
-- **ADD/DROP/RENAME Columns**: Live schema changes
-- **Schema Versioning**: All versions stored, queryable
+### **Unified Schema System with Performance Optimization**
+- **Single Source of Truth**: All schema definitions consolidated in `kalamdb-commons` for consistency
+- **Type-Safe Models**: 16 data types with wire format encoding (BOOLEAN, INT, BIGINT, DOUBLE, FLOAT, TEXT, TIMESTAMP, DATE, DATETIME, TIME, JSON, BYTES, EMBEDDING, UUID, DECIMAL, SMALLINT)
+- **Schema Caching**: >99% cache hit rate with DashMap-based concurrent access
+- **Arrow Conversion**: Lossless bidirectional conversion between KalamDB and Apache Arrow types
+- **Column Ordering**: Deterministic SELECT * results via ordinal_position tracking
+- **Schema Versioning**: All versions stored, queryable via `DESCRIBE TABLE HISTORY`
+- **ADD/DROP/RENAME Columns**: Live schema changes with backward compatibility
 - **Automatic Projection**: Old Parquet files adapt to new schema
 - **Breaking Change Prevention**: Cannot drop required columns
 
 ```sql
+-- Create table with modern data types
+CREATE USER TABLE app.messages (
+  id BIGINT DEFAULT SNOWFLAKE_ID(),
+  user_id UUID DEFAULT UUID_V7(),
+  content TEXT,
+  price DECIMAL(10, 2),
+  priority SMALLINT,
+  embedding EMBEDDING(384),  -- Vector embeddings for AI/ML
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Evolve schema safely
 ALTER TABLE app.messages ADD COLUMN reaction TEXT;
 ALTER TABLE app.messages RENAME COLUMN content TO message_text;
+
+-- View schema history
+DESCRIBE TABLE app.messages HISTORY;
 ```
 
 ### **Backup and Restore**
@@ -308,9 +330,14 @@ SELECT * FROM system.users WHERE role = 'dba';
 
 * Three table types (**USER**, **SHARED**, **STREAM**) with isolated storage
 * DataFusion SQL engine with full DDL/DML support
+* **Unified schema system** with type-safe models and >99% cache hit rate (16 data types)
+* **EMBEDDING type** for AI/ML vector storage (FixedSizeList<Float32> in Arrow)
+* **UUID, DECIMAL, SMALLINT** types for modern database applications
 * Sub-millisecond writes (RocksDB hot tier + Parquet cold tier)
 * WebSocket live query subscriptions with change tracking
 * Schema evolution (**ALTER TABLE** with backward compatibility)
+* **Schema caching** with DashMap-based concurrent access
+* **Column ordering** via ordinal_position for deterministic SELECT * results
 * Multi-storage backends (Local, S3, Azure Blob, GCS)
 * Role-based access control (user, service, dba, system)
 * Backup/restore with Parquet file verification

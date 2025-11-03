@@ -14,7 +14,7 @@ use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
 use kalamdb_core::jobs::JobManager;
-use kalamdb_core::live_query::{LiveQueryManager, NodeId};
+use kalamdb_core::live_query::LiveQueryManager;
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
     UserTableService,
@@ -83,8 +83,8 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
             storage_type: "filesystem".to_string(),
             base_directory: "".to_string(),
             credentials: None,
-            shared_tables_template: "{namespace}/{tableName}".to_string(),
-            user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
+            shared_tables_template: config.storage.shared_tables_template.clone(),
+            user_tables_template: config.storage.user_tables_template.clone(),
             created_at: now,
             updated_at: now,
         };
@@ -108,6 +108,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     let shared_table_service = Arc::new(SharedTableService::new(
         shared_table_store.clone(),
         kalam_sql.clone(),
+        config.storage.default_storage_path.clone(),
     ));
     let stream_table_service = Arc::new(StreamTableService::new(
         stream_table_store.clone(),
@@ -139,33 +140,41 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         .expect("Failed to register system schema");
 
     // Register all system tables using centralized function (EntityStore-based v2 providers)
-    let jobs_provider = kalamdb_core::system_table_registration::register_system_tables(
-        &system_schema,
-        backend.clone(),
-    )
-    .expect("Failed to register system tables");
+    let (jobs_provider, schema_store) =
+        kalamdb_core::system_table_registration::register_system_tables(
+            &system_schema,
+            backend.clone(),
+        )
+        .expect("Failed to register system tables");
 
     info!(
         "System tables registered with DataFusion (catalog: {})",
         catalog_name
     );
+    info!(
+        "TableSchemaStore initialized with {} system table schemas",
+        7
+    );
 
     // Storage registry and SQL executor
-    let storage_registry = Arc::new(StorageRegistry::new(kalam_sql.clone()));
+    let storage_registry = Arc::new(StorageRegistry::new(
+        kalam_sql.clone(),
+        config.storage.default_storage_path.clone(),
+    ));
 
     // Create job manager first
     let job_manager = Arc::new(TokioJobManager::new());
 
-    // Live query manager (per-node)
-    let node_id = NodeId::new(format!("{}:{}", config.server.host, config.server.port));
+    // Live query manager (per-node) - use configured node_id
+    let node_id = kalamdb_commons::NodeId::new(config.server.node_id.clone());
     let live_query_manager = Arc::new(LiveQueryManager::new(
         kalam_sql.clone(),
-        node_id,
+        node_id.clone(),
         Some(user_table_store.clone()),
         Some(shared_table_store.clone()),
         Some(stream_table_store.clone()),
     ));
-    info!("LiveQueryManager initialized");
+    info!("LiveQueryManager initialized with node_id: {}", node_id);
 
     let sql_executor = Arc::new(
         SqlExecutor::new(
@@ -186,7 +195,8 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
             kalam_sql.clone(),
         )
         .with_password_complexity(config.auth.enforce_password_complexity)
-        .with_storage_backend(backend.clone()),
+        .with_storage_backend(backend.clone())
+        .with_schema_store(schema_store), // Phase 10: schema_cache is part of unified_cache now
     );
 
     info!(
@@ -227,7 +237,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     // Job executor for stream eviction
     let job_executor = Arc::new(JobExecutor::new(
         jobs_provider.clone(),
-        format!("{}:{}", config.server.host, config.server.port),
+           node_id.clone(),
     ));
 
     // Stream eviction job and scheduler
@@ -339,7 +349,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     create_default_system_user(kalam_sql.clone()).await?;
 
     // Security warning: Check if remote access is enabled with empty root password
-    check_remote_access_security(&config, kalam_sql.clone()).await?;
+    check_remote_access_security(config, kalam_sql.clone()).await?;
 
     Ok(ApplicationComponents {
         session_factory,

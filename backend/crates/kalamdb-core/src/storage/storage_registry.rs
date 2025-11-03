@@ -15,12 +15,29 @@ use std::sync::Arc;
 /// - Validate path templates for correctness
 pub struct StorageRegistry {
     kalam_sql: Arc<KalamSql>,
+    /// Default base path for local filesystem storage when base_directory is empty
+    /// Comes from server config: storage.default_storage_path (e.g., "/data/storage")
+    default_storage_path: String,
 }
 
 impl StorageRegistry {
     /// Create a new StorageRegistry
-    pub fn new(kalam_sql: Arc<KalamSql>) -> Self {
-        Self { kalam_sql }
+    pub fn new(kalam_sql: Arc<KalamSql>, default_storage_path: String) -> Self {
+        use std::path::{Path, PathBuf};
+        // Normalize default path: if relative, resolve against current working directory
+        let normalized = if Path::new(&default_storage_path).is_absolute() {
+            default_storage_path
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(default_storage_path)
+                .to_string_lossy()
+                .into_owned()
+        };
+        Self {
+            kalam_sql,
+            default_storage_path: normalized,
+        }
     }
 
     /// Get a storage configuration by ID
@@ -57,10 +74,18 @@ impl StorageRegistry {
             Some(storage) => {
                 let storage_type = StorageType::from(storage.storage_type.as_str());
 
+                // If base_directory is empty (common for 'local'), substitute default_storage_path
+                let base_directory = if storage.base_directory.trim().is_empty() {
+                    // Normalize to not end with '/'
+                    self.default_storage_path.trim_end_matches('/').to_string()
+                } else {
+                    storage.base_directory
+                };
+
                 let config = StorageConfig::new(
                     storage.storage_id,
                     storage_type,
-                    storage.base_directory,
+                    base_directory,
                     storage.shared_tables_template,
                     storage.user_tables_template,
                     storage.credentials,
@@ -429,6 +454,13 @@ mod tests {
             KalamSql::new(backend).expect("Failed to create KalamSQL for storage registry tests"),
         );
 
-        StorageRegistry::new(kalam_sql)
+        // Use a temp storage base under the temp dir for tests
+        let default_storage_path = db_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("storage")
+            .to_string_lossy()
+            .into_owned();
+        StorageRegistry::new(kalam_sql, default_storage_path)
     }
 }

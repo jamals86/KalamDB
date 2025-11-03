@@ -29,12 +29,13 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::LiveQueryManager;
 use chrono::Utc;
 use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobId, JobType};
+use kalamdb_commons::{JobId, JobType, NodeId};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Metadata for user table flush operations
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Default)]
 pub struct UserTableFlushMetadata {
     /// Number of unique users whose data was flushed
     pub users_count: usize,
@@ -43,28 +44,16 @@ pub struct UserTableFlushMetadata {
     pub errors: Vec<String>,
 }
 
-impl Default for UserTableFlushMetadata {
-    fn default() -> Self {
-        Self {
-            users_count: 0,
-            errors: Vec::new(),
-        }
-    }
-}
 
 /// Metadata for shared table flush operations
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Default)]
 pub struct SharedTableFlushMetadata {
     /// Additional context (reserved for future use)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
 }
 
-impl Default for SharedTableFlushMetadata {
-    fn default() -> Self {
-        Self { context: None }
-    }
-}
 
 /// Flush metadata for different table types
 ///
@@ -199,8 +188,9 @@ pub trait TableFlush: Send + Sync {
     ///
     /// Override to customize node identification.
     /// Default uses process ID.
-    fn node_id(&self) -> String {
-        format!("node-{}", std::process::id())
+    fn node_id(&self) -> NodeId {
+        //TODO: Use the nodeId from global config or context
+        NodeId::from(format!("node-{}", std::process::id()))
     }
 
     /// Generate unique job ID
@@ -492,6 +482,6 @@ mod tests {
         };
 
         let node_id = job.node_id();
-        assert!(node_id.starts_with("node-"));
+        assert!(node_id.as_str().starts_with("node-"));
     }
 }

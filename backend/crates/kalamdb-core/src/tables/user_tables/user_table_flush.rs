@@ -10,17 +10,20 @@
 //! - Only implements unique logic: multi-file flush grouped by user_id
 
 use crate::catalog::{NamespaceId, TableName, UserId};
+use crate::catalog::SchemaCache; // Phase 10: Use unified cache instead of old TableCache
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
-use crate::storage::{ParquetWriter, StorageRegistry};
+use crate::live_query::NodeId;
+use crate::storage::ParquetWriter;
 use crate::stores::system_table::UserTableStoreExt;
 use crate::tables::base_flush::{FlushExecutor, FlushJobResult, TableFlush};
 use crate::tables::UserTableStore;
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use kalamdb_commons::models::StorageType;
+use kalamdb_commons::models::TableId; // Phase 10: Arc<TableId> optimization
 use serde_json::Value as JsonValue;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,28 +32,30 @@ use std::sync::Arc;
 ///
 /// Flushes data from RocksDB to Parquet files, grouping by UserId.
 /// Implements `TableFlush` trait for common job tracking/metrics.
+///
+/// **Phase 10 Optimization (T318)**: Stores Arc<TableId> to avoid repeated allocations
+/// during cache lookups. Uses unified SchemaCache for storage path resolution.
 pub struct UserTableFlushJob {
     /// UserTableStore for accessing table data
     store: Arc<UserTableStore>,
 
-    /// Namespace ID
+    /// Composite table identifier (Phase 10: Arc for zero-allocation cache lookups)
+    table_id: Arc<TableId>,
+
+    /// Namespace ID (kept for backward compatibility with existing code)
     namespace_id: NamespaceId,
 
-    /// Table name
+    /// Table name (kept for backward compatibility with existing code)
     table_name: TableName,
 
     /// Arrow schema for the table
     schema: SchemaRef,
 
-    /// Storage location template (may contain ${user_id})
-    /// DEPRECATED: Use storage_registry instead (T170)
-    storage_location: String,
-
-    /// Storage registry for dynamic storage resolution (T170)
-    storage_registry: Option<Arc<StorageRegistry>>,
+    /// Unified SchemaCache for dynamic storage path resolution (Phase 10 - replaces TableCache)
+    unified_cache: Arc<SchemaCache>,
 
     /// Node ID for job tracking
-    node_id: String,
+    node_id: NodeId,
 
     /// Optional LiveQueryManager for flush notifications
     live_query_manager: Option<Arc<LiveQueryManager>>,
@@ -58,30 +63,34 @@ pub struct UserTableFlushJob {
 
 impl UserTableFlushJob {
     /// Create a new user table flush job
+    ///
+    /// # Arguments
+    /// * `table_id` - Arc<TableId> created once at registration (Phase 10: zero-allocation cache lookups)
+    /// * `store` - UserTableStore for accessing table data
+    /// * `namespace_id` - Namespace ID (kept for backward compatibility)
+    /// * `table_name` - Table name (kept for backward compatibility)
+    /// * `schema` - Arrow schema for the table
+    /// * `unified_cache` - Unified SchemaCache for storage path resolution (Phase 10)
     pub fn new(
+        table_id: Arc<TableId>,
         store: Arc<UserTableStore>,
         namespace_id: NamespaceId,
         table_name: TableName,
         schema: SchemaRef,
-        storage_location: String,
+        unified_cache: Arc<SchemaCache>,
     ) -> Self {
-        let node_id = format!("node-{}", std::process::id());
+        //TODO: Use the nodeId from global config or context
+        let node_id = NodeId::from(format!("node-{}", std::process::id()));
         Self {
             store,
+            table_id,
             namespace_id,
             table_name,
             schema,
-            storage_location,
-            storage_registry: None,
+            unified_cache,
             node_id,
             live_query_manager: None,
         }
-    }
-
-    /// Set the StorageRegistry for dynamic storage resolution (builder pattern)
-    pub fn with_storage_registry(mut self, registry: Arc<StorageRegistry>) -> Self {
-        self.storage_registry = Some(registry);
-        self
     }
 
     /// Set the LiveQueryManager for flush notifications (builder pattern)
@@ -97,54 +106,30 @@ impl UserTableFlushJob {
         FlushExecutor::execute_with_tracking(self, self.namespace_id.clone())
     }
 
-    /// Substitute ${user_id} in storage path template (DEPRECATED)
-    fn substitute_user_id_in_path(&self, user_id: &UserId) -> String {
-        self.storage_location
-            .replace("${user_id}", user_id.as_str())
-    }
-
-    /// Resolve storage path for a user using StorageRegistry (T170-T170c)
+    /// Resolve storage path for a specific user (Phase 10 - T318)
+    ///
+    /// Uses unified SchemaCache to get storage path template and substitutes {userId}.
+    /// Implements zero-allocation cache lookup using `&*self.table_id`.
+    ///
+    /// # Arguments
+    /// * `user_id` - The user ID to substitute into the template
+    ///
+    /// # Returns
+    /// Tuple of (full_path, optional_credentials)
     fn resolve_storage_path_for_user(
         &self,
         user_id: &UserId,
     ) -> Result<(String, Option<JsonValue>), KalamDbError> {
-        if let Some(ref registry) = self.storage_registry {
-            let storage = registry
-                .get_storage_config("local")?
-                .ok_or_else(|| KalamDbError::NotFound("Storage 'local' not found".to_string()))?;
+        // Phase 10: Use unified cache with zero-allocation lookup
+        let full_path = self.unified_cache.get_storage_path(
+            &*self.table_id,
+            Some(user_id),   // Pass UserId reference directly
+            None,            // No sharding for now
+        )?;
 
-            let path = storage
-                .user_tables_template()
-                .replace("{namespace}", self.namespace_id.as_str())
-                .replace("{tableName}", self.table_name.as_str())
-                .replace("{userId}", user_id.as_str())
-                .replace("{shard}", "");
-
-            let full_path = if storage.base_directory().is_empty() {
-                path
-            } else {
-                format!(
-                    "{}/{}",
-                    storage.base_directory().trim_end_matches('/'),
-                    path.trim_start_matches('/')
-                )
-            };
-
-            let credentials = if matches!(storage.storage_type(), StorageType::S3) {
-                match storage.credentials() {
-                    Some(raw) => Some(serde_json::from_str::<JsonValue>(raw).map_err(|e| {
-                        KalamDbError::Other(format!("Invalid S3 credentials JSON: {}", e))
-                    })?),
-                    None => None,
-                }
-            } else {
-                None
-            };
-
-            Ok((full_path, credentials))
-        } else {
-            Ok((self.substitute_user_id_in_path(user_id), None))
-        }
+        // For now, we return None for credentials as they'll be handled by ParquetWriter
+        // Future work: Extend SchemaCache to include credential resolution
+        Ok((full_path, None))
     }
 
     /// Generate batch filename with ISO 8601 timestamp
@@ -189,8 +174,89 @@ impl UserTableFlushJob {
         rows: &[(Vec<u8>, JsonValue)],
     ) -> Result<RecordBatch, KalamDbError> {
         let mut builder = crate::flush::util::JsonBatchBuilder::new(self.schema.clone())?;
-        for (_, row) in rows {
-            builder.push_object_row(row)?;
+
+        // Helper: fill id/created_at if missing and non-nullable according to schema
+        fn generate_numeric_id() -> i64 {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            use std::time::{SystemTime, UNIX_EPOCH};
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            let c = COUNTER.fetch_add(1, Ordering::SeqCst) % 4096; // 12 bits
+            let id = now_ms.saturating_mul(1000).saturating_add(c);
+            id as i64
+        }
+
+        for (key_bytes, row) in rows.iter() {
+            // Parse row_id from the composite key to backfill primary key if missing
+            let key_str = String::from_utf8_lossy(key_bytes).to_string();
+            let (_user_from_key, row_id_from_key) = match self.parse_user_key(&key_str) {
+                Ok((u, r)) => (u, r),
+                Err(_) => (String::new(), String::new()),
+            };
+            let mut patched = row.clone();
+            if let Some(obj) = patched.as_object_mut() {
+                for field in self.schema.fields() {
+                    let name = field.name();
+                    // Only handle known generated columns here
+                    if name == "id" {
+                        let missing = !obj.contains_key(name)
+                            || obj.get(name).map(|v| v.is_null()).unwrap_or(true);
+                        if missing && !field.is_nullable() {
+                            use datafusion::arrow::datatypes::DataType;
+                            match field.data_type() {
+                                DataType::Int64 => {
+                                    if let Ok(parsed) = row_id_from_key.parse::<i64>() {
+                                        obj.insert(name.to_string(), serde_json::json!(parsed));
+                                    } else {
+                                        obj.insert(
+                                            name.to_string(),
+                                            serde_json::json!(generate_numeric_id()),
+                                        );
+                                    }
+                                }
+                                DataType::Utf8 => {
+                                    let to_set = if !row_id_from_key.is_empty() {
+                                        row_id_from_key.clone()
+                                    } else {
+                                        generate_numeric_id().to_string()
+                                    };
+                                    obj.insert(name.to_string(), serde_json::json!(to_set));
+                                }
+                                _ => {
+                                    // Unsupported id type; leave as is to surface error clearly
+                                }
+                            }
+                        }
+                    } else if name == "created_at" {
+                        let missing = !obj.contains_key(name)
+                            || obj.get(name).map(|v| v.is_null()).unwrap_or(true);
+                        if missing && !field.is_nullable() {
+                            use datafusion::arrow::datatypes::DataType;
+                            let now_ms = chrono::Utc::now().timestamp_millis();
+                            match field.data_type() {
+                                DataType::Int64 => {
+                                    obj.insert(name.to_string(), serde_json::json!(now_ms));
+                                }
+                                DataType::Utf8 => {
+                                    obj.insert(
+                                        name.to_string(),
+                                        serde_json::json!(chrono::Utc::now().to_rfc3339()),
+                                    );
+                                }
+                                DataType::Timestamp(_, _) => {
+                                    // Builder expects millis for TsMs
+                                    obj.insert(name.to_string(), serde_json::json!(now_ms));
+                                }
+                                _ => { /* leave as null */ }
+                            }
+                        }
+                    }
+                }
+            }
+            builder.push_object_row(&patched)?;
         }
         builder.finish()
     }
@@ -309,7 +375,7 @@ impl TableFlush for UserTableFlushJob {
             rows_scanned += 1;
 
             // Decode row
-            let user_table_row: crate::models::UserTableRow =
+            let user_table_row: crate::tables::user_tables::user_table_store::UserTableRow =
                 match serde_json::from_slice(&value_bytes) {
                     Ok(v) => v,
                     Err(e) => {
@@ -329,7 +395,10 @@ impl TableFlush for UserTableFlushJob {
             }
 
             // Convert to JSON value and inject system columns
-            let mut row_data = JsonValue::Object(user_table_row.fields);
+            let mut row_data = match user_table_row.fields {
+                serde_json::Value::Object(map) => JsonValue::Object(map),
+                other => other,
+            };
             if let Some(obj) = row_data.as_object_mut() {
                 obj.insert(
                     "_updated".to_string(),
@@ -357,7 +426,7 @@ impl TableFlush for UserTableFlushJob {
             // Group by user_id
             rows_by_user
                 .entry(user_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push((key_bytes, row_data));
 
             if rows_scanned % 1000 == 0 {
@@ -434,6 +503,23 @@ impl TableFlush for UserTableFlushJob {
             }
         }
 
+        // If any user flush failed, treat the entire job as failed (per SQL spec)
+        if !error_messages.is_empty() {
+            let summary = format!(
+                "One or more user partitions failed to flush ({} errors). Rows flushed before failure: {}. First error: {}",
+                error_messages.len(),
+                total_rows_flushed,
+                error_messages.first().cloned().unwrap_or_else(|| "unknown error".to_string())
+            );
+            log::error!(
+                "❌ User table flush failed: table={}.{} — {}",
+                self.namespace_id.as_str(),
+                self.table_name.as_str(),
+                summary
+            );
+            return Err(KalamDbError::Other(summary));
+        }
+
         log::info!(
             "✅ User table flush completed: table={}.{}, rows_flushed={}, users_count={}, parquet_files={}",
             self.namespace_id.as_str(),
@@ -492,8 +578,8 @@ impl TableFlush for UserTableFlushJob {
         self.live_query_manager.as_ref()
     }
 
-    fn node_id(&self) -> String {
-        self.node_id.clone()
+        fn node_id(&self) -> NodeId {
+            self.node_id.clone()
     }
 }
 

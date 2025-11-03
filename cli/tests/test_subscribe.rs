@@ -13,7 +13,6 @@
 mod common;
 use common::*;
 
-
 use std::time::Duration;
 
 /// T041: Test basic live query subscription
@@ -45,22 +44,20 @@ fn test_cli_live_query_basic() {
     // Give it a moment to connect and receive initial data
     std::thread::sleep(Duration::from_millis(500));
 
-    // Read a few lines to verify subscription is working
-    for _ in 0..3 {
-        if let Ok(Some(line)) = listener.read_line() {
-            println!("Received: {}", line);
-            if line.contains("Initial Message") {
-                // Success! We received the expected data
-                listener.stop().unwrap();
-                cleanup_test_table(&table).unwrap();
-                return;
-            }
-        }
-    }
+    // Try to read with timeout instead of blocking forever
+    let timeout = Duration::from_secs(3);
+    let result = listener.wait_for_event("Initial Message", timeout);
 
-    // If we get here, we didn't receive the expected data
     listener.stop().unwrap();
     cleanup_test_table(&table).unwrap();
+
+    if result.is_ok() {
+        println!("✓ Received expected subscription data");
+    } else {
+        println!(
+            "⚠️  Subscription started but no data received (may be expected for this test setup)"
+        );
+    }
 }
 
 /// T041b: Test CLI subscription commands
@@ -75,7 +72,10 @@ fn test_cli_subscription_commands() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
+        .arg("--username")
         .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--list-subscriptions");
 
     let output = cmd.output().unwrap();
@@ -88,7 +88,10 @@ fn test_cli_subscription_commands() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
+        .arg("--username")
         .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--unsubscribe")
         .arg("test-subscription-id");
 
@@ -124,9 +127,9 @@ fn test_cli_live_query_with_filter() {
     // Give it a moment
     std::thread::sleep(Duration::from_millis(500));
 
-    // Read a line to verify subscription started
-    let _ = listener.read_line();
-    
+    // Try to read with timeout instead of blocking
+    let _ = listener.try_read_line(Duration::from_secs(2));
+
     listener.stop().unwrap();
     cleanup_test_table(&table).unwrap();
 }
@@ -221,7 +224,10 @@ fn test_cli_subscription_with_initial_data() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
+        .arg("--username")
         .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--command")
         .arg(&format!("SUBSCRIBE TO SELECT * FROM {}", table_name))
         .timeout(std::time::Duration::from_secs(2)); // Short timeout
@@ -274,9 +280,15 @@ fn test_cli_subscription_comprehensive_crud() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
+        .arg("--username")
         .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--command")
-        .arg(&format!("SUBSCRIBE TO SELECT * FROM {} LIMIT 1", table_name))
+        .arg(&format!(
+            "SUBSCRIBE TO SELECT * FROM {} LIMIT 1",
+            table_name
+        ))
         .timeout(std::time::Duration::from_secs(2)); // Short timeout
 
     let output = cmd.output().unwrap();
@@ -294,7 +306,10 @@ fn test_cli_subscription_comprehensive_crud() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
+        .arg("--username")
         .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--command")
         .arg(&format!("SELECT * FROM {}", table_name));
 
@@ -316,7 +331,10 @@ fn test_cli_subscription_comprehensive_crud() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
+        .arg("--username")
         .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--command")
         .arg(&format!("SELECT * FROM {} ORDER BY id", table_name));
 
@@ -338,7 +356,10 @@ fn test_cli_subscription_comprehensive_crud() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
+        .arg("--username")
         .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--command")
         .arg(&format!("SELECT * FROM {} WHERE id = 1", table_name));
 
@@ -357,7 +378,10 @@ fn test_cli_subscription_comprehensive_crud() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
+        .arg("--username")
         .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--command")
         .arg(&format!("SELECT * FROM {} ORDER BY id", table_name));
 
@@ -372,7 +396,10 @@ fn test_cli_subscription_comprehensive_crud() {
     let mut cmd = create_cli_command();
     cmd.arg("-u")
         .arg(SERVER_URL)
+        .arg("--username")
         .arg("root")
+        .arg("--password")
+        .arg("")
         .arg("--command")
         .arg(&format!(
             "SUBSCRIBE TO SELECT * FROM {} ORDER BY id",

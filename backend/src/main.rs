@@ -35,6 +35,7 @@ async fn main() -> Result<()> {
         &config.logging.level,
         &config.logging.file_path,
         config.logging.log_to_console,
+        Some(&config.logging.targets),
     )?;
 
     // Display enhanced version information

@@ -508,7 +508,6 @@ impl Handler<SendNotification> for WebSocketSession {
 mod tests {
     use super::*;
     use kalamdb_core::live_query::{LiveQueryManager, NodeId};
-    use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
     #[test]

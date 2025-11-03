@@ -6,8 +6,9 @@
 //! - RocksDB buffer with Parquet persistence
 //! - Flush policy support (row/time/combined)
 
-use crate::catalog::{NamespaceId, TableMetadata, TableName};
+use crate::catalog::{NamespaceId, SchemaCache, TableName, TableType};
 use crate::error::KalamDbError;
+use crate::tables::base_table_provider::{BaseTableProvider, TableProviderCore};
 use crate::tables::arrow_json_conversion::{
     arrow_batch_to_json, json_rows_to_arrow_batch, validate_insert_rows,
 };
@@ -21,6 +22,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_commons::models::TableId; // Phase 10: Arc<TableId> optimization
 use kalamdb_store::EntityStoreV2 as EntityStore;
 use serde_json::Value as JsonValue;
 use std::any::Any;
@@ -35,12 +37,12 @@ use std::sync::Arc;
 /// - Flush to Parquet
 ///
 /// **Key Difference from User Tables**: Single storage location (no ${user_id} templating)
+///
+/// **Phase 10 Optimization**: Uses unified SchemaCache as single source of truth for table metadata
+/// **Phase 3B**: Uses TableProviderCore to consolidate common provider fields
 pub struct SharedTableProvider {
-    /// Table metadata (namespace, table name, type, etc.)
-    table_metadata: TableMetadata,
-
-    /// Arrow schema for the table (includes system columns)
-    schema: SchemaRef,
+    /// Core provider fields (table_id, schema, cache, etc.)
+    core: TableProviderCore,
 
     /// SharedTableStore for data operations
     store: Arc<SharedTableStore>,
@@ -49,8 +51,8 @@ pub struct SharedTableProvider {
 impl std::fmt::Debug for SharedTableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SharedTableProvider")
-            .field("table_metadata", &self.table_metadata)
-            .field("schema", &self.schema)
+            .field("table_id", self.core.table_id())
+            .field("schema", &self.core.schema_ref())
             .field("store", &"<SharedTableStore>")
             .finish()
     }
@@ -60,38 +62,43 @@ impl SharedTableProvider {
     /// Create a new shared table provider
     ///
     /// # Arguments
-    /// * `table_metadata` - Table metadata (namespace, table name, type, etc.)
+    /// * `table_id` - Arc<TableId> created once at registration (Phase 10: zero-allocation cache lookups)
+    /// * `unified_cache` - Reference to unified SchemaCache for metadata lookups
     /// * `schema` - Arrow schema for the table (with system columns)
     /// * `store` - SharedTableStore for data operations
     pub fn new(
-        table_metadata: TableMetadata,
+        table_id: Arc<TableId>,
+        unified_cache: Arc<SchemaCache>,
         schema: SchemaRef,
         store: Arc<SharedTableStore>,
     ) -> Self {
-        Self {
-            table_metadata,
+        let core = TableProviderCore::new(
+            table_id,
+            TableType::Shared,
             schema,
-            store,
-        }
+            None, // storage_id - will be fetched from cache when needed
+            unified_cache,
+        );
+        Self { core, store }
     }
 
     /// Get the column family name for this shared table
     pub fn column_family_name(&self) -> String {
         format!(
             "shared_table:{}:{}",
-            self.table_metadata.namespace.as_str(),
-            self.table_metadata.table_name.as_str()
+            self.core.namespace().as_str(),
+            self.core.table_name().as_str()
         )
     }
 
     /// Get the namespace ID
     pub fn namespace_id(&self) -> &NamespaceId {
-        &self.table_metadata.namespace
+        self.core.namespace()
     }
 
     /// Get the table name
     pub fn table_name(&self) -> &TableName {
-        &self.table_metadata.table_name
+        self.core.table_name()
     }
 
     /// INSERT operation
@@ -172,7 +179,7 @@ impl SharedTableProvider {
     /// - NOT NULL constraints (non-nullable columns must have values)
     /// - Data type compatibility (basic type checking)
     fn validate_insert_rows_local(&self, rows: &[JsonValue]) -> Result<(), String> {
-        validate_insert_rows(&self.schema, rows)
+        validate_insert_rows(&self.core.schema_ref(), rows)
     }
 
     /// DELETE operation (soft delete)
@@ -213,6 +220,20 @@ impl SharedTableProvider {
     }
 }
 
+impl BaseTableProvider for SharedTableProvider {
+    fn table_id(&self) -> &kalamdb_commons::models::TableId {
+        self.core.table_id()
+    }
+
+    fn schema_ref(&self) -> SchemaRef {
+        self.core.schema_ref()
+    }
+
+    fn table_type(&self) -> crate::catalog::TableType {
+        self.core.table_type()
+    }
+}
+
 // DataFusion TableProvider trait implementation
 #[async_trait]
 impl TableProvider for SharedTableProvider {
@@ -222,7 +243,7 @@ impl TableProvider for SharedTableProvider {
 
     fn schema(&self) -> SchemaRef {
         // Add system columns to the schema if they don't already exist
-        let mut fields = self.schema.fields().to_vec();
+        let mut fields = self.core.schema_ref().fields().to_vec();
 
         // Check if _updated already exists
         if !fields.iter().any(|f| f.name() == "_updated") {
@@ -386,7 +407,7 @@ impl TableProvider for SharedTableProvider {
 
         // Return empty execution plan (INSERT returns no rows)
         use datafusion::physical_plan::empty::EmptyExec;
-        Ok(Arc::new(EmptyExec::new(self.schema.clone())))
+        Ok(Arc::new(EmptyExec::new(self.core.schema_ref())))
     }
 }
 
@@ -513,7 +534,16 @@ mod tests {
     use super::*;
     use crate::catalog::TableType;
     use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+    use kalamdb_commons::StorageId;
     use kalamdb_store::test_utils::{InMemoryBackend, TestDb};
+
+    /// Phase 10: Create Arc<TableId> for test providers (avoids allocation on every cache lookup)
+    fn create_test_table_id() -> Arc<TableId> {
+        Arc::new(TableId::new(
+            NamespaceId::new("app"),
+            TableName::new("config"),
+        ))
+    }
 
     fn create_test_provider() -> (SharedTableProvider, TestDb) {
         let test_db = TestDb::new(&["shared_table:app:config"]).unwrap();
@@ -529,25 +559,45 @@ mod tests {
             Field::new("_deleted", DataType::Boolean, false),
         ]));
 
-        let metadata = TableMetadata {
-            table_name: TableName::new("config"),
-            table_type: TableType::Shared,
-            namespace: NamespaceId::new("app"),
-            created_at: chrono::Utc::now(),
-            storage_location: "/data/shared".to_string(),
-            flush_policy: crate::flush::FlushPolicy::RowLimit { row_limit: 1000 },
-            schema_version: 1,
-            deleted_retention_hours: Some(24),
-        };
+        // Build unified cache with CachedTableData for tests
+        use crate::catalog::{CachedTableData, SchemaCache};
+        use kalamdb_commons::models::schemas::TableDefinition;
+
+        let unified_cache = Arc::new(SchemaCache::new(0, None));
+
+        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("config"));
+        let td: Arc<TableDefinition> = Arc::new(
+            TableDefinition::new_with_defaults(
+                NamespaceId::new("app"),
+                TableName::new("config"),
+                TableType::Shared,
+                vec![], // Empty columns for test
+                None,
+            ).unwrap()
+        );
+
+        let data = CachedTableData::new(
+            table_id.clone(),
+            TableType::Shared,
+            chrono::Utc::now(),
+            Some(StorageId::new("local")),
+            crate::flush::FlushPolicy::RowLimit { row_limit: 1000 },
+            "/data/{namespace}/{tableName}/".to_string(),
+            1,
+            Some(24),
+            td,
+        );
+
+        unified_cache.insert(table_id.clone(), Arc::new(data));
 
         let store = Arc::new(
             crate::tables::shared_tables::shared_table_store::new_shared_table_store(
                 Arc::new(InMemoryBackend::new()),
-                &metadata.namespace,
-                &metadata.table_name,
+                &table_id.namespace_id(),
+                &table_id.table_name(),
             ),
         );
-        let provider = SharedTableProvider::new(metadata, schema, store);
+        let provider = SharedTableProvider::new(create_test_table_id(), unified_cache, schema, store);
 
         (provider, test_db)
     }

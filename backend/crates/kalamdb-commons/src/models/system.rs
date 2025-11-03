@@ -45,24 +45,14 @@
 //!     deleted_at: None,
 //! };
 //! ```
-
-use crate::{
-    models::{JobId, LiveQueryId, TableId, UserName},
-    AuthType, JobStatus, JobType, NamespaceId, Role, StorageId, StorageMode, TableAccess,
-    TableName, TableType, UserId,
+use super::{
+    JobId, LiveQueryId, NamespaceId, NodeId, Role, StorageId, TableId, TableName, UserId, UserName,
+};
+use crate::models::{
+    schemas::TableType, AuthType, JobStatus, JobType, StorageMode, TableAccess,
 };
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
-
-/// User entity for system.users table.
-///
-/// Represents a user account with authentication credentials and metadata.
-///
-/// ## Fields
-/// - `id`: Unique user identifier
-/// - `username`: Unique username for login
-/// - `password_hash`: Bcrypt hash of password (for password auth type)
-/// - `role`: User role (User, Service, Dba, System)
 /// - `email`: Optional email address
 /// - `auth_type`: Authentication method (Password, OAuth, Internal)
 /// - `auth_data`: JSON blob for auth-specific data (e.g., OAuth provider/subject)
@@ -180,7 +170,8 @@ pub struct Job {
     pub created_at: i64,           // Unix timestamp in milliseconds
     pub started_at: Option<i64>,   // Unix timestamp in milliseconds
     pub completed_at: Option<i64>, // Unix timestamp in milliseconds
-    pub node_id: String,
+        #[bincode(with_serde)]
+        pub node_id: NodeId,
     pub error_message: Option<String>,
 }
 
@@ -190,7 +181,7 @@ impl Job {
         job_id: JobId,
         job_type: JobType,
         namespace_id: NamespaceId,
-        node_id: String,
+        node_id: NodeId,
     ) -> Self {
         let now = chrono::Utc::now().timestamp_millis();
         Self {
@@ -412,12 +403,12 @@ impl Namespace {
 /// - `namespace`: Namespace ID
 /// - `table_type`: Type of table (USER, SHARED, STREAM, SYSTEM)
 /// - `created_at`: Unix timestamp in milliseconds when table was created
-/// - `storage_location`: Storage location path
-/// - `storage_id`: Optional storage configuration ID
+/// - `storage_id`: Optional storage configuration ID (references system.storages)
 /// - `use_user_storage`: Whether to use user-specific storage
 /// - `flush_policy`: Flush policy configuration (JSON)
 /// - `schema_version`: Current schema version
 /// - `deleted_retention_hours`: Hours to retain deleted rows
+/// - `access_level`: Access level for shared tables (PUBLIC, PRIVATE, RESTRICTED)
 ///
 /// ## Serialization
 /// - **RocksDB**: Bincode (compact binary format)
@@ -435,14 +426,19 @@ impl Namespace {
 ///     namespace: NamespaceId::new("default"),
 ///     table_type: TableType::User,
 ///     created_at: 1730000000000,
-///     storage_location: "/data/tables".to_string(),
 ///     storage_id: Some(StorageId::new("storage_1")),
 ///     use_user_storage: false,
 ///     flush_policy: "{}".to_string(),
 ///     schema_version: 1,
 ///     deleted_retention_hours: 24,
+///     access_level: None,
 /// };
 /// ```
+///
+/// Note:
+/// - SystemTable is the registry metadata for a table (IDs, namespace, storage, access, lifecycle).
+/// - `schemas::TableDefinition` defines the logical columnar schema and table options (columns, PKs, TTL, etc.).
+/// - They are complementary, not interchangeable. SystemTable references the active `schema_version` of the logical TableDefinition.
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
 pub struct SystemTable {
     pub table_id: TableId,
@@ -450,16 +446,18 @@ pub struct SystemTable {
     pub namespace: NamespaceId,
     pub table_type: TableType,
     pub created_at: i64, // Unix timestamp in milliseconds
-    pub storage_location: String,
     pub storage_id: Option<StorageId>,
     pub use_user_storage: bool,
-    pub flush_policy: String, // JSON
+    pub flush_policy: String, // JSON TODO: Why not use a struct here?
     pub schema_version: i32,
     pub deleted_retention_hours: i32,
     /// Access level for SHARED tables (public, private, restricted)
     /// NULL for USER and SYSTEM tables (they have different access control)
     pub access_level: Option<TableAccess>,
 }
+
+/// Alias for clarity when referring to registry metadata
+pub type TableMetadata = SystemTable;
 
 /// Storage configuration in system_storages table
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -636,8 +634,8 @@ pub struct UserTableCounter {
 /// Table schema version in system_table_schemas table
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TableSchema {
-    pub schema_id: String, // PK
-    pub table_id: String,
+    pub schema_id: String, // PK (composite: table_id + version)
+    pub table_id: TableId,
     pub version: i32,
     pub arrow_schema: String, // Arrow schema as JSON
     pub created_at: i64,
@@ -689,7 +687,7 @@ mod tests {
             created_at: 1730000000000,
             started_at: Some(1730000000000),
             completed_at: Some(1730000300000),
-            node_id: "server-01".to_string(),
+            node_id: NodeId::from("server-01"),
             error_message: None,
         };
 
@@ -725,7 +723,6 @@ mod tests {
             namespace: NamespaceId::new("default"),
             table_type: TableType::User,
             created_at: 1730000000000,
-            storage_location: "/data/tables".to_string(),
             storage_id: Some(StorageId::new("storage_1")),
             use_user_storage: false,
             flush_policy: "{}".to_string(),
@@ -815,7 +812,7 @@ mod tests {
             JobId::new("job_123"),
             JobType::Flush,
             NamespaceId::new("default"),
-            "server-01".to_string(),
+              NodeId::from("server-01"),
         )
         .with_table_name(TableName::new("events"))
         .with_parameters(r#"["param1", "param2"]"#.to_string());
@@ -831,7 +828,7 @@ mod tests {
             JobId::new("job_123"),
             JobType::Flush,
             NamespaceId::new("default"),
-            "server-01".to_string(),
+              NodeId::from("server-01"),
         );
 
         assert_eq!(job.status, JobStatus::Running);

@@ -166,3 +166,6 @@ base64 = { workspace = true }
 bcrypt = { workspace = true }
 datafusion = { workspace = true }
 libc = { workspace = true }
+parquet = { workspace = true }
+arrow = { workspace = true }
+hex = { workspace = true }

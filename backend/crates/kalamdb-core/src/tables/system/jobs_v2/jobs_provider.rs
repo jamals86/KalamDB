@@ -274,7 +274,7 @@ impl SystemTableProviderExt for JobsTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::{JobStatus, JobType, NamespaceId, TableName};
+    use kalamdb_commons::{JobStatus, JobType, NamespaceId, NodeId, TableName};
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> JobsTableProvider {
@@ -297,7 +297,7 @@ mod tests {
             created_at: 1000,
             started_at: Some(1000),
             completed_at: None,
-            node_id: "server-01".to_string(),
+                node_id: NodeId::from("server-01"),
             error_message: None,
         }
     }

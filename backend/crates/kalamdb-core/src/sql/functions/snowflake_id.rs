@@ -136,7 +136,6 @@ impl ScalarUDFImpl for SnowflakeIdFunction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::array::Array;
     use datafusion::logical_expr::ScalarUDF;
     use std::collections::HashSet;
 
@@ -222,7 +221,6 @@ mod tests {
 
     #[test]
     // Removed: direct invoke with arguments test due to DataFusion API changes
-    #[test]
     fn test_snowflake_id_return_type() {
         let func_impl = SnowflakeIdFunction::new();
         let return_type = func_impl.return_type(&[]);

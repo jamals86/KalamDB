@@ -75,18 +75,28 @@ pub fn parse_optional_in_clause(sql: &str, command: &str) -> DdlResult<Option<St
     // Check for IN clause
     if sql_upper.contains(" IN ") {
         let in_pos = sql_upper.find(" IN ").unwrap();
-        let namespace_part = sql_trimmed[in_pos + 4..].trim();
+        let after_in_orig = sql_trimmed[in_pos + 4..].trim();
+        let after_in_upper = sql_upper[in_pos + 4..].trim();
 
-        if namespace_part.is_empty() {
+        if after_in_upper.is_empty() {
             return Err("Namespace name required after IN".to_string());
         }
 
-        let namespace_name = namespace_part
-            .split_whitespace()
-            .next()
-            .ok_or_else(|| "Namespace name required after IN".to_string())?;
+        // Support optional "NAMESPACE" keyword: "IN NAMESPACE <ns>"
+        // We operate on the original-cased slice to preserve identifier case
+        let mut parts_orig = after_in_orig.split_whitespace();
+        let first_token_orig = parts_orig.next().ok_or_else(|| "Namespace name required after IN".to_string())?;
 
-        Ok(Some(namespace_name.to_string()))
+        if first_token_orig.eq_ignore_ascii_case("NAMESPACE") {
+            // Expect a namespace name after the NAMESPACE keyword
+            let ns = parts_orig
+                .next()
+                .ok_or_else(|| "Namespace name required after IN NAMESPACE".to_string())?;
+            Ok(Some(ns.to_string()))
+        } else {
+            // Classic form: IN <namespace>
+            Ok(Some(first_token_orig.to_string()))
+        }
     } else if sql_upper.ends_with(" IN") {
         Err("Namespace name required after IN".to_string())
     } else {
@@ -342,6 +352,10 @@ mod tests {
 
         // With IN clause
         let result = parse_optional_in_clause("SHOW TABLES IN myapp", "SHOW TABLES").unwrap();
+        assert_eq!(result.unwrap(), "myapp");
+
+        // With IN NAMESPACE clause
+        let result = parse_optional_in_clause("SHOW TABLES IN NAMESPACE myapp", "SHOW TABLES").unwrap();
         assert_eq!(result.unwrap(), "myapp");
 
         // Missing namespace after IN

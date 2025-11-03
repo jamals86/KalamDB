@@ -48,7 +48,10 @@ pub struct CreateUserStatement {
     /// Optional email address
     pub email: Option<String>,
 
-    /// Password (only for Password auth type)
+    /// Secret or credentials payload:
+    /// - For AuthType::Password: the plaintext password (will be hashed by executor)
+    /// - For AuthType::OAuth: a JSON string with provider/subject (e.g. '{"provider":"google","subject":"123"}')
+    /// - For AuthType::Internal: None
     pub password: Option<String>,
 }
 
@@ -66,8 +69,8 @@ impl CreateUserStatement {
             return Err("SQL must start with CREATE USER".to_string());
         }
 
-        // Extract username (quoted string after CREATE USER)
-        let username = extract_quoted_keyword_value(&normalized, "USER")?;
+        // Extract username after CREATE USER (accept quoted or unquoted)
+        let username = extract_keyword_value(&normalized, "USER")?;
 
         // Determine auth type
         let auth_type = if normalized.to_uppercase().contains("WITH PASSWORD") {
@@ -83,11 +86,17 @@ impl CreateUserStatement {
             );
         };
 
-        // Extract password if auth type is Password
-        let password = if auth_type == AuthType::Password {
-            Some(extract_quoted_keyword_value(&normalized, "PASSWORD")?)
-        } else {
-            None
+        // Extract secret/credentials depending on auth type
+        let password = match auth_type {
+            AuthType::Password => {
+                // CREATE USER 'u' WITH PASSWORD 'secret'
+                Some(extract_quoted_keyword_value(&normalized, "PASSWORD")?)
+            }
+            AuthType::OAuth => {
+                // OAuth users don't have passwords in SQL (credentials managed externally)
+                None
+            }
+            AuthType::Internal => None,
         };
 
         // Extract role (required)
@@ -229,6 +238,7 @@ impl AlterUserStatement {
 /// Syntax:
 /// ```sql
 /// DROP USER 'username';
+/// DROP USER IF EXISTS 'username';
 /// ```
 ///
 /// Example:
@@ -239,6 +249,8 @@ impl AlterUserStatement {
 pub struct DropUserStatement {
     /// Username to delete
     pub username: String,
+    /// If true, do not error when the user does not exist
+    pub if_exists: bool,
 }
 
 impl DropUserStatement {
@@ -253,10 +265,25 @@ impl DropUserStatement {
             return Err("SQL must start with DROP USER".to_string());
         }
 
-        // Extract username
-        let username = extract_quoted_keyword_value(&normalized, "USER")?;
+        // Detect IF EXISTS (optional)
+        let if_exists = sql_upper.contains("DROP USER IF EXISTS");
 
-        Ok(DropUserStatement { username })
+        // Username can appear either after USER or after IF EXISTS depending on syntax form
+        // Supported forms:
+        // - DROP USER 'alice'
+        // - DROP USER IF EXISTS 'alice'
+        let username = if if_exists {
+            // Extract quoted value after EXISTS
+            extract_quoted_keyword_value(&normalized, "EXISTS")?
+        } else {
+            // Extract quoted value after USER
+            extract_quoted_keyword_value(&normalized, "USER")?
+        };
+
+        Ok(DropUserStatement {
+            username,
+            if_exists,
+        })
     }
 }
 
@@ -284,12 +311,15 @@ mod tests {
     fn test_parse_create_user_with_oauth() {
         let sql = "CREATE USER 'oauth_user' WITH OAUTH ROLE viewer EMAIL 'user@example.com'";
         let result = CreateUserStatement::parse(sql);
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
         let stmt = result.unwrap();
         assert_eq!(stmt.username, "oauth_user");
         assert_eq!(stmt.auth_type, AuthType::OAuth);
+        eprintln!("Password (should be None): {:?}", stmt.password);
+        eprintln!("Email (should be Some): {:?}", stmt.email);
         assert_eq!(stmt.password, None);
         assert_eq!(stmt.role, Role::User); // viewer maps to User
+        assert_eq!(stmt.email, Some("user@example.com".to_string()));
     }
 
     #[test]
@@ -337,6 +367,14 @@ mod tests {
         assert!(result.is_ok());
         let stmt = result.unwrap();
         assert_eq!(stmt.username, "alice");
+        assert!(!stmt.if_exists);
+
+        let sql2 = "DROP USER IF EXISTS 'bob'";
+        let result2 = DropUserStatement::parse(sql2);
+        assert!(result2.is_ok());
+        let stmt2 = result2.unwrap();
+        assert_eq!(stmt2.username, "bob");
+        assert!(stmt2.if_exists);
     }
 
     #[test]
