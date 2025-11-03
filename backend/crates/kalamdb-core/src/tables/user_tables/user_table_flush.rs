@@ -10,7 +10,7 @@
 //! - Only implements unique logic: multi-file flush grouped by user_id
 
 use crate::catalog::{NamespaceId, TableName, UserId};
-use crate::catalog::TableCache;
+use crate::catalog::SchemaCache; // Phase 10: Use unified cache instead of old TableCache
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::live_query::NodeId;
@@ -21,6 +21,7 @@ use crate::tables::UserTableStore;
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
+use kalamdb_commons::models::TableId; // Phase 10: Arc<TableId> optimization
 use serde_json::Value as JsonValue;
 
 use std::collections::HashMap;
@@ -31,21 +32,27 @@ use std::sync::Arc;
 ///
 /// Flushes data from RocksDB to Parquet files, grouping by UserId.
 /// Implements `TableFlush` trait for common job tracking/metrics.
+///
+/// **Phase 10 Optimization (T318)**: Stores Arc<TableId> to avoid repeated allocations
+/// during cache lookups. Uses unified SchemaCache for storage path resolution.
 pub struct UserTableFlushJob {
     /// UserTableStore for accessing table data
     store: Arc<UserTableStore>,
 
-    /// Namespace ID
+    /// Composite table identifier (Phase 10: Arc for zero-allocation cache lookups)
+    table_id: Arc<TableId>,
+
+    /// Namespace ID (kept for backward compatibility with existing code)
     namespace_id: NamespaceId,
 
-    /// Table name
+    /// Table name (kept for backward compatibility with existing code)
     table_name: TableName,
 
     /// Arrow schema for the table
     schema: SchemaRef,
 
-    /// TableCache for dynamic storage path resolution (Phase 9 - T202)
-    table_cache: Arc<TableCache>,
+    /// Unified SchemaCache for dynamic storage path resolution (Phase 10 - replaces TableCache)
+    unified_cache: Arc<SchemaCache>,
 
     /// Node ID for job tracking
     node_id: NodeId,
@@ -56,21 +63,31 @@ pub struct UserTableFlushJob {
 
 impl UserTableFlushJob {
     /// Create a new user table flush job
+    ///
+    /// # Arguments
+    /// * `table_id` - Arc<TableId> created once at registration (Phase 10: zero-allocation cache lookups)
+    /// * `store` - UserTableStore for accessing table data
+    /// * `namespace_id` - Namespace ID (kept for backward compatibility)
+    /// * `table_name` - Table name (kept for backward compatibility)
+    /// * `schema` - Arrow schema for the table
+    /// * `unified_cache` - Unified SchemaCache for storage path resolution (Phase 10)
     pub fn new(
+        table_id: Arc<TableId>,
         store: Arc<UserTableStore>,
         namespace_id: NamespaceId,
         table_name: TableName,
         schema: SchemaRef,
-        table_cache: Arc<TableCache>,
+        unified_cache: Arc<SchemaCache>,
     ) -> Self {
         //TODO: Use the nodeId from global config or context
         let node_id = NodeId::from(format!("node-{}", std::process::id()));
         Self {
             store,
+            table_id,
             namespace_id,
             table_name,
             schema,
-            table_cache,
+            unified_cache,
             node_id,
             live_query_manager: None,
         }
@@ -89,12 +106,10 @@ impl UserTableFlushJob {
         FlushExecutor::execute_with_tracking(self, self.namespace_id.clone())
     }
 
-    /// Resolve storage path for a specific user (Phase 9 - T202)
+    /// Resolve storage path for a specific user (Phase 10 - T318)
     ///
-    /// Gets the partially-resolved template from TableCache and substitutes {userId}.
-    /// This implements the two-stage resolution:
-    /// 1. TableCache has already resolved {namespace}, {tableName} (cached)
-    /// 2. This method resolves {userId} per-request (dynamic)
+    /// Uses unified SchemaCache to get storage path template and substitutes {userId}.
+    /// Implements zero-allocation cache lookup using `&*self.table_id`.
     ///
     /// # Arguments
     /// * `user_id` - The user ID to substitute into the template
@@ -105,20 +120,15 @@ impl UserTableFlushJob {
         &self,
         user_id: &UserId,
     ) -> Result<(String, Option<JsonValue>), KalamDbError> {
-        // Get partially-resolved template from TableCache (Phase 9)
-        // Template has {namespace}, {tableName} already substituted but {userId} remains
-        let partial_template = self.table_cache.get_storage_path(
-            &self.namespace_id,
-            &self.table_name,
+        // Phase 10: Use unified cache with zero-allocation lookup
+        let full_path = self.unified_cache.get_storage_path(
+            &*self.table_id,
+            Some(user_id),   // Pass UserId reference directly
+            None,            // No sharding for now
         )?;
 
-        // Substitute dynamic placeholders per-request
-        let full_path = partial_template
-            .replace("{userId}", user_id.as_str())
-            .replace("{shard}", ""); // TODO: Implement sharding logic if needed
-
         // For now, we return None for credentials as they'll be handled by ParquetWriter
-        // Future work: Extend TableCache to include credential resolution
+        // Future work: Extend SchemaCache to include credential resolution
         Ok((full_path, None))
     }
 

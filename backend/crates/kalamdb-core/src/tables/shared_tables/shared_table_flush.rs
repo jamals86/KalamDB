@@ -9,7 +9,8 @@
 //! - Uses `FlushExecutor::execute_with_tracking()` for common workflow
 //! - Only implements unique logic: single-file flush for all rows
 
-use crate::catalog::{NamespaceId, TableCache, TableName};
+use crate::catalog::{NamespaceId, TableName};
+use crate::catalog::SchemaCache; // Phase 10: Use unified cache instead of old TableCache
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::live_query::NodeId;
@@ -21,6 +22,7 @@ use crate::tables::SharedTableStore;
 use chrono::Utc;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
+use kalamdb_commons::models::TableId; // Phase 10: Arc<TableId> optimization
 use serde_json::Value as JsonValue;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,21 +31,27 @@ use std::sync::Arc;
 ///
 /// Flushes data from RocksDB to a single Parquet file.
 /// Implements `TableFlush` trait for common job tracking/metrics.
+///
+/// **Phase 10 Optimization (T319)**: Stores Arc<TableId> to avoid repeated allocations
+/// during cache lookups. Uses unified SchemaCache for storage path resolution.
 pub struct SharedTableFlushJob {
     /// SharedTableStore for accessing table data
     store: Arc<SharedTableStore>,
 
-    /// Namespace ID
+    /// Composite table identifier (Phase 10: Arc for zero-allocation cache lookups)
+    table_id: Arc<TableId>,
+
+    /// Namespace ID (kept for backward compatibility with existing code)
     namespace_id: NamespaceId,
 
-    /// Table name
+    /// Table name (kept for backward compatibility with existing code)
     table_name: TableName,
 
     /// Arrow schema for the table
     schema: SchemaRef,
 
-    /// TableCache for dynamic storage path resolution (Phase 9)
-    table_cache: Arc<TableCache>,
+    /// Unified SchemaCache for dynamic storage path resolution (Phase 10 - replaces TableCache)
+    unified_cache: Arc<SchemaCache>,
 
     /// Node ID for job tracking
     node_id: NodeId,
@@ -54,21 +62,31 @@ pub struct SharedTableFlushJob {
 
 impl SharedTableFlushJob {
     /// Create a new shared table flush job
+    ///
+    /// # Arguments
+    /// * `table_id` - Arc<TableId> created once at registration (Phase 10: zero-allocation cache lookups)
+    /// * `store` - SharedTableStore for accessing table data
+    /// * `namespace_id` - Namespace ID (kept for backward compatibility)
+    /// * `table_name` - Table name (kept for backward compatibility)
+    /// * `schema` - Arrow schema for the table
+    /// * `unified_cache` - Unified SchemaCache for storage path resolution (Phase 10)
     pub fn new(
+        table_id: Arc<TableId>,
         store: Arc<SharedTableStore>,
         namespace_id: NamespaceId,
         table_name: TableName,
         schema: SchemaRef,
-        table_cache: Arc<TableCache>,
+        unified_cache: Arc<SchemaCache>,
     ) -> Self {
         //TODO: Use the nodeId from global config or context
         let node_id = NodeId::from(format!("node-{}", std::process::id()));
         Self {
             store,
+            table_id,
             namespace_id,
             table_name,
             schema,
-            table_cache,
+            unified_cache,
             node_id,
             live_query_manager: None,
         }
@@ -224,12 +242,14 @@ impl TableFlush for SharedTableFlushJob {
         // Convert rows to RecordBatch
         let batch = self.rows_to_record_batch(&rows)?;
 
-        // Determine output path via TableCache templates (Phase 9)
+        // Determine output path via unified SchemaCache (Phase 10 - T319)
         let batch_filename = self.generate_batch_filename();
-        let partial = self
-            .table_cache
-            .get_storage_path(&self.namespace_id, &self.table_name)?;
-        let table_dir = PathBuf::from(partial.replace("{shard}", ""));
+        let full_path = self.unified_cache.get_storage_path(
+            &*self.table_id,  // Phase 10: Zero-allocation cache lookup
+            None,             // No user_id for shared tables
+            None,             // No sharding for now
+        )?;
+        let table_dir = PathBuf::from(full_path);
         let output_path = table_dir.join(&batch_filename);
 
         // Ensure directory exists
@@ -330,6 +350,20 @@ mod tests {
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_store::{test_utils::TestDb, RocksDBBackend};
 
+    /// Phase 10: Create Arc<TableId> for test jobs (avoids allocation on every cache lookup)
+    fn create_test_table_id() -> Arc<TableId> {
+        Arc::new(TableId::new(
+            NamespaceId::new("test"),
+            TableName::new("test_table"),
+        ))
+    }
+
+    /// Phase 10: Create mock unified cache for tests
+    fn create_test_cache() -> Arc<SchemaCache> {
+        // For now, create empty cache - in real scenarios this would be populated
+        Arc::new(SchemaCache::new(100, None))
+    }
+
     #[test]
     fn test_generate_batch_filename() {
         let test_db = TestDb::new(&["shared_table:test:test_table"]).unwrap();
@@ -339,6 +373,7 @@ mod tests {
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
         let job = SharedTableFlushJob::new(
+            create_test_table_id(),
             Arc::new(SharedTableStore::new(
                 backend,
                 "shared_table:test:test_table",
@@ -346,7 +381,7 @@ mod tests {
             namespace_id,
             table_name,
             schema,
-            Arc::new(TableCache::new()),
+            create_test_cache(),
         );
 
         let filename = job.generate_batch_filename();
@@ -363,6 +398,7 @@ mod tests {
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
         let job = SharedTableFlushJob::new(
+            create_test_table_id(),
             Arc::new(SharedTableStore::new(
                 backend,
                 "shared_table:test_ns:test_table",
@@ -370,7 +406,7 @@ mod tests {
             namespace_id,
             table_name,
             schema,
-            Arc::new(TableCache::new()),
+            create_test_cache(),
         );
 
         assert_eq!(job.table_identifier(), "test_ns.test_table");

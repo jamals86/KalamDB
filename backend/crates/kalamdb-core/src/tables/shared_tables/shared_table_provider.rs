@@ -21,6 +21,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_commons::models::TableId; // Phase 10: Arc<TableId> optimization
 use kalamdb_store::EntityStoreV2 as EntityStore;
 use serde_json::Value as JsonValue;
 use std::any::Any;
@@ -35,7 +36,13 @@ use std::sync::Arc;
 /// - Flush to Parquet
 ///
 /// **Key Difference from User Tables**: Single storage location (no ${user_id} templating)
+///
+/// **Phase 10 Optimization**: Stores Arc<TableId> to avoid repeated allocations
+/// during cache lookups (created once at registration, reused for all queries).
 pub struct SharedTableProvider {
+    /// Composite table identifier (Phase 10: Arc for zero-allocation cache lookups)
+    table_id: Arc<TableId>,
+
     /// Table metadata (namespace, table name, type, etc.)
     table_metadata: TableMetadata,
 
@@ -60,15 +67,18 @@ impl SharedTableProvider {
     /// Create a new shared table provider
     ///
     /// # Arguments
+    /// * `table_id` - Arc<TableId> created once at registration (Phase 10: zero-allocation cache lookups)
     /// * `table_metadata` - Table metadata (namespace, table name, type, etc.)
     /// * `schema` - Arrow schema for the table (with system columns)
     /// * `store` - SharedTableStore for data operations
     pub fn new(
+        table_id: Arc<TableId>,
         table_metadata: TableMetadata,
         schema: SchemaRef,
         store: Arc<SharedTableStore>,
     ) -> Self {
         Self {
+            table_id,
             table_metadata,
             schema,
             store,
@@ -516,6 +526,14 @@ mod tests {
     use kalamdb_commons::StorageId;
     use kalamdb_store::test_utils::{InMemoryBackend, TestDb};
 
+    /// Phase 10: Create Arc<TableId> for test providers (avoids allocation on every cache lookup)
+    fn create_test_table_id() -> Arc<TableId> {
+        Arc::new(TableId::new(
+            NamespaceId::new("app"),
+            TableName::new("config"),
+        ))
+    }
+
     fn create_test_provider() -> (SharedTableProvider, TestDb) {
         let test_db = TestDb::new(&["shared_table:app:config"]).unwrap();
 
@@ -548,7 +566,7 @@ mod tests {
                 &metadata.table_name,
             ),
         );
-        let provider = SharedTableProvider::new(metadata, schema, store);
+        let provider = SharedTableProvider::new(create_test_table_id(), metadata, schema, store);
 
         (provider, test_db)
     }

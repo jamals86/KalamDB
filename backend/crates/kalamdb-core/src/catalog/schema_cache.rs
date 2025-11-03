@@ -419,6 +419,88 @@ impl SchemaCache {
     pub fn is_empty(&self) -> bool {
         self.cache.is_empty()
     }
+
+    /// Resolve partial storage path template for a table
+    ///
+    /// Substitutes static placeholders ({namespace}, {tableName}) and leaves
+    /// dynamic placeholders ({userId}, {shard}) for per-request substitution.
+    ///
+    /// # Arguments
+    /// * `namespace` - Namespace identifier
+    /// * `table_name` - Table name
+    /// * `table_type` - Table type (determines template selection)
+    /// * `storage_id` - Storage configuration reference
+    ///
+    /// # Returns
+    /// Partially-resolved template path with static placeholders substituted
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use kalamdb_core::catalog::SchemaCache;
+    /// # use kalamdb_core::storage::StorageRegistry;
+    /// # use kalamdb_commons::models::{NamespaceId, TableName, StorageId};
+    /// # use kalamdb_commons::schemas::TableType;
+    /// # use std::sync::Arc;
+    /// # let registry = Arc::new(StorageRegistry::new());
+    /// let cache = SchemaCache::new(1000, Some(registry));
+    /// let template = cache.resolve_storage_path_template(
+    ///     &NamespaceId::new("my_ns"),
+    ///     &TableName::new("messages"),
+    ///     TableType::User,
+    ///     &StorageId::new("local")
+    /// )?;
+    /// // Returns: "/data/my_ns/messages/{userId}/"
+    /// # Ok::<(), kalamdb_core::error::KalamDbError>(())
+    /// ```
+    pub fn resolve_storage_path_template(
+        &self,
+        namespace: &NamespaceId,
+        table_name: &TableName,
+        table_type: TableType,
+        storage_id: &StorageId,
+    ) -> Result<String, KalamDbError> {
+        // Get storage registry (required for resolution)
+        let registry = self.storage_registry.as_ref().ok_or_else(|| {
+            KalamDbError::Other(
+                "StorageRegistry not set on SchemaCache - call with_storage_registry()".to_string(),
+            )
+        })?;
+
+        // Query storage config from system.storages
+        let storage_config = registry
+            .get_storage_config(storage_id.as_str())?
+            .ok_or_else(|| {
+                KalamDbError::Other(format!("Storage config not found: {}", storage_id))
+            })?;
+
+        // Select template based on table type
+        let template = match table_type {
+            TableType::User => &storage_config.user_tables_template,
+            TableType::Shared | TableType::System => &storage_config.shared_tables_template,
+            TableType::Stream => {
+                // Stream tables don't use Parquet storage
+                return Ok(String::new());
+            }
+        };
+
+        // Substitute STATIC placeholders only
+        let partial_path = template
+            .replace("{namespace}", namespace.as_str())
+            .replace("{tableName}", table_name.as_str());
+
+        // Build full path: <base_directory>/<partial_template>/
+        let full_path = if storage_config.base_directory.is_empty() {
+            format!("/{}/", partial_path.trim_matches('/'))
+        } else {
+            format!(
+                "{}/{}/",
+                storage_config.base_directory.trim_end_matches('/'),
+                partial_path.trim_matches('/')
+            )
+        };
+
+        Ok(full_path)
+    }
 }
 
 impl Default for SchemaCache {

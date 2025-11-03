@@ -196,7 +196,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         )
         .with_password_complexity(config.auth.enforce_password_complexity)
         .with_storage_backend(backend.clone())
-        .with_schema_infrastructure(schema_store, schema_cache),
+        .with_schema_store(schema_store), // Phase 10: schema_cache is part of unified_cache now
     );
 
     info!(

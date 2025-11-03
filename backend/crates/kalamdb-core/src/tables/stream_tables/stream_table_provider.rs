@@ -21,6 +21,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::{Expr, TableType as DataFusionTableType};
 use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_commons::models::TableId; // Phase 10: Arc<TableId> optimization
 use kalamdb_store::EntityStoreV2 as EntityStore;
 use serde_json::Value as JsonValue;
 use std::any::Any;
@@ -35,7 +36,13 @@ use std::sync::Arc;
 /// - Real-time event delivery
 ///
 /// **Important**: Stream tables do NOT have system columns (_updated, _deleted)
+///
+/// **Phase 10 Optimization**: Stores Arc<TableId> to avoid repeated allocations
+/// during cache lookups (created once at registration, reused for all queries).
 pub struct StreamTableProvider {
+    /// Composite table identifier (Phase 10: Arc for zero-allocation cache lookups)
+    table_id: Arc<TableId>,
+
     /// Table metadata (namespace, table name, type, etc.)
     table_metadata: TableMetadata,
 
@@ -79,6 +86,7 @@ impl StreamTableProvider {
     /// Create a new stream table provider
     ///
     /// # Arguments
+    /// * `table_id` - Arc<TableId> created once at registration (Phase 10: zero-allocation cache lookups)
     /// * `table_metadata` - Table metadata (namespace, table name, type, etc.)
     /// * `schema` - Arrow schema for the table (NO system columns)
     /// * `store` - StreamTableStore for event operations
@@ -86,6 +94,7 @@ impl StreamTableProvider {
     /// * `ephemeral` - If true, only store events if subscribers exist
     /// * `max_buffer` - Optional maximum buffer size
     pub fn new(
+        table_id: Arc<TableId>,
         table_metadata: TableMetadata,
         schema: SchemaRef,
         store: Arc<StreamTableStore>,
@@ -94,6 +103,7 @@ impl StreamTableProvider {
         max_buffer: Option<usize>,
     ) -> Self {
         Self {
+            table_id,
             table_metadata,
             schema,
             store,
@@ -499,6 +509,14 @@ mod tests {
     use kalamdb_store::test_utils::TestDb;
     use serde_json::json;
 
+    /// Phase 10: Create Arc<TableId> for test providers (avoids allocation on every cache lookup)
+    fn create_test_table_id() -> Arc<TableId> {
+        Arc::new(TableId::new(
+            NamespaceId::new("app"),
+            TableName::new("events"),
+        ))
+    }
+
     fn create_test_provider() -> (StreamTableProvider, TestDb) {
         let test_db = TestDb::new(&["stream_app:events"]).unwrap();
 
@@ -525,6 +543,7 @@ mod tests {
         ));
 
         let provider = StreamTableProvider::new(
+            create_test_table_id(),
             table_metadata,
             schema,
             store,
@@ -645,6 +664,7 @@ mod tests {
         ));
 
         let provider = StreamTableProvider::new(
+            create_test_table_id(),
             table_metadata,
             schema,
             store,
@@ -731,6 +751,7 @@ mod tests {
         ));
 
         let provider = StreamTableProvider::new(
+            create_test_table_id(),
             table_metadata,
             schema,
             store,
@@ -784,6 +805,7 @@ mod tests {
         let live_queries = Arc::new(LiveQueriesTableProvider::new(kalam_sql.adapter().backend()));
 
         let provider = StreamTableProvider::new(
+            create_test_table_id(),
             table_metadata,
             schema,
             store,
@@ -839,6 +861,7 @@ mod tests {
         let live_queries = Arc::new(LiveQueriesTableProvider::new(kalam_sql.adapter().backend()));
 
         let provider = StreamTableProvider::new(
+            create_test_table_id(),
             table_metadata,
             schema,
             store,

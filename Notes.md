@@ -118,6 +118,8 @@ If the user already specified primary key then we dont do that, the _id we add a
                 vec![], // parquet_paths - empty for now
             );
 
+107) Check if we can here combine this with our main cache: backend\crates\kalamdb-core\src\sql\schema_cache.rs, or if this needed anymore?
+
 
 
 

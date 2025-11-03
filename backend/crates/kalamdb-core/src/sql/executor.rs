@@ -155,14 +155,10 @@ pub struct SqlExecutor {
     job_manager: Option<Arc<dyn crate::jobs::JobManager>>,
     // Live query manager for subscription coordination
     live_query_manager: Option<Arc<crate::live_query::LiveQueryManager>>,
-    // Phase 15 (008-schema-consolidation): Schema store and cache for DESCRIBE TABLE
+    // Phase 15 (008-schema-consolidation): Schema store for system table definitions
     schema_store: Option<Arc<crate::tables::system::schemas::TableSchemaStore>>,
-    // Phase 10 (Cache Consolidation): Unified cache replaces both schema_cache and table_cache
+    // Phase 10 (Cache Consolidation): Unified cache replaces both old schema_cache and table_cache
     unified_cache: Option<Arc<crate::catalog::SchemaCache>>,
-    // OLD Phase 15 cache - to be deleted after migration
-    schema_cache: Option<Arc<crate::tables::system::schemas::SchemaCache>>,
-    // OLD Phase 9 cache - to be deleted after migration
-    table_cache: Option<Arc<crate::catalog::TableCache>>,
     enforce_password_complexity: bool,
 }
 
@@ -231,27 +227,18 @@ impl SqlExecutor {
             job_manager: None,
             live_query_manager: None,
             schema_store: None,
-            schema_cache: None, // OLD - to be deleted
-            table_cache: None, // OLD - to be deleted
-            unified_cache: None, // Phase 10: Initialize unified cache (will be set via with_storage_registry)
+            unified_cache: None, // Phase 10: Unified cache (set via with_storage_registry)
             enforce_password_complexity: false,
         }
     }
 
     /// Set the storage registry (optional, for storage template validation)
     pub fn with_storage_registry(mut self, registry: Arc<crate::storage::StorageRegistry>) -> Self {
-        // Phase 10: Initialize unified SchemaCache instead of dual TableCache + SchemaCache
+        // Phase 10: Initialize unified SchemaCache (replaces old dual-cache architecture)
         let unified_cache = Arc::new(
             crate::catalog::SchemaCache::new(10000, Some(registry.clone()))
         );
         self.unified_cache = Some(unified_cache);
-        
-        // OLD Phase 9: Initialize TableCache for backward compatibility during migration
-        let table_cache = Arc::new(
-            crate::catalog::TableCache::new()
-                .with_storage_registry(registry.clone())
-        );
-        self.table_cache = Some(table_cache);
         
         self.storage_registry = Some(registry);
         self
@@ -312,14 +299,13 @@ impl SqlExecutor {
         self
     }
 
-    /// Phase 15 (008-schema-consolidation): Set schema store and cache for DESCRIBE TABLE
-    pub fn with_schema_infrastructure(
+    /// Phase 15 (008-schema-consolidation): Set schema store for DESCRIBE TABLE
+    /// Note: SchemaCache is now part of unified_cache, set via with_storage_registry()
+    pub fn with_schema_store(
         mut self,
         schema_store: Arc<crate::tables::system::schemas::TableSchemaStore>,
-        schema_cache: Arc<crate::tables::system::schemas::SchemaCache>,
     ) -> Self {
         self.schema_store = Some(schema_store);
-        self.schema_cache = Some(schema_cache);
         self
     }
 
@@ -449,16 +435,8 @@ impl SqlExecutor {
             Some(StorageId::new("local")), // Default storage
         );
 
-        // Phase 9: Add table to cache for path resolution
-        if let Some(ref cache) = self.table_cache {
-            cache.insert(table_metadata.clone());
-            log::debug!(
-                "Added table to cache: {}.{} (type: {:?})",
-                namespace_id.as_str(),
-                table_name.as_str(),
-                table_type
-            );
-        }
+        // Phase 10: Table will be added to unified_cache in cache_table_metadata() 
+        // after full metadata is available (T311-T314)
 
         match table_type {
             TableType::User => {
@@ -476,7 +454,14 @@ impl SqlExecutor {
                     KalamDbError::InvalidOperation("SharedTableStore not configured".to_string())
                 })?;
 
+                // Phase 10: Create Arc<TableId> once for zero-allocation cache lookups
+                let table_id = Arc::new(kalamdb_commons::models::TableId::new(
+                    namespace_id.clone(),
+                    table_name.clone(),
+                ));
+
                 let provider = Arc::new(SharedTableProvider::new(
+                    table_id,
                     table_metadata,
                     schema,
                     store.clone(),
@@ -505,7 +490,14 @@ impl SqlExecutor {
                     KalamDbError::InvalidOperation("StreamTableStore not configured".to_string())
                 })?;
 
+                // Phase 10: Create Arc<TableId> once for zero-allocation cache lookups
+                let table_id = Arc::new(kalamdb_commons::models::TableId::new(
+                    namespace_id.clone(),
+                    table_name.clone(),
+                ));
+
                 let mut provider = StreamTableProvider::new(
+                    table_id,
                     table_metadata,
                     schema,
                     store.clone(),
@@ -596,6 +588,107 @@ impl SqlExecutor {
                 namespace_name, namespace_name
             )));
         }
+        Ok(())
+    }
+
+    /// Helper (T311): Cache newly created table in unified SchemaCache
+    ///
+    /// Builds CachedTableData with resolved storage path template and inserts into cache.
+    ///
+    /// # Arguments
+    /// * `namespace` - Namespace identifier
+    /// * `table_name` - Table name
+    /// * `table_type` - Table type
+    /// * `storage_id` - Storage configuration reference
+    /// * `flush_policy_ddl` - Flush policy from DDL parser
+    /// * `arrow_schema` - Arrow schema from CREATE TABLE statement
+    /// * `schema_version` - Current schema version
+    /// * `deleted_retention_hours` - Soft delete retention period
+    fn cache_table_metadata(
+        &self,
+        namespace: &CommonNamespaceId,
+        table_name: &kalamdb_commons::models::TableName,
+        table_type: TableType,
+        storage_id: &StorageId,
+        flush_policy_ddl: Option<kalamdb_sql::ddl::FlushPolicy>,
+        arrow_schema: Arc<arrow::datatypes::Schema>,
+        schema_version: u32,
+        deleted_retention_hours: Option<u32>,
+    ) -> Result<(), KalamDbError> {
+        // Skip caching if unified_cache not initialized
+        let cache = match &self.unified_cache {
+            Some(c) => c,
+            None => return Ok(()), // Cache not initialized - skip
+        };
+
+        // Convert DDL FlushPolicy to core FlushPolicy
+        use kalamdb_sql::ddl::FlushPolicy as DdlFlushPolicy;
+        let flush_policy = match flush_policy_ddl {
+            Some(DdlFlushPolicy::RowLimit { row_limit }) => {
+                crate::flush::FlushPolicy::RowLimit { row_limit }
+            }
+            Some(DdlFlushPolicy::TimeInterval { interval_seconds }) => {
+                crate::flush::FlushPolicy::TimeInterval { interval_seconds }
+            }
+            Some(DdlFlushPolicy::Combined {
+                row_limit,
+                interval_seconds,
+            }) => crate::flush::FlushPolicy::Combined {
+                row_limit,
+                interval_seconds,
+            },
+            None => crate::flush::FlushPolicy::default(),
+        };
+
+        // Build TableDefinition from Arrow schema
+        // For now, create a minimal TableDefinition - we can enhance this later
+        // to extract column details from Arrow schema
+        use kalamdb_commons::models::schemas::{TableDefinition, TableOptions};
+        
+        let table_options = match table_type {
+            TableType::User => TableOptions::user(),
+            TableType::Shared => TableOptions::shared(),
+            TableType::Stream => TableOptions::stream(deleted_retention_hours.unwrap_or(3600) as u64),
+            TableType::System => TableOptions::system(),
+        };
+
+        let table_def = TableDefinition::new(
+            kalamdb_commons::models::NamespaceId::new(namespace.as_str()),
+            table_name.clone(),
+            table_type,
+            vec![], // Empty columns for now - TODO: convert from Arrow schema
+            table_options,
+            None, // No table comment
+        ).map_err(|e| KalamDbError::Other(format!("Failed to create TableDefinition: {}", e)))?;
+
+        // Resolve partial storage path template
+        let namespace_id = crate::catalog::NamespaceId::new(namespace.as_str());
+        let table_name_id = crate::catalog::TableName::new(table_name.as_str());
+        
+        let storage_path_template = cache.resolve_storage_path_template(
+            &namespace_id,
+            &table_name_id,
+            table_type,
+            storage_id,
+        )?;
+
+        // Build CachedTableData
+        let table_id = TableId::new(namespace_id, table_name_id);
+        let cached_data = Arc::new(crate::catalog::CachedTableData::new(
+            table_id.clone(),
+            table_type,
+            chrono::Utc::now(),
+            Some(storage_id.clone()),
+            flush_policy,
+            storage_path_template,
+            schema_version,
+            deleted_retention_hours,
+            Arc::new(table_def),
+        ));
+
+        // Insert into cache
+        cache.insert(table_id, cached_data);
+
         Ok(())
     }
 
@@ -1236,8 +1329,14 @@ impl SqlExecutor {
                 KalamDbError::InvalidOperation("SharedTableStore not configured".to_string())
             })?;
 
+            // Phase 10: Create Arc<TableId> once for zero-allocation cache lookups
+            let table_id = Arc::new(kalamdb_commons::models::TableId::new(
+                namespace_id.clone(),
+                table_name.clone(),
+            ));
+
             // Create provider
-            let provider = Arc::new(SharedTableProvider::new(metadata, schema, store.clone()));
+            let provider = Arc::new(SharedTableProvider::new(table_id, metadata, schema, store.clone()));
 
             // Register with fully qualified name
             let qualified_name = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
@@ -1464,8 +1563,15 @@ impl SqlExecutor {
                 KalamDbError::InvalidOperation("StreamTableStore not configured".to_string())
             })?;
 
+            // Phase 10: Create Arc<TableId> once for zero-allocation cache lookups
+            let table_id = Arc::new(kalamdb_commons::models::TableId::new(
+                namespace_id.clone(),
+                table_name.clone(),
+            ));
+
             // Create provider
             let mut provider = StreamTableProvider::new(
+                table_id,
                 metadata,
                 schema,
                 store.clone(),
@@ -2121,19 +2227,26 @@ impl SqlExecutor {
             &stmt.table_name,
         ));
 
-        // Phase 9: Use shared TableCache for dynamic path resolution
-        let table_cache = self.table_cache.as_ref()
+        // Phase 10: Use unified SchemaCache for dynamic path resolution
+        let unified_cache = self.unified_cache.as_ref()
             .ok_or_else(|| KalamDbError::Other(
-                "TableCache not initialized - call with_storage_registry()".to_string()
+                "Unified cache not initialized - call with_storage_registry()".to_string()
             ))?
             .clone();
 
+        // Phase 10: Create Arc<TableId> once for zero-allocation cache lookups
+        let table_id = Arc::new(kalamdb_commons::models::TableId::new(
+            namespace_id.clone(),
+            table_name.clone(),
+        ));
+
         let flush_job = crate::flush::UserTableFlushJob::new(
+            table_id,
             table_store,
             namespace_id,
             table_name.clone(),
             arrow_schema.schema,
-            table_cache, // Phase 9 - dynamic path resolution via shared TableCache
+            unified_cache, // Phase 10 - unified cache instead of table_cache
         );
 
         // Clone necessary data for the async task
@@ -2354,89 +2467,36 @@ impl SqlExecutor {
     async fn execute_describe_table(&self, sql: &str) -> Result<ExecutionResult, KalamDbError> {
         let stmt = DescribeTableStatement::parse(sql)?;
 
-        // Phase 15 (008-schema-consolidation): Use TableSchemaStore for schema information
-        if let (Some(schema_store), Some(_schema_cache)) = (&self.schema_store, &self.schema_cache)
-        {
-            // Get table metadata from system.tables (for table-level info)
-            let kalam_sql = self
-                .kalam_sql
-                .as_ref()
-                .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+        // T314: Use unified cache for schema information
+        let cache = self.unified_cache.as_ref()
+            .ok_or_else(|| KalamDbError::Other("Unified cache not initialized".to_string()))?;
 
-            let tables = kalam_sql
-                .scan_all_tables()
-                .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
+        // Construct TableId for cache lookup
+        let namespace_str = stmt
+            .namespace_id
+            .as_ref()
+            .map(|ns| ns.as_str())
+            .unwrap_or("default");
+        let namespace_id = crate::catalog::NamespaceId::new(namespace_str);
+        let table_name = crate::catalog::TableName::new(stmt.table_name.as_str());
+        let table_id = TableId::new(namespace_id, table_name);
 
-            let table = tables
-                .into_iter()
-                .find(|t| {
-                    let name_matches = t.table_name.as_str() == stmt.table_name.as_str();
-                    let namespace_matches = stmt
-                        .namespace_id
-                        .as_ref()
-                        .map(|ns| t.namespace.as_str() == ns.as_str())
-                        .unwrap_or(true);
-                    name_matches && namespace_matches
-                })
-                .ok_or_else(|| {
-                    KalamDbError::NotFound(format!(
-                        "Table '{}' not found",
-                        stmt.table_name.as_str()
-                    ))
-                })?;
+        // Get table definition from cache (must exist - schema_store only used for populating cache)
+        let cached_data = cache.get(&table_id)
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!(
+                    "Table '{}' not found in cache",
+                    stmt.table_name.as_str()
+                ))
+            })?;
 
-            // Construct TableId for schema lookup
-            let namespace_id = kalamdb_commons::NamespaceId::from(table.namespace.as_str());
-            let table_name = kalamdb_commons::TableName::from(table.table_name.as_str());
-            let table_id = kalamdb_commons::TableId::new(namespace_id, table_name);
-
-            // Query TableSchemaStore for column definitions
-            let table_def = schema_store
-                .get(&table_id)
-                .map_err(|e| KalamDbError::Other(format!("Failed to get schema: {}", e)))?
-                .ok_or_else(|| {
-                    KalamDbError::NotFound(format!("Schema not found for table '{}'", table_id))
-                })?;
-
-            if stmt.show_history {
-                // Show schema version history
-                let batch = Self::schema_history_to_record_batch(&table_def)?;
-                Ok(ExecutionResult::RecordBatch(batch))
-            } else {
-                // Show column definitions (standard DESCRIBE TABLE output)
-                let batch = Self::columns_to_record_batch(&table_def.columns)?;
-                Ok(ExecutionResult::RecordBatch(batch))
-            }
+        if stmt.show_history {
+            // Show schema version history
+            let batch = Self::schema_history_to_record_batch(&cached_data.schema)?;
+            Ok(ExecutionResult::RecordBatch(batch))
         } else {
-            // Fallback: old implementation (table metadata only)
-            let kalam_sql = self
-                .kalam_sql
-                .as_ref()
-                .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
-
-            let tables = kalam_sql
-                .scan_all_tables()
-                .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
-
-            let table = tables
-                .into_iter()
-                .find(|t| {
-                    let name_matches = t.table_name.as_str() == stmt.table_name.as_str();
-                    let namespace_matches = stmt
-                        .namespace_id
-                        .as_ref()
-                        .map(|ns| t.namespace.as_str() == ns.as_str())
-                        .unwrap_or(true);
-                    name_matches && namespace_matches
-                })
-                .ok_or_else(|| {
-                    KalamDbError::NotFound(format!(
-                        "Table '{}' not found",
-                        stmt.table_name.as_str()
-                    ))
-                })?;
-
-            let batch = Self::table_details_to_record_batch(&table)?;
+            // Show column definitions (standard DESCRIBE TABLE output)
+            let batch = Self::columns_to_record_batch(&cached_data.schema.columns)?;
             Ok(ExecutionResult::RecordBatch(batch))
         }
     }
@@ -2992,17 +3052,23 @@ impl SqlExecutor {
                     &namespace_id,
                     &table_name,
                     crate::catalog::TableType::User,
-                    schema,
+                    schema.clone(),
                     dummy_user_id,
                 )
                 .await?;
             }
 
-            // T112: Invalidate schema cache for newly created table
-            if let Some(schema_cache) = &self.schema_cache {
-                let table_id = TableId::from_strings(namespace_id.as_str(), table_name.as_str());
-                schema_cache.invalidate(&table_id);
-            }
+            // T311: Cache table metadata in unified SchemaCache
+            self.cache_table_metadata(
+                &namespace_id,
+                &table_name,
+                TableType::User,
+                &storage_id,
+                flush_policy,
+                schema,
+                1, // initial schema_version
+                deleted_retention_hours,
+            )?;
 
             Ok(ExecutionResult::Success(
                 "User table created successfully".to_string(),
@@ -3069,17 +3135,44 @@ impl SqlExecutor {
                     &namespace_id,
                     &table_name,
                     crate::catalog::TableType::Stream,
-                    schema,
+                    schema.clone(),
                     default_user_id,
                 )
                 .await?;
             }
 
-            // T112: Invalidate schema cache for newly created table
-            if let Some(schema_cache) = &self.schema_cache {
-                let table_id = TableId::from_strings(namespace_id.as_str(), table_name.as_str());
-                schema_cache.invalidate(&table_id);
-            }
+            // T311: Cache table metadata in unified SchemaCache
+            let storage_id = StorageId::from("local"); // Stream tables always use local storage
+            // Convert core FlushPolicy to DDL FlushPolicy for caching
+            let flush_policy_ddl = match &metadata.flush_policy {
+                crate::flush::FlushPolicy::RowLimit { row_limit } => {
+                    Some(kalamdb_sql::ddl::FlushPolicy::RowLimit {
+                        row_limit: *row_limit,
+                    })
+                }
+                crate::flush::FlushPolicy::TimeInterval { interval_seconds } => {
+                    Some(kalamdb_sql::ddl::FlushPolicy::TimeInterval {
+                        interval_seconds: *interval_seconds,
+                    })
+                }
+                crate::flush::FlushPolicy::Combined {
+                    row_limit,
+                    interval_seconds,
+                } => Some(kalamdb_sql::ddl::FlushPolicy::Combined {
+                    row_limit: *row_limit,
+                    interval_seconds: *interval_seconds,
+                }),
+            };
+            self.cache_table_metadata(
+                &namespace_id,
+                &table_name,
+                TableType::Stream,
+                &storage_id,
+                flush_policy_ddl,
+                schema,
+                1, // initial schema_version
+                retention_seconds,
+            )?;
 
             Ok(ExecutionResult::Success(
                 "Stream table created successfully".to_string(),
@@ -3135,7 +3228,7 @@ impl SqlExecutor {
                 if let Some(kalam_sql) = &self.kalam_sql {
                     // Serialize flush policy for storage
                     let flush_policy_json =
-                        serde_json::to_string(&flush_policy.unwrap_or_default())
+                        serde_json::to_string(&flush_policy.clone().unwrap_or_default())
                             .unwrap_or_else(|_| "{}".to_string());
 
                     let table = kalamdb_sql::Table {
@@ -3175,18 +3268,23 @@ impl SqlExecutor {
                         &namespace_id,
                         &table_name,
                         crate::catalog::TableType::Shared,
-                        schema,
+                        schema.clone(),
                         default_user_id,
                     )
                     .await?;
                 }
 
-                // T112: Invalidate schema cache for newly created table
-                if let Some(schema_cache) = &self.schema_cache {
-                    let table_id =
-                        TableId::from_strings(namespace_id.as_str(), table_name.as_str());
-                    schema_cache.invalidate(&table_id);
-                }
+                // T311: Cache table metadata in unified SchemaCache
+                self.cache_table_metadata(
+                    &namespace_id,
+                    &table_name,
+                    TableType::Shared,
+                    &storage_id,
+                    flush_policy,
+                    schema,
+                    1, // initial schema_version
+                    deleted_retention.map(|s| (s / 3600) as u32),
+                )?;
 
                 Ok(ExecutionResult::Success(
                     "Table created successfully".to_string(),
@@ -3227,7 +3325,7 @@ impl SqlExecutor {
                 if let Some(kalam_sql) = &self.kalam_sql {
                     // Serialize flush policy for storage
                     let flush_policy_json =
-                        serde_json::to_string(&flush_policy.unwrap_or_default())
+                        serde_json::to_string(&flush_policy.clone().unwrap_or_default())
                             .unwrap_or_else(|_| "{}".to_string());
 
                     let table = kalamdb_sql::Table {
@@ -3263,18 +3361,23 @@ impl SqlExecutor {
                         &namespace_id,
                         &table_name,
                         crate::catalog::TableType::Shared,
-                        schema,
+                        schema.clone(),
                         default_user_id,
                     )
                     .await?;
                 }
 
-                // T112: Invalidate schema cache for newly created table
-                if let Some(schema_cache) = &self.schema_cache {
-                    let table_id =
-                        TableId::from_strings(namespace_id.as_str(), table_name.as_str());
-                    schema_cache.invalidate(&table_id);
-                }
+                // T311: Cache table metadata in unified SchemaCache
+                self.cache_table_metadata(
+                    &namespace_id,
+                    &table_name,
+                    TableType::Shared,
+                    &storage_id,
+                    flush_policy,
+                    schema,
+                    1, // initial schema_version
+                    deleted_retention.map(|s| (s / 3600) as u32),
+                )?;
 
                 Ok(ExecutionResult::Success(
                     "Table created successfully".to_string(),
@@ -3348,9 +3451,9 @@ impl SqlExecutor {
                 .update_table(&table)
                 .map_err(|e| KalamDbError::Other(format!("Failed to update table: {}", e)))?;
 
-            // T113: Invalidate schema cache after ALTER TABLE
-            if let Some(schema_cache) = &self.schema_cache {
-                schema_cache.invalidate(&table_id);
+            // T312: Invalidate unified cache after ALTER TABLE
+            if let Some(cache) = &self.unified_cache {
+                cache.invalidate(&table_id);
             }
 
             self.log_audit_event(
@@ -3451,9 +3554,9 @@ impl SqlExecutor {
             )));
         }
 
-        // T114: Invalidate schema cache after DROP TABLE
-        if let Some(schema_cache) = &self.schema_cache {
-            schema_cache.invalidate(&table_identifier);
+        // T313: Invalidate unified cache after DROP TABLE
+        if let Some(cache) = &self.unified_cache {
+            cache.invalidate(&table_identifier);
         }
 
         let deletion_result = result.unwrap();

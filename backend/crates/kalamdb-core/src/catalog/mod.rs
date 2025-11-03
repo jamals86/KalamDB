@@ -8,15 +8,14 @@
 //! **Note**: Namespace struct has been moved to `kalamdb_commons::system::Namespace`
 //! as the single source of truth for all system table models.
 //!
-//! **Phase 10 Update**: New unified SchemaCache module replaces dual-cache architecture
+//! **Phase 10 Complete**: Unified SchemaCache replaces old dual-cache architecture
+//! - Deleted: table_cache.rs (516 lines) - old TableCache implementation
+//! - Deleted: table_metadata.rs (252 lines) - replaced by CachedTableData
+//! - Deleted: tables/system/schemas/schema_cache.rs (443 lines) - old system SchemaCache
 
-pub mod schema_cache; // Phase 10: New unified cache
-pub mod table_cache; // Phase 10: Will be deleted after migration
-pub mod table_metadata; // Phase 10: Will be deleted after migration
+pub mod schema_cache; // Phase 10: Unified cache implementation
 
 pub use schema_cache::{CachedTableData, SchemaCache};
-pub use table_cache::TableCache;
-pub use table_metadata::TableMetadata;
 
 // Re-export common types from kalamdb_commons for convenience
 pub use kalamdb_commons::models::{NamespaceId, TableName, UserId};
