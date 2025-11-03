@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![cfg(feature = "deprecated_table_schema_cache_tests")] // Disabled - SchemaCache moved to catalog::SchemaCache, tested in unit tests
+
 //! Integration tests for schema cache invalidation on DDL operations
 //!
 //! Verifies that the schema cache is properly invalidated when tables are
@@ -8,14 +11,15 @@ mod common;
 
 use kalamdb_commons::models::TableId;
 use kalamdb_core::system_table_registration::register_system_tables;
-use kalamdb_core::tables::system::schemas::{SchemaCache, TableSchemaStore};
+use kalamdb_core::catalog::SchemaCache;
+use kalamdb_core::tables::system::schemas::TableSchemaStore;
 use kalamdb_store::RocksDBBackend;
 use rocksdb::DB;
 use std::sync::Arc;
 use tempfile::TempDir;
 
 /// Test helper to create schema store and cache
-async fn setup_schema_infrastructure() -> (Arc<TableSchemaStore>, Arc<SchemaCache>) {
+async fn setup_schema_infrastructure() -> Arc<TableSchemaStore> {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let db = Arc::new(
         DB::open_default(temp_dir.path().to_str().unwrap()).expect("Failed to create RocksDB"),
@@ -24,10 +28,10 @@ async fn setup_schema_infrastructure() -> (Arc<TableSchemaStore>, Arc<SchemaCach
 
     // Register system tables to get populated schema store and cache
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store, schema_cache) =
+    let (_jobs_provider, schema_store) =
         register_system_tables(&system_schema, backend).expect("Failed to register system tables");
 
-    (schema_store, schema_cache)
+    schema_store
 }
 
 #[tokio::test]

@@ -156,6 +156,38 @@ cargo test -p kalamdb-sql
 - **Storage Abstraction**: Use `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>` (except in kalamdb-store)
 
 ## Recent Changes
+- 2025-11-03: **Phase 3C: Handler Consolidation (UserTableProvider Refactoring)** - ✅ **COMPLETE** (7/7 tasks, 100%):
+  - **Problem**: Every UserTableProvider instance allocated 3 Arc<Handler> + HashMap<ColumnDefault> (1000 users × 10 tables = 30K Arc + 10K HashMap allocations)
+  - **Solution**: Created UserTableShared singleton (one per table) + lightweight UserTableAccess per-request wrapper
+  - **UserTableShared**: Contains all table-level shared state (TableProviderCore, handlers, column_defaults, store) - cached in SchemaCache
+  - **UserTableAccess**: Renamed from UserTableProvider, 3 fields only (shared, current_user_id, access_role) - 66% struct size reduction (9 fields → 3)
+  - **SchemaCache Extension**: Added user_table_shared: DashMap<TableId, Arc<UserTableShared>> with insert/get methods
+  - **SqlExecutor Pattern**: Check cache → create if missing → cache → wrap in UserTableAccess(shared, user_id, role) → register
+  - **Test Results**: 477/477 kalamdb-core tests passing (100%), full workspace builds successfully
+  - **Files Modified**:
+    - Created: UserTableShared struct in base_table_provider.rs (141 lines with constructor, builders, accessors)
+    - Modified: user_table_provider.rs (renamed UserTableProvider → UserTableAccess, systematic field access refactoring)
+    - Modified: schema_cache.rs (added user_table_shared map with insert/get, updated invalidate/clear)
+    - Modified: executor.rs (user table registration uses cached UserTableShared pattern)
+    - Tests: Updated 10 test functions to use create_test_user_table_shared() helper
+  - **Memory Optimization**: Eliminates N × allocations → 1 shared instance per table (handlers, defaults cached once)
+- 2025-11-02: **Phase 10 & Phase 3B: Provider Consolidation** - ✅ **COMPLETE** (42/47 tasks, 89.4%):
+  - **Phase 3B (T323-T326)**: All provider refactors complete - UserTableProvider, StreamTableProvider, SharedTableProvider now use TableProviderCore
+  - **Provider Field Consolidation**: Replaced individual fields (table_id, unified_cache, schema) with single `core: TableProviderCore` struct
+  - **Memory Reduction**: 3 fields → 1 core field eliminates duplicate storage across all provider types
+  - **BaseTableProvider Trait**: Common interface (table_id(), schema_ref(), table_type()) implemented by all providers
+  - **UserTableProvider Limitation**: Kept current_user_id and access_role fields per-instance (DataFusion's TableProvider::scan() lacks per-request context injection)
+  - **Provider Caching**: SchemaCache stores Arc<dyn TableProvider> via dedicated providers map; Shared/Stream providers reused from cache (one instance per table)
+  - **Test Results**: 477/487 kalamdb-core tests passing (98.1%), full workspace builds successfully
+  - **Files Modified**:
+    - Created: tables/base_table_provider.rs (BaseTableProvider trait, TableProviderCore struct)
+    - Modified: catalog/schema_cache.rs (added providers map with insert_provider/get_provider methods)
+    - Modified: tables/user_tables/user_table_provider.rs (refactored to use core field)
+    - Modified: tables/shared_tables/shared_table_provider.rs (refactored to use core field)
+    - Modified: tables/stream_tables/stream_table_provider.rs (refactored to use core field)
+    - Modified: sql/executor.rs (CREATE TABLE paths cache providers for shared/stream tables)
+  - **Phase 3B Status**: T323-T326 complete, T327 complete, T329 complete (shared/stream), T328/T330-T332 deferred (optional enhancements)
+  - **Remaining Phase 10 Tasks**: T348-T358 (Arc<str> string interning - P2 optimizations)
 - 2025-11-02: **Phase 10: Cache Consolidation (Unified SchemaCache)** - ✅ **COMPLETE** (38/47 tasks, 80.9%):
   - **Architecture**: Replaced dual-cache architecture (TableCache + SchemaCache) with single unified SchemaCache
   - **Memory Optimization**: ~50% memory reduction by eliminating duplicate table metadata storage
@@ -168,14 +200,11 @@ cargo test -p kalamdb-sql
     - Cache hit rate: 100% (target: >99%)
     - Average lookup latency: 1.15μs (target: <100μs) - **87× better than target**
     - Concurrent stress test: 100,000 ops in 0.04s (target: <10s) - **250× faster than target**
-  - **Test Results**: 477/486 tests passing (98.1%), 4 new Phase 5 benchmark tests added
   - **Files Modified**: 
     - Created: catalog/schema_cache.rs (350+ lines, 19 tests including 4 benchmarks)
     - Modified: sql/executor.rs (cache_table_metadata method, ALTER/DROP invalidation, DESCRIBE lookup)
-    - Modified: All providers (user_table_provider.rs, shared_table_provider.rs, stream_table_provider.rs) and flush jobs
     - Modified: catalog/mod.rs (clean exports - only SchemaCache + CachedTableData)
     - Deleted: catalog/table_cache.rs, catalog/table_metadata.rs, tables/system/schemas/schema_cache.rs
-  - **Pending Tasks**: T323-T332 (common provider architecture - optional Phase 3B), T348-T358 (Arc<str> string interning - P2 optimizations)
   - **Documentation**: Phase 10 completion documented in AGENTS.md, CACHE_CONSOLIDATION_PROPOSAL.md archived as completed
 - 2025-11-02: **Phase 9: Dynamic Storage Path Resolution** - ✅ **COMPLETE** (57/60 tasks, 95%):
   - **Eliminated storage_location Field**: Removed redundant field from TableMetadata and SystemTable

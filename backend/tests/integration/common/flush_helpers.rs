@@ -34,8 +34,9 @@ pub async fn execute_flush_synchronously(
     table_name: &str,
 ) -> Result<kalamdb_core::tables::base_flush::FlushJobResult, String> {
     use kalamdb_commons::models::{NamespaceId as ModelNamespaceId, TableName as ModelTableName};
-    use kalamdb_core::catalog::{NamespaceId, TableCache, TableName};
+    use kalamdb_core::catalog::{NamespaceId, SchemaCache, TableName};
     use kalamdb_core::tables::user_tables::UserTableFlushJob;
+    use kalamdb_commons::models::TableId;
     use kalamdb_store::StorageBackend;
 
     // Get table definition from kalam_sql
@@ -91,15 +92,19 @@ pub async fn execute_flush_synchronously(
             .to_string(),
     ));
 
-    // Create TableCache bound to the storage registry
-    let table_cache = Arc::new(TableCache::new().with_storage_registry(Arc::clone(&storage_registry)));
-
+    let table_id = Arc::new(TableId::new(
+        model_namespace.clone(),
+        model_table.clone(),
+    ));
+    let unified_cache = Arc::new(SchemaCache::new(0, None));
+    
     let flush_job = UserTableFlushJob::new(
+        table_id,
         user_table_store.clone(),
         namespace_id,
         table_name_id,
-        arrow_schema.schema,
-        table_cache,
+        arrow_schema.schema.clone(),
+        unified_cache,
     );
 
     flush_job
@@ -114,6 +119,8 @@ pub async fn execute_shared_flush_synchronously(
     table_name: &str,
 ) -> Result<kalamdb_core::tables::base_flush::FlushJobResult, String> {
     use kalamdb_core::catalog::{NamespaceId, TableName};
+    use kalamdb_commons::models::{NamespaceId as ModelNamespaceId, TableName as ModelTableName, TableId};
+    use kalamdb_core::catalog::SchemaCache;
     use kalamdb_core::tables::shared_tables::SharedTableFlushJob;
     use kalamdb_core::tables::SharedTableStore;
     use kalamdb_store::StorageBackend;
@@ -146,6 +153,8 @@ pub async fn execute_shared_flush_synchronously(
 
     let backend: Arc<dyn StorageBackend> =
         Arc::new(kalamdb_store::RocksDBBackend::new(server.db.clone()));
+    let model_namespace = ModelNamespaceId::new(namespace);
+    let model_table = ModelTableName::new(table_name);
     let shared_table_store = Arc::new(SharedTableStore::new(backend, "shared_tables"));
 
     // Create storage registry and TableCache (needed for template-based path resolution)
@@ -157,16 +166,20 @@ pub async fn execute_shared_flush_synchronously(
             .unwrap_or("./data/storage")
             .to_string(),
     ));
-    let table_cache = Arc::new(kalamdb_core::catalog::TableCache::new().with_storage_registry(
-        Arc::clone(&storage_registry),
+    
+    let table_id = Arc::new(TableId::new(
+        model_namespace,
+        model_table,
     ));
-
+    let unified_cache = Arc::new(SchemaCache::new(0, None));
+    
     let flush_job = SharedTableFlushJob::new(
+        table_id,
         shared_table_store.clone(),
         namespace_id,
         table_name_id,
-        arrow_schema.schema,
-        table_cache,
+        arrow_schema.schema.clone(),
+        unified_cache,
     );
 
     flush_job

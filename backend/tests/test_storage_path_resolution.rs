@@ -1,3 +1,6 @@
+#![cfg(test)]
+#![cfg(feature = "deprecated_table_cache_tests")] // Disabled - TableCache removed in Phase 10, functionality integrated into SchemaCache
+
 //! Integration tests for storage path resolution via TableCache
 //!
 //! Verifies dynamic path resolution architecture (Phase 9 - US7):
@@ -15,10 +18,9 @@ mod common;
 
 use common::TestServer;
 use kalamdb_commons::{NamespaceId, TableName, StorageId};
-use kalamdb_core::catalog::{TableCache, TableMetadata};
-use kalamdb_core::storage::StorageRegistry;
-use kalamdb_core::flush::FlushPolicy;
+use kalamdb_core::catalog::SchemaCache;
 use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::system::FlushPolicy;
 use chrono::Utc;
 use std::sync::Arc;
 

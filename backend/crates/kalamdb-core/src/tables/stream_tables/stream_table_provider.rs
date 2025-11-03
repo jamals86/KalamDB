@@ -7,8 +7,9 @@
 //! - Optional ephemeral mode (only store if subscribers exist)
 //! - Real-time event delivery to subscribers
 
-use crate::catalog::{NamespaceId, SchemaCache, TableName};
+use crate::catalog::{NamespaceId, SchemaCache, TableName, TableType};
 use crate::error::KalamDbError;
+use crate::tables::base_table_provider::{BaseTableProvider, TableProviderCore};
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::stores::system_table::SharedTableStoreExt;
 use crate::tables::arrow_json_conversion::{arrow_batch_to_json, json_rows_to_arrow_batch};
@@ -38,15 +39,10 @@ use std::sync::Arc;
 /// **Important**: Stream tables do NOT have system columns (_updated, _deleted)
 ///
 /// **Phase 10 Optimization**: Uses unified SchemaCache as single source of truth for table metadata
+/// **Phase 3B**: Uses TableProviderCore to consolidate common provider fields
 pub struct StreamTableProvider {
-    /// Composite table identifier (Phase 10: Arc for zero-allocation cache lookups)
-    table_id: Arc<TableId>,
-
-    /// Unified cache reference (Phase 10: single source of truth for table metadata)
-    unified_cache: Arc<SchemaCache>,
-
-    /// Arrow schema for the table (user-defined only, no system columns)
-    schema: SchemaRef,
+    /// Core provider fields (table_id, schema, cache, etc.)
+    core: TableProviderCore,
 
     /// StreamTableStore for event operations
     store: Arc<StreamTableStore>,
@@ -73,7 +69,7 @@ pub struct StreamTableProvider {
 impl std::fmt::Debug for StreamTableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StreamTableProvider")
-            .field("table_id", &self.table_id)
+            .field("table_id", self.core.table_id())
             .field("retention_seconds", &self.retention_seconds)
             .field("ephemeral", &self.ephemeral)
             .field("max_buffer", &self.max_buffer)
@@ -101,10 +97,15 @@ impl StreamTableProvider {
         ephemeral: bool,
         max_buffer: Option<usize>,
     ) -> Self {
-        Self {
+        let core = TableProviderCore::new(
             table_id,
-            unified_cache,
+            TableType::Stream,
             schema,
+            None, // storage_id - stream tables don't use Parquet
+            unified_cache,
+        );
+        Self {
+            core,
             store,
             retention_seconds,
             ephemeral,
@@ -137,19 +138,19 @@ impl StreamTableProvider {
     pub fn column_family_name(&self) -> String {
         format!(
             "stream_table:{}:{}",
-            self.table_id.namespace_id().as_str(),
-            self.table_id.table_name().as_str()
+            self.core.namespace().as_str(),
+            self.core.table_name().as_str()
         )
     }
 
     /// Get the namespace ID
     pub fn namespace_id(&self) -> &NamespaceId {
-        self.table_id.namespace_id()
+        self.core.namespace()
     }
 
     /// Get the table name
     pub fn table_name(&self) -> &TableName {
-        self.table_id.table_name()
+        self.core.table_name()
     }
 
     /// Check if ephemeral mode is enabled
@@ -337,6 +338,20 @@ impl StreamTableProvider {
     }
 }
 
+impl BaseTableProvider for StreamTableProvider {
+    fn table_id(&self) -> &kalamdb_commons::models::TableId {
+        self.core.table_id()
+    }
+
+    fn schema_ref(&self) -> SchemaRef {
+        self.core.schema_ref()
+    }
+
+    fn table_type(&self) -> crate::catalog::TableType {
+        self.core.table_type()
+    }
+}
+
 /// Implement DataFusion TableProvider trait
 #[async_trait]
 impl TableProvider for StreamTableProvider {
@@ -347,7 +362,7 @@ impl TableProvider for StreamTableProvider {
 
     /// Returns the Arrow schema for this table (NO system columns)
     fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+        self.core.schema_ref()
     }
 
     /// Returns the table type (always Base for stream tables)
@@ -374,8 +389,8 @@ impl TableProvider for StreamTableProvider {
         let events = self
             .store
             .scan(
-                self.table_id.namespace_id().as_str(),
-                self.table_id.table_name().as_str(),
+                self.core.namespace().as_str(),
+                self.core.table_name().as_str(),
             )
             .map_err(|e| {
                 DataFusionError::Execution(format!("Failed to scan stream table: {}", e))
@@ -393,7 +408,7 @@ impl TableProvider for StreamTableProvider {
             .into_iter()
             .map(|(_id, row)| row.fields)
             .collect();
-        let batch = json_rows_to_arrow_batch(&self.schema, row_values).map_err(|e| {
+        let batch = json_rows_to_arrow_batch(&self.core.schema_ref(), row_values).map_err(|e| {
             DataFusionError::Execution(format!("Failed to convert events to Arrow: {}", e))
         })?;
 
@@ -404,7 +419,7 @@ impl TableProvider for StreamTableProvider {
                 .map(|&i| batch.column(i).clone())
                 .collect();
 
-            let projected_schema = Arc::new(self.schema.project(proj_indices).map_err(|e| {
+            let projected_schema = Arc::new(self.core.schema_ref().project(proj_indices).map_err(|e| {
                 DataFusionError::Execution(format!("Failed to project schema: {}", e))
             })?);
 
@@ -415,7 +430,7 @@ impl TableProvider for StreamTableProvider {
 
             (projected_batch, projected_schema)
         } else {
-            (batch, self.schema.clone())
+            (batch, self.core.schema_ref())
         };
 
         // Return a MemTable scan with the result

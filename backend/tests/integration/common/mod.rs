@@ -267,7 +267,7 @@ impl TestServer {
             .expect("Failed to register system schema");
 
         // Register all system tables using centralized function
-        let (_jobs_provider, _schema_store, _schema_cache) =
+        let (_jobs_provider, _schema_store) =
             kalamdb_core::system_table_registration::register_system_tables(
                 &system_schema,
                 backend.clone(),

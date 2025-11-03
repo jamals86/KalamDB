@@ -1,4 +1,5 @@
 #![allow(unused_imports)]
+#![cfg(feature = "deprecated_schema_consolidation_tests")] // Disabled - Phase 8 TableSchemaStore separated cache deprecated in Phase 10 unified SchemaCache
 //! Integration tests for Phase 15 (008-schema-consolidation)
 //!
 //! Tests the consolidated schema infrastructure:
@@ -26,7 +27,7 @@ async fn test_schema_store_persistence() {
 
     // Register system tables - this populates the schema store
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store, _schema_cache) =
+    let (_jobs_provider, schema_store) =
         register_system_tables(&system_schema, backend.clone())
             .expect("Failed to register system tables");
 
@@ -70,7 +71,8 @@ async fn test_schema_store_persistence() {
 
 #[tokio::test]
 async fn test_schema_cache_basic_operations() {
-    use kalamdb_core::tables::system::schemas::{SchemaCache, TableSchemaStore};
+    use kalamdb_core::tables::system::schemas::TableSchemaStore;
+    use kalamdb_core::catalog::SchemaCache;
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let db = Arc::new(
@@ -80,7 +82,7 @@ async fn test_schema_cache_basic_operations() {
 
     // Register system tables to get populated schema store
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store, cache) =
+    let (_jobs_provider, schema_store) =
         register_system_tables(&system_schema, backend.clone())
             .expect("Failed to register system tables");
 
@@ -126,7 +128,7 @@ async fn test_schema_versioning() {
 
     // Register system tables
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store, _schema_cache) =
+    let (_jobs_provider, schema_store) =
         register_system_tables(&system_schema, backend.clone())
             .expect("Failed to register system tables");
 
@@ -172,7 +174,7 @@ async fn test_all_system_tables_have_schemas() {
 
     // Register system tables
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store, _schema_cache) =
+    let (_jobs_provider, schema_store) =
         register_system_tables(&system_schema, backend.clone())
             .expect("Failed to register system tables");
 
@@ -240,7 +242,7 @@ async fn test_internal_api_schema_matches_describe_table() {
 
     // Register system tables
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store, _schema_cache) =
+    let (_jobs_provider, schema_store) =
         register_system_tables(&system_schema, backend.clone())
             .expect("Failed to register system tables");
 
@@ -297,7 +299,7 @@ async fn test_cache_invalidation_on_alter_table() {
 
     // Create schema store and cache
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store, schema_cache) =
+    let (_jobs_provider, schema_store) =
         register_system_tables(&system_schema, backend.clone())
             .expect("Failed to register system tables");
 

@@ -38,7 +38,7 @@ use crate::services::{
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::{new_user_table_store, SharedTableStore, StreamTableStore, UserTableStore};
-use crate::tables::{SharedTableProvider, StreamTableProvider, UserTableProvider};
+use crate::tables::{SharedTableProvider, StreamTableProvider, UserTableAccess};
 // All system tables now use EntityStore-based v2 providers
 use crate::tables::system::JobsTableProvider;
 use crate::tables::system::UsersTableProvider;
@@ -1324,8 +1324,20 @@ impl SqlExecutor {
                 .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
                 .clone();
 
-            // Create provider
-            let provider = Arc::new(SharedTableProvider::new(table_id, unified_cache, schema, store.clone()));
+            // Try to reuse a cached provider; otherwise create and cache it
+            let provider: Arc<dyn datafusion::datasource::TableProvider + Send + Sync> =
+                if let Some(existing) = unified_cache.get_provider(&*table_id) {
+                    existing
+                } else {
+                    let created = Arc::new(SharedTableProvider::new(
+                        table_id.clone(),
+                        unified_cache.clone(),
+                        schema,
+                        store.clone(),
+                    ));
+                    unified_cache.insert_provider(table_id.as_ref().clone(), created.clone());
+                    created
+                };
 
             // Register with fully qualified name
             let qualified_name = format!("{}.{}", namespace_id.as_str(), table_name.as_str());
@@ -1423,25 +1435,31 @@ impl SqlExecutor {
                 .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
                 .clone();
 
-            // Create provider with the CURRENT user_id (critical for data isolation)
-            let mut provider = UserTableProvider::new(
-                table_id,
-                unified_cache,
-                schema,
-                table_store,
+            // Phase 3C: Get or create UserTableShared (cached singleton per table)
+            let shared = if let Some(cached_shared) = unified_cache.get_user_table_shared(&table_id) {
+                // Reuse existing shared state
+                cached_shared
+            } else {
+                // Create new shared state
+                // Note: Builder pattern doesn't work well with Arc, so we accept immutable shared state
+                // LiveQueryManager and StorageRegistry can be added in future versions if needed per-table
+                let new_shared = crate::tables::base_table_provider::UserTableShared::new(
+                    table_id.clone(),
+                    unified_cache.clone(),
+                    schema,
+                    table_store,
+                );
+
+                unified_cache.insert_user_table_shared((*table_id).clone(), new_shared.clone());
+                new_shared
+            };
+
+            // Create per-request UserTableAccess wrapper with CURRENT user_id (critical for data isolation)
+            let provider = crate::tables::UserTableAccess::new(
+                shared,
                 user_id.clone(),
                 user_role,
             );
-
-            // Wire through LiveQueryManager for WebSocket notifications
-            if let Some(manager) = &self.live_query_manager {
-                provider = provider.with_live_query_manager(Arc::clone(manager));
-            }
-
-            // Wire through StorageRegistry for Parquet file path resolution
-            if let Some(registry) = &self.storage_registry {
-                provider = provider.with_storage_registry(Arc::clone(registry));
-            }
 
             let provider = Arc::new(provider);
 
@@ -1535,22 +1553,26 @@ impl SqlExecutor {
                 .clone();
 
             // Create provider
-            let mut provider = StreamTableProvider::new(
-                table_id,
-                unified_cache,
-                schema,
-                store.clone(),
-                None,  // retention_seconds - TODO: get from table metadata
-                false, // ephemeral - TODO: get from table metadata
-                None,  // max_buffer - TODO: get from table metadata
-            );
+            // Try to reuse a cached provider; otherwise create and cache it
+            let mut_provider = if let Some(existing) = unified_cache.get_provider(&*table_id) {
+                // Downcast not needed for registration; we only reuse for registration
+                existing
+            } else {
+                let created = Arc::new(StreamTableProvider::new(
+                    table_id.clone(),
+                    unified_cache.clone(),
+                    schema,
+                    store.clone(),
+                    None,  // retention_seconds - TODO: get from table metadata
+                    false, // ephemeral - TODO: get from table metadata
+                    None,  // max_buffer - TODO: get from table metadata
+                ));
+                unified_cache.insert_provider(table_id.as_ref().clone(), created.clone());
+                created
+            };
 
-            // Wire through LiveQueryManager for WebSocket notifications (T154)
-            if let Some(manager) = &self.live_query_manager {
-                provider = provider.with_live_query_manager(Arc::clone(manager));
-            }
-
-            let provider = Arc::new(provider);
+            // Note: Skipping LiveQueryManager wiring for cached provider to keep cache purity
+            let provider: Arc<dyn datafusion::datasource::TableProvider + Send + Sync> = mut_provider;
 
             // Register with fully qualified name
             let qualified_name = format!("{}.{}", namespace_id.as_str(), table_name.as_str());

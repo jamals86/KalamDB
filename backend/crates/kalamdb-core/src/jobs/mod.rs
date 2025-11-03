@@ -17,7 +17,7 @@
 //! # fn example() {
 //! let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
 //! let jobs_provider = Arc::new(JobsTableProvider::new(backend));
-//! let executor = JobExecutor::new(Arc::clone(&jobs_provider), "node-1".to_string());
+//! let executor = JobExecutor::new(Arc::clone(&jobs_provider), kalamdb_commons::NodeId::new("node-1".to_string()));
 //!
 //! // Execute a job
 //! let result = executor.execute_job(

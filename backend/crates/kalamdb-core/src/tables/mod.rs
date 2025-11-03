@@ -7,6 +7,7 @@
 //! - System tables: Internal system metadata tables (EntityStore-based v2 providers)
 
 pub mod arrow_json_conversion;
+pub mod base_table_provider;
 pub mod base_flush;
 pub mod parquet_scan;
 pub mod shared_tables;
@@ -19,6 +20,9 @@ pub use base_flush::{
     FlushJobResult, FlushMetadata, SharedTableFlushMetadata, TableFlush, UserTableFlushMetadata,
 };
 
+// Re-export base provider traits
+pub use base_table_provider::{BaseTableProvider, TableProviderCore};
+
 // Re-export from consolidated modules
 pub use shared_tables::{
     new_shared_table_store, SharedTableProvider, SharedTableRow, SharedTableRowId, SharedTableStore,
@@ -27,6 +31,6 @@ pub use stream_tables::{
     new_stream_table_store, StreamTableProvider, StreamTableRow, StreamTableRowId, StreamTableStore,
 };
 pub use user_tables::{
-    new_user_table_store, UserTableDeleteHandler, UserTableInsertHandler, UserTableProvider,
-    UserTableRow, UserTableRowId, UserTableStore, UserTableUpdateHandler,
+    new_user_table_store, UserTableAccess, UserTableDeleteHandler, UserTableInsertHandler,
+    UserTableProvider, UserTableRow, UserTableRowId, UserTableStore, UserTableUpdateHandler,
 };

@@ -21,7 +21,7 @@ async fn test_select_star_returns_columns_in_ordinal_order() {
 
     // Register system tables
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store, _schema_cache) =
+    let (_jobs_provider, schema_store) =
         register_system_tables(&system_schema, backend.clone())
             .expect("Failed to register system tables");
 
@@ -89,7 +89,7 @@ async fn test_alter_table_add_column_assigns_next_ordinal() {
     let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
 
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store, _schema_cache) =
+    let (_jobs_provider, schema_store) =
         register_system_tables(&system_schema, backend.clone())
             .expect("Failed to register system tables");
 
@@ -147,7 +147,7 @@ async fn test_alter_table_drop_column_preserves_ordinals() {
     let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
 
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store, _schema_cache) =
+    let (_jobs_provider, schema_store) =
         register_system_tables(&system_schema, backend.clone())
             .expect("Failed to register system tables");
 
@@ -211,7 +211,7 @@ async fn test_system_tables_have_correct_column_ordering() {
     let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
 
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store, _schema_cache) =
+    let (_jobs_provider, schema_store) =
         register_system_tables(&system_schema, backend.clone())
             .expect("Failed to register system tables");
 

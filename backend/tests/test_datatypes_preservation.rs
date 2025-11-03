@@ -12,9 +12,7 @@ use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition, TableT
 use kalamdb_commons::models::types::KalamDataType;
 use kalamdb_commons::{NamespaceId, TableId, TableName};
 use kalamdb_core::system_table_registration::register_system_tables;
-use kalamdb_core::catalog::{TableCache, TableMetadata as CoreTableMetadata};
-use kalamdb_core::storage::StorageRegistry;
-use kalamdb_commons::models::StorageId;
+use kalamdb_core::catalog::SchemaCache;
 use kalamdb_sql::KalamSql;
 use kalamdb_core::tables::user_tables::user_table_flush::UserTableFlushJob;
 use kalamdb_core::tables::user_tables::user_table_store::{
@@ -36,7 +34,7 @@ async fn test_datatypes_preservation_values() {
 
     // Register system tables (schema store not strictly required here, but keep consistent)
     let system_schema = Arc::new(MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store, _schema_cache) =
+        let (_jobs_provider, schema_store) =
         register_system_tables(&system_schema, backend.clone())
             .expect("register_system_tables failed");
 
@@ -182,30 +180,16 @@ async fn test_datatypes_preservation_values() {
     // Initialize KalamSql backed by the same RocksDB
     let kalam_sql = Arc::new(KalamSql::new(backend.clone()).expect("init KalamSQL"));
 
-    // Build TableCache bound to a StorageRegistry that uses output_base as default path
-    // When storage_id is not found or empty, it falls back to this default base
-    let registry = Arc::new(StorageRegistry::new(
-        kalam_sql.clone(),
-        output_base.to_string_lossy().into_owned(),
-    ));
-    let table_cache = Arc::new(TableCache::new().with_storage_registry(registry));
-
-    // Insert table metadata into cache with storage_id=None (will use default fallback path)
-    let table_meta = CoreTableMetadata::new(
-        tbl_name.clone().into(),
-        kalamdb_core::catalog::TableType::User,
-        ns.clone().into(),
-        None, // No explicit storage_id, will use default fallback
-    );
-    table_cache.insert(table_meta);
-
     // Execute flush job
+    let table_id_arc = Arc::new(TableId::new(ns.clone(), tbl_name.clone()));
+    let unified_cache = Arc::new(SchemaCache::new(0, None));
     let job = UserTableFlushJob::new(
+        table_id_arc,
         store.clone(),
         ns.clone(),
         tbl_name.clone(),
         arrow_schema.clone(),
-        table_cache.clone(),
+        unified_cache,
     );
 
     let result = job.execute_tracked().expect("flush job failed");

@@ -20,6 +20,7 @@ use crate::flush::FlushPolicy;
 use crate::storage::StorageRegistry;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use datafusion::datasource::TableProvider;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName, UserId};
 use kalamdb_commons::schemas::TableType;
@@ -105,6 +106,12 @@ pub struct SchemaCache {
     /// LRU timestamps indexed by TableId (separate to avoid cloning CachedTableData)
     lru_timestamps: DashMap<TableId, AtomicU64>,
 
+    /// Cached DataFusion providers per table (shared/stream safe to reuse)
+    providers: DashMap<TableId, Arc<dyn TableProvider + Send + Sync>>,
+
+    /// Cached UserTableShared instances per table (Phase 3C: handler consolidation)
+    user_table_shared: DashMap<TableId, Arc<crate::tables::base_table_provider::UserTableShared>>,
+
     /// Maximum number of entries before LRU eviction
     max_size: usize,
 
@@ -126,18 +133,20 @@ impl SchemaCache {
     /// * `storage_registry` - Optional storage registry for path template resolution
     ///
     /// # Example
-    /// ```no_run
+    /// ```ignore
+    /// // Creating a SchemaCache without a StorageRegistry (path resolution disabled)
     /// use kalamdb_core::catalog::SchemaCache;
-    /// use kalamdb_core::storage::StorageRegistry;
-    /// use std::sync::Arc;
+    /// let cache = SchemaCache::new(10_000, None);
     ///
-    /// let registry = Arc::new(StorageRegistry::new());
-    /// let cache = SchemaCache::new(10000, Some(registry));
+    /// // If you need storage path template resolution, construct a StorageRegistry
+    /// // with the required dependencies and pass `Some(Arc<StorageRegistry>)` instead.
     /// ```
     pub fn new(max_size: usize, storage_registry: Option<Arc<StorageRegistry>>) -> Self {
         Self {
             cache: DashMap::new(),
             lru_timestamps: DashMap::new(),
+            providers: DashMap::new(),
+            user_table_shared: DashMap::new(),
             max_size,
             storage_registry,
             hits: AtomicU64::new(0),
@@ -235,28 +244,9 @@ impl SchemaCache {
     /// * `data` - Table data to cache
     ///
     /// # Example
-    /// ```no_run
-    /// # use kalamdb_core::catalog::{SchemaCache, CachedTableData};
-    /// # use kalamdb_commons::models::{TableId, NamespaceId, TableName};
-    /// # use kalamdb_commons::schemas::{TableType, TableDefinition};
-    /// # use kalamdb_core::flush::FlushPolicy;
-    /// # use chrono::Utc;
-    /// # use std::sync::Arc;
-    /// # let cache = SchemaCache::new(1000, None);
-    /// # let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
-    /// # let schema = Arc::new(TableDefinition::default());
-    /// let data = CachedTableData::new(
-    ///     table_id.clone(),
-    ///     TableType::User,
-    ///     Utc::now(),
-    ///     None,
-    ///     FlushPolicy::default(),
-    ///     "/data/{namespace}/{tableName}/".to_string(),
-    ///     1,
-    ///     None,
-    ///     schema,
-    /// );
-    /// cache.insert(table_id, Arc::new(data));
+    /// ```ignore
+    /// // Create `CachedTableData` with your real TableDefinition and insert it.
+    /// // See unit tests in this file for a complete, compiling example.
     /// ```
     pub fn insert(&self, table_id: TableId, data: Arc<CachedTableData>) {
         // Check if we need to evict before inserting
@@ -290,6 +280,8 @@ impl SchemaCache {
     pub fn invalidate(&self, table_id: &TableId) {
         self.cache.remove(table_id);
         self.lru_timestamps.remove(table_id);
+        self.providers.remove(table_id);
+        self.user_table_shared.remove(table_id);
     }
 
     /// Evict least-recently-used entry from cache
@@ -406,6 +398,8 @@ impl SchemaCache {
     pub fn clear(&self) {
         self.cache.clear();
         self.lru_timestamps.clear();
+        self.providers.clear();
+        self.user_table_shared.clear();
         self.hits.store(0, Ordering::Relaxed);
         self.misses.store(0, Ordering::Relaxed);
     }
@@ -418,6 +412,45 @@ impl SchemaCache {
     /// Check if cache is empty
     pub fn is_empty(&self) -> bool {
         self.cache.is_empty()
+    }
+
+    /// Insert a DataFusion provider into the cache for a table
+    pub fn insert_provider(
+        &self,
+        table_id: TableId,
+        provider: Arc<dyn TableProvider + Send + Sync>,
+    ) {
+        self.providers.insert(table_id, provider);
+    }
+
+    /// Get a cached DataFusion provider for a table
+    pub fn get_provider(
+        &self,
+        table_id: &TableId,
+    ) -> Option<Arc<dyn TableProvider + Send + Sync>> {
+        self.providers.get(table_id).map(|e| Arc::clone(e.value()))
+    }
+
+    /// Insert a UserTableShared instance into the cache for a table (Phase 3C)
+    ///
+    /// UserTableShared contains all table-level shared state (handlers, defaults, core)
+    /// and is created once per table at registration time.
+    pub fn insert_user_table_shared(
+        &self,
+        table_id: TableId,
+        shared: Arc<crate::tables::base_table_provider::UserTableShared>,
+    ) {
+        self.user_table_shared.insert(table_id, shared);
+    }
+
+    /// Get a cached UserTableShared instance for a table (Phase 3C)
+    ///
+    /// Returns the shared table-level state that can be wrapped in per-request UserTableAccess.
+    pub fn get_user_table_shared(
+        &self,
+        table_id: &TableId,
+    ) -> Option<Arc<crate::tables::base_table_provider::UserTableShared>> {
+        self.user_table_shared.get(table_id).map(|e| Arc::clone(e.value()))
     }
 
     /// Resolve partial storage path template for a table
@@ -435,22 +468,16 @@ impl SchemaCache {
     /// Partially-resolved template path with static placeholders substituted
     ///
     /// # Example
-    /// ```no_run
-    /// # use kalamdb_core::catalog::SchemaCache;
-    /// # use kalamdb_core::storage::StorageRegistry;
-    /// # use kalamdb_commons::models::{NamespaceId, TableName, StorageId};
-    /// # use kalamdb_commons::schemas::TableType;
-    /// # use std::sync::Arc;
-    /// # let registry = Arc::new(StorageRegistry::new());
-    /// let cache = SchemaCache::new(1000, Some(registry));
-    /// let template = cache.resolve_storage_path_template(
-    ///     &NamespaceId::new("my_ns"),
-    ///     &TableName::new("messages"),
-    ///     TableType::User,
-    ///     &StorageId::new("local")
-    /// )?;
+    /// ```ignore
+    /// // Requires a properly constructed StorageRegistry; see crate docs for setup.
+    /// // let cache = SchemaCache::new(1000, Some(registry));
+    /// // let template = cache.resolve_storage_path_template(
+    /// //     &NamespaceId::new("my_ns"),
+    /// //     &TableName::new("messages"),
+    /// //     TableType::User,
+    /// //     &StorageId::new("local")
+    /// // )?;
     /// // Returns: "/data/my_ns/messages/{userId}/"
-    /// # Ok::<(), kalamdb_core::error::KalamDbError>(())
     /// ```
     pub fn resolve_storage_path_template(
         &self,
@@ -1022,5 +1049,18 @@ mod tests {
         );
         println!("✅ Recorded ops: {} (get operations only)", recorded_ops);
         println!("✅ No deadlocks, no panics!");
+    }
+
+    #[test]
+    fn test_provider_cache_insert_and_get() {
+        use crate::tables::system::stats::StatsTableProvider;
+        let cache = SchemaCache::new(1000, None);
+        let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("stats"));
+        let provider = Arc::new(StatsTableProvider::new(None)) as Arc<dyn TableProvider + Send + Sync>;
+
+        cache.insert_provider(table_id.clone(), Arc::clone(&provider));
+        let retrieved = cache.get_provider(&table_id).expect("provider present");
+
+        assert!(Arc::ptr_eq(&provider, &retrieved), "must return same Arc instance");
     }
 }
