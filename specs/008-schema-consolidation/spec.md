@@ -295,6 +295,746 @@ struct CachedTableData {
 
 ---
 
+### User Story 9 - Unified Job Management System (Priority: P1)
+
+**Status**: Design proposal (2025-11-04)
+
+Developers need a unified, consistent job management system with a single JobManager responsible for ALL background jobs (flush, cleanup, retention, stream eviction, compaction, backup, restore). Currently, job-related code is scattered across multiple files with inconsistent patterns, duplicate state tracking, and ad-hoc implementations. The system must consolidate all job types into a single coherent architecture with comprehensive lifecycle management, dedicated logging, and shortened job IDs with type-specific prefixes.
+
+**Why this priority**: Job management is critical infrastructure that affects system reliability, observability, and maintenance. Current fragmentation causes:
+- **Operational Complexity**: 7+ different job implementations with different patterns for starting/stopping/monitoring
+- **Poor Observability**: Jobs log to main app.log with no dedicated job tracking, making debugging difficult
+- **Inconsistent State**: Some jobs track in system.jobs, others in memory only, leading to lost job state on restart
+- **Long Job IDs**: Current UUID-based job IDs (36 chars) waste storage and readability vs typed short IDs
+- **Limited Status Tracking**: Only 4 statuses (Running, Completed, Failed, Cancelled) miss important states like Queued and Retrying
+
+**Independent Test**: Can be fully tested by:
+1. Creating jobs of each type (flush, cleanup, retention, etc.)
+2. Verifying all jobs appear in system.jobs with correct status transitions
+3. Checking jobs.log contains job-specific entries with job_id prefixes
+4. Validating job ID format (e.g., "FL-abc123" for flush, "CL-def456" for cleanup)
+5. Testing crash recovery by restarting server mid-job and verifying resume/fail behavior
+
+**Current Problems**:
+
+1. **Scattered Job Code**: Jobs split across multiple files with different patterns:
+   - `backend/crates/kalamdb-core/src/jobs/` (7 files: executor.rs, job_manager.rs, tokio_job_manager.rs, job_cleanup.rs, retention.rs, stream_eviction.rs, stream_eviction_scheduler.rs, user_cleanup.rs)
+   - `backend/crates/kalamdb-core/src/scheduler.rs` (flush scheduler logic)
+   - Duplicate state tracking in FlushScheduler, StreamEvictionScheduler, JobExecutor
+
+2. **Inconsistent Logging**: All jobs log to main app.log, no dedicated jobs.log, hard to filter job-specific events
+
+3. **Long Job IDs**: Current format uses full UUIDs (e.g., "flush-messages-550e8400-e29b-41d4-a716-446655440000", 36+ chars), wastes storage, unreadable
+
+4. **Limited Status Model**: Only 4 statuses (Running, Completed, Failed, Cancelled) miss:
+   - **New**: Job created but not yet queued
+   - **Queued**: Job waiting in queue (for rate limiting, backpressure)
+   - **Retrying**: Job failed but will retry (exponential backoff)
+
+5. **No Unified JobManager**: JobExecutor mixes executor logic with scheduling, no clear separation of concerns
+
+**Proposed Architecture**:
+
+```rust
+// ============================================================================
+// JobManager - Central Coordinator
+// ============================================================================
+
+/// Unified job manager responsible for ALL background jobs
+///
+/// Responsibilities:
+/// - Job lifecycle: create → queue → execute → complete/fail/retry
+/// - State persistence: all jobs tracked in system.jobs
+/// - Logging: dedicated jobs.log with job_id prefix on every entry
+/// - Crash recovery: resume incomplete jobs on startup
+/// - Resource management: concurrency limits, backpressure, rate limiting
+pub struct JobManager {
+    /// Job queue (priority queue for different job types)
+    job_queue: Arc<JobQueue>,
+    
+    /// Job executor pool (Tokio tasks or thread pool)
+    executor_pool: Arc<ExecutorPool>,
+    
+    /// System.jobs table provider (persistent state)
+    jobs_provider: Arc<JobsTableProvider>,
+    
+    /// Active jobs registry (in-memory tracking)
+    active_jobs: Arc<DashMap<JobId, JobHandle>>,
+    
+    /// Job logger (dedicated jobs.log file)
+    job_logger: Arc<JobLogger>,
+    
+    /// Configuration (max concurrent jobs, retry policy, etc.)
+    config: JobManagerConfig,
+}
+
+// ============================================================================
+// Enhanced JobStatus - 7 States
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+pub enum JobStatus {
+    /// Job created but not yet queued (initial state)
+    New,
+    
+    /// Job waiting in queue (backpressure, rate limiting)
+    Queued,
+    
+    /// Job actively executing
+    Running,
+    
+    /// Job completed successfully
+    Completed,
+    
+    /// Job failed permanently (max retries exhausted)
+    Failed,
+    
+    /// Job failed but will retry (exponential backoff)
+    Retrying,
+    
+    /// Job cancelled by user/admin
+    Cancelled,
+}
+
+// ============================================================================
+// Enhanced JobType - Type-Specific Prefixes
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+pub enum JobType {
+    Flush,          // Prefix: FL
+    Compact,        // Prefix: CO
+    Cleanup,        // Prefix: CL
+    Backup,         // Prefix: BK
+    Restore,        // Prefix: RS
+    Retention,      // Prefix: RT
+    StreamEviction, // Prefix: SE
+    UserCleanup,    // Prefix: UC
+}
+
+impl JobType {
+    /// Get short prefix for job ID generation (2 chars)
+    pub fn prefix(&self) -> &'static str {
+        match self {
+            JobType::Flush => "FL",
+            JobType::Compact => "CO",
+            JobType::Cleanup => "CL",
+            JobType::Backup => "BK",
+            JobType::Restore => "RS",
+            JobType::Retention => "RT",
+            JobType::StreamEviction => "SE",
+            JobType::UserCleanup => "UC",
+        }
+    }
+}
+
+// ============================================================================
+// JobId - Short, Typed, Readable
+// ============================================================================
+
+/// Type-safe job ID with format: {PREFIX}-{SHORT_ID}
+///
+/// Examples:
+/// - FL-abc123 (Flush job)
+/// - CL-def456 (Cleanup job)
+/// - SE-ghi789 (Stream eviction job)
+///
+/// Short ID format: 6 chars base62 (62^6 = 56 billion unique IDs)
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
+pub struct JobId(String);
+
+impl JobId {
+    /// Generate new job ID for given type
+    /// Format: {PREFIX}-{base62(timestamp_ms + random_u16)}
+    ///
+    /// Examples:
+    /// - FL-abc123 (Flush job at timestamp 1730000000000)
+    /// - CL-def456 (Cleanup job at timestamp 1730000001000)
+    pub fn generate(job_type: JobType) -> Self {
+        let prefix = job_type.prefix();
+        let timestamp = chrono::Utc::now().timestamp_millis() as u64;
+        let random = rand::random::<u16>() as u64;
+        let combined = timestamp.wrapping_add(random);
+        let short_id = base62_encode(combined, 6); // 6 chars
+        JobId(format!("{}-{}", prefix, short_id))
+    }
+    
+    /// Parse job type from ID prefix
+    pub fn job_type(&self) -> Option<JobType> {
+        let prefix = self.0.split('-').next()?;
+        match prefix {
+            "FL" => Some(JobType::Flush),
+            "CO" => Some(JobType::Compact),
+            "CL" => Some(JobType::Cleanup),
+            "BK" => Some(JobType::Backup),
+            "RS" => Some(JobType::Restore),
+            "RT" => Some(JobType::Retention),
+            "SE" => Some(JobType::StreamEviction),
+            "UC" => Some(JobType::UserCleanup),
+            _ => None,
+        }
+    }
+}
+
+// ============================================================================
+// JobLogger - Dedicated Logging
+// ============================================================================
+
+/// Dedicated logger for jobs.log file
+///
+/// Log format: [{job_id}] {level} - {message}
+/// Example: [FL-abc123] INFO - Flush started for table users.messages
+pub struct JobLogger {
+    log_file: Arc<RwLock<File>>,
+}
+
+impl JobLogger {
+    /// Log job event with job_id prefix
+    pub fn log(&self, job_id: &JobId, level: LogLevel, message: &str) {
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let entry = format!("[{}] {} {} - {}\n", timestamp, job_id.as_str(), level, message);
+        
+        if let Ok(mut file) = self.log_file.write() {
+            let _ = file.write_all(entry.as_bytes());
+            let _ = file.flush();
+        }
+    }
+    
+    /// Log with structured data (JSON for complex events)
+    pub fn log_structured(&self, job_id: &JobId, level: LogLevel, data: &serde_json::Value) {
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let entry = format!("[{}] {} {} - {}\n", timestamp, job_id.as_str(), level, data);
+        
+        if let Ok(mut file) = self.log_file.write() {
+            let _ = file.write_all(entry.as_bytes());
+            let _ = file.flush();
+        }
+    }
+}
+
+// ============================================================================
+// Enhanced Job Struct - Idempotency & Unified Messaging
+// ============================================================================
+
+/// Enhanced Job struct with idempotency, retry logic, and unified messaging
+///
+/// **Key Changes from Original**:
+/// 
+/// 1. **Idempotency Key**: Ensures each job runs once only
+///    - Format: "flush:{namespace}:{table}:{YYYYMMDD}" for daily flush jobs
+///    - Format: "cleanup:{type}:{YYYYMMDDTHH}" for hourly cleanup jobs
+///    - Before creating a job, check system.jobs for existing job with same idempotency_key and active status
+///    - Active statuses: New, Queued, Running, Retrying
+///    - If active job exists, reject new job creation with error "Job already running: {existing_job_id}"
+///
+/// 2. **Unified Message Field**: Replaces `result` + `error_message`
+///    - Single `message` field serves both success and error messages
+///    - Completed job: message contains success info (e.g., "Flushed 1,234 rows to Parquet")
+///    - Failed job: message contains error summary (e.g., "RocksDB read failed: IO error")
+///    - Cleaner API, less confusion about which field to use
+///
+/// 3. **Exception Trace**: Separate field for detailed stack traces
+///    - Old `trace` field renamed to `exception_trace` for clarity
+///    - Contains full stack trace for failed jobs (multi-line format)
+///    - Only populated on failure (None for successful jobs)
+///    - Enables detailed debugging without cluttering message field
+///
+/// 4. **Retry Logic**: Built-in retry mechanism
+///    - `retry_count`: Current retry attempt (0 = first attempt, 1+ = retries)
+///    - `max_retries`: Maximum retry attempts (default: 3)
+///    - Status transitions: Failed → Retrying → Running → Completed/Failed
+///    - Exponential backoff: retry_delay = base_delay * 2^retry_count
+///
+/// 5. **Parameters Change**: JSON object instead of JSON array
+///    - Old: `parameters: Option<String>` // JSON array like ["param1", "param2"]
+///    - New: `parameters: Option<String>` // JSON object like {"key": "value", "count": 100}
+///    - More flexible, self-documenting, easier to extend
+///
+#[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug, PartialEq)]
+pub struct Job {
+    pub job_id: JobId,
+    pub job_type: JobType,
+    pub namespace_id: NamespaceId,
+    pub table_name: Option<TableName>,
+    pub status: JobStatus,
+    
+    /// **NEW**: Idempotency key to prevent duplicate job execution
+    /// 
+    /// Examples:
+    /// - Daily flush: "flush:default:events:20251104"
+    /// - Hourly cleanup: "cleanup:retention:20251104T14"
+    /// - Compaction: "compact:default:events:20251104T14"
+    ///
+    /// Before creating a job, query system.jobs:
+    /// ```sql
+    /// SELECT job_id FROM system.jobs 
+    /// WHERE idempotency_key = ? 
+    ///   AND status IN ('New', 'Queued', 'Running', 'Retrying')
+    /// ```
+    /// If result exists, reject job creation.
+    pub idempotency_key: Option<String>,
+    
+    /// **CHANGED**: JSON object (not array) for flexible parameters
+    /// 
+    /// Examples:
+    /// - Flush: {"threshold_bytes": 1048576, "force": false}
+    /// - Cleanup: {"retention_days": 30, "batch_size": 1000}
+    /// - Retention: {"delete_before": "2025-10-01T00:00:00Z"}
+    pub parameters: Option<String>,
+    
+    /// **NEW**: Unified message field for success OR error messages
+    /// 
+    /// Success example: "Flushed 1,234 rows (5.2 MB) to Parquet in 342ms"
+    /// Error example: "RocksDB read failed: IO error at offset 12345"
+    ///
+    /// Replaces old `result` and `error_message` fields.
+    pub message: Option<String>,
+    
+    /// **RENAMED**: Full exception trace for failed jobs (was `trace`)
+    /// 
+    /// Contains multi-line stack trace:
+    /// ```
+    /// Error: Failed to flush table
+    ///   at FlushJob::execute (flush.rs:123)
+    ///   at JobExecutor::run (executor.rs:456)
+    ///   at tokio::runtime::task (task.rs:789)
+    /// ```
+    ///
+    /// Only populated on failure. Success jobs have None.
+    pub exception_trace: Option<String>,
+    
+    pub memory_used: Option<i64>,  // bytes
+    pub cpu_used: Option<i64>,     // microseconds
+    pub created_at: i64,           // Unix timestamp in milliseconds
+    pub started_at: Option<i64>,   // Unix timestamp in milliseconds
+    pub completed_at: Option<i64>, // Unix timestamp in milliseconds
+    
+    #[bincode(with_serde)]
+    pub node_id: NodeId,
+    
+    /// **NEW**: Retry tracking
+    pub retry_count: u32,      // Current retry attempt (0 = first try)
+    pub max_retries: u32,      // Maximum retry attempts (default: 3)
+}
+
+impl Job {
+    /// Create new job with New status (not Running)
+    /// 
+    /// **Changed**: Initial status is New (not Running) to allow proper queuing
+    pub fn new(
+        job_id: JobId,
+        job_type: JobType,
+        namespace_id: NamespaceId,
+        node_id: NodeId,
+    ) -> Self {
+        let now = chrono::Utc::now().timestamp_millis();
+        Self {
+            job_id,
+            job_type,
+            namespace_id,
+            table_name: None,
+            status: JobStatus::New,  // Changed from Running
+            idempotency_key: None,
+            parameters: None,
+            message: None,
+            exception_trace: None,
+            memory_used: None,
+            cpu_used: None,
+            created_at: now,
+            started_at: None,  // Set when job actually starts
+            completed_at: None,
+            node_id,
+            retry_count: 0,
+            max_retries: 3,  // Default retry limit
+        }
+    }
+    
+    /// Mark job as queued
+    pub fn queue(mut self) -> Self {
+        self.status = JobStatus::Queued;
+        self
+    }
+    
+    /// Mark job as running (transition from Queued)
+    pub fn start(mut self) -> Self {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.status = JobStatus::Running;
+        self.started_at = Some(now);
+        self
+    }
+    
+    /// Mark job as completed with success message
+    pub fn complete(mut self, message: Option<String>) -> Self {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.status = JobStatus::Completed;
+        self.completed_at = Some(now);
+        if self.started_at.is_none() {
+            self.started_at = Some(self.created_at);
+        }
+        self.message = message;
+        self.exception_trace = None;  // Clear trace on success
+        self
+    }
+    
+    /// Mark job as failed with error message and optional exception trace
+    pub fn fail(mut self, error_message: String, exception_trace: Option<String>) -> Self {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.status = JobStatus::Failed;
+        self.completed_at = Some(now);
+        if self.started_at.is_none() {
+            self.started_at = Some(self.created_at);
+        }
+        self.message = Some(error_message);
+        self.exception_trace = exception_trace;
+        self
+    }
+    
+    /// Mark job for retry (increment retry_count, set Retrying status)
+    pub fn retry(mut self, error_message: String, exception_trace: Option<String>) -> Self {
+        self.retry_count += 1;
+        self.status = JobStatus::Retrying;
+        self.message = Some(error_message);
+        self.exception_trace = exception_trace;
+        self
+    }
+    
+    /// Check if job can be retried
+    pub fn can_retry(&self) -> bool {
+        self.retry_count < self.max_retries
+    }
+    
+    /// Mark job as cancelled
+    pub fn cancel(mut self) -> Self {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.status = JobStatus::Cancelled;
+        self.completed_at = Some(now);
+        self
+    }
+    
+    /// Set idempotency key
+    pub fn with_idempotency_key(mut self, key: String) -> Self {
+        self.idempotency_key = Some(key);
+        self
+    }
+    
+    /// Set table name
+    pub fn with_table_name(mut self, table_name: TableName) -> Self {
+        self.table_name = Some(table_name);
+        self
+    }
+    
+    /// Set parameters (JSON object)
+    pub fn with_parameters(mut self, parameters: String) -> Self {
+        self.parameters = Some(parameters);
+        self
+    }
+    
+    /// Set max retries
+    pub fn with_max_retries(mut self, max_retries: u32) -> Self {
+        self.max_retries = max_retries;
+        self
+    }
+    
+    /// Set resource metrics
+    pub fn with_metrics(mut self, memory_used: Option<i64>, cpu_used: Option<i64>) -> Self {
+        self.memory_used = memory_used;
+        self.cpu_used = cpu_used;
+        self
+    }
+    
+    /// Helper: Generate daily flush idempotency key
+    /// Format: "flush:{namespace}:{table}:{YYYYMMDD}"
+    pub fn daily_flush_key(namespace: &NamespaceId, table: &TableName) -> String {
+        let today = chrono::Utc::now().format("%Y%m%d");
+        format!("flush:{}:{}:{}", namespace.as_str(), table.as_str(), today)
+    }
+    
+    /// Helper: Generate hourly cleanup idempotency key
+    /// Format: "cleanup:{type}:{YYYYMMDDTHH}"
+    pub fn hourly_cleanup_key(cleanup_type: &str) -> String {
+        let hour = chrono::Utc::now().format("%Y%m%dT%H");
+        format!("cleanup:{}:{}", cleanup_type, hour)
+    }
+}
+
+// ============================================================================
+// JobManager - Idempotency Enforcement
+// ============================================================================
+
+impl JobManager {
+    /// Create job with idempotency check
+    /// 
+    /// **Idempotency Logic**:
+    /// 1. If idempotency_key provided, query system.jobs for active jobs with same key
+    /// 2. Active statuses: New, Queued, Running, Retrying
+    /// 3. If active job found, return error: "Job already running: {existing_job_id}"
+    /// 4. If no active job, create new job and persist to system.jobs
+    /// 5. If idempotency_key is None, skip check (allow duplicate jobs)
+    ///
+    /// **Example Usage**:
+    /// ```rust
+    /// // Daily flush job (idempotent)
+    /// let job_id = JobId::generate(JobType::Flush);
+    /// let idempotency_key = Job::daily_flush_key(&namespace_id, &table_name);
+    /// let job = Job::new(job_id, JobType::Flush, namespace_id, node_id)
+    ///     .with_table_name(table_name)
+    ///     .with_idempotency_key(idempotency_key);
+    ///
+    /// match job_manager.create_job(job).await {
+    ///     Ok(job_id) => println!("Job created: {}", job_id),
+    ///     Err(e) if e.contains("already running") => println!("Job already exists, skip"),
+    ///     Err(e) => eprintln!("Error: {}", e),
+    /// }
+    /// ```
+    pub async fn create_job(&self, job: Job) -> Result<JobId, String> {
+        // Check idempotency if key provided
+        if let Some(ref key) = job.idempotency_key {
+            let active_statuses = vec![
+                JobStatus::New,
+                JobStatus::Queued,
+                JobStatus::Running,
+                JobStatus::Retrying,
+            ];
+            
+            // Query system.jobs for active jobs with same idempotency key
+            for status in active_statuses {
+                let existing = self.jobs_provider
+                    .find_by_idempotency_key(key, status)
+                    .await?;
+                
+                if let Some(existing_job) = existing {
+                    return Err(format!(
+                        "Job already running: {} (status: {:?}, created: {})",
+                        existing_job.job_id.as_str(),
+                        existing_job.status,
+                        existing_job.created_at
+                    ));
+                }
+            }
+        }
+        
+        // No active job found, create new one
+        let job_id = job.job_id.clone();
+        self.jobs_provider.insert(job).await?;
+        self.job_queue.enqueue(job_id.clone()).await?;
+        
+        self.job_logger.log(
+            &job_id,
+            LogLevel::Info,
+            &format!("Job created (type: {:?})", job.job_type)
+        );
+        
+        Ok(job_id)
+    }
+}
+
+// ============================================================================
+// Job Trait - Common Interface for All Jobs
+// ============================================================================
+
+#[async_trait]
+pub trait Job: Send + Sync {
+    /// Job type identifier
+    fn job_type(&self) -> JobType;
+    
+    /// Execute the job (main work)
+    async fn execute(&self, ctx: &JobContext) -> Result<String, String>;
+    
+    /// Cleanup after job completes/fails
+    async fn cleanup(&self, ctx: &JobContext) -> Result<(), String> {
+        Ok(()) // Default: no cleanup
+    }
+    
+    /// Check if job should retry on failure
+    fn should_retry(&self, error: &str) -> bool {
+        false // Default: no retry
+    }
+    
+    /// Retry delay (exponential backoff)
+    fn retry_delay(&self, attempt: u32) -> Duration {
+        Duration::from_secs(2u64.pow(attempt).min(3600)) // Max 1 hour
+    }
+}
+
+// ============================================================================
+// Concrete Job Implementations
+// ============================================================================
+
+/// Flush job - flushes RocksDB buffer to Parquet
+pub struct FlushJob {
+    table_id: TableId,
+    flush_policy: FlushPolicy,
+}
+
+#[async_trait]
+impl Job for FlushJob {
+    fn job_type(&self) -> JobType { JobType::Flush }
+    
+    async fn execute(&self, ctx: &JobContext) -> Result<String, String> {
+        ctx.log(LogLevel::Info, &format!("Flushing table {}", self.table_id));
+        
+        // Actual flush logic (existing code from user_table_flush.rs, shared_table_flush.rs)
+        // ...
+        
+        Ok(format!("Flushed {} rows", 1000))
+    }
+    
+    fn should_retry(&self, error: &str) -> bool {
+        // Retry on transient errors (lock conflicts, I/O errors)
+        error.contains("lock") || error.contains("I/O")
+    }
+}
+
+/// Cleanup job - deletes old completed/failed jobs
+pub struct CleanupJob {
+    retention_config: RetentionConfig,
+}
+
+#[async_trait]
+impl Job for CleanupJob {
+    fn job_type(&self) -> JobType { JobType::Cleanup }
+    
+    async fn execute(&self, ctx: &JobContext) -> Result<String, String> {
+        ctx.log(LogLevel::Info, "Starting job cleanup");
+        
+        // Existing logic from job_cleanup.rs
+        // ...
+        
+        Ok(format!("Deleted {} old jobs", 50))
+    }
+}
+
+// Similar for: RetentionJob, StreamEvictionJob, UserCleanupJob, CompactJob, BackupJob, RestoreJob
+```
+
+**Acceptance Scenarios**:
+
+1. **Given** JobManager is initialized at startup, **When** creating a new flush job, **Then** job is created with status=New, assigned JobId with FL- prefix (e.g., "FL-abc123"), and persisted to system.jobs
+
+2. **Given** a job is created with status=New, **When** JobManager processes queue, **Then** job transitions to Queued → Running with timestamp updates and logs to jobs.log: "[FL-abc123] INFO - Job queued" then "[FL-abc123] INFO - Job started"
+
+3. **Given** a job is running, **When** job completes successfully, **Then** status transitions to Completed, result is stored, and logs: "[FL-abc123] INFO - Job completed: Flushed 1000 rows"
+
+4. **Given** a job fails with transient error, **When** Job.should_retry() returns true, **Then** status transitions to Retrying, retry_count increments, and logs: "[FL-abc123] WARN - Job failed, retrying in 2s (attempt 1/3)"
+
+5. **Given** a job fails after max retries (3 attempts), **When** final retry fails, **Then** status transitions to Failed, error_message stored, and logs: "[FL-abc123] ERROR - Job failed permanently: {error}"
+
+6. **Given** server restarts with jobs in Running status, **When** JobManager starts, **Then** incomplete jobs are marked as Failed with error "Server restarted during execution" and logged
+
+7. **Given** all job types (Flush, Cleanup, Retention, StreamEviction, UserCleanup, Compact, Backup, Restore), **When** jobs are created, **Then** each has correct prefix (FL-, CL-, RT-, SE-, UC-, CO-, BK-, RS-) and appears in system.jobs
+
+8. **Given** jobs.log file exists, **When** filtering logs by job ID "FL-abc123", **Then** all entries for that specific job are returned (grep "[FL-abc123]" jobs.log)
+
+9. **Given** JobManager with max_concurrent_jobs=5, **When** 10 jobs are submitted, **Then** 5 jobs execute immediately (Running), 5 jobs wait (Queued), and queue drains as jobs complete
+
+10. **Given** a job is cancelled via CANCEL JOB command, **When** job is running, **Then** job receives cancellation signal, performs cleanup, transitions to Cancelled status, and logs: "[FL-abc123] INFO - Job cancelled by user"
+
+**Idempotency Acceptance Scenarios**:
+
+11. **Given** a daily flush job for table "events" on 2025-11-04, **When** JobManager creates job with idempotency key "flush:default:events:20251104", **Then** job is created successfully with New status
+
+12. **Given** job "FL-abc123" is Running with idempotency key "flush:default:events:20251104", **When** another flush job is created with same idempotency key, **Then** creation fails with error: "Job already running: FL-abc123 (status: Running, created: 1730000000000)"
+
+13. **Given** job "FL-abc123" completed on 2025-11-04 with status=Completed, **When** another flush job is created on 2025-11-04 with same idempotency key "flush:default:events:20251104", **Then** job is created successfully (previous job is completed, not active)
+
+14. **Given** job "FL-abc123" failed and transitioned to Retrying with idempotency key "flush:default:events:20251104", **When** another flush job is created with same key, **Then** creation fails with error: "Job already running: FL-abc123 (status: Retrying, ...)"
+
+15. **Given** hourly cleanup job with idempotency key "cleanup:retention:20251104T14", **When** same cleanup runs twice in same hour, **Then** second attempt fails with "Job already running" error (idempotency prevents duplicate cleanup)
+
+16. **Given** job is created without idempotency key (idempotency_key = None), **When** creating multiple jobs of same type, **Then** all jobs are created successfully (no idempotency check when key is absent)
+
+**Unified Message Field Acceptance Scenarios**:
+
+17. **Given** flush job completes successfully, **When** job.complete() is called with message "Flushed 1,234 rows (5.2 MB) to Parquet in 342ms", **Then** job.message contains success message and job.exception_trace is None
+
+18. **Given** cleanup job fails with RocksDB error, **When** job.fail() is called with error_message "RocksDB read failed: IO error at offset 12345", **Then** job.message contains error summary (not "result" or "error_message" field)
+
+19. **Given** retention job completes with message "Deleted 500 old rows before 2025-10-01", **When** querying system.jobs, **Then** message field is populated (old "result" field no longer exists)
+
+20. **Given** compaction job fails with message "Merge failed: insufficient disk space", **When** querying system.jobs, **Then** message field contains error (old "error_message" field no longer exists)
+
+**Exception Trace Acceptance Scenarios**:
+
+21. **Given** flush job fails with panic/exception, **When** job.fail() is called with exception_trace containing multi-line stack trace, **Then** system.jobs stores full trace in exception_trace field
+
+22. **Given** job completes successfully, **When** job.complete() is called, **Then** exception_trace is explicitly set to None (cleared from previous failures)
+
+23. **Given** job fails with short error "IO error", **When** exception_trace is provided with full stack trace (100+ lines), **Then** message contains concise error, exception_trace contains detailed debugging info
+
+24. **Given** job retry after failure, **When** job.retry() is called with error_message and exception_trace, **Then** both message and exception_trace are updated (not cleared until success)
+
+25. **Given** developer queries system.jobs for failed jobs, **When** filtering WHERE status = 'Failed', **Then** results include both message (error summary) and exception_trace (full stack) for debugging
+
+**Retry Logic Acceptance Scenarios**:
+
+26. **Given** job is created, **When** job.new() is called, **Then** retry_count = 0 and max_retries = 3 (default)
+
+27. **Given** job fails with transient error, **When** job.can_retry() returns true and job.retry() is called, **Then** retry_count increments to 1, status = Retrying, message and exception_trace updated
+
+28. **Given** job has retry_count = 2 (2 previous failures), **When** job fails again and max_retries = 3, **Then** job.can_retry() returns true (2 < 3), job transitions to Retrying for 3rd attempt
+
+29. **Given** job has retry_count = 3 and max_retries = 3, **When** job fails, **Then** job.can_retry() returns false (3 >= 3), job transitions to Failed permanently (no more retries)
+
+30. **Given** job is created with custom max_retries, **When** job.with_max_retries(5) is called, **Then** job can retry up to 5 times before permanent failure
+
+**Parameters Change Acceptance Scenarios**:
+
+31. **Given** flush job is created, **When** parameters are set with JSON object {"threshold_bytes": 1048576, "force": false}, **Then** system.jobs stores parameters as JSON object (not array)
+
+32. **Given** cleanup job with parameters {"retention_days": 30, "batch_size": 1000}, **When** job executor parses parameters, **Then** values are extracted by key (retention_days, batch_size) not array index
+
+33. **Given** legacy job created with old parameters format (JSON array), **When** migrating to new format, **Then** migration converts array ["param1", "param2"] to object {"arg0": "param1", "arg1": "param2"} for backward compatibility
+
+**Architecture Benefits**:
+
+- **Unified Management**: Single JobManager handles ALL job types (no more scheduler fragmentation)
+- **Better Observability**: Dedicated jobs.log with filterable job IDs makes debugging 10× easier
+- **Shorter IDs**: "FL-abc123" (9 chars) vs "flush-messages-550e8400-..." (45+ chars) = 80% storage reduction
+- **Rich Status Model**: 7 statuses (New, Queued, Running, Completed, Failed, Retrying, Cancelled) provide fine-grained lifecycle tracking
+- **Crash Recovery**: All jobs in system.jobs enable resume/fail on restart
+- **Retry Logic**: Built-in exponential backoff for transient failures
+- **Resource Control**: Queue-based execution with concurrency limits prevents overload
+
+**Migration Plan**:
+
+1. **Phase 1** (Day 1): Extend JobStatus enum (add New, Queued, Retrying), update JobType with prefixes, implement JobId with short format
+2. **Phase 2** (Day 2): Create JobManager core (queue, executor pool, lifecycle management), implement JobLogger
+3. **Phase 3** (Day 3): Define Job trait, migrate FlushJob, CleanupJob, RetentionJob to new pattern
+4. **Phase 4** (Day 4): Migrate StreamEvictionJob, UserCleanupJob, add CompactJob/BackupJob/RestoreJob stubs
+5. **Phase 5** (Day 5): Wire JobManager into AppContext, update lifecycle.rs to start JobManager
+6. **Phase 6** (Day 6): Delete old code (scheduler.rs, individual job managers), update all call sites
+7. **Phase 7** (Day 7): Integration tests, crash recovery tests, concurrency tests, documentation
+
+**Files to Create**:
+- `backend/crates/kalamdb-core/src/jobs/manager.rs` (~800 lines) - JobManager implementation
+- `backend/crates/kalamdb-core/src/jobs/logger.rs` (~150 lines) - JobLogger implementation
+- `backend/crates/kalamdb-core/src/jobs/queue.rs` (~300 lines) - Priority queue implementation
+- `backend/crates/kalamdb-core/src/jobs/trait.rs` (~100 lines) - Job trait definition
+- `backend/crates/kalamdb-core/src/jobs/flush_job.rs` (~200 lines) - FlushJob implementation
+- `backend/crates/kalamdb-core/src/jobs/cleanup_job.rs` (~150 lines) - CleanupJob implementation
+- `backend/crates/kalamdb-core/src/jobs/retention_job.rs` (~150 lines) - RetentionJob implementation
+- `backend/crates/kalamdb-core/src/jobs/stream_eviction_job.rs` (~200 lines) - StreamEvictionJob
+- `backend/crates/kalamdb-core/src/jobs/user_cleanup_job.rs` (~150 lines) - UserCleanupJob
+
+**Files to Modify**:
+- `backend/crates/kalamdb-commons/src/models/job_status.rs` - Add New, Queued, Retrying
+- `backend/crates/kalamdb-commons/src/models/job_type.rs` - Add Retention, StreamEviction, UserCleanup; add prefix() method
+- `backend/crates/kalamdb-commons/src/models/job_id.rs` - Add generate(), job_type() methods
+- `backend/crates/kalamdb-core/src/app_context.rs` - Add job_manager field
+- `backend/src/lifecycle.rs` - Start JobManager, migrate flush/eviction schedulers
+
+**Files to Delete**:
+- `backend/crates/kalamdb-core/src/scheduler.rs` (~800 lines) - Replaced by JobManager
+- `backend/crates/kalamdb-core/src/jobs/tokio_job_manager.rs` (~400 lines) - Merged into JobManager
+- `backend/crates/kalamdb-core/src/jobs/stream_eviction_scheduler.rs` (~300 lines) - Replaced by JobManager
+
+**Net Impact**:
+- Lines added: ~2,200 (new unified architecture)
+- Lines removed: ~1,500 (old fragmented code)
+- Net increase: ~700 lines (but massively improved maintainability, observability, reliability)
+
+---
+
 ### Edge Cases
 
 - **Schema Evolution**: What happens when querying old schema versions after multiple ALTER TABLE operations? System must support schema_history array in TableDefinition to retrieve historical schemas.

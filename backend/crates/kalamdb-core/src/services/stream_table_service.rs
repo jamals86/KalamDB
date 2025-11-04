@@ -7,19 +7,20 @@
 //! - Metadata registration in system_tables via kalamdb-sql
 //! - Column family creation for stream_table:{namespace}:{table_name}
 //! - TTL and max_buffer configuration
+//!
+//! **REFACTORED (Phase 5, T205)**: Stateless service - fetches dependencies from AppContext
 
+use crate::app_context::AppContext;
 use crate::catalog::{NamespaceId, TableName};
 use crate::error::KalamDbError;
 // TODO: Phase 2b - Re-enable FlushPolicy when flushing is re-implemented
 // use crate::flush::FlushPolicy;
 use crate::stores::system_table::SharedTableStoreExt;
-use crate::tables::StreamTableStore;
 use datafusion::arrow::datatypes::Schema;
 use kalamdb_sql::ddl::CreateTableStatement;
-use kalamdb_sql::KalamSql;
 use std::sync::Arc;
 
-/// Stream table service
+/// Stream table service (stateless)
 ///
 /// Coordinates stream table creation across schema storage (RocksDB),
 /// column families, and metadata management.
@@ -29,22 +30,15 @@ use std::sync::Arc;
 /// - NO Parquet persistence (memory/RocksDB only)
 /// - TTL-based eviction
 /// - Optional ephemeral mode (only store if subscribers exist)
-pub struct StreamTableService {
-    stream_table_store: Arc<StreamTableStore>,
-    kalam_sql: Arc<KalamSql>,
-}
+///
+/// **Phase 5 Optimization**: Zero-sized struct - all dependencies fetched
+/// from AppContext::get() on demand.
+pub struct StreamTableService;
 
 impl StreamTableService {
-    /// Create a new stream table service
-    ///
-    /// # Arguments
-    /// * `stream_table_store` - Storage backend for stream tables
-    /// * `kalam_sql` - KalamSQL instance for metadata storage
-    pub fn new(stream_table_store: Arc<StreamTableStore>, kalam_sql: Arc<KalamSql>) -> Self {
-        Self {
-            stream_table_store,
-            kalam_sql,
-        }
+    /// Create a new stream table service (zero-sized)
+    pub fn new() -> Self {
+        Self
     }
 
     /// Create a stream table from a CREATE STREAM TABLE statement
@@ -90,9 +84,13 @@ impl StreamTableService {
         // Save complete table definition to information_schema_tables (atomic write)
         self.save_table_definition(&stmt, &schema)?;
 
+        // Fetch stream_table_store from AppContext
+        let ctx = AppContext::get();
+        let stream_table_store = ctx.stream_table_store();
+
         // Create the column family in RocksDB
         SharedTableStoreExt::create_column_family(
-            self.stream_table_store.as_ref(),
+            stream_table_store.as_ref(),
             stmt.namespace_id.as_str(),
             stmt.table_name.as_str(),
         )
@@ -170,8 +168,12 @@ impl StreamTableService {
             None, // table_comment
         ).map_err(|e| KalamDbError::SchemaError(e))?;
 
+        // Fetch kalam_sql from AppContext
+        let ctx = AppContext::get();
+        let kalam_sql = ctx.kalam_sql();
+
         // Single atomic write to information_schema_tables
-        self.kalam_sql
+        kalam_sql
             .upsert_table_definition(&table_def)
             .map_err(|e| {
                 KalamDbError::Other(format!(
@@ -234,7 +236,11 @@ impl StreamTableService {
         namespace_id: &NamespaceId,
         table_name: &TableName,
     ) -> Result<bool, KalamDbError> {
-        match self.kalam_sql.get_table_definition(namespace_id, table_name) {
+        // Fetch kalam_sql from AppContext
+        let ctx = AppContext::get();
+        let kalam_sql = ctx.kalam_sql();
+
+        match kalam_sql.get_table_definition(namespace_id, table_name) {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false),
             Err(e) => Err(KalamDbError::Other(e.to_string())),
@@ -247,23 +253,14 @@ mod tests {
     use super::*;
     use datafusion::arrow::datatypes::{DataType, Field};
     use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{RocksDBBackend, StorageBackend};
-    use kalamdb_commons::models::StorageId;
     use kalamdb_commons::schemas::TableType;
 
-    fn create_test_service() -> (StreamTableService, TestDb) {
-        let test_db = TestDb::new(&[
-            "stream_table:app:events",
-            "system_tables",
-            "information_schema_tables",
-        ])
-        .unwrap();
+    fn create_test_service() -> (StreamTableService, Arc<TestDb>) {
+        // Initialize AppContext for tests
+        let test_db = crate::test_helpers::init_test_app_context();
 
-        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
-        let stream_table_store = Arc::new(StreamTableStore::new(backend.clone(), "stream_tables"));
-        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
-
-        let service = StreamTableService::new(stream_table_store, kalam_sql);
+        // StreamTableService is now zero-sized - no dependencies needed
+        let service = StreamTableService::new();
         (service, test_db)
     }
 
@@ -315,7 +312,7 @@ mod tests {
         ]));
 
         let stmt = CreateTableStatement {
-            table_name: TableName::new("events"),
+            table_name: TableName::new("events_no_sys_cols"), // Unique name to avoid conflicts
             namespace_id: NamespaceId::new("app"),
             table_type: TableType::Stream,
             schema,
@@ -331,10 +328,13 @@ mod tests {
         };
 
         let result = service.create_table(stmt);
+        if let Err(ref e) = result {
+            eprintln!("Error creating stream table: {:?}", e);
+        }
         assert!(result.is_ok());
 
         // Verify table was created
-        assert!(service.table_exists(&NamespaceId::new("app"), &TableName::new("events")).unwrap());
+        assert!(service.table_exists(&NamespaceId::new("app"), &TableName::new("events_no_sys_cols")).unwrap());
     }
 
     #[test]
@@ -344,7 +344,7 @@ mod tests {
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
         let stmt1 = CreateTableStatement {
-            table_name: TableName::new("events"),
+            table_name: TableName::new("events_if_not_exists"), // Unique name
             namespace_id: NamespaceId::new("app"),
             table_type: TableType::Stream,
             schema: schema.clone(),

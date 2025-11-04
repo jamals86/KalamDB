@@ -120,12 +120,12 @@ async fn create_system_user(
 
 #[tokio::test]
 async fn test_create_user_with_password_success() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Execute CREATE USER command
     let sql = "CREATE USER 'alice' WITH PASSWORD 'SecurePass123' ROLE developer EMAIL 'alice@example.com'";
-    let result = executor.execute(&*session_ctx, sql, Some(&admin_id)).await;
+    let result = executor.execute(&session_ctx, sql, Some(&admin_id)).await;
 
     assert!(result.is_ok(), "CREATE USER should succeed: {:?}", result);
 
@@ -149,11 +149,11 @@ async fn test_create_user_with_password_success() {
 
 #[tokio::test]
 async fn test_create_user_with_oauth_success() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     let sql = r#"CREATE USER 'bob' WITH OAUTH '{"provider": "google", "subject": "12345"}' ROLE viewer EMAIL 'bob@example.com'"#;
-    let result = executor.execute(&*session_ctx, sql, Some(&admin_id)).await;
+    let result = executor.execute(&session_ctx, sql, Some(&admin_id)).await;
 
     assert!(
         result.is_ok(),
@@ -172,7 +172,7 @@ async fn test_create_user_with_oauth_success() {
 
 #[tokio::test]
 async fn test_create_user_without_authorization_fails() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
 
     // Create a regular user (not DBA/System)
     let regular_user_id = UserId::new("regular_user");
@@ -197,7 +197,7 @@ async fn test_create_user_without_authorization_fails() {
 
     // Try to create a user as regular user
     let sql = "CREATE USER 'charlie' WITH PASSWORD 'TestPass123' ROLE user";
-    let result = executor.execute(&*session_ctx, sql, Some(&regular_user_id)).await;
+    let result = executor.execute(&session_ctx, sql, Some(&regular_user_id)).await;
 
     assert!(
         result.is_err(),
@@ -220,13 +220,13 @@ async fn test_create_user_without_authorization_fails() {
 
 #[tokio::test]
 async fn test_alter_user_set_password() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Create user first
     let create_sql = "CREATE USER 'dave' WITH PASSWORD 'OldPass123' ROLE user";
     executor
-        .execute(&*session_ctx, create_sql, Some(&admin_id))
+        .execute(&session_ctx, create_sql, Some(&admin_id))
         .await
         .expect("CREATE USER failed");
 
@@ -238,7 +238,7 @@ async fn test_alter_user_set_password() {
 
     // Change password
     let alter_sql = "ALTER USER 'dave' SET PASSWORD 'NewPass456'";
-    let result = executor.execute(&*session_ctx, alter_sql, Some(&admin_id)).await;
+    let result = executor.execute(&session_ctx, alter_sql, Some(&admin_id)).await;
 
     assert!(result.is_ok(), "ALTER USER SET PASSWORD should succeed");
 
@@ -255,19 +255,19 @@ async fn test_alter_user_set_password() {
 
 #[tokio::test]
 async fn test_alter_user_set_role() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Create user first
     let create_sql = "CREATE USER 'eve' WITH PASSWORD 'Password123' ROLE user";
     executor
-        .execute(&*session_ctx, create_sql, Some(&admin_id))
+        .execute(&session_ctx, create_sql, Some(&admin_id))
         .await
         .expect("CREATE USER failed");
 
     // Change role
     let alter_sql = "ALTER USER 'eve' SET ROLE dba";
-    let result = executor.execute(&*session_ctx, alter_sql, Some(&admin_id)).await;
+    let result = executor.execute(&session_ctx, alter_sql, Some(&admin_id)).await;
 
     assert!(result.is_ok(), "ALTER USER SET ROLE should succeed");
 
@@ -277,19 +277,19 @@ async fn test_alter_user_set_role() {
 
 #[tokio::test]
 async fn test_drop_user_soft_delete() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Create user first
     let create_sql = "CREATE USER 'frank' WITH PASSWORD 'Password123' ROLE user";
     executor
-        .execute(&*session_ctx, create_sql, Some(&admin_id))
+        .execute(&session_ctx, create_sql, Some(&admin_id))
         .await
         .expect("CREATE USER failed");
 
     // Drop user
     let drop_sql = "DROP USER 'frank'";
-    let result = executor.execute(&*session_ctx, drop_sql, Some(&admin_id)).await;
+    let result = executor.execute(&session_ctx, drop_sql, Some(&admin_id)).await;
 
     assert!(result.is_ok(), "DROP USER should succeed");
 
@@ -306,7 +306,7 @@ async fn test_drop_user_soft_delete() {
 
 #[tokio::test]
 async fn test_create_user_role_mapping() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Test various role aliases
@@ -328,7 +328,7 @@ async fn test_create_user_role_mapping() {
             username, role_str
         );
 
-        let result = executor.execute(&*session_ctx, &sql, Some(&admin_id)).await;
+        let result = executor.execute(&session_ctx, &sql, Some(&admin_id)).await;
         assert!(
             result.is_ok(),
             "CREATE USER with role {} should succeed",
@@ -350,11 +350,11 @@ async fn test_create_user_role_mapping() {
 /// T084S - Test CREATE USER WITH INTERNAL (system users)
 #[tokio::test]
 async fn test_create_user_with_internal_auth() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     let sql = "CREATE USER 'system_user' WITH INTERNAL ROLE system";
-    let result = executor.execute(&*session_ctx, sql, Some(&admin_id)).await;
+    let result = executor.execute(&session_ctx, sql, Some(&admin_id)).await;
 
     assert!(result.is_ok(), "CREATE USER with INTERNAL should succeed");
 
@@ -374,20 +374,20 @@ async fn test_create_user_with_internal_auth() {
 /// T084T - Test ALTER USER SET EMAIL
 #[tokio::test]
 async fn test_alter_user_set_email() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Create user first
     let create_sql =
         "CREATE USER 'george' WITH PASSWORD 'Password123' ROLE user EMAIL 'george@old.com'";
     executor
-        .execute(&*session_ctx, create_sql, Some(&admin_id))
+        .execute(&session_ctx, create_sql, Some(&admin_id))
         .await
         .expect("CREATE USER failed");
 
     // Change email
     let alter_sql = "ALTER USER 'george' SET EMAIL 'george@new.com'";
-    let result = executor.execute(&*session_ctx, alter_sql, Some(&admin_id)).await;
+    let result = executor.execute(&session_ctx, alter_sql, Some(&admin_id)).await;
 
     assert!(result.is_ok(), "ALTER USER SET EMAIL should succeed");
 
@@ -401,13 +401,13 @@ async fn test_alter_user_set_email() {
 /// T084V - Additional authorization test for ALTER USER
 #[tokio::test]
 async fn test_alter_user_without_authorization_fails() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Create target user
     let create_sql = "CREATE USER 'target' WITH PASSWORD 'Password123' ROLE user";
     executor
-        .execute(&*session_ctx, create_sql, Some(&admin_id))
+        .execute(&session_ctx, create_sql, Some(&admin_id))
         .await
         .expect("CREATE USER failed");
 
@@ -434,7 +434,7 @@ async fn test_alter_user_without_authorization_fails() {
 
     // Try to alter user as regular user
     let alter_sql = "ALTER USER 'target' SET ROLE dba";
-    let result = executor.execute(&*session_ctx, alter_sql, Some(&regular_user_id)).await;
+    let result = executor.execute(&session_ctx, alter_sql, Some(&regular_user_id)).await;
 
     assert!(
         result.is_err(),
@@ -455,13 +455,13 @@ async fn test_alter_user_without_authorization_fails() {
 /// T084V - Additional authorization test for DROP USER
 #[tokio::test]
 async fn test_drop_user_without_authorization_fails() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Create target user
     let create_sql = "CREATE USER 'to_delete' WITH PASSWORD 'Password123' ROLE user";
     executor
-        .execute(&*session_ctx, create_sql, Some(&admin_id))
+        .execute(&session_ctx, create_sql, Some(&admin_id))
         .await
         .expect("CREATE USER failed");
 
@@ -488,7 +488,7 @@ async fn test_drop_user_without_authorization_fails() {
 
     // Try to drop user as regular user
     let drop_sql = "DROP USER 'to_delete'";
-    let result = executor.execute(&*session_ctx, drop_sql, Some(&regular_user_id)).await;
+    let result = executor.execute(&session_ctx, drop_sql, Some(&regular_user_id)).await;
 
     assert!(
         result.is_err(),
@@ -509,7 +509,7 @@ async fn test_drop_user_without_authorization_fails() {
 /// T084W - Test weak password rejection (common passwords)
 #[tokio::test]
 async fn test_create_user_weak_password_rejected() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Common weak passwords that should be rejected
@@ -523,7 +523,7 @@ async fn test_create_user_weak_password_rejected() {
             weak_pass, weak_pass
         );
 
-        let result = executor.execute(&*session_ctx, &sql, Some(&admin_id)).await;
+        let result = executor.execute(&session_ctx, &sql, Some(&admin_id)).await;
 
         assert!(
             result.is_err(),
@@ -543,12 +543,12 @@ async fn test_create_user_weak_password_rejected() {
 /// T084W - Test password length validation
 #[tokio::test]
 async fn test_create_user_password_length_validation() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Too short password (less than 8 characters)
     let sql_short = "CREATE USER 'short_pass' WITH PASSWORD 'abc' ROLE user";
-    let result_short = executor.execute(&*session_ctx, sql_short, Some(&admin_id)).await;
+    let result_short = executor.execute(&session_ctx, sql_short, Some(&admin_id)).await;
 
     assert!(
         result_short.is_err(),
@@ -563,7 +563,7 @@ async fn test_create_user_password_length_validation() {
 
     // Valid password (8+ characters)
     let sql_valid = "CREATE USER 'valid_pass' WITH PASSWORD 'ValidPass123' ROLE user";
-    let result_valid = executor.execute(&*session_ctx, sql_valid, Some(&admin_id)).await;
+    let result_valid = executor.execute(&session_ctx, sql_valid, Some(&admin_id)).await;
 
     assert!(
         result_valid.is_ok(),
@@ -575,19 +575,19 @@ async fn test_create_user_password_length_validation() {
 /// T084W - Test ALTER USER with weak password
 #[tokio::test]
 async fn test_alter_user_weak_password_rejected() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Create user with strong password first
     let create_sql = "CREATE USER 'henry' WITH PASSWORD 'StrongPass123!' ROLE user";
     executor
-        .execute(&*session_ctx, create_sql, Some(&admin_id))
+        .execute(&session_ctx, create_sql, Some(&admin_id))
         .await
         .expect("CREATE USER failed");
 
     // Try to change to weak password
     let alter_sql = "ALTER USER 'henry' SET PASSWORD 'password'";
-    let result = executor.execute(&*session_ctx, alter_sql, Some(&admin_id)).await;
+    let result = executor.execute(&session_ctx, alter_sql, Some(&admin_id)).await;
 
     assert!(
         result.is_err(),
@@ -604,12 +604,12 @@ async fn test_alter_user_weak_password_rejected() {
 /// T193: Test CREATE USER duplicate error
 #[tokio::test]
 async fn test_create_user_duplicate_error() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Create user first time
     let create_sql = "CREATE USER 'duplicate_test' WITH PASSWORD 'Password123!' ROLE user";
-    let result1 = executor.execute(&*session_ctx, create_sql, Some(&admin_id)).await;
+    let result1 = executor.execute(&session_ctx, create_sql, Some(&admin_id)).await;
 
     if let Err(ref e) = result1 {
         eprintln!("First CREATE USER failed with error: {:?}", e);
@@ -621,7 +621,7 @@ async fn test_create_user_duplicate_error() {
     );
 
     // Try to create same user again
-    let result2 = executor.execute(&*session_ctx, create_sql, Some(&admin_id)).await;
+    let result2 = executor.execute(&session_ctx, create_sql, Some(&admin_id)).await;
 
     eprintln!("Second CREATE USER result: {:?}", result2);
 
@@ -645,12 +645,12 @@ async fn test_create_user_duplicate_error() {
 /// T197: Test ALTER USER not found error
 #[tokio::test]
 async fn test_alter_user_not_found() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Try to alter non-existent user
     let alter_sql = "ALTER USER 'nonexistent_user' SET ROLE dba";
-    let result = executor.execute(&*session_ctx, alter_sql, Some(&admin_id)).await;
+    let result = executor.execute(&session_ctx, alter_sql, Some(&admin_id)).await;
 
     assert!(
         result.is_err(),
@@ -671,12 +671,12 @@ async fn test_alter_user_not_found() {
 /// T199: Test DROP USER IF EXISTS (no error on non-existent user)
 #[tokio::test]
 async fn test_drop_user_if_exists() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Drop non-existent user with IF EXISTS - should succeed without error
     let drop_sql = "DROP USER IF EXISTS 'user_that_never_existed'";
-    let result = executor.execute(&*session_ctx, drop_sql, Some(&admin_id)).await;
+    let result = executor.execute(&session_ctx, drop_sql, Some(&admin_id)).await;
 
     assert!(
         result.is_ok(),
@@ -687,12 +687,12 @@ async fn test_drop_user_if_exists() {
     // Create a user, then drop with IF EXISTS - should also succeed
     let create_sql = "CREATE USER 'temp_user' WITH PASSWORD 'Pass123!' ROLE user";
     executor
-        .execute(&*session_ctx, create_sql, Some(&admin_id))
+        .execute(&session_ctx, create_sql, Some(&admin_id))
         .await
         .expect("CREATE USER failed");
 
     let drop_sql2 = "DROP USER IF EXISTS 'temp_user'";
-    let result2 = executor.execute(&*session_ctx, drop_sql2, Some(&admin_id)).await;
+    let result2 = executor.execute(&session_ctx, drop_sql2, Some(&admin_id)).await;
 
     assert!(
         result2.is_ok(),
@@ -704,20 +704,20 @@ async fn test_drop_user_if_exists() {
 /// T200: Test restore deleted user (UPDATE deleted_at = NULL)
 #[tokio::test]
 async fn test_restore_deleted_user() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Create user
     let create_sql = "CREATE USER 'restore_test' WITH PASSWORD 'Password123!' ROLE user";
     executor
-        .execute(&*session_ctx, create_sql, Some(&admin_id))
+        .execute(&session_ctx, create_sql, Some(&admin_id))
         .await
         .expect("CREATE USER failed");
 
     // Soft delete user
     let drop_sql = "DROP USER 'restore_test'";
     executor
-        .execute(&*session_ctx, drop_sql, Some(&admin_id))
+        .execute(&session_ctx, drop_sql, Some(&admin_id))
         .await
         .expect("DROP USER failed");
 
@@ -733,7 +733,7 @@ async fn test_restore_deleted_user() {
 
     // Restore user by setting deleted_at = NULL
     let restore_sql = "UPDATE system.users SET deleted_at = NULL WHERE username = 'restore_test'";
-    let result = executor.execute(&*session_ctx, restore_sql, Some(&admin_id)).await;
+    let result = executor.execute(&session_ctx, restore_sql, Some(&admin_id)).await;
 
     assert!(
         result.is_ok(),
@@ -755,7 +755,7 @@ async fn test_restore_deleted_user() {
 /// T201: Test SELECT * FROM system.users excludes deleted users by default
 #[tokio::test]
 async fn test_select_users_excludes_deleted() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Create two users
@@ -763,25 +763,25 @@ async fn test_select_users_excludes_deleted() {
     let create_sql2 = "CREATE USER 'deleted_user' WITH PASSWORD 'Pass123!' ROLE user";
 
     executor
-        .execute(&*session_ctx, create_sql1, Some(&admin_id))
+        .execute(&session_ctx, create_sql1, Some(&admin_id))
         .await
         .expect("CREATE active_user failed");
     executor
-        .execute(&*session_ctx, create_sql2, Some(&admin_id))
+        .execute(&session_ctx, create_sql2, Some(&admin_id))
         .await
         .expect("CREATE deleted_user failed");
 
     // Soft delete one user
     let drop_sql = "DROP USER 'deleted_user'";
     executor
-        .execute(&*session_ctx, drop_sql, Some(&admin_id))
+        .execute(&session_ctx, drop_sql, Some(&admin_id))
         .await
         .expect("DROP USER failed");
 
     // SELECT from system.users (should exclude deleted by default)
     let select_sql =
         "SELECT username FROM system.users WHERE username IN ('active_user', 'deleted_user')";
-    let result = executor.execute(&*session_ctx, select_sql, Some(&admin_id)).await;
+    let result = executor.execute(&session_ctx, select_sql, Some(&admin_id)).await;
 
     assert!(result.is_ok(), "SELECT should succeed: {:?}", result);
 
@@ -796,7 +796,7 @@ async fn test_select_users_excludes_deleted() {
 /// T202: Test SELECT deleted users explicitly (WHERE deleted_at IS NOT NULL)
 #[tokio::test]
 async fn test_select_deleted_users_explicit() {
-    let (executor, _temp_dir, _kalam_sql, users_provider, session_ctx) = setup_test_executor().await;
+    let (executor, _temp_dir, _kalam_sql, users_provider) = setup_test_executor().await;
     let admin_id = create_system_user(&users_provider).await;
 
     // Create two users
@@ -804,24 +804,24 @@ async fn test_select_deleted_users_explicit() {
     let create_sql2 = "CREATE USER 'deleted_user2' WITH PASSWORD 'Pass123!' ROLE user";
 
     executor
-        .execute(&*session_ctx, create_sql1, Some(&admin_id))
+        .execute(&session_ctx, create_sql1, Some(&admin_id))
         .await
         .expect("CREATE active_user2 failed");
     executor
-        .execute(&*session_ctx, create_sql2, Some(&admin_id))
+        .execute(&session_ctx, create_sql2, Some(&admin_id))
         .await
         .expect("CREATE deleted_user2 failed");
 
     // Soft delete one user
     let drop_sql = "DROP USER 'deleted_user2'";
     executor
-        .execute(&*session_ctx, drop_sql, Some(&admin_id))
+        .execute(&session_ctx, drop_sql, Some(&admin_id))
         .await
         .expect("DROP USER failed");
 
     // SELECT deleted users explicitly
     let select_sql = "SELECT username FROM system.users WHERE deleted_at IS NOT NULL AND username IN ('active_user2', 'deleted_user2')";
-    let result = executor.execute(&*session_ctx, select_sql, Some(&admin_id)).await;
+    let result = executor.execute(&session_ctx, select_sql, Some(&admin_id)).await;
 
     assert!(
         result.is_ok(),

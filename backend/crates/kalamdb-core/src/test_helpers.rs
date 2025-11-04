@@ -1,0 +1,93 @@
+//! Test helpers for initializing AppContext with minimal dependencies
+//!
+//! This module provides utilities for setting up AppContext in unit tests.
+
+use crate::app_context::AppContext;
+use kalamdb_commons::models::{NodeId, StorageId};
+use kalamdb_store::test_utils::TestDb;
+use kalamdb_store::{RocksDBBackend, StorageBackend};
+use std::sync::Arc;
+use once_cell::sync::OnceCell;
+use std::sync::Once;
+
+static TEST_DB: OnceCell<Arc<TestDb>> = OnceCell::new();
+static INIT: Once = Once::new();
+static STORAGE_INIT: Once = Once::new();
+
+/// Initialize AppContext with minimal test dependencies
+///
+/// Uses AppContext::init() with 3 parameters - simple and clean!
+/// Thread-safe: uses Once to ensure single initialization.
+///
+/// # Example
+/// ```no_run
+/// use kalamdb_core::test_helpers::init_test_app_context;
+///
+/// #[test]
+/// fn my_test() {
+///     init_test_app_context();
+///     // Now AppContext::get() will work
+/// }
+/// ```
+pub fn init_test_app_context() -> Arc<TestDb> {
+    // Use Once to ensure we only initialize once across all tests
+    INIT.call_once(|| {
+        // Create test database with all required column families
+        let test_db = Arc::new(
+            TestDb::new(&[
+                "system_tables",
+                "system_namespaces",
+                "system_storages",
+                "system_users",
+                "system_jobs",
+                "system_live_queries",
+                "information_schema_tables",
+                "shared_table:app:config",
+                "stream_table:app:events",
+            ])
+            .unwrap(),
+        );
+
+        // Store in static for reuse
+        TEST_DB.set(test_db.clone()).ok();
+
+        let storage_backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
+
+        // Phase 5: Simple 3-parameter initialization!
+        // Uses constants from kalamdb_commons for table prefixes
+        AppContext::init(
+            storage_backend,
+            NodeId::new("test-node".to_string()),
+            "data/storage".to_string(),
+        );
+    });
+
+    // Create default 'local' storage entry for tests (separate Once to avoid deadlock)
+    STORAGE_INIT.call_once(|| {
+        use kalamdb_commons::system::Storage;
+        
+        let ctx = AppContext::get();
+        let kalam_sql = ctx.kalam_sql();
+        
+        let default_storage = Storage {
+            storage_id: StorageId::new("local"),
+            storage_name: "local".to_string(),
+            description: Some("Default local storage for tests".to_string()),
+            storage_type: "filesystem".to_string(),
+            base_directory: "data/storage/local".to_string(),
+            credentials: None,
+            shared_tables_template: "{namespace}/{tableName}".to_string(),
+            user_tables_template: "{namespace}/{tableName}/{userId}/{shard}".to_string(),
+            created_at: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
+        };
+        
+        // Insert using KalamSql
+        if let Err(e) = kalam_sql.insert_storage(&default_storage) {
+            eprintln!("Warning: Failed to create default storage: {:?}", e);
+        }
+    });
+
+    // Return the test DB (guaranteed to be set by Once)
+    TEST_DB.get().expect("TEST_DB should be initialized").clone()
+}

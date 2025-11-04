@@ -12,13 +12,15 @@
 //! - kalamdb-store for data operations
 //! - kalamdb-sql for metadata operations
 //! - No direct RocksDB access
+//!
+//! **REFACTORED (Phase 5, T205)**: Stateless service - fetches dependencies from AppContext
 
+use crate::app_context::AppContext;
 use crate::catalog::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
-use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_commons::models::{JobId, JobStatus, JobType, NodeId};
-use kalamdb_sql::{Job, KalamSql};
+use kalamdb_sql::Job;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -39,30 +41,29 @@ pub struct TableDeletionResult {
     pub job_id: String,
 }
 
-/// Table deletion service
+/// Table deletion service (stateless)
 ///
 /// Coordinates table deletion using kalamdb-store and kalamdb-sql
-pub struct TableDeletionService {
-    user_table_store: Arc<UserTableStore>,
-    shared_table_store: Arc<SharedTableStore>,
-    stream_table_store: Arc<StreamTableStore>,
-    kalam_sql: Arc<KalamSql>,
-}
+///
+/// **Phase 5 Optimization**: Zero-sized struct - all dependencies fetched
+/// from AppContext::get() on demand.
+pub struct TableDeletionService;
 
 impl TableDeletionService {
-    /// Create a new table deletion service
-    pub fn new(
-        user_table_store: Arc<UserTableStore>,
-        shared_table_store: Arc<SharedTableStore>,
-        stream_table_store: Arc<StreamTableStore>,
-        kalam_sql: Arc<KalamSql>,
+    /// Create a new table deletion service (zero-sized)
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Deprecated: Use `new()` instead (zero dependencies)
+    #[deprecated(since = "0.2.0", note = "Use new() instead - service is now stateless")]
+    pub fn new_with_deps(
+        _user_table_store: Arc<dyn std::any::Any>,
+        _shared_table_store: Arc<dyn std::any::Any>,
+        _stream_table_store: Arc<dyn std::any::Any>,
+        _kalam_sql: Arc<dyn std::any::Any>,
     ) -> Self {
-        Self {
-            user_table_store,
-            shared_table_store,
-            stream_table_store,
-            kalam_sql,
-        }
+        Self
     }
 
     /// Drop a table with complete cleanup
@@ -87,9 +88,12 @@ impl TableDeletionService {
         // Generate table_id (format: namespace:table_name)
         let table_id = format!("{}:{}", namespace_id.as_str(), table_name.as_str());
 
+        // Fetch kalam_sql from AppContext
+        let ctx = AppContext::get();
+        let kalam_sql = ctx.kalam_sql();
+
         // Check if table exists
-        let table_metadata = self
-            .kalam_sql
+        let table_metadata = kalam_sql
             .get_table(&table_id)
             .map_err(|e| KalamDbError::IoError(format!("Failed to get table: {}", e)))?;
 
@@ -169,8 +173,11 @@ impl TableDeletionService {
 
     /// Check for active subscriptions (T168)
     fn check_active_subscriptions(&self, table_name: &TableName) -> Result<(), KalamDbError> {
-        let live_queries = self
-            .kalam_sql
+        // Fetch kalam_sql from AppContext
+        let ctx = AppContext::get();
+        let kalam_sql = ctx.kalam_sql();
+
+        let live_queries = kalam_sql
             .scan_all_live_queries()
             .map_err(|e| KalamDbError::IoError(format!("Failed to scan live queries: {}", e)))?;
 
@@ -208,21 +215,26 @@ impl TableDeletionService {
         table_name: &TableName,
         table_type: &TableType,
     ) -> Result<(), KalamDbError> {
+        // Fetch stores from AppContext
+        let ctx = AppContext::get();
+        let user_table_store = ctx.user_table_store();
+        let shared_table_store = ctx.shared_table_store();
+        let stream_table_store = ctx.stream_table_store();
+
         match table_type {
             TableType::User => UserTableStoreExt::drop_table(
-                self.user_table_store.as_ref(),
+                user_table_store.as_ref(),
                 namespace_id.as_str(),
                 table_name.as_str(),
             )
             .map_err(|e| KalamDbError::IoError(format!("Failed to drop user table data: {}", e))),
             TableType::Shared => SharedTableStoreExt::drop_table(
-                self.shared_table_store.as_ref(),
+                shared_table_store.as_ref(),
                 namespace_id.as_str(),
                 table_name.as_str(),
             )
             .map_err(|e| KalamDbError::IoError(format!("Failed to drop shared table data: {}", e))),
-            TableType::Stream => self
-                .stream_table_store
+            TableType::Stream => stream_table_store
                 .drop_table(namespace_id.as_str(), table_name.as_str())
                 .map_err(|e| {
                     KalamDbError::IoError(format!("Failed to drop stream table data: {}", e))
@@ -370,14 +382,18 @@ impl TableDeletionService {
 
     /// Delete metadata (T171)
     fn cleanup_metadata(&self, table_id: &str) -> Result<(), KalamDbError> {
+        // Fetch kalam_sql from AppContext
+        let ctx = AppContext::get();
+        let kalam_sql = ctx.kalam_sql();
+
         // TODO: Phase 2b - Schema history stored in TableDefinition.schema_history, no separate deletion needed
         // Delete table schemas
-        // self.kalam_sql
+        // kalam_sql
         //     .delete_table_schemas_for_table(table_id)
         //     .map_err(|e| KalamDbError::IoError(format!("Failed to delete table schemas: {}", e)))?;
 
         // Delete table metadata
-        self.kalam_sql
+        kalam_sql
             .delete_table(table_id)
             .map_err(|e| KalamDbError::IoError(format!("Failed to delete table: {}", e)))?;
 
@@ -450,7 +466,11 @@ impl TableDeletionService {
             error_message: None,
         };
 
-        self.kalam_sql
+        // Fetch kalam_sql from AppContext
+        let ctx = AppContext::get();
+        let kalam_sql = ctx.kalam_sql();
+
+        kalam_sql
             .insert_job(&job)
             .map_err(|e| KalamDbError::IoError(format!("Failed to insert job: {}", e)))?;
 
@@ -464,8 +484,11 @@ impl TableDeletionService {
         files_deleted: usize,
         bytes_freed: u64,
     ) -> Result<(), KalamDbError> {
-        let job = self
-            .kalam_sql
+        // Fetch kalam_sql from AppContext
+        let ctx = AppContext::get();
+        let kalam_sql = ctx.kalam_sql();
+
+        let job = kalam_sql
             .get_job(job_id)
             .map_err(|e| KalamDbError::IoError(format!("Failed to get job: {}", e)))?
             .ok_or_else(|| KalamDbError::NotFound(format!("Job '{}' not found", job_id)))?;
@@ -484,7 +507,7 @@ impl TableDeletionService {
             ..job
         };
 
-        self.kalam_sql
+        kalam_sql
             .update_job(&updated_job)
             .map_err(|e| KalamDbError::IoError(format!("Failed to update job: {}", e)))?;
 
@@ -493,8 +516,11 @@ impl TableDeletionService {
 
     /// Fail deletion job (T173, T174)
     fn fail_deletion_job(&self, job_id: &str, error_message: &str) -> Result<(), KalamDbError> {
-        let job = self
-            .kalam_sql
+        // Fetch kalam_sql from AppContext
+        let ctx = AppContext::get();
+        let kalam_sql = ctx.kalam_sql();
+
+        let job = kalam_sql
             .get_job(job_id)
             .map_err(|e| KalamDbError::IoError(format!("Failed to get job: {}", e)))?;
 
@@ -506,7 +532,7 @@ impl TableDeletionService {
                 ..job
             };
 
-            self.kalam_sql
+            kalam_sql
                 .update_job(&updated_job)
                 .map_err(|e| KalamDbError::IoError(format!("Failed to update job: {}", e)))?;
         }
@@ -521,34 +547,12 @@ mod tests {
     use kalamdb_store::test_utils::TestDb;
     use kalamdb_store::{RocksDBBackend, StorageBackend};
 
-    fn create_test_service() -> (TableDeletionService, TestDb) {
-        // Create test database with all required column families
-        let cf_names = vec![
-            "system_users",
-            "system_namespaces",
-            "system_storage_locations",
-            "system_jobs",
-            "system_live_queries",
-            "system_tables",
-            "system_table_schemas",
-        ];
+    fn create_test_service() -> (TableDeletionService, Arc<TestDb>) {
+        // Initialize AppContext for tests
+        let test_db = crate::test_helpers::init_test_app_context();
 
-        let test_db = TestDb::new(&cf_names).unwrap();
-        let db = Arc::clone(&test_db.db);
-        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
-
-        let user_store = Arc::new(UserTableStore::new(backend.clone(), "user_table:app:users"));
-        let shared_store = Arc::new(SharedTableStore::new(
-            backend.clone(),
-            "shared_table:app:config",
-        ));
-        let stream_store = Arc::new(StreamTableStore::new(
-            backend.clone(),
-            "stream_table:app:events",
-        ));
-        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
-
-        let service = TableDeletionService::new(user_store, shared_store, stream_store, kalam_sql);
+        // TableDeletionService is now zero-sized - no dependencies needed
+        let service = TableDeletionService::new();
 
         (service, test_db)
     }

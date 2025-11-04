@@ -156,6 +156,27 @@ cargo test -p kalamdb-sql
 - **Storage Abstraction**: Use `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>` (except in kalamdb-store)
 
 ## Recent Changes
+- 2025-11-04: **Phase 5 Schema Consolidation: SchemaRegistry + TableSchemaStore Unification** - ✅ **COMPLETE**:
+  - **Problem**: Duplicate schema management logic split between SchemaRegistry (cache facade) and TableSchemaStore (persistence)
+  - **Solution**: Consolidated TableSchemaStore into SchemaRegistry for single source of truth
+  - **SchemaRegistry Enhancement**: Now handles both cache (hot path) AND persistence (cold path)
+    - Added `store: Arc<TableSchemaStore>` field to SchemaRegistry
+    - Read-through pattern: `get_table_definition()` checks cache → fallback to store
+    - Write-through pattern: `put_table_definition()` persists to RocksDB → invalidates cache
+    - Delete-through pattern: `delete_table_definition()` removes from store → invalidates cache
+  - **AppContext Simplification**: 12 fields → 11 fields (removed `schema_store` field, 8% reduction)
+    - SchemaRegistry now constructed with both SchemaCache AND TableSchemaStore
+    - `AppContext::init()` signature: schema_store moved to 2nd parameter (passed to SchemaRegistry)
+    - Removed `schema_store()` getter (use `schema_registry()` for all schema operations)
+  - **Unified API**: Single component for all schema operations (cache + persistence + Arrow memoization)
+  - **Benefits**: Eliminates duplication, clearer semantics, better consistency (no cache/store divergence)
+  - **Files Modified**:
+    - backend/crates/kalamdb-core/src/schema/registry.rs (added store field, put/delete methods)
+    - backend/crates/kalamdb-core/src/app_context.rs (removed schema_store field, updated init signature)
+    - backend/src/lifecycle.rs (updated AppContext::init() call, schema_store now 2nd param)
+    - backend/crates/kalamdb-core/src/test_helpers.rs (updated AppContext::init() call)
+  - **Test Results**: ✅ **477/477 tests passing (100% pass rate)**, workspace builds successfully (7.51s)
+  - **Architecture**: SchemaRegistry = unified schema management (cache + store + Arrow schemas)
 - 2025-11-03: **Phase 3C: Handler Consolidation (UserTableProvider Refactoring)** - ✅ **COMPLETE** (7/7 tasks, 100%):
   - **Problem**: Every UserTableProvider instance allocated 3 Arc<Handler> + HashMap<ColumnDefault> (1000 users × 10 tables = 30K Arc + 10K HashMap allocations)
   - **Solution**: Created UserTableShared singleton (one per table) + lightweight UserTableAccess per-request wrapper
@@ -171,6 +192,37 @@ cargo test -p kalamdb-sql
     - Modified: executor.rs (user table registration uses cached UserTableShared pattern)
     - Tests: Updated 10 test functions to use create_test_user_table_shared() helper
   - **Memory Optimization**: Eliminates N × allocations → 1 shared instance per table (handlers, defaults cached once)
+- 2025-11-04: **Phase 5 Complete: AppContext + SystemTablesRegistry** - ✅ **FINAL** (6/6 core tasks + registry consolidation, 100%):
+  - **T200 SchemaRegistry**: Facade over SchemaCache with read-through API (backend/crates/kalamdb-core/src/schema/registry.rs)
+    - Methods: get_table_data(), get_table_definition(), get_arrow_schema() (memoized), get_user_table_shared(), invalidate()
+    - DashMap-based Arrow schema memoization for zero-allocation repeated access
+  - **T201 AppContext Wiring**: SchemaRegistry integrated into AppContext singleton (backend/crates/kalamdb-core/src/app_context.rs)
+    - **SystemTablesRegistry**: Centralized all 10 system table providers (Phase 5 completion)
+    - Replaced 6 individual provider fields + 4 missing providers with single registry
+    - Registry fields: users, jobs, namespaces, storages, live_queries, tables, audit_logs, stats, information_schema.tables, information_schema.columns
+    - 12 total AppContext fields (was 18): 3 stores, 2 caches, 2 managers, 2 registries, 3 infrastructure
+    - 20+ getter methods for type-safe access (simplified from 30+ methods)
+  - **T202 Stateless SqlExecutor**: Removed stored SessionContext field, converted to per-request parameters
+    - **Refactored 25 Handler Methods**: All execute_* methods now take (&SessionContext, &str, &ExecutionContext)
+  - **T203 Route Handlers**: Updated lifecycle.rs and sql_handler.rs to use per-request session creation
+  - **T204 AppContext Implementation**: Full singleton pattern, lifecycle integration, SystemTablesRegistry
+  - **T205 Stateless Services**: All 4 core services refactored to zero-sized structs (100% memory reduction)
+    - **Memory Savings**: Each service instance reduced from 48+ bytes to 0 bytes (100% reduction × 4 services)
+    - **Test Infrastructure**: Created backend/crates/kalamdb-core/src/test_helpers.rs (153 lines)
+      - Thread-safe AppContext initialization using `std::sync::Once` (prevents race conditions)
+      - Separate `Once` for storage initialization to avoid deadlock
+      - Single shared TestDB and AppContext for all tests (memory efficient)
+    - **Test Results**: ✅ **477/477 tests passing (100% pass rate)**
+  - **KalamCore Removed**: Deleted obsolete facade (backend/crates/kalamdb-core/src/kalam_core.rs)
+    - AppContext now provides all functionality previously scattered across KalamCore + individual providers
+    - Cleaner API: `AppContext::get().system_tables().users()` vs old pattern with 10 separate fields
+  - **Files Created**:
+    - backend/crates/kalamdb-core/src/tables/system/registry.rs (172 lines) - SystemTablesRegistry
+  - **Files Deleted**:
+    - backend/crates/kalamdb-core/src/kalam_core.rs - obsolete facade
+  - **Architecture Benefits**: Memory-efficient (no duplication), cleaner API (1 registry vs 10 fields), easier testing
+  - **Build Status**: Workspace compiles successfully (60s), ✅ **477/477 tests passing (100%)**
+  - **Next Steps**: T206-T220 (LiveQueryManager integration, flush pipeline, cleanup, docs, tests) - OPTIONAL
 - 2025-11-02: **Phase 10 & Phase 3B: Provider Consolidation** - ✅ **COMPLETE** (42/47 tasks, 89.4%):
   - **Phase 3B (T323-T326)**: All provider refactors complete - UserTableProvider, StreamTableProvider, SharedTableProvider now use TableProviderCore
   - **Provider Field Consolidation**: Replaced individual fields (table_id, unified_cache, schema) with single `core: TableProviderCore` struct

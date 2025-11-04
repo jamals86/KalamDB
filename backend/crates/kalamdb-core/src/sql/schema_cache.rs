@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+//TODO: Check do we need this? since we have schema registry now
 /// Cache key for schema lookup
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SchemaCacheKey {

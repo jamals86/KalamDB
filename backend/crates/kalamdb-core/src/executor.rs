@@ -128,20 +128,9 @@ pub struct ExecutionMetadata {
 
 /// SQL executor
 ///
-/// Executes SQL statements by dispatching to appropriate handlers.
-/// All dependencies are fetched from AppContext.
+/// Executes SQL statements by dispatching to appropriate handlers
 pub struct SqlExecutor {
-    /// Reference to AppContext for all dependencies
     app_context: Arc<crate::app_context::AppContext>,
-    
-    /// Services (zero-sized, created on-demand)
-    namespace_service: Arc<NamespaceService>,
-    user_table_service: Arc<UserTableService>,
-    shared_table_service: Arc<SharedTableService>,
-    stream_table_service: Arc<StreamTableService>,
-    table_deletion_service: Arc<TableDeletionService>,
-    
-    /// Password complexity enforcement
     enforce_password_complexity: bool,
 }
 
@@ -163,182 +152,20 @@ struct DeleteInfo {
 }
 
 impl SqlExecutor {
-    /// Create a new SQL executor with only AppContext
+    /// Expose a clone of the underlying RocksDbAdapter if available.
     ///
-    /// All dependencies are fetched from AppContext.
-    ///
-    /// # Arguments
-    /// - `app_context`: The application context containing all shared resources
-    /// - `enforce_password_complexity`: Whether to enforce password complexity rules
-    pub fn new(
-        app_context: Arc<crate::app_context::AppContext>,
-        enforce_password_complexity: bool,
-    ) -> Self {
-        // Create zero-sized service instances
-        let kalam_sql = app_context.kalam_sql();
-        let namespace_service = Arc::new(NamespaceService::new(kalam_sql));
-        let user_table_service = Arc::new(UserTableService::new());
-        let shared_table_service = Arc::new(SharedTableService::new());
-        let stream_table_service = Arc::new(StreamTableService::new());
-        let table_deletion_service = Arc::new(TableDeletionService::new());
-        
+    /// This is primarily intended for API layers that need to perform
+    /// lightweight authentication/lookup without wiring the full
+    /// authentication middleware (e.g., in test harnesses).
+    pub fn get_rocks_adapter(&self) -> Option<Arc<RocksDbAdapter>> {
+        self.app_context.kalam_sql().adapter().cloned()
+    }
+    /// Create a new SQL executor
+    pub fn new(app_context: Arc<crate::app_context::AppContext>) -> Self {
         Self {
             app_context,
-            namespace_service,
-            user_table_service,
-            shared_table_service,
-            stream_table_service,
-            table_deletion_service,
-            enforce_password_complexity,
-        }
-    }
-
-    /// Expose a clone of the underlying RocksDbAdapter
-    pub fn get_rocks_adapter(&self) -> Option<Arc<RocksDbAdapter>> {
-        Some(Arc::new(self.app_context.kalam_sql().adapter().clone()))
-    }
-    
-    // ===== Helper methods to get dependencies from AppContext =====
-    
-    fn kalam_sql(&self) -> Arc<KalamSql> {
-        self.app_context.kalam_sql()
-    }
-    
-    fn user_table_store(&self) -> Arc<UserTableStore> {
-        self.app_context.user_table_store()
-    }
-    
-    fn shared_table_store(&self) -> Arc<SharedTableStore> {
-        self.app_context.shared_table_store()
-    }
-    
-    fn stream_table_store(&self) -> Arc<StreamTableStore> {
-        self.app_context.stream_table_store()
-    }
-    
-    fn storage_backend(&self) -> Arc<dyn kalamdb_store::StorageBackend> {
-        self.app_context.storage_backend()
-    }
-    
-    fn storage_registry(&self) -> Arc<crate::storage::StorageRegistry> {
-        self.app_context.storage_registry()
-    }
-    
-    fn job_manager(&self) -> Arc<dyn crate::jobs::JobManager> {
-        self.app_context.job_manager()
-    }
-    
-    fn live_query_manager(&self) -> Arc<crate::live_query::LiveQueryManager> {
-        self.app_context.live_query_manager()
-    }
-    
-    fn schema_registry(&self) -> Arc<crate::schema::registry::SchemaRegistry> {
-        self.app_context.schema_registry()
-    }
-    
-    fn unified_cache(&self) -> Arc<crate::catalog::SchemaCache> {
-        self.app_context.schema_cache()
-    }
-    
-    fn jobs_table_provider(&self) -> Arc<crate::tables::system::JobsTableProvider> {
-        self.app_context.system_tables().jobs()
-    }
-    
-    fn users_table_provider(&self) -> Arc<UsersTableProvider> {
-        self.app_context.system_tables().users()
-    }
-    
-    fn session_factory(&self) -> Arc<DataFusionSessionFactory> {
-        self.app_context.session_factory()
-    }
-        namespace_service: Arc<NamespaceService>,
-        user_table_service: Arc<UserTableService>,
-        shared_table_service: Arc<SharedTableService>,
-        stream_table_service: Arc<StreamTableService>,
-    ) -> Self {
-        let session_factory = DataFusionSessionFactory::default();
-        Self {
-            namespace_service,
-            user_table_service,
-            shared_table_service,
-            stream_table_service,
-            table_deletion_service: None,
-            user_table_store: None,
-            shared_table_store: None,
-            stream_table_store: None,
-            kalam_sql: None,
-            storage_backend: None, // Phase 14: Initialize storage backend
-            session_factory,
-            jobs_table_provider: None,
-            users_table_provider: None,
-            storage_registry: None,
-            job_manager: None,
-            live_query_manager: None,
-            schema_store: None,
-            unified_cache: None, // Phase 10: Unified cache (set via with_storage_registry)
             enforce_password_complexity: false,
         }
-    }
-
-    /// Set the storage registry (optional, for storage template validation)
-    pub fn with_storage_registry(mut self, registry: Arc<crate::storage::StorageRegistry>) -> Self {
-        // Phase 10: Initialize unified SchemaCache (replaces old dual-cache architecture)
-        let unified_cache = Arc::new(
-            crate::catalog::SchemaCache::new(10000, Some(registry.clone()))
-        );
-        self.unified_cache = Some(unified_cache);
-        
-        self.storage_registry = Some(registry);
-        self
-    }
-
-    /// Set the job manager (optional, for FLUSH TABLE support)
-    pub fn with_job_manager(mut self, job_manager: Arc<dyn crate::jobs::JobManager>) -> Self {
-        self.job_manager = Some(job_manager);
-        self
-    }
-
-    /// Set the live query manager for subscription coordination (optional)
-    pub fn with_live_query_manager(
-        mut self,
-        manager: Arc<crate::live_query::LiveQueryManager>,
-    ) -> Self {
-        self.live_query_manager = Some(manager);
-        self
-    }
-
-    /// Set the table deletion service (optional, for DROP TABLE support)
-    pub fn with_table_deletion_service(mut self, service: Arc<TableDeletionService>) -> Self {
-        self.table_deletion_service = Some(service);
-        self
-    }
-
-    /// Set stores and KalamSQL for table registration (optional, for SELECT/INSERT/UPDATE/DELETE support)
-    pub fn with_stores(
-        mut self,
-        user_table_store: Arc<UserTableStore>,
-        shared_table_store: Arc<SharedTableStore>,
-        stream_table_store: Arc<StreamTableStore>,
-        kalam_sql: Arc<KalamSql>,
-    ) -> Self {
-        self.user_table_store = Some(user_table_store);
-        self.shared_table_store = Some(shared_table_store);
-        self.stream_table_store = Some(stream_table_store);
-        // Phase 14: Note - we can't get kalamdb_store::StorageBackend from KalamSql yet
-        // because it uses kalamdb_commons::StorageBackend. This will be fixed when
-        // kalamdb-sql is migrated to use kalamdb_store::StorageBackend.
-        // For now, storage_backend must be set separately via with_storage_backend()
-        self.kalam_sql = Some(kalam_sql);
-        self
-    }
-
-    /// Phase 14: Set the storage backend for EntityStore-based providers
-    pub fn with_storage_backend(mut self, backend: Arc<dyn kalamdb_store::StorageBackend>) -> Self {
-        // Phase 14: Use storage backend for new EntityStore-based providers
-        self.storage_backend = Some(backend.clone());
-        self.users_table_provider = Some(Arc::new(UsersTableProvider::new(backend.clone())));
-        self.jobs_table_provider = Some(Arc::new(JobsTableProvider::new(backend)));
-        self
     }
 
     /// Enable or disable password complexity enforcement.
@@ -347,23 +174,9 @@ impl SqlExecutor {
         self
     }
 
-    /// Phase 15 (008-schema-consolidation): Set schema store for DESCRIBE TABLE
-    /// Note: SchemaCache is now part of unified_cache, set via with_storage_registry()
-    pub fn with_schema_store(
-        mut self,
-        schema_store: Arc<crate::tables::system::schemas::TableSchemaStore>,
-    ) -> Self {
-        self.schema_store = Some(schema_store);
-        self
-    }
-
     /// Load and register existing tables from system_tables on initialization
     pub async fn load_existing_tables(&self, _default_user_id: UserId) -> Result<(), KalamDbError> {
-        let kalam_sql = Some(&self.kalam_sql()).ok_or_else(|| {
-            KalamDbError::InvalidOperation(
-                "Cannot load tables - KalamSQL not configured".to_string(),
-            )
-        })?;
+        let kalam_sql = self.app_context.kalam_sql();
 
         // Get all tables from system_tables
         let tables = kalam_sql
@@ -490,9 +303,7 @@ impl SqlExecutor {
                 return Ok(());
             }
             TableType::Shared => {
-                let store = self.shared_table_store.as_ref().ok_or_else(|| {
-                    KalamDbError::InvalidOperation("SharedTableStore not configured".to_string())
-                })?;
+                let store = self.app_context.shared_table_store();
 
                 // Phase 10: Create Arc<TableId> once for zero-allocation cache lookups
                 let table_id = Arc::new(kalamdb_commons::models::TableId::new(
@@ -501,9 +312,7 @@ impl SqlExecutor {
                 ));
 
                 // Get unified_cache for provider
-                let unified_cache = self.unified_cache.as_ref()
-                    .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
-                    .clone();
+                let unified_cache = self.app_context.schema_cache();
 
                 let provider = Arc::new(SharedTableProvider::new(
                     table_id,
@@ -531,9 +340,7 @@ impl SqlExecutor {
                     })?;
             }
             TableType::Stream => {
-                let store = self.stream_table_store.as_ref().ok_or_else(|| {
-                    KalamDbError::InvalidOperation("StreamTableStore not configured".to_string())
-                })?;
+                let store = self.app_context.stream_table_store();
 
                 // Phase 10: Create Arc<TableId> once for zero-allocation cache lookups
                 let table_id = Arc::new(kalamdb_commons::models::TableId::new(
@@ -542,9 +349,7 @@ impl SqlExecutor {
                 ));
 
                 // Get unified_cache for provider
-                let unified_cache = self.unified_cache.as_ref()
-                    .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
-                    .clone();
+                let unified_cache = self.app_context.schema_cache();
 
                 let mut provider = StreamTableProvider::new(
                     table_id,
@@ -557,9 +362,8 @@ impl SqlExecutor {
                 );
 
                 // Wire through LiveQueryManager for WebSocket notifications (T154)
-                if let Some(manager) = &self.live_query_manager {
-                    provider = provider.with_live_query_manager(Arc::clone(manager));
-                }
+                let manager = self.app_context.live_query_manager();
+                let provider = provider.with_live_query_manager(manager);
 
                 let provider = Arc::new(provider);
 
@@ -608,14 +412,13 @@ impl SqlExecutor {
         let storage_id = storage_id.unwrap_or_else(StorageId::local);
 
         // T167b & T167c: Validate storage_id exists in system.storages (NOT NULL enforcement)
-        if let Some(kalam_sql) = &self.kalam_sql {
-            let storage_exists = kalam_sql.get_storage(&storage_id).is_ok();
-            if !storage_exists {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "Storage '{}' does not exist in system.storages",
-                    storage_id
-                )));
-            }
+        let kalam_sql = self.app_context.kalam_sql();
+        let storage_exists = kalam_sql.get_storage(&storage_id).is_ok();
+        if !storage_exists {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Storage '{}' does not exist in system.storages",
+                storage_id
+            )));
         }
 
         Ok(storage_id)
@@ -631,7 +434,8 @@ impl SqlExecutor {
         namespace_id: &CommonNamespaceId,
     ) -> Result<(), KalamDbError> {
         let namespace_name = namespace_id.as_str();
-        let exists = self.namespace_service.namespace_exists(namespace_name)?;
+        let namespaces = self.app_context.system_tables().namespaces();
+        let exists = namespaces.namespace_exists(namespace_name)?;
         if !exists {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}.",
@@ -666,10 +470,7 @@ impl SqlExecutor {
         deleted_retention_hours: Option<u32>,
     ) -> Result<(), KalamDbError> {
         // Skip caching if unified_cache not initialized
-        let cache = match &self.unified_cache {
-            Some(c) => c,
-            None => return Ok(()), // Cache not initialized - skip
-        };
+        let cache = self.app_context.schema_cache();
 
         // Convert DDL FlushPolicy to core FlushPolicy
         use kalamdb_sql::ddl::FlushPolicy as DdlFlushPolicy;
@@ -761,36 +562,32 @@ impl SqlExecutor {
         };
 
         // Look up user to get their role
-        if let Some(kalam_sql) = &self.kalam_sql {
-            match kalam_sql.get_user_by_id(&user_id) {
-                Ok(Some(user)) => {
-                    // Check if user is soft-deleted
-                    if user.deleted_at.is_some() {
-                        log::warn!("User '{}' is deleted, rejecting request", user_id.as_str());
-                        return Err(KalamDbError::PermissionDenied(
-                            "User account has been deleted".to_string(),
-                        ));
-                    }
-                    return Ok(ExecutionContext::new(user_id, user.role));
+        let kalam_sql = self.app_context.kalam_sql();
+        match kalam_sql.get_user_by_id(&user_id) {
+            Ok(Some(user)) => {
+                // Check if user is soft-deleted
+                if user.deleted_at.is_some() {
+                    log::warn!("User '{}' is deleted, rejecting request", user_id.as_str());
+                    return Err(KalamDbError::PermissionDenied(
+                        "User account has been deleted".to_string(),
+                    ));
                 }
-                Ok(None) => {
-                    // User not found - treat as anonymous
-                    log::warn!(
-                        "User '{}' not found in database, using anonymous context",
-                        user_id.as_str()
-                    );
-                    return Ok(ExecutionContext::anonymous());
-                }
-                Err(e) => {
-                    log::error!("Failed to look up user '{}': {:?}", user_id.as_str(), e);
-                    // On error, default to anonymous for safety
-                    return Ok(ExecutionContext::anonymous());
-                }
+                return Ok(ExecutionContext::new(user_id, user.role));
+            }
+            Ok(None) => {
+                // User not found - treat as anonymous
+                log::warn!(
+                    "User '{}' not found in database, using anonymous context",
+                    user_id.as_str()
+                );
+                return Ok(ExecutionContext::anonymous());
+            }
+            Err(e) => {
+                log::error!("Failed to look up user '{}': {:?}", user_id.as_str(), e);
+                // On error, default to anonymous for safety
+                return Ok(ExecutionContext::anonymous());
             }
         }
-
-        // If KalamSQL not initialized, default to User role
-        Ok(ExecutionContext::new(user_id, Role::User))
     }
 
     /// Check if user is authorized to execute a SQL statement
@@ -1110,11 +907,7 @@ impl SqlExecutor {
         })?;
 
         // Get storage backend for EntityStore-based providers
-        let backend = self.storage_backend.as_ref().ok_or_else(|| {
-            KalamDbError::InvalidOperation(
-                "Storage backend not configured for system tables".to_string(),
-            )
-        })?;
+        let backend = self.app_context.storage_backend();
 
         // Use EntityStore-based v2 providers for all system tables
         use crate::tables::system::{
@@ -1227,13 +1020,10 @@ impl SqlExecutor {
         use datafusion::catalog::memory::MemorySchemaProvider;
 
         // Create fresh SessionContext using the shared RuntimeEnv (efficient - no memory duplication)
-        let user_session = self.session_factory.create_session();
+        let user_session = self.app_context.session_factory().create_session();
 
         // Get KalamSQL for querying system tables
-        let kalam_sql = self
-            .kalam_sql
-            .as_ref()
-            .ok_or_else(|| KalamDbError::InvalidOperation("KalamSQL not configured".to_string()))?;
+        let kalam_sql = self.app_context.kalam_sql();
 
         // Look up user role for RBAC authorization on shared tables
         let user_role = if user_id.as_str() == "anonymous" {
@@ -1359,9 +1149,7 @@ impl SqlExecutor {
             let schema = arrow_schema_with_opts.schema;
 
             // Get shared table store
-            let store = self.shared_table_store.as_ref().ok_or_else(|| {
-                KalamDbError::InvalidOperation("SharedTableStore not configured".to_string())
-            })?;
+            let store = self.app_context.shared_table_store();
 
             // Phase 10: Create Arc<TableId> once for zero-allocation cache lookups
             let table_id = Arc::new(kalamdb_commons::models::TableId::new(
@@ -1370,9 +1158,7 @@ impl SqlExecutor {
             ));
 
             // Get unified_cache for provider
-            let unified_cache = self.unified_cache.as_ref()
-                .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
-                .clone();
+            let unified_cache = self.app_context.schema_cache();
 
             // Try to reuse a cached provider; otherwise create and cache it
             let provider: Arc<dyn datafusion::datasource::TableProvider + Send + Sync> =
@@ -1464,9 +1250,7 @@ impl SqlExecutor {
             // Create table-specific store with proper partition name
             // Instead of using the generic self.user_table_store, create a store
             // specific to this table with the correct column family name
-            let backend = self.storage_backend.as_ref().ok_or_else(|| {
-                KalamDbError::InvalidOperation("Storage backend not configured".to_string())
-            })?;
+            let backend = self.app_context.storage_backend();
 
             let table_store = Arc::new(crate::tables::new_user_table_store(
                 backend.clone(),
@@ -1481,9 +1265,7 @@ impl SqlExecutor {
             ));
 
             // Get unified_cache for provider
-            let unified_cache = self.unified_cache.as_ref()
-                .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
-                .clone();
+            let unified_cache = self.app_context.schema_cache();
 
             // Phase 3C: Get or create UserTableShared (cached singleton per table)
             let shared = if let Some(cached_shared) = unified_cache.get_user_table_shared(&table_id) {
@@ -1587,9 +1369,7 @@ impl SqlExecutor {
             let schema = arrow_schema_with_opts.schema;
 
             // Get stream table store
-            let store = self.stream_table_store.as_ref().ok_or_else(|| {
-                KalamDbError::InvalidOperation("StreamTableStore not configured".to_string())
-            })?;
+            let store = self.app_context.stream_table_store();
 
             // Phase 10: Create Arc<TableId> once for zero-allocation cache lookups
             let table_id = Arc::new(kalamdb_commons::models::TableId::new(
@@ -1598,9 +1378,7 @@ impl SqlExecutor {
             ));
 
             // Get unified_cache for provider
-            let unified_cache = self.unified_cache.as_ref()
-                .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
-                .clone();
+            let unified_cache = self.app_context.schema_cache();
 
             // Create provider
             // Try to reuse a cached provider; otherwise create and cache it
@@ -1783,9 +1561,7 @@ impl SqlExecutor {
     async fn execute_create_namespace(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let stmt = CreateNamespaceStatement::parse(sql)
             .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
-        let created = self
-            .namespace_service
-            .create(stmt.name.as_str(), stmt.if_not_exists)?;
+        let created = self.app_context.system_tables().namespaces().create(stmt.name.as_str(), stmt.if_not_exists)?;
 
         let message = if created {
             format!("Namespace '{}' created successfully", stmt.name.as_str())
@@ -1799,7 +1575,7 @@ impl SqlExecutor {
     /// Execute SHOW NAMESPACES
     async fn execute_show_namespaces(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let _stmt = ShowNamespacesStatement::parse(sql)?;
-        let namespaces = self.namespace_service.list()?;
+        let namespaces = self.app_context.system_tables().namespaces().list()?;
 
         // Convert to RecordBatch
         let batch = Self::namespaces_to_record_batch(namespaces)?;
@@ -1811,10 +1587,7 @@ impl SqlExecutor {
     async fn execute_show_tables(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let stmt = ShowTablesStatement::parse(sql)?;
 
-        let kalam_sql = self
-            .kalam_sql
-            .as_ref()
-            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+        let kalam_sql = self.app_context.kalam_sql();
 
         // Scan all tables from kalam_sql
         let tables = kalam_sql
@@ -1848,10 +1621,7 @@ impl SqlExecutor {
 
         let _stmt = ShowStoragesStatement::parse(sql).map_err(KalamDbError::InvalidSql)?;
 
-        let kalam_sql = self
-            .kalam_sql
-            .as_ref()
-            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+        let kalam_sql = self.app_context.kalam_sql();
 
         // Get all storages
         let storages = kalam_sql
@@ -1903,7 +1673,7 @@ impl SqlExecutor {
         }
 
         // Validate templates using StorageRegistry (only if provided)
-        if let Some(storage_registry) = &self.storage_registry {
+        if let Some(storage_registry) = &self.app_context.storage_registry() {
             if !stmt.shared_tables_template.is_empty() {
                 storage_registry.validate_template(&stmt.shared_tables_template, false)?;
             }
@@ -1990,16 +1760,12 @@ impl SqlExecutor {
         }
         if let Some(template) = stmt.shared_tables_template {
             // Validate new template
-            if let Some(storage_registry) = &self.storage_registry {
-                storage_registry.validate_template(&template, false)?;
-            }
+            self.app_context.storage_registry().validate_template(&template, false)?;
             storage.shared_tables_template = template;
         }
         if let Some(template) = stmt.user_tables_template {
             // Validate new template
-            if let Some(storage_registry) = &self.storage_registry {
-                storage_registry.validate_template(&template, true)?;
-            }
+            self.app_context.storage_registry().validate_template(&template, true)?;
             storage.user_tables_template = template;
         }
 
@@ -2156,31 +1922,25 @@ impl SqlExecutor {
         }
 
         // Get required dependencies
-        let job_manager = self
-            .job_manager
-            .as_ref()
-            .ok_or_else(|| KalamDbError::Other("JobManager not initialized".to_string()))?;
-
-        let jobs_provider = self.jobs_table_provider.clone();
+        let job_manager = self.app_context.job_manager();
+        let jobs_provider = self.app_context.system_tables().jobs();
 
         // T21: Check if a flush job is already running for this table
         let table_full_name = format!("{}.{}", stmt.namespace, stmt.table_name);
-        if let Some(ref provider) = jobs_provider {
-            let all_jobs = provider.list_jobs()?;
-            for job in all_jobs {
-                if job.status == JobStatus::Running
-                    && job.job_type == JobType::Flush
-                    && job
-                        .table_name
-                        .as_ref()
-                        .map(|tn| format!("{}.{}", job.namespace_id.as_str(), tn.as_str()))
-                        == Some(table_full_name.clone())
-                {
-                    return Err(KalamDbError::InvalidOperation(format!(
-                        "Flush job already running for table '{}' (job_id: {}). Please wait for it to complete.",
-                        table_full_name, job.job_id
-                    )));
-                }
+        let all_jobs = jobs_provider.list_jobs()?;
+        for job in all_jobs {
+            if job.status == JobStatus::Running
+                && job.job_type == JobType::Flush
+                && job
+                    .table_name
+                    .as_ref()
+                    .map(|tn| format!("{}.{}", job.namespace_id.as_str(), tn.as_str()))
+                    == Some(table_full_name.clone())
+            {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Flush job already running for table '{}' (job_id: {}). Please wait for it to complete.",
+                    table_full_name, job.job_id
+                )));
             }
         }
 
@@ -2239,9 +1999,7 @@ impl SqlExecutor {
         )));
 
         // Persist job to system.jobs
-        if let Some(ref jobs_table_provider) = self.jobs_table_provider {
-            jobs_table_provider.insert_job(job_record)?;
-        }
+        self.app_context.system_tables().jobs().insert_job(job_record)?;
 
         // Create flush job
         let namespace_id = stmt.namespace.clone();
@@ -2470,9 +2228,7 @@ impl SqlExecutor {
             )));
 
             // Persist job to system.jobs
-            if let Some(ref jobs_table_provider) = self.jobs_table_provider {
-                jobs_table_provider.insert_job(job_record)?;
-            }
+            self.app_context.system_tables().jobs().insert_job(job_record)?;
 
             log::info!(
                 "Flush job created: job_id={}, table={}.{}",
@@ -2572,7 +2328,7 @@ impl SqlExecutor {
     /// Execute ALTER NAMESPACE
     async fn execute_alter_namespace(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let stmt = AlterNamespaceStatement::parse(sql)?;
-        self.namespace_service
+        self.app_context.system_tables().namespaces()
             .update_options(stmt.name.clone(), stmt.options)?;
 
         let message = format!("Namespace '{}' updated successfully", stmt.name.as_str());
@@ -2583,8 +2339,7 @@ impl SqlExecutor {
     /// Execute DROP NAMESPACE
     async fn execute_drop_namespace(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let stmt = DropNamespaceStatement::parse(sql)?;
-        let deleted = self
-            .namespace_service
+        let deleted = self.app_context.system_tables().namespaces()
             .delete(stmt.name.clone(), stmt.if_exists)?;
 
         let message = if deleted {
@@ -2701,15 +2456,11 @@ impl SqlExecutor {
         };
 
         // Save user via users table provider
-        let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
-            KalamDbError::InvalidOperation("User management not configured".to_string())
-        })?;
-
-        users_provider.create_user(user.clone())?;
+        self.app_context.system_tables().users().create_user(user.clone())?;
 
         // Back-compat: also write to legacy KalamSQL store so auth/tests using
         // the adapter can find the user while we complete full migration.
-        if let Some(kalam_sql) = &self.kalam_sql {
+        if let Some(kalam_sql) = &self.app_context.kalam_sql() {
             let _ = kalam_sql.insert_user(&user);
         }
 
@@ -2752,13 +2503,9 @@ impl SqlExecutor {
         }
 
         // Get users provider
-        let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
-            KalamDbError::InvalidOperation("User management not configured".to_string())
-        })?;
-
         // Get existing user
         let target_user_id = UserId::new(&stmt.username);
-        let mut user = users_provider
+        let mut user = self.app_context.system_tables().users()
             .get_user_by_id(&target_user_id)?
             .ok_or_else(|| KalamDbError::NotFound(format!("User not found: {}", stmt.username)))?;
 
@@ -2797,7 +2544,7 @@ impl SqlExecutor {
         user.updated_at = chrono::Utc::now().timestamp_millis();
 
         // Update user
-        users_provider.update_user(user)?;
+        self.app_context.system_tables().users().update_user(user)?;
 
         self.log_audit_event(
             exec_ctx,
@@ -2833,13 +2580,9 @@ impl SqlExecutor {
         }
 
         // Get users provider
-        let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
-            KalamDbError::InvalidOperation("User management not configured".to_string())
-        })?;
-
         // Soft delete the user
         let target_user_id = UserId::new(&stmt.username);
-        match users_provider.delete_user(&target_user_id) {
+        match self.app_context.system_tables().users().delete_user(&target_user_id) {
             Ok(()) => { /* deleted */ }
             Err(KalamDbError::NotFound(_)) if stmt.if_exists => {
                 // IF EXISTS: treat missing user as success (skipped)
@@ -3041,7 +2784,7 @@ impl SqlExecutor {
             let _metadata = self.user_table_service.create_table(stmt)?;
 
             // Insert into system.tables via KalamSQL
-            if let Some(kalam_sql) = &self.kalam_sql {
+            if let Some(kalam_sql) = &self.app_context.kalam_sql() {
                 let table = kalamdb_sql::Table {
                     table_id: TableId::from_strings(namespace_id.as_str(), table_name.as_str()),
                     table_name: table_name.clone(),
@@ -3129,7 +2872,7 @@ impl SqlExecutor {
 
             // TODO: In the future create the table and directly add it to the cache and read the Table from the cache itself
             // Insert into system.tables via KalamSQL
-            if let Some(kalam_sql) = &self.kalam_sql {
+            if let Some(kalam_sql) = &self.app_context.kalam_sql() {
                 let table = kalamdb_sql::Table {
                     table_id: TableId::from_strings(namespace_id.as_str(), table_name.as_str()),
                     table_name: table_name.clone(),
@@ -3251,7 +2994,7 @@ impl SqlExecutor {
                     table_name
                 );
                 // Insert into system.tables via KalamSQL
-                if let Some(kalam_sql) = &self.kalam_sql {
+                if let Some(kalam_sql) = &self.app_context.kalam_sql() {
                     // Serialize flush policy for storage
                     let flush_policy_json =
                         serde_json::to_string(&flush_policy.clone().unwrap_or_default())
@@ -3349,7 +3092,7 @@ impl SqlExecutor {
             let was_created = self.shared_table_service.create_table(stmt)?;
 
             if was_created {
-                if let Some(kalam_sql) = &self.kalam_sql {
+                if let Some(kalam_sql) = &self.app_context.kalam_sql() {
                     // Serialize flush policy for storage
                     let flush_policy_json =
                         serde_json::to_string(&flush_policy.clone().unwrap_or_default())
@@ -3444,10 +3187,9 @@ impl SqlExecutor {
             }
 
             // Get the table to verify it exists and is a SHARED table
-            let kalam_sql = self
-                .kalam_sql
-                .as_ref()
-                .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+            let kalam_sql = self.app_context.kalam_sql().as_ref().ok_or_else(|| {
+                KalamDbError::Other("KalamSql not initialized".to_string())
+            })?;
 
             let table_id =
                 TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
@@ -3531,7 +3273,7 @@ impl SqlExecutor {
         let table_identifier =
             TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
 
-        let actual_table_type = if let Some(kalam_sql) = &self.kalam_sql {
+        let actual_table_type = if let Some(kalam_sql) = &self.app_context.kalam_sql() {
             match kalam_sql.get_table(table_identifier.as_ref()) {
                 Ok(Some(table)) => table.table_type,
                 Ok(None) => requested_table_type,
@@ -3653,17 +3395,12 @@ impl SqlExecutor {
             }
 
             // Perform restore
-            let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
-                KalamDbError::InvalidOperation("User management not configured".to_string())
-            })?;
-
-            let mut user = users_provider
-                .get_user_by_username(&where_val)?
+            let user = self.app_context.system_tables().users().get_user_by_username(&where_val)?
                 .ok_or_else(|| KalamDbError::NotFound(format!("User not found: {}", where_val)))?;
 
             user.deleted_at = None;
             user.updated_at = chrono::Utc::now().timestamp_millis();
-            users_provider.update_user(user)?;
+            self.app_context.system_tables().users().update_user(user)?;
 
             return Ok(ExecutionResult::Success("Updated 1 user(s)".to_string()));
         }
@@ -3734,13 +3471,8 @@ impl SqlExecutor {
             })?;
 
         // Execute the update on shared table
-        let store = self
-            .shared_table_store
-            .as_ref()
-            .ok_or_else(|| KalamDbError::InvalidOperation("Store not configured".to_string()))?;
-        let all_rows =
-            SharedTableStoreExt::scan(store.as_ref(), update_info.namespace.as_str(), update_info.table.as_str())
-                .map_err(|e| KalamDbError::Other(e.to_string()))?;
+        let all_rows = self.app_context.shared_table_store().scan(update_info.namespace.as_str(), update_info.table.as_str())
+            .map_err(|e| KalamDbError::Other(e.to_string()))?;
 
         // Filter rows by WHERE clause (simple evaluation: col = 'value')
         let (where_col, where_val) = self.parse_simple_where(&update_info.where_clause)?;
@@ -4657,16 +4389,7 @@ impl SqlExecutor {
         details: serde_json::Value,
         metadata: Option<&ExecutionMetadata>,
     ) {
-        let kalam_sql = match &self.kalam_sql {
-            Some(k) => k,
-            None => {
-                log::debug!(
-                    "Audit logging skipped (KalamSql not configured) for action '{}'",
-                    action
-                );
-                return;
-            }
-        };
+        let kalam_sql = self.app_context.kalam_sql();
 
         let actor_username = match kalam_sql.get_user_by_id(&ctx.user_id) {
             Ok(Some(user)) => user.username.clone(),
@@ -4734,13 +4457,14 @@ mod tests {
         let shared_table_service = Arc::new(crate::services::SharedTableService::new());
         let stream_table_service = Arc::new(crate::services::StreamTableService::new());
 
-        SqlExecutor::new(
-            namespace_service,
-            user_table_service,
-            shared_table_service,
-            stream_table_service,
-        )
-        .with_storage_backend(backend)
+        // Create minimal AppContext for testing
+        let app_context = crate::app_context::AppContext::init(
+            backend,
+            crate::ids::snowflake::SnowflakeIdGenerator::new(1, 1).node_id(),
+            "/tmp/test".to_string(),
+        );
+
+        SqlExecutor::new(app_context)
     }
 
     fn create_test_session() -> SessionContext {
@@ -4844,14 +4568,14 @@ mod tests {
             "./data/storage".to_string(),
         ));
 
-        let mut executor = SqlExecutor::new(
-            namespace_service,
-            user_table_service,
-            shared_table_service,
-            stream_table_service,
-        )
-        .with_storage_backend(backend.clone())
-        .with_storage_registry(storage_registry.clone());
+        // Create minimal AppContext for testing
+        let app_context = crate::app_context::AppContext::init(
+            backend.clone(),
+            crate::ids::snowflake::SnowflakeIdGenerator::new(1, 1).node_id(),
+            "./data/storage".to_string(),
+        );
+
+        let mut executor = SqlExecutor::new(app_context);
 
         // Create and populate unified cache for DESCRIBE TABLE
         let unified_cache = Arc::new(crate::catalog::SchemaCache::new(100, Some(storage_registry)));
@@ -4886,8 +4610,8 @@ mod tests {
         );
         unified_cache.insert(table_id, Arc::new(cached_data));
 
-        // Set cache in executor
-        executor.unified_cache = Some(unified_cache);
+        // Set cache in executor - now handled through AppContext
+        // executor.unified_cache = Some(unified_cache);
 
         let session = create_test_session();
         let exec_ctx = create_test_exec_ctx();
@@ -4944,10 +4668,7 @@ mod tests {
             .unwrap();
 
         // Simulate adding a table
-        executor
-            .namespace_service
-            .increment_table_count("app")
-            .unwrap();
+        executor.app_context.system_tables().namespaces().increment_table_count(namespace_name).unwrap();
 
         let result = executor.execute(&session, "DROP NAMESPACE app", &exec_ctx).await;
         assert!(result.is_err());

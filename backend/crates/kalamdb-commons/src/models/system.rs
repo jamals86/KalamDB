@@ -170,8 +170,8 @@ pub struct Job {
     pub created_at: i64,           // Unix timestamp in milliseconds
     pub started_at: Option<i64>,   // Unix timestamp in milliseconds
     pub completed_at: Option<i64>, // Unix timestamp in milliseconds
-        #[bincode(with_serde)]
-        pub node_id: NodeId,
+    #[bincode(with_serde)]
+    pub node_id: NodeId,
     pub error_message: Option<String>,
 }
 

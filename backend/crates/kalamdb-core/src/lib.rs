@@ -16,6 +16,7 @@ pub mod live_query;
 pub mod models; // Domain models for system tables and table rows
 pub mod scheduler;
 pub mod schema;
+pub mod app_context;
 pub mod services;
 pub mod sql;
 pub mod storage;
@@ -23,5 +24,6 @@ pub mod stores; // EntityStore-based table stores
 pub mod system_table_registration;
 pub mod tables;
 
-// Optional facade for initializing core stores from a generic StorageBackend
-pub mod kalam_core;
+// Test helpers (only compiled in test mode)
+#[cfg(test)]
+pub mod test_helpers;

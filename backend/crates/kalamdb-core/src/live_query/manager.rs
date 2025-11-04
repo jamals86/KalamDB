@@ -59,6 +59,11 @@ impl LiveQueryManager {
         }
     }
 
+    /// Get the node_id for this manager
+    pub fn node_id(&self) -> &NodeId {
+        &self.node_id
+    }
+
     /// Get current timestamp in milliseconds
     fn current_timestamp_ms() -> i64 {
         SystemTime::now()

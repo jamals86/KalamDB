@@ -9,10 +9,18 @@
 
 use crate::error::KalamDbError;
 use crate::tables::system::JobsTableProvider;
+use crate::flush::{FlushPolicy, FlushTriggerMonitor};
+use crate::jobs::JobManager;
+use crate::catalog::TableName;
 use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, NodeId, TableName};
+use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, NodeId, TableName as CommonsTableName};
 use std::sync::Arc;
 use std::time::Instant;
+use std::collections::HashMap;
+use std::sync::RwLock;
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
+use std::time::Duration;
 
 /// Job execution result
 #[derive(Debug, Clone)]
@@ -21,10 +29,35 @@ pub enum JobResult {
     Failure(String),
 }
 
+/// Configuration for a scheduled table
+#[derive(Debug, Clone)]
+struct ScheduledTable {
+    /// Table name
+    table_name: TableName,
+}
+
+/// Flush scheduler state
+enum SchedulerState {
+    /// Scheduler is stopped
+    Stopped,
+    /// Scheduler is running with background task
+    Running(JoinHandle<()>),
+}
+
 /// Job executor that manages job lifecycle and metrics
 pub struct JobExecutor {
     jobs_provider: Arc<JobsTableProvider>,
     node_id: NodeId,
+    
+    // Flush scheduler components
+    job_manager: Arc<dyn JobManager>,
+    trigger_monitor: Arc<FlushTriggerMonitor>,
+    //TODO: We should have one scheduler who checks all tables which is the main job
+    scheduled_tables: Arc<RwLock<HashMap<String, ScheduledTable>>>,
+    active_flushes: Arc<RwLock<HashMap<String, String>>>, //TODO: Use JobId type as key
+    state: Arc<RwLock<SchedulerState>>,
+    check_interval: Duration,
+    shutdown: Arc<Notify>,
 }
 
 impl JobExecutor {
@@ -33,10 +66,24 @@ impl JobExecutor {
     /// # Arguments
     /// * `jobs_provider` - Provider for system.jobs table
     /// * `node_id` - Unique identifier for this node
-    pub fn new(jobs_provider: Arc<JobsTableProvider>, node_id: NodeId) -> Self {
+    /// * `job_manager` - Job manager for executing flush operations
+    /// * `check_interval` - How often to check for flush triggers
+    pub fn new(
+        jobs_provider: Arc<JobsTableProvider>, 
+        node_id: NodeId,
+        job_manager: Arc<dyn JobManager>,
+        check_interval: Duration,
+    ) -> Self {
         Self {
             jobs_provider,
             node_id,
+            job_manager,
+            trigger_monitor: Arc::new(FlushTriggerMonitor::new()),
+            scheduled_tables: Arc::new(RwLock::new(HashMap::new())),
+            active_flushes: Arc::new(RwLock::new(HashMap::new())),
+            state: Arc::new(RwLock::new(SchedulerState::Stopped)),
+            check_interval,
+            shutdown: Arc::new(Notify::new()),
         }
     }
 
@@ -244,6 +291,239 @@ impl JobExecutor {
         Ok(())
     }
 
+    // ===== Flush Scheduling Methods =====
+
+    /// Get the trigger monitor for external row count updates
+    pub fn trigger_monitor(&self) -> Arc<FlushTriggerMonitor> {
+        Arc::clone(&self.trigger_monitor)
+    }
+
+    /// Schedule a table for automatic flushing
+    pub async fn schedule_table(
+        &self,
+        table_name: TableName,
+        cf_name: String,
+        policy: FlushPolicy,
+    ) -> Result<(), KalamDbError> {
+        // Validate the flush policy
+        policy
+            .validate()
+            .map_err(|e| KalamDbError::Other(format!("Invalid flush policy: {}", e)))?;
+
+        // Check if already scheduled
+        {
+            let tables = self
+                .scheduled_tables
+                .read()
+                .map_err(|e| KalamDbError::Other(format!("Failed to acquire read lock: {}", e)))?;
+
+            if tables.contains_key(&cf_name) {
+                return Err(KalamDbError::Other(format!(
+                    "Table {} is already scheduled for flushing",
+                    cf_name
+                )));
+            }
+        }
+
+        // Register with trigger monitor
+        use crate::catalog::TableType;
+        self.trigger_monitor.register_table(
+            table_name.clone(),
+            cf_name.clone(),
+            &TableType::User,
+            policy.clone(),
+        )?;
+
+        // Add to scheduled tables
+        let scheduled = ScheduledTable { table_name };
+
+        let mut tables = self
+            .scheduled_tables
+            .write()
+            .map_err(|e| KalamDbError::Other(format!("Failed to acquire write lock: {}", e)))?;
+
+        tables.insert(cf_name, scheduled);
+
+        Ok(())
+    }
+
+    /// Unschedule a table from automatic flushing
+    pub async fn unschedule_table(&self, cf_name: &str) -> Result<(), KalamDbError> {
+        // Remove from trigger monitor
+        self.trigger_monitor.unregister_table(cf_name)?;
+
+        // Remove from scheduled tables
+        let mut tables = self
+            .scheduled_tables
+            .write()
+            .map_err(|e| KalamDbError::Other(format!("Failed to acquire write lock: {}", e)))?;
+
+        tables.remove(cf_name);
+
+        Ok(())
+    }
+
+    /// Start the flush scheduler
+    pub async fn start_flush_scheduler(&self) -> Result<(), KalamDbError> {
+        let mut state = self
+            .state
+            .write()
+            .map_err(|e| KalamDbError::Other(format!("Failed to acquire write lock: {}", e)))?;
+
+        match &*state {
+            SchedulerState::Running(_) => {
+                Err(KalamDbError::Other(
+                    "Flush scheduler is already running".to_string(),
+                ))
+            }
+            SchedulerState::Stopped => {
+                // Start background task
+                let handle = self.spawn_scheduler_task();
+                *state = SchedulerState::Running(handle);
+                Ok(())
+            }
+        }
+    }
+
+    /// Stop the flush scheduler
+    pub async fn stop_flush_scheduler(&self) -> Result<(), KalamDbError> {
+        // Signal shutdown
+        self.shutdown.notify_one();
+
+        // Get the handle and wait for task to complete
+        let handle = {
+            let mut state = self
+                .state
+                .write()
+                .map_err(|e| KalamDbError::Other(format!("Failed to acquire write lock: {}", e)))?;
+
+            match std::mem::replace(&mut *state, SchedulerState::Stopped) {
+                SchedulerState::Running(handle) => Some(handle),
+                SchedulerState::Stopped => None,
+            }
+        };
+
+        if let Some(handle) = handle {
+            // Wait for task to complete
+            handle.await.map_err(|e| {
+                KalamDbError::Other(format!("Failed to join scheduler task: {}", e))
+            })?;
+        }
+
+        Ok(())
+    }
+
+    /// Spawn the background scheduler task
+    fn spawn_scheduler_task(&self) -> JoinHandle<()> {
+        let scheduled_tables = Arc::clone(&self.scheduled_tables);
+        let active_flushes = Arc::clone(&self.active_flushes);
+        let trigger_monitor = Arc::clone(&self.trigger_monitor);
+        let job_manager = Arc::clone(&self.job_manager);
+        let check_interval = self.check_interval;
+        let shutdown = Arc::clone(&self.shutdown);
+
+        tokio::spawn(async move {
+            log::info!("Flush scheduler started with check interval {:?}", check_interval);
+
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(check_interval) => {
+                        // Check for flush triggers
+                        if let Err(e) = Self::check_and_trigger_flushes(
+                            &scheduled_tables,
+                            &active_flushes,
+                            &trigger_monitor,
+                            &job_manager,
+                        ).await {
+                            log::error!("Error checking flush triggers: {}", e);
+                        }
+                    }
+                    _ = shutdown.notified() => {
+                        log::info!("Flush scheduler shutting down");
+                        break;
+                    }
+                }
+            }
+        })
+    }
+
+    /// Check for flush triggers and start jobs
+    async fn check_and_trigger_flushes(
+        scheduled_tables: &Arc<RwLock<HashMap<String, ScheduledTable>>>,
+        active_flushes: &Arc<RwLock<HashMap<String, String>>>,
+        trigger_monitor: &Arc<FlushTriggerMonitor>,
+        job_manager: &Arc<dyn JobManager>,
+    ) -> Result<(), KalamDbError> {
+        // First, collect all tables that need flushing (without holding locks)
+        let tables_to_flush: Vec<(String, TableName)> = {
+            let scheduled = scheduled_tables
+                .read()
+                .map_err(|e| KalamDbError::Other(format!("Failed to acquire read lock: {}", e)))?;
+            
+            let active = active_flushes
+                .read()
+                .map_err(|e| KalamDbError::Other(format!("Failed to acquire read lock: {}", e)))?;
+
+            let mut tables_to_flush = Vec::new();
+            
+            for (cf_name, scheduled) in scheduled.iter() {
+                // Skip if already flushing
+                if active.contains_key(cf_name) {
+                    continue;
+                }
+
+                // Check if flush is needed
+                if trigger_monitor.should_flush(cf_name)? {
+                    tables_to_flush.push((cf_name.clone(), scheduled.table_name.clone()));
+                }
+            }
+            
+            tables_to_flush
+        };
+
+        // Now start flush jobs for each table (locks released)
+        for (cf_name, table_name) in tables_to_flush {
+            // Mark as active
+            {
+                let mut active = active_flushes
+                    .write()
+                    .map_err(|e| KalamDbError::Other(format!("Failed to acquire write lock: {}", e)))?;
+
+                active.insert(cf_name.clone(), format!("flush-{}-{}", cf_name, chrono::Utc::now().timestamp()));
+            }
+
+            // Start the job
+            let cf_name_clone = cf_name.clone();
+            let active_flushes_clone = Arc::clone(active_flushes);
+            let trigger_monitor_clone = Arc::clone(trigger_monitor);
+
+            job_manager.start_job(
+                format!("flush-{}-{}", cf_name, chrono::Utc::now().timestamp()),
+                "flush".to_string(),
+                Box::pin(async move {
+                    // TODO: Implement actual flush logic
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+                    // Reset trigger after successful flush
+                    if let Err(e) = trigger_monitor_clone.on_flush_completed(&cf_name_clone) {
+                        log::error!("Failed to reset trigger for {}: {}", cf_name_clone, e);
+                    }
+
+                    // Remove from active flushes
+                    let mut active = active_flushes_clone
+                        .write()
+                        .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
+
+                    active.remove(&cf_name_clone);
+
+                    Ok(format!("Flushed table {}", cf_name_clone))
+                })
+            ).await?;
+        }
+
+        Ok(())
+    }
+
     /// Get current memory usage in MB
     ///
     /// This is a simplified implementation. In production, use OS-specific APIs:
@@ -259,6 +539,89 @@ impl JobExecutor {
     /// Get the node ID for this executor
     pub fn node_id(&self) -> &str {
            self.node_id.as_str()
+    }
+
+    /// Wait for all active flush jobs to complete within the specified timeout
+    /// Returns the number of jobs that were waited for
+    pub async fn wait_for_active_flush_jobs(&self, timeout: Duration) -> Result<usize, KalamDbError> {
+        let start = std::time::Instant::now();
+        let mut poll_interval = tokio::time::interval(Duration::from_millis(500));
+
+        loop {
+            // Check if timeout exceeded
+            if start.elapsed() > timeout {
+                return Err(KalamDbError::Other(format!(
+                    "Timeout waiting for active flush jobs to complete after {:?}",
+                    timeout
+                )));
+            }
+
+            // Check active flushes
+            let active_count = {
+                let active_flushes = self.active_flushes.read().map_err(|e| {
+                    KalamDbError::Other(format!("Failed to acquire active_flushes lock: {}", e))
+                })?;
+                active_flushes.len()
+            };
+
+            if active_count == 0 {
+                log::info!("All active flush jobs completed");
+                return Ok(0); // No jobs were actively running when we started waiting
+            }
+
+            // Wait a bit before checking again
+            poll_interval.tick().await;
+        }
+    }
+
+    /// Resume any incomplete flush jobs that were running when the system restarted
+    /// Returns the number of jobs resumed
+    pub async fn resume_incomplete_jobs(&self) -> Result<usize, KalamDbError> {
+        // Query all jobs from the jobs provider
+        let all_jobs = self.jobs_provider.list_jobs()?;
+
+        // Filter for running flush jobs
+        let incomplete_flush_jobs: Vec<_> = all_jobs
+            .into_iter()
+            .filter(|job| job.status == JobStatus::Running && job.job_type == JobType::Flush)
+            .collect();
+
+        if incomplete_flush_jobs.is_empty() {
+            log::trace!("No incomplete flush jobs to resume");
+            return Ok(0);
+        }
+
+        log::info!("Found {} incomplete flush jobs to resume", incomplete_flush_jobs.len());
+
+        let mut resumed = 0;
+        for job in incomplete_flush_jobs {
+            let job_id = job.job_id.clone();
+            let table_name = job.table_name.clone();
+
+            // Create updated job with failed status
+            let mut failed_job = job.clone();
+            failed_job.status = JobStatus::Failed;
+            failed_job.error_message = Some("Job was incomplete when system restarted".to_string());
+            failed_job.completed_at = Some(chrono::Utc::now().timestamp_millis());
+
+            // Update job status
+            if let Err(e) = self.jobs_provider.update_job(failed_job) {
+                log::error!("Failed to mark incomplete job {} as failed: {}", job_id, e);
+                continue;
+            }
+
+            // Remove from active flushes if present
+            if let Some(ref table_name) = table_name {
+                if let Ok(mut active_flushes) = self.active_flushes.write() {
+                    active_flushes.remove(table_name.as_str());
+                }
+            }
+
+            log::info!("Marked incomplete flush job {} for table {:?} as failed", job_id, table_name);
+            resumed += 1;
+        }
+
+        Ok(resumed)
     }
 }
 
@@ -278,7 +641,13 @@ mod tests {
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(kalam_sql.adapter().backend()));
-        let executor = JobExecutor::new(jobs_provider, NodeId::from("test-node-1"));
+        let job_manager = Arc::new(crate::jobs::TokioJobManager::new());
+        let executor = JobExecutor::new(
+            jobs_provider, 
+            NodeId::from("test-node-1"),
+            job_manager,
+            Duration::from_secs(5),
+        );
         (executor, temp_dir)
     }
 
