@@ -1,5 +1,6 @@
-//! SchemaRegistry: Facade over SchemaCache for efficient table/schema access
+//! SchemaRegistry: Unified schema management (cache + persistence)
 // Implements T200 (US8) for Phase 5: AppContext + SchemaRegistry + Stateless Executor
+// Phase 5 Enhancement: Consolidates TableSchemaStore for single source of truth
 
 use std::sync::Arc;
 use dashmap::DashMap;
@@ -7,21 +8,33 @@ use arrow::datatypes::SchemaRef;
 
 use crate::catalog::SchemaCache;
 use crate::tables::base_table_provider::UserTableShared;
+use crate::tables::system::schemas::TableSchemaStore;
 use crate::catalog::CachedTableData;
+use crate::error::KalamDbError;
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_commons::models::TableId;
+use kalamdb_store::entity_store::EntityStore;
 
-/// SchemaRegistry provides a read-through API over SchemaCache for table metadata, definitions, and Arrow schemas.
+/// SchemaRegistry provides unified schema management:
+/// - In-memory cache (hot path) via SchemaCache
+/// - Persistent storage (cold path) via TableSchemaStore
+/// - Memoized Arrow schemas for zero-allocation repeated access
+/// 
+/// **Consolidation**: Eliminates duplicate logic between SchemaRegistry (cache) 
+/// and TableSchemaStore (persistence) by making SchemaRegistry the single API 
+/// for all schema operations.
 pub struct SchemaRegistry {
     cache: Arc<SchemaCache>,
+    store: Arc<TableSchemaStore>,
     // Memoized Arrow schemas: TableId -> Arc<SchemaRef>
     arrow_schemas: DashMap<TableId, Arc<SchemaRef>>,
 }
 
 impl SchemaRegistry {
-    pub fn new(cache: Arc<SchemaCache>) -> Self {
+    pub fn new(cache: Arc<SchemaCache>, store: Arc<TableSchemaStore>) -> Self {
         Self {
             cache,
+            store,
             arrow_schemas: DashMap::new(),
         }
     }
@@ -31,9 +44,40 @@ impl SchemaRegistry {
         self.cache.get(table_id)
     }
 
-    /// Get TableDefinition for a table
+    /// Get TableDefinition for a table (read-through: cache → store fallback)
     pub fn get_table_definition(&self, table_id: &TableId) -> Option<Arc<TableDefinition>> {
-        self.cache.get(table_id).map(|data| data.schema.clone())
+        // Fast path: check cache first
+        if let Some(data) = self.cache.get(table_id) {
+            return Some(data.schema.clone());
+        }
+        
+        // Cache miss: read from persistent store
+        match self.store.get(table_id) {
+            Ok(Some(def)) => Some(Arc::new(def)),
+            _ => None,
+        }
+    }
+    
+    /// Store a table definition (write-through: persist + invalidate cache)
+    pub fn put_table_definition(&self, table_id: &TableId, definition: &TableDefinition) -> Result<(), KalamDbError> {
+        // Persist to RocksDB
+        self.store.put(table_id, definition)?;
+        
+        // Invalidate cache to force reload on next access
+        self.invalidate(table_id);
+        
+        Ok(())
+    }
+    
+    /// Delete a table definition (write-through: remove from store + cache)
+    pub fn delete_table_definition(&self, table_id: &TableId) -> Result<(), KalamDbError> {
+        // Delete from RocksDB
+        self.store.delete(table_id)?;
+        
+        // Invalidate cache
+        self.invalidate(table_id);
+        
+        Ok(())
     }
 
     /// Get Arrow SchemaRef for a table (memoized)

@@ -5,6 +5,7 @@
 pub mod audit_logs;
 pub mod information_schema_columns;
 pub mod information_schema_tables;
+pub mod registry; // Phase 5: SystemTablesRegistry - centralized provider access
 pub mod system_table_definitions; // Phase 15: System table schema definitions
 pub mod system_table_trait;
 // EntityStore-based system tables (using SystemTableStore<K,V>)
@@ -16,6 +17,9 @@ pub mod stats;
 pub mod storages_v2;
 pub mod tables_v2;
 pub mod users_v2;
+
+// Export registry (Phase 5 completion)
+pub use registry::SystemTablesRegistry;
 
 // Export common trait
 pub use system_table_trait::SystemTableProviderExt;

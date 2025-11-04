@@ -224,27 +224,12 @@ impl TestServer {
 
         // Initialize services
         let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
-        let user_table_service = Arc::new(UserTableService::new(
-            kalam_sql.clone(),
-            user_table_store.clone(),
-        ));
-        let shared_table_service = Arc::new(SharedTableService::new(
-            shared_table_store.clone(),
-            kalam_sql.clone(),
-            "./data/storage".to_string(),
-        ));
-        let stream_table_service = Arc::new(StreamTableService::new(
-            stream_table_store.clone(),
-            kalam_sql.clone(),
-        ));
+        let user_table_service = Arc::new(UserTableService::new());
+        let shared_table_service = Arc::new(SharedTableService::new());
+        let stream_table_service = Arc::new(StreamTableService::new());
 
         // Initialize TableDeletionService for DROP TABLE support
-        let table_deletion_service = Arc::new(TableDeletionService::new(
-            user_table_store.clone(),
-            shared_table_store.clone(),
-            stream_table_store.clone(),
-            kalam_sql.clone(),
-        ));
+        let table_deletion_service = Arc::new(TableDeletionService::new());
 
         // Initialize DataFusion session factory
         let session_factory = Arc::new(
@@ -267,7 +252,7 @@ impl TestServer {
             .expect("Failed to register system schema");
 
         // Register all system tables using centralized function
-        let (_jobs_provider, _schema_store) =
+        let providers =
             kalamdb_core::system_table_registration::register_system_tables(
                 &system_schema,
                 backend.clone(),
@@ -295,11 +280,10 @@ impl TestServer {
             Some(stream_table_store.clone()),
         ));
 
-        // Initialize SqlExecutor with builder pattern
+        // Initialize SqlExecutor with builder pattern (Phase 5: no SessionContext parameter)
         let sql_executor = Arc::new(
             SqlExecutor::new(
                 namespace_service.clone(),
-                session_context.clone(),
                 user_table_service.clone(),
                 shared_table_service.clone(),
                 stream_table_service.clone(),
@@ -423,7 +407,8 @@ impl TestServer {
         let mask_credentials = !is_admin;
 
         // Try custom DDL/DML execution first (same as REST API)
-        match self.sql_executor.execute(sql, user_id_obj.as_ref()).await {
+        // Phase 5: execute() now requires SessionContext as first parameter
+        match self.sql_executor.execute(&*self.session_context, sql, user_id_obj.as_ref()).await {
             Ok(result) => {
                 use kalamdb_core::sql::ExecutionResult;
                 match result {

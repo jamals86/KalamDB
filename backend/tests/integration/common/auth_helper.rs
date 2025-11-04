@@ -60,7 +60,7 @@ pub async fn create_test_user(
     let system_user_id = UserId::new("system");
     let result = server
         .sql_executor
-        .execute(&create_user_sql, Some(&system_user_id))
+        .execute(&*server.session_context, &create_user_sql.as_str(), Some(&system_user_id))
         .await;
 
     if let Err(e) = &result {

@@ -60,19 +60,9 @@ async fn setup_test_executor() -> (SqlExecutor, TempDir, Arc<KalamSql>) {
     ));
 
     let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
-    let user_table_service = Arc::new(UserTableService::new(
-        kalam_sql.clone(),
-        user_table_store.clone(),
-    ));
-    let shared_table_service = Arc::new(SharedTableService::new(
-        shared_table_store.clone(),
-        kalam_sql.clone(),
-        "./data/storage".to_string(),
-    ));
-    let stream_table_service = Arc::new(StreamTableService::new(
-        stream_table_store.clone(),
-        kalam_sql.clone(),
-    ));
+    let user_table_service = Arc::new(UserTableService::new());
+    let shared_table_service = Arc::new(SharedTableService::new());
+    let stream_table_service = Arc::new(StreamTableService::new());
 
     // Use DataFusionSessionFactory to properly configure "kalam" catalog
     let session_factory =
@@ -81,7 +71,6 @@ async fn setup_test_executor() -> (SqlExecutor, TempDir, Arc<KalamSql>) {
 
     let executor = SqlExecutor::new(
         namespace_service,
-        session_context,
         user_table_service,
         shared_table_service,
         stream_table_service,
@@ -94,7 +83,7 @@ async fn setup_test_executor() -> (SqlExecutor, TempDir, Arc<KalamSql>) {
     )
     .with_storage_backend(backend.clone());
 
-    (executor, temp_dir, kalam_sql)
+    (executor, temp_dir, kalam_sql, session_context)
 }
 
 async fn create_system_user(kalam_sql: &Arc<KalamSql>) -> UserId {
@@ -136,11 +125,12 @@ fn find_audit_entry<'a>(
 
 #[tokio::test]
 async fn test_audit_log_for_user_management() {
-    let (executor, _temp_dir, kalam_sql) = setup_test_executor().await;
+    let (executor, _temp_dir, kalam_sql, session_ctx) = setup_test_executor().await;
     let admin_id = create_system_user(&kalam_sql).await;
 
     executor
         .execute(
+            &session_ctx,
             "CREATE USER 'audit_user' WITH PASSWORD 'StrongPass123!' ROLE user",
             Some(&admin_id),
         )
@@ -148,12 +138,12 @@ async fn test_audit_log_for_user_management() {
         .expect("CREATE USER failed");
 
     executor
-        .execute("ALTER USER 'audit_user' SET ROLE dba", Some(&admin_id))
+        .execute(&*session_ctx, "ALTER USER 'audit_user' SET ROLE dba", Some(&admin_id))
         .await
         .expect("ALTER USER failed");
 
     executor
-        .execute("DROP USER 'audit_user'", Some(&admin_id))
+        .execute(&*session_ctx, "DROP USER 'audit_user'", Some(&admin_id))
         .await
         .expect("DROP USER failed");
 
@@ -182,16 +172,17 @@ async fn test_audit_log_for_user_management() {
 
 #[tokio::test]
 async fn test_audit_log_for_table_access_change() {
-    let (executor, _temp_dir, kalam_sql) = setup_test_executor().await;
+    let (executor, _temp_dir, kalam_sql, session_ctx) = setup_test_executor().await;
     let admin_id = create_system_user(&kalam_sql).await;
 
     executor
-        .execute("CREATE NAMESPACE analytics", Some(&admin_id))
+        .execute(&*session_ctx, "CREATE NAMESPACE analytics", Some(&admin_id))
         .await
         .expect("CREATE NAMESPACE failed");
 
     executor
         .execute(
+            &session_ctx,
             "CREATE SHARED TABLE analytics.events (id INT, value TEXT) ACCESS LEVEL private",
             Some(&admin_id),
         )
@@ -200,6 +191,7 @@ async fn test_audit_log_for_table_access_change() {
 
     executor
         .execute(
+            &session_ctx,
             "ALTER TABLE analytics.events SET ACCESS LEVEL public",
             Some(&admin_id),
         )

@@ -312,7 +312,7 @@ mod tests {
         ]));
 
         let stmt = CreateTableStatement {
-            table_name: TableName::new("events"),
+            table_name: TableName::new("events_no_sys_cols"), // Unique name to avoid conflicts
             namespace_id: NamespaceId::new("app"),
             table_type: TableType::Stream,
             schema,
@@ -328,10 +328,13 @@ mod tests {
         };
 
         let result = service.create_table(stmt);
+        if let Err(ref e) = result {
+            eprintln!("Error creating stream table: {:?}", e);
+        }
         assert!(result.is_ok());
 
         // Verify table was created
-        assert!(service.table_exists(&NamespaceId::new("app"), &TableName::new("events")).unwrap());
+        assert!(service.table_exists(&NamespaceId::new("app"), &TableName::new("events_no_sys_cols")).unwrap());
     }
 
     #[test]
@@ -341,7 +344,7 @@ mod tests {
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
         let stmt1 = CreateTableStatement {
-            table_name: TableName::new("events"),
+            table_name: TableName::new("events_if_not_exists"), // Unique name
             namespace_id: NamespaceId::new("app"),
             table_type: TableType::Stream,
             schema: schema.clone(),

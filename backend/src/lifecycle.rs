@@ -9,11 +9,9 @@ use crate::routes;
 use crate::ServerConfig;
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
-use datafusion::catalog::memory::MemorySchemaProvider;
 use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
-use kalamdb_core::jobs::JobManager;
 use kalamdb_core::live_query::LiveQueryManager;
 use kalamdb_core::services::{
     NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
@@ -21,13 +19,11 @@ use kalamdb_core::services::{
 };
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_core::storage::StorageRegistry;
 use kalamdb_core::{
     jobs::{
         JobCleanupTask, JobExecutor, JobResult, StreamEvictionJob, StreamEvictionScheduler,
-        TokioJobManager, UserCleanupConfig, UserCleanupJob,
+        UserCleanupConfig, UserCleanupJob,
     },
-    scheduler::FlushScheduler,
 };
 use kalamdb_sql::KalamSql;
 use kalamdb_sql::RocksDbAdapter;
@@ -45,7 +41,7 @@ pub struct ApplicationComponents {
     pub sql_executor: Arc<SqlExecutor>,
     pub jwt_auth: Arc<JwtAuth>,
     pub rate_limiter: Arc<RateLimiter>,
-    pub flush_scheduler: Arc<FlushScheduler>,
+    pub job_executor: Arc<JobExecutor>,
     pub live_query_manager: Arc<LiveQueryManager>,
     pub stream_eviction_scheduler: Arc<StreamEvictionScheduler>,
     pub rocks_db_adapter: Arc<RocksDbAdapter>,
@@ -95,101 +91,35 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     }
 
     // Initialize core stores from generic backend (uses kalamdb_store::StorageBackend)
-    let core = kalamdb_core::kalam_core::KalamCore::new(backend.clone())?;
-    let user_table_store = core.user_table_store.clone();
-    let shared_table_store = core.shared_table_store.clone();
-    let stream_table_store = core.stream_table_store.clone();
+    // Phase 5: AppContext now creates all dependencies internally!
+    // Uses constants from kalamdb_commons for table prefixes
+    let app_context = kalamdb_core::app_context::AppContext::init(
+        backend.clone(),
+        kalamdb_commons::NodeId::new(config.server.node_id.clone()),
+        config.storage.default_storage_path.clone(),
+    );
+    info!("AppContext initialized with all stores, managers, registries, and providers");
 
+    // Get references from AppContext for services that need them
+    let kalam_sql = app_context.kalam_sql();
+    let user_table_store = app_context.user_table_store();
+    let shared_table_store = app_context.shared_table_store();
+    let stream_table_store = app_context.stream_table_store();
+    let job_manager = app_context.job_manager();
+    let storage_registry = app_context.storage_registry();
+    let live_query_manager = app_context.live_query_manager();
+    let node_id = app_context.node_id();
+    let session_factory = app_context.session_factory();
+    
+    // Get system table providers for job executor and flush scheduler
+    let jobs_provider = app_context.system_tables().jobs();
+    
+    // Create services (zero-sized structs)
     let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
     let user_table_service = Arc::new(UserTableService::new());
     let shared_table_service = Arc::new(SharedTableService::new());
     let stream_table_service = Arc::new(StreamTableService::new());
     let table_deletion_service = Arc::new(TableDeletionService::new());
-
-    // DataFusion session factory and base context
-    let session_factory = Arc::new(DataFusionSessionFactory::new()?);
-    let session_context = Arc::new(session_factory.create_session());
-
-    // Register system tables with DataFusion
-    let system_schema = Arc::new(MemorySchemaProvider::new());
-    let catalog_name = session_context
-        .catalog_names()
-        .first()
-        .expect("No catalogs available")
-        .clone();
-
-    session_context
-        .catalog(&catalog_name)
-        .expect("Failed to get catalog")
-        .register_schema("system", system_schema.clone())
-        .expect("Failed to register system schema");
-
-    // Register all system tables using centralized function (EntityStore-based v2 providers)
-    let providers =
-        kalamdb_core::system_table_registration::register_system_tables(
-            &system_schema,
-            backend.clone(),
-        )
-        .expect("Failed to register system tables");
-
-    info!(
-        "System tables registered with DataFusion (catalog: {})",
-        catalog_name
-    );
-    info!(
-        "TableSchemaStore initialized with {} system table schemas",
-        7
-    );
-
-    // Storage registry (needed before SchemaCache)
-    let storage_registry = Arc::new(StorageRegistry::new(
-        kalam_sql.clone(),
-        config.storage.default_storage_path.clone(),
-    ));
-
-    // Initialize SchemaCache (Phase 10 unified cache)
-    // Use default max_size of 1000 tables, pass storage_registry for path resolution
-    let schema_cache = Arc::new(kalamdb_core::catalog::SchemaCache::new(
-        1000,
-        Some(storage_registry.clone()),
-    ));
-
-    // Create job manager first
-    let job_manager: Arc<dyn JobManager> = Arc::new(TokioJobManager::new());
-
-    // Live query manager (per-node) - use configured node_id
-    let node_id = kalamdb_commons::NodeId::new(config.server.node_id.clone());
-    let live_query_manager = Arc::new(LiveQueryManager::new(
-        kalam_sql.clone(),
-        node_id.clone(),
-        Some(user_table_store.clone()),
-        Some(shared_table_store.clone()),
-        Some(stream_table_store.clone()),
-    ));
-    info!("LiveQueryManager initialized with node_id: {}", node_id);
-
-    // Initialize AppContext singleton (Phase 5, T204)
-    let _app_context = kalamdb_core::app_context::AppContext::init(
-        schema_cache.clone(),
-        user_table_store.clone(),
-        shared_table_store.clone(),
-        stream_table_store.clone(),
-        kalam_sql.clone(),
-        backend.clone(),
-        providers.schema_store.clone(),
-        job_manager.clone(),
-        live_query_manager.clone(),
-        storage_registry.clone(),
-        session_factory.clone(),
-        session_context.clone(),
-        providers.users_provider.clone(),
-        providers.jobs_provider.clone(),
-        providers.namespaces_provider.clone(),
-        providers.storages_provider.clone(),
-        providers.live_queries_provider.clone(),
-        providers.tables_provider.clone(),
-    );
-    info!("AppContext initialized with all stores, managers, registries, and providers");
 
     let sql_executor = Arc::new(
         SqlExecutor::new(
@@ -199,7 +129,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
             stream_table_service.clone(),
         )
         .with_table_deletion_service(table_deletion_service)
-        .with_storage_registry(storage_registry)
+        .with_storage_registry(storage_registry.clone())
         .with_job_manager(job_manager.clone())
         .with_live_query_manager(live_query_manager.clone())
         .with_stores(
@@ -209,8 +139,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
             kalam_sql.clone(),
         )
         .with_password_complexity(config.auth.enforce_password_complexity)
-        .with_storage_backend(backend.clone())
-        .with_schema_store(providers.schema_store), // Phase 10: schema_cache is part of unified_cache now
+        .with_storage_backend(backend.clone()),
     );
 
     info!(
@@ -242,16 +171,12 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         config.rate_limit.max_subscriptions_per_user
     );
 
-    // Flush scheduler
-    let flush_scheduler = Arc::new(
-        FlushScheduler::new(job_manager.clone(), std::time::Duration::from_secs(5))
-            .with_jobs_provider(providers.jobs_provider.clone()),
-    );
-
-    // Job executor for stream eviction
+    // Job executor for stream eviction (now includes flush scheduling)
     let job_executor = Arc::new(JobExecutor::new(
-        providers.jobs_provider.clone(),
-           node_id.clone(),
+        jobs_provider.clone(),
+        node_id.clone(),
+        job_manager.clone(),
+        std::time::Duration::from_secs(5),
     ));
 
     // Stream eviction job and scheduler
@@ -336,7 +261,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     );
 
     // Resume crash recovery jobs
-    match flush_scheduler.resume_incomplete_jobs().await {
+    match job_executor.resume_incomplete_jobs().await {
         Ok(count) if count > 0 => {
             info!(
                 "Resumed {} incomplete flush jobs from previous session",
@@ -349,7 +274,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         }
     }
 
-    flush_scheduler.start().await?;
+    job_executor.start_flush_scheduler().await?;
     info!("FlushScheduler started (checking triggers every 5 seconds)");
 
     // Start stream eviction scheduler
@@ -370,7 +295,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         sql_executor,
         jwt_auth,
         rate_limiter,
-        flush_scheduler,
+        job_executor,
         live_query_manager,
         stream_eviction_scheduler,
         rocks_db_adapter,
@@ -383,7 +308,7 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
     info!("Starting HTTP server on {}", bind_addr);
     info!("Endpoints: POST /v1/api/sql, GET /v1/ws");
 
-    let flush_scheduler_shutdown = components.flush_scheduler.clone();
+    let job_executor_shutdown = components.job_executor.clone();
     let stream_eviction_scheduler_shutdown = components.stream_eviction_scheduler.clone();
     let shutdown_timeout_secs = config.shutdown.flush.timeout;
 
@@ -434,12 +359,12 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
             );
             let timeout = std::time::Duration::from_secs(shutdown_timeout_secs as u64);
 
-            match flush_scheduler_shutdown.wait_for_active_jobs(timeout).await {
+            match job_executor_shutdown.wait_for_active_flush_jobs(timeout).await {
                 Ok(_) => info!("All flush jobs completed successfully"),
                 Err(e) => log::warn!("Flush jobs did not complete within timeout: {}", e),
             }
 
-            if let Err(e) = flush_scheduler_shutdown.stop().await {
+            if let Err(e) = job_executor_shutdown.stop_flush_scheduler().await {
                 log::error!("Error stopping flush scheduler: {}", e);
             }
 

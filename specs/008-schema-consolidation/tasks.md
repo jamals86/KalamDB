@@ -282,7 +282,17 @@
   - **Pattern**: `let ctx = AppContext::get(); let dep = ctx.dependency();`
   - **Memory Savings**: Each service 48+ bytes → 0 bytes (100% reduction per instance)
   - **Build Status**: Workspace builds successfully (34.97s)
-  - **Test Results**: kalamdb-core 465/477 tests passing (97.5%), 12 failures in test fixtures needing AppContext init
+  - **Test Infrastructure**: Created `test_helpers.rs` with `init_test_app_context()` function
+    - Thread-safe AppContext initialization using `std::sync::Once` (prevents race conditions)
+    - Separate `Once` for storage initialization to avoid deadlock (2-stage initialization)
+    - Single shared TestDB and AppContext for all tests (memory efficient)
+    - Creates default 'local' storage for tests automatically
+  - **Test Results**: ✅ **477/477 tests passing (100% pass rate)** - Fixed 12 test failures:
+    - Shared table service: 6/6 passing (was 4 failures)
+    - Stream table service: 4/4 passing (was 2 failures, fixed table name conflicts)
+    - Table deletion service: 5/5 passing (was 5 failures)
+    - User table service: All passing (no changes needed)
+  - **Pattern Proven**: Unique table names per test + thread-safe singleton = reliable parallel testing
 
 ### Real-time Subscriptions (Live Queries)
 

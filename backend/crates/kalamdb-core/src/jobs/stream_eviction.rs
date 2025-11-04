@@ -334,7 +334,12 @@ mod tests {
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(Arc::clone(&backend)));
-    let job_executor = Arc::new(JobExecutor::new(jobs_provider, NodeId::from("test-node")));
+    let job_executor = Arc::new(JobExecutor::new(
+        jobs_provider,
+        NodeId::from("test-node"),
+        Arc::new(crate::jobs::TokioJobManager::new()),
+        Duration::from_secs(5),
+    ));
 
         let eviction_job =
             StreamEvictionJob::with_defaults(Arc::clone(&stream_store), kalam_sql, job_executor);
@@ -362,7 +367,12 @@ mod tests {
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
         let jobs_provider = Arc::new(JobsTableProvider::new(Arc::clone(&backend)));
-        let job_executor = Arc::new(JobExecutor::new(jobs_provider, NodeId::from("test-node")));
+        let job_executor = Arc::new(JobExecutor::new(
+            jobs_provider,
+            NodeId::from("test-node"),
+            Arc::new(crate::jobs::TokioJobManager::new()),
+            Duration::from_secs(5),
+        ));
 
         let config = StreamEvictionConfig {
             eviction_interval_secs: 30,
