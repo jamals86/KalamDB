@@ -15,10 +15,16 @@
 //! - **helpers**: Shared helper functions (future)
 //! - **audit**: Audit logging (future)
 
+use crate::error::KalamDbError;
+use datafusion::execution::context::SessionContext;
+use kalamdb_sql::SqlStatement;
+
 pub mod types;
 pub mod authorization;
 pub mod ddl;
 pub mod transaction;
+pub mod helpers;
+pub mod audit;
 
 #[cfg(test)]
 mod tests;
@@ -28,3 +34,84 @@ pub use types::{ExecutionContext, ExecutionMetadata, ExecutionResult, ParamValue
 pub use authorization::AuthorizationHandler;
 pub use ddl::DDLHandler;
 pub use transaction::TransactionHandler;
+
+/// Common trait for SQL statement handlers
+///
+/// All statement handlers should implement this trait to provide a consistent
+/// interface for executing SQL operations.
+///
+/// **Phase 2 Task T016**: Unified handler interface for all SQL statement types
+///
+/// # Example
+///
+/// ```ignore
+/// use kalamdb_core::sql::executor::handlers::{StatementHandler, ExecutionContext, ExecutionResult};
+/// use async_trait::async_trait;
+///
+/// pub struct MyHandler;
+///
+/// #[async_trait]
+/// impl StatementHandler for MyHandler {
+///     async fn execute(
+///         &self,
+///         session: &SessionContext,
+///         statement: SqlStatement,
+///         params: Vec<ParamValue>,
+///         context: &ExecutionContext,
+///     ) -> Result<ExecutionResult, KalamDbError> {
+///         // Handler implementation
+///         Ok(ExecutionResult::Success("Completed".to_string()))
+///     }
+///
+///     async fn check_authorization(
+///         &self,
+///         statement: &SqlStatement,
+///         context: &ExecutionContext,
+///     ) -> Result<(), KalamDbError> {
+///         // Authorization checks
+///         Ok(())
+///     }
+/// }
+/// ```
+#[async_trait::async_trait]
+pub trait StatementHandler: Send + Sync {
+    /// Execute a SQL statement with full context
+    ///
+    /// # Arguments
+    /// * `session` - DataFusion session context for query execution
+    /// * `statement` - Parsed SQL statement (from kalamdb_sql)
+    /// * `params` - Parameter values for prepared statements (? placeholders)
+    /// * `context` - Execution context (user, role, namespace, audit info)
+    ///
+    /// # Returns
+    /// * `Ok(ExecutionResult)` - Successful execution result
+    /// * `Err(KalamDbError)` - Execution error
+    async fn execute(
+        &self,
+        session: &SessionContext,
+        statement: SqlStatement,
+        params: Vec<ParamValue>,
+        context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError>;
+
+    /// Validate authorization before execution
+    ///
+    /// Called by the authorization gateway before routing to the handler.
+    /// Handlers can implement statement-specific authorization logic here.
+    ///
+    /// # Arguments
+    /// * `statement` - SQL statement to authorize
+    /// * `context` - Execution context with user/role information
+    ///
+    /// # Returns
+    /// * `Ok(())` - Authorization passed
+    /// * `Err(KalamDbError::PermissionDenied)` - Authorization failed
+    async fn check_authorization(
+        &self,
+        statement: &SqlStatement,
+        context: &ExecutionContext,
+    ) -> Result<(), KalamDbError> {
+        // Default implementation: delegate to AuthorizationHandler
+        AuthorizationHandler::check_authorization(context, statement)
+    }
+}

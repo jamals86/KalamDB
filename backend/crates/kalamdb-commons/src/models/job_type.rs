@@ -13,6 +13,10 @@ pub enum JobType {
     Cleanup,
     Backup,
     Restore,
+    Retention,
+    StreamEviction,
+    UserCleanup,
+    Unknown,
 }
 
 impl JobType {
@@ -23,6 +27,36 @@ impl JobType {
             JobType::Cleanup => "cleanup",
             JobType::Backup => "backup",
             JobType::Restore => "restore",
+            JobType::Retention => "retention",
+            JobType::StreamEviction => "stream_eviction",
+            JobType::UserCleanup => "user_cleanup",
+            JobType::Unknown => "unknown",
+        }
+    }
+
+    /// Returns the 2-letter uppercase prefix for JobId generation
+    /// 
+    /// Prefix mapping:
+    /// - FL: Flush
+    /// - CO: Compact
+    /// - CL: Cleanup
+    /// - BK: Backup
+    /// - RS: Restore
+    /// - RT: Retention
+    /// - SE: StreamEviction
+    /// - UC: UserCleanup
+    /// - UN: Unknown
+    pub fn short_prefix(&self) -> &'static str {
+        match self {
+            JobType::Flush => "FL",
+            JobType::Compact => "CO",
+            JobType::Cleanup => "CL",
+            JobType::Backup => "BK",
+            JobType::Restore => "RS",
+            JobType::Retention => "RT",
+            JobType::StreamEviction => "SE",
+            JobType::UserCleanup => "UC",
+            JobType::Unknown => "UN",
         }
     }
 
@@ -33,6 +67,10 @@ impl JobType {
             "cleanup" => Some(JobType::Cleanup),
             "backup" => Some(JobType::Backup),
             "restore" => Some(JobType::Restore),
+            "retention" => Some(JobType::Retention),
+            "stream_eviction" => Some(JobType::StreamEviction),
+            "user_cleanup" => Some(JobType::UserCleanup),
+            "unknown" => Some(JobType::Unknown),
             _ => None,
         }
     }
@@ -52,7 +90,11 @@ impl From<&str> for JobType {
             "cleanup" => JobType::Cleanup,
             "backup" => JobType::Backup,
             "restore" => JobType::Restore,
-            _ => JobType::Flush,
+            "retention" => JobType::Retention,
+            "stream_eviction" => JobType::StreamEviction,
+            "user_cleanup" => JobType::UserCleanup,
+            "unknown" => JobType::Unknown,
+            _ => JobType::Unknown,
         }
     }
 }

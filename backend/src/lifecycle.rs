@@ -13,10 +13,7 @@ use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
 use kalamdb_core::live_query::LiveQueryManager;
-use kalamdb_core::services::{
-    NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
-    UserTableService,
-};
+// Services are created internally by AppContext/SqlExecutor in Phase 5+
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::{
@@ -26,7 +23,6 @@ use kalamdb_core::{
     },
 };
 use kalamdb_sql::KalamSql;
-use kalamdb_sql::RocksDbAdapter;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
 use log::debug;
@@ -44,7 +40,7 @@ pub struct ApplicationComponents {
     pub job_executor: Arc<JobExecutor>,
     pub live_query_manager: Arc<LiveQueryManager>,
     pub stream_eviction_scheduler: Arc<StreamEvictionScheduler>,
-    pub rocks_db_adapter: Arc<RocksDbAdapter>,
+    pub user_repo: Arc<dyn kalamdb_auth::UserRepository>,
 }
 
 /// Initialize RocksDB, DataFusion, services, rate limiter, and flush scheduler.
@@ -64,8 +60,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     let kalam_sql = Arc::new(KalamSql::new(backend.clone())?);
     info!("KalamSQL initialized");
 
-    // Extract RocksDbAdapter for API key authentication
-    let rocks_db_adapter = Arc::new(kalam_sql.adapter().clone());
+    // Note: Authentication will use provider-backed repository (no direct adapter)
 
     // Seed default storage if necessary
     let storages = kalam_sql.scan_all_storages()?;
@@ -113,34 +108,15 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     
     // Get system table providers for job executor and flush scheduler
     let jobs_provider = app_context.system_tables().jobs();
+    let users_provider = app_context.system_tables().users();
+    let user_repo: Arc<dyn kalamdb_auth::UserRepository> =
+        Arc::new(kalamdb_api::repositories::CoreUsersRepo::new(users_provider));
     
-    // Create services (zero-sized structs)
-    let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
-    let user_table_service = Arc::new(UserTableService::new());
-    let shared_table_service = Arc::new(SharedTableService::new());
-    let stream_table_service = Arc::new(StreamTableService::new());
-    let table_deletion_service = Arc::new(TableDeletionService::new());
-
-    let sql_executor = Arc::new(
-        SqlExecutor::new(
-            namespace_service.clone(),
-            user_table_service.clone(),
-            shared_table_service.clone(),
-            stream_table_service.clone(),
-        )
-        .with_table_deletion_service(table_deletion_service)
-        .with_storage_registry(storage_registry.clone())
-        .with_job_manager(job_manager.clone())
-        .with_live_query_manager(live_query_manager.clone())
-        .with_stores(
-            user_table_store.clone(),
-            shared_table_store.clone(),
-            stream_table_store.clone(),
-            kalam_sql.clone(),
-        )
-        .with_password_complexity(config.auth.enforce_password_complexity)
-        .with_storage_backend(backend.clone()),
-    );
+    // SqlExecutor now uses AppContext directly
+    let sql_executor = Arc::new(SqlExecutor::new(
+        app_context.clone(),
+        config.auth.enforce_password_complexity,
+    ));
 
     info!(
         "SqlExecutor initialized with DROP TABLE support, storage registry, job manager, and table registration"
@@ -298,7 +274,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         job_executor,
         live_query_manager,
         stream_eviction_scheduler,
-        rocks_db_adapter,
+        user_repo,
     })
 }
 
@@ -317,7 +293,7 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
     let jwt_auth = components.jwt_auth.clone();
     let rate_limiter = components.rate_limiter.clone();
     let live_query_manager = components.live_query_manager.clone();
-    let rocks_db_adapter = components.rocks_db_adapter.clone();
+    let user_repo = components.user_repo.clone();
 
     let server = HttpServer::new(move || {
         App::new()
@@ -328,7 +304,7 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
             .app_data(web::Data::new(jwt_auth.clone()))
             .app_data(web::Data::new(rate_limiter.clone()))
             .app_data(web::Data::new(live_query_manager.clone()))
-            .app_data(web::Data::new(rocks_db_adapter.clone()))
+        .app_data(web::Data::new(user_repo.clone()))
             .configure(routes::configure)
     })
     .bind(&bind_addr)?

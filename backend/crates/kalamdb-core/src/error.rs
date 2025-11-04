@@ -64,6 +64,9 @@ pub enum KalamDbError {
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 
+    #[error("Idempotent conflict: {0}")]
+    IdempotentConflict(String),
+
     #[error("Column family error: {0}")]
     ColumnFamily(#[from] ColumnFamilyError),
 

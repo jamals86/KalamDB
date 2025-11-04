@@ -8,5 +8,6 @@ pub mod auth;
 pub mod handlers;
 pub mod middleware;
 pub mod models;
+pub mod repositories;
 pub mod rate_limiter;
 pub mod routes;

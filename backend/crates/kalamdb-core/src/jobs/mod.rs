@@ -39,6 +39,7 @@
 //! ```
 
 pub mod executor;
+pub mod executors;
 pub mod job_cleanup;
 pub mod job_manager;
 pub mod retention;
@@ -48,6 +49,7 @@ pub mod tokio_job_manager;
 pub mod user_cleanup;
 
 pub use executor::{JobExecutor, JobResult};
+pub use executors::{JobContext, JobDecision, JobExecutor as JobExecutorTrait, JobRegistry};
 pub use job_cleanup::JobCleanupTask;
 pub use job_manager::{JobInfo, JobManager, JobStatus};
 pub use retention::{RetentionConfig, RetentionPolicy};

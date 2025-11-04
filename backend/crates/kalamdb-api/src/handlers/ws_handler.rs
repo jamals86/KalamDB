@@ -11,9 +11,8 @@ use uuid::Uuid;
 
 use crate::actors::WebSocketSession;
 use crate::rate_limiter::RateLimiter;
-use kalamdb_auth::extract_auth;
+use kalamdb_auth::{extract_auth_with_repo, UserRepository};
 use kalamdb_core::live_query::LiveQueryManager;
-use kalamdb_sql::RocksDbAdapter;
 
 /// GET /v1/ws - Establish WebSocket connection (T063AAA)
 ///
@@ -65,16 +64,15 @@ pub async fn websocket_handler_v1(
     _query: web::Query<std::collections::HashMap<String, String>>,
     rate_limiter: web::Data<Arc<RateLimiter>>,
     live_query_manager: web::Data<Arc<LiveQueryManager>>,
-    sql_adapter: web::Data<Arc<RocksDbAdapter>>,
+    user_repo: web::Data<Arc<dyn UserRepository>>,
 ) -> Result<HttpResponse, Error> {
     // Generate unique connection ID
     let connection_id = Uuid::new_v4().to_string();
 
     info!("New WebSocket connection request: {}", connection_id);
 
-    // Authenticate using centralized extract_auth function
-    // This supports both Basic Auth and JWT (when JWT is implemented)
-    let auth_result = match extract_auth(&req, &sql_adapter).await {
+    // Authenticate using centralized extract_auth function (repo-based)
+    let auth_result = match extract_auth_with_repo(&req, user_repo.get_ref()).await {
         Ok(auth) => {
             info!(
                 "WebSocket connection authenticated: connection_id={}, user_id={}, username={}",
@@ -129,7 +127,10 @@ mod tests {
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
         let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend.clone()).expect("kalam sql"));
-        let sql_adapter = Arc::new(RocksDbAdapter::new(backend));
+        // Build provider-backed user repository
+        let users_provider = kalamdb_core::tables::system::UsersTableProvider::new(backend);
+        let user_repo: Arc<dyn kalamdb_auth::UserRepository> =
+            Arc::new(kalamdb_auth::ProviderUserRepo::new(Arc::new(users_provider)));
         let live_query_manager = Arc::new(LiveQueryManager::new(
             kalam_sql,
             NodeId::new("test-node".to_string()),
@@ -140,7 +141,7 @@ mod tests {
 
         let app = test::init_service(
             App::new()
-                .app_data(web::Data::new(sql_adapter))
+        .app_data(web::Data::new(user_repo))
                 .app_data(web::Data::new(rate_limiter))
                 .app_data(web::Data::new(live_query_manager))
                 .service(websocket_handler_v1),

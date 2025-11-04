@@ -18,6 +18,9 @@ pub mod schema_cache; // Phase 10: Unified cache implementation
 
 pub use schema_cache::{CachedTableData, SchemaCache};
 
+// Re-export SchemaRegistry from schema module (Phase 3: Module Consolidation)
+pub use crate::schema::{SchemaRegistry, TableMetadata};
+
 // Re-export common types from kalamdb_commons for convenience
 pub use kalamdb_commons::models::{NamespaceId, TableName, UserId};
 pub use kalamdb_commons::schemas::TableType;

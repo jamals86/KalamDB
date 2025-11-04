@@ -10,6 +10,37 @@
 use kalamdb_commons::system::{User, Job, LiveQuery, Namespace, SystemTable, InformationSchemaTable, UserTableCounter};
 ```
 
+## ⚠️ CRITICAL: Module Organization (Phase 3 Consolidation)
+
+**Table Row Models**: User/Shared/Stream table row models are in their respective modules:
+```rust
+// ✅ CORRECT: Import from table-specific modules
+use kalamdb_core::tables::user_tables::UserTableRow;
+use kalamdb_core::tables::shared_tables::SharedTableRow;
+use kalamdb_core::tables::stream_tables::StreamTableRow;
+
+// ✅ ALSO CORRECT: Re-exported in models/tables.rs for backward compatibility
+use kalamdb_core::models::tables::{UserTableRow, SharedTableRow, StreamTableRow};
+```
+
+**Schema & Catalog**: SchemaRegistry exposed from both schema and catalog modules:
+```rust
+// ✅ CORRECT: Direct import from schema module
+use kalamdb_core::schema::{SchemaRegistry, TableMetadata};
+
+// ✅ ALSO CORRECT: Re-exported in catalog module (Phase 3)
+use kalamdb_core::catalog::{SchemaRegistry, TableMetadata, SchemaCache, CachedTableData};
+```
+
+**System Table Store**: Moved from stores/ to tables/system/:
+```rust
+// ✅ CORRECT: New location
+use kalamdb_core::tables::system::system_table_store::SystemTableStore;
+
+// ✅ ALSO CORRECT: Re-exported in stores/mod.rs for backward compatibility
+use kalamdb_core::stores::system_table::SystemTableStore;
+```
+
 **ALWAYS prefer using enums instead of string**
 **ALWAYS TRY TO FINISH WRITING CODE BEFORE TESTING/BUILDING IT**
 

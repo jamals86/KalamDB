@@ -162,21 +162,35 @@ pub struct Job {
     pub namespace_id: NamespaceId,
     pub table_name: Option<TableName>,
     pub status: JobStatus,
-    pub parameters: Option<String>, // JSON array of strings
-    pub result: Option<String>,
-    pub trace: Option<String>,
-    pub memory_used: Option<i64>,  // bytes
-    pub cpu_used: Option<i64>,     // microseconds
-    pub created_at: i64,           // Unix timestamp in milliseconds
-    pub started_at: Option<i64>,   // Unix timestamp in milliseconds
-    pub completed_at: Option<i64>, // Unix timestamp in milliseconds
+    pub parameters: Option<String>, // JSON object (migrated from array)
+    pub message: Option<String>,    // Unified field replacing result/error_message
+    pub exception_trace: Option<String>, // Full stack trace on failures
+    pub idempotency_key: Option<String>, // For preventing duplicate jobs
+    pub retry_count: u8,            // Number of retries attempted (default 0)
+    pub max_retries: u8,            // Maximum retries allowed (default 3)
+    pub memory_used: Option<i64>,   // bytes
+    pub cpu_used: Option<i64>,      // microseconds
+    pub created_at: i64,            // Unix timestamp in milliseconds
+    pub updated_at: i64,            // Unix timestamp in milliseconds
+    pub started_at: Option<i64>,    // Unix timestamp in milliseconds
+    pub finished_at: Option<i64>,   // Unix timestamp in milliseconds (renamed from completed_at)
     #[bincode(with_serde)]
     pub node_id: NodeId,
+    pub queue: Option<String>,      // Queue name (future use)
+    pub priority: Option<i32>,      // Priority value (future use)
+    
+    // Legacy fields (deprecated, kept for backward compatibility)
+    #[deprecated(since = "0.9.0", note = "Use message field instead")]
+    pub result: Option<String>,
+    #[deprecated(since = "0.9.0", note = "Use message field instead")]
     pub error_message: Option<String>,
+    #[deprecated(since = "0.9.0", note = "Use exception_trace field instead")]
+    pub trace: Option<String>,
 }
 
 impl Job {
-    /// Create a new job with running status
+    /// Create a new job with New status
+    #[allow(deprecated)]
     pub fn new(
         job_id: JobId,
         job_type: JobType,
@@ -189,41 +203,61 @@ impl Job {
             job_type,
             namespace_id,
             table_name: None,
-            status: JobStatus::Running,
+            status: JobStatus::New,
             parameters: None,
-            result: None,
-            trace: None,
+            message: None,
+            exception_trace: None,
+            idempotency_key: None,
+            retry_count: 0,
+            max_retries: 3,
             memory_used: None,
             cpu_used: None,
             created_at: now,
-            started_at: Some(now),
-            completed_at: None,
+            updated_at: now,
+            started_at: None,
+            finished_at: None,
             node_id,
+            queue: None,
+            priority: None,
+            // Legacy fields
+            result: None,
             error_message: None,
+            trace: None,
         }
     }
 
-    /// Mark job as completed with result
-    pub fn complete(mut self, result: Option<String>) -> Self {
+    /// Mark job as completed with result message
+    #[allow(deprecated)]
+    pub fn complete(mut self, message: Option<String>) -> Self {
         let now = chrono::Utc::now().timestamp_millis();
         self.status = JobStatus::Completed;
-        self.completed_at = Some(now);
+        self.updated_at = now;
+        self.finished_at = Some(now);
         if self.started_at.is_none() {
             self.started_at = Some(self.created_at);
         }
-        self.result = result;
+        self.message = message;
+        self.exception_trace = None; // Clear any previous error trace
+        // Legacy compatibility
+        self.result = self.message.clone();
         self
     }
 
-    /// Mark job as failed with error message
-    pub fn fail(mut self, error_message: String) -> Self {
+    /// Mark job as failed with error message and optional stack trace
+    #[allow(deprecated)]
+    pub fn fail(mut self, error_message: String, exception_trace: Option<String>) -> Self {
         let now = chrono::Utc::now().timestamp_millis();
         self.status = JobStatus::Failed;
-        self.completed_at = Some(now);
+        self.updated_at = now;
+        self.finished_at = Some(now);
         if self.started_at.is_none() {
             self.started_at = Some(self.created_at);
         }
+        self.message = Some(error_message.clone());
+        self.exception_trace = exception_trace.clone();
+        // Legacy compatibility
         self.error_message = Some(error_message);
+        self.trace = exception_trace;
         self
     }
 
@@ -231,8 +265,45 @@ impl Job {
     pub fn cancel(mut self) -> Self {
         let now = chrono::Utc::now().timestamp_millis();
         self.status = JobStatus::Cancelled;
-        self.completed_at = Some(now);
+        self.updated_at = now;
+        self.finished_at = Some(now);
         self
+    }
+
+    /// Queue the job (transition from New to Queued)
+    pub fn queue(mut self) -> Self {
+        self.status = JobStatus::Queued;
+        self.updated_at = chrono::Utc::now().timestamp_millis();
+        self
+    }
+
+    /// Start the job (transition to Running)
+    pub fn start(mut self) -> Self {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.status = JobStatus::Running;
+        self.updated_at = now;
+        self.started_at = Some(now);
+        self
+    }
+
+    /// Mark job for retry (increment retry_count, set status to Retrying)
+    #[allow(deprecated)]
+    pub fn retry(mut self, error_message: String, exception_trace: Option<String>) -> Self {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.retry_count += 1;
+        self.status = JobStatus::Retrying;
+        self.updated_at = now;
+        self.message = Some(error_message.clone());
+        self.exception_trace = exception_trace.clone();
+        // Legacy compatibility
+        self.error_message = Some(error_message);
+        self.trace = exception_trace;
+        self
+    }
+
+    /// Check if job can be retried
+    pub fn can_retry(&self) -> bool {
+        self.retry_count < self.max_retries
     }
 
     /// Set table name
@@ -241,9 +312,33 @@ impl Job {
         self
     }
 
-    /// Set parameters
+    /// Set parameters (JSON object)
     pub fn with_parameters(mut self, parameters: String) -> Self {
         self.parameters = Some(parameters);
+        self
+    }
+
+    /// Set idempotency key for duplicate prevention
+    pub fn with_idempotency_key(mut self, key: String) -> Self {
+        self.idempotency_key = Some(key);
+        self
+    }
+
+    /// Set max retries
+    pub fn with_max_retries(mut self, max_retries: u8) -> Self {
+        self.max_retries = max_retries;
+        self
+    }
+
+    /// Set queue name
+    pub fn with_queue(mut self, queue: String) -> Self {
+        self.queue = Some(queue);
+        self
+    }
+
+    /// Set priority
+    pub fn with_priority(mut self, priority: i32) -> Self {
+        self.priority = Some(priority);
         self
     }
 
@@ -254,10 +349,81 @@ impl Job {
         self
     }
 
-    /// Set trace information
+    /// Set trace information (deprecated - use exception_trace)
+    #[deprecated(since = "0.9.0", note = "Use with_exception_trace instead")]
+    #[allow(deprecated)]
     pub fn with_trace(mut self, trace: String) -> Self {
+        self.exception_trace = Some(trace.clone());
         self.trace = Some(trace);
         self
+    }
+
+    /// Set exception trace
+    #[allow(deprecated)]
+    pub fn with_exception_trace(mut self, trace: String) -> Self {
+        self.exception_trace = Some(trace.clone());
+        self.trace = Some(trace);
+        self
+    }
+}
+
+/// Options for job creation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobOptions {
+    /// Maximum number of retries (default: 3)
+    pub max_retries: Option<u8>,
+    /// Queue name for job routing (future use)
+    pub queue: Option<String>,
+    /// Priority value (higher = more priority, future use)
+    pub priority: Option<i32>,
+    /// Idempotency key to prevent duplicate job creation
+    pub idempotency_key: Option<String>,
+}
+
+impl Default for JobOptions {
+    fn default() -> Self {
+        Self {
+            max_retries: Some(3),
+            queue: None,
+            priority: None,
+            idempotency_key: None,
+        }
+    }
+}
+
+/// Filter criteria for job queries
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobFilter {
+    /// Filter by job type
+    pub job_type: Option<JobType>,
+    /// Filter by job status
+    pub status: Option<JobStatus>,
+    /// Filter by namespace
+    pub namespace_id: Option<NamespaceId>,
+    /// Filter by table name
+    pub table_name: Option<TableName>,
+    /// Filter by idempotency key
+    pub idempotency_key: Option<String>,
+    /// Limit number of results
+    pub limit: Option<usize>,
+    /// Start from created_at timestamp (inclusive)
+    pub created_after: Option<i64>,
+    /// End at created_at timestamp (exclusive)
+    pub created_before: Option<i64>,
+}
+
+impl Default for JobFilter {
+    fn default() -> Self {
+        Self {
+            job_type: None,
+            status: None,
+            namespace_id: None,
+            table_name: None,
+            idempotency_key: None,
+            limit: Some(100),
+            created_after: None,
+            created_before: None,
+        }
     }
 }
 
@@ -672,6 +838,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_job_serialization() {
         let job = Job {
             job_id: "job_123".into(),
@@ -680,15 +847,24 @@ mod tests {
             table_name: Some(TableName::new("events")),
             status: JobStatus::Completed,
             parameters: None,
-            result: None,
-            trace: None,
+            message: Some("Job completed successfully".to_string()),
+            exception_trace: None,
+            idempotency_key: None,
+            retry_count: 0,
+            max_retries: 3,
             memory_used: None,
             cpu_used: None,
             created_at: 1730000000000,
+            updated_at: 1730000300000,
             started_at: Some(1730000000000),
-            completed_at: Some(1730000300000),
+            finished_at: Some(1730000300000),
             node_id: NodeId::from("server-01"),
+            queue: None,
+            priority: None,
+            // Legacy fields
+            result: None,
             error_message: None,
+            trace: None,
         };
 
         // Test bincode serialization
@@ -828,14 +1004,21 @@ mod tests {
             JobId::new("job_123"),
             JobType::Flush,
             NamespaceId::new("default"),
-              NodeId::from("server-01"),
+            NodeId::from("server-01"),
         );
 
-        assert_eq!(job.status, JobStatus::Running);
+        assert_eq!(job.status, JobStatus::New);
 
-        let completed_job = job.complete(Some("Success".to_string()));
+        let queued_job = job.queue();
+        assert_eq!(queued_job.status, JobStatus::Queued);
+
+        let running_job = queued_job.start();
+        assert_eq!(running_job.status, JobStatus::Running);
+        assert!(running_job.started_at.is_some());
+
+        let completed_job = running_job.complete(Some("Success".to_string()));
         assert_eq!(completed_job.status, JobStatus::Completed);
-        assert_eq!(completed_job.result, Some("Success".to_string()));
-        assert!(completed_job.completed_at.is_some());
+        assert_eq!(completed_job.message, Some("Success".to_string()));
+        assert!(completed_job.finished_at.is_some());
     }
 }

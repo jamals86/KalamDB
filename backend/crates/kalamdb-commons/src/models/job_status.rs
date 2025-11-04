@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", derive(bincode::Encode, bincode::Decode))]
 pub enum JobStatus {
+    New,
+    Queued,
     Running,
+    Retrying,
     Completed,
     Failed,
     Cancelled,
@@ -17,7 +20,10 @@ pub enum JobStatus {
 impl JobStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
+            JobStatus::New => "new",
+            JobStatus::Queued => "queued",
             JobStatus::Running => "running",
+            JobStatus::Retrying => "retrying",
             JobStatus::Completed => "completed",
             JobStatus::Failed => "failed",
             JobStatus::Cancelled => "cancelled",
@@ -26,7 +32,10 @@ impl JobStatus {
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
+            "new" => Some(JobStatus::New),
+            "queued" => Some(JobStatus::Queued),
             "running" => Some(JobStatus::Running),
+            "retrying" => Some(JobStatus::Retrying),
             "completed" => Some(JobStatus::Completed),
             "failed" => Some(JobStatus::Failed),
             "cancelled" => Some(JobStatus::Cancelled),
@@ -44,7 +53,10 @@ impl fmt::Display for JobStatus {
 impl From<&str> for JobStatus {
     fn from(s: &str) -> Self {
         match s.to_lowercase().as_str() {
+            "new" => JobStatus::New,
+            "queued" => JobStatus::Queued,
             "running" => JobStatus::Running,
+            "retrying" => JobStatus::Retrying,
             "completed" => JobStatus::Completed,
             "failed" => JobStatus::Failed,
             "cancelled" => JobStatus::Cancelled,

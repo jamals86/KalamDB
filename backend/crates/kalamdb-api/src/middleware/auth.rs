@@ -36,6 +36,7 @@ use actix_web::{
 use futures_util::future::LocalBoxFuture;
 use kalamdb_auth::{
     connection::ConnectionInfo, context::AuthenticatedUser, error::AuthError, service::AuthService,
+    RocksAdapterUserRepo, UserRepository,
 };
 use kalamdb_sql::RocksDbAdapter;
 use log::{debug, warn};
@@ -51,7 +52,7 @@ use std::{
 /// Creates middleware instances that authenticate incoming HTTP requests.
 pub struct AuthMiddleware {
     auth_service: Arc<AuthService>,
-    rocks_adapter: Arc<RocksDbAdapter>,
+    repo: Arc<dyn UserRepository>,
 }
 
 impl AuthMiddleware {
@@ -61,10 +62,15 @@ impl AuthMiddleware {
     /// * `auth_service` - The authentication service for validating credentials
     /// * `rocks_adapter` - The RocksDB adapter for user database access
     pub fn new(auth_service: Arc<AuthService>, rocks_adapter: Arc<RocksDbAdapter>) -> Self {
-        Self {
-            auth_service,
-            rocks_adapter,
-        }
+        let repo = Arc::new(RocksAdapterUserRepo::new(rocks_adapter)) as Arc<dyn UserRepository>;
+        Self { auth_service, repo }
+    }
+
+    /// Create a new authentication middleware using a repository abstraction
+    ///
+    /// Preferred constructor for provider-based storage (no direct RocksDB dependency)
+    pub fn new_with_repo(auth_service: Arc<AuthService>, repo: Arc<dyn UserRepository>) -> Self {
+        Self { auth_service, repo }
     }
 }
 
@@ -93,7 +99,7 @@ where
         ready(Ok(AuthMiddlewareService {
             service: Rc::new(service),
             auth_service: self.auth_service.clone(),
-            rocks_adapter: self.rocks_adapter.clone(),
+            repo: self.repo.clone(),
         }))
     }
 }
@@ -102,7 +108,7 @@ where
 pub struct AuthMiddlewareService<S> {
     service: Rc<S>,
     auth_service: Arc<AuthService>,
-    rocks_adapter: Arc<RocksDbAdapter>,
+    repo: Arc<dyn UserRepository>,
 }
 
 impl<S> Service<ServiceRequest> for AuthMiddlewareService<S>
@@ -118,8 +124,8 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let service = self.service.clone();
-        let auth_service = self.auth_service.clone();
-        let rocks_adapter = self.rocks_adapter.clone();
+    let auth_service = self.auth_service.clone();
+    let repo = self.repo.clone();
 
         Box::pin(async move {
             // Extract connection information
@@ -186,7 +192,7 @@ where
 
             // Authenticate the request
             match auth_service
-                .authenticate(&auth_header, &connection, &rocks_adapter)
+                .authenticate_with_repo(&auth_header, &connection, &repo)
                 .await
             {
                 Ok(authenticated_user) => {
