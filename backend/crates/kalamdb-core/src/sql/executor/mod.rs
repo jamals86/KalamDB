@@ -27,6 +27,9 @@
 //! This architecture makes traditional SQL injection (e.g., `'; DROP TABLE users; --`)
 //! impossible because malicious input is treated as literal data values, not executable SQL.
 
+// Handler modules for organized SQL execution logic
+pub mod handlers;
+
 use crate::auth::rbac;
 use crate::catalog::{NamespaceId, TableName, TableType, UserId};
 use crate::error::KalamDbError;
