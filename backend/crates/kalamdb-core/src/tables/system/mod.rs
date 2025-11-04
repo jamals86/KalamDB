@@ -8,6 +8,7 @@ pub mod information_schema_tables;
 pub mod registry; // Phase 5: SystemTablesRegistry - centralized provider access
 pub mod system_table_definitions; // Phase 15: System table schema definitions
 pub mod system_table_trait;
+pub mod system_table_store; // Colocated SystemTableStore (moved from stores/)
 // EntityStore-based system tables (using SystemTableStore<K,V>)
 pub mod jobs_v2;
 pub mod live_queries_v2;

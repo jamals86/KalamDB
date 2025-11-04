@@ -135,16 +135,13 @@ impl DDLHandler {
     ///   SHARED_TABLES_TEMPLATE '{namespace}/{tableName}'
     ///   USER_TABLES_TEMPLATE '{namespace}/{tableName}/{userId}';
     /// ```
-    pub async fn execute_create_storage<SR>(
-        kalam_sql: &KalamSql,
-        storage_registry: &SR,
+    pub async fn execute_create_storage(
+        kalam_sql: &Arc<KalamSql>,
+        storage_registry: &crate::storage::StorageRegistry,
         _session: &SessionContext,
         sql: &str,
         _exec_ctx: &ExecutionContext,
-    ) -> Result<ExecutionResult, KalamDbError>
-    where
-        SR: crate::storage::StorageRegistryTrait,
-    {
+    ) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::CreateStorageStatement;
 
         // Parse CREATE STORAGE statement
