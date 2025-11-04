@@ -50,7 +50,7 @@ pub use kalamdb_commons::system::{
 };
 
 pub use adapter::StorageAdapter;
-// Backwards-compatibility alias
+// Backwards-compatibility alias, TODO: Remove the alias and use only StorageAdapter
 pub type RocksDbAdapter = StorageAdapter;
 pub use batch_execution::split_statements;
 pub use compatibility::{

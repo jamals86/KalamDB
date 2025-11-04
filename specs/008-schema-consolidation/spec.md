@@ -1578,6 +1578,719 @@ Adoption plan
 - Phase 2: Migrate providers/services/executor to use SchemaRegistry for schema/derived artifacts.
 - Phase 3: Route all invalidation through SchemaRegistry; keep SchemaCache API available for advanced internals.
 
+---
+
+### User Story 10 - SQL Executor Modular Architecture (Priority: P0)
+
+**Status**: Design proposal (2025-11-05)
+
+Developers need a high-performance, memory-efficient, and secure SQL executor with modular handler architecture. Currently, `executor.rs` is a monolithic 4,956-line file with all SQL handling logic inline, making it difficult to maintain, test, and optimize. The system must refactor into focused handler modules while optimizing for **single-pass SQL parsing**, **authorization gateway routing**, and **future query caching support** for parameterized queries.
+
+**Why this priority**: SQL execution is the critical hot path for ALL database operations. Current monolithic architecture causes:
+- **Performance Bottleneck**: No query caching, no statement reuse, duplicate parsing overhead
+- **Memory Inefficiency**: Large monolithic struct with excessive allocations per request
+- **Security Risk**: Authorization checks scattered throughout code, no centralized security gateway
+- **Maintainability Crisis**: 4,956 lines in one file, difficult to review/modify/test individual features
+- **Testing Complexity**: Cannot unit test individual handlers in isolation, only integration tests
+
+**Performance Requirements** (Critical):
+- **Fast Execution**: Sub-millisecond latency for simple queries (SELECT/INSERT/UPDATE/DELETE)
+- **Low Memory**: Zero unnecessary allocations on hot path, efficient Arc/String reuse
+- **Secure**: Authorization checked ONCE before handler routing, SQL injection prevention via DataFusion
+
+**Architecture Principles**:
+
+1. **Single-Pass SQL Parsing**: Parse SQL statement ONCE, classify statement type, route to appropriate handler
+2. **Authorization Gateway**: Check authentication/authorization BEFORE routing to handlers (fail-fast security)
+3. **Modular Handlers**: Each handler module responsible for one statement category (DDL, DML, query, etc.)
+4. **Type-Safe Identifiers**: ALL identifiers use type-safe wrappers (NamespaceId, UserId, TableName, TableId, StorageId) - NO raw strings
+5. **Namespace in Statements**: SQL statements contain namespace (e.g., `CREATE TABLE mydb.users`), fallback optional for convenience
+6. **Parameter Binding**: execute_with_metadata() accepts `params: Vec<ParamValue>` for prepared statement support
+7. **DataFusion Query Caching**: Leverage DataFusion 40.0+ built-in LogicalPlan/PhysicalPlan caching before building custom solution
+
+**Type-Safe Identifier Architecture**:
+
+All handlers MUST use type-safe wrappers defined in `kalamdb-commons`:
+- **NamespaceId**: Wraps namespace identifier (e.g., "mydb", "system")
+- **UserId**: Wraps user identifier (from ExecutionContext)
+- **TableName**: Wraps table name (extracted from SQL statements)
+- **TableId**: Composite identifier (namespace + table name, globally unique)
+- **StorageId**: Wraps storage backend identifier
+
+```rust
+// Example handler signature (type-safe)
+impl DdlHandler {
+    pub async fn execute_create_table(
+        session: &SessionContext,
+        namespace_id: NamespaceId,        // Type-safe wrapper
+        table_name: TableName,            // Type-safe wrapper
+        statement: &Statement,
+        execution_context: &ExecutionContext, // Contains UserId
+    ) -> Result<ExecutionResult, KalamDbError> {
+        // Extract user_id from context (type-safe)
+        let user_id: UserId = execution_context.user_id();
+        
+        // Build table_id from namespace + table (type-safe)
+        let table_id = TableId::new(namespace_id, table_name);
+        
+        // Use type-safe wrappers throughout
+        let storage_id: StorageId = get_storage_for_namespace(&namespace_id)?;
+        
+        // ...
+    }
+}
+```
+
+**Benefits of Type-Safe Wrappers**:
+- Compile-time prevention of mixing identifier types (e.g., passing user_id where table_name expected)
+- Zero runtime overhead (wrappers optimized away by compiler)
+- Clearer function signatures (self-documenting)
+- Easier refactoring (compiler catches all usages)
+
+**DataFusion Query Caching Research** (Phase 11 - P1):
+
+Before implementing custom query cache, investigate DataFusion 40.0+ native caching:
+
+1. **SessionContext Caching**: Does DataFusion cache LogicalPlan per session?
+2. **Plan Reuse**: Can we reuse plans across different parameter values?
+3. **Invalidation**: How does DataFusion invalidate plans when schemas change?
+4. **Performance**: What speedup does DataFusion caching provide?
+5. **Limitations**: What scenarios require custom caching layer?
+
+If DataFusion caching is insufficient:
+- Build normalized SQL cache (literals → placeholders)
+- Map normalized SQL to Statement + parameter positions
+- Let DataFusion handle LogicalPlan/PhysicalPlan caching
+- Only cache SQL normalization layer
+
+**Leveraging kalamdb-sql Crate Infrastructure** (Critical):
+
+The `kalamdb-sql` crate already provides extensive SQL infrastructure:
+
+1. **SqlStatement Classification** (`statement_classifier.rs`):
+   - ✅ **Fast statement classification without full parse**
+   - ✅ **30+ statement types already defined** (CreateTable, Insert, Select, FlushTable, Subscribe, etc.)
+   - ✅ **is_datafusion_statement()** and **is_custom_command()** helpers
+   - ✅ **100% test coverage** (30+ tests)
+   - **Usage**: `let stmt_type = SqlStatement::classify(sql);`
+
+2. **SQL Parser Infrastructure** (`parser/` module):
+   - ✅ **Standard SQL via sqlparser-rs** (SELECT, INSERT, UPDATE, DELETE, CREATE TABLE)
+   - ✅ **KalamDB extensions** (CREATE STORAGE, FLUSH TABLE, SUBSCRIBE, etc.)
+   - ✅ **PostgreSQL/MySQL compatibility** (multiple syntax variants)
+   - ✅ **Type-safe AST** (strongly typed statement representations)
+   - **Usage**: `let statement = kalam_sql.parse_statement(sql)?;`
+
+3. **Query Cache** (`query_cache.rs`):
+   - ✅ **DashMap-based lock-free cache** (100× less contention than RwLock)
+   - ✅ **TTL configuration per query type** (tables: 60s, jobs: 30s, storages: 5min)
+   - ✅ **LRU eviction** (default 10,000 entries)
+   - ✅ **Zero-copy results** (Arc<[u8]> for shared results)
+   - **Usage**: System table queries already cached, can extend to user queries
+
+4. **System Table Operations** (`adapter.rs`):
+   - ✅ **CRUD operations** for all 7 system tables (users, jobs, namespaces, storages, live_queries, tables, audit_logs)
+   - ✅ **Type-safe identifiers** (NamespaceId, UserId, StorageId, TableName)
+   - ✅ **information_schema.tables** integration (TableDefinition CRUD)
+
+**Refactoring Strategy Using kalamdb-sql**:
+
+Instead of building everything from scratch, leverage existing infrastructure:
+
+| Component | Current Location | Move To | Benefit |
+|-----------|------------------|---------|---------|
+| SqlStatement enum | ✅ kalamdb-sql::statement_classifier | **Keep in kalamdb-sql** | Already complete, tested, 30+ types |
+| SQL Parser | ✅ kalamdb-sql::parser | **Keep in kalamdb-sql** | Standard + custom SQL, type-safe AST |
+| Query Classification | ✅ kalamdb-sql::SqlStatement::classify() | **Keep in kalamdb-sql** | Fast, no full parse needed |
+| Query Cache | ✅ kalamdb-sql::QueryCache | **Extend for user queries** | Lock-free, TTL, LRU already working |
+| Authorization Logic | ❌ kalamdb-core::executor | **Move to handlers/authorization.rs** | Centralized security gateway |
+| Handler Modules | ❌ kalamdb-core::executor (inline) | **Move to handlers/*.rs** | Modular, testable, maintainable |
+| ExecutionContext | ❌ kalamdb-core::executor | **Move to handlers/types.rs** | Shared across all handlers |
+
+**What Stays in kalamdb-sql**:
+- SqlStatement classification (already perfect)
+- SQL parsing infrastructure (standard + custom)
+- Query caching (extend with user query support)
+- System table operations (already complete)
+
+**What Moves to kalamdb-core/handlers**:
+- Authorization gateway (security-critical, needs RBAC logic)
+- Execution handlers (DDL, DML, query, transaction, flush, etc.)
+- ExecutionResult/ExecutionContext types (execution-specific)
+- Handler orchestration (routing logic)
+
+**Proposed Architecture**:
+
+```rust
+// ============================================================================
+// SqlExecutor - Thin Coordinator (Stateless)
+// ============================================================================
+
+/// SQL execution coordinator with zero stored state
+///
+/// All dependencies fetched from AppContext on each request.
+/// Leverages kalamdb-sql crate for parsing and classification.
+/// 
+/// Responsibilities:
+/// 1. Classify statement type (fast) using kalamdb-sql::SqlStatement
+/// 2. Parse SQL statement ONCE (full parse) using kalamdb-sql parser
+/// 3. Extract namespace from statement OR use fallback
+/// 4. Check authorization via AuthorizationHandler (gateway pattern)
+/// 5. Route to appropriate handler module based on classification
+/// 6. Return ExecutionResult
+pub struct SqlExecutor;
+
+impl SqlExecutor {
+    /// Main entry point for SQL execution
+    ///
+    /// Flow:
+    /// 1. Classify → SqlStatement enum (kalamdb-sql::statement_classifier - fast, no full parse)
+    /// 2. Parse SQL → Statement (single pass via kalamdb-sql parser - full parse)
+    /// 3. Extract namespace from statement OR use fallback (statements contain namespace)
+    /// 4. Check auth → ExecutionContext (role, user_id, permissions)
+    /// 5. Route → handler based on classification (no re-parsing)
+    /// 6. Return → ExecutionResult
+    ///
+    /// # Parameters
+    /// - `session`: DataFusion session context (for query execution)
+    /// - `sql`: SQL statement string
+    /// - `params`: Parameter values for parameterized queries (e.g., [123, "alice"] for SELECT * FROM users WHERE id = ? AND name = ?)
+    /// - `fallback_namespace`: Optional namespace to use if statement doesn't specify one
+    /// - `execution_context`: User authentication/authorization context
+    pub async fn execute_with_metadata(
+        session: &SessionContext,
+        sql: &str,
+        params: Vec<ParamValue>,
+        fallback_namespace: Option<NamespaceId>,
+        execution_context: &ExecutionContext,
+    ) -> Result<(ExecutionResult, ExecutionMetadata), KalamDbError> {
+        // Step 1: Classify statement type (fast, no full parse)
+        // Uses kalamdb-sql::statement_classifier::SqlStatement::classify()
+        let stmt_type = SqlStatement::classify(sql); // Already exists in kalamdb-sql!
+        
+        // Step 2: Parse SQL statement ONCE (full parse)
+        let ctx = AppContext::get();
+        let kalam_sql = ctx.kalam_sql(); // kalamdb-sql::KalamSql instance
+        let statement = kalam_sql.parse_statement(sql)?; // PARSE ONCE
+        
+        // Step 3: Extract namespace from statement (statements contain namespace)
+        // e.g., "CREATE TABLE mydb.users (id INT)" → namespace = NamespaceId("mydb")
+        //       "SELECT * FROM users" with fallback → use fallback_namespace
+        let namespace_id = statement.extract_namespace()
+            .or(fallback_namespace)
+            .ok_or_else(|| KalamDbError::MissingNamespace("Statement must specify namespace or provide fallback"))?;
+        
+        // Step 4: Authorization gateway (fail-fast)
+        AuthorizationHandler::check_authorization(
+            &stmt_type,      // SqlStatement classification
+            &statement,      // Parsed statement
+            &namespace_id,
+            execution_context,
+        )?;
+        
+        // Step 5: Route to handler based on classification (no re-parsing)
+        // All handlers use type-safe wrappers (NamespaceId, UserId, TableName, etc.)
+        // Uses SqlStatement enum from kalamdb-sql crate
+        let result = match stmt_type {
+            SqlStatement::CreateTable => {
+                // Extract type-safe identifiers from statement
+                let table_name = TableName::from_statement(&statement)?;
+                DdlHandler::execute_create_table(
+                    session, 
+                    namespace_id, 
+                    table_name,
+                    &statement, 
+                    execution_context
+                ).await?
+            }
+            SqlStatement::Insert => {
+                let table_name = TableName::from_statement(&statement)?;
+                DmlHandler::execute_insert(
+                    session, 
+                    namespace_id,
+                    table_name,
+                    &statement, 
+                    params, // Parameter values for INSERT INTO users VALUES (?, ?)
+                    execution_context
+                ).await?
+            }
+            SqlStatement::Select => {
+                QueryHandler::execute_query(
+                    session, 
+                    namespace_id,
+                    &statement, 
+                    params, // Parameter values for WHERE clauses
+                    execution_context
+                ).await?
+            }
+            SqlStatement::BeginTransaction => {
+                TransactionHandler::execute_begin(
+                    session, 
+                    namespace_id,
+                    &statement, 
+                    execution_context
+                ).await?
+            }
+            // Map all SqlStatement variants to handlers
+            SqlStatement::CreateNamespace => NamespaceHandler::execute_create(...).await?,
+            SqlStatement::AlterNamespace => NamespaceHandler::execute_alter(...).await?,
+            SqlStatement::DropNamespace => NamespaceHandler::execute_drop(...).await?,
+            SqlStatement::CreateStorage => StorageHandler::execute_create(...).await?,
+            SqlStatement::FlushTable => FlushHandler::execute_flush_table(...).await?,
+            SqlStatement::FlushAllTables => FlushHandler::execute_flush_all(...).await?,
+            SqlStatement::CreateUser => UserManagementHandler::execute_create_user(...).await?,
+            SqlStatement::Subscribe => SubscriptionHandler::execute_subscribe(...).await?,
+            // ... all other SqlStatement variants from kalamdb-sql
+            _ => {
+                return Err(KalamDbError::UnsupportedStatement(stmt_type.name().to_string()));
+            }
+        };
+        
+        // Step 6: Return with metadata
+        Ok((result, ExecutionMetadata { /* ... */ }))
+    }
+}
+
+// ============================================================================
+// Handler Modules (14 Total)
+// ============================================================================
+
+/// handlers/
+/// ├── types.rs              - ExecutionResult, ExecutionContext, ExecutionMetadata
+/// ├── authorization.rs      - check_authorization() gateway
+/// ├── transaction.rs        - BEGIN, COMMIT, ROLLBACK
+/// ├── ddl.rs               - CREATE, ALTER, DROP (tables, namespaces, storages)
+/// ├── dml.rs               - INSERT, UPDATE, DELETE
+/// ├── query.rs             - SELECT, DESCRIBE, SHOW
+/// ├── flush.rs             - FLUSH TABLE
+/// ├── subscription.rs      - LIVE SELECT
+/// ├── user_management.rs   - CREATE USER, ALTER USER, DROP USER
+/// ├── table_registry.rs    - REGISTER TABLE, UNREGISTER TABLE
+/// ├── system_commands.rs   - VACUUM, OPTIMIZE, ANALYZE
+/// ├── audit.rs             - Audit logging helpers
+/// ├── helpers.rs           - Common utilities (table resolution, etc.)
+/// └── mod.rs               - Module exports
+
+// ============================================================================
+// Future: Query Caching Architecture
+// ============================================================================
+
+/// Parameterized query cache leveraging DataFusion's built-in caching
+///
+/// **IMPORTANT**: DataFusion 40.0+ provides query plan caching via SessionContext.
+/// We should investigate and use DataFusion's native caching before building custom solution.
+///
+/// DataFusion Caching Features (v40.0):
+/// - LogicalPlan caching: Reuses parsed/optimized logical plans
+/// - Physical plan caching: Reuses execution plans for same logical plan
+/// - Session-level cache: Plans cached per SessionContext
+/// - Automatic invalidation: Plans invalidated when underlying data changes
+///
+/// Custom Layer (if needed):
+/// - SQL normalization: Convert literals to parameters for cache key
+/// - Cross-session cache: Share plans across multiple sessions
+/// - Schema-aware invalidation: Integrate with SchemaRegistry
+///
+/// Design (if DataFusion caching insufficient):
+/// - Cache key: Normalized SQL with placeholders (e.g., "SELECT * FROM users WHERE id = ?")
+/// - Cache value: Parsed Statement + parameter positions
+/// - DataFusion handles plan caching internally
+/// - Scope: Only DML + queries (NOT DDL, admin commands, transactions)
+/// - Invalidation: On ALTER TABLE, DROP TABLE (via SchemaRegistry)
+/// - Memory: LRU cache with configurable size (default 1000 queries)
+///
+/// Example:
+/// ```
+/// // Original queries
+/// SELECT * FROM users WHERE id = 123
+/// SELECT * FROM users WHERE id = 456
+///
+/// // Cached as single entry
+/// SELECT * FROM users WHERE id = ?  (with parameter binding)
+/// 
+/// // DataFusion caches the execution plan
+/// // Our layer normalizes SQL + binds parameters
+/// ```
+pub struct QueryCache {
+    /// Normalized SQL → (Statement, Parameter Positions)
+    /// DataFusion SessionContext handles plan caching internally
+    cache: Arc<DashMap<String, Arc<CachedQuery>>>,
+    
+    /// LRU eviction policy
+    lru: Arc<Mutex<LruCache<String, ()>>>,
+    
+    /// Max cache size (default 1000)
+    max_size: usize,
+    
+    /// DataFusion session context (handles plan caching)
+    /// Plans automatically cached and reused by DataFusion
+    session_context: Arc<SessionContext>,
+}
+
+impl QueryCache {
+    /// Get cached query by normalized SQL
+    /// Returns normalized statement + param positions
+    /// DataFusion handles plan caching when statement is executed
+    pub fn get(&self, normalized_sql: &str) -> Option<Arc<CachedQuery>> {
+        self.cache.get(normalized_sql).map(|v| Arc::clone(&v))
+    }
+    
+    /// Insert query into cache (with LRU eviction)
+    pub fn insert(&self, normalized_sql: String, query: Arc<CachedQuery>) {
+        if self.cache.len() >= self.max_size {
+            // Evict LRU entry
+            if let Some((evicted_key, _)) = self.lru.lock().unwrap().pop_lru() {
+                self.cache.remove(&evicted_key);
+            }
+        }
+        self.cache.insert(normalized_sql.clone(), query);
+        self.lru.lock().unwrap().put(normalized_sql, ());
+    }
+    
+    /// Invalidate all queries for a table (on ALTER/DROP)
+    /// DataFusion automatically invalidates plans when table schema changes
+    pub fn invalidate_table(&self, table_id: &TableId) {
+        self.cache.retain(|_, cached| {
+            !cached.referenced_tables.contains(table_id)
+        });
+        // DataFusion's SessionContext invalidates affected plans automatically
+    }
+}
+
+struct CachedQuery {
+    /// Parsed statement with placeholders
+    statement: Statement,
+    
+    /// Tables referenced by this query (for invalidation)
+    /// Use type-safe TableId wrappers
+    referenced_tables: Vec<TableId>,
+    
+    /// Parameter positions (for binding values)
+    /// Maps placeholder positions to parameter indices
+    /// e.g., "SELECT * FROM users WHERE id = ? AND name = ?" → [0, 1]
+    parameters: Vec<ParameterPosition>,
+    
+    /// Note: DataFusion SessionContext caches LogicalPlan and PhysicalPlan internally
+    /// We only cache normalized SQL + parameter mapping
+}
+
+/// Parameter value types for prepared statements
+#[derive(Debug, Clone)]
+pub enum ParamValue {
+    Int(i32),
+    BigInt(i64),
+    Float(f32),
+    Double(f64),
+    Text(String),
+    Boolean(bool),
+    Null,
+    // ... other KalamDataType variants
+}
+
+/// Parameter position in normalized SQL
+#[derive(Debug, Clone)]
+pub struct ParameterPosition {
+    /// Placeholder index in SQL (0-based)
+    position: usize,
+    
+    /// Expected data type (for validation)
+    expected_type: KalamDataType,
+}
+```
+
+**Acceptance Scenarios**:
+
+#### Scenario 10.1: Single-Pass SQL Parsing
+```
+Given the SQL executor receives query: "SELECT * FROM mydb.users WHERE id = 123"
+When execute_with_metadata() is called with sql and params
+Then SQL is parsed exactly ONCE via kalam_sql.parse_statement()
+And the parsed Statement is passed to all downstream handlers
+And namespace is extracted from statement: NamespaceId("mydb")
+And no handler re-parses the original SQL string
+And execution completes in <1ms for simple queries
+```
+
+#### Scenario 10.2: Authorization Gateway (Fail-Fast)
+```
+Given user with role='user' executes "DROP TABLE system.users"
+When execute_with_metadata() is called
+Then statement is parsed to extract namespace: NamespaceId("system")
+And AuthorizationHandler::check_authorization(statement, namespace_id, context) is called FIRST
+And authorization fails with "Insufficient permissions" error
+And no handler is invoked (fail-fast security)
+And DdlHandler::execute_drop_table() is NEVER called
+```
+
+#### Scenario 10.3: Modular Handler Routing with Type Safety
+```
+Given SQL statements: 
+  - "CREATE TABLE mydb.test (id INT)" 
+  - "INSERT INTO mydb.test VALUES (?)" with params [1]
+  - "SELECT * FROM mydb.test WHERE id = ?" with params [1]
+When each statement is executed
+Then CREATE TABLE extracts NamespaceId("mydb"), TableName("test"), routes to DdlHandler
+And INSERT extracts NamespaceId("mydb"), TableName("test"), params [1], routes to DmlHandler
+And SELECT extracts NamespaceId("mydb"), params [1], routes to QueryHandler
+And all handlers use type-safe wrappers (NamespaceId, TableName, UserId, etc.)
+And each handler is tested independently with unit tests
+```
+
+#### Scenario 10.4: Parameter Binding
+```
+Given parameterized query: "SELECT * FROM users WHERE id = ? AND name = ?"
+And parameters: [ParamValue::Int(123), ParamValue::Text("alice")]
+When execute_with_metadata() is called
+Then QueryHandler receives statement + params
+And parameters are bound to placeholders in order: [0→123, 1→"alice"]
+And query executes with bound values
+And same query with different params reuses cached plan (via DataFusion)
+```
+
+#### Scenario 10.5: Namespace Extraction from Statement
+```
+Given SQL: "CREATE TABLE mydb.users (id INT, name TEXT)"
+When execute_with_metadata() is called without fallback_namespace
+Then statement.extract_namespace() returns Some(NamespaceId("mydb"))
+And DdlHandler receives NamespaceId("mydb") and TableName("users")
+
+Given SQL: "SELECT * FROM users" (no explicit namespace)
+And fallback_namespace = Some(NamespaceId("default"))
+When execute_with_metadata() is called
+Then statement.extract_namespace() returns None
+And fallback_namespace NamespaceId("default") is used
+And QueryHandler receives NamespaceId("default")
+
+Given SQL: "SELECT * FROM users" (no explicit namespace)
+And fallback_namespace = None
+When execute_with_metadata() is called
+Then error "Statement must specify namespace or provide fallback" is returned
+```
+
+#### Scenario 10.6: Memory Efficiency (Zero Allocations on Hot Path)
+```
+Given 1000 concurrent SELECT queries on same table
+When all queries execute via QueryHandler
+Then Arc<TableDefinition> is cloned (NOT duplicated) via SchemaCache
+And Arc<UserTableShared> is reused from cache
+And String allocations occur only for result rows (not metadata)
+And memory usage remains constant (no leak/growth)
+```
+
+#### Scenario 10.7: DataFusion Query Plan Caching (Leveraging Built-in)
+```
+Given QueryCache is enabled and DataFusion SessionContext has plan caching
+When "SELECT * FROM users WHERE id = ?" executes with params [123]
+Then query is normalized to "SELECT * FROM users WHERE id = ?"
+And DataFusion caches the LogicalPlan and PhysicalPlan internally
+When "SELECT * FROM users WHERE id = ?" executes with params [456]
+Then normalized SQL cache hit returns same Statement
+And parameters [456] are bound to placeholders
+And DataFusion reuses cached LogicalPlan (no re-optimization)
+And execution is 10-100× faster than cold query (DataFusion's optimization)
+```
+
+#### Scenario 10.8: Cache Invalidation on Schema Change
+```
+Given QueryCache contains 50 cached queries referencing table 'users' (TableId)
+When "ALTER TABLE mydb.users ADD COLUMN email VARCHAR" executes
+Then SchemaRegistry invalidates TableId for 'users'
+And QueryCache.invalidate_table(TableId("mydb.users")) is called
+And all 50 cached normalized queries are evicted
+And DataFusion SessionContext invalidates affected plans automatically
+And next SELECT on 'users' triggers cache miss + re-parse + re-plan
+```
+
+#### Scenario 10.9: DDL Commands Bypass Query Cache
+```
+Given QueryCache is enabled
+When "CREATE TABLE mydb.test (id INT)" executes
+Then DdlHandler executes normally
+And query is NOT added to QueryCache (DDL excluded)
+When "FLUSH TABLE users" executes
+Then FlushHandler executes normally
+And query is NOT cached (admin command excluded)
+```
+
+#### Scenario 10.10: Type-Safe Identifiers Throughout
+```
+Given all handlers use type-safe wrappers
+When DdlHandler::execute_create_table() is called
+Then namespace parameter is NamespaceId (not &str)
+And table_name parameter is TableName (not String)
+When DmlHandler::execute_insert() is called
+Then user_id in ExecutionContext is UserId (not String)
+When QueryHandler resolves table reference
+Then table_id is TableId (not String)
+And all identifier types provide compile-time safety
+```
+
+**Implementation Plan**:
+
+**Phase 1: Directory Structure & Type Extraction (P0)**
+- Create `backend/crates/kalamdb-core/src/sql/executor/` directory
+- Move `executor.rs` → `executor/mod.rs` (no logic changes)
+- Extract to `executor/handlers/types.rs`: ExecutionResult, ExecutionContext, ExecutionMetadata, ParamValue enum
+- Extract to `executor/handlers/mod.rs`: Module exports
+- **Import SqlStatement** from kalamdb-sql crate: `use kalamdb_sql::statement_classifier::SqlStatement;`
+- Update execute_with_metadata() signature: Add `params: Vec<ParamValue>`, change `namespace: &str` → `fallback_namespace: Option<NamespaceId>`
+- **Validation**: Workspace compiles, all tests pass (no behavior change)
+
+**Phase 2: Statement Classification Integration (P0)**
+- Replace manual statement type detection with `SqlStatement::classify(sql)`
+- Update routing logic to use SqlStatement enum (already has 30+ variants!)
+- Remove duplicate classification code from executor
+- **Validation**: All existing tests pass, classification correct
+
+**Phase 3: Authorization Gateway (P0)**
+- Extract to `executor/handlers/authorization.rs`: check_authorization(stmt_type, statement, namespace_id, context) function
+- Modify `executor/mod.rs`: Call AuthorizationHandler::check_authorization() BEFORE routing
+- Update authorization to receive SqlStatement + NamespaceId (type-safe wrappers)
+- Add authorization tests: role permissions, system table access, fail-fast behavior
+- **Validation**: All existing tests pass + 10 new authorization tests
+
+**Phase 4: Statement Namespace Extraction (P0)**
+- Add `extract_namespace()` method to parsed Statement
+- Implement namespace extraction for all statement types (CREATE TABLE mydb.users → NamespaceId("mydb"))
+- Update execute_with_metadata() to extract namespace from statement
+- Fallback to fallback_namespace if statement doesn't specify
+- Return error if both are None
+- **Validation**: Namespace extraction tests pass for all statement types
+
+**Phase 4: Transaction Handler (P0)**
+- Extract to `executor/handlers/transaction.rs`: BEGIN, COMMIT, ROLLBACK handlers
+- Update handler signatures: Use NamespaceId instead of &str
+- Update `executor/mod.rs`: Route transaction statements to TransactionHandler
+- Add transaction tests: isolation levels, rollback, error handling
+- **Validation**: All transaction tests pass (integration + unit)
+
+**Phase 5: DDL Handler (P0)**
+- Extract to `executor/handlers/ddl.rs`: CREATE/ALTER/DROP handlers (tables, namespaces, storages)
+- Update handler signatures: Use NamespaceId, TableName, UserId (type-safe wrappers)
+- Update `executor/mod.rs`: Route DDL statements to DdlHandler
+- Add DDL tests: schema creation, modification, deletion
+- **Validation**: All DDL tests pass, schema operations correct
+
+**Phase 6: DML Handler (P0)**
+- Extract to `executor/handlers/dml.rs`: INSERT, UPDATE, DELETE handlers
+- Update handler signatures: Use NamespaceId, TableName, params: Vec<ParamValue>
+- Implement parameter binding in INSERT/UPDATE/DELETE handlers
+- Update `executor/mod.rs`: Route DML statements to DmlHandler with params
+- Add DML tests: data manipulation, parameter binding, defaults, constraints
+- **Validation**: All DML tests pass, data integrity maintained
+
+**Phase 7: Query Handler (P0)**
+- Extract to `executor/handlers/query.rs`: SELECT, DESCRIBE, SHOW handlers
+- Update handler signatures: Use NamespaceId, params: Vec<ParamValue>
+- Implement parameter binding in WHERE clauses via DataFusion
+- Update `executor/mod.rs`: Route query statements to QueryHandler with params
+- Add query tests: filtering, joins, aggregations, parameter binding
+- **Validation**: All query tests pass, results correct
+
+**Phase 7: Query Handler (P0)**
+- Extract to `executor/handlers/query.rs`: SELECT, DESCRIBE, SHOW handlers
+- Update handler signatures: Use NamespaceId, params: Vec<ParamValue>
+- Implement parameter binding in WHERE clauses via DataFusion
+- Update `executor/mod.rs`: Route query statements to QueryHandler with params
+- Add query tests: filtering, joins, aggregations, parameter binding
+- **Validation**: All query tests pass, results correct
+
+**Phase 8: Remaining Handlers (P1)**
+- Extract to `executor/handlers/flush.rs`: FLUSH TABLE handler (uses TableName)
+- Extract to `executor/handlers/subscription.rs`: LIVE SELECT handler (uses NamespaceId, params)
+- Extract to `executor/handlers/user_management.rs`: CREATE/ALTER/DROP USER handlers (uses UserId)
+- Extract to `executor/handlers/table_registry.rs`: REGISTER/UNREGISTER TABLE handlers (uses TableName, NamespaceId)
+- Extract to `executor/handlers/system_commands.rs`: VACUUM, OPTIMIZE, ANALYZE handlers
+- Extract to `executor/handlers/helpers.rs`: Common utilities (table resolution with TableId)
+- Extract to `executor/handlers/audit.rs`: Audit logging helpers (uses UserId, TableId)
+- **Validation**: All handlers tested independently, integration tests pass
+
+**Phase 9: Single-Pass Parsing Optimization (P0)**
+- Audit all handler methods: Ensure Statement is passed (not &str)
+- Remove any redundant parse_statement() calls in handlers
+- Verify namespace extraction happens once in execute_with_metadata()
+- Add performance test: Verify single parse per query
+- **Validation**: Performance test confirms 1 parse per execution
+
+**Phase 10: Memory Profiling (P0)**
+- Add memory benchmarks: Measure allocations in QueryHandler hot path
+- Optimize Arc cloning: Use Arc::clone() instead of new allocations
+- Verify String interning: Ensure system columns use interned strings
+- Verify type-safe wrappers (NamespaceId, TableId, etc.) have zero overhead
+- **Validation**: Benchmarks show <100 bytes allocated per simple query
+
+**Phase 11: DataFusion Query Caching Investigation (P1)**
+- Research DataFusion 40.0+ SessionContext query caching capabilities
+- Test DataFusion's LogicalPlan and PhysicalPlan caching behavior
+- Measure cache hit rates and performance improvements
+- Document DataFusion caching features and limitations
+- **Validation**: DataFusion caching documented, performance measured
+
+**Phase 12: Query Cache Design (P2 - Future, if DataFusion insufficient)**
+- Create `executor/query_cache.rs`: QueryCache struct with LRU eviction
+- Design normalized SQL format: Replace literals with placeholders
+- Implement parameter mapping: Track placeholder positions
+- Integrate with DataFusion SessionContext for plan caching
+- Implement cache invalidation: Integrate with SchemaRegistry
+- Add configuration: query_cache_size, query_cache_enabled
+- **Validation**: Cache hit rate >80% in benchmark, invalidation correct
+
+**Testing Strategy**:
+
+1. **Unit Tests**: Each handler module has dedicated test file
+   - `handlers/tests/authorization_tests.rs`: 20+ authorization scenarios
+   - `handlers/tests/transaction_tests.rs`: 15+ transaction scenarios
+   - `handlers/tests/ddl_tests.rs`: 30+ DDL scenarios
+   - `handlers/tests/dml_tests.rs`: 25+ DML scenarios
+   - `handlers/tests/query_tests.rs`: 40+ query scenarios
+
+2. **Integration Tests**: End-to-end SQL execution
+   - `tests/sql_executor_integration_tests.rs`: Multi-statement workflows
+   - `tests/sql_executor_performance_tests.rs`: Latency/memory benchmarks
+
+3. **Performance Benchmarks**: Criterion.rs benchmarks
+   - `benches/sql_parsing_bench.rs`: Verify single-pass parsing (target: <50μs)
+   - `benches/query_execution_bench.rs`: Measure query latency (target: <1ms)
+   - `benches/memory_usage_bench.rs`: Measure allocations (target: <100 bytes)
+
+4. **Security Tests**: Authorization enforcement
+   - `tests/sql_security_tests.rs`: Role-based access control
+   - `tests/sql_injection_tests.rs`: SQL injection prevention (DataFusion)
+
+**Success Metrics**:
+
+- **Code Organization**: 4,956 lines in 1 file → ~300-500 lines per handler file (14 files)
+- **Test Coverage**: 90%+ line coverage for all handler modules
+- **Performance**: SELECT latency <1ms, INSERT latency <5ms (simple queries)
+- **Memory**: <100 bytes allocated per simple query (Arc reuse)
+- **Security**: 100% of authorization tests pass (fail-fast gateway)
+- **Maintainability**: Each handler can be modified/tested independently
+- **Future-Ready**: Query cache architecture designed (implementation in P2)
+
+**Migration Impact**:
+
+- **Files Modified**: 1 file deleted (`executor.rs`), 15+ files created (executor/ directory structure)
+- **Breaking Changes**: None (internal refactoring only, public API unchanged)
+- **Test Changes**: Existing tests remain unchanged, new handler unit tests added
+- **Documentation**: Update architecture docs with handler module diagram
+
+**Dependencies**:
+
+- **User Story 8**: SchemaRegistry required for cache invalidation integration
+- **AppContext**: All handlers use AppContext::get() for dependency injection
+- **KalamSQL**: Parser must return Statement for single-pass parsing
+- **DataFusion**: Query execution requires LogicalPlan for future caching
+
+**Future Enhancements** (Post-P0):
+
+1. **Query Cache (P2)**: Implement parameterized query caching for 10-100× speedup on repeated queries
+2. **Prepared Statements (P2)**: Add SQL PREPARE/EXECUTE support for client-side caching
+3. **Query Plan Cache (P2)**: Cache DataFusion LogicalPlan for complex queries (joins, aggregations)
+4. **Parallel Execution (P3)**: Execute independent statements concurrently (batch inserts)
+5. **Query Profiling (P3)**: Add EXPLAIN ANALYZE for execution plan analysis
+
+---
+
 ## Dependencies
 
 ### Internal Dependencies

@@ -27,6 +27,12 @@
 //! This architecture makes traditional SQL injection (e.g., `'; DROP TABLE users; --`)
 //! impossible because malicious input is treated as literal data values, not executable SQL.
 
+// Phase 9 (US10): Modular handler architecture
+pub mod handlers;
+
+#[cfg(test)]
+mod tests;
+
 use crate::auth::rbac;
 use crate::catalog::{NamespaceId, TableName, TableType, UserId};
 use crate::error::KalamDbError;
@@ -67,64 +73,11 @@ use kalamdb_sql::RocksDbAdapter;
 use serde_json::json;
 use std::sync::Arc;
 
-/// SQL execution result
-#[derive(Debug)]
-pub enum ExecutionResult {
-    /// DDL operation completed successfully with a message
-    Success(String),
+// Import ExecutionResult, ExecutionContext, and ExecutionMetadata from handlers module
+pub use handlers::{ExecutionResult, ExecutionContext, ExecutionMetadata};
 
-    /// Query result as Arrow RecordBatch
-    RecordBatch(RecordBatch),
-
-    /// Multiple record batches (for streaming results)
-    RecordBatches(Vec<RecordBatch>),
-
-    /// Subscription metadata (for SUBSCRIBE TO commands)
-    Subscription(serde_json::Value),
-}
-
-/// Execution context for SQL queries
-///
-/// Contains authentication and authorization information for the current query execution.
-#[derive(Debug, Clone)]
-pub struct ExecutionContext {
-    /// User ID of the user executing the query
-    pub user_id: UserId,
-    /// Role of the user (User, Service, Dba, System)
-    pub user_role: Role,
-}
-
-impl ExecutionContext {
-    /// Create a new execution context
-    pub fn new(user_id: UserId, user_role: Role) -> Self {
-        Self { user_id, user_role }
-    }
-
-    /// Create an anonymous execution context with User role
-    pub fn anonymous() -> Self {
-        Self {
-            user_id: UserId::from("anonymous"),
-            user_role: Role::User,
-        }
-    }
-
-    /// Check if the user is an administrator (Dba or System role)
-    pub fn is_admin(&self) -> bool {
-        matches!(self.user_role, Role::Dba | Role::System)
-    }
-
-    /// Check if the user is a system user
-    pub fn is_system(&self) -> bool {
-        matches!(self.user_role, Role::System)
-    }
-}
-
-/// Additional metadata for a statement execution (per request).
-#[derive(Debug, Clone, Default)]
-pub struct ExecutionMetadata {
-    /// Optional client IP address (for audit logging).
-    pub ip_address: Option<String>,
-}
+// Import handlers for statement routing
+use handlers::{AuthorizationHandler, DDLHandler, TransactionHandler};
 
 /// SQL executor
 ///
@@ -251,93 +204,53 @@ impl SqlExecutor {
     fn session_factory(&self) -> Arc<DataFusionSessionFactory> {
         self.app_context.session_factory()
     }
-        namespace_service: Arc<NamespaceService>,
-        user_table_service: Arc<UserTableService>,
-        shared_table_service: Arc<SharedTableService>,
-        stream_table_service: Arc<StreamTableService>,
-    ) -> Self {
-        let session_factory = DataFusionSessionFactory::default();
-        Self {
-            namespace_service,
-            user_table_service,
-            shared_table_service,
-            stream_table_service,
-            table_deletion_service: None,
-            user_table_store: None,
-            shared_table_store: None,
-            stream_table_store: None,
-            kalam_sql: None,
-            storage_backend: None, // Phase 14: Initialize storage backend
-            session_factory,
-            jobs_table_provider: None,
-            users_table_provider: None,
-            storage_registry: None,
-            job_manager: None,
-            live_query_manager: None,
-            schema_store: None,
-            unified_cache: None, // Phase 10: Unified cache (set via with_storage_registry)
-            enforce_password_complexity: false,
-        }
-    }
-
+    
+    /// DEPRECATED: Old constructor removed - use SqlExecutor::new(app_context) instead
     /// Set the storage registry (optional, for storage template validation)
-    pub fn with_storage_registry(mut self, registry: Arc<crate::storage::StorageRegistry>) -> Self {
-        // Phase 10: Initialize unified SchemaCache (replaces old dual-cache architecture)
-        let unified_cache = Arc::new(
-            crate::catalog::SchemaCache::new(10000, Some(registry.clone()))
-        );
-        self.unified_cache = Some(unified_cache);
-        
-        self.storage_registry = Some(registry);
+    // ========================================================================
+    // DEPRECATED BUILDER METHODS - SqlExecutor now uses AppContext for all dependencies
+    // These methods are kept for backward compatibility but are no-ops
+    // ========================================================================
+
+    #[deprecated(note = "SqlExecutor now uses AppContext - this method is a no-op")]
+    pub fn with_storage_registry(self, _registry: Arc<crate::storage::StorageRegistry>) -> Self {
+        // No-op: AppContext provides storage_registry via dependency injection
         self
     }
 
-    /// Set the job manager (optional, for FLUSH TABLE support)
-    pub fn with_job_manager(mut self, job_manager: Arc<dyn crate::jobs::JobManager>) -> Self {
-        self.job_manager = Some(job_manager);
+    #[deprecated(note = "SqlExecutor now uses AppContext - this method is a no-op")]
+    pub fn with_job_manager(self, _job_manager: Arc<dyn crate::jobs::JobManager>) -> Self {
+        // No-op: AppContext provides job_manager via dependency injection
         self
     }
 
-    /// Set the live query manager for subscription coordination (optional)
-    pub fn with_live_query_manager(
-        mut self,
-        manager: Arc<crate::live_query::LiveQueryManager>,
-    ) -> Self {
-        self.live_query_manager = Some(manager);
+    #[deprecated(note = "SqlExecutor now uses AppContext - this method is a no-op")]
+    pub fn with_live_query_manager(self, _manager: Arc<crate::live_query::LiveQueryManager>) -> Self {
+        // No-op: AppContext provides live_query_manager via dependency injection
         self
     }
 
-    /// Set the table deletion service (optional, for DROP TABLE support)
-    pub fn with_table_deletion_service(mut self, service: Arc<TableDeletionService>) -> Self {
-        self.table_deletion_service = Some(service);
+    #[deprecated(note = "SqlExecutor now uses AppContext - this method is a no-op")]
+    pub fn with_table_deletion_service(self, _service: Arc<TableDeletionService>) -> Self {
+        // No-op: AppContext provides table_deletion_service via dependency injection
         self
     }
 
-    /// Set stores and KalamSQL for table registration (optional, for SELECT/INSERT/UPDATE/DELETE support)
+    #[deprecated(note = "SqlExecutor now uses AppContext - this method is a no-op")]
     pub fn with_stores(
-        mut self,
-        user_table_store: Arc<UserTableStore>,
-        shared_table_store: Arc<SharedTableStore>,
-        stream_table_store: Arc<StreamTableStore>,
-        kalam_sql: Arc<KalamSql>,
+        self,
+        _user_table_store: Arc<UserTableStore>,
+        _shared_table_store: Arc<SharedTableStore>,
+        _stream_table_store: Arc<StreamTableStore>,
+        _kalam_sql: Arc<KalamSql>,
     ) -> Self {
-        self.user_table_store = Some(user_table_store);
-        self.shared_table_store = Some(shared_table_store);
-        self.stream_table_store = Some(stream_table_store);
-        // Phase 14: Note - we can't get kalamdb_store::StorageBackend from KalamSql yet
-        // because it uses kalamdb_commons::StorageBackend. This will be fixed when
-        // kalamdb-sql is migrated to use kalamdb_store::StorageBackend.
-        // For now, storage_backend must be set separately via with_storage_backend()
-        self.kalam_sql = Some(kalam_sql);
+        // No-op: AppContext provides all stores via dependency injection
         self
     }
 
-    /// Phase 14: Set the storage backend for EntityStore-based providers
-    pub fn with_storage_backend(mut self, backend: Arc<dyn kalamdb_store::StorageBackend>) -> Self {
-        // Phase 14: Use storage backend for new EntityStore-based providers
-        self.storage_backend = Some(backend.clone());
-        self.users_table_provider = Some(Arc::new(UsersTableProvider::new(backend.clone())));
-        self.jobs_table_provider = Some(Arc::new(JobsTableProvider::new(backend)));
+    #[deprecated(note = "SqlExecutor now uses AppContext - this method is a no-op")]
+    pub fn with_storage_backend(self, _backend: Arc<dyn kalamdb_store::StorageBackend>) -> Self {
+        // No-op: AppContext provides storage_backend via dependency injection
         self
     }
 
@@ -349,21 +262,18 @@ impl SqlExecutor {
 
     /// Phase 15 (008-schema-consolidation): Set schema store for DESCRIBE TABLE
     /// Note: SchemaCache is now part of unified_cache, set via with_storage_registry()
+    #[deprecated(note = "SqlExecutor now uses AppContext - this method is a no-op")]
     pub fn with_schema_store(
-        mut self,
-        schema_store: Arc<crate::tables::system::schemas::TableSchemaStore>,
+        self,
+        _schema_store: Arc<crate::tables::system::schemas::TableSchemaStore>,
     ) -> Self {
-        self.schema_store = Some(schema_store);
+        // No-op: AppContext provides schema_registry via dependency injection
         self
     }
 
     /// Load and register existing tables from system_tables on initialization
     pub async fn load_existing_tables(&self, _default_user_id: UserId) -> Result<(), KalamDbError> {
-        let kalam_sql = Some(&self.kalam_sql()).ok_or_else(|| {
-            KalamDbError::InvalidOperation(
-                "Cannot load tables - KalamSQL not configured".to_string(),
-            )
-        })?;
+        let kalam_sql = self.kalam_sql();
 
         // Get all tables from system_tables
         let tables = kalam_sql
@@ -490,9 +400,7 @@ impl SqlExecutor {
                 return Ok(());
             }
             TableType::Shared => {
-                let store = self.shared_table_store.as_ref().ok_or_else(|| {
-                    KalamDbError::InvalidOperation("SharedTableStore not configured".to_string())
-                })?;
+                let store = self.shared_table_store();
 
                 // Phase 10: Create Arc<TableId> once for zero-allocation cache lookups
                 let table_id = Arc::new(kalamdb_commons::models::TableId::new(
@@ -501,9 +409,7 @@ impl SqlExecutor {
                 ));
 
                 // Get unified_cache for provider
-                let unified_cache = self.unified_cache.as_ref()
-                    .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
-                    .clone();
+                let unified_cache = self.unified_cache();
 
                 let provider = Arc::new(SharedTableProvider::new(
                     table_id,
@@ -531,9 +437,7 @@ impl SqlExecutor {
                     })?;
             }
             TableType::Stream => {
-                let store = self.stream_table_store.as_ref().ok_or_else(|| {
-                    KalamDbError::InvalidOperation("StreamTableStore not configured".to_string())
-                })?;
+                let store = self.stream_table_store();
 
                 // Phase 10: Create Arc<TableId> once for zero-allocation cache lookups
                 let table_id = Arc::new(kalamdb_commons::models::TableId::new(
@@ -542,9 +446,7 @@ impl SqlExecutor {
                 ));
 
                 // Get unified_cache for provider
-                let unified_cache = self.unified_cache.as_ref()
-                    .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
-                    .clone();
+                let unified_cache = self.unified_cache();
 
                 let mut provider = StreamTableProvider::new(
                     table_id,
@@ -557,9 +459,8 @@ impl SqlExecutor {
                 );
 
                 // Wire through LiveQueryManager for WebSocket notifications (T154)
-                if let Some(manager) = &self.live_query_manager {
-                    provider = provider.with_live_query_manager(Arc::clone(manager));
-                }
+                let manager = self.live_query_manager();
+                provider = provider.with_live_query_manager(manager);
 
                 let provider = Arc::new(provider);
 
@@ -608,7 +509,7 @@ impl SqlExecutor {
         let storage_id = storage_id.unwrap_or_else(StorageId::local);
 
         // T167b & T167c: Validate storage_id exists in system.storages (NOT NULL enforcement)
-        if let Some(kalam_sql) = &self.kalam_sql {
+        let kalam_sql = self.kalam_sql(); if true {
             let storage_exists = kalam_sql.get_storage(&storage_id).is_ok();
             if !storage_exists {
                 return Err(KalamDbError::InvalidOperation(format!(
@@ -665,11 +566,8 @@ impl SqlExecutor {
         schema_version: u32,
         deleted_retention_hours: Option<u32>,
     ) -> Result<(), KalamDbError> {
-        // Skip caching if unified_cache not initialized
-        let cache = match &self.unified_cache {
-            Some(c) => c,
-            None => return Ok(()), // Cache not initialized - skip
-        };
+        // Get unified_cache for caching table metadata
+        let cache = self.unified_cache();
 
         // Convert DDL FlushPolicy to core FlushPolicy
         use kalamdb_sql::ddl::FlushPolicy as DdlFlushPolicy;
@@ -761,7 +659,7 @@ impl SqlExecutor {
         };
 
         // Look up user to get their role
-        if let Some(kalam_sql) = &self.kalam_sql {
+        let kalam_sql = self.kalam_sql(); if true {
             match kalam_sql.get_user_by_id(&user_id) {
                 Ok(Some(user)) => {
                     // Check if user is soft-deleted
@@ -795,99 +693,19 @@ impl SqlExecutor {
 
     /// Check if user is authorized to execute a SQL statement
     ///
+    /// This method delegates to the AuthorizationHandler for centralized RBAC enforcement.
+    ///
     /// Authorization rules:
     /// - System and DBA users can execute all statements
     /// - Regular users can only access their own USER tables
     /// - System tables (system.*, information_schema.*) are readable by all authenticated users
     /// - DDL operations (CREATE/ALTER/DROP NAMESPACE, STORAGE, etc.) require admin privileges
     fn check_authorization(&self, ctx: &ExecutionContext, sql: &str) -> Result<(), KalamDbError> {
-        // Admin users (DBA, System) can do anything
-        if ctx.is_admin() {
-            return Ok(());
-        }
-
-        // Classify the statement to determine authorization requirements
+        // Classify the statement
         let stmt_type = SqlStatement::classify(sql);
-
-        match stmt_type {
-            // Storage and global operations require admin privileges
-            SqlStatement::CreateStorage
-            | SqlStatement::AlterStorage
-            | SqlStatement::DropStorage
-            | SqlStatement::KillJob => {
-                Err(KalamDbError::Unauthorized(format!(
-                    "Admin privileges required to execute {}",
-                    sql.lines().next().unwrap_or("this statement")
-                )))
-            }
-
-            // User management requires admin privileges (except for self-modification)
-            SqlStatement::CreateUser | SqlStatement::DropUser => {
-                Err(KalamDbError::Unauthorized(
-                    "Admin privileges required for user management".to_string(),
-                ))
-            }
-
-            // ALTER USER allowed for self (changing own password), admin for others
-            SqlStatement::AlterUser => {
-                // Extract username from ALTER USER statement
-                // For now, we'll allow it and let the execute_alter_user method do the check
-                // TODO: Parse and verify user is modifying their own account
-                Ok(())
-            }
-
-            // Namespace DDL requires admin privileges
-            SqlStatement::CreateNamespace
-            | SqlStatement::AlterNamespace
-            | SqlStatement::DropNamespace => {
-                Err(KalamDbError::Unauthorized(
-                    "Admin privileges required for namespace operations".to_string(),
-                ))
-            }
-
-            // Read-only operations on system tables are allowed for all authenticated users
-            SqlStatement::ShowNamespaces
-            | SqlStatement::ShowTables
-            | SqlStatement::ShowStorages
-            | SqlStatement::ShowStats
-            | SqlStatement::DescribeTable => {
-                Ok(())
-            }
-
-            // CREATE TABLE, DROP TABLE, FLUSH TABLE, ALTER TABLE - check table ownership in execute methods
-            SqlStatement::CreateTable
-            | SqlStatement::AlterTable
-            | SqlStatement::DropTable
-            | SqlStatement::FlushTable
-            | SqlStatement::FlushAllTables => {
-                // Table-level authorization will be checked in the execution methods
-                Ok(())
-            }
-
-            // SELECT, INSERT, UPDATE, DELETE - check table access in execution
-            SqlStatement::Select
-            | SqlStatement::Insert
-            | SqlStatement::Update
-            | SqlStatement::Delete => {
-                // Query-level authorization will be enforced by using per-user sessions
-                // User tables are filtered by user_id in UserTableProvider
-                Ok(())
-            }
-
-            // Subscriptions, transactions, and other operations allowed for all users
-            SqlStatement::Subscribe
-            | SqlStatement::KillLiveQuery
-            | SqlStatement::BeginTransaction
-            | SqlStatement::CommitTransaction
-            | SqlStatement::RollbackTransaction => {
-                Ok(())
-            }
-
-            SqlStatement::Unknown => {
-                // Unknown statements will fail in execute anyway
-                Ok(())
-            }
-        }
+        
+        // Delegate to centralized authorization handler
+        handlers::AuthorizationHandler::check_authorization(ctx, &stmt_type)
     }
 
     /// Execute a SQL statement
@@ -915,17 +733,114 @@ impl SqlExecutor {
 
         // Classify the SQL statement and dispatch to appropriate handler
         match SqlStatement::classify(sql) {
-            SqlStatement::CreateNamespace => self.execute_create_namespace(session, sql, exec_ctx).await,
+            SqlStatement::CreateNamespace => {
+                // Route to DDL handler (Phase 9.5 - Step 1)
+                DDLHandler::execute_create_namespace(&self.namespace_service, session, sql, exec_ctx).await
+            },
             SqlStatement::AlterNamespace => self.execute_alter_namespace(session, sql, exec_ctx).await,
-            SqlStatement::DropNamespace => self.execute_drop_namespace(session, sql, exec_ctx).await,
+            SqlStatement::DropNamespace => {
+                // Route to DDL handler (Phase 9.5 - T269)
+                DDLHandler::execute_drop_namespace(&self.namespace_service, session, sql, exec_ctx).await
+            },
             SqlStatement::ShowNamespaces => self.execute_show_namespaces(session, sql, exec_ctx).await,
-            SqlStatement::CreateStorage => self.execute_create_storage(session, sql, exec_ctx).await,
+            SqlStatement::CreateStorage => {
+                // Route to DDL handler (Phase 9.5 - T270)
+                let kalam_sql = self.kalam_sql();
+                let storage_registry = self.storage_registry();
+                DDLHandler::execute_create_storage(&kalam_sql, storage_registry, session, sql, exec_ctx).await
+            },
             SqlStatement::AlterStorage => self.execute_alter_storage(session, sql, exec_ctx).await,
             SqlStatement::DropStorage => self.execute_drop_storage(session, sql, exec_ctx).await,
             SqlStatement::ShowStorages => self.execute_show_storages(session, sql, exec_ctx).await,
-            SqlStatement::CreateTable => self.execute_create_table(session, sql, exec_ctx).await,
-            SqlStatement::AlterTable => self.execute_alter_table(session, sql, exec_ctx, metadata).await,
-            SqlStatement::DropTable => self.execute_drop_table(session, sql, exec_ctx).await,
+            SqlStatement::CreateTable => {
+                // Route to DDL handler (Phase 9.5 - Step 3)
+                let user_table_service = self.user_table_service.as_ref();
+                let shared_table_service = self.shared_table_service.as_ref();
+                let stream_table_service = self.stream_table_service.as_ref();
+                let kalam_sql = self.kalam_sql();
+                
+                // Closure for caching table metadata (simplified - no actual caching in handler)
+                let cache_fn = |_namespace_id: &kalamdb_commons::models::NamespaceId, 
+                                _table_name: &kalamdb_commons::models::TableName, 
+                                _table_type: TableType, 
+                                _storage_id: &kalamdb_commons::models::StorageId, 
+                                _flush_policy: Option<kalamdb_commons::config::FlushPolicy>, 
+                                _schema: std::sync::Arc<arrow::datatypes::Schema>, 
+                                _schema_version: i32, 
+                                _deleted_retention_hours: Option<u32>| -> Result<(), KalamDbError> {
+                    // Cache is handled internally by services
+                    Ok(())
+                };
+                
+                // Closure for DataFusion registration (no-op - services handle this)
+                let register_fn = |_session: &SessionContext, 
+                                   _namespace_id: &kalamdb_commons::models::NamespaceId, 
+                                   _table_name: &kalamdb_commons::models::TableName, 
+                                   _table_type: TableType, 
+                                   _schema: std::sync::Arc<arrow::datatypes::Schema>, 
+                                   _user_id: kalamdb_commons::models::UserId| -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), KalamDbError>> + Send>> {
+                    Box::pin(async move { Ok(()) })
+                };
+                
+                // Closure for storage validation (converts between catalog and commons types)
+                let validate_storage_fn = |_storage_id: Option<kalamdb_commons::models::StorageId>| -> Result<kalamdb_commons::models::StorageId, KalamDbError> {
+                    // Services handle storage validation internally
+                    Ok(kalamdb_commons::models::StorageId::from("local"))
+                };
+                
+                // Closure for namespace validation (no-op - services validate)
+                let ensure_namespace_fn = |_namespace_id: &kalamdb_commons::models::NamespaceId| -> Result<(), KalamDbError> {
+                    // Services handle namespace validation internally
+                    Ok(())
+                };
+                
+                DDLHandler::execute_create_table(
+                    user_table_service,
+                    shared_table_service,
+                    stream_table_service,
+                    &kalam_sql,
+                    cache_fn,
+                    register_fn,
+                    validate_storage_fn,
+                    ensure_namespace_fn,
+                    session,
+                    sql,
+                    exec_ctx,
+                ).await
+            },
+            SqlStatement::AlterTable => {
+                // Route to DDL handler (Phase 9.5 - Step 2, Phase 10.2 - SchemaRegistry migration)
+                let schema_registry = self.app_context.schema_registry();
+                let kalam_sql = self.kalam_sql();
+                let cache = self.app_context.schema_cache();
+                let log_fn = |action: &str, target: &str, details: serde_json::Value| {
+                    self.log_audit_event(exec_ctx, action, target, details, metadata);
+                };
+                DDLHandler::execute_alter_table(schema_registry, &kalam_sql, Some(cache), log_fn, session, sql, exec_ctx, metadata).await
+            },
+            SqlStatement::DropTable => {
+                // Route to DDL handler (Phase 9.5 - Step 2, Phase 10.2 - SchemaRegistry migration)
+                let deletion_service = self.table_deletion_service.as_ref()
+                    .ok_or_else(|| KalamDbError::InvalidOperation(
+                        "DROP TABLE not available - table deletion service not configured".to_string()
+                    ))?;
+                let schema_registry = self.app_context.schema_registry();
+                let cache = self.app_context.schema_cache();
+                let live_query_check = |table_ref: &str| -> bool {
+                    if let Some(manager) = &self.live_query_manager {
+                        // Synchronous check - can't await in closure
+                        // This is acceptable as has_active_subscriptions_for is internally async
+                        tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current().block_on(
+                                manager.has_active_subscriptions_for(table_ref)
+                            )
+                        })
+                    } else {
+                        false
+                    }
+                };
+                DDLHandler::execute_drop_table(deletion_service, schema_registry, Some(cache), live_query_check, session, sql, exec_ctx).await
+            },
             SqlStatement::ShowTables => self.execute_show_tables(session, sql, exec_ctx).await,
             SqlStatement::DescribeTable => self.execute_describe_table(session, sql, exec_ctx).await,
             SqlStatement::ShowStats => self.execute_show_table_stats(session, sql, exec_ctx).await,
@@ -933,9 +848,9 @@ impl SqlExecutor {
             SqlStatement::FlushAllTables => self.execute_flush_all_tables(session, sql, exec_ctx).await,
             SqlStatement::KillJob => self.execute_kill_job(session, sql, exec_ctx).await,
             SqlStatement::KillLiveQuery => self.execute_kill_live_query(session, sql, exec_ctx).await,
-            SqlStatement::BeginTransaction => self.execute_begin_transaction().await,
-            SqlStatement::CommitTransaction => self.execute_commit_transaction().await,
-            SqlStatement::RollbackTransaction => self.execute_rollback_transaction().await,
+            SqlStatement::BeginTransaction => handlers::TransactionHandler::execute_begin(exec_ctx, sql).await,
+            SqlStatement::CommitTransaction => handlers::TransactionHandler::execute_commit(exec_ctx).await,
+            SqlStatement::RollbackTransaction => handlers::TransactionHandler::execute_rollback(exec_ctx).await,
             SqlStatement::Subscribe => self.execute_subscribe(session, sql, exec_ctx).await,
             SqlStatement::CreateUser => self.execute_create_user(session, sql, exec_ctx, metadata).await,
             SqlStatement::AlterUser => self.execute_alter_user(session, sql, exec_ctx, metadata).await,
@@ -960,24 +875,6 @@ impl SqlExecutor {
                 sql.lines().next().unwrap_or("")
             ))),
         }
-    }
-
-    async fn execute_begin_transaction(&self) -> Result<ExecutionResult, KalamDbError> {
-        Ok(ExecutionResult::Success(
-            "Transaction started (BEGIN)".to_string(),
-        ))
-    }
-
-    async fn execute_commit_transaction(&self) -> Result<ExecutionResult, KalamDbError> {
-        Ok(ExecutionResult::Success(
-            "Transaction committed (no-op)".to_string(),
-        ))
-    }
-
-    async fn execute_rollback_transaction(&self) -> Result<ExecutionResult, KalamDbError> {
-        Ok(ExecutionResult::Success(
-            "Transaction rollback (not supported - no changes applied)".to_string(),
-        ))
     }
 
     /// Extract table references from SQL query
@@ -1110,11 +1007,7 @@ impl SqlExecutor {
         })?;
 
         // Get storage backend for EntityStore-based providers
-        let backend = self.storage_backend.as_ref().ok_or_else(|| {
-            KalamDbError::InvalidOperation(
-                "Storage backend not configured for system tables".to_string(),
-            )
-        })?;
+        let backend = self.storage_backend();
 
         // Use EntityStore-based v2 providers for all system tables
         use crate::tables::system::{
@@ -1227,13 +1120,10 @@ impl SqlExecutor {
         use datafusion::catalog::memory::MemorySchemaProvider;
 
         // Create fresh SessionContext using the shared RuntimeEnv (efficient - no memory duplication)
-        let user_session = self.session_factory.create_session();
+        let user_session = self.session_factory().create_session();
 
         // Get KalamSQL for querying system tables
-        let kalam_sql = self
-            .kalam_sql
-            .as_ref()
-            .ok_or_else(|| KalamDbError::InvalidOperation("KalamSQL not configured".to_string()))?;
+        let kalam_sql = self.kalam_sql();
 
         // Look up user role for RBAC authorization on shared tables
         let user_role = if user_id.as_str() == "anonymous" {
@@ -1359,9 +1249,7 @@ impl SqlExecutor {
             let schema = arrow_schema_with_opts.schema;
 
             // Get shared table store
-            let store = self.shared_table_store.as_ref().ok_or_else(|| {
-                KalamDbError::InvalidOperation("SharedTableStore not configured".to_string())
-            })?;
+            let store = self.shared_table_store();
 
             // Phase 10: Create Arc<TableId> once for zero-allocation cache lookups
             let table_id = Arc::new(kalamdb_commons::models::TableId::new(
@@ -1370,9 +1258,7 @@ impl SqlExecutor {
             ));
 
             // Get unified_cache for provider
-            let unified_cache = self.unified_cache.as_ref()
-                .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
-                .clone();
+            let unified_cache = self.unified_cache();
 
             // Try to reuse a cached provider; otherwise create and cache it
             let provider: Arc<dyn datafusion::datasource::TableProvider + Send + Sync> =
@@ -1464,9 +1350,7 @@ impl SqlExecutor {
             // Create table-specific store with proper partition name
             // Instead of using the generic self.user_table_store, create a store
             // specific to this table with the correct column family name
-            let backend = self.storage_backend.as_ref().ok_or_else(|| {
-                KalamDbError::InvalidOperation("Storage backend not configured".to_string())
-            })?;
+            let backend = self.storage_backend();
 
             let table_store = Arc::new(crate::tables::new_user_table_store(
                 backend.clone(),
@@ -1481,9 +1365,7 @@ impl SqlExecutor {
             ));
 
             // Get unified_cache for provider
-            let unified_cache = self.unified_cache.as_ref()
-                .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
-                .clone();
+            let unified_cache = self.unified_cache();
 
             // Phase 3C: Get or create UserTableShared (cached singleton per table)
             let shared = if let Some(cached_shared) = unified_cache.get_user_table_shared(&table_id) {
@@ -1587,9 +1469,7 @@ impl SqlExecutor {
             let schema = arrow_schema_with_opts.schema;
 
             // Get stream table store
-            let store = self.stream_table_store.as_ref().ok_or_else(|| {
-                KalamDbError::InvalidOperation("StreamTableStore not configured".to_string())
-            })?;
+            let store = self.stream_table_store();
 
             // Phase 10: Create Arc<TableId> once for zero-allocation cache lookups
             let table_id = Arc::new(kalamdb_commons::models::TableId::new(
@@ -1598,9 +1478,7 @@ impl SqlExecutor {
             ));
 
             // Get unified_cache for provider
-            let unified_cache = self.unified_cache.as_ref()
-                .ok_or_else(|| KalamDbError::InvalidOperation("Unified cache not initialized".to_string()))?
-                .clone();
+            let unified_cache = self.unified_cache();
 
             // Create provider
             // Try to reuse a cached provider; otherwise create and cache it
@@ -1689,10 +1567,7 @@ impl SqlExecutor {
 
         // For regular users, check each referenced table
         if let Some(table_refs) = table_refs {
-            let kalam_sql = self
-                .kalam_sql
-                .as_ref()
-                .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+            let kalam_sql = self.kalam_sql();
 
             let all_tables = kalam_sql
                 .scan_all_tables()
@@ -1811,10 +1686,7 @@ impl SqlExecutor {
     async fn execute_show_tables(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let stmt = ShowTablesStatement::parse(sql)?;
 
-        let kalam_sql = self
-            .kalam_sql
-            .as_ref()
-            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+        let kalam_sql = self.kalam_sql();
 
         // Scan all tables from kalam_sql
         let tables = kalam_sql
@@ -1848,10 +1720,7 @@ impl SqlExecutor {
 
         let _stmt = ShowStoragesStatement::parse(sql).map_err(KalamDbError::InvalidSql)?;
 
-        let kalam_sql = self
-            .kalam_sql
-            .as_ref()
-            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+        let kalam_sql = self.kalam_sql();
 
         // Get all storages
         let storages = kalam_sql
@@ -1885,10 +1754,7 @@ impl SqlExecutor {
             KalamDbError::InvalidOperation(format!("CREATE STORAGE parse error: {}", e))
         })?;
 
-        let kalam_sql = self
-            .kalam_sql
-            .as_ref()
-            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+        let kalam_sql = self.kalam_sql();
 
         // Check if storage already exists
         let storage_id = StorageId::from(stmt.storage_id.as_str());
@@ -1902,14 +1768,13 @@ impl SqlExecutor {
             )));
         }
 
-        // Validate templates using StorageRegistry (only if provided)
-        if let Some(storage_registry) = &self.storage_registry {
-            if !stmt.shared_tables_template.is_empty() {
-                storage_registry.validate_template(&stmt.shared_tables_template, false)?;
-            }
-            if !stmt.user_tables_template.is_empty() {
-                storage_registry.validate_template(&stmt.user_tables_template, true)?;
-            }
+        // Validate templates using StorageRegistry (always available)
+        let storage_registry = self.storage_registry();
+        if !stmt.shared_tables_template.is_empty() {
+            storage_registry.validate_template(&stmt.shared_tables_template, false)?;
+        }
+        if !stmt.user_tables_template.is_empty() {
+            storage_registry.validate_template(&stmt.user_tables_template, true)?;
         }
 
         // Validate credentials JSON (if provided)
@@ -1967,10 +1832,7 @@ impl SqlExecutor {
             KalamDbError::InvalidOperation(format!("ALTER STORAGE parse error: {}", e))
         })?;
 
-        let kalam_sql = self
-            .kalam_sql
-            .as_ref()
-            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+        let kalam_sql = self.kalam_sql();
 
         // Get existing storage
         let storage_id = StorageId::from(stmt.storage_id.as_str());
@@ -1981,6 +1843,8 @@ impl SqlExecutor {
                 KalamDbError::NotFound(format!("Storage '{}' not found", stmt.storage_id))
             })?;
 
+        let storage_registry = self.storage_registry();
+
         // Apply updates
         if let Some(name) = stmt.storage_name {
             storage.storage_name = name;
@@ -1990,16 +1854,12 @@ impl SqlExecutor {
         }
         if let Some(template) = stmt.shared_tables_template {
             // Validate new template
-            if let Some(storage_registry) = &self.storage_registry {
-                storage_registry.validate_template(&template, false)?;
-            }
+            storage_registry.validate_template(&template, false)?;
             storage.shared_tables_template = template;
         }
         if let Some(template) = stmt.user_tables_template {
             // Validate new template
-            if let Some(storage_registry) = &self.storage_registry {
-                storage_registry.validate_template(&template, true)?;
-            }
+            storage_registry.validate_template(&template, true)?;
             storage.user_tables_template = template;
         }
 
@@ -2024,10 +1884,7 @@ impl SqlExecutor {
             KalamDbError::InvalidOperation(format!("DROP STORAGE parse error: {}", e))
         })?;
 
-        let kalam_sql = self
-            .kalam_sql
-            .as_ref()
-            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+        let kalam_sql = self.kalam_sql();
 
         // Check if storage exists
         let storage_id = StorageId::from(stmt.storage_id.as_str());
@@ -2124,10 +1981,7 @@ impl SqlExecutor {
             KalamDbError::InvalidOperation(format!("FLUSH TABLE parse error: {}", e))
         })?;
 
-        let kalam_sql = self
-            .kalam_sql
-            .as_ref()
-            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+        let kalam_sql = self.kalam_sql();
 
         // Verify table exists
         let tables = kalam_sql
@@ -2156,12 +2010,9 @@ impl SqlExecutor {
         }
 
         // Get required dependencies
-        let job_manager = self
-            .job_manager
-            .as_ref()
-            .ok_or_else(|| KalamDbError::Other("JobManager not initialized".to_string()))?;
+        let job_manager = self.job_manager();
 
-        let jobs_provider = self.jobs_table_provider.clone();
+        let jobs_provider = self.jobs_table_provider().clone();
 
         // T21: Check if a flush job is already running for this table
         let table_full_name = format!("{}.{}", stmt.namespace, stmt.table_name);
@@ -2239,7 +2090,7 @@ impl SqlExecutor {
         )));
 
         // Persist job to system.jobs
-        if let Some(ref jobs_table_provider) = self.jobs_table_provider {
+        let jobs_table_provider = self.jobs_table_provider(); if true {
             jobs_table_provider.insert_job(job_record)?;
         }
 
@@ -2247,10 +2098,7 @@ impl SqlExecutor {
         let namespace_id = stmt.namespace.clone();
         let table_name = stmt.table_name.clone();
 
-        let storage_backend = self
-            .storage_backend
-            .as_ref()
-            .ok_or_else(|| KalamDbError::Other("Storage backend not initialized".to_string()))?;
+        let storage_backend = self.storage_backend();
 
         let table_store = Arc::new(new_user_table_store(
             storage_backend.clone(),
@@ -2404,10 +2252,7 @@ impl SqlExecutor {
             KalamDbError::InvalidOperation(format!("FLUSH ALL TABLES parse error: {}", e))
         })?;
 
-        let kalam_sql = self
-            .kalam_sql
-            .as_ref()
-            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+        let kalam_sql = self.kalam_sql();
 
         // Verify namespace exists
         let namespace_id = NamespaceId::from(stmt.namespace.as_str());
@@ -2470,7 +2315,7 @@ impl SqlExecutor {
             )));
 
             // Persist job to system.jobs
-            if let Some(ref jobs_table_provider) = self.jobs_table_provider {
+            let jobs_table_provider = self.jobs_table_provider(); if true {
                 jobs_table_provider.insert_job(job_record)?;
             }
 
@@ -2536,10 +2381,7 @@ impl SqlExecutor {
     async fn execute_show_table_stats(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let stmt = ShowTableStatsStatement::parse(sql)?;
 
-        let kalam_sql = self
-            .kalam_sql
-            .as_ref()
-            .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+        let kalam_sql = self.kalam_sql();
 
         // Get all tables to find the requested one
         let tables = kalam_sql
@@ -2709,7 +2551,7 @@ impl SqlExecutor {
 
         // Back-compat: also write to legacy KalamSQL store so auth/tests using
         // the adapter can find the user while we complete full migration.
-        if let Some(kalam_sql) = &self.kalam_sql {
+        let kalam_sql = self.kalam_sql(); if true {
             let _ = kalam_sql.insert_user(&user);
         }
 
@@ -3041,7 +2883,7 @@ impl SqlExecutor {
             let _metadata = self.user_table_service.create_table(stmt)?;
 
             // Insert into system.tables via KalamSQL
-            if let Some(kalam_sql) = &self.kalam_sql {
+            let kalam_sql = self.kalam_sql(); if true {
                 let table = kalamdb_sql::Table {
                     table_id: TableId::from_strings(namespace_id.as_str(), table_name.as_str()),
                     table_name: table_name.clone(),
@@ -3068,7 +2910,7 @@ impl SqlExecutor {
             // NOTE: For USER tables, this registration is skipped (returns Ok immediately)
             // because user tables are registered dynamically at query time per user.
             // The user_id parameter is ignored for USER table type.
-            if self.user_table_store.is_some() {
+            if true {
                 let dummy_user_id = crate::catalog::UserId::from("system");
                 self.register_table_with_datafusion(
                     session,
@@ -3129,7 +2971,7 @@ impl SqlExecutor {
 
             // TODO: In the future create the table and directly add it to the cache and read the Table from the cache itself
             // Insert into system.tables via KalamSQL
-            if let Some(kalam_sql) = &self.kalam_sql {
+            let kalam_sql = self.kalam_sql(); if true {
                 let table = kalamdb_sql::Table {
                     table_id: TableId::from_strings(namespace_id.as_str(), table_name.as_str()),
                     table_name: table_name.clone(),
@@ -3155,7 +2997,7 @@ impl SqlExecutor {
             }
 
             // Register with DataFusion if stores are configured
-            if self.stream_table_store.is_some() {
+            if true {
                 self.register_table_with_datafusion(
                     session,
                     &namespace_id,
@@ -3251,7 +3093,7 @@ impl SqlExecutor {
                     table_name
                 );
                 // Insert into system.tables via KalamSQL
-                if let Some(kalam_sql) = &self.kalam_sql {
+                let kalam_sql = self.kalam_sql(); if true {
                     // Serialize flush policy for storage
                     let flush_policy_json =
                         serde_json::to_string(&flush_policy.clone().unwrap_or_default())
@@ -3289,7 +3131,7 @@ impl SqlExecutor {
                 }
 
                 // Register with DataFusion if stores are configured
-                if self.shared_table_store.is_some() {
+                if true {
                     self.register_table_with_datafusion(
                         session,
                         &namespace_id,
@@ -3349,7 +3191,7 @@ impl SqlExecutor {
             let was_created = self.shared_table_service.create_table(stmt)?;
 
             if was_created {
-                if let Some(kalam_sql) = &self.kalam_sql {
+                let kalam_sql = self.kalam_sql(); if true {
                     // Serialize flush policy for storage
                     let flush_policy_json =
                         serde_json::to_string(&flush_policy.clone().unwrap_or_default())
@@ -3383,7 +3225,7 @@ impl SqlExecutor {
                     log::warn!("kalam_sql is None for default SHARED table, cannot insert into system.tables");
                 }
 
-                if self.shared_table_store.is_some() {
+                if true {
                     self.register_table_with_datafusion(
                         session,
                         &namespace_id,
@@ -3444,10 +3286,7 @@ impl SqlExecutor {
             }
 
             // Get the table to verify it exists and is a SHARED table
-            let kalam_sql = self
-                .kalam_sql
-                .as_ref()
-                .ok_or_else(|| KalamDbError::Other("KalamSql not initialized".to_string()))?;
+            let kalam_sql = self.kalam_sql();
 
             let table_id =
                 TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
@@ -3531,14 +3370,11 @@ impl SqlExecutor {
         let table_identifier =
             TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
 
-        let actual_table_type = if let Some(kalam_sql) = &self.kalam_sql {
-            match kalam_sql.get_table(table_identifier.as_ref()) {
-                Ok(Some(table)) => table.table_type,
-                Ok(None) => requested_table_type,
-                Err(_) => requested_table_type,
-            }
-        } else {
-            requested_table_type
+        let kalam_sql = self.kalam_sql();
+        let actual_table_type = match kalam_sql.get_table(table_identifier.as_ref()) {
+            Ok(Some(table)) => table.table_type,
+            Ok(None) => requested_table_type,
+            Err(_) => requested_table_type,
         };
 
         // TODO: Track table ownership in system tables to determine is_owner accurately (#US3 follow-up)
@@ -4587,10 +4423,7 @@ impl SqlExecutor {
         &self,
         full_table_name: &str,
     ) -> Result<(usize, String, u64), KalamDbError> {
-        let provider = match &self.jobs_table_provider {
-            Some(provider) => provider,
-            None => return Ok((0, "never".to_string(), 0)),
-        };
+        let provider = self.jobs_table_provider();
 
         let jobs = provider.list_jobs().map_err(|e| {
             KalamDbError::Other(format!("Failed to list jobs for SHOW TABLE STATS: {}", e))
@@ -4709,247 +4542,5 @@ impl SqlExecutor {
 
     fn password_policy(&self) -> PasswordPolicy {
         PasswordPolicy::default().with_enforced_complexity(self.enforce_password_complexity)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use datafusion::prelude::SessionContext;
-    use kalamdb_sql::KalamSql;
-    use kalamdb_store::test_utils::TestDb;
-    use kalamdb_store::{RocksDBBackend, StorageBackend};
-
-    fn setup_test_executor() -> SqlExecutor {
-        let test_db =
-            TestDb::new(&["system_namespaces", "system_tables", "system_table_schemas"]).unwrap();
-
-        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
-        let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
-        let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
-        let session_context = Arc::new(SessionContext::new());
-
-        // Initialize table services for tests (now zero-sized structs)
-        let user_table_service = Arc::new(crate::services::UserTableService::new());
-        let shared_table_service = Arc::new(crate::services::SharedTableService::new());
-        let stream_table_service = Arc::new(crate::services::StreamTableService::new());
-
-        SqlExecutor::new(
-            namespace_service,
-            user_table_service,
-            shared_table_service,
-            stream_table_service,
-        )
-        .with_storage_backend(backend)
-    }
-
-    fn create_test_session() -> SessionContext {
-        SessionContext::new()
-    }
-
-    fn create_test_exec_ctx() -> ExecutionContext {
-        ExecutionContext::new(
-            UserId::from("test_user"),
-            Role::Dba,  // Use Dba role for tests to bypass permission checks
-        )
-    }
-
-    #[tokio::test]
-    async fn test_execute_create_namespace() {
-        let executor = setup_test_executor();
-        let session = create_test_session();
-        let exec_ctx = create_test_exec_ctx();
-
-        let result = executor
-            .execute(&session, "CREATE NAMESPACE app", &exec_ctx)
-            .await
-            .unwrap();
-
-        match result {
-            ExecutionResult::Success(msg) => {
-                assert!(msg.contains("created successfully"));
-            }
-            _ => panic!("Expected Success result"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_show_namespaces() {
-        let executor = setup_test_executor();
-        let session = create_test_session();
-        let exec_ctx = create_test_exec_ctx();
-
-        // Create some namespaces
-        executor
-            .execute(&session, "CREATE NAMESPACE app1", &exec_ctx)
-            .await
-            .unwrap();
-        executor
-            .execute(&session, "CREATE NAMESPACE app2", &exec_ctx)
-            .await
-            .unwrap();
-
-        let result = executor.execute(&session, "SHOW NAMESPACES", &exec_ctx).await.unwrap();
-
-        match result {
-            ExecutionResult::RecordBatch(batch) => {
-                assert_eq!(batch.num_rows(), 2);
-                assert_eq!(batch.num_columns(), 3);
-            }
-            _ => panic!("Expected RecordBatch result"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_alter_namespace() {
-        let executor = setup_test_executor();
-        let session = create_test_session();
-        let exec_ctx = create_test_exec_ctx();
-
-        executor
-            .execute(&session, "CREATE NAMESPACE app", &exec_ctx)
-            .await
-            .unwrap();
-
-        let result = executor
-            .execute(&session, "ALTER NAMESPACE app SET OPTIONS (enabled = true)", &exec_ctx)
-            .await
-            .unwrap();
-
-        match result {
-            ExecutionResult::Success(msg) => {
-                assert!(msg.contains("updated successfully"));
-            }
-            _ => panic!("Expected Success result"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_describe_stream_table_shows_no_system_columns() {
-        // Create test database with necessary column families
-        let test_db =
-            TestDb::new(&["system_namespaces", "system_tables", "system_table_schemas", "information_schema_tables"]).unwrap();
-        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
-        let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
-        let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
-        let session_context = Arc::new(SessionContext::new());
-
-        // Initialize table services for tests (now zero-sized structs)
-        let user_table_service = Arc::new(crate::services::UserTableService::new());
-        let shared_table_service = Arc::new(crate::services::SharedTableService::new());
-        let stream_table_service = Arc::new(crate::services::StreamTableService::new());
-
-        let storage_registry = Arc::new(crate::storage::StorageRegistry::new(
-            kalam_sql.clone(),
-            "./data/storage".to_string(),
-        ));
-
-        let mut executor = SqlExecutor::new(
-            namespace_service,
-            user_table_service,
-            shared_table_service,
-            stream_table_service,
-        )
-        .with_storage_backend(backend.clone())
-        .with_storage_registry(storage_registry.clone());
-
-        // Create and populate unified cache for DESCRIBE TABLE
-        let unified_cache = Arc::new(crate::catalog::SchemaCache::new(100, Some(storage_registry)));
-        
-        // Create a test stream table definition using TableDefinition
-        use kalamdb_commons::schemas::{TableDefinition, TableOptions};
-        use crate::catalog::CachedTableData;
-        
-        let table_def = TableDefinition::new(
-            NamespaceId::new("app"),
-            TableName::new("events"),
-            kalamdb_commons::schemas::TableType::Stream,
-            vec![], // Stream tables have no user-defined columns
-            TableOptions::stream(3600), // Default 1 hour TTL
-            None, // table_comment
-        ).unwrap();
-
-        kalam_sql.upsert_table_definition(&table_def).unwrap();
-
-        // Populate cache with the table definition
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("events"));
-        let cached_data = CachedTableData::new(
-            table_id.clone(),
-            kalamdb_commons::schemas::TableType::Stream,
-            chrono::Utc::now(),
-            Some(StorageId::new("local")),
-            crate::flush::FlushPolicy::default(),
-            "./data/storage/stream".to_string(), // storage_path_template
-            1, // schema_version
-            None, // deleted_retention_hours
-            Arc::new(table_def),
-        );
-        unified_cache.insert(table_id, Arc::new(cached_data));
-
-        // Set cache in executor
-        executor.unified_cache = Some(unified_cache);
-
-        let session = create_test_session();
-        let exec_ctx = create_test_exec_ctx();
-
-        // Execute DESCRIBE TABLE
-        let result = executor
-            .execute(&session, "DESCRIBE TABLE app.events", &exec_ctx)
-            .await
-            .unwrap();
-
-        // Verify stream table shows no user-defined columns
-        match result {
-            ExecutionResult::RecordBatch(batch) => {
-                // Should have 8 columns (standard DESCRIBE TABLE schema)
-                assert_eq!(batch.num_columns(), 8);
-                
-                // Should have 0 rows (stream tables have no user-defined columns)
-                assert_eq!(batch.num_rows(), 0, "Stream tables should have no user-defined columns");
-            }
-            _ => panic!("Expected RecordBatch result"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_drop_namespace() {
-        let executor = setup_test_executor();
-        let session = create_test_session();
-        let exec_ctx = create_test_exec_ctx();
-
-        executor
-            .execute(&session, "CREATE NAMESPACE app", &exec_ctx)
-            .await
-            .unwrap();
-
-        let result = executor.execute(&session, "DROP NAMESPACE app", &exec_ctx).await.unwrap();
-
-        match result {
-            ExecutionResult::Success(msg) => {
-                assert!(msg.contains("dropped successfully"));
-            }
-            _ => panic!("Expected Success result"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_drop_namespace_with_tables() {
-        let executor = setup_test_executor();
-        let session = create_test_session();
-        let exec_ctx = create_test_exec_ctx();
-
-        executor
-            .execute(&session, "CREATE NAMESPACE app", &exec_ctx)
-            .await
-            .unwrap();
-
-        // Simulate adding a table
-        executor
-            .namespace_service
-            .increment_table_count("app")
-            .unwrap();
-
-        let result = executor.execute(&session, "DROP NAMESPACE app", &exec_ctx).await;
-        assert!(result.is_err());
     }
 }

@@ -11,3 +11,4 @@ pub mod registry;
 pub use arrow_schema::ArrowSchemaWithOptions;
 pub use projection::{project_batch, schemas_compatible};
 pub use system_columns::SystemColumns;
+pub use registry::{SchemaRegistry, TableMetadata};

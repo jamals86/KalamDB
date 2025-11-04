@@ -119,7 +119,7 @@ If the user already specified primary key then we dont do that, the _id we add a
             );
 
 107) Check if we can here combine this with our main cache: backend\crates\kalamdb-core\src\sql\schema_cache.rs, or if this needed anymore?
-
+108) Prevent creating namespace with names like: sys/system/root/kalamdb/kalam/main/default/sql and name these as SYSTEM_RESERVED_NAMES, also add function to Namespaceid.isSystem() to check if the namespace is a system one
 
 
 
