@@ -237,6 +237,14 @@ Parameters Change Acceptance Scenarios:
 - How are concurrent schema updates handled? SchemaRegistry invalidation must be atomic and visible to subsequent operations.
 - What if legacy code paths still reference removed layers? The build must fail with actionable errors (no silent fallbacks).
 
+## Clarifications
+
+### Session 2025-11-04
+
+- Q: FR-011: Migration Strategy for KalamSql Utility Methods - Should we port remaining utility methods into providers vs. add minimal facades in SystemTablesRegistry? → A: Port utility methods directly into respective providers (e.g., user helpers → UsersTableProvider, job helpers → JobsTableProvider). Each provider exposes its own helper methods.
+- Q: FR-012: External Tool Compatibility with KalamSql Removal - Are any external tools directly expecting KalamSql semantics? → A: No external tools directly depend on KalamSql semantics. All external integrations use the public REST API / SQL interface, which remains unchanged. Proceed with full KalamSql removal.
+- Q: FR-013: Release Versioning for Internal Refactor - Do we tag this refactor under a minor or patch release for Alpha? → A: Tag as patch release (0.0.X). API remains unchanged, so this is a patch-level improvement. Reserves minor versions for new features.
+
 ## Requirements (mandatory)
 
 ### Functional Requirements
@@ -251,12 +259,9 @@ Parameters Change Acceptance Scenarios:
 - FR-008: All public behavior MUST remain backward-compatible at the API level (no user-facing breaking changes).
 - FR-009: The entire workspace MUST compile, and all tests MUST pass post-refactor.
 - FR-010: SchemaRegistry MUST be the single source for table schema/definition reads in handlers.
-
-Unclear/Decision Items:
-
-- FR-011: Migration of any KalamSql-specific helpers MUST be handled by \[NEEDS CLARIFICATION: Should we port remaining utility methods into providers vs. add minimal facades in SystemTablesRegistry?]
-- FR-012: Backward compatibility strategy for external integrations MUST be defined \[NEEDS CLARIFICATION: Are any external tools directly expecting KalamSql semantics?]
-- FR-013: Versioning of internal APIs MUST be documented \[NEEDS CLARIFICATION: Do we tag this refactor under a minor or patch release for Alpha?]
+- FR-011: Migration of any KalamSql-specific utility methods MUST port them directly into respective providers (e.g., user helpers → UsersTableProvider, job helpers → JobsTableProvider). Each provider exposes its own helper methods for clean separation of concerns.
+- FR-012: External integrations use the public REST API / SQL interface exclusively. No external tools depend on KalamSql internal semantics. Full KalamSql removal is safe as long as API-level backward compatibility (FR-008) is maintained.
+- FR-013: This refactor MUST be tagged as a patch release (0.0.X) since the API remains unchanged. This is an internal implementation improvement that reserves minor version increments for new features.
 
 ### Key Entities
 
