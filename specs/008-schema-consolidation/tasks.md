@@ -1705,11 +1705,129 @@ The critical path through this feature is:
 
 ---
 
+## Phase 8: User Story 9 - Unified Job Management System (Priority: P1)
+
+**Goal**: Consolidate all job-related code into single JobManager with idempotency, unified messaging, exception tracing, retry logic, and short job IDs
+
+**Independent Test**: Create jobs of each type, verify all appear in system.jobs with correct status transitions, check jobs.log contains job-specific entries, validate job ID format (FL-abc123), test crash recovery
+
+**Status**: ⏳ NOT STARTED - Design proposal complete in spec.md
+
+### Enhanced Job Model for US9
+
+- [ ] T158 [P] [US9] Update Job struct in `backend/crates/kalamdb-commons/src/models/system.rs` to add `idempotency_key: Option<String>` field
+- [ ] T159 [P] [US9] Update Job struct in `backend/crates/kalamdb-commons/src/models/system.rs` to rename `result` + `error_message` → unified `message: Option<String>` field
+- [ ] T160 [P] [US9] Update Job struct in `backend/crates/kalamdb-commons/src/models/system.rs` to rename `trace` → `exception_trace: Option<String>` field
+- [ ] T161 [P] [US9] Update Job struct in `backend/crates/kalamdb-commons/src/models/system.rs` to add retry fields: `retry_count: u32`, `max_retries: u32`
+- [ ] T162 [P] [US9] Update Job struct in `backend/crates/kalamdb-commons/src/models/system.rs` to change `parameters` from JSON array to JSON object (documentation update)
+- [ ] T163 [US9] Update Job::new() in `backend/crates/kalamdb-commons/src/models/system.rs` to set initial status to New (not Running) and initialize retry_count=0, max_retries=3
+- [ ] T164 [P] [US9] Add Job::queue() method in `backend/crates/kalamdb-commons/src/models/system.rs` to transition status to Queued
+- [ ] T165 [P] [US9] Add Job::start() method in `backend/crates/kalamdb-commons/src/models/system.rs` to transition status to Running with timestamp
+- [ ] T166 [US9] Update Job::complete() signature in `backend/crates/kalamdb-commons/src/models/system.rs` to accept `message: Option<String>` and clear exception_trace
+- [ ] T167 [US9] Update Job::fail() signature in `backend/crates/kalamdb-commons/src/models/system.rs` to accept `error_message: String, exception_trace: Option<String>`
+- [ ] T168 [P] [US9] Add Job::retry() method in `backend/crates/kalamdb-commons/src/models/system.rs` to increment retry_count, set Retrying status, update message and exception_trace
+- [ ] T169 [P] [US9] Add Job::can_retry() method in `backend/crates/kalamdb-commons/src/models/system.rs` to check if retry_count < max_retries
+- [ ] T170 [P] [US9] Add Job::with_idempotency_key() builder in `backend/crates/kalamdb-commons/src/models/system.rs`
+- [ ] T171 [P] [US9] Add Job::with_max_retries() builder in `backend/crates/kalamdb-commons/src/models/system.rs`
+- [ ] T172 [P] [US9] Add Job::daily_flush_key() static helper in `backend/crates/kalamdb-commons/src/models/system.rs` for format "flush:{namespace}:{table}:{YYYYMMDD}"
+- [ ] T173 [P] [US9] Add Job::hourly_cleanup_key() static helper in `backend/crates/kalamdb-commons/src/models/system.rs` for format "cleanup:{type}:{YYYYMMDDTHH}"
+
+### Enhanced JobStatus Enum for US9
+
+- [ ] T174 [P] [US9] Extend JobStatus enum in `backend/crates/kalamdb-commons/src/models/system.rs` to add New, Queued, Retrying variants (7 total states)
+- [ ] T175 [P] [US9] Add JobStatus::is_active() method in `backend/crates/kalamdb-commons/src/models/system.rs` returning true for New, Queued, Running, Retrying
+
+### Enhanced JobType with Prefixes for US9
+
+- [ ] T176 [P] [US9] Add JobType variants in `backend/crates/kalamdb-commons/src/models/system.rs`: Retention, StreamEviction, UserCleanup (8 total types)
+- [ ] T177 [P] [US9] Add JobType::prefix() method in `backend/crates/kalamdb-commons/src/models/system.rs` returning 2-char prefix (FL, CO, CL, BK, RS, RT, SE, UC)
+
+### Short JobId Implementation for US9
+
+- [ ] T178 [P] [US9] Update JobId in `backend/crates/kalamdb-commons/src/models/types.rs` to implement generate(job_type) with format {PREFIX}-{base62(6 chars)}
+- [ ] T179 [P] [US9] Add JobId::job_type() method in `backend/crates/kalamdb-commons/src/models/types.rs` to parse job type from prefix
+- [ ] T180 [P] [US9] Add base62_encode() utility function in `backend/crates/kalamdb-commons/src/utils/encoding.rs` for 6-char short IDs
+
+### Update Existing Job Code for US9
+
+- [ ] T181 [US9] Update all Job struct usages in `backend/crates/kalamdb-core/src/jobs/executor.rs` to use new field names (result/error_message → message, trace → exception_trace)
+- [ ] T182 [P] [US9] Update flush job creation in `backend/crates/kalamdb-core/src/jobs/user_table_flush.rs` to use idempotency key and new status flow
+- [ ] T183 [P] [US9] Update cleanup job creation in `backend/crates/kalamdb-core/src/jobs/job_cleanup.rs` to use idempotency key and new status flow
+- [ ] T184 [P] [US9] Update retention job creation in `backend/crates/kalamdb-core/src/jobs/retention.rs` to use idempotency key and new status flow
+- [ ] T185 [P] [US9] Update stream eviction job creation in `backend/crates/kalamdb-core/src/jobs/stream_eviction.rs` to use idempotency key and new status flow
+- [ ] T186 [P] [US9] Update user cleanup job creation in `backend/crates/kalamdb-core/src/jobs/user_cleanup.rs` to use idempotency key and new status flow
+
+### Idempotency Checking for US9
+
+- [ ] T187 [US9] Add find_by_idempotency_key() method to JobsTableProvider in `backend/crates/kalamdb-core/src/tables/system/jobs_v2/jobs_table.rs`
+- [ ] T188 [US9] Implement idempotency check in job creation logic in `backend/crates/kalamdb-core/src/jobs/executor.rs` - query system.jobs for active jobs (New, Queued, Running, Retrying) with same key
+- [ ] T189 [US9] Return error "Job already running: {job_id}" if active job exists with same idempotency key in `backend/crates/kalamdb-core/src/jobs/executor.rs`
+
+### JobLogger Implementation for US9
+
+- [ ] T190 [P] [US9] Create JobLogger struct in `backend/crates/kalamdb-core/src/jobs/job_logger.rs` with dedicated jobs.log file handle
+- [ ] T191 [P] [US9] Implement JobLogger::log() method in `backend/crates/kalamdb-core/src/jobs/job_logger.rs` with format "[{timestamp}] [{job_id}] {level} - {message}"
+- [ ] T192 [P] [US9] Implement JobLogger::log_structured() method in `backend/crates/kalamdb-core/src/jobs/job_logger.rs` for JSON logging
+- [ ] T193 [US9] Integrate JobLogger into JobExecutor in `backend/crates/kalamdb-core/src/jobs/executor.rs` to log all job lifecycle events
+
+### System.jobs Table Update for US9
+
+- [ ] T194 [US9] Update system.jobs table definition in `backend/crates/kalamdb-core/src/tables/system/jobs_v2/jobs_table.rs` to include idempotency_key column
+- [ ] T195 [US9] Update system.jobs table definition in `backend/crates/kalamdb-core/src/tables/system/jobs_v2/jobs_table.rs` to rename result + error_message → message column
+- [ ] T196 [US9] Update system.jobs table definition in `backend/crates/kalamdb-core/src/tables/system/jobs_v2/jobs_table.rs` to rename trace → exception_trace column
+- [ ] T197 [US9] Update system.jobs table definition in `backend/crates/kalamdb-core/src/tables/system/jobs_v2/jobs_table.rs` to add retry_count, max_retries columns
+- [ ] T198 [US9] Add index on idempotency_key column in `backend/crates/kalamdb-core/src/tables/system/jobs_v2/jobs_table.rs` for fast lookup
+
+### Unit Tests for US9
+
+- [ ] T199 [P] [US9] Write unit tests for Job struct changes in `backend/crates/kalamdb-commons/tests/test_job_model.rs` (new fields, builders, state transitions)
+- [ ] T200 [P] [US9] Write unit tests for JobStatus::is_active() in `backend/crates/kalamdb-commons/tests/test_job_status.rs` (New, Queued, Running, Retrying return true)
+- [ ] T201 [P] [US9] Write unit tests for JobType::prefix() in `backend/crates/kalamdb-commons/tests/test_job_type.rs` (all 8 types return correct prefix)
+- [ ] T202 [P] [US9] Write unit tests for JobId::generate() in `backend/crates/kalamdb-commons/tests/test_job_id.rs` (correct format FL-abc123, unique IDs)
+- [ ] T203 [P] [US9] Write unit tests for JobId::job_type() in `backend/crates/kalamdb-commons/tests/test_job_id.rs` (parse prefix correctly)
+- [ ] T204 [P] [US9] Write unit tests for Job::retry() in `backend/crates/kalamdb-commons/tests/test_job_model.rs` (increment retry_count, set Retrying status)
+- [ ] T205 [P] [US9] Write unit tests for Job::can_retry() in `backend/crates/kalamdb-commons/tests/test_job_model.rs` (respect max_retries limit)
+- [ ] T206 [P] [US9] Write unit tests for idempotency key helpers in `backend/crates/kalamdb-commons/tests/test_job_model.rs` (daily_flush_key, hourly_cleanup_key formats)
+
+### Integration Tests for US9
+
+- [ ] T207 [P] [US9] Write integration test in `backend/tests/test_job_management.rs` verifying job creation with idempotency key prevents duplicate creation
+- [ ] T208 [P] [US9] Write integration test in `backend/tests/test_job_management.rs` verifying completed job allows new job with same idempotency key
+- [ ] T209 [P] [US9] Write integration test in `backend/tests/test_job_management.rs` verifying job retry increments retry_count and transitions to Retrying status
+- [ ] T210 [P] [US9] Write integration test in `backend/tests/test_job_management.rs` verifying job fails permanently after max_retries exhausted
+- [ ] T211 [P] [US9] Write integration test in `backend/tests/test_job_management.rs` verifying job status transitions New → Queued → Running → Completed
+- [ ] T212 [P] [US9] Write integration test in `backend/tests/test_job_management.rs` verifying JobLogger logs to jobs.log with correct format
+- [ ] T213 [P] [US9] Write integration test in `backend/tests/test_job_management.rs` verifying all job types (8 types) generate correct prefixed job IDs
+- [ ] T214 [P] [US9] Write integration test in `backend/tests/test_job_management.rs` verifying exception_trace is cleared on successful completion
+- [ ] T215 [P] [US9] Write integration test in `backend/tests/test_job_management.rs` verifying message field serves both success and error messages
+- [ ] T216 [US9] Run `cargo test -p kalamdb-core --test test_job_management` and verify 100% pass rate
+
+**Checkpoint**: ✅ User Story 9 complete - unified job management with idempotency, retry logic, short IDs, unified messaging, exception tracing
+
+**Phase 8 Progress Summary**:
+- **Status**: ⏳ NOT STARTED
+- **Tasks**: 59 tasks (T158-T216)
+  - T158-T177: Job model enhancements (20 tasks)
+  - T178-T180: Short JobId implementation (3 tasks)
+  - T181-T186: Update existing job code (6 tasks)
+  - T187-T189: Idempotency checking (3 tasks)
+  - T190-T193: JobLogger implementation (4 tasks)
+  - T194-T198: System.jobs table updates (5 tasks)
+  - T199-T206: Unit tests (8 tasks)
+  - T207-T216: Integration tests (10 tasks)
+- **Estimated Duration**: 5-7 days
+- **Dependencies**: Requires Phase 2 (Job model in kalamdb-commons) and Phase 3 (system.jobs table)
+- **Parallel Opportunities**: T158-T173 (Job model), T174-T177 (JobStatus/JobType), T178-T180 (JobId) can run in parallel
+- **Next Step**: Start with T158-T177 (Job model enhancements) in parallel
+
+---
+
 **Tasks Generated**: 2025-11-01  
-**Tasks Updated**: 2025-11-01 (added type-safe TableOptions: T013b-T013h, T015b, T021b)  
-**Total Tasks**: 157 (includes type-safe TableOptions implementation)  
-**Completed Tasks**: 31 (Phase 1: 4 tasks, Phase 2: 27 tasks) - 20% complete  
-**Estimated Duration**: 13-26 days (varies by team size, 20% complete)  
-**Next Step**: Begin Phase 3 (User Story 1: Schema Consolidation) → EntityStore implementation
+**Tasks Updated**: 2025-11-04 (added User Story 9: Unified Job Management System - Phase 8)  
+**Total Tasks**: 216 (includes unified job management with idempotency and retry logic)  
+**Completed Tasks**: 145 (Phases 1-6 complete, Phase 7 in progress)  
+**Phase 8 Tasks**: 59 tasks for User Story 9 (job management consolidation)  
+**Estimated Duration**: 26-33 days total (20 days complete, 6-13 days remaining)  
+**Next Step**: Complete Phase 7 (Polish) documentation tasks, then optionally begin Phase 8 (Job Management)
 
 
