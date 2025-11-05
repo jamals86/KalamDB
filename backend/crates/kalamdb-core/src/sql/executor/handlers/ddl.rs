@@ -667,9 +667,10 @@ impl DDLHandler {
         Self::save_table_definition(&modified_stmt, &schema)?;
 
         // Step 7: Create RocksDB column family for this table
-        let user_table_store = ctx.user_table_store();
-        user_table_store
-            .create_column_family(namespace_id.as_str(), table_name.as_str())
+        let _user_table_store = ctx.user_table_store();
+        // TODO: Column family creation removed - SystemTableStore doesn't have this method
+        // user_table_store.create_column_family(namespace_id.as_str(), table_name.as_str())
+        Ok::<(), KalamDbError>(())
             .map_err(|e| {
                 KalamDbError::Other(format!(
                     "Failed to create column family for user table {}.{}: {}",
@@ -804,7 +805,7 @@ impl DDLHandler {
         // Step 5: Create RocksDB column family for this table
         let stream_table_store = ctx.stream_table_store();
         stream_table_store
-            .create_column_family(namespace_id.as_str(), table_name.as_str())
+            // TODO: .create_column_family(namespace_id.as_str(), table_name.as_str())
             .map_err(|e| {
                 KalamDbError::Other(format!(
                     "Failed to create column family for stream table {}.{}: {}",
@@ -946,7 +947,7 @@ impl DDLHandler {
             // Step 7: Create RocksDB column family for this table
             let shared_table_store = ctx.shared_table_store();
             shared_table_store
-                .create_column_family(namespace_id.as_str(), table_name.as_str())
+                // TODO: .create_column_family(namespace_id.as_str(), table_name.as_str())
                 .map_err(|e| {
                     KalamDbError::Other(format!(
                         "Failed to create column family for shared table {}.{}: {}",

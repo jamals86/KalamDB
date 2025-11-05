@@ -185,6 +185,12 @@ impl SqlExecutor {
         self.app_context.session_factory()
     }
     
+    // TODO: Remove this stub - kalam_sql was removed in Phase 8
+    #[deprecated(note = "KalamSql removed in Phase 8, use providers instead")]
+    fn kalam_sql(&self) -> ! {
+        panic!("kalam_sql removed in Phase 8 - use system_tables() providers instead")
+    }
+    
     /// DEPRECATED: Old constructor removed - use SqlExecutor::new(app_context) instead
     /// Set the storage registry (optional, for storage template validation)
     // ========================================================================
@@ -1562,9 +1568,10 @@ impl SqlExecutor {
             // Create new namespace
             let namespace = kalamdb_commons::system::Namespace {
                 namespace_id: namespace_id.clone(),
-                namespace_name: stmt.name.as_str().to_string(),
+                name: stmt.name.as_str().to_string(),
                 created_at: chrono::Utc::now().timestamp_millis(),
-                deleted_at: None,
+                options: None,
+                table_count: 0,
             };
             self.namespaces_provider().create_namespace(namespace)?;
             true
@@ -2633,7 +2640,7 @@ impl SqlExecutor {
     }
 
     async fn execute_kill_live_query(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
-        let manager = self.live_query_manager().ok_or_else(|| {
+        let manager = Some(self.live_query_manager()).ok_or_else(|| {
             KalamDbError::InvalidOperation("Live query manager not configured".to_string())
         })?;
 
@@ -2777,7 +2784,7 @@ impl SqlExecutor {
             // Validate and resolve storage_id
             let storage_id = self.validate_storage_id(stmt_storage_id)?;
 
-            let _metadata = self.user_table_service.create_table(stmt)?;
+            let _metadata = self.user_table_store().create_table(stmt)?;
 
             // Insert into system.tables via KalamSQL
             let kalam_sql = self.kalam_sql(); if true {
@@ -2864,7 +2871,7 @@ impl SqlExecutor {
             let retention_seconds = stmt.ttl_seconds.map(|t| t as u32);
             let flush_policy = stmt.flush_policy.clone().map(crate::flush::FlushPolicy::from).unwrap_or_default();
 
-            self.stream_table_service.create_table(stmt)?;
+            self.stream_table_store().create_table(stmt)?;
 
             // TODO: In the future create the table and directly add it to the cache and read the Table from the cache itself
             // Insert into system.tables via KalamSQL
@@ -2975,7 +2982,7 @@ impl SqlExecutor {
             // Validate and resolve storage_id
             let storage_id = self.validate_storage_id(stmt_storage_id)?;
 
-            let was_created = self.shared_table_service.create_table(stmt)?;
+            let was_created = self.shared_table_store().create_table(stmt)?;
             log::debug!(
                 "CREATE SHARED TABLE: was_created={}, table_name={}",
                 was_created,
@@ -3085,7 +3092,7 @@ impl SqlExecutor {
             // Validate and resolve storage_id
             let storage_id = self.validate_storage_id(stmt_storage_id)?;
 
-            let was_created = self.shared_table_service.create_table(stmt)?;
+            let was_created = self.shared_table_store().create_table(stmt)?;
 
             if was_created {
                 let kalam_sql = self.kalam_sql(); if true {
@@ -3252,7 +3259,7 @@ impl SqlExecutor {
         exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         // Check if table deletion service is available
-        let deletion_service = self.table_deletion_service.as_ref().ok_or_else(|| {
+        let deletion_service = // TODO: table_deletion_service removed {
             KalamDbError::InvalidOperation(
                 "DROP TABLE not available - table deletion service not configured".to_string(),
             )
