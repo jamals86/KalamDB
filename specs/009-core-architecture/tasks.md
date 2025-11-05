@@ -307,7 +307,7 @@
   - Table definition storage: `kalam_sql.upsert_table_definition()` → `schema_registry.put_table_definition()`
   - DROP TABLE metadata: `kalam_sql.get_table()` → `tables_provider.get_table_by_id()`
   - Active subscriptions: `kalam_sql.scan_all_live_queries()` → `live_queries_provider.scan_all_live_queries()` with Arrow parsing
-  - Metadata cleanup: Dual deletion via `tables_provider.delete_table()` + `schema_registry.delete_table_definition()`
+  - Metadata cleanup: Dual deletion via `tables_provider.delete_table()` + `schema_registry.delete_table_definition()`/
 - [X] **Import Cleanup**: Removed `use kalamdb_sql::KalamSql;` from handlers/ddl.rs
 
 ### Keep Valid Services
