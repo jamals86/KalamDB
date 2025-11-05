@@ -379,6 +379,32 @@ cargo test -p kalamdb-sql
       - **Build Status**: ✅ kalamdb-core compiles successfully, zero new errors
       - **Documentation**: specs/009-core-architecture/PHASE9_CLEANUP_SUMMARY.md
       - **Next Steps**: Migrate lifecycle.rs to UnifiedJobManager, then remove 5 deprecated files (~1,700 lines)
+  - **Phase 9 Lifecycle Migration** (2025-11-05): ✅ **COMPLETE**
+    - **Problem**: lifecycle.rs still used 5 deprecated job modules (executor.rs, job_cleanup.rs, stream_eviction.rs, stream_eviction_scheduler.rs, user_cleanup.rs)
+    - **Solution**: Migrated all job management to UnifiedJobManager, deleted all deprecated modules
+    - **Lifecycle Changes**:
+      - Removed JobExecutor instance creation and usage (5 method calls)
+      - Removed StreamEvictionScheduler and StreamEvictionJob (3 usage sites)
+      - Removed UserCleanupJob tokio::spawn task (80+ lines)
+      - Updated ApplicationComponents struct (removed 2 fields)
+      - Added UnifiedJobManager.shutdown() + job status polling for graceful shutdown
+      - Updated bootstrap() to return (ApplicationComponents, Arc<AppContext>)
+      - Updated run() to accept app_context parameter for job manager access
+    - **Files Deleted** (5 modules, 1,700+ lines):
+      - executor.rs (858 lines)
+      - job_cleanup.rs (200+ lines)
+      - stream_eviction.rs (250+ lines)
+      - stream_eviction_scheduler.rs (200+ lines)
+      - user_cleanup.rs (180+ lines)
+    - **Final Cleanup**: jobs/mod.rs (removed all deprecated module declarations + legacy exports)
+    - **Jobs Folder Result**: 13 files → 4 files (75% reduction)
+      - unified_manager.rs (650 lines) - Phase 9 job manager
+      - executors/ (1,400+ lines) - 8 concrete executors
+      - tests/ (800+ lines) - 31 test scenarios
+      - PHASE9_EXECUTORS_SUMMARY.md (documentation)
+    - **Total Lines Removed**: ~3,000 lines across 2 cleanup phases (1,289 + 1,700+)
+    - **Build Status**: ✅ kalamdb-core + kalamdb-server compile successfully
+    - **TODO**: Implement cron-based stream eviction and user cleanup job scheduling
 - 2025-11-04: **Phase 9.5: DDL Handler - COMPLETE** - ✅ **COMPLETE** (14/15 tasks, 93.3%):
   - **Problem**: DDL operations scattered across 600+ lines in SqlExecutor
   - **Solution**: Extracted all DDL logic to dedicated DDLHandler with 6 methods
