@@ -35,20 +35,11 @@ use std::sync::Arc;
 /// to avoid cloning this entire struct on every cache access.
 #[derive(Debug, Clone)]
 pub struct CachedTableData {
-    /// Composite table identifier (contains namespace + table_name)
-    pub table_id: TableId,
-
-    /// Type of table (User, Shared, System, Stream)
-    pub table_type: TableType,
-
-    /// When the table was created
-    pub created_at: DateTime<Utc>,
+    /// Full schema definition with all columns
+    pub table: Arc<TableDefinition>,
 
     /// Reference to storage configuration in system.storages
     pub storage_id: Option<StorageId>,
-
-    /// When to flush buffered data to Parquet
-    pub flush_policy: FlushPolicy,
 
     /// Partially-resolved storage path template
     /// Static placeholders substituted ({namespace}, {tableName}), dynamic ones remain ({userId}, {shard})
@@ -56,12 +47,6 @@ pub struct CachedTableData {
 
     /// Current schema version number
     pub schema_version: u32,
-
-    /// How long to keep deleted rows (in hours)
-    pub deleted_retention_hours: Option<u32>,
-
-    /// Full schema definition with all columns
-    pub schema: Arc<TableDefinition>,
 }
 
 impl CachedTableData {
