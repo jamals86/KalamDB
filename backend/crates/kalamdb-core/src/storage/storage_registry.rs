@@ -50,8 +50,10 @@ impl StorageRegistry {
     /// * `Ok(Some(Storage))` - Storage found
     /// * `Ok(None)` - Storage not found
     /// * `Err` - Database error
-    ///
-    /// # Example
+    pub async fn get_storage_by_id(&self, storage_id: &StorageId) -> Result<Option<Storage>, KalamDbError> {
+        self.storages_provider
+            .get_storage(storage_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))
     }
 
     /// List all storage configurations
@@ -233,7 +235,7 @@ impl StorageRegistry {
 
         Ok(())
     }
-    
+}
 
 #[cfg(test)]
 mod tests {
