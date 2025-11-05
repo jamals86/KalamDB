@@ -43,7 +43,7 @@ impl JobExecutor for CompactExecutor {
         JobType::Compact
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "CompactExecutor"
     }
 

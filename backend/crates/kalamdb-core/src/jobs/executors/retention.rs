@@ -44,7 +44,7 @@ impl JobExecutor for RetentionExecutor {
         JobType::Retention
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "RetentionExecutor"
     }
 

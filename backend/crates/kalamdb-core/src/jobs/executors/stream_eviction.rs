@@ -45,7 +45,7 @@ impl JobExecutor for StreamEvictionExecutor {
         JobType::StreamEviction
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "StreamEvictionExecutor"
     }
 

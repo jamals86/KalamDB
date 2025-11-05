@@ -43,7 +43,7 @@ impl JobExecutor for RestoreExecutor {
         JobType::Restore
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "RestoreExecutor"
     }
 

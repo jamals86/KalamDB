@@ -219,15 +219,15 @@ impl JobManager {
         // Apply filters
         let filtered = all_jobs.into_iter().filter(|job| {
             // Filter by status
-            if let Some(ref statuses) = filter.status {
-                if !statuses.iter().any(|s| s == &job.status) {
+            if let Some(ref status) = filter.status {
+                if status != &job.status {
                     return false;
                 }
             }
             
             // Filter by job type
-            if let Some(ref job_types) = filter.job_type {
-                if !job_types.iter().any(|t| t == &job.job_type) {
+            if let Some(ref job_type) = filter.job_type {
+                if job_type != &job.job_type {
                     return false;
                 }
             }
