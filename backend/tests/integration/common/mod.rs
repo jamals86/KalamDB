@@ -76,8 +76,6 @@ pub struct TestServer {
     pub db: Arc<rocksdb::DB>,
     /// Shared DataFusion session context used by SqlExecutor (providers registered here)
     pub session_context: Arc<datafusion::prelude::SessionContext>,
-    /// KalamSQL instance for direct database access
-    pub kalam_sql: Arc<kalamdb_sql::KalamSql>,
     /// SQL executor for query execution
     pub sql_executor: Arc<SqlExecutor>,
     /// Namespace service for namespace operations
@@ -158,13 +156,9 @@ impl TestServer {
 
         // Initialize KalamSQL via StorageBackend abstraction
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
-        let kalam_sql =
-            Arc::new(kalamdb_sql::KalamSql::new(backend).expect("Failed to create KalamSQL"));
 
         // Create default 'local' storage if system.storages is empty
-        let storages = kalam_sql
-            .scan_all_storages()
-            .expect("Failed to scan storages");
+        let storages = backend.scan_all_storages().expect("Failed to scan storages");
         if storages.is_empty() {
             let now = chrono::Utc::now().timestamp_millis();
             let default_storage = kalamdb_sql::Storage {

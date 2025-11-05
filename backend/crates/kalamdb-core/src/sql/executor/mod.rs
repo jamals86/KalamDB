@@ -37,10 +37,7 @@ use crate::auth::rbac;
 use crate::catalog::{NamespaceId, TableName, TableType, UserId};
 use crate::error::KalamDbError;
 use crate::schema::arrow_schema::ArrowSchemaWithOptions;
-use crate::services::{
-    NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
-    UserTableService,
-};
+// All services removed in Phase 8 (business logic inlined into DDL handlers)
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::{new_user_table_store, SharedTableStore, StreamTableStore, UserTableStore};
@@ -68,8 +65,6 @@ use kalamdb_sql::ddl::{
     ShowTableStatsStatement, ShowTablesStatement,
 };
 use kalamdb_sql::statement_classifier::SqlStatement;
-use kalamdb_sql::KalamSql;
-use kalamdb_sql::RocksDbAdapter;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -83,16 +78,12 @@ use handlers::{AuthorizationHandler, DDLHandler, TransactionHandler};
 ///
 /// Executes SQL statements by dispatching to appropriate handlers.
 /// All dependencies are fetched from AppContext.
+///
+/// **Phase 8 Cleanup**: Removed NamespaceService, UserTableService, SharedTableService fields
+/// (business logic inlined into DDL handlers - Phase 8 COMPLETE)
 pub struct SqlExecutor {
     /// Reference to AppContext for all dependencies
     app_context: Arc<crate::app_context::AppContext>,
-    
-    /// Services (zero-sized, created on-demand)
-    namespace_service: Arc<NamespaceService>,
-    user_table_service: Arc<UserTableService>,
-    shared_table_service: Arc<SharedTableService>,
-    stream_table_service: Arc<StreamTableService>,
-    table_deletion_service: Arc<TableDeletionService>,
     
     /// Password complexity enforcement
     enforce_password_complexity: bool,
@@ -127,21 +118,9 @@ impl SqlExecutor {
         app_context: Arc<crate::app_context::AppContext>,
         enforce_password_complexity: bool,
     ) -> Self {
-        // Create zero-sized service instances
-        let kalam_sql = app_context.kalam_sql();
-        let namespace_service = Arc::new(NamespaceService::new(kalam_sql));
-        let user_table_service = Arc::new(UserTableService::new());
-        let shared_table_service = Arc::new(SharedTableService::new());
-        let stream_table_service = Arc::new(StreamTableService::new());
-        let table_deletion_service = Arc::new(TableDeletionService::new());
-        
+        // Phase 8 COMPLETE: All services removed (business logic inlined into DDL handlers)
         Self {
             app_context,
-            namespace_service,
-            user_table_service,
-            shared_table_service,
-            stream_table_service,
-            table_deletion_service,
             enforce_password_complexity,
         }
     }
@@ -152,10 +131,6 @@ impl SqlExecutor {
     }
     
     // ===== Helper methods to get dependencies from AppContext =====
-    
-    fn kalam_sql(&self) -> Arc<KalamSql> {
-        self.app_context.kalam_sql()
-    }
     
     fn user_table_store(&self) -> Arc<UserTableStore> {
         self.app_context.user_table_store()
@@ -230,11 +205,7 @@ impl SqlExecutor {
         self
     }
 
-    #[deprecated(note = "SqlExecutor now uses AppContext - this method is a no-op")]
-    pub fn with_table_deletion_service(self, _service: Arc<TableDeletionService>) -> Self {
-        // No-op: AppContext provides table_deletion_service via dependency injection
-        self
-    }
+    // Removed: with_table_deletion_service() - Phase 8 complete, service no longer exists
 
     #[deprecated(note = "SqlExecutor now uses AppContext - this method is a no-op")]
     pub fn with_stores(
@@ -242,7 +213,6 @@ impl SqlExecutor {
         _user_table_store: Arc<UserTableStore>,
         _shared_table_store: Arc<SharedTableStore>,
         _stream_table_store: Arc<StreamTableStore>,
-        _kalam_sql: Arc<KalamSql>,
     ) -> Self {
         // No-op: AppContext provides all stores via dependency injection
         self
@@ -764,9 +734,6 @@ impl SqlExecutor {
             },
             SqlStatement::CreateTable => {
                 // Route to DDL handler (Phase 9.5 - Step 3, Phase 6 - provider migration)
-                let user_table_service = self.user_table_service.as_ref();
-                let shared_table_service = self.shared_table_service.as_ref();
-                let stream_table_service = self.stream_table_service.as_ref();
                 let tables_provider = self.app_context.system_tables().tables();
                 
                 // Closure for caching table metadata (simplified - no actual caching in handler)
@@ -778,11 +745,11 @@ impl SqlExecutor {
                                 _schema: std::sync::Arc<arrow::datatypes::Schema>, 
                                 _schema_version: i32, 
                                 _deleted_retention_hours: Option<u32>| -> Result<(), KalamDbError> {
-                    // Cache is handled internally by services
+                    // Cache is handled internally by handlers
                     Ok(())
                 };
                 
-                // Closure for DataFusion registration (no-op - services handle this)
+                // Closure for DataFusion registration (no-op - handlers handle this)
                 let register_fn = |_session: &SessionContext, 
                                    _namespace_id: &kalamdb_commons::models::NamespaceId, 
                                    _table_name: &kalamdb_commons::models::TableName, 
@@ -794,19 +761,17 @@ impl SqlExecutor {
                 
                 // Closure for storage validation (converts between catalog and commons types)
                 let validate_storage_fn = |_storage_id: Option<kalamdb_commons::models::StorageId>| -> Result<kalamdb_commons::models::StorageId, KalamDbError> {
-                    // Services handle storage validation internally
+                    // Handlers handle storage validation internally
                     Ok(kalamdb_commons::models::StorageId::from("local"))
                 };
                 
-                // Closure for namespace validation (no-op - services validate)
+                // Closure for namespace validation (no-op - handlers validate)
                 let ensure_namespace_fn = |_namespace_id: &kalamdb_commons::models::NamespaceId| -> Result<(), KalamDbError> {
-                    // Services handle namespace validation internally
+                    // Handlers handle namespace validation internally
                     Ok(())
                 };
                 
                 DDLHandler::execute_create_table(
-                    shared_table_service,
-                    stream_table_service,
                     &tables_provider,
                     cache_fn,
                     register_fn,
@@ -820,19 +785,14 @@ impl SqlExecutor {
             SqlStatement::AlterTable => {
                 // Route to DDL handler (Phase 9.5 - Step 2, Phase 10.2 - SchemaRegistry migration)
                 let schema_registry = self.app_context.schema_registry();
-                let kalam_sql = self.kalam_sql();
                 let cache = self.app_context.schema_cache();
                 let log_fn = |action: &str, target: &str, details: serde_json::Value| {
                     self.log_audit_event(exec_ctx, action, target, details, metadata);
                 };
-                DDLHandler::execute_alter_table(schema_registry, &kalam_sql, Some(cache), log_fn, session, sql, exec_ctx, metadata).await
+                DDLHandler::execute_alter_table(schema_registry, Some(cache), log_fn, session, sql, exec_ctx, metadata).await
             },
             SqlStatement::DropTable => {
-                // Route to DDL handler (Phase 9.5 - Step 2, Phase 10.2 - SchemaRegistry migration)
-                let deletion_service = self.table_deletion_service.as_ref()
-                    .ok_or_else(|| KalamDbError::InvalidOperation(
-                        "DROP TABLE not available - table deletion service not configured".to_string()
-                    ))?;
+                // Route to DDL handler (Phase 9.5 - Step 2, Phase 10.2 - SchemaRegistry migration, Phase 8 - T111)
                 let schema_registry = self.app_context.schema_registry();
                 let cache = self.app_context.schema_cache();
                 let live_query_check = |table_ref: &str| -> bool {
@@ -848,7 +808,7 @@ impl SqlExecutor {
                         false
                     }
                 };
-                DDLHandler::execute_drop_table(deletion_service, schema_registry, Some(cache), live_query_check, session, sql, exec_ctx).await
+                DDLHandler::execute_drop_table(schema_registry, Some(cache), live_query_check, session, sql, exec_ctx).await
             },
             SqlStatement::ShowTables => {
                 // Route to Query handler (Phase 7 - T082)

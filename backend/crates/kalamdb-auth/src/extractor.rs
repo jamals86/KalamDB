@@ -8,7 +8,6 @@ use crate::error::{AuthError, AuthResult};
 use crate::password;
 use actix_web::HttpRequest;
 use kalamdb_commons::{AuthType, Role, UserId};
-use kalamdb_sql::RocksDbAdapter;
 use crate::user_repo::UserRepository;
 use log::warn;
 use std::sync::Arc;

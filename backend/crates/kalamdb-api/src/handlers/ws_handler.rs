@@ -126,7 +126,6 @@ mod tests {
         let db = db_init.open().expect("open RocksDB");
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
-        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend.clone()).expect("kalam sql"));
         // Build provider-backed user repository
         let users_provider = kalamdb_core::tables::system::UsersTableProvider::new(backend);
         let user_repo: Arc<dyn kalamdb_auth::UserRepository> =

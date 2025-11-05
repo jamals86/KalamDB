@@ -518,7 +518,6 @@ mod tests {
         let db = db_init.open().unwrap();
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
-        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
         let manager = Arc::new(LiveQueryManager::new(
             kalam_sql,
             NodeId::new("test-node".to_string()),

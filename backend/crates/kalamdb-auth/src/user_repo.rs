@@ -3,7 +3,6 @@ use kalamdb_commons::{
     system::User,
     AuthType, Role, StorageId, StorageMode, UserId, UserName,
 };
-use kalamdb_sql::RocksDbAdapter;
 use std::sync::Arc;
 
 /// Abstraction over user persistence for authentication flows.

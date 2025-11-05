@@ -15,7 +15,6 @@ use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::{NodeId, constants::ColumnFamilyNames};
-use kalamdb_sql::KalamSql;
 use kalamdb_store::StorageBackend;
 use std::sync::{Arc, OnceLock};
 
@@ -40,7 +39,6 @@ pub struct AppContext {
     stream_table_store: Arc<StreamTableStore>,
     
     // ===== Core Infrastructure =====
-    kalam_sql: Arc<KalamSql>,
     storage_backend: Arc<dyn StorageBackend>,
     
     // ===== Managers =====
@@ -66,7 +64,6 @@ impl std::fmt::Debug for AppContext {
             .field("user_table_store", &"Arc<UserTableStore>")
             .field("shared_table_store", &"Arc<SharedTableStore>")
             .field("stream_table_store", &"Arc<StreamTableStore>")
-            .field("kalam_sql", &"Arc<KalamSql>")
             .field("storage_backend", &"Arc<dyn StorageBackend>")
             .field("job_manager", &"Arc<dyn JobManager>")
             .field("live_query_manager", &"Arc<LiveQueryManager>")
@@ -110,12 +107,6 @@ impl AppContext {
     ) -> Arc<AppContext> {
         APP_CONTEXT
             .get_or_init(|| {
-                // Create KalamSQL adapter
-                let kalam_sql = Arc::new(
-                    KalamSql::new(storage_backend.clone())
-                        .expect("Failed to initialize KalamSQL"),
-                );
-
                 // Create stores using constants from kalamdb_commons
                 let user_table_store = Arc::new(UserTableStore::new(
                     storage_backend.clone(),
@@ -211,7 +202,6 @@ impl AppContext {
                     user_table_store,
                     shared_table_store,
                     stream_table_store,
-                    kalam_sql,
                     storage_backend,
                     job_manager,
                     live_query_manager,
@@ -257,10 +247,6 @@ impl AppContext {
     
     pub fn stream_table_store(&self) -> Arc<StreamTableStore> {
         self.stream_table_store.clone()
-    }
-    
-    pub fn kalam_sql(&self) -> Arc<KalamSql> {
-        self.kalam_sql.clone()
     }
     
     pub fn storage_backend(&self) -> Arc<dyn StorageBackend> {
