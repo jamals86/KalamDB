@@ -13,7 +13,6 @@ use kalamdb_commons::models::types::KalamDataType;
 use kalamdb_commons::{NamespaceId, TableId, TableName};
 use kalamdb_core::system_table_registration::register_system_tables;
 use kalamdb_core::catalog::SchemaCache;
-use kalamdb_sql::KalamSql;
 use kalamdb_core::tables::user_tables::user_table_flush::UserTableFlushJob;
 use kalamdb_core::tables::user_tables::user_table_store::{
     new_user_table_store, UserTableRow, UserTableRowId,

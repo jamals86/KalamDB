@@ -11,7 +11,6 @@ use crate::error::KalamDbError;
 use crate::schema::SchemaRegistry;
 use crate::services::{SharedTableService, TableDeletionService};
 use crate::sql::executor::handlers::{DDLHandler, ExecutionContext, ExecutionResult};
-use crate::sql::KalamSql;
 use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
 use kalamdb_commons::Role;
@@ -28,7 +27,6 @@ fn get_test_dependencies() -> (
     Arc<crate::AppContext>,
     SharedTableService,
     TableDeletionService,
-    KalamSql,
     Arc<SchemaRegistry>,
     Arc<SchemaCache>,
 ) {
@@ -39,15 +37,6 @@ fn get_test_dependencies() -> (
     let shared_table_service = SharedTableService::new();
     let table_deletion_service = TableDeletionService::new();
     
-    let kalam_sql = KalamSql::new(
-        app_ctx.system_tables().users(),
-        app_ctx.system_tables().namespaces(),
-        app_ctx.system_tables().storages(),
-        app_ctx.system_tables().tables(),
-        app_ctx.system_tables().jobs(),
-        app_ctx.system_tables().live_queries(),
-    );
-    
     let schema_registry = app_ctx.schema_registry();
     let schema_cache = app_ctx.schema_cache();
     
@@ -55,7 +44,6 @@ fn get_test_dependencies() -> (
         Arc::clone(&app_ctx),
         shared_table_service,
         table_deletion_service,
-        kalam_sql,
         schema_registry,
         schema_cache,
     )

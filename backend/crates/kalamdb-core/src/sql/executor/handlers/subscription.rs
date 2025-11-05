@@ -74,7 +74,7 @@ impl StatementHandler for SubscriptionHandler {
     ) -> Result<(), KalamDbError> {
         // LIVE SELECT requires at least User role
         // Table-specific authorization handled during execution
-        if context.user_role() < &kalamdb_commons::Role::User {
+            if !matches!(context.user_role(), kalamdb_commons::Role::User | kalamdb_commons::Role::Service | kalamdb_commons::Role::Dba | kalamdb_commons::Role::System) {
             return Err(KalamDbError::Unauthorized(
                 "Insufficient permissions for LIVE SELECT".to_string(),
             ));

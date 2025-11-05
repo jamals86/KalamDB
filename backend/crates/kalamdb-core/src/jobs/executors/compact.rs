@@ -70,7 +70,8 @@ impl JobExecutor for CompactExecutor {
         // - Remove old files after successful merge
         
         Ok(JobDecision::Failed {
-            exception_trace: "CompactExecutor not yet implemented".to_string(),
+            message: "CompactExecutor not yet implemented".to_string(),
+            exception_trace: Some("CompactExecutor not yet implemented".to_string()),
         })
     }
 

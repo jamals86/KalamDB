@@ -52,50 +52,6 @@ impl StorageRegistry {
     /// * `Err` - Database error
     ///
     /// # Example
-    /// ```no_run
-    /// # use kalamdb_core::storage::StorageRegistry;
-    /// # fn example(registry: &StorageRegistry) -> Result<(), kalamdb_core::error::KalamDbError> {
-    /// let storage = registry.get_storage("local")?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn get_storage(&self, storage_id: &str) -> Result<Option<Storage>, KalamDbError> {
-        let storage_id_typed = StorageId::from(storage_id);
-        self.storages_provider.get_storage(&storage_id_typed).map_err(|e| {
-            KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e))
-        })
-    }
-
-    /// Get a typed storage configuration (including credentials).
-    pub fn get_storage_config(
-        &self,
-        storage_id: &str,
-    ) -> Result<Option<StorageConfig>, KalamDbError> {
-        match self.get_storage(storage_id)? {
-            Some(storage) => {
-                let storage_type = StorageType::from(storage.storage_type.as_str());
-
-                // If base_directory is empty (common for 'local'), substitute default_storage_path
-                let base_directory = if storage.base_directory.trim().is_empty() {
-                    // Normalize to not end with '/'
-                    self.default_storage_path.trim_end_matches('/').to_string()
-                } else {
-                    storage.base_directory
-                };
-
-                let config = StorageConfig::new(
-                    storage.storage_id,
-                    storage_type,
-                    base_directory,
-                    storage.shared_tables_template,
-                    storage.user_tables_template,
-                    storage.credentials,
-                );
-
-                Ok(Some(config))
-            }
-            None => Ok(None),
-        }
     }
 
     /// List all storage configurations
@@ -119,7 +75,7 @@ impl StorageRegistry {
     /// ```
     pub fn list_storages(&self) -> Result<Vec<Storage>, KalamDbError> {
         let mut storages = self
-            .kalam_sql
+            .storages_provider
             .scan_all_storages()
             .map_err(|e| KalamDbError::Other(format!("Failed to list storages: {}", e)))?;
 
@@ -276,77 +232,6 @@ impl StorageRegistry {
         }
 
         Ok(())
-    }
-
-    /// Resolve the storage ID for a user based on table configuration
-    ///
-    /// Implements the 5-step storage lookup chain (T169-T169e):
-    /// 1. If table.use_user_storage=false, return table.storage_id
-    /// 2. If table.use_user_storage=true, query user.storage_mode
-    /// 3. If user.storage_mode='region', return user.storage_id
-    /// 4. If user.storage_mode='table' (or NULL), fallback to table.storage_id
-    /// 5. If table.storage_id is NULL, fallback to storage_id='local'
-    ///
-    /// # Arguments
-    /// * `table_id` - The table identifier (namespace:table_name)
-    /// * `user_id` - The user identifier
-    ///
-    /// # Returns
-    /// * `Ok(String)` - Resolved storage ID
-    /// * `Err` - Database error or invalid configuration
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use kalamdb_core::storage::StorageRegistry;
-    /// # async fn example(registry: &StorageRegistry) -> Result<(), kalamdb_core::error::KalamDbError> {
-    /// let storage_id = registry.resolve_storage_for_user("ns:users", "user123").await?;
-    /// println!("Using storage: {}", storage_id);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn resolve_storage_for_user(
-        &self,
-        table_id: &str,
-        user_id: &str,
-    ) -> Result<String, KalamDbError> {
-        // Get table configuration
-        let table = self
-            .kalam_sql
-            .get_table(table_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to get table '{}': {}", table_id, e)))?
-            .ok_or_else(|| KalamDbError::NotFound(format!("Table '{}' not found", table_id)))?;
-
-        // T169a: Step 1 - If table.use_user_storage=false, return table.storage_id
-        if !table.use_user_storage {
-            return Ok(table
-                .storage_id
-                .unwrap_or_else(|| StorageId::from("local"))
-                .into_string());
-        }
-
-        // T169b: Step 2 - If table.use_user_storage=true, query user.storage_mode
-        let _user = self
-            .kalam_sql
-            .get_user(user_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to get user '{}': {}", user_id, e)))?
-            .ok_or_else(|| KalamDbError::NotFound(format!("User '{}' not found", user_id)))?;
-
-        // T169c: Step 3 - If user.storage_mode='region', return user.storage_id
-        // TODO: User storage preferences (storage_mode, storage_id) not yet implemented in User model
-        // if let Some(storage_mode) = &user.storage_mode {
-        //     if storage_mode == "region" {
-        //         if let Some(user_storage_id) = &user.storage_id {
-        //             return Ok(user_storage_id.clone());
-        //         }
-        //     }
-        // }
-
-        // T169d: Step 4 - If user.storage_mode='table' (or NULL), fallback to table.storage_id
-        // T169e: Step 5 - If table.storage_id is NULL, fallback to storage_id='local'
-        Ok(table
-            .storage_id
-            .unwrap_or_else(|| StorageId::from("local"))
-            .into_string())
     }
 }
 

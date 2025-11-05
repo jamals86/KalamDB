@@ -866,9 +866,7 @@ mod tests {
         ));
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
-        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
-        let live_queries = Arc::new(LiveQueriesTableProvider::new(kalam_sql.adapter().backend()));
-
+        let live_queries = Arc::new(LiveQueriesTableProvider::new(backend));
         let provider = StreamTableProvider::new(
             create_test_table_id(),
             unified_cache.clone(),
@@ -934,8 +932,7 @@ mod tests {
         ));
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone()));
-        let kalam_sql = Arc::new(kalamdb_sql::KalamSql::new(backend).unwrap());
-        let live_queries = Arc::new(LiveQueriesTableProvider::new(kalam_sql.adapter().backend()));
+        let live_queries = Arc::new(LiveQueriesTableProvider::new(backend));
 
         let provider = StreamTableProvider::new(
             create_test_table_id(),

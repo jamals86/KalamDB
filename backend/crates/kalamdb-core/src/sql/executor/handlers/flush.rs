@@ -72,7 +72,7 @@ impl StatementHandler for FlushHandler {
     ) -> Result<(), KalamDbError> {
         // FLUSH TABLE requires Dba or System role
         use kalamdb_commons::Role;
-        if context.user_role() < &Role::Dba {
+            if !matches!(context.user_role(), Role::Dba | Role::System) {
             return Err(KalamDbError::Unauthorized(
                 "FLUSH TABLE requires Dba or System role".to_string(),
             ));

@@ -125,7 +125,7 @@ impl StatementHandler for DMLHandler {
     ) -> Result<(), KalamDbError> {
         // DML operations require at least User role
         // Additional table-specific authorization (e.g., shared table access) handled in execute
-        if context.user_role() < &kalamdb_commons::Role::User {
+            if !matches!(context.user_role(), kalamdb_commons::Role::User | kalamdb_commons::Role::Service | kalamdb_commons::Role::Dba | kalamdb_commons::Role::System) {
             return Err(KalamDbError::Unauthorized(
                 "Insufficient permissions for DML operations".to_string(),
             ));

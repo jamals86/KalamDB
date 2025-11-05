@@ -8,7 +8,6 @@ use kalamdb_core::services::{
 };
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
-use kalamdb_sql::KalamSql;
 use kalamdb_store::{RocksDBBackend, RocksDbInit, StorageBackend};
 use std::sync::Arc;
 use tempfile::TempDir;

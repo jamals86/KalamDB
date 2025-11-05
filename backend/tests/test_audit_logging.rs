@@ -8,7 +8,6 @@ use kalamdb_core::services::{
 };
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::sql::DataFusionSessionFactory;
-use kalamdb_sql::KalamSql;
 use kalamdb_store::{RocksDBBackend, RocksDbInit, StorageBackend};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;

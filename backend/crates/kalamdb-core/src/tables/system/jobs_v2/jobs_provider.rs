@@ -148,7 +148,7 @@ impl JobsTableProvider {
             }
 
             let reference_time = job
-                .completed_at
+                .finished_at
                 .or(job.started_at)
                 .unwrap_or(job.created_at);
             if now - reference_time > retention_ms {
@@ -176,7 +176,7 @@ impl JobsTableProvider {
         let mut cpu_useds = Vec::new();
         let mut created_ats = Vec::new();
         let mut started_ats = Vec::new();
-        let mut completed_ats = Vec::new();
+        let mut finished_ats = Vec::new();
         let mut node_ids = StringBuilder::new();
         let mut error_messages = StringBuilder::new();
 
@@ -193,7 +193,7 @@ impl JobsTableProvider {
             cpu_useds.push(job.cpu_used);
             created_ats.push(Some(job.created_at));
             started_ats.push(job.started_at);
-            completed_ats.push(job.completed_at);
+            finished_ats.push(job.finished_at);
             node_ids.append_value(&job.node_id);
             error_messages.append_option(job.error_message.as_deref());
         }
@@ -213,7 +213,7 @@ impl JobsTableProvider {
                 Arc::new(Int64Array::from(cpu_useds)) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(started_ats)) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(completed_ats)) as ArrayRef,
+                Arc::new(TimestampMillisecondArray::from(finished_ats)) as ArrayRef,
                 Arc::new(node_ids.finish()) as ArrayRef,
                 Arc::new(error_messages.finish()) as ArrayRef,
             ],
@@ -296,7 +296,7 @@ mod tests {
             cpu_used: None,
             created_at: 1000,
             started_at: Some(1000),
-            completed_at: None,
+            finished_at: None,
                 node_id: NodeId::from("server-01"),
             error_message: None,
         }

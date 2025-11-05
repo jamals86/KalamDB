@@ -354,8 +354,8 @@ impl FlushExecutor {
                 );
 
                 // Update job record with failure
-                let _failed_job = job_record.fail(format!("Flush failed: {}", e));
-
+                let failed_job = job_record.fail(format!("Flush failed: {}", e), None);
+                // Return error
                 Err(e)
             }
         }

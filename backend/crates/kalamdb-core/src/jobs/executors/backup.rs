@@ -72,7 +72,8 @@ impl JobExecutor for BackupExecutor {
         // - Verify backup integrity
         
         Ok(JobDecision::Failed {
-            exception_trace: "BackupExecutor not yet implemented".to_string(),
+            message: "BackupExecutor not yet implemented".to_string(),
+            exception_trace: Some("BackupExecutor not yet implemented".to_string()),
         })
     }
 

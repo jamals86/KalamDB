@@ -6,7 +6,6 @@
 use kalamdb_commons::constants::AuthConstants;
 use kalamdb_commons::system::User;
 use kalamdb_commons::{AuthType, Role, UserId};
-use kalamdb_sql::KalamSql;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
 use kalamdb_store::StorageBackend;

@@ -67,7 +67,6 @@ pub fn init_test_app_context() -> Arc<TestDb> {
         use kalamdb_commons::system::Storage;
         
         let ctx = AppContext::get();
-        let kalam_sql = ctx.kalam_sql();
         
         let default_storage = Storage {
             storage_id: StorageId::new("local"),
@@ -81,11 +80,6 @@ pub fn init_test_app_context() -> Arc<TestDb> {
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
         };
-        
-        // Insert using KalamSql
-        if let Err(e) = kalam_sql.insert_storage(&default_storage) {
-            eprintln!("Warning: Failed to create default storage: {:?}", e);
-        }
     });
 
     // Return the test DB (guaranteed to be set by Once)

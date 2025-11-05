@@ -179,7 +179,7 @@ impl InformationSchemaTablesProvider {
             // ttl_seconds: Need to get from TableDefinition for Stream tables
             let ttl = if kalam_type == "Stream" {
                 // Try to get table definition to extract TTL
-                let tid = TableId::from(table_id);
+                    let tid = TableId::new(table_id);
                 self.schema_registry.get_table_definition(&tid)
                     .and_then(|def| {
                         use kalamdb_commons::schemas::TableOptions;

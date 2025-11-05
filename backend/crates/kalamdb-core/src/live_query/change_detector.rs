@@ -446,7 +446,6 @@ mod tests {
     use crate::live_query::connection_registry::NodeId;
     use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
     use kalamdb_commons::{NamespaceId, TableName};
-    use kalamdb_sql::KalamSql;
     use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
@@ -472,13 +471,11 @@ mod tests {
             &NamespaceId::new("default"),
             &TableName::new("test"),
         ));
-        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
         let live_query_manager = Arc::new(LiveQueryManager::new(
-            kalam_sql,
-            NodeId::new("test".to_string()),
-            Some(user_table_store.clone()),
-            Some(shared_table_store.clone()),
-            Some(stream_table_store.clone()),
+            user_table_store,
+            shared_table_store,
+            stream_table_store,
+            NodeId::new("node1"),
         ));
 
         let detector = UserTableChangeDetector::new(user_table_store, live_query_manager);

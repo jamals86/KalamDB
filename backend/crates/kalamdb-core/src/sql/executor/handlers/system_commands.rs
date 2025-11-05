@@ -40,7 +40,7 @@ impl SystemCommandsHandler {
         //
         // **Authorization**: Only Dba and System roles
         
-        Err(KalamDbError::UnsupportedOperation(
+        Err(KalamDbError::InvalidOperation(
             "VACUUM not yet implemented in SystemCommandsHandler".to_string(),
         ))
     }
@@ -63,7 +63,7 @@ impl SystemCommandsHandler {
         //
         // **Authorization**: Only Dba and System roles
         
-        Err(KalamDbError::UnsupportedOperation(
+        Err(KalamDbError::InvalidOperation(
             "OPTIMIZE not yet implemented in SystemCommandsHandler".to_string(),
         ))
     }
@@ -87,7 +87,7 @@ impl SystemCommandsHandler {
         //
         // **Authorization**: Only Dba and System roles
         
-        Err(KalamDbError::UnsupportedOperation(
+        Err(KalamDbError::InvalidOperation(
             "ANALYZE not yet implemented in SystemCommandsHandler".to_string(),
         ))
     }
@@ -103,15 +103,15 @@ impl StatementHandler for SystemCommandsHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         match statement {
-            SqlStatement::Vacuum { .. } => {
-                self.execute_vacuum(session, statement, context).await
-            }
-            SqlStatement::Optimize { .. } => {
-                self.execute_optimize(session, statement, context).await
-            }
-            SqlStatement::Analyze { .. } => {
-                self.execute_analyze(session, statement, context).await
-            }
+            // SqlStatement::Vacuum { .. } => {
+            //     self.execute_vacuum(session, statement, context).await
+            // }
+            // SqlStatement::Optimize { .. } => {
+            //     self.execute_optimize(session, statement, context).await
+            // }
+            // SqlStatement::Analyze { .. } => {
+            //     self.execute_analyze(session, statement, context).await
+            // }
             _ => Err(KalamDbError::InvalidOperation(
                 "Not a system command statement".to_string(),
             )),
@@ -126,7 +126,7 @@ impl StatementHandler for SystemCommandsHandler {
         use kalamdb_commons::Role;
         
         // System commands require Dba or System role
-        if context.user_role() < &Role::Dba {
+        if !matches!(context.user_role(), Role::Dba | Role::System) {
             return Err(KalamDbError::Unauthorized(
                 "System commands require Dba or System role".to_string(),
             ));

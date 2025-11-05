@@ -19,7 +19,7 @@ use std::sync::{Arc, RwLock};
 ///
 /// Provides centralized access to all system.* and information_schema.* tables.
 /// Used by AppContext to eliminate 10 individual provider fields.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SystemTablesRegistry {
     // ===== system.* tables (EntityStore-based) =====
     users: Arc<UsersTableProvider>,
@@ -52,7 +52,6 @@ impl SystemTablesRegistry {
     /// use kalamdb_core::tables::system::SystemTablesRegistry;
     /// use std::sync::Arc;
     /// # use kalamdb_store::StorageBackend;
-    /// # use kalamdb_sql::KalamSql;
     ///
     /// # let backend: Arc<dyn StorageBackend> = unimplemented!();
     /// # let kalam_sql: Arc<KalamSql> = unimplemented!();

@@ -41,7 +41,7 @@ impl TableRegistryHandler {
         // **Use Case**: External tables, views, materialized views
         // **Authorization**: Only Dba and System roles
         
-        Err(KalamDbError::UnsupportedOperation(
+        Err(KalamDbError::InvalidOperation(
             "REGISTER TABLE not yet implemented in TableRegistryHandler".to_string(),
         ))
     }
@@ -65,7 +65,7 @@ impl TableRegistryHandler {
         // **Authorization**: Only Dba and System roles
         // **Validation**: Cannot unregister system tables
         
-        Err(KalamDbError::UnsupportedOperation(
+        Err(KalamDbError::InvalidOperation(
             "UNREGISTER TABLE not yet implemented in TableRegistryHandler".to_string(),
         ))
     }
@@ -103,7 +103,7 @@ impl StatementHandler for TableRegistryHandler {
         use kalamdb_commons::Role;
         
         // Table registry operations require Dba or System role
-        if context.user_role() < &Role::Dba {
+            if !matches!(context.user_role(), Role::Dba | Role::System) {
             return Err(KalamDbError::Unauthorized(
                 "Table registry operations require Dba or System role".to_string(),
             ));

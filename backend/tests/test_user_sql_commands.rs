@@ -14,7 +14,6 @@ use kalamdb_core::services::{
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::system_table_registration::register_system_tables;
 use kalamdb_core::tables::{SharedTableStore, StreamTableStore, UserTableStore};
-use kalamdb_sql::KalamSql;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
 use kalamdb_store::StorageBackend;
@@ -25,7 +24,6 @@ use tempfile::TempDir;
 async fn setup_test_executor() -> (
     SqlExecutor,
     TempDir,
-    Arc<KalamSql>,
     Arc<kalamdb_core::tables::system::users_v2::UsersTableProvider>,
 ) {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");

@@ -51,23 +51,23 @@ impl JobExecutor for UserCleanupExecutor {
         let params = job
             .parameters
             .as_ref()
-            .ok_or_else(|| KalamDbError::invalid_input("Missing parameters"))?;
+            .ok_or_else(|| KalamDbError::invalid_request("Missing parameters"))?;
 
         let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::invalid_input(format!("Invalid JSON parameters: {}", e)))?;
+            .map_err(|e| KalamDbError::invalid_request(format!("Invalid JSON parameters: {}", e)))?;
 
         // Validate required fields
         if params_obj.get("user_id").is_none() {
-            return Err(KalamDbError::invalid_input("Missing required parameter: user_id"));
+            return Err(KalamDbError::invalid_request("Missing required parameter: user_id"));
         }
         if params_obj.get("username").is_none() {
-            return Err(KalamDbError::invalid_input("Missing required parameter: username"));
+            return Err(KalamDbError::invalid_request("Missing required parameter: username"));
         }
 
         // Validate cascade if present
         if let Some(cascade) = params_obj.get("cascade") {
             if !cascade.is_boolean() {
-                return Err(KalamDbError::invalid_input("cascade must be a boolean"));
+                return Err(KalamDbError::invalid_request("cascade must be a boolean"));
             }
         }
 
@@ -83,7 +83,7 @@ impl JobExecutor for UserCleanupExecutor {
         // Parse parameters
         let params = job.parameters.as_ref().unwrap();
         let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::invalid_input(format!("Failed to parse parameters: {}", e)))?;
+            .map_err(|e| KalamDbError::invalid_request(format!("Failed to parse parameters: {}", e)))?;
 
         let user_id = params_obj["user_id"].as_str().unwrap();
         let username = params_obj["username"].as_str().unwrap();
@@ -126,7 +126,7 @@ impl JobExecutor for UserCleanupExecutor {
     async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), KalamDbError> {
         ctx.log_warn("User cleanup job cancellation requested");
         // User cleanup jobs should complete to avoid partial cleanup state
-        Err(KalamDbError::operation_not_supported("User cleanup jobs cannot be safely cancelled"))
+        Err(KalamDbError::InvalidOperation("User cleanup jobs cannot be safely cancelled".to_string()))
     }
 }
 

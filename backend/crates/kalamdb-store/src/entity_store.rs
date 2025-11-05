@@ -254,13 +254,24 @@ where
     /// println!("Total users: {}", all_users.len());
     /// ```
     fn scan_all(&self) -> Result<Vec<(Vec<u8>, V)>> {
+        // Place a hard limit to bypass scanning massive tables into memory
+        const MAX_SCAN_LIMIT: usize = 100000;
         let partition = Partition::new(self.partition());
         let iter = self.backend().scan(&partition, None, None)?;
 
+        let mut count = 0;
         let mut results = Vec::new();
         for (key_bytes, value_bytes) in iter {
             let entity = self.deserialize(&value_bytes)?;
             results.push((key_bytes, entity));
+            count += 1;
+            if count >= MAX_SCAN_LIMIT {
+                log::warn!(
+                    "Scan all reached max limit of {} entries, stopping early",
+                    MAX_SCAN_LIMIT
+                );
+                break;
+            }
         }
 
         Ok(results)

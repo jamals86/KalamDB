@@ -42,7 +42,7 @@
 //! ```
 
 use crate::app_context::AppContext;
-use crate::jobs::executors::{JobContext, JobDecision, JobExecutor, JobRegistry};
+use crate::jobs::executors::{JobContext, JobDecision, JobRegistry};
 use crate::tables::system::JobsTableProvider;
 use kalamdb_commons::system::{Job, JobFilter, JobOptions};
 use kalamdb_commons::{JobId, JobStatus, JobType, NamespaceId, NodeId};
@@ -212,9 +212,44 @@ impl JobManager {
     /// # Returns
     /// Vector of matching jobs
     pub async fn list_jobs(&self, filter: JobFilter) -> Result<Vec<Job>, crate::error::KalamDbError> {
-        self.jobs_provider
-            .list_jobs(filter)
-            .map_err(|e| crate::error::KalamDbError::IoError(format!("Failed to list jobs: {}", e)))
+        let all_jobs = self.jobs_provider
+            .list_jobs()
+            .map_err(|e| crate::error::KalamDbError::IoError(format!("Failed to list jobs: {}", e)))?;
+        
+        // Apply filters
+        let filtered = all_jobs.into_iter().filter(|job| {
+            // Filter by status
+            if let Some(ref statuses) = filter.status {
+                if !statuses.iter().any(|s| s == &job.status) {
+                    return false;
+                }
+            }
+            
+            // Filter by job type
+            if let Some(ref job_types) = filter.job_type {
+                if !job_types.iter().any(|t| t == &job.job_type) {
+                    return false;
+                }
+            }
+            
+            // Filter by namespace
+            if let Some(ref namespace) = filter.namespace_id {
+                // Extract namespace from idempotency_key if present
+                // Format: "flush-{namespace}-{table}" or similar
+                if let Some(ref key) = job.idempotency_key {
+                    if !key.contains(namespace.as_str()) {
+                        return false;
+                    }
+                } else {
+                    // No idempotency_key means we can't filter by namespace
+                    return false;
+                }
+            }
+            
+            true
+        }).collect();
+        
+        Ok(filtered)
     }
 
     /// Complete a job with success message (Phase 9, T165)
@@ -232,7 +267,7 @@ impl JobManager {
         let completed_job = job.complete(message);
         
         self.jobs_provider
-            .update_job(&completed_job)
+            .update_job(completed_job.clone())
             .map_err(|e| crate::error::KalamDbError::Other(format!("Failed to complete job: {}", e)))?;
         
         self.log_job_event(job_id, "info", &format!("Job completed successfully"));
@@ -254,7 +289,7 @@ impl JobManager {
         let failed_job = job.fail(error_message.clone(), None);
         
         self.jobs_provider
-            .update_job(&failed_job)
+            .update_job(failed_job.clone())
             .map_err(|e| crate::error::KalamDbError::Other(format!("Failed to mark job as failed: {}", e)))?;
         
         self.log_job_event(job_id, "error", &format!("Job failed: {}", error_message));
@@ -332,7 +367,7 @@ impl JobManager {
         job.updated_at = chrono::Utc::now().timestamp_millis();
 
         self.jobs_provider
-            .update_job(&job)
+            .update_job(job.clone())
             .map_err(|e| crate::error::KalamDbError::IoError(format!("Failed to start job: {}", e)))?;
 
         self.log_job_event(&job_id, "info", "Job started");
@@ -345,61 +380,62 @@ impl JobManager {
 
         // Create job context
         let app_ctx = AppContext::get();
-        let ctx = JobContext::new(app_ctx, &job_id);
+        let ctx = JobContext::new(app_ctx, job_id.as_str());
 
         // Execute job
-        let decision = executor.execute(&ctx, &job).await;
+        let decision = executor.execute(&ctx, &job).await?;
 
         // Handle execution result
         match decision {
             JobDecision::Completed { message } => {
                 let completed_job = job.complete(message.clone());
                 self.jobs_provider
-                    .update_job(&completed_job)
+                    .update_job(completed_job.clone())
                     .map_err(|e| crate::error::KalamDbError::IoError(format!("Failed to complete job: {}", e)))?;
 
                 self.log_job_event(&job_id, "info", &format!("Job completed: {}", message.unwrap_or_default()));
             }
             JobDecision::Retry {
-                backoff_ms,
+                message,
                 exception_trace,
+                backoff_ms,
             } => {
                 // Check if can retry
                 if job.retry_count < job.max_retries {
                     job.retry_count += 1;
                     job.status = JobStatus::Retrying;
-                    job.exception_trace = Some(exception_trace.clone());
+                    job.exception_trace = exception_trace.clone();
                     job.updated_at = chrono::Utc::now().timestamp_millis();
 
                     self.jobs_provider
-                        .update_job(&job)
+                        .update_job(job.clone())
                         .map_err(|e| crate::error::KalamDbError::IoError(format!("Failed to retry job: {}", e)))?;
 
                     self.log_job_event(
                         &job_id,
                         "warn",
-                        &format!("Job retry {}/{}, waiting {}ms", job.retry_count, job.max_retries, backoff_ms),
+                        &format!("Job retry {}/{}, waiting {}ms: {}", job.retry_count, job.max_retries, backoff_ms, message),
                     );
 
                     // Sleep before retry
-                    sleep(Duration::from_millis(backoff_ms as u64)).await;
+                    sleep(Duration::from_millis(backoff_ms)).await;
                 } else {
                     // Max retries exceeded, mark as failed
-                    let failed_job = job.fail("Max retries exceeded".to_string(), Some(exception_trace));
+                    let failed_job = job.fail("Max retries exceeded".to_string(), exception_trace);
                     self.jobs_provider
-                        .update_job(&failed_job)
+                        .update_job(failed_job.clone())
                         .map_err(|e| crate::error::KalamDbError::IoError(format!("Failed to fail job: {}", e)))?;
 
                     self.log_job_event(&job_id, "error", "Job failed: max retries exceeded");
                 }
             }
-            JobDecision::Failed { exception_trace } => {
-                let failed_job = job.fail("Job execution failed".to_string(), Some(exception_trace.clone()));
+            JobDecision::Failed { message, exception_trace } => {
+                let failed_job = job.fail(message.clone(), exception_trace.clone());
                 self.jobs_provider
-                    .update_job(&failed_job)
+                    .update_job(failed_job.clone())
                     .map_err(|e| crate::error::KalamDbError::IoError(format!("Failed to fail job: {}", e)))?;
 
-                self.log_job_event(&job_id, "error", &format!("Job failed: {}", exception_trace));
+                self.log_job_event(&job_id, "error", &format!("Job failed: {}", message));
             }
         }
 
@@ -469,7 +505,7 @@ impl JobManager {
             );
 
             self.jobs_provider
-                .update_job(&failed_job)
+                .update_job(failed_job.clone())
                 .map_err(|e| crate::error::KalamDbError::IoError(format!("Failed to recover job: {}", e)))?;
 
             self.log_job_event(&failed_job.job_id, "error", "Job marked as failed (server restart)");

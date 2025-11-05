@@ -15,7 +15,6 @@ use kalamdb_core::services::{
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_core::system_table_registration::register_system_tables;
 use kalamdb_core::tables::{SharedTableStore, StreamTableStore, UserTableStore};
-use kalamdb_sql::KalamSql;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
 use kalamdb_store::StorageBackend;

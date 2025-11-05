@@ -52,28 +52,28 @@ impl JobExecutor for RetentionExecutor {
         let params = job
             .parameters
             .as_ref()
-            .ok_or_else(|| KalamDbError::invalid_input("Missing parameters"))?;
+            .ok_or_else(|| KalamDbError::invalid_request("Missing parameters"))?;
 
         let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::invalid_input(format!("Invalid JSON parameters: {}", e)))?;
+            .map_err(|e| KalamDbError::invalid_request(format!("Invalid JSON parameters: {}", e)))?;
 
         // Validate required fields
         if params_obj.get("namespace_id").is_none() {
-            return Err(KalamDbError::invalid_input("Missing required parameter: namespace_id"));
+            return Err(KalamDbError::invalid_request("Missing required parameter: namespace_id"));
         }
         if params_obj.get("table_name").is_none() {
-            return Err(KalamDbError::invalid_input("Missing required parameter: table_name"));
+            return Err(KalamDbError::invalid_request("Missing required parameter: table_name"));
         }
         if params_obj.get("table_type").is_none() {
-            return Err(KalamDbError::invalid_input("Missing required parameter: table_type"));
+            return Err(KalamDbError::invalid_request("Missing required parameter: table_type"));
         }
         if params_obj.get("retention_hours").is_none() {
-            return Err(KalamDbError::invalid_input("Missing required parameter: retention_hours"));
+            return Err(KalamDbError::invalid_request("Missing required parameter: retention_hours"));
         }
 
         // Validate retention_hours is a number
         if !params_obj["retention_hours"].is_number() {
-            return Err(KalamDbError::invalid_input("retention_hours must be a number"));
+            return Err(KalamDbError::invalid_request("retention_hours must be a number"));
         }
 
         Ok(())
@@ -88,7 +88,7 @@ impl JobExecutor for RetentionExecutor {
         // Parse parameters
         let params = job.parameters.as_ref().unwrap();
         let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::invalid_input(format!("Failed to parse parameters: {}", e)))?;
+            .map_err(|e| KalamDbError::invalid_request(format!("Failed to parse parameters: {}", e)))?;
 
         let namespace_id = params_obj["namespace_id"].as_str().unwrap();
         let table_name = params_obj["table_name"].as_str().unwrap();

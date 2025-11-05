@@ -14,7 +14,7 @@
 use crate::catalog::{NamespaceId, TableType};
 use crate::error::KalamDbError;
 use kalamdb_commons::models::{JobId, JobStatus, JobType, NodeId};
-use kalamdb_sql::{Job, KalamSql, Namespace, Table, TableSchema};
+use kalamdb_sql::{Job, Namespace, Table, TableSchema};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;

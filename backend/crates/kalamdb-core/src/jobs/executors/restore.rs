@@ -72,7 +72,8 @@ impl JobExecutor for RestoreExecutor {
         // - Validate restored data consistency
         
         Ok(JobDecision::Failed {
-            exception_trace: "RestoreExecutor not yet implemented".to_string(),
+              message: "RestoreExecutor not yet implemented".to_string(),
+              exception_trace: Some("RestoreExecutor not yet implemented".to_string()),
         })
     }
 

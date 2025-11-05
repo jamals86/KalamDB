@@ -124,7 +124,7 @@ impl StatementHandler for UserManagementHandler {
         // CREATE USER and DROP USER require Dba or System role
         match statement {
             SqlStatement::CreateUser { .. } | SqlStatement::DropUser { .. } => {
-                if context.user_role() < &Role::Dba {
+                    if !matches!(context.user_role(), Role::Dba | Role::System) {
                     return Err(KalamDbError::Unauthorized(
                         "User management requires Dba or System role".to_string(),
                     ));

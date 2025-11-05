@@ -838,7 +838,6 @@ mod tests {
         let db = Arc::new(init.open().unwrap());
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
-        let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
 
         // Create table stores for testing (using default namespace and table)
         let test_namespace = NamespaceId::new("user1");

@@ -72,7 +72,7 @@ use std::sync::Arc;
 pub use handlers::{ExecutionResult, ExecutionContext, ExecutionMetadata};
 
 // Import handlers for statement routing
-use handlers::{AuthorizationHandler, DDLHandler, TransactionHandler};
+use handlers::{AuthorizationHandler, DDLHandler, StatementHandler, TransactionHandler};
 
 /// SQL executor
 ///
@@ -1002,9 +1002,6 @@ impl SqlExecutor {
 
         // Create fresh SessionContext using the shared RuntimeEnv (efficient - no memory duplication)
         let user_session = self.session_factory().create_session();
-
-        // Get KalamSQL for querying system tables
-        let kalam_sql = self.kalam_sql();
 
         // Look up user role for RBAC authorization on shared tables
         let user_role = if user_id.as_str() == "anonymous" {
@@ -4224,7 +4221,7 @@ impl SqlExecutor {
     fn count_buffered_rows(&self, table: &kalamdb_sql::Table) -> Result<usize, KalamDbError> {
         match table.table_type {
             TableType::User => {
-                let store = self.user_table_store.as_ref().ok_or_else(|| {
+                    let store = self.user_table_store().as_ref().ok_or_else(|| {
                     KalamDbError::InvalidOperation(
                         "User table store not configured for SHOW TABLE STATS".to_string(),
                     )
@@ -4245,7 +4242,7 @@ impl SqlExecutor {
                 Ok(rows.len())
             }
             TableType::Shared => {
-                let store = self.shared_table_store.as_ref().ok_or_else(|| {
+                    let store = self.shared_table_store().as_ref().ok_or_else(|| {
                     KalamDbError::InvalidOperation(
                         "Shared table store not configured for SHOW TABLE STATS".to_string(),
                     )
@@ -4263,7 +4260,7 @@ impl SqlExecutor {
                 Ok(rows.len())
             }
             TableType::Stream => {
-                let store = self.stream_table_store.as_ref().ok_or_else(|| {
+                    let store = self.stream_table_store().as_ref().ok_or_else(|| {
                     KalamDbError::InvalidOperation(
                         "Stream table store not configured for SHOW TABLE STATS".to_string(),
                     )
@@ -4299,12 +4296,12 @@ impl SqlExecutor {
             use kalamdb_commons::JobType;
             if job.job_type == JobType::Flush
                 && job.table_name.as_ref().map(|tn| tn.as_str()) == Some(full_table_name)
-                && job.completed_at.is_some()
+                    && job.finished_at.is_some()
             {
-                let candidate_ts = job.completed_at.unwrap_or_default();
+                    let candidate_ts = job.finished_at.unwrap_or_default();
                 let replace = latest
                     .as_ref()
-                    .map(|existing| existing.completed_at.unwrap_or_default() < candidate_ts)
+                        .map(|existing| existing.finished_at.unwrap_or_default() < candidate_ts)
                     .unwrap_or(true);
 
                 if replace {
@@ -4314,7 +4311,7 @@ impl SqlExecutor {
         }
 
         if let Some(job) = latest {
-            let completed_at = job.completed_at.unwrap_or_default();
+                let completed_at = job.finished_at.unwrap_or_default();
             let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(completed_at)
                 .map(|dt| dt.to_rfc3339())
                 .unwrap_or_else(|| completed_at.to_string());
@@ -4355,7 +4352,7 @@ impl SqlExecutor {
         details: serde_json::Value,
         metadata: Option<&ExecutionMetadata>,
     ) {
-        let kalam_sql = match &self.kalam_sql {
+           let kalam_sql = match self.kalam_sql() {
             Some(k) => k,
             None => {
                 log::debug!(
@@ -4391,9 +4388,7 @@ impl SqlExecutor {
             } else {
                 Some(details.to_string())
             },
-            ip_address: metadata
-                .and_then(|m| m.ip_address.as_ref())
-                .map(|s| s.to_string()),
+            ip_address: ctx.ip_address().map(|s| s.to_string()),
         };
 
         if let Err(err) = kalam_sql.insert_audit_log(&entry) {
