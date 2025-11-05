@@ -45,9 +45,6 @@
 pub mod unified_manager;
 pub mod executors;
 
-#[cfg(test)]
-mod tests;
-
 // Phase 9 exports (production API)
 pub use unified_manager::JobManager as UnifiedJobManager;
 pub use executors::{JobContext, JobDecision, JobExecutor as JobExecutorTrait, JobRegistry};

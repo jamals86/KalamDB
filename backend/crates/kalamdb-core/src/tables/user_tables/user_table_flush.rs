@@ -9,13 +9,13 @@
 //! - Uses `FlushExecutor::execute_with_tracking()` for common workflow
 //! - Only implements unique logic: multi-file flush grouped by user_id
 
-use crate::catalog::{NamespaceId, TableName, UserId};
-use crate::catalog::SchemaCache; // Phase 10: Use unified cache instead of old TableCache
+use crate::schema::{NamespaceId, TableName, UserId};
+use crate::schema::SchemaCache; // Phase 10: Use unified cache instead of old TableCache
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::live_query::NodeId;
 use crate::storage::ParquetWriter;
-use crate::stores::system_table::UserTableStoreExt;
+use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::base_flush::{FlushExecutor, FlushJobResult, TableFlush};
 use crate::tables::UserTableStore;
 use chrono::Utc;
@@ -371,10 +371,22 @@ impl TableFlush for UserTableFlushJob {
         let mut rows_by_user: HashMap<String, Vec<(Vec<u8>, JsonValue)>> = HashMap::new();
         let mut rows_scanned = 0;
 
-        while let Some(Ok((key_bytes, value_bytes))) = iter.next() {
+        for entry in iter {
+            let (key_bytes, value_bytes) = match entry {
+                Ok(pair) => pair,
+                Err(e) => {
+                    log::warn!(
+                        "Skipping row due to iterator error (table={}.{}): {}",
+                        self.namespace_id.as_str(),
+                        self.table_name.as_str(),
+                        e
+                    );
+                    continue;
+                }
+            };
+
             rows_scanned += 1;
 
-            // Decode row
             let user_table_row: crate::tables::user_tables::user_table_store::UserTableRow =
                 match serde_json::from_slice(&value_bytes) {
                     Ok(v) => v,

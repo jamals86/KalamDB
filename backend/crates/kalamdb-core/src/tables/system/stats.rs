@@ -3,7 +3,7 @@
 //! Provides runtime metrics as key-value pairs for observability.
 //! Initial implementation focuses on schema cache metrics.
 
-use crate::catalog::SchemaCache;
+use crate::schema::SchemaCache;
 use crate::error::KalamDbError;
 use crate::tables::system::SystemTableProviderExt;
 use async_trait::async_trait;

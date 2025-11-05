@@ -118,9 +118,9 @@ impl LiveQueryManager {
             ))
         })?;
 
-        let namespace_id = NamespaceId::from(namespace);
-        let table_name = TableName::from(table);
-        let table_id = TableId::from(format!("{}.{}", namespace, table));
+    let namespace_id = NamespaceId::from(namespace);
+    let table_name = TableName::from(table);
+    let table_id = TableId::new(namespace_id.clone(), table_name.clone());
         let table_def = self
             .schema_registry
             .get_table_definition(&table_id)
@@ -257,7 +257,7 @@ impl LiveQueryManager {
 
             let namespace_id = NamespaceId::from(namespace);
             let table_name = TableName::from(table);
-            let table_id = TableId::from(format!("{}.{}", namespace, table));
+            let table_id = TableId::new(namespace_id.clone(), table_name.clone());
             let table_def = self
                 .schema_registry
                 .get_table_definition(&table_id)
@@ -825,7 +825,11 @@ pub struct RegistryStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::{SchemaCache, SchemaRegistry};
+    use crate::tables::system::schemas::TableSchemaStore;
+    use crate::tables::system::LiveQueriesTableProvider;
     use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
+    use kalamdb_commons::models::TableId;
     use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
     use kalamdb_commons::types::KalamDataType;
     use kalamdb_commons::{NamespaceId, TableName};
@@ -838,6 +842,11 @@ mod tests {
         let db = Arc::new(init.open().unwrap());
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
+
+        let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(backend.clone()));
+        let schema_cache = Arc::new(SchemaCache::new(128, None));
+        let schema_store = Arc::new(TableSchemaStore::new(backend.clone()));
+        let schema_registry = Arc::new(SchemaRegistry::new(schema_cache, schema_store));
 
         // Create table stores for testing (using default namespace and table)
         let test_namespace = NamespaceId::new("user1");
@@ -854,7 +863,7 @@ mod tests {
         ));
         let stream_table_store = Arc::new(new_stream_table_store(&test_namespace, &test_table));
 
-        // Create test tables in information_schema_tables using NEW schema
+        // Create test table definitions via SchemaRegistry
         let messages_table = TableDefinition::new(
             NamespaceId::new("user1"),
             TableName::new("messages"),
@@ -864,8 +873,8 @@ mod tests {
                     "id",
                     1,
                     KalamDataType::Int,
-                    false, // not nullable
-                    true,  // is primary key
+                    false,
+                    true,
                     false,
                     kalamdb_commons::schemas::ColumnDefault::None,
                     None,
@@ -874,7 +883,7 @@ mod tests {
                     "user_id",
                     2,
                     KalamDataType::Text,
-                    true, // nullable
+                    true,
                     false,
                     false,
                     kalamdb_commons::schemas::ColumnDefault::None,
@@ -883,8 +892,15 @@ mod tests {
             ],
             TableOptions::user(),
             None,
-        ).unwrap();
-        kalam_sql.upsert_table_definition(&messages_table).unwrap();
+        )
+        .unwrap();
+        let messages_table_id = TableId::new(
+            messages_table.namespace_id.clone(),
+            messages_table.table_name.clone(),
+        );
+        schema_registry
+            .put_table_definition(&messages_table_id, &messages_table)
+            .unwrap();
 
         let notifications_table = TableDefinition::new(
             NamespaceId::new("user1"),
@@ -895,8 +911,8 @@ mod tests {
                     "id",
                     1,
                     KalamDataType::Int,
-                    false, // not nullable
-                    true,  // is primary key
+                    false,
+                    true,
                     false,
                     kalamdb_commons::schemas::ColumnDefault::None,
                     None,
@@ -905,7 +921,7 @@ mod tests {
                     "user_id",
                     2,
                     KalamDataType::Text,
-                    true, // nullable
+                    true,
                     false,
                     false,
                     kalamdb_commons::schemas::ColumnDefault::None,
@@ -914,18 +930,23 @@ mod tests {
             ],
             TableOptions::user(),
             None,
-        ).unwrap();
-        kalam_sql
-            .upsert_table_definition(&notifications_table)
+        )
+        .unwrap();
+        let notifications_table_id = TableId::new(
+            notifications_table.namespace_id.clone(),
+            notifications_table.table_name.clone(),
+        );
+        schema_registry
+            .put_table_definition(&notifications_table_id, &notifications_table)
             .unwrap();
 
-        let node_id = NodeId::new("test_node".to_string());
         let manager = LiveQueryManager::new(
-            kalam_sql,
-            node_id,
-            Some(user_table_store),
-            Some(shared_table_store),
-            Some(stream_table_store),
+            live_queries_provider,
+            schema_registry,
+            NodeId::from("test_node"),
+            Some(Arc::clone(&user_table_store)),
+            Some(Arc::clone(&shared_table_store)),
+            Some(Arc::clone(&stream_table_store)),
         );
         (manager, temp_dir)
     }

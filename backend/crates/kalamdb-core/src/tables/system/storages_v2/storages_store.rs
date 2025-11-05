@@ -2,7 +2,7 @@
 //!
 //! This module provides a SystemTableStore<StorageId, Storage> wrapper for the system.storages table.
 
-use crate::stores::SystemTableStore;
+use crate::tables::system::system_table_store::SystemTableStore;
 use kalamdb_commons::system::Storage;
 use kalamdb_commons::StorageId;
 use kalamdb_store::StorageBackend;

@@ -2,7 +2,7 @@
 //!
 //! This module handles template substitution for storage paths (e.g., ${user_id}).
 
-use crate::catalog::UserId;
+use crate::schema::UserId;
 use crate::error::KalamDbError;
 use std::collections::HashMap;
 

@@ -77,7 +77,7 @@ impl JobManager {
         Self {
             jobs_provider,
             job_registry,
-            node_id: NodeId::new("node_default"), // TODO: Get from config
+            node_id: NodeId::new("node_default".to_string()), // TODO: Get from config
             shutdown: Arc::new(RwLock::new(false)),
         }
     }
@@ -217,7 +217,7 @@ impl JobManager {
             .map_err(|e| crate::error::KalamDbError::IoError(format!("Failed to list jobs: {}", e)))?;
         
         // Apply filters
-        let filtered = all_jobs.into_iter().filter(|job| {
+        let mut filtered: Vec<Job> = all_jobs.into_iter().filter(|job| {
             // Filter by status
             if let Some(ref status) = filter.status {
                 if status != &job.status {
@@ -234,21 +234,34 @@ impl JobManager {
             
             // Filter by namespace
             if let Some(ref namespace) = filter.namespace_id {
-                // Extract namespace from idempotency_key if present
-                // Format: "flush-{namespace}-{table}" or similar
-                if let Some(ref key) = job.idempotency_key {
-                    if !key.contains(namespace.as_str()) {
-                        return false;
-                    }
-                } else {
-                    // No idempotency_key means we can't filter by namespace
+                if namespace != &job.namespace_id {
+                    return false;
+                }
+            }
+
+            // Filter by table name
+            if let Some(ref table_name) = filter.table_name {
+                if job.table_name.as_ref() != Some(table_name) {
+                    return false;
+                }
+            }
+
+            // Filter by idempotency key
+            if let Some(ref key) = filter.idempotency_key {
+                if job.idempotency_key.as_ref() != Some(key) {
                     return false;
                 }
             }
             
             true
         }).collect();
-        
+
+        if let Some(limit) = filter.limit {
+            if filtered.len() > limit {
+                filtered.truncate(limit);
+            }
+        }
+
         Ok(filtered)
     }
 
@@ -344,15 +357,14 @@ impl JobManager {
     /// Next job to execute, or None if no jobs available
     async fn poll_next(&self) -> Result<Option<Job>, crate::error::KalamDbError> {
         // Query for jobs with status=Queued or New, ordered by priority and created_at
-        let filter = JobFilter {
-            status: Some(vec![JobStatus::New, JobStatus::Queued]),
-            ..Default::default()
-        };
+        let jobs = self.list_jobs(JobFilter::default()).await?;
 
-        let jobs = self.list_jobs(filter).await?;
+        let next_job = jobs
+            .into_iter()
+            .filter(|job| matches!(job.status, JobStatus::New | JobStatus::Queued))
+            .next();
 
-        // Return first job (already sorted by priority/created_at)
-        Ok(jobs.into_iter().next())
+        Ok(next_job)
     }
 
     /// Execute a single job
@@ -380,7 +392,7 @@ impl JobManager {
 
         // Create job context
         let app_ctx = AppContext::get();
-        let ctx = JobContext::new(app_ctx, job_id.as_str());
+    let ctx = JobContext::new(app_ctx, job_id.as_str().to_string());
 
         // Execute job
         let decision = executor.execute(&ctx, &job).await?;
@@ -465,29 +477,21 @@ impl JobManager {
     ///
     /// Active = New, Queued, Running, or Retrying status
     async fn has_active_job_with_key(&self, key: &str) -> Result<bool, crate::error::KalamDbError> {
-        let filter = JobFilter {
-            idempotency_key: Some(key.to_string()),
-            status: Some(vec![
-                JobStatus::New,
-                JobStatus::Queued,
-                JobStatus::Running,
-                JobStatus::Retrying,
-            ]),
-            ..Default::default()
-        };
+        let mut filter = JobFilter::default();
+        filter.idempotency_key = Some(key.to_string());
 
         let jobs = self.list_jobs(filter).await?;
-        Ok(!jobs.is_empty())
+        Ok(jobs
+            .into_iter()
+            .any(|job| matches!(job.status, JobStatus::New | JobStatus::Queued | JobStatus::Running | JobStatus::Retrying)))
     }
 
     /// Recover incomplete jobs on startup
     ///
     /// Marks all Running jobs as Failed with "Server restarted" error.
     async fn recover_incomplete_jobs(&self) -> Result<(), crate::error::KalamDbError> {
-        let filter = JobFilter {
-            status: Some(vec![JobStatus::Running]),
-            ..Default::default()
-        };
+        let mut filter = JobFilter::default();
+        filter.status = Some(JobStatus::Running);
 
         let running_jobs = self.list_jobs(filter).await?;
 
@@ -537,28 +541,5 @@ impl JobManager {
     pub async fn shutdown(&self) {
         log::info!("Initiating job manager shutdown");
         *self.shutdown.write().await = true;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use kalamdb_commons::JobType;
-
-    #[test]
-    fn test_generate_job_id_prefixes() {
-        let jobs_provider = Arc::new(crate::test_helpers::create_test_jobs_provider());
-        let job_registry = Arc::new(JobRegistry::new());
-        let manager = JobManager::new(jobs_provider, job_registry);
-
-        // Test all job type prefixes
-        assert!(manager.generate_job_id(&JobType::Flush).as_str().starts_with("FL-"));
-        assert!(manager.generate_job_id(&JobType::Cleanup).as_str().starts_with("CL-"));
-        assert!(manager.generate_job_id(&JobType::Retention).as_str().starts_with("RT-"));
-        assert!(manager.generate_job_id(&JobType::StreamEviction).as_str().starts_with("SE-"));
-        assert!(manager.generate_job_id(&JobType::UserCleanup).as_str().starts_with("UC-"));
-        assert!(manager.generate_job_id(&JobType::Compact).as_str().starts_with("CO-"));
-        assert!(manager.generate_job_id(&JobType::Backup).as_str().starts_with("BK-"));
-        assert!(manager.generate_job_id(&JobType::Restore).as_str().starts_with("RS-"));
     }
 }

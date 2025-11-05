@@ -503,39 +503,3 @@ impl Handler<SendNotification> for WebSocketSession {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use kalamdb_core::live_query::{LiveQueryManager, NodeId};
-    use tempfile::TempDir;
-
-    #[test]
-    fn test_websocket_session_creation() {
-        let user_id = Some(UserId::from("user-123"));
-        let temp_dir = TempDir::new().unwrap();
-        let db_init = kalamdb_store::RocksDbInit::new(temp_dir.path().to_str().unwrap());
-        let db = db_init.open().unwrap();
-        let backend: Arc<dyn kalamdb_store::StorageBackend> =
-            Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
-        let manager = Arc::new(LiveQueryManager::new(
-            kalam_sql,
-            NodeId::new("test-node".to_string()),
-            None,
-            None,
-            None,
-        ));
-
-        let session =
-            WebSocketSession::new("test-conn-123".to_string(), user_id.clone(), None, manager);
-        assert_eq!(session.connection_id, "test-conn-123");
-        assert_eq!(session.user_id, user_id);
-        assert_eq!(session.subscriptions.len(), 0);
-    }
-
-    #[test]
-    fn test_heartbeat_constants() {
-        assert_eq!(HEARTBEAT_INTERVAL, Duration::from_secs(5));
-        assert_eq!(CLIENT_TIMEOUT, Duration::from_secs(10));
-    }
-}

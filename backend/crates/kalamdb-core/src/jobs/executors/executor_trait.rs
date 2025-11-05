@@ -247,8 +247,8 @@ mod tests {
     }
 
     #[test]
-    fn test_job_context_logging() {
-        let app_ctx = Arc::new(AppContext::default());
+    fn test_job_context_logging() {     
+        let app_ctx = AppContext::get();
         let ctx = JobContext::new(app_ctx, "FL-abc123".to_string());
         
         // These should not panic

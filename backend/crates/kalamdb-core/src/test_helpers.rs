@@ -89,7 +89,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
 /// Create a JobsTableProvider for testing
 ///
 /// Returns the jobs provider from the initialized AppContext.
-pub fn create_test_jobs_provider() -> crate::tables::system::JobsTableProvider {
+pub fn create_test_jobs_provider() -> Arc<crate::tables::system::JobsTableProvider> {
     init_test_app_context();
     let ctx = AppContext::get();
     ctx.system_tables().jobs().clone()

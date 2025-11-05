@@ -3,7 +3,7 @@
 //! Provides global access to all core resources with simplified 3-parameter initialization.
 //! Uses constants from kalamdb_commons for table prefixes.
 
-use crate::catalog::SchemaCache;
+use crate::schema::SchemaCache;
 use crate::schema::registry::SchemaRegistry;
 use crate::jobs::UnifiedJobManager;
 use crate::jobs::executors::{

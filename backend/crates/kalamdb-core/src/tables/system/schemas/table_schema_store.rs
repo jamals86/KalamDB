@@ -28,7 +28,7 @@
 //! }
 //! ```
 
-use crate::stores::SystemTableStore;
+use crate::tables::system::system_table_store::SystemTableStore;
 use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_store::entity_store::EntityStore;

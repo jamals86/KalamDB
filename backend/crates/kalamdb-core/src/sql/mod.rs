@@ -5,5 +5,6 @@ pub mod executor;
 pub mod functions;
 
 pub use datafusion_session::{DataFusionSessionFactory, KalamSessionState};
-pub use executor::{ExecutionResult, SqlExecutor};
+pub use executor::SqlExecutor;
+pub use executor::handlers::ExecutionResult;
 pub use functions::CurrentUserFunction;

@@ -5,8 +5,10 @@
 use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::{extract_auth_with_repo, AuthenticatedUser, UserRepository};
 use kalamdb_commons::models::UserId;
+use kalamdb_core::sql::ExecutionResult;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
-use kalamdb_core::sql::executor::{ExecutionContext, ExecutionMetadata, ExecutionResult, SqlExecutor};
+use kalamdb_core::sql::executor::{ExecutorMetadataAlias, SqlExecutor};
+use kalamdb_core::sql::executor::handlers::types::ExecutionContext;
 use log::warn;
 use std::sync::Arc;
 use std::time::Instant;
@@ -185,7 +187,7 @@ async fn execute_single_statement(
     session_factory: &Arc<DataFusionSessionFactory>,
     sql_executor: Option<&Arc<SqlExecutor>>,
     auth: &kalamdb_auth::AuthenticatedRequest,
-    metadata: Option<&ExecutionMetadata>,
+    metadata: Option<&ExecutorMetadataAlias>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     // Create execution context from authenticated user
     let exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role);

@@ -3,7 +3,7 @@
 //! This module monitors row count and time intervals per column family to determine
 //! when flush operations should be triggered based on configured flush policies.
 
-use crate::catalog::{TableName, TableType};
+use crate::schema::{TableName, TableType};
 use crate::error::KalamDbError;
 use crate::flush::FlushPolicy;
 use chrono::{DateTime, Utc};

@@ -2,7 +2,7 @@
 //!
 //! This module provides a SystemTableStore<JobId, Job> wrapper for the system.jobs table.
 
-use crate::stores::SystemTableStore;
+use crate::tables::system::system_table_store::SystemTableStore;
 use kalamdb_commons::system::Job;
 use kalamdb_commons::JobId;
 use kalamdb_store::StorageBackend;
@@ -36,23 +36,19 @@ mod tests {
     }
 
     fn create_test_job(job_id: &str) -> Job {
-        Job {
-            job_id: JobId::new(job_id),
-            job_type: JobType::Flush,
-            namespace_id: NamespaceId::new("default"),
-            table_name: Some(TableName::new("events")),
-            status: JobStatus::Running,
-            parameters: None,
-            result: None,
-            trace: None,
-            memory_used: None,
-            cpu_used: None,
-            created_at: 1000,
-            started_at: Some(1000),
-            completed_at: None,
-            node_id: NodeId::from("server-01"),
-            error_message: None,
-        }
+        let mut job = Job::new(
+            JobId::new(job_id),
+            JobType::Flush,
+            NamespaceId::new("default"),
+            NodeId::from("server-01"),
+        );
+        job.table_name = Some(TableName::new("events"));
+        job.status = JobStatus::Running;
+        job.created_at = 1000;
+        job.updated_at = 1000;
+        job.started_at = Some(1000);
+        job.finished_at = None;
+        job
     }
 
     #[test]

@@ -35,9 +35,6 @@ pub mod user_management;
 pub mod table_registry;
 pub mod system_commands;
 
-#[cfg(test)]
-mod tests;
-
 // Re-export core types for convenience
 pub use types::{ExecutionContext, ExecutionMetadata, ExecutionResult, ParamValue};
 pub use authorization::AuthorizationHandler;

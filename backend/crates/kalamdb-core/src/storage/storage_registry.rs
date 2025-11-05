@@ -4,7 +4,7 @@
 
 use crate::error::KalamDbError;
 use crate::tables::system::StoragesTableProvider;
-use kalamdb_commons::models::{StorageConfig, StorageId, StorageType};
+use kalamdb_commons::models::StorageId;
 use kalamdb_commons::system::Storage;
 use std::sync::Arc;
 
@@ -50,10 +50,16 @@ impl StorageRegistry {
     /// * `Ok(Some(Storage))` - Storage found
     /// * `Ok(None)` - Storage not found
     /// * `Err` - Database error
-    pub async fn get_storage_by_id(&self, storage_id: &StorageId) -> Result<Option<Storage>, KalamDbError> {
+    pub fn get_storage_by_id(&self, storage_id: &StorageId) -> Result<Option<Storage>, KalamDbError> {
         self.storages_provider
             .get_storage(storage_id)
             .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))
+    }
+
+    /// Backward compatible helper that accepts a raw storage ID string.
+    pub fn get_storage_config(&self, storage_id: &str) -> Result<Option<Storage>, KalamDbError> {
+        let storage_id = StorageId::from(storage_id);
+        self.get_storage_by_id(&storage_id)
     }
 
     /// List all storage configurations
@@ -78,7 +84,7 @@ impl StorageRegistry {
     pub fn list_storages(&self) -> Result<Vec<Storage>, KalamDbError> {
         let mut storages = self
             .storages_provider
-            .scan_all_storages()
+            .list_storages()
             .map_err(|e| KalamDbError::Other(format!("Failed to list storages: {}", e)))?;
 
         // Sort: 'local' first, then alphabetically

@@ -155,7 +155,7 @@ mod tests {
             JobId::new("UC-test123"),
             JobType::UserCleanup,
             NamespaceId::new("default"),
-            NodeId::new("node1"),
+            NodeId::from("node1"),
         );
 
         let mut job = job;
@@ -179,7 +179,7 @@ mod tests {
             JobId::new("UC-test123"),
             JobType::UserCleanup,
             NamespaceId::new("default"),
-            NodeId::new("node1"),
+            NodeId::from("node1"),
         );
 
         let mut job = job;
@@ -192,8 +192,9 @@ mod tests {
 
         let result = executor.validate_params(&job).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
+        let err = result.unwrap_err();
+        assert!(err
+            .to_string()
             .contains("Missing required parameter: user_id"));
     }
 

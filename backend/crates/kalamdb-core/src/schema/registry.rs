@@ -6,10 +6,10 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use arrow::datatypes::SchemaRef;
 
-use crate::catalog::SchemaCache;
+use crate::schema::SchemaCache;
 use crate::tables::base_table_provider::UserTableShared;
 use crate::tables::system::schemas::TableSchemaStore;
-use crate::catalog::CachedTableData;
+use crate::schema::CachedTableData;
 use crate::error::KalamDbError;
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_commons::models::{TableId, NamespaceId};

@@ -156,7 +156,7 @@ mod tests {
             JobId::new("RT-test123"),
             JobType::Retention,
             NamespaceId::new("default"),
-            NodeId::new("node1"),
+            NodeId::from("node1"),
         );
 
         let mut job = job;
@@ -181,7 +181,7 @@ mod tests {
             JobId::new("RT-test123"),
             JobType::Retention,
             NamespaceId::new("default"),
-            NodeId::new("node1"),
+            NodeId::from("node1"),
         );
 
         let mut job = job;
@@ -196,8 +196,9 @@ mod tests {
 
         let result = executor.validate_params(&job).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
+        let err = result.unwrap_err();
+        assert!(err
+            .to_string()
             .contains("Missing required parameter: retention_hours"));
     }
 

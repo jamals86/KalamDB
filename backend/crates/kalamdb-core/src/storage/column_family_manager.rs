@@ -3,7 +3,7 @@
 //! This module manages creation and deletion of RocksDB column families
 //! with proper naming conventions for table isolation.
 
-use crate::catalog::{NamespaceId, TableName, TableType};
+use crate::schema::{NamespaceId, TableName, TableType};
 use crate::error::KalamDbError;
 
 /// Column family manager for RocksDB

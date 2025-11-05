@@ -20,15 +20,13 @@
 //! }
 //! ```
 
-use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
 use crate::error::KalamDbError;
-use crate::catalog::{NamespaceId, TableName};
-use crate::tables::{UserTableFlushJob, SharedTableFlushJob};
+use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
+use crate::tables::{SharedTableFlushJob, UserTableFlushJob};
 use crate::tables::base_flush::TableFlush;
 use async_trait::async_trait;
 use kalamdb_commons::system::Job;
-use kalamdb_commons::JobType;
-use kalamdb_commons::models::TableId;
+use kalamdb_commons::{JobType, NamespaceId, TableName, TableId};
 use std::sync::Arc;
 
 /// Flush Job Executor
@@ -93,13 +91,13 @@ impl JobExecutor for FlushExecutor {
         let params_obj: serde_json::Value = serde_json::from_str(params)
             .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to parse parameters: {}", e)))?;
 
-        let namespace_id = params_obj["namespace_id"].as_str().unwrap();
-        let table_name = params_obj["table_name"].as_str().unwrap();
+        let namespace_id_str = params_obj["namespace_id"].as_str().unwrap();
+        let table_name_str = params_obj["table_name"].as_str().unwrap();
         let table_type = params_obj["table_type"].as_str().unwrap();
 
         ctx.log_info(&format!(
             "Flushing {}.{} (type: {})",
-            namespace_id, table_name, table_type
+            namespace_id_str, table_name_str, table_type
         ));
 
         // Get dependencies from AppContext
@@ -108,13 +106,20 @@ impl JobExecutor for FlushExecutor {
         let schema_registry = app_ctx.schema_registry();
         let live_query_manager = app_ctx.live_query_manager();
 
+        let namespace_id = NamespaceId::new(namespace_id_str.to_string());
+        let table_name = TableName::new(table_name_str.to_string());
+
         // Create TableId for cache lookups
-        let table_id = Arc::new(TableId::new(namespace_id, table_name));
+        let table_id = Arc::new(TableId::new(namespace_id.clone(), table_name.clone()));
 
         // Get table definition and schema
-        let table_def = schema_registry.get_table_definition(&table_id).await
-            .ok_or_else(|| KalamDbError::table_not_found(namespace_id, table_name))?;
-        let schema = schema_registry.get_arrow_schema(&table_id).await;
+        let _table_def = schema_registry
+            .get_table_definition(&table_id)
+            .ok_or_else(|| KalamDbError::table_not_found(format!("{}.{}", namespace_id_str, table_name_str)))?;
+        let schema_ref = schema_registry
+            .get_arrow_schema(&table_id)
+            .ok_or_else(|| KalamDbError::table_not_found(format!("{}.{}", namespace_id_str, table_name_str)))?;
+        let schema = schema_ref.as_ref().clone();
 
         // Execute flush based on table type
         let result = match table_type {
@@ -124,15 +129,15 @@ impl JobExecutor for FlushExecutor {
                 let flush_job = UserTableFlushJob::new(
                     table_id.clone(),
                     store,
-                    NamespaceId::new(namespace_id.to_string()),
-                    TableName::new(table_name.to_string()),
-                    schema,
+                    namespace_id.clone(),
+                    table_name.clone(),
+                    schema.clone(),
                     schema_cache.clone(),
                 )
                 .with_live_query_manager(live_query_manager);
 
                 flush_job.execute()
-                    .map_err(|e| KalamDbError::internal(format!("User table flush failed: {}", e)))?
+                    .map_err(|e| KalamDbError::Other(format!("User table flush failed: {}", e)))?
             }
             "Shared" => {
                 ctx.log_info("Executing SharedTableFlushJob");
@@ -140,21 +145,24 @@ impl JobExecutor for FlushExecutor {
                 let flush_job = SharedTableFlushJob::new(
                     table_id.clone(),
                     store,
-                    NamespaceId::new(namespace_id.to_string()),
-                    TableName::new(table_name.to_string()),
-                    schema,
+                    namespace_id.clone(),
+                    table_name.clone(),
+                    schema.clone(),
                     schema_cache.clone(),
                 )
                 .with_live_query_manager(live_query_manager);
 
                 flush_job.execute()
-                    .map_err(|e| KalamDbError::internal(format!("Shared table flush failed: {}", e)))?
+                    .map_err(|e| KalamDbError::Other(format!("Shared table flush failed: {}", e)))?
             }
             "Stream" => {
                 ctx.log_info("Stream table flush not yet implemented");
                 // TODO: Implement StreamTableFlushJob when stream tables support flush
                 return Ok(JobDecision::Completed {
-                    message: Some(format!("Stream flush not yet implemented for {}.{}", namespace_id, table_name)),
+                    message: Some(format!(
+                        "Stream flush not yet implemented for {}.{}",
+                        namespace_id_str, table_name_str
+                    )),
                 });
             }
             _ => {
@@ -173,7 +181,10 @@ impl JobExecutor for FlushExecutor {
         Ok(JobDecision::Completed {
             message: Some(format!(
                 "Flushed {}.{} successfully ({} rows, {} files)",
-                namespace_id, table_name, result.rows_flushed, result.parquet_files.len()
+                namespace_id_str,
+                table_name_str,
+                result.rows_flushed,
+                result.parquet_files.len()
             )),
         })
     }
@@ -204,7 +215,7 @@ mod tests {
             JobId::new("FL-test123"),
             JobType::Flush,
             NamespaceId::new("default"),
-            NodeId::new("node1"),
+            NodeId::default_node(),
         );
 
         let mut job = job;
@@ -229,7 +240,7 @@ mod tests {
             JobId::new("FL-test123"),
             JobType::Flush,
             NamespaceId::new("default"),
-            NodeId::new("node1"),
+            NodeId::default_node(),
         );
 
         let mut job = job;
@@ -243,7 +254,8 @@ mod tests {
 
         let result = executor.validate_params(&job).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("table_name"));
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("table_name"));
     }
 
     #[test]

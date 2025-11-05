@@ -2,7 +2,7 @@
 //!
 //! This module provides a SystemTableStore-based implementation for cross-user shared tables.
 
-use crate::stores::SystemTableStore;
+use crate::tables::system::system_table_store::SystemTableStore;
 use kalamdb_commons::models::{NamespaceId, TableName};
 use kalamdb_commons::TableAccess;
 use kalamdb_store::StorageBackend;

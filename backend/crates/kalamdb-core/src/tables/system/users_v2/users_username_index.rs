@@ -4,7 +4,7 @@
 //! Maps UserName -> UserId for efficient username-based queries.
 
 use crate::error::KalamDbError;
-use crate::stores::SystemTableStore;
+use crate::tables::system::system_table_store::SystemTableStore;
 use kalamdb_commons::models::UserName;
 use kalamdb_commons::system::User;
 use kalamdb_commons::UserId;

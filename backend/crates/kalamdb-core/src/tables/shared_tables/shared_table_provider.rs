@@ -6,7 +6,7 @@
 //! - RocksDB buffer with Parquet persistence
 //! - Flush policy support (row/time/combined)
 
-use crate::catalog::{NamespaceId, SchemaCache, TableName, TableType};
+use crate::schema::{NamespaceId, SchemaCache, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::tables::base_table_provider::{BaseTableProvider, TableProviderCore};
 use crate::tables::arrow_json_conversion::{
@@ -229,7 +229,7 @@ impl BaseTableProvider for SharedTableProvider {
         self.core.schema_ref()
     }
 
-    fn table_type(&self) -> crate::catalog::TableType {
+    fn table_type(&self) -> crate::schema::TableType {
         self.core.table_type()
     }
 }
@@ -532,7 +532,7 @@ fn shared_rows_to_arrow_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::TableType;
+    use crate::schema::TableType;
     use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
     use kalamdb_commons::StorageId;
     use kalamdb_store::test_utils::{InMemoryBackend, TestDb};
@@ -560,7 +560,7 @@ mod tests {
         ]));
 
         // Build unified cache with CachedTableData for tests
-        use crate::catalog::{CachedTableData, SchemaCache};
+        use crate::schema::{CachedTableData, SchemaCache};
         use kalamdb_commons::models::schemas::TableDefinition;
 
         let unified_cache = Arc::new(SchemaCache::new(0, None));

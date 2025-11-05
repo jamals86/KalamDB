@@ -8,10 +8,10 @@
 //! - kalamdb-store for RocksDB operations
 //! - Data isolation enforcement
 
-use crate::catalog::{NamespaceId, TableName, UserId};
+use crate::schema::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
-use crate::stores::system_table::UserTableStoreExt;
+use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId};
 use crate::tables::UserTableStore;
 use arrow::datatypes::Schema;

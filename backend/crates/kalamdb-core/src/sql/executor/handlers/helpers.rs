@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn test_validate_namespace_name_invalid() {
         assert!(validate_namespace_name(&NamespaceId::from("")).is_err());
-        assert!(validate_namespace_name(&NamespaceId::from(&"a".repeat(65))).is_err());
+        assert!(validate_namespace_name(&NamespaceId::from("a".repeat(65))).is_err());
         assert!(validate_namespace_name(&NamespaceId::from("123ns")).is_err());
         assert!(validate_namespace_name(&NamespaceId::from("ns-name")).is_err());
     }

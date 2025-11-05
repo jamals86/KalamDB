@@ -8,7 +8,7 @@
 //! - UserTableShared: Singleton shared state for all users accessing the same table
 //! - Eliminates redundant handler/defaults allocations (30K Arc + 10K HashMap for 1000 users × 10 tables)
 
-use crate::catalog::{SchemaCache, TableType};
+use crate::schema::{SchemaCache, TableType};
 use crate::live_query::manager::LiveQueryManager;
 use crate::tables::user_tables::{UserTableDeleteHandler, UserTableInsertHandler, UserTableUpdateHandler};
 use crate::tables::UserTableStore;

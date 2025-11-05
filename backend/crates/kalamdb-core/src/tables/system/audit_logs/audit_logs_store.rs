@@ -2,11 +2,12 @@
 //!
 //! This module provides a SystemTableStore<AuditLogId, AuditLogEntry> wrapper for the system.audit_log table.
 
-use crate::stores::SystemTableStore;
 use kalamdb_commons::models::AuditLogId;
 use kalamdb_commons::system::AuditLogEntry;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;
+
+use crate::tables::system::system_table_store::SystemTableStore;
 
 /// Type alias for the audit logs table store
 pub type AuditLogsStore = SystemTableStore<AuditLogId, AuditLogEntry>;

@@ -79,7 +79,7 @@ impl ScalarUDFImpl for CurrentUserFunction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::{NamespaceId, UserId};
+    use crate::schema::{NamespaceId, UserId};
     use datafusion::logical_expr::ScalarUDF;
 
     #[test]

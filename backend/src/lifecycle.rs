@@ -61,7 +61,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     let max_concurrent = config.jobs.max_concurrent;
     tokio::spawn(async move {
         info!("Starting UnifiedJobManager run loop with max {} concurrent jobs", max_concurrent);
-        if let Err(e) = job_manager.run_loop(max_concurrent).await {
+        if let Err(e) = job_manager.run_loop(max_concurrent as usize).await {
             log::error!("UnifiedJobManager run loop failed: {}", e);
         }
     });
@@ -236,12 +236,9 @@ pub async fn run(
             let start = std::time::Instant::now();
             
             loop {
-                // Check for Running or Retrying jobs
+                // Check for Running jobs
                 let filter = kalamdb_commons::system::JobFilter {
-                    status: Some(vec![
-                        kalamdb_commons::JobStatus::Running,
-                        kalamdb_commons::JobStatus::Retrying,
-                    ]),
+                    status: Some(kalamdb_commons::JobStatus::Running),
                     ..Default::default()
                 };
                 

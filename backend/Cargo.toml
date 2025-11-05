@@ -12,6 +12,7 @@ kalamdb-core = { path = "crates/kalamdb-core" }
 kalamdb-api = { path = "crates/kalamdb-api" }
 kalamdb-sql = { path = "crates/kalamdb-sql" }
 kalamdb-store = { path = "crates/kalamdb-store" }
+kalamdb-auth = { path = "crates/kalamdb-auth" }
 kalamdb-commons = { path = "crates/kalamdb-commons" }
 
 

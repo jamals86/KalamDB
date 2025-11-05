@@ -2,7 +2,7 @@
 //!
 //! This module provides a SystemTableStore-based implementation for user-scoped tables.
 
-use crate::stores::SystemTableStore;
+use crate::tables::system::system_table_store::SystemTableStore;
 use kalamdb_commons::models::{NamespaceId, TableName, UserId};
 use kalamdb_store::StorageBackend;
 use serde::{Deserialize, Serialize};

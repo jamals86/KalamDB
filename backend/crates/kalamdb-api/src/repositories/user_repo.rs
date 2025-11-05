@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use arrow::array::{StringArray, TimestampMillisecondArray};
-use kalamdb_auth::{AuthError, AuthResult, UserRepository};
+use arrow::array::{Array, StringArray, TimestampMillisecondArray};
+use kalamdb_auth::{AuthError, UserRepository, error::AuthResult};
 use kalamdb_commons::{system::User, AuthType, Role, StorageId, StorageMode, UserId, UserName};
 use kalamdb_core::tables::system::UsersTableProvider;
 

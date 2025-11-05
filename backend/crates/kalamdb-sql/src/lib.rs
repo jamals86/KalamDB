@@ -68,9 +68,6 @@ pub use ddl::{
 pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
 
-use anyhow::Result;
-use std::sync::Arc;
-
 // ============================================================================
 // PHASE 6: KalamSql STRUCT COMMENTED OUT
 // ============================================================================

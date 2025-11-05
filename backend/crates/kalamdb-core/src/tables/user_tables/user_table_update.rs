@@ -6,10 +6,10 @@
 //! - Data isolation enforcement
 //! - Atomic update operations
 
-use crate::catalog::{NamespaceId, TableName, UserId};
+use crate::schema::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
-use crate::stores::system_table::UserTableStoreExt;
+use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::UserTableStore;
 
 use serde_json::Value as JsonValue;

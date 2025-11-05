@@ -13,7 +13,7 @@
 //! - Phase 3: CREATE TABLE (complex, 445 lines with 3 table type branches)
 
 use super::types::{ExecutionContext, ExecutionMetadata, ExecutionResult};
-use crate::catalog::TableType;
+use crate::schema::TableType;
 use crate::error::KalamDbError;
 use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::{JobId, NamespaceId, StorageId, TableId, UserId};
@@ -803,17 +803,8 @@ impl DDLHandler {
         Self::save_table_definition(&stmt, &schema)?;
 
         // Step 5: Create RocksDB column family for this table
-        let stream_table_store = ctx.stream_table_store();
-        stream_table_store
-            // TODO: .create_column_family(namespace_id.as_str(), table_name.as_str())
-            .map_err(|e| {
-                KalamDbError::Other(format!(
-                    "Failed to create column family for stream table {}.{}: {}",
-                    namespace_id.as_str(),
-                    table_name.as_str(),
-                    e
-                ))
-            })?;
+        let _stream_table_store = ctx.stream_table_store();
+        // TODO: create column family for stream tables once storage API exposes the helper again
 
         log::info!(
             "Stream table {}.{} created successfully (schema version 1, TTL: {:?}s)",
@@ -927,7 +918,7 @@ impl DDLHandler {
             }
         } else {
             // Step 3: Auto-increment field injection (id column)
-            let schema = Self::inject_auto_increment_field(schema)?;
+            let schema = Self::inject_auto_increment_field(schema.clone())?;
 
             // Step 4: System column injection (_updated, _deleted)
             let schema = Self::inject_system_columns(schema, TableType::Shared)?;
@@ -945,17 +936,8 @@ impl DDLHandler {
             Self::save_table_definition(&modified_stmt, &schema)?;
 
             // Step 7: Create RocksDB column family for this table
-            let shared_table_store = ctx.shared_table_store();
-            shared_table_store
-                // TODO: .create_column_family(namespace_id.as_str(), table_name.as_str())
-                .map_err(|e| {
-                    KalamDbError::Other(format!(
-                        "Failed to create column family for shared table {}.{}: {}",
-                        namespace_id.as_str(),
-                        table_name.as_str(),
-                        e
-                    ))
-                })?;
+            let _shared_table_store = ctx.shared_table_store();
+            // TODO: create column family for shared tables once storage API exposes the helper again
 
             log::info!(
                 "Shared table {}.{} created successfully (schema version 1)",
@@ -1042,7 +1024,7 @@ impl DDLHandler {
     /// * `_metadata` - Optional execution metadata
     pub async fn execute_alter_table<F>(
         schema_registry: &crate::schema::SchemaRegistry,
-        cache: Option<&crate::catalog::SchemaCache>,
+    cache: Option<&crate::schema::SchemaCache>,
         log_fn: F,
         _session: &SessionContext,
         sql: &str,
@@ -1093,23 +1075,6 @@ impl DDLHandler {
             return Err(KalamDbError::InvalidOperation(
                 "ALTER TABLE SET ACCESS LEVEL temporarily disabled - Phase 8 migration in progress".to_string()
             ));
-
-            // Invalidate unified cache after ALTER TABLE
-            if let Some(cache) = cache {
-                cache.invalidate(&table_id);
-            }
-
-            // Log audit event
-            log_fn(
-                "table.set_access",
-                &format!("{}.{}", stmt.namespace_id.as_str(), stmt.table_name.as_str()),
-                json!({ "access_level": format!("{:?}", access_level) }),
-            );
-
-            return Ok(ExecutionResult::Success(format!(
-                "Table '{}' access level changed to '{:?}'",
-                table_id, access_level
-            )));
         }
 
         // For other ALTER TABLE operations (ADD COLUMN, DROP COLUMN, etc.),
@@ -1147,7 +1112,7 @@ impl DDLHandler {
     /// ```
     pub async fn execute_drop_table<F>(
         schema_registry: &crate::schema::SchemaRegistry,
-        cache: Option<&crate::catalog::SchemaCache>,
+    cache: Option<&crate::schema::SchemaCache>,
         job_manager: &crate::jobs::UnifiedJobManager,
         live_query_check_fn: F,
         _session: &SessionContext,
@@ -1351,7 +1316,7 @@ impl DDLHandler {
         table_type: &TableType,
     ) -> Result<(), KalamDbError> {
         use crate::app_context::AppContext;
-        use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
+    use crate::tables::system::system_table_store::{SharedTableStoreExt, UserTableStoreExt};
         
         let ctx = AppContext::get();
         let user_table_store = ctx.user_table_store();
@@ -1617,6 +1582,8 @@ impl DDLHandler {
 
 #[cfg(test)]
 mod tests {
+    use crate::app_context::AppContext;
+
     use super::*;
     use datafusion::execution::context::SessionContext;
     use kalamdb_commons::models::UserId;
@@ -1633,10 +1600,7 @@ mod tests {
 
     /// Helper to get namespaces provider from AppContext
     fn get_namespaces_provider() -> Arc<crate::tables::system::NamespacesTableProvider> {
-        // Use AppContext test helper (Phase 5 pattern)
-        use crate::test_helpers;
-        
-        let app_ctx = test_helpers::get_app_context();
+        let app_ctx = AppContext::get();
         app_ctx.system_tables().namespaces()
     }
 

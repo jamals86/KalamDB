@@ -2,7 +2,7 @@
 //!
 //! This module provides a SystemTableStore<String, SystemTable> wrapper for the system.tables table.
 
-use crate::stores::SystemTableStore;
+use crate::tables::system::system_table_store::SystemTableStore;
 use kalamdb_commons::system::SystemTable;
 use kalamdb_store::StorageBackend;
 use std::sync::Arc;

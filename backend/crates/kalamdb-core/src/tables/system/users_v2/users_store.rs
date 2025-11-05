@@ -2,7 +2,7 @@
 //!
 //! This module provides a SystemTableStore<UserId, User> wrapper for the system.users table.
 
-use crate::stores::SystemTableStore;
+use crate::tables::system::system_table_store::SystemTableStore;
 use kalamdb_commons::system::User;
 use kalamdb_commons::UserId;
 use kalamdb_store::StorageBackend;
