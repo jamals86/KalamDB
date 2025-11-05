@@ -45,37 +45,9 @@
 pub mod unified_manager;
 pub mod executors;
 
-// ============================================================================
-// DEPRECATED: LEGACY JOB COMPONENTS (PENDING MIGRATION)
-// ============================================================================
-// These modules are marked #[deprecated] and still used by lifecycle.rs
-// Will be removed after background scheduler migration (Phase 9 deferred work)
-#[deprecated(since = "0.1.0", note = "Use UnifiedJobManager with concrete executors instead. See unified_manager.rs")]
-pub mod executor;
-#[deprecated(since = "0.1.0", note = "Use UnifiedJobManager executors instead")]
-pub mod job_cleanup;
-#[deprecated(since = "0.1.0", note = "Use UnifiedJobManager executors instead")]
-pub mod stream_eviction;
-#[deprecated(since = "0.1.0", note = "Use UnifiedJobManager executors instead")]
-pub mod stream_eviction_scheduler;
-#[deprecated(since = "0.1.0", note = "Use UnifiedJobManager executors instead")]
-pub mod user_cleanup;
-
 #[cfg(test)]
 mod tests;
 
-// Phase 9 exports (primary API)
+// Phase 9 exports (production API)
 pub use unified_manager::JobManager as UnifiedJobManager;
 pub use executors::{JobContext, JobDecision, JobExecutor as JobExecutorTrait, JobRegistry};
-
-// Legacy exports (used by lifecycle.rs - pending migration)
-#[allow(deprecated)]
-pub use executor::{JobExecutor, JobResult};
-#[allow(deprecated)]
-pub use job_cleanup::JobCleanupTask;
-#[allow(deprecated)]
-pub use stream_eviction::{StreamEvictionConfig, StreamEvictionJob};
-#[allow(deprecated)]
-pub use stream_eviction_scheduler::StreamEvictionScheduler;
-#[allow(deprecated)]
-pub use user_cleanup::{UserCleanupConfig, UserCleanupJob};

@@ -16,12 +16,6 @@ use kalamdb_core::live_query::LiveQueryManager;
 // Services are created internally by AppContext/SqlExecutor in Phase 5+
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_core::{
-    jobs::{
-        JobCleanupTask, JobExecutor, JobResult, StreamEvictionJob, StreamEvictionScheduler,
-        UserCleanupConfig, UserCleanupJob,
-    },
-};
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
 use log::debug;
@@ -36,14 +30,12 @@ pub struct ApplicationComponents {
     pub sql_executor: Arc<SqlExecutor>,
     pub jwt_auth: Arc<JwtAuth>,
     pub rate_limiter: Arc<RateLimiter>,
-    pub job_executor: Arc<JobExecutor>,
     pub live_query_manager: Arc<LiveQueryManager>,
-    pub stream_eviction_scheduler: Arc<StreamEvictionScheduler>,
     pub user_repo: Arc<dyn kalamdb_auth::UserRepository>,
 }
 
 /// Initialize RocksDB, DataFusion, services, rate limiter, and flush scheduler.
-pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
+pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     // Initialize RocksDB
     let db_path = std::path::PathBuf::from(&config.storage.rocksdb_path);
     std::fs::create_dir_all(&db_path)?;
@@ -103,10 +95,6 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     }
 
     // Get references from AppContext for services that need them
-    let kalam_sql = app_context.kalam_sql();
-    let user_table_store = app_context.user_table_store();
-    let shared_table_store = app_context.shared_table_store();
-    let stream_table_store = app_context.stream_table_store();
     let job_manager = app_context.job_manager();
     let storage_registry = app_context.storage_registry();
     let live_query_manager = app_context.live_query_manager();
@@ -154,118 +142,12 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         config.rate_limit.max_subscriptions_per_user
     );
 
-    // Job executor for stream eviction (now includes flush scheduling)
-    let job_executor = Arc::new(JobExecutor::new(
-        jobs_provider.clone(),
-        node_id.clone(),
-        job_manager.clone(),
-        std::time::Duration::from_secs(5),
-    ));
-
-    // Stream eviction job and scheduler
-    let stream_eviction_job = Arc::new(StreamEvictionJob::with_defaults(
-        stream_table_store.clone(),
-        kalam_sql.clone(),
-        job_executor.clone(),
-    ));
-
-    let eviction_interval = Duration::from_secs(config.stream.eviction_interval_seconds);
-    let stream_eviction_scheduler = Arc::new(StreamEvictionScheduler::new(
-        stream_eviction_job,
-        eviction_interval,
-    ));
-    info!(
-        "Stream eviction scheduler initialized (interval: {} seconds)",
-        config.stream.eviction_interval_seconds
-    );
-
-    // User cleanup job (scheduled background task)
-    let user_cleanup_job = Arc::new(UserCleanupJob::new(
-        kalam_sql.clone(),
-        user_table_store.clone(),
-        UserCleanupConfig {
-            grace_period_days: config.user_management.deletion_grace_period_days,
-        },
-    ));
-
-    let cleanup_interval =
-        JobCleanupTask::parse_cron_schedule(&config.user_management.cleanup_job_schedule);
-    let cleanup_job_manager = job_manager.clone();
-    let cleanup_job_executor = job_executor.clone();
-    let scheduled_cleanup_job = Arc::clone(&user_cleanup_job);
-
-    tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(cleanup_interval);
-
-        loop {
-            ticker.tick().await;
-
-            let job_id = format!("user-cleanup-{}", chrono::Utc::now().timestamp_millis());
-            let job_id_clone = job_id.clone();
-            let job_executor = Arc::clone(&cleanup_job_executor);
-            let job_instance = Arc::clone(&scheduled_cleanup_job);
-            let grace_period = job_instance.config().grace_period_days;
-
-            let job_future = Box::pin(async move {
-                let executor_job_id = job_id;
-                let cleanup_job = Arc::clone(&job_instance);
-                let result = job_executor.execute_job(
-                    executor_job_id,
-                    "user_cleanup".to_string(),
-                    None,
-                    vec![format!("grace_period_days={}", grace_period)],
-                    move || {
-                        cleanup_job
-                            .enforce()
-                            .map(|count| format!("Deleted {} expired users", count))
-                            .map_err(|err| err.to_string())
-                    },
-                );
-
-                match result {
-                    Ok(JobResult::Success(msg)) => Ok(msg),
-                    Ok(JobResult::Failure(msg)) => Err(msg),
-                    Err(err) => Err(err.to_string()),
-                }
-            });
-
-            if let Err(e) = cleanup_job_manager
-                .start_job(job_id_clone, "user_cleanup".to_string(), job_future)
-                .await
-            {
-                log::error!("Failed to start user cleanup job: {}", e);
-            }
-        }
-    });
-    info!(
-        "User cleanup job scheduled (grace period: {} days, schedule: {})",
-        config.user_management.deletion_grace_period_days,
-        config.user_management.cleanup_job_schedule
-    );
-
-    // Resume crash recovery jobs
-    match job_executor.resume_incomplete_jobs().await {
-        Ok(count) if count > 0 => {
-            info!(
-                "Resumed {} incomplete flush jobs from previous session",
-                count
-            );
-        }
-        Ok(_) => {}
-        Err(e) => {
-            log::warn!("Failed to resume incomplete jobs: {}", e);
-        }
-    }
-
-    job_executor.start_flush_scheduler().await?;
-    info!("FlushScheduler started (checking triggers every 5 seconds)");
-
-    // Start stream eviction scheduler
-    stream_eviction_scheduler.start();
-    info!(
-        "Stream eviction scheduler started (running every {} seconds)",
-        config.stream.eviction_interval_seconds
-    );
+    // Phase 9: All job scheduling now handled by UnifiedJobManager
+    // Crash recovery handled by UnifiedJobManager.recover_incomplete_jobs() in run_loop
+    // Flush scheduling via FLUSH TABLE/FLUSH ALL TABLES commands
+    // Stream eviction and user cleanup via scheduled job creation (TODO: implement cron scheduler)
+    
+    info!("Job management delegated to UnifiedJobManager (already running in background)");
 
     // Get users provider for system user initialization
     let users_provider_for_init = app_context.system_tables().users();
@@ -276,26 +158,30 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     // Security warning: Check if remote access is enabled with empty root password
     check_remote_access_security(config, users_provider_for_init).await?;
 
-    Ok(ApplicationComponents {
+    let components = ApplicationComponents {
         session_factory,
         sql_executor,
         jwt_auth,
         rate_limiter,
-        job_executor,
         live_query_manager,
-        stream_eviction_scheduler,
         user_repo,
-    })
+    };
+
+    Ok((components, app_context))
 }
 
 /// Start the HTTP server and manage graceful shutdown.
-pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Result<()> {
+pub async fn run(
+    config: &ServerConfig, 
+    components: ApplicationComponents,
+    app_context: Arc<kalamdb_core::app_context::AppContext>,
+) -> Result<()> {
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     info!("Starting HTTP server on {}", bind_addr);
     info!("Endpoints: POST /v1/api/sql, GET /v1/ws");
 
-    let job_executor_shutdown = components.job_executor.clone();
-    let stream_eviction_scheduler_shutdown = components.stream_eviction_scheduler.clone();
+    // Get UnifiedJobManager for graceful shutdown
+    let job_manager_shutdown = app_context.job_manager();
     let shutdown_timeout_secs = config.shutdown.flush.timeout;
 
     let session_factory = components.session_factory.clone();
@@ -340,22 +226,44 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
             server_handle.stop(true).await;
 
             info!(
-                "Waiting up to {}s for active flush jobs to complete...",
+                "Waiting up to {}s for active jobs to complete...",
                 shutdown_timeout_secs
             );
+            
+            // Signal shutdown to UnifiedJobManager
+            job_manager_shutdown.shutdown().await;
+            
+            // Wait for active jobs with timeout
             let timeout = std::time::Duration::from_secs(shutdown_timeout_secs as u64);
-
-            match job_executor_shutdown.wait_for_active_flush_jobs(timeout).await {
-                Ok(_) => info!("All flush jobs completed successfully"),
-                Err(e) => log::warn!("Flush jobs did not complete within timeout: {}", e),
-            }
-
-            if let Err(e) = job_executor_shutdown.stop_flush_scheduler().await {
-                log::error!("Error stopping flush scheduler: {}", e);
-            }
-
-            if let Err(e) = stream_eviction_scheduler_shutdown.stop().await {
-                log::error!("Error stopping stream eviction scheduler: {}", e);
+            let start = std::time::Instant::now();
+            
+            loop {
+                // Check for Running or Retrying jobs
+                let filter = kalamdb_commons::system::JobFilter {
+                    status: Some(vec![
+                        kalamdb_commons::JobStatus::Running,
+                        kalamdb_commons::JobStatus::Retrying,
+                    ]),
+                    ..Default::default()
+                };
+                
+                match job_manager_shutdown.list_jobs(filter).await {
+                    Ok(jobs) if jobs.is_empty() => {
+                        info!("All jobs completed successfully");
+                        break;
+                    }
+                    Ok(jobs) => {
+                        if start.elapsed() > timeout {
+                            warn!("Timeout waiting for {} active jobs to complete", jobs.len());
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    }
+                    Err(e) => {
+                        log::error!("Error checking job status during shutdown: {}", e);
+                        break;
+                    }
+                }
             }
         }
     }
