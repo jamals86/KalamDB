@@ -57,20 +57,26 @@ impl JobExecutor for FlushExecutor {
         let params = job
             .parameters
             .as_ref()
-            .ok_or_else(|| KalamDbError::invalid_request("Missing parameters"))?;
+            .ok_or_else(|| KalamDbError::InvalidOperation("Missing parameters".to_string()))?;
 
         let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::invalid_request(format!("Invalid JSON parameters: {}", e)))?;
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid JSON parameters: {}", e)))?;
 
         // Validate required fields
         if params_obj.get("namespace_id").is_none() {
-            return Err(KalamDbError::invalid_request("Missing required parameter: namespace_id"));
+            return Err(KalamDbError::InvalidOperation(
+                "Missing required parameter: namespace_id".to_string(),
+            ));
         }
         if params_obj.get("table_name").is_none() {
-            return Err(KalamDbError::invalid_request("Missing required parameter: table_name"));
+            return Err(KalamDbError::InvalidOperation(
+                "Missing required parameter: table_name".to_string(),
+            ));
         }
         if params_obj.get("table_type").is_none() {
-            return Err(KalamDbError::invalid_request("Missing required parameter: table_type"));
+            return Err(KalamDbError::InvalidOperation(
+                "Missing required parameter: table_type".to_string(),
+            ));
         }
 
         Ok(())
@@ -85,7 +91,7 @@ impl JobExecutor for FlushExecutor {
         // Parse parameters
         let params = job.parameters.as_ref().unwrap();
         let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::invalid_request(format!("Failed to parse parameters: {}", e)))?;
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to parse parameters: {}", e)))?;
 
         let namespace_id = params_obj["namespace_id"].as_str().unwrap();
         let table_name = params_obj["table_name"].as_str().unwrap();
@@ -152,7 +158,10 @@ impl JobExecutor for FlushExecutor {
                 });
             }
             _ => {
-                return Err(KalamDbError::invalid_request(format!("Unknown table type: {}", table_type)));
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Unknown table type: {}",
+                    table_type
+                )));
             }
         };
 

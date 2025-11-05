@@ -51,23 +51,29 @@ impl JobExecutor for UserCleanupExecutor {
         let params = job
             .parameters
             .as_ref()
-            .ok_or_else(|| KalamDbError::invalid_request("Missing parameters"))?;
+            .ok_or_else(|| KalamDbError::InvalidOperation("Missing parameters".to_string()))?;
 
         let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::invalid_request(format!("Invalid JSON parameters: {}", e)))?;
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid JSON parameters: {}", e)))?;
 
         // Validate required fields
         if params_obj.get("user_id").is_none() {
-            return Err(KalamDbError::invalid_request("Missing required parameter: user_id"));
+            return Err(KalamDbError::InvalidOperation(
+                "Missing required parameter: user_id".to_string(),
+            ));
         }
         if params_obj.get("username").is_none() {
-            return Err(KalamDbError::invalid_request("Missing required parameter: username"));
+            return Err(KalamDbError::InvalidOperation(
+                "Missing required parameter: username".to_string(),
+            ));
         }
 
         // Validate cascade if present
         if let Some(cascade) = params_obj.get("cascade") {
             if !cascade.is_boolean() {
-                return Err(KalamDbError::invalid_request("cascade must be a boolean"));
+                return Err(KalamDbError::InvalidOperation(
+                    "cascade must be a boolean".to_string(),
+                ));
             }
         }
 
@@ -83,7 +89,7 @@ impl JobExecutor for UserCleanupExecutor {
         // Parse parameters
         let params = job.parameters.as_ref().unwrap();
         let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::invalid_request(format!("Failed to parse parameters: {}", e)))?;
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to parse parameters: {}", e)))?;
 
         let user_id = params_obj["user_id"].as_str().unwrap();
         let username = params_obj["username"].as_str().unwrap();

@@ -53,46 +53,58 @@ impl JobExecutor for StreamEvictionExecutor {
         let params = job
             .parameters
             .as_ref()
-            .ok_or_else(|| KalamDbError::invalid_request("Missing parameters"))?;
+            .ok_or_else(|| KalamDbError::InvalidOperation("Missing parameters".to_string()))?;
 
         let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::invalid_request(format!("Invalid JSON parameters: {}", e)))?;
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid JSON parameters: {}", e)))?;
 
         // Validate required fields
         if params_obj.get("namespace_id").is_none() {
-            return Err(KalamDbError::invalid_request("Missing required parameter: namespace_id"));
+            return Err(KalamDbError::InvalidOperation(
+                "Missing required parameter: namespace_id".to_string(),
+            ));
         }
         if params_obj.get("table_name").is_none() {
-            return Err(KalamDbError::invalid_request("Missing required parameter: table_name"));
+            return Err(KalamDbError::InvalidOperation(
+                "Missing required parameter: table_name".to_string(),
+            ));
         }
         if params_obj.get("table_type").is_none() {
-            return Err(KalamDbError::invalid_request("Missing required parameter: table_type"));
+            return Err(KalamDbError::InvalidOperation(
+                "Missing required parameter: table_type".to_string(),
+            ));
         }
 
         // Validate table_type is Stream
         let table_type = params_obj["table_type"]
             .as_str()
-            .ok_or_else(|| KalamDbError::invalid_request("table_type must be a string"))?;
+            .ok_or_else(|| KalamDbError::InvalidOperation("table_type must be a string".to_string()))?;
         if table_type != "Stream" {
-            return Err(KalamDbError::invalid_request(format!(
+            return Err(KalamDbError::InvalidOperation(format!(
                 "Invalid table_type: expected 'Stream', got '{}'",
                 table_type
             )));
         }
 
         if params_obj.get("ttl_seconds").is_none() {
-            return Err(KalamDbError::invalid_request("Missing required parameter: ttl_seconds"));
+            return Err(KalamDbError::InvalidOperation(
+                "Missing required parameter: ttl_seconds".to_string(),
+            ));
         }
 
         // Validate ttl_seconds is a number
         if !params_obj["ttl_seconds"].is_number() {
-            return Err(KalamDbError::invalid_request("ttl_seconds must be a number"));
+            return Err(KalamDbError::InvalidOperation(
+                "ttl_seconds must be a number".to_string(),
+            ));
         }
 
         // Validate batch_size if present
         if let Some(batch_size) = params_obj.get("batch_size") {
             if !batch_size.is_number() {
-                return Err(KalamDbError::invalid_request("batch_size must be a number"));
+                return Err(KalamDbError::InvalidOperation(
+                    "batch_size must be a number".to_string(),
+                ));
             }
         }
 
@@ -108,7 +120,7 @@ impl JobExecutor for StreamEvictionExecutor {
         // Parse parameters
         let params = job.parameters.as_ref().unwrap();
         let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::invalid_request(format!("Failed to parse parameters: {}", e)))?;
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to parse parameters: {}", e)))?;
 
         let namespace_id = params_obj["namespace_id"].as_str().unwrap();
         let table_name = params_obj["table_name"].as_str().unwrap();

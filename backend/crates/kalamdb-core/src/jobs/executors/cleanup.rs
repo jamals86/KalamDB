@@ -51,17 +51,21 @@ impl JobExecutor for CleanupExecutor {
         let params = job
             .parameters
             .as_ref()
-            .ok_or_else(|| KalamDbError::invalid_request("Missing parameters"))?;
+            .ok_or_else(|| KalamDbError::InvalidOperation("Missing parameters".to_string()))?;
 
         let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::invalid_request(format!("Invalid JSON parameters: {}", e)))?;
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid JSON parameters: {}", e)))?;
 
         // Validate required fields
         if params_obj.get("table_id").is_none() {
-            return Err(KalamDbError::invalid_request("Missing required parameter: table_id"));
+            return Err(KalamDbError::InvalidOperation(
+                "Missing required parameter: table_id".to_string(),
+            ));
         }
         if params_obj.get("operation").is_none() {
-            return Err(KalamDbError::invalid_request("Missing required parameter: operation"));
+            return Err(KalamDbError::InvalidOperation(
+                "Missing required parameter: operation".to_string(),
+            ));
         }
 
         Ok(())
@@ -76,7 +80,7 @@ impl JobExecutor for CleanupExecutor {
         // Parse parameters
         let params = job.parameters.as_ref().unwrap();
         let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| KalamDbError::invalid_request(format!("Failed to parse parameters: {}", e)))?;
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to parse parameters: {}", e)))?;
 
         let table_id = params_obj["table_id"].as_str().unwrap();
         let operation = params_obj["operation"].as_str().unwrap();
@@ -102,7 +106,9 @@ impl JobExecutor for CleanupExecutor {
     async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), KalamDbError> {
         ctx.log_warn("Cleanup job cancellation requested");
         // Cleanup jobs should complete to avoid orphaned data
-        Err(KalamDbError::operation_not_supported("Cleanup jobs cannot be safely cancelled"))
+        Err(KalamDbError::InvalidOperation(
+            "Cleanup jobs cannot be safely cancelled".to_string(),
+        ))
     }
 }
 

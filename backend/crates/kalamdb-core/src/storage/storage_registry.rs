@@ -233,7 +233,7 @@ impl StorageRegistry {
 
         Ok(())
     }
-}
+    
 
 #[cfg(test)]
 mod tests {
