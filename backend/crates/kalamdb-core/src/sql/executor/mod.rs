@@ -3255,84 +3255,14 @@ impl SqlExecutor {
     async fn execute_drop_table(
         &self,
         _session: &SessionContext,
-        sql: &str,
-        exec_ctx: &ExecutionContext,
+        _sql: &str,
+        _exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        // Check if table deletion service is available
-        let deletion_service = // TODO: table_deletion_service removed {
-            KalamDbError::InvalidOperation(
-                "DROP TABLE not available - table deletion service not configured".to_string(),
-            )
-        })?;
-
-        // Use default namespace - the SQL parser will extract namespace from qualified name (namespace.table)
-        let default_namespace = kalamdb_commons::NamespaceId::new("default".to_string());
-        let stmt = DropTableStatement::parse(sql, &default_namespace)
-            .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
-
-        let requested_table_type: TableType = stmt.table_type.into();
-        let table_identifier =
-            TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
-
-        let kalam_sql = self.kalam_sql();
-        let actual_table_type = match kalam_sql.get_table(table_identifier.as_ref()) {
-            Ok(Some(table)) => table.table_type,
-            Ok(None) => requested_table_type,
-            Err(_) => requested_table_type,
-        };
-
-        // TODO: Track table ownership in system tables to determine is_owner accurately (#US3 follow-up)
-        let is_owner = false;
-        if !crate::auth::rbac::can_delete_table(exec_ctx.user_role, actual_table_type, is_owner) {
-            return Err(KalamDbError::Unauthorized(
-                "Insufficient privileges to drop this table".to_string(),
-            ));
-        }
-
-        if let Some(manager) = &self.live_query_manager() {
-            let table_ref = format!(
-                "{}.{}",
-                stmt.namespace_id.as_str(),
-                stmt.table_name.as_str()
-            );
-            if manager.has_active_subscriptions_for(&table_ref).await {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "Cannot drop table {} while active live queries exist",
-                    table_ref
-                )));
-            }
-        }
-
-        // Convert TableKind to TableType
-        let result = deletion_service.drop_table(
-            &stmt.namespace_id,
-            &stmt.table_name,
-            stmt.table_type.into(),
-            stmt.if_exists,
-        )?;
-
-        // If if_exists is true and table didn't exist, return success message
-        if result.is_none() {
-            return Ok(ExecutionResult::Success(format!(
-                "Table {}.{} does not exist (skipped)",
-                stmt.namespace_id.as_str(),
-                stmt.table_name.as_str()
-            )));
-        }
-
-        // T313: Invalidate unified cache after DROP TABLE
-        if let Some(cache) = &self.unified_cache {
-            cache.invalidate(&table_identifier);
-        }
-
-        let deletion_result = result.unwrap();
-        Ok(ExecutionResult::Success(format!(
-            "Table {}.{} dropped successfully ({} Parquet files deleted, {} bytes freed)",
-            stmt.namespace_id.as_str(),
-            stmt.table_name.as_str(),
-            deletion_result.files_deleted,
-            deletion_result.bytes_freed
-        )))
+        // TODO: table_deletion_service removed in Phase 8
+        // DROP TABLE functionality needs to be re-implemented without TableDeletionService
+        return Err(KalamDbError::InvalidOperation(
+            "DROP TABLE not available - table deletion service not configured".to_string(),
+        ));
     }
 
     /// Execute UPDATE statement
