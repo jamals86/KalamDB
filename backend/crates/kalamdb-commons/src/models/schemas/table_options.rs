@@ -2,14 +2,27 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{TableAccess, schemas::policy::FlushPolicy};
+use crate::{StorageId, TableAccess, schemas::policy::FlushPolicy};
+
+/// **Q: How does per-user storage assignment work with use_user_storage option?** → A: Lookup chain: table.use_user_storage=true → check user.storage_mode → if "region" use user.storage_id, if "table" use table.storage_id fallback
+/// - *Impact*: User Story 2, User Story 10 (user management), new storage assignment logic
+/// - *Rationale*: Enables data sovereignty (users in EU region → EU S3 bucket). Flexible fallback prevents orphaned data. user.storage_mode="table" allows per-table override when needed. Supports multi-tenant SaaS scenarios with region-specific compliance.
 
 /// Table options for USER tables
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserTableOptions {
+    /// The storage ID to use for this table (overrides user storage if use_user_storage is false)
+    pub storage_id: StorageId,
+
+    /// Whether to use the user's assigned storage ID instead of the table's storage ID
+    #[serde(default)]
+    pub use_user_storage: bool,
+
+    /// Flush policy (e.g. time-based, size-based or both)
     pub flush_policy: Option<FlushPolicy>,
 
     /// Compression algorithm (none, snappy, lz4, zstd)
+    /// TODO: Make this an enum
     #[serde(default = "default_compression")]
     pub compression: String,
 }
@@ -17,18 +30,17 @@ pub struct UserTableOptions {
 /// Table options for SHARED tables
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SharedTableOptions {
+    pub storage_id: StorageId,
+
     /// Access level (public, restricted)
     pub access_level: Option<TableAccess>,
 
     pub flush_policy: Option<FlushPolicy>,
 
     /// Compression algorithm (none, snappy, lz4, zstd)
+    /// TODO: Make this an enum
     #[serde(default = "default_compression")]
     pub compression: String,
-
-    /// Enable replication across nodes
-    #[serde(default)]
-    pub enable_replication: bool,
 }
 
 /// Table options for STREAM tables
@@ -155,6 +167,8 @@ fn default_eviction_strategy() -> String {
 impl Default for UserTableOptions {
     fn default() -> Self {
         Self {
+            storage_id: StorageId::default(),
+            use_user_storage: false,
             flush_policy: None,
             compression: default_compression(),
         }
@@ -164,10 +178,10 @@ impl Default for UserTableOptions {
 impl Default for SharedTableOptions {
     fn default() -> Self {
         Self {
+            storage_id: StorageId::default(),
             access_level: None,
             flush_policy: None,
-            compression: default_compression(),
-            enable_replication: false,
+            compression: default_compression()
         }
     }
 }
@@ -211,7 +225,6 @@ mod tests {
         assert!(opts.access_level.is_none());
         assert!(opts.flush_policy.is_none());
         assert_eq!(opts.compression, "snappy");
-        assert!(!opts.enable_replication);
     }
 
     #[test]

@@ -13,7 +13,7 @@ pub mod system_table_store; // Colocated SystemTableStore (moved from stores/)
 pub mod jobs_v2;
 pub mod live_queries_v2;
 pub mod namespaces_v2;
-pub mod schemas; // Phase 15 (008-schema-consolidation): Schema storage
+// schemas module removed - tables_v2 now handles TableDefinition storage
 pub mod stats;
 pub mod storages_v2;
 pub mod tables_v2;

@@ -15,7 +15,7 @@ use crate::live_query::LiveQueryManager;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::storage::storage_registry::StorageRegistry;
 use crate::tables::system::registry::SystemTablesRegistry;
-use crate::tables::system::schemas::TableSchemaStore;
+use crate::tables::system::tables_v2::TablesStore;
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
@@ -179,8 +179,8 @@ impl AppContext {
                         .expect("Failed to register information_schema table");
                 }
 
-                // Create schema store (for table definitions)
-                let schema_store = Arc::new(TableSchemaStore::new(storage_backend.clone()));
+                // Create schema store (for table definitions) - using TablesStore from tables_v2
+                let schema_store = Arc::new(TablesStore::new(storage_backend.clone(), "system_tables"));
 
                 // Create schema registry (Phase 5: unified cache + persistence)
                 let schema_registry = Arc::new(SchemaRegistry::new(

@@ -445,7 +445,7 @@ mod tests {
     use super::*;
     use crate::live_query::connection_registry::NodeId;
     use crate::schema::{SchemaCache, SchemaRegistry};
-    use crate::tables::system::schemas::TableSchemaStore;
+    use crate::tables::system::tables_v2::TablesStore;
     use crate::tables::system::LiveQueriesTableProvider;
     use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
     use kalamdb_commons::datatypes::KalamDataType;
@@ -465,7 +465,7 @@ mod tests {
 
         let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(backend.clone()));
         let schema_cache = Arc::new(SchemaCache::new(64, None));
-        let schema_store = Arc::new(TableSchemaStore::new(backend.clone()));
+        let schema_store = Arc::new(TablesStore::new(backend.clone(), "system_tables"));
         let schema_registry = Arc::new(SchemaRegistry::new(schema_cache, schema_store));
 
         let default_ns = NamespaceId::new("default");

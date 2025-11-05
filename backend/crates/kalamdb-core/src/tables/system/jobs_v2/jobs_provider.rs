@@ -187,15 +187,16 @@ impl JobsTableProvider {
             table_names.append_option(job.table_name.as_ref().map(|t| t.as_str()));
             statuses.append_value(job.status.as_str());
             parameters.append_option(job.parameters.as_deref());
-            results.append_option(job.result.as_deref());
-            traces.append_option(job.trace.as_deref());
+            // Note: Job struct uses 'message' and 'exception_trace' instead of 'result'/'trace'/'error_message'
+            results.append_option(job.message.as_deref());
+            traces.append_option(job.exception_trace.as_deref());
             memory_useds.push(job.memory_used);
             cpu_useds.push(job.cpu_used);
             created_ats.push(Some(job.created_at));
             started_ats.push(job.started_at);
             finished_ats.push(job.finished_at);
             node_ids.append_value(&job.node_id);
-            error_messages.append_option(job.error_message.as_deref());
+            error_messages.append_option(job.message.as_deref()); // message field contains error messages for failed jobs
         }
 
         let batch = RecordBatch::try_new(

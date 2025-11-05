@@ -1,15 +1,17 @@
-//! SchemaRegistry: Unified schema management (cache + persistence)
+//!     // All table schemas now come from same store
+//! }
+//! ```
+
 // Implements T200 (US8) for Phase 5: AppContext + SchemaRegistry + Stateless Executor
-// Phase 5 Enhancement: Consolidates TableSchemaStore for single source of truth
+// Phase 5 Enhancement: Consolidates TablesStore for single source of truth
 
 use std::sync::Arc;
 use dashmap::DashMap;
 use arrow::datatypes::SchemaRef;
 
-use crate::schema::SchemaCache;
+use crate::schema::schema_cache::{SchemaCache, CachedTableData};
 use crate::tables::base_table_provider::UserTableShared;
-use crate::tables::system::schemas::TableSchemaStore;
-use crate::schema::CachedTableData;
+use crate::tables::system::tables_v2::TablesStore;
 use crate::error::KalamDbError;
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_commons::models::{TableId, NamespaceId};
@@ -17,21 +19,21 @@ use kalamdb_store::entity_store::EntityStore;
 
 /// SchemaRegistry provides unified schema management:
 /// - In-memory cache (hot path) via SchemaCache
-/// - Persistent storage (cold path) via TableSchemaStore
+/// - Persistent storage (cold path) via TablesStore
 /// - Memoized Arrow schemas for zero-allocation repeated access
 /// 
 /// **Consolidation**: Eliminates duplicate logic between SchemaRegistry (cache) 
-/// and TableSchemaStore (persistence) by making SchemaRegistry the single API 
+/// and TablesStore (persistence) by making SchemaRegistry the single API 
 /// for all schema operations.
 pub struct SchemaRegistry {
     cache: Arc<SchemaCache>,
-    store: Arc<TableSchemaStore>,
+    store: Arc<TablesStore>,
     // Memoized Arrow schemas: TableId -> Arc<SchemaRef>
     arrow_schemas: DashMap<TableId, Arc<SchemaRef>>,
 }
 
 impl SchemaRegistry {
-    pub fn new(cache: Arc<SchemaCache>, store: Arc<TableSchemaStore>) -> Self {
+    pub fn new(cache: Arc<SchemaCache>, store: Arc<TablesStore>) -> Self {
         Self {
             cache,
             store,

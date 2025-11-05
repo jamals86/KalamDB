@@ -16,14 +16,13 @@
 //! - Better performance (single lookup instead of potentially two)
 
 use crate::error::KalamDbError;
-use crate::flush::FlushPolicy;
 use crate::storage::StorageRegistry;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use datafusion::datasource::TableProvider;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName, UserId};
-use kalamdb_commons::schemas::TableType;
+use kalamdb_commons::schemas::{TableType, policy::FlushPolicy};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 

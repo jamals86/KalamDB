@@ -1,22 +1,23 @@
 //! System.tables table provider
 //!
 //! This module provides a DataFusion TableProvider implementation for the system.tables table.
-//! Uses the new EntityStore architecture with String keys (table_id).
+//! Uses the new EntityStore architecture with TableId keys and TableDefinition values.
 
 use super::super::SystemTableProviderExt;
 use super::{new_tables_store, TablesStore, TablesTableSchema};
 use crate::error::KalamDbError;
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    ArrayRef, BooleanArray, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+    ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
 };
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_store::EntityStoreV2;
-use kalamdb_store::StorageBackend;
+use kalamdb_commons::models::TableId;
+use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_store::{StorageBackend, EntityStoreV2};
 use std::any::Any;
 use std::sync::Arc;
 
@@ -47,37 +48,39 @@ impl TablesTableProvider {
         }
     }
 
-    pub fn create_table(&self, table: SystemTable) -> Result<(), KalamDbError> {
-        self.store.put(&table.table_id.to_string(), &table)?;
+    pub fn create_table(&self, table_id: &TableId, table_def: &TableDefinition) -> Result<(), KalamDbError> {
+        self.store.put(table_id, table_def)?;
         Ok(())
     }
 
-    pub fn update_table(&self, table: SystemTable) -> Result<(), KalamDbError> {
+    pub fn update_table(&self, table_id: &TableId, table_def: &TableDefinition) -> Result<(), KalamDbError> {
         // Check if table exists
-        if self.store.get(&table.table_id.to_string())?.is_none() {
+        if self.store.get(table_id)?.is_none() {
             return Err(KalamDbError::NotFound(format!(
                 "Table not found: {}",
-                table.table_id
+                table_id
             )));
         }
 
-        self.store.put(&table.table_id.to_string(), &table)?;
+        self.store.put(table_id, table_def)?;
         Ok(())
     }
 
     /// Delete a table entry
-    pub fn delete_table(&self, table_id: &str) -> Result<(), KalamDbError> {
-        self.store.delete(&table_id.to_string())?;
+    pub fn delete_table(&self, table_id: &TableId) -> Result<(), KalamDbError> {
+        self.store.delete(table_id)?;
         Ok(())
     }
 
     /// Get a table by ID
-    pub fn get_table_by_id(&self, table_id: &str) -> Result<Option<SystemTable>, KalamDbError> {
-        Ok(self.store.get(&table_id.to_string())?)
+    pub fn get_table_by_id(&self, table_id: &TableId) -> Result<Option<TableDefinition>, KalamDbError> {
+        Ok(self.store.get(table_id)?)
     }
 
     /// Scan all tables and return as RecordBatch
     pub fn scan_all_tables(&self) -> Result<RecordBatch, KalamDbError> {
+        use kalamdb_store::EntityStoreV2;
+        
         let tables = self.store.scan_all()?;
 
         let mut table_ids = StringBuilder::new();
@@ -85,25 +88,21 @@ impl TablesTableProvider {
         let mut namespaces = StringBuilder::new();
         let mut table_types = StringBuilder::new();
         let mut created_ats = Vec::new();
-        let mut storage_ids = StringBuilder::new();
-        let mut use_user_storages = Vec::new();
-        let mut flush_policies = StringBuilder::new();
         let mut schema_versions = Vec::new();
-        let mut deleted_retention_hours_vec = Vec::new();
-        let mut access_levels = StringBuilder::new();
+        let mut table_comments = StringBuilder::new();
+        let mut updated_ats = Vec::new();
 
-        for (_key, table) in tables {
-            table_ids.append_value(&table.table_id);
-            table_names.append_value(table.table_name.as_str());
-            namespaces.append_value(table.namespace.as_str());
-            table_types.append_value(table.table_type.as_str());
-            created_ats.push(Some(table.created_at));
-            storage_ids.append_option(table.storage_id.as_ref().map(|s| s.as_str()));
-            use_user_storages.push(Some(table.use_user_storage));
-            flush_policies.append_value(&table.flush_policy);
-            schema_versions.push(Some(table.schema_version));
-            deleted_retention_hours_vec.push(Some(table.deleted_retention_hours));
-            access_levels.append_option(table.access_level.as_ref().map(|a| a.as_str()));
+        for (table_id, table_def) in tables {
+            // Convert TableId to string format: "namespace:table_name"
+            let table_id_str = format!("{}:{}", table_def.namespace_id.as_str(), table_def.table_name.as_str());
+            table_ids.append_value(&table_id_str);
+            table_names.append_value(table_def.table_name.as_str());
+            namespaces.append_value(table_def.namespace_id.as_str());
+            table_types.append_value(table_def.table_type.as_str());
+            created_ats.push(Some(table_def.created_at.timestamp_millis()));
+            schema_versions.push(Some(table_def.schema_version as i32));
+            table_comments.append_option(table_def.table_comment.as_deref());
+            updated_ats.push(Some(table_def.updated_at.timestamp_millis()));
         }
 
         let batch = RecordBatch::try_new(
@@ -114,12 +113,9 @@ impl TablesTableProvider {
                 Arc::new(namespaces.finish()) as ArrayRef,
                 Arc::new(table_types.finish()) as ArrayRef,
                 Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
-                Arc::new(storage_ids.finish()) as ArrayRef,
-                Arc::new(BooleanArray::from(use_user_storages)) as ArrayRef,
-                Arc::new(flush_policies.finish()) as ArrayRef,
                 Arc::new(Int32Array::from(schema_versions)) as ArrayRef,
-                Arc::new(Int32Array::from(deleted_retention_hours_vec)) as ArrayRef,
-                Arc::new(access_levels.finish()) as ArrayRef,
+                Arc::new(table_comments.finish()) as ArrayRef,
+                Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef,
             ],
         )
         .map_err(|e| KalamDbError::Other(format!("Arrow error: {}", e)))?;
@@ -179,8 +175,10 @@ impl SystemTableProviderExt for TablesTableProvider {
 mod tests {
     use super::*;
     use kalamdb_commons::{
-        NamespaceId, StorageId, TableId, TableName, TableType as KalamTableType,
+        NamespaceId, TableId, TableName,
     };
+    use kalamdb_commons::datatypes::KalamDataType;
+    use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType as KalamTableType};
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_provider() -> TablesTableProvider {
@@ -188,49 +186,73 @@ mod tests {
         TablesTableProvider::new(backend)
     }
 
-    fn create_test_table(_table_id: &str, table_name: &str) -> SystemTable {
-        SystemTable {
-            table_id: TableId::new(NamespaceId::new("default"), TableName::new(table_name)),
-            table_name: TableName::new(table_name),
-            namespace: NamespaceId::new("default"),
-            table_type: KalamTableType::User,
-            created_at: 1000,
-            storage_id: Some(StorageId::new("local")),
-            use_user_storage: false,
-            flush_policy: "{}".to_string(),
-            schema_version: 1,
-            deleted_retention_hours: 24,
-            access_level: None,
-        }
+    fn create_test_table(namespace: &str, table_name: &str) -> (TableId, TableDefinition) {
+        let namespace_id = NamespaceId::new(namespace);
+        let table_name_id = TableName::new(table_name);
+        let table_id = TableId::new(namespace_id.clone(), table_name_id.clone());
+        
+        let columns = vec![
+            ColumnDefinition::new(
+                "id",
+                1,
+                KalamDataType::Uuid,
+                false,
+                true,
+                false,
+                kalamdb_commons::schemas::ColumnDefault::None,
+                None,
+            ),
+            ColumnDefinition::new(
+                "name",
+                2,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                kalamdb_commons::schemas::ColumnDefault::None,
+                None,
+            ),
+        ];
+
+        let table_def = TableDefinition::new(
+            namespace_id,
+            table_name_id,
+            KalamTableType::User,
+            columns,
+            TableOptions::user(),
+            None,
+        ).expect("Failed to create table definition");
+
+        (table_id, table_def)
     }
 
     #[test]
     fn test_create_and_get_table() {
         let provider = create_test_provider();
-        let table = create_test_table("table1", "conversations");
+        let (table_id, table_def) = create_test_table("default", "conversations");
 
-        provider.create_table(table.clone()).unwrap();
+        provider.create_table(&table_id, &table_def).unwrap();
 
-        let retrieved = provider.get_table_by_id("default:conversations").unwrap();
+        let retrieved = provider.get_table_by_id(&table_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
-        assert_eq!(retrieved.table_id.to_string(), "default:conversations");
+        assert_eq!(retrieved.namespace_id.as_str(), "default");
         assert_eq!(retrieved.table_name.as_str(), "conversations");
     }
 
     #[test]
     fn test_update_table() {
         let provider = create_test_provider();
-        let mut table = create_test_table("table1", "conversations");
-        provider.create_table(table.clone()).unwrap();
+        let (table_id, mut table_def) = create_test_table("default", "conversations");
+        provider.create_table(&table_id, &table_def).unwrap();
 
         // Update
-        table.schema_version = 2;
-        provider.update_table(table.clone()).unwrap();
+        table_def.schema_version = 2;
+        provider.update_table(&table_id, &table_def).unwrap();
 
         // Verify
         let retrieved = provider
-            .get_table_by_id("default:conversations")
+            .get_table_by_id(&table_id)
             .unwrap()
             .unwrap();
         assert_eq!(retrieved.schema_version, 2);
@@ -239,12 +261,12 @@ mod tests {
     #[test]
     fn test_delete_table() {
         let provider = create_test_provider();
-        let table = create_test_table("table1", "conversations");
+        let (table_id, table_def) = create_test_table("default", "conversations");
 
-        provider.create_table(table).unwrap();
-        provider.delete_table("table1").unwrap();
+        provider.create_table(&table_id, &table_def).unwrap();
+        provider.delete_table(&table_id).unwrap();
 
-        let retrieved = provider.get_table_by_id("table1").unwrap();
+        let retrieved = provider.get_table_by_id(&table_id).unwrap();
         assert!(retrieved.is_none());
     }
 
@@ -254,14 +276,14 @@ mod tests {
 
         // Insert multiple tables
         for i in 1..=3 {
-            let table = create_test_table(&format!("table{}", i), &format!("table{}", i));
-            provider.create_table(table).unwrap();
+            let (table_id, table_def) = create_test_table("default", &format!("table{}", i));
+            provider.create_table(&table_id, &table_def).unwrap();
         }
 
         // Scan
         let batch = provider.scan_all_tables().unwrap();
         assert_eq!(batch.num_rows(), 3);
-        assert_eq!(batch.num_columns(), 11); // Phase 9: removed storage_location column
+        assert_eq!(batch.num_columns(), 8); // TableDefinition has 8 fields: table_id, table_name, namespace, table_type, created_at, schema_version, table_comment, updated_at
     }
 
     #[tokio::test]
@@ -269,8 +291,8 @@ mod tests {
         let provider = create_test_provider();
 
         // Insert test data
-        let table = create_test_table("table1", "conversations");
-        provider.create_table(table).unwrap();
+        let (table_id, table_def) = create_test_table("default", "conversations");
+        provider.create_table(&table_id, &table_def).unwrap();
 
         // Create DataFusion session
         let ctx = datafusion::execution::context::SessionContext::new();

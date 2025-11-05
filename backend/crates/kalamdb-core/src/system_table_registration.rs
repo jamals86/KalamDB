@@ -6,10 +6,9 @@
 use crate::tables::system::jobs_v2::JobsTableProvider;
 use crate::tables::system::live_queries_v2::LiveQueriesTableProvider;
 use crate::tables::system::namespaces_v2::NamespacesTableProvider;
-use crate::tables::system::schemas::TableSchemaStore;
+use crate::tables::system::tables_v2::{TablesTableProvider, TablesStore};
 use crate::tables::system::storages_v2::StoragesTableProvider;
 use crate::tables::system::system_table_definitions::all_system_table_definitions;
-use crate::tables::system::tables_v2::TablesTableProvider;
 use crate::tables::system::users_v2::UsersTableProvider;
 use crate::tables::system::StatsTableProvider;
 use datafusion::catalog::memory::MemorySchemaProvider;
@@ -26,7 +25,7 @@ pub struct SystemTableProviders {
     pub storages_provider: Arc<StoragesTableProvider>,
     pub live_queries_provider: Arc<LiveQueriesTableProvider>,
     pub tables_provider: Arc<TablesTableProvider>,
-    pub schema_store: Arc<TableSchemaStore>,
+    pub schema_store: Arc<TablesStore>,
 }
 
 /// Register all system tables with the provided schema
@@ -63,14 +62,15 @@ pub fn register_system_tables(
 ) -> Result<SystemTableProviders, String> {
     use kalamdb_store::storage_trait::Partition;
 
-    // Create the system_table_schemas partition if it doesn't exist
-    let schemas_partition = Partition::new("system_table_schemas");
+    // Create the system_tables partition if it doesn't exist
+    let schemas_partition = Partition::new("system_tables");
     let _ = storage_backend.create_partition(&schemas_partition); // Ignore error if already exists
 
-    // Initialize TableSchemaStore (no separate cache - unified cache in SqlExecutor)
-    let schema_store = Arc::new(TableSchemaStore::new(storage_backend.clone()));
+    // Initialize TablesStore (stores TableDefinition for all tables)
+    let schema_store = Arc::new(TablesStore::new(storage_backend.clone(), "system_tables"));
 
-    // Register all system table schema definitions in TableSchemaStore
+    // Register all system table schema definitions in TablesStore
+    use kalamdb_store::EntityStoreV2;
     for (table_id, table_def) in all_system_table_definitions() {
         schema_store
             .put(&table_id, &table_def)

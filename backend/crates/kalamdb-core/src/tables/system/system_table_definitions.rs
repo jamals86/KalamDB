@@ -706,18 +706,15 @@ pub fn live_queries_table_definition() -> TableDefinition {
 
 /// Create TableDefinition for system.tables table
 ///
-/// Schema:
+/// Schema (flattened view of TableDefinition):
 /// - table_id TEXT PRIMARY KEY (composite: namespace_id:table_name)
 /// - table_name TEXT NOT NULL
 /// - namespace TEXT NOT NULL
 /// - table_type TEXT NOT NULL
 /// - created_at TIMESTAMP NOT NULL
-/// - storage_id TEXT (nullable)
-/// - use_user_storage BOOLEAN NOT NULL
-/// - flush_policy TEXT NOT NULL
 /// - schema_version INT NOT NULL
-/// - deleted_retention_hours INT NOT NULL
-/// - access_level TEXT (nullable)
+/// - table_comment TEXT (nullable)
+/// - updated_at TIMESTAMP NOT NULL
 pub fn tables_table_definition() -> TableDefinition {
     let columns = vec![
         ColumnDefinition::new(
@@ -771,38 +768,8 @@ pub fn tables_table_definition() -> TableDefinition {
             Some("Table creation timestamp".to_string()),
         ),
         ColumnDefinition::new(
-            "storage_id",
-            6,
-            KalamDataType::Text,
-            true, // NULLABLE
-            false,
-            false,
-            ColumnDefault::None,
-            Some("Storage configuration ID".to_string()),
-        ),
-        ColumnDefinition::new(
-            "use_user_storage",
-            7,
-            KalamDataType::Boolean,
-            false,
-            false,
-            false,
-            ColumnDefault::None,
-            Some("Whether table uses user-specific storage".to_string()),
-        ),
-        ColumnDefinition::new(
-            "flush_policy",
-            8,
-            KalamDataType::Text,
-            false,
-            false,
-            false,
-            ColumnDefault::None,
-            Some("Flush policy configuration (JSON)".to_string()),
-        ),
-        ColumnDefinition::new(
             "schema_version",
-            9,
+            6,
             KalamDataType::Int,
             false,
             false,
@@ -811,24 +778,24 @@ pub fn tables_table_definition() -> TableDefinition {
             Some("Current schema version number".to_string()),
         ),
         ColumnDefinition::new(
-            "deleted_retention_hours",
-            10,
-            KalamDataType::Int,
-            false,
-            false,
-            false,
-            ColumnDefault::None,
-            Some("Hours to retain soft-deleted records".to_string()),
-        ),
-        ColumnDefinition::new(
-            "access_level",
-            11,
+            "table_comment",
+            7,
             KalamDataType::Text,
             true, // NULLABLE
             false,
             false,
             ColumnDefault::None,
-            Some("Access level for shared tables: PUBLIC, PRIVATE, RESTRICTED".to_string()),
+            Some("Optional table description or comment".to_string()),
+        ),
+        ColumnDefinition::new(
+            "updated_at",
+            8,
+            KalamDataType::Timestamp,
+            false,
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Last modification timestamp".to_string()),
         ),
     ];
 
