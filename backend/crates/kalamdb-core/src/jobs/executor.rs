@@ -1,3 +1,16 @@
+//! **DEPRECATED**: This module is deprecated in favor of `UnifiedJobManager` and executor traits.
+//!
+//! See `jobs::unified_manager` and `jobs::executors` for the new architecture:
+//! - `UnifiedJobManager`: Main job orchestration (create_job, run_loop, execute_job)
+//! - `JobExecutor` trait: Defines execute() method for concrete executors
+//! - Concrete executors: FlushExecutor, CleanupExecutor, RetentionExecutor, etc.
+//!
+//! The new system provides:
+//! - Typed JobIds with prefixes (FL-*, CL-*, RT-*, SE-*, UC-*, CO-*, BK-*, RS-*)
+//! - Idempotency enforcement (prevents duplicate jobs)
+//! - Retry logic with exponential backoff
+//! - Crash recovery (marks Running jobs as Failed on startup)
+//!
 //! Job execution framework
 //!
 //! This module provides the infrastructure for executing background jobs with:
@@ -45,6 +58,9 @@ enum SchedulerState {
 }
 
 /// Job executor that manages job lifecycle and metrics
+///
+/// **DEPRECATED**: Use `UnifiedJobManager` with concrete `JobExecutor` trait implementations instead.
+#[deprecated(since = "0.1.0", note = "Use UnifiedJobManager from jobs::unified_manager with FlushExecutor, CleanupExecutor, etc. implementations")]
 pub struct JobExecutor {
     jobs_provider: Arc<JobsTableProvider>,
     node_id: NodeId,

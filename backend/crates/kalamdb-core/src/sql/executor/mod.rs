@@ -808,7 +808,8 @@ impl SqlExecutor {
                         false
                     }
                 };
-                DDLHandler::execute_drop_table(schema_registry, Some(cache), live_query_check, session, sql, exec_ctx).await
+                let job_manager = self.app_context.job_manager();
+                DDLHandler::execute_drop_table(schema_registry, Some(cache), &job_manager, live_query_check, session, sql, exec_ctx).await
             },
             SqlStatement::ShowTables => {
                 // Route to Query handler (Phase 7 - T082)
@@ -2080,33 +2081,25 @@ impl SqlExecutor {
         )?;
 
         // Generate job_id for tracking
-        let job_id = format!(
-            "flush-{}-{}-{}",
-            stmt.table_name,
-            chrono::Utc::now().timestamp_millis(),
-            uuid::Uuid::new_v4()
-        );
-        let job_id_clone = job_id.clone();
-
-        // Create and persist job record to system.jobs
-        use kalamdb_commons::{JobId, JobType};
-        let job_record = kalamdb_commons::system::Job::new(
-            JobId::new(job_id.clone()),
+        // Phase 9, T165: Create flush job via UnifiedJobManager
+        let job_manager = self.app_context.job_manager();
+        let parameters = serde_json::json!({
+            "table_name": format!("{}.{}", stmt.namespace.as_str(), stmt.table_name.as_str()),
+            "operation": "flush_table"
+        });
+        let idempotency_key = Some(format!("flush-{}-{}", stmt.namespace.as_str(), stmt.table_name.as_str()));
+        
+        use kalamdb_commons::JobType;
+        let job_id = job_manager.create_job(
             JobType::Flush,
             stmt.namespace.clone(),
-                    //TODO: Use the nodeId from global config or context
-              NodeId::from(format!("node-{}", std::process::id())),
-        )
-        .with_table_name(kalamdb_commons::TableName::new(format!(
-            "{}.{}",
-            stmt.namespace.as_str(),
-            stmt.table_name.as_str()
-        )));
-
-        // Persist job to system.jobs
-        let jobs_table_provider = self.jobs_table_provider(); if true {
-            jobs_table_provider.insert_job(job_record)?;
-        }
+            parameters,
+            idempotency_key,
+            None,
+        ).await?;
+        
+        log::info!("Created flush job {} for table {}.{}", job_id, stmt.namespace, stmt.table_name);
+        let job_id_clone = job_id.clone();
 
         // Create flush job
         let namespace_id = stmt.namespace.clone();
@@ -2303,36 +2296,26 @@ impl SqlExecutor {
             )));
         }
 
-        // Create flush job for each table
+        // Phase 9, T165: Create flush jobs via UnifiedJobManager
+        let job_manager = self.app_context.job_manager();
         let mut job_ids = Vec::new();
+        
         for table in user_tables {
-            let job_id = format!(
-                "flush-{}-{}-{}",
-                table.table_name,
-                chrono::Utc::now().timestamp_millis(),
-                uuid::Uuid::new_v4()
-            );
-
-            // Create job record
-            use kalamdb_commons::{JobId, JobType, TableName};
-            let job_record = kalamdb_commons::system::Job::new(
-                JobId::new(job_id.clone()),
+            let parameters = serde_json::json!({
+                "table_name": format!("{}.{}", table.namespace.as_str(), table.table_name.as_str()),
+                "operation": "flush_all_tables"
+            });
+            let idempotency_key = Some(format!("flush-{}-{}", table.namespace.as_str(), table.table_name.as_str()));
+            
+            use kalamdb_commons::JobType;
+            let job_id = job_manager.create_job(
                 JobType::Flush,
                 table.namespace.clone(),
-                        //TODO: Use the nodeId from global config or context
-                 NodeId::from(format!("node-{}", std::process::id())),
-            )
-            .with_table_name(TableName::new(format!(
-                "{}.{}",
-                table.namespace.as_str(),
-                table.table_name.as_str()
-            )));
-
-            // Persist job to system.jobs
-            let jobs_table_provider = self.jobs_table_provider(); if true {
-                jobs_table_provider.insert_job(job_record)?;
-            }
-
+                parameters,
+                idempotency_key,
+                None,
+            ).await?;
+            
             log::info!(
                 "Flush job created: job_id={}, table={}.{}",
                 job_id,
@@ -2340,7 +2323,7 @@ impl SqlExecutor {
                 table.table_name
             );
 
-            job_ids.push(job_id);
+            job_ids.push(job_id.to_string());
         }
 
         // TODO: Spawn async flush tasks via JobManager (T250)

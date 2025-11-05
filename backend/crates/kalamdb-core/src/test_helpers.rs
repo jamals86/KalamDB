@@ -91,3 +91,30 @@ pub fn init_test_app_context() -> Arc<TestDb> {
     // Return the test DB (guaranteed to be set by Once)
     TEST_DB.get().expect("TEST_DB should be initialized").clone()
 }
+
+/// Create a JobsTableProvider for testing
+///
+/// Returns the jobs provider from the initialized AppContext.
+pub fn create_test_jobs_provider() -> crate::tables::system::JobsTableProvider {
+    init_test_app_context();
+    let ctx = AppContext::get();
+    ctx.system_tables().jobs().clone()
+}
+
+/// Create a JobRegistry with all executors for testing
+pub fn create_test_job_registry() -> crate::jobs::JobRegistry {
+    use crate::jobs::executors::*;
+    let registry = crate::jobs::JobRegistry::new();
+    
+    // Register all 8 executors
+    registry.register(Arc::new(FlushExecutor::new()));
+    registry.register(Arc::new(CleanupExecutor::new()));
+    registry.register(Arc::new(RetentionExecutor::new()));
+    registry.register(Arc::new(StreamEvictionExecutor::new()));
+    registry.register(Arc::new(UserCleanupExecutor::new()));
+    registry.register(Arc::new(CompactExecutor::new()));
+    registry.register(Arc::new(BackupExecutor::new()));
+    registry.register(Arc::new(RestoreExecutor::new()));
+    
+    registry
+}

@@ -1172,6 +1172,7 @@ impl DDLHandler {
     pub async fn execute_drop_table<F>(
         schema_registry: &crate::schema::SchemaRegistry,
         cache: Option<&crate::catalog::SchemaCache>,
+        job_manager: &crate::jobs::UnifiedJobManager,
         live_query_check_fn: F,
         _session: &SessionContext,
         sql: &str,
@@ -1213,6 +1214,7 @@ impl DDLHandler {
         // Fetch providers from AppContext
         let ctx = crate::app_context::AppContext::get();
         let tables_provider = ctx.system_tables().tables();
+        let jobs_provider = ctx.system_tables().jobs();
 
         // Check if table exists
         let table_metadata = tables_provider
@@ -1249,15 +1251,15 @@ impl DDLHandler {
             )));
         }
 
-        // Step 2: Create job record for tracking
-        let job_id = Self::create_deletion_job_internal(&table_id_str, &stmt.namespace_id, &stmt.table_name, &table_type_internal)?;
+        // Step 2: Create job record for tracking (Phase 9, T165)
+        let job_id = Self::create_deletion_job_unified(&job_manager, &table_id_str, &stmt.namespace_id, &stmt.table_name, &table_type_internal).await?;
 
         // Step 3: Delete table data from RocksDB
         let data_cleanup_result = Self::cleanup_table_data_internal(&stmt.namespace_id, &stmt.table_name, &table_type_internal);
 
         if let Err(e) = data_cleanup_result {
-            // Update job as failed
-            Self::fail_deletion_job_internal(&job_id, &e.to_string())?;
+            // Update job as failed (Phase 9, T165)
+            Self::fail_deletion_job_unified(&job_manager, &job_id, &e.to_string()).await?;
             return Err(e);
         }
 
@@ -1269,7 +1271,7 @@ impl DDLHandler {
             Err(e) => {
                 // Attempt rollback: restore metadata
                 log::error!("Parquet cleanup failed: {}, attempting rollback", e);
-                Self::fail_deletion_job_internal(&job_id, &format!("Parquet cleanup failed: {}", e))?;
+                Self::fail_deletion_job_unified(&job_manager, &job_id, &format!("Parquet cleanup failed: {}", e)).await?;
 
                 // Note: Data deletion is idempotent, no need to restore
                 return Err(e);
@@ -1282,7 +1284,7 @@ impl DDLHandler {
         if let Err(e) = metadata_result {
             // Log warning but don't rollback (data is already deleted)
             log::warn!("Metadata cleanup failed but data is deleted: {}", e);
-            Self::fail_deletion_job_internal(&job_id, &format!("Metadata cleanup failed: {}", e))?;
+            Self::fail_deletion_job_unified(&job_manager, &job_id, &format!("Metadata cleanup failed: {}", e)).await?;
             return Err(e);
         }
 
@@ -1295,8 +1297,8 @@ impl DDLHandler {
             }
         }
 
-        // Step 7: Complete job successfully
-        Self::complete_deletion_job_internal(&job_id, files_deleted, bytes_freed)?;
+        // Step 7: Complete job successfully (Phase 9, T165)
+        Self::complete_deletion_job_unified(&job_manager, &job_id, files_deleted, bytes_freed).await?;
 
         // ========================================================================
         // End Inlined Business Logic
@@ -1577,38 +1579,63 @@ impl DDLHandler {
         Ok(())
     }
 
-    /// Create deletion job for tracking
-    /// TODO: Update Job struct to match new schema (Phase 8 follow-up)
-    fn create_deletion_job_internal(
+    /// Create deletion job for tracking (Phase 9, T165 - UnifiedJobManager)
+    async fn create_deletion_job_unified(
+        job_manager: &crate::jobs::UnifiedJobManager,
         table_id: &str,
-        _namespace_id: &NamespaceId,
-        _table_name: &kalamdb_commons::models::TableName,
-        _table_type: &TableType,
-    ) -> Result<String, KalamDbError> {
-        // Temporarily disabled until Job struct schema is updated
-        // Use tables_provider.insert_job() when schema is fixed
-        let job_id = format!("drop_table:{}", table_id);
-        log::warn!("Job tracking temporarily disabled for table deletion (schema migration needed)");
+        namespace_id: &NamespaceId,
+        table_name: &kalamdb_commons::models::TableName,
+        table_type: &TableType,
+    ) -> Result<JobId, KalamDbError> {
+        use kalamdb_commons::JobType;
+        
+        // Create job parameters
+        let parameters = serde_json::json!({
+            "table_id": table_id,
+            "table_name": table_name.as_str(),
+            "table_type": format!("{:?}", table_type),
+            "operation": "drop_table"
+        });
+        
+        // Create idempotency key from table ID to prevent duplicate deletion jobs
+        let idempotency_key = Some(format!("drop-table-{}", table_id));
+        
+        // Create job via UnifiedJobManager
+        let job_id = job_manager
+            .create_job(
+                JobType::Cleanup,
+                namespace_id.clone(),
+                parameters,
+                idempotency_key,
+                None, // Use default options
+            )
+            .await?;
+        
+        log::info!("Created deletion job {} for table {}", job_id, table_id);
         Ok(job_id)
     }
 
-    /// Complete deletion job
-    /// TODO: Update Job struct to match new schema (Phase 8 follow-up)
-    fn complete_deletion_job_internal(
-        _job_id: &str,
-        _files_deleted: usize,
-        _bytes_freed: u64,
+    /// Complete deletion job (Phase 9, T165 - UnifiedJobManager)
+    async fn complete_deletion_job_unified(
+        job_manager: &crate::jobs::UnifiedJobManager,
+        job_id: &JobId,
+        files_deleted: usize,
+        bytes_freed: u64,
     ) -> Result<(), KalamDbError> {
-        // Temporarily disabled until Job struct schema is updated
-        log::warn!("Job completion tracking temporarily disabled (schema migration needed)");
+        let message = format!("Deleted {} files, freed {} bytes", files_deleted, bytes_freed);
+        job_manager.complete_job(job_id, Some(message)).await?;
+        log::info!("Completed deletion job {}: {} files, {} bytes", job_id, files_deleted, bytes_freed);
         Ok(())
     }
 
-    /// Fail deletion job
-    /// TODO: Update Job struct to match new schema (Phase 8 follow-up)
-    fn fail_deletion_job_internal(_job_id: &str, error_message: &str) -> Result<(), KalamDbError> {
-        // Temporarily disabled until Job struct schema is updated
-        log::warn!("Job failure tracking temporarily disabled (schema migration needed): {}", error_message);
+    /// Fail deletion job (Phase 9, T165 - UnifiedJobManager)
+    async fn fail_deletion_job_unified(
+        job_manager: &crate::jobs::UnifiedJobManager,
+        job_id: &JobId,
+        error_message: &str,
+    ) -> Result<(), KalamDbError> {
+        job_manager.fail_job(job_id, error_message.to_string()).await?;
+        log::error!("Failed deletion job {}: {}", job_id, error_message);
         Ok(())
     }
 }

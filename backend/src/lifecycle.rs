@@ -65,6 +65,17 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     );
     info!("AppContext initialized with all stores, managers, registries, and providers");
 
+    // Start UnifiedJobManager run loop (Phase 9, T163)
+    let job_manager = app_context.job_manager();
+    let max_concurrent = config.jobs.max_concurrent;
+    tokio::spawn(async move {
+        info!("Starting UnifiedJobManager run loop with max {} concurrent jobs", max_concurrent);
+        if let Err(e) = job_manager.run_loop(max_concurrent).await {
+            log::error!("UnifiedJobManager run loop failed: {}", e);
+        }
+    });
+    info!("UnifiedJobManager background task spawned");
+
     // Seed default storage if necessary (using SystemTablesRegistry)
     let storages_provider = app_context.system_tables().storages();
     let existing_storages = storages_provider.scan_all_storages()?;

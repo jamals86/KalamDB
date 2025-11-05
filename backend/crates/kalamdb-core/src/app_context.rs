@@ -5,7 +5,12 @@
 
 use crate::catalog::SchemaCache;
 use crate::schema::registry::SchemaRegistry;
-use crate::jobs::{JobManager, TokioJobManager};
+use crate::jobs::UnifiedJobManager;
+use crate::jobs::executors::{
+    BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor,
+    JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor,
+    UserCleanupExecutor,
+};
 use crate::live_query::LiveQueryManager;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::storage::storage_registry::StorageRegistry;
@@ -42,7 +47,7 @@ pub struct AppContext {
     storage_backend: Arc<dyn StorageBackend>,
     
     // ===== Managers =====
-    job_manager: Arc<dyn JobManager>,
+    job_manager: Arc<UnifiedJobManager>,
     live_query_manager: Arc<LiveQueryManager>,
     
     // ===== Registries =====
@@ -65,7 +70,7 @@ impl std::fmt::Debug for AppContext {
             .field("shared_table_store", &"Arc<SharedTableStore>")
             .field("stream_table_store", &"Arc<StreamTableStore>")
             .field("storage_backend", &"Arc<dyn StorageBackend>")
-            .field("job_manager", &"Arc<dyn JobManager>")
+            .field("job_manager", &"Arc<UnifiedJobManager>")
             .field("live_query_manager", &"Arc<LiveQueryManager>")
             .field("storage_registry", &"Arc<StorageRegistry>")
             .field("session_factory", &"Arc<DataFusionSessionFactory>")
@@ -107,6 +112,10 @@ impl AppContext {
     ) -> Arc<AppContext> {
         APP_CONTEXT
             .get_or_init(|| {
+                // Create KalamSql (temporary for information_schema providers - Phase 6 legacy)
+                let kalam_sql = Arc::new(KalamSql::new(storage_backend.clone())
+                    .expect("Failed to create KalamSql"));
+
                 // Create stores using constants from kalamdb_commons
                 let user_table_store = Arc::new(UserTableStore::new(
                     storage_backend.clone(),
@@ -184,8 +193,23 @@ impl AppContext {
                     schema_store,
                 ));
 
-                // Create job manager
-                let job_manager: Arc<dyn JobManager> = Arc::new(TokioJobManager::new());
+                // Create job registry and register all 8 executors (Phase 9, T154)
+                let job_registry = Arc::new(JobRegistry::new());
+                job_registry.register(Arc::new(FlushExecutor::new()));
+                job_registry.register(Arc::new(CleanupExecutor::new()));
+                job_registry.register(Arc::new(RetentionExecutor::new()));
+                job_registry.register(Arc::new(StreamEvictionExecutor::new()));
+                job_registry.register(Arc::new(UserCleanupExecutor::new()));
+                job_registry.register(Arc::new(CompactExecutor::new()));
+                job_registry.register(Arc::new(BackupExecutor::new()));
+                job_registry.register(Arc::new(RestoreExecutor::new()));
+
+                // Create unified job manager (Phase 9, T154)
+                let jobs_provider = system_tables.jobs();
+                let job_manager = Arc::new(UnifiedJobManager::new(
+                    jobs_provider,
+                    job_registry,
+                ));
 
                 // Create live query manager
                 let live_query_manager = Arc::new(LiveQueryManager::new(
@@ -253,7 +277,7 @@ impl AppContext {
         self.storage_backend.clone()
     }
     
-    pub fn job_manager(&self) -> Arc<dyn JobManager> {
+    pub fn job_manager(&self) -> Arc<UnifiedJobManager> {
         self.job_manager.clone()
     }
     

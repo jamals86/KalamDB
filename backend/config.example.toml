@@ -238,3 +238,18 @@ max_password_length = 1024
 # Higher values are more secure but slower
 # 12 is recommended for production (good balance of security and performance)
 bcrypt_cost = 12
+
+# Phase 9, T163: Unified Job Management System
+[jobs]
+# Maximum number of concurrent jobs (default: 10)
+# Controls how many jobs can execute simultaneously
+max_concurrent = 10
+
+# Maximum number of retry attempts per job (default: 3)
+# Jobs will be retried this many times before being marked as permanently failed
+max_retries = 3
+
+# Initial retry backoff delay in milliseconds (default: 100ms)
+# Delay increases exponentially with each retry (100ms, 200ms, 400ms, etc.)
+retry_backoff_ms = 100
+
