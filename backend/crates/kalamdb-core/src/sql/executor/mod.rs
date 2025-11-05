@@ -125,10 +125,7 @@ impl SqlExecutor {
         }
     }
 
-    /// Expose a clone of the underlying RocksDbAdapter
-    pub fn get_rocks_adapter(&self) -> Option<Arc<RocksDbAdapter>> {
-        Some(Arc::new(self.app_context.kalam_sql().adapter().clone()))
-    }
+    // REMOVED: get_rocks_adapter() - RocksDbAdapter deprecated in Phase 8, use storage_backend() instead
     
     // ===== Helper methods to get dependencies from AppContext =====
     
@@ -152,7 +149,7 @@ impl SqlExecutor {
         self.app_context.storage_registry()
     }
     
-    fn job_manager(&self) -> Arc<dyn crate::jobs::JobManager> {
+    fn job_manager(&self) -> Arc<crate::jobs::UnifiedJobManager> {
         self.app_context.job_manager()
     }
     
@@ -194,7 +191,7 @@ impl SqlExecutor {
     }
 
     #[deprecated(note = "SqlExecutor now uses AppContext - this method is a no-op")]
-    pub fn with_job_manager(self, _job_manager: Arc<dyn crate::jobs::JobManager>) -> Self {
+    pub fn with_job_manager(self, _job_manager: Arc<crate::jobs::UnifiedJobManager>) -> Self {
         // No-op: AppContext provides job_manager via dependency injection
         self
     }
@@ -992,140 +989,9 @@ impl SqlExecutor {
         }
     }
 
-    /// Execute a query that only accesses system tables (optimized - no user table loading)
-    /// Create a fresh SessionContext for a specific user with only their tables registered
-    ///
-    /// This ensures user data isolation by creating a dedicated session with user-scoped TableProviders.
-    fn register_system_tables_in_session(
-        &self,
-        session: &SessionContext,
-        kalam_sql: &Arc<KalamSql>,
-    ) -> Result<(), KalamDbError> {
-        use datafusion::catalog::memory::MemorySchemaProvider;
-
-        let catalog_name = "kalam";
-        let catalog = session
-            .catalog(catalog_name)
-            .ok_or_else(|| KalamDbError::Other(format!("Catalog '{}' not found", catalog_name)))?;
-
-        if catalog.schema("system").is_none() {
-            let system_schema = Arc::new(MemorySchemaProvider::new());
-            catalog
-                .register_schema("system", system_schema)
-                .map_err(|e| {
-                    KalamDbError::Other(format!("Failed to register system schema: {}", e))
-                })?;
-        }
-
-        let system_schema = catalog.schema("system").ok_or_else(|| {
-            KalamDbError::Other("System schema not found after registration".to_string())
-        })?;
-
-        // Get storage backend for EntityStore-based providers
-        let backend = self.storage_backend();
-
-        // Use EntityStore-based v2 providers for all system tables
-        use crate::tables::system::{
-            NamespacesTableProvider, TablesTableProvider, UsersTableProvider,
-        };
-
-        system_schema
-            .register_table(
-                "namespaces".to_string(),
-                Arc::new(NamespacesTableProvider::new(backend.clone())),
-            )
-            .map_err(|e| {
-                KalamDbError::Other(format!("Failed to register system.namespaces: {}", e))
-            })?;
-
-        system_schema
-            .register_table(
-                "tables".to_string(),
-                Arc::new(TablesTableProvider::new(backend.clone())),
-            )
-            .map_err(|e| KalamDbError::Other(format!("Failed to register system.tables: {}", e)))?;
-
-        system_schema
-            .register_table(
-                "users".to_string(),
-                Arc::new(UsersTableProvider::new(backend.clone())),
-            )
-            .map_err(|e| KalamDbError::Other(format!("Failed to register system.users: {}", e)))?;
-
-        // Register additional system tables (using EntityStore-based v2 providers)
-        use crate::tables::system::{
-            JobsTableProvider, LiveQueriesTableProvider, StoragesTableProvider,
-        };
-
-        system_schema
-            .register_table(
-                "storages".to_string(),
-                Arc::new(StoragesTableProvider::new(backend.clone())),
-            )
-            .map_err(|e| {
-                KalamDbError::Other(format!("Failed to register system.storages: {}", e))
-            })?;
-        system_schema
-            .register_table(
-                "live_queries".to_string(),
-                Arc::new(LiveQueriesTableProvider::new(backend.clone())),
-            )
-            .map_err(|e| {
-                KalamDbError::Other(format!("Failed to register system.live_queries: {}", e))
-            })?;
-
-        system_schema
-            .register_table(
-                "jobs".to_string(),
-                Arc::new(JobsTableProvider::new(backend.clone())),
-            )
-            .map_err(|e| KalamDbError::Other(format!("Failed to register system.jobs: {}", e)))?;
-
-        // Register information_schema tables
-        use crate::tables::system::{
-            InformationSchemaColumnsProvider, InformationSchemaTablesProvider,
-        };
-
-        // Check if information_schema exists, if not create it
-        if catalog.schema("information_schema").is_none() {
-            let info_schema = Arc::new(MemorySchemaProvider::new());
-            catalog
-                .register_schema("information_schema", info_schema)
-                .map_err(|e| {
-                    KalamDbError::Other(format!("Failed to register information_schema: {}", e))
-                })?;
-        }
-
-        let info_schema = catalog.schema("information_schema").ok_or_else(|| {
-            KalamDbError::Other("information_schema not found after registration".to_string())
-        })?;
-
-        info_schema
-            .register_table(
-                "tables".to_string(),
-                Arc::new(InformationSchemaTablesProvider::new(kalam_sql.clone())),
-            )
-            .map_err(|e| {
-                KalamDbError::Other(format!(
-                    "Failed to register information_schema.tables: {}",
-                    e
-                ))
-            })?;
-
-        info_schema
-            .register_table(
-                "columns".to_string(),
-                Arc::new(InformationSchemaColumnsProvider::new(kalam_sql.clone())),
-            )
-            .map_err(|e| {
-                KalamDbError::Other(format!(
-                    "Failed to register information_schema.columns: {}",
-                    e
-                ))
-            })?;
-
-        Ok(())
-    }
+    // REMOVED: register_system_tables_in_session() - obsolete method using KalamSql
+    // System tables are now registered via AppContext.system_tables() (Phase 8)
+    // Was 140 lines of manual table registration - replaced by SystemTablesRegistry
 
     async fn create_user_session_context(
         &self,
@@ -1164,8 +1030,10 @@ impl SqlExecutor {
             }
         };
 
-        self.register_system_tables_in_session(&user_session, kalam_sql)?;
-
+        // REMOVED: register_system_tables_in_session() - obsolete method using KalamSql
+        // System tables are now registered via AppContext.system_tables() (Phase 8)
+        // TODO: This entire create_user_session_context method needs refactoring to use SchemaRegistry
+        
         // Get the "kalam" catalog
         let catalog_name = "kalam";
         let catalog = user_session

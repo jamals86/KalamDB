@@ -16,7 +16,7 @@ use super::types::{ExecutionContext, ExecutionMetadata, ExecutionResult};
 use crate::catalog::TableType;
 use crate::error::KalamDbError;
 use datafusion::execution::context::SessionContext;
-use kalamdb_commons::models::{NamespaceId, StorageId, TableId, UserId};
+use kalamdb_commons::models::{JobId, NamespaceId, StorageId, TableId, UserId};
 use kalamdb_commons::system::Namespace;
 use kalamdb_commons::Role;
 use kalamdb_sql::ddl::{AlterTableStatement, ColumnOperation, CreateNamespaceStatement, CreateTableStatement, DropTableStatement, FlushPolicy};
@@ -521,7 +521,7 @@ impl DDLHandler {
 
         // Check for TABLE_TYPE clause
         let has_table_type_user = sql_upper.contains("TABLE_TYPE") && sql_upper.contains("TABLE_TYPE USER");
-        let has_table_type_shared = sql_upper.contains("TABLE_TYPE") && sql_upper.contains("TABLE_TYPE SHARED");
+        let _has_table_type_shared = sql_upper.contains("TABLE_TYPE") && sql_upper.contains("TABLE_TYPE SHARED");
         let has_table_type_stream = sql_upper.contains("TABLE_TYPE") && sql_upper.contains("TABLE_TYPE STREAM");
 
         // Determine table type and route to appropriate service
@@ -716,31 +716,6 @@ impl DDLHandler {
         cache_fn(&namespace_id, &table_name, TableType::User, &storage_id, flush_policy, schema, 1, deleted_retention_hours)?;
 
         Ok(ExecutionResult::Success("User table created successfully".to_string()))
-    }
-
-    /// Create STREAM table (TTL-based ephemeral table) - LEGACY SIGNATURE, NOT USED
-    /// This is the old signature before Phase 8 migration. The actual implementation is below.
-    /// TODO: Remove this once all references are confirmed migrated
-    #[allow(dead_code)]
-    #[allow(clippy::too_many_arguments)]
-    async fn _create_stream_table_old<CacheFn, RegisterFn, EnsureFn>(
-        _stream_table_service: &crate::services::StreamTableService,
-        _tables_provider: &Arc<crate::tables::system::TablesTableProvider>,
-        _cache_fn: CacheFn,
-        _register_fn: RegisterFn,
-        _ensure_namespace_fn: EnsureFn,
-        _session: &SessionContext,
-        _sql: &str,
-        _namespace_id: &NamespaceId,
-        _default_user_id: UserId,
-        _exec_ctx: &ExecutionContext,
-    ) -> Result<ExecutionResult, KalamDbError>
-    where
-        CacheFn: FnOnce(&NamespaceId, &kalamdb_commons::models::TableName, TableType, &StorageId, Option<FlushPolicy>, std::sync::Arc<arrow::datatypes::Schema>, i32, Option<u32>) -> Result<(), KalamDbError>,
-        RegisterFn: FnOnce(&SessionContext, &NamespaceId, &kalamdb_commons::models::TableName, TableType, std::sync::Arc<arrow::datatypes::Schema>, UserId) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), KalamDbError>> + Send>>,
-        EnsureFn: FnOnce(&NamespaceId) -> Result<(), KalamDbError>,
-    {
-        unreachable!("Old signature - should never be called")
     }
 
     /// Create STREAM table (TTL-based ephemeral table)
@@ -1114,7 +1089,7 @@ impl DDLHandler {
                 table_id, access_level
             );
 
-            return Err(KalamDbError::NotImplemented(
+            return Err(KalamDbError::InvalidOperation(
                 "ALTER TABLE SET ACCESS LEVEL temporarily disabled - Phase 8 migration in progress".to_string()
             ));
 
@@ -1214,7 +1189,7 @@ impl DDLHandler {
         // Fetch providers from AppContext
         let ctx = crate::app_context::AppContext::get();
         let tables_provider = ctx.system_tables().tables();
-        let jobs_provider = ctx.system_tables().jobs();
+        let _jobs_provider = ctx.system_tables().jobs();
 
         // Check if table exists
         let table_metadata = tables_provider
@@ -1327,7 +1302,6 @@ impl DDLHandler {
     /// Check for active subscriptions before dropping table
     fn check_active_subscriptions_internal(table_name: &kalamdb_commons::models::TableName) -> Result<(), KalamDbError> {
         use crate::app_context::AppContext;
-        use kalamdb_commons::system::LiveQuery;
         use datafusion::arrow::array::AsArray;
         
         let ctx = AppContext::get();

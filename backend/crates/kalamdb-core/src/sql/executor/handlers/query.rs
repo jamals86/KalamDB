@@ -39,7 +39,7 @@ impl QueryHandler {
         // 6. Log audit entry via audit::log_query_operation
         // 7. Return ExecutionResult with RecordBatch data
         
-        Err(KalamDbError::UnsupportedOperation(
+        Err(KalamDbError::InvalidOperation(
             "SELECT not yet implemented in QueryHandler".to_string(),
         ))
     }
@@ -57,7 +57,7 @@ impl QueryHandler {
         // 3. Format schema information as RecordBatch
         // 4. Return ExecutionResult with schema details
         
-        Err(KalamDbError::UnsupportedOperation(
+        Err(KalamDbError::InvalidOperation(
             "DESCRIBE not yet implemented in QueryHandler".to_string(),
         ))
     }
@@ -75,7 +75,7 @@ impl QueryHandler {
         // 3. Format results as RecordBatch
         // 4. Return ExecutionResult
         
-        Err(KalamDbError::UnsupportedOperation(
+        Err(KalamDbError::InvalidOperation(
             "SHOW not yet implemented in QueryHandler".to_string(),
         ))
     }

@@ -14,7 +14,7 @@ pub mod jobs;
 pub mod live_query;
 // pub mod metrics;
 pub mod models; // Domain models for system tables and table rows
-pub mod scheduler;
+// pub mod scheduler; // REMOVED: Obsolete FlushScheduler (replaced by Phase 9 UnifiedJobManager + FlushExecutor)
 pub mod schema;
 pub mod app_context;
 pub mod services;

@@ -143,7 +143,7 @@ impl JobManager {
 
         // Persist job
         self.jobs_provider
-            .insert_job(&job)
+            .insert_job(job.clone())
             .map_err(|e| crate::error::KalamDbError::IoError(format!("Failed to create job: {}", e)))?;
 
         // Log job creation
@@ -182,7 +182,7 @@ impl JobManager {
         let cancelled_job = job.cancel();
 
         self.jobs_provider
-            .update_job(&cancelled_job)
+            .update_job(cancelled_job.clone())
             .map_err(|e| crate::error::KalamDbError::IoError(format!("Failed to cancel job: {}", e)))?;
 
         // Log cancellation

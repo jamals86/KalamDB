@@ -42,7 +42,7 @@ impl DMLHandler {
         // 9. Log audit entry via audit::log_dml_operation
         // 10. Return ExecutionResult with rows_affected count
         
-        Err(KalamDbError::UnsupportedOperation(
+        Err(KalamDbError::InvalidOperation(
             "INSERT not yet implemented in DMLHandler".to_string(),
         ))
     }
@@ -63,7 +63,7 @@ impl DMLHandler {
         // 5. Log audit entry
         // 6. Return rows_affected count
         
-        Err(KalamDbError::UnsupportedOperation(
+        Err(KalamDbError::InvalidOperation(
             "UPDATE not yet implemented in DMLHandler".to_string(),
         ))
     }
@@ -84,7 +84,7 @@ impl DMLHandler {
         // 5. Log audit entry
         // 6. Return rows_affected count
         
-        Err(KalamDbError::UnsupportedOperation(
+        Err(KalamDbError::InvalidOperation(
             "DELETE not yet implemented in DMLHandler".to_string(),
         ))
     }

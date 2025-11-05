@@ -3,8 +3,9 @@
 //! Provides centralized access to storage configurations and path template validation.
 
 use crate::error::KalamDbError;
+use crate::tables::system::StoragesTableProvider;
 use kalamdb_commons::models::{StorageConfig, StorageId, StorageType};
-use kalamdb_sql::{KalamSql, Storage};
+use kalamdb_commons::system::Storage;
 use std::sync::Arc;
 
 /// Registry for managing storage backends
@@ -14,7 +15,7 @@ use std::sync::Arc;
 /// - List all available storages
 /// - Validate path templates for correctness
 pub struct StorageRegistry {
-    kalam_sql: Arc<KalamSql>,
+    storages_provider: Arc<StoragesTableProvider>,
     /// Default base path for local filesystem storage when base_directory is empty
     /// Comes from server config: storage.default_storage_path (e.g., "/data/storage")
     default_storage_path: String,
@@ -22,7 +23,7 @@ pub struct StorageRegistry {
 
 impl StorageRegistry {
     /// Create a new StorageRegistry
-    pub fn new(kalam_sql: Arc<KalamSql>, default_storage_path: String) -> Self {
+    pub fn new(storages_provider: Arc<StoragesTableProvider>, default_storage_path: String) -> Self {
         use std::path::{Path, PathBuf};
         // Normalize default path: if relative, resolve against current working directory
         let normalized = if Path::new(&default_storage_path).is_absolute() {
@@ -35,7 +36,7 @@ impl StorageRegistry {
                 .into_owned()
         };
         Self {
-            kalam_sql,
+            storages_provider,
             default_storage_path: normalized,
         }
     }
@@ -60,7 +61,7 @@ impl StorageRegistry {
     /// ```
     pub fn get_storage(&self, storage_id: &str) -> Result<Option<Storage>, KalamDbError> {
         let storage_id_typed = StorageId::from(storage_id);
-        self.kalam_sql.get_storage(&storage_id_typed).map_err(|e| {
+        self.storages_provider.get_storage(&storage_id_typed).map_err(|e| {
             KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e))
         })
     }
@@ -450,9 +451,9 @@ mod tests {
 
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
-        let kalam_sql = Arc::new(
-            KalamSql::new(backend).expect("Failed to create KalamSQL for storage registry tests"),
-        );
+        
+        // Create StoragesTableProvider for tests
+        let storages_provider = Arc::new(crate::tables::system::StoragesTableProvider::new(backend));
 
         // Use a temp storage base under the temp dir for tests
         let default_storage_path = db_path
@@ -461,6 +462,6 @@ mod tests {
             .join("storage")
             .to_string_lossy()
             .into_owned();
-        StorageRegistry::new(kalam_sql, default_storage_path)
+        StorageRegistry::new(storages_provider, default_storage_path)
     }
 }

@@ -72,6 +72,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     let existing_storages = storages_provider.scan_all_storages()?;
     let storage_count = existing_storages.num_rows();
     
+    //TODO: Extract as a separate function create_default_storage_if_needed
     if storage_count == 0 {
         info!("No storages found, creating default 'local' storage");
         let now = chrono::Utc::now().timestamp_millis();

@@ -41,7 +41,7 @@ impl SubscriptionHandler {
         // **Integration**: LiveQueryManager (app_context.live_query_manager())
         // **Storage**: system.live_queries table via SystemTablesRegistry
         
-        Err(KalamDbError::UnsupportedOperation(
+        Err(KalamDbError::InvalidOperation(
             "LIVE SELECT not yet implemented in SubscriptionHandler".to_string(),
         ))
     }

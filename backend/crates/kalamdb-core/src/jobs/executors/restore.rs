@@ -20,6 +20,7 @@
 //! }
 //! ```
 
+use crate::error::KalamDbError;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
 use async_trait::async_trait;
 use kalamdb_commons::system::Job;
@@ -46,20 +47,20 @@ impl JobExecutor for RestoreExecutor {
         "RestoreExecutor"
     }
 
-    async fn validate_params(&self, job: &Job) -> Result<(), String> {
+    async fn validate_params(&self, job: &Job) -> Result<(), KalamDbError> {
         let params = job
             .parameters
             .as_ref()
-            .ok_or_else(|| "Missing parameters".to_string())?;
+            .ok_or_else(|| KalamDbError::InvalidOperation("Missing parameters".to_string()))?;
 
         let _params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| format!("Invalid JSON parameters: {}", e))?;
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid JSON parameters: {}", e)))?;
 
         // TODO: Validate restore-specific parameters
         Ok(())
     }
 
-    async fn execute(&self, ctx: &JobContext, _job: &Job) -> JobDecision {
+    async fn execute(&self, ctx: &JobContext, _job: &Job) -> Result<JobDecision, KalamDbError> {
         ctx.log_warn("RestoreExecutor not yet implemented");
         
         // TODO: Implement restore logic
@@ -70,12 +71,12 @@ impl JobExecutor for RestoreExecutor {
         // - Import data into RocksDB and Parquet files
         // - Validate restored data consistency
         
-        JobDecision::Failed {
+        Ok(JobDecision::Failed {
             exception_trace: "RestoreExecutor not yet implemented".to_string(),
-        }
+        })
     }
 
-    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), String> {
+    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), KalamDbError> {
         ctx.log_warn("Restore job cancellation requested");
         // Allow cancellation since partial restores can be rolled back
         Ok(())

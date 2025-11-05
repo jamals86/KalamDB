@@ -124,6 +124,7 @@ If the user already specified primary key then we dont do that, the _id we add a
 110) Instead of having system.<system table> we can use sys.<system table> for less typing and easier to remember
 111) Add virtualTables module to kalamdb-core/src/tables/virtual_tables to include all virtual tables for example information_schema and other virtual tables we may have in the future, virtual tables should be also registered with schema registry
 112) In JobType add another model for each type with the parameters it should have in the Json in this way we can validate it easily by deserializing into the right struct for each job type
+113) Check if we need to remove ColumnFamilyManager
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):

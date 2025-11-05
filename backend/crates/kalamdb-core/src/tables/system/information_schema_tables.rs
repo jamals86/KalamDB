@@ -7,7 +7,8 @@
 //! of fragmented system.tables storage.
 
 use crate::error::KalamDbError;
-use crate::tables::system::SystemTableProviderExt;
+use crate::schema::registry::SchemaRegistry;
+use crate::tables::system::{SystemTableProviderExt, TablesTableProvider};
 use async_trait::async_trait;
 use datafusion::arrow::array::{
     ArrayRef, BooleanArray, RecordBatch, StringBuilder, TimestampMillisecondArray, UInt32Array,
@@ -18,13 +19,14 @@ use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_sql::KalamSql;
+use kalamdb_commons::models::TableId;
 use std::any::Any;
 use std::sync::Arc;
 
 /// InformationSchemaTablesProvider exposes all table metadata from information_schema_tables CF
 pub struct InformationSchemaTablesProvider {
-    kalam_sql: Arc<KalamSql>,
+    tables_provider: Arc<TablesTableProvider>,
+    schema_registry: Arc<SchemaRegistry>,
     schema: SchemaRef,
 }
 
@@ -38,8 +40,9 @@ impl InformationSchemaTablesProvider {
     /// Create a new information_schema.tables provider
     ///
     /// # Arguments
-    /// * `kalam_sql` - KalamSQL instance for accessing information_schema_tables CF
-    pub fn new(kalam_sql: Arc<KalamSql>) -> Self {
+    /// * `tables_provider` - TablesTableProvider for accessing system.tables metadata
+    /// * `schema_registry` - SchemaRegistry for accessing table schema details
+    pub fn new(tables_provider: Arc<TablesTableProvider>, schema_registry: Arc<SchemaRegistry>) -> Self {
         let schema = Arc::new(Schema::new(vec![
             // SQL standard information_schema.tables columns
             Field::new("table_catalog", DataType::Utf8, false),
@@ -65,16 +68,44 @@ impl InformationSchemaTablesProvider {
             Field::new("ttl_seconds", DataType::UInt64, true),             // nullable
         ]));
 
-        Self { kalam_sql, schema }
+        Self { 
+            tables_provider,
+            schema_registry,
+            schema 
+        }
     }
 
     /// Scan all tables across all namespaces and return as RecordBatch
     pub fn scan_all_tables(&self) -> Result<RecordBatch, KalamDbError> {
-        let table_defs = self
-            .kalam_sql
-            .scan_all_table_definitions()
-            .map_err(|e| KalamDbError::Other(format!("Failed to scan table definitions: {}", e)))?;
+        // Get table metadata from system.tables
+        let tables_batch = self
+            .tables_provider
+            .scan_all_tables()
+            .map_err(|e| KalamDbError::Other(format!("Failed to scan tables: {}", e)))?;
 
+        // Parse system.tables columns
+        use datafusion::arrow::array::{Array, StringArray, Int32Array, Int64Array};
+        
+        let table_id_col = tables_batch.column(0).as_any().downcast_ref::<StringArray>()
+            .ok_or_else(|| KalamDbError::Other("table_id column type mismatch".to_string()))?;
+        let table_name_col = tables_batch.column(1).as_any().downcast_ref::<StringArray>()
+            .ok_or_else(|| KalamDbError::Other("table_name column type mismatch".to_string()))?;
+        let namespace_col = tables_batch.column(2).as_any().downcast_ref::<StringArray>()
+            .ok_or_else(|| KalamDbError::Other("namespace column type mismatch".to_string()))?;
+        let table_type_col = tables_batch.column(3).as_any().downcast_ref::<StringArray>()
+            .ok_or_else(|| KalamDbError::Other("table_type column type mismatch".to_string()))?;
+        let created_at_col = tables_batch.column(4).as_any().downcast_ref::<Int64Array>()
+            .ok_or_else(|| KalamDbError::Other("created_at column type mismatch".to_string()))?;
+        let storage_id_col = tables_batch.column(5).as_any().downcast_ref::<StringArray>()
+            .ok_or_else(|| KalamDbError::Other("storage_id column type mismatch".to_string()))?;
+        let use_user_storage_col = tables_batch.column(6).as_any().downcast_ref::<BooleanArray>()
+            .ok_or_else(|| KalamDbError::Other("use_user_storage column type mismatch".to_string()))?;
+        let schema_version_col = tables_batch.column(8).as_any().downcast_ref::<Int32Array>()
+            .ok_or_else(|| KalamDbError::Other("schema_version column type mismatch".to_string()))?;
+        let deleted_retention_col = tables_batch.column(9).as_any().downcast_ref::<Int32Array>()
+            .ok_or_else(|| KalamDbError::Other("deleted_retention_hours column type mismatch".to_string()))?;
+
+        let num_rows = tables_batch.num_rows();
         let mut table_catalogs = StringBuilder::new();
         let mut table_schemas = StringBuilder::new();
         let mut table_names = StringBuilder::new();
@@ -88,50 +119,77 @@ impl InformationSchemaTablesProvider {
         let mut deleted_retention_hours_vec: Vec<Option<u32>> = Vec::new();
         let mut ttl_seconds_vec: Vec<Option<u64>> = Vec::new();
 
-        for table_def in table_defs {
+        for i in 0..num_rows {
             // SQL standard information_schema uses "def" as default catalog
             table_catalogs.append_value("def");
 
             // table_schema is the namespace/database name
-            table_schemas.append_value(&table_def.namespace_id);
+            let namespace = namespace_col.value(i);
+            table_schemas.append_value(namespace);
 
             // table_name
-            table_names.append_value(&table_def.table_name);
+            let table_name = table_name_col.value(i);
+            table_names.append_value(table_name);
 
             // table_type: Convert KalamDB type to SQL standard
-            use kalamdb_commons::schemas::TableType;
-            let standard_type = match table_def.table_type {
-                TableType::User | TableType::Shared => "BASE TABLE",
-                TableType::System => "SYSTEM VIEW",
-                TableType::Stream => "STREAM TABLE",
+            let kalam_type = table_type_col.value(i);
+            let standard_type = match kalam_type {
+                "User" | "Shared" => "BASE TABLE",
+                "System" => "SYSTEM VIEW",
+                "Stream" => "STREAM TABLE",
+                _ => "BASE TABLE", // Default
             };
             table_types.append_value(standard_type);
 
-            // KalamDB-specific columns - synthesize from NEW schema
-            // table_id: synthesize from namespace + table_name
-            let synthetic_table_id = format!("{}.{}", table_def.namespace_id, table_def.table_name);
-            table_ids.append_value(&synthetic_table_id);
+            // table_id
+            let table_id = table_id_col.value(i);
+            table_ids.append_value(table_id);
             
-            // Convert DateTime<Utc> to i64 timestamp (milliseconds since epoch)
-            created_ats.push(table_def.created_at.timestamp_millis());
-            updated_ats.push(table_def.updated_at.timestamp_millis());
+            // created_at is already i64 timestamp in milliseconds
+            let created_at = created_at_col.value(i);
+            created_ats.push(created_at);
             
-            schema_versions.push(table_def.schema_version);
+            // updated_at: use created_at as fallback (system.tables doesn't have updated_at yet)
+            updated_ats.push(created_at);
             
-            // storage_id: use "default" as placeholder
-            storage_ids.append_value("default");
+            // schema_version
+            let schema_ver = schema_version_col.value(i);
+            schema_versions.push(schema_ver as u32);
             
-            // use_user_storage: default to false
-            use_user_storages.push(false);
+            // storage_id
+            let storage_id = if storage_id_col.is_null(i) {
+                "default"
+            } else {
+                storage_id_col.value(i)
+            };
+            storage_ids.append_value(storage_id);
             
-            // deleted_retention_hours: not in NEW schema
-            deleted_retention_hours_vec.push(None);
+            // use_user_storage
+            let use_user_storage = use_user_storage_col.value(i);
+            use_user_storages.push(use_user_storage);
             
-            // ttl_seconds: extract from StreamTableOptions if present
-            use kalamdb_commons::schemas::TableOptions;
-            let ttl = match &table_def.table_options {
-                TableOptions::Stream(opts) => Some(opts.ttl_seconds),
-                _ => None,
+            // deleted_retention_hours
+            let retention = if deleted_retention_col.is_null(i) {
+                None
+            } else {
+                Some(deleted_retention_col.value(i) as u32)
+            };
+            deleted_retention_hours_vec.push(retention);
+            
+            // ttl_seconds: Need to get from TableDefinition for Stream tables
+            let ttl = if kalam_type == "Stream" {
+                // Try to get table definition to extract TTL
+                let tid = TableId::from(table_id);
+                self.schema_registry.get_table_definition(&tid)
+                    .and_then(|def| {
+                        use kalamdb_commons::schemas::TableOptions;
+                        match &def.table_options {
+                            TableOptions::Stream(opts) => Some(opts.ttl_seconds),
+                            _ => None,
+                        }
+                    })
+            } else {
+                None
             };
             ttl_seconds_vec.push(ttl);
         }

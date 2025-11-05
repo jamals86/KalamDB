@@ -40,6 +40,7 @@ impl UserRepository for CoreUsersRepo {
             .map_err(|e| AuthError::DatabaseError(e.to_string()))
     }
 
+    //TODO: Use the function which returns all USER OBJECTS WITHOUT MAPPING
     async fn scan_all_users(&self) -> AuthResult<Vec<User>> {
         let provider = self.provider.clone();
         tokio::task::spawn_blocking(move || {

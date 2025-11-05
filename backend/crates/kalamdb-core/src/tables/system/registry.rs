@@ -11,9 +11,9 @@ use super::{
     JobsTableProvider, LiveQueriesTableProvider, NamespacesTableProvider, StatsTableProvider,
     StoragesTableProvider, TablesTableProvider, UsersTableProvider,
 };
-use kalamdb_sql::KalamSql;
+use crate::schema::registry::SchemaRegistry;
 use kalamdb_store::StorageBackend;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 /// Registry of all system table providers
 ///
@@ -33,9 +33,9 @@ pub struct SystemTablesRegistry {
     // ===== Virtual tables =====
     stats: Arc<StatsTableProvider>,
     
-    // ===== information_schema.* tables =====
-    information_schema_tables: Arc<InformationSchemaTablesProvider>,
-    information_schema_columns: Arc<InformationSchemaColumnsProvider>,
+    // ===== information_schema.* tables (lazy-initialized) =====
+    information_schema_tables: RwLock<Option<Arc<InformationSchemaTablesProvider>>>,
+    information_schema_columns: RwLock<Option<Arc<InformationSchemaColumnsProvider>>>,
 }
 
 impl SystemTablesRegistry {
@@ -59,8 +59,7 @@ impl SystemTablesRegistry {
     /// let registry = SystemTablesRegistry::new(backend, kalam_sql);
     /// ```
     pub fn new(
-        storage_backend: Arc<dyn StorageBackend>,
-        kalam_sql: Arc<KalamSql>,
+        storage_backend: Arc<dyn StorageBackend>
     ) -> Self {
         Self {
             // EntityStore-based providers
@@ -75,10 +74,25 @@ impl SystemTablesRegistry {
             // Virtual tables
             stats: Arc::new(StatsTableProvider::new(None)), // Will be wired with cache later
             
-            // Information schema providers
-            information_schema_tables: Arc::new(InformationSchemaTablesProvider::new(kalam_sql.clone())),
-            information_schema_columns: Arc::new(InformationSchemaColumnsProvider::new(kalam_sql)),
+            // Information schema providers (lazy-initialized in set_information_schema_dependencies)
+            information_schema_tables: RwLock::new(None),
+            information_schema_columns: RwLock::new(None),
         }
+    }
+
+    /// Set information_schema dependencies after SchemaRegistry is created
+    ///
+    /// This is called from AppContext::init() after schema_registry is available.
+    pub fn set_information_schema_dependencies(&self, schema_registry: Arc<SchemaRegistry>) {
+        // Initialize information_schema.tables
+        let tables_provider = Arc::new(InformationSchemaTablesProvider::new(
+            self.tables.clone(),
+            schema_registry.clone(),
+        ));
+        *self.information_schema_tables.write().unwrap() = Some(tables_provider);
+
+        // TODO: Initialize information_schema.columns (needs similar refactoring)
+        // For now, leave as None - this provider needs to be refactored too
     }
     
     // ===== Getter Methods =====
@@ -124,13 +138,13 @@ impl SystemTablesRegistry {
     }
     
     /// Get the information_schema.tables provider
-    pub fn information_schema_tables(&self) -> Arc<InformationSchemaTablesProvider> {
-        self.information_schema_tables.clone()
+    pub fn information_schema_tables(&self) -> Option<Arc<InformationSchemaTablesProvider>> {
+        self.information_schema_tables.read().unwrap().clone()
     }
     
     /// Get the information_schema.columns provider
-    pub fn information_schema_columns(&self) -> Arc<InformationSchemaColumnsProvider> {
-        self.information_schema_columns.clone()
+    pub fn information_schema_columns(&self) -> Option<Arc<InformationSchemaColumnsProvider>> {
+        self.information_schema_columns.read().unwrap().clone()
     }
     
     // ===== Convenience Methods =====
@@ -152,10 +166,19 @@ impl SystemTablesRegistry {
     }
     
     /// Get all information_schema.* providers as a vector
+    ///
+    /// Only returns providers that have been initialized via set_information_schema_dependencies().
     pub fn all_information_schema_providers(&self) -> Vec<(&'static str, Arc<dyn datafusion::datasource::TableProvider>)> {
-        vec![
-            ("tables", self.information_schema_tables.clone() as Arc<dyn datafusion::datasource::TableProvider>),
-            ("columns", self.information_schema_columns.clone() as Arc<dyn datafusion::datasource::TableProvider>),
-        ]
+        let mut providers = Vec::new();
+        
+        if let Some(tables) = self.information_schema_tables.read().unwrap().clone() {
+            providers.push(("tables", tables as Arc<dyn datafusion::datasource::TableProvider>));
+        }
+        
+        if let Some(columns) = self.information_schema_columns.read().unwrap().clone() {
+            providers.push(("columns", columns as Arc<dyn datafusion::datasource::TableProvider>));
+        }
+        
+        providers
     }
 }

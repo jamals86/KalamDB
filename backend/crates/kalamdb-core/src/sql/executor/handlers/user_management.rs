@@ -40,7 +40,7 @@ impl UserManagementHandler {
         // **Authorization**: Only Dba and System roles can create users
         // **Validation**: Username uniqueness, password complexity
         
-        Err(KalamDbError::UnsupportedOperation(
+        Err(KalamDbError::InvalidOperation(
             "CREATE USER not yet implemented in UserManagementHandler".to_string(),
         ))
     }
@@ -61,7 +61,7 @@ impl UserManagementHandler {
         //
         // **Authorization**: Dba/System for role changes, users can change own password
         
-        Err(KalamDbError::UnsupportedOperation(
+        Err(KalamDbError::InvalidOperation(
             "ALTER USER not yet implemented in UserManagementHandler".to_string(),
         ))
     }
@@ -82,7 +82,7 @@ impl UserManagementHandler {
         // **Authorization**: Only Dba and System roles can drop users
         // **Validation**: Cannot drop system user
         
-        Err(KalamDbError::UnsupportedOperation(
+        Err(KalamDbError::InvalidOperation(
             "DROP USER not yet implemented in UserManagementHandler".to_string(),
         ))
     }

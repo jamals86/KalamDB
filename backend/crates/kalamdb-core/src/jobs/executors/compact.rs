@@ -20,6 +20,7 @@
 //! }
 //! ```
 
+use crate::error::KalamDbError;
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
 use async_trait::async_trait;
 use kalamdb_commons::system::Job;
@@ -46,20 +47,20 @@ impl JobExecutor for CompactExecutor {
         "CompactExecutor"
     }
 
-    async fn validate_params(&self, job: &Job) -> Result<(), String> {
+    async fn validate_params(&self, job: &Job) -> Result<(), KalamDbError> {
         let params = job
             .parameters
             .as_ref()
-            .ok_or_else(|| "Missing parameters".to_string())?;
+            .ok_or_else(|| KalamDbError::InvalidOperation("Missing parameters".to_string()))?;
 
         let _params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| format!("Invalid JSON parameters: {}", e))?;
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Invalid JSON parameters: {}", e)))?;
 
         // TODO: Validate compaction-specific parameters
         Ok(())
     }
 
-    async fn execute(&self, ctx: &JobContext, _job: &Job) -> JobDecision {
+    async fn execute(&self, ctx: &JobContext, _job: &Job) -> Result<JobDecision, KalamDbError> {
         ctx.log_warn("CompactExecutor not yet implemented");
         
         // TODO: Implement compaction logic
@@ -68,12 +69,12 @@ impl JobExecutor for CompactExecutor {
         // - Update table metadata with new file references
         // - Remove old files after successful merge
         
-        JobDecision::Failed {
+        Ok(JobDecision::Failed {
             exception_trace: "CompactExecutor not yet implemented".to_string(),
-        }
+        })
     }
 
-    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), String> {
+    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), KalamDbError> {
         ctx.log_warn("Compact job cancellation requested");
         Ok(())
     }

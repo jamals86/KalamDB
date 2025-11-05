@@ -11,11 +11,11 @@ use crate::live_query::filter::FilterCache;
 use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::tables::system::LiveQueriesTableProvider;
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
-use kalamdb_commons::models::{NamespaceId, TableName, UserId};
+use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
+use crate::schema::registry::SchemaRegistry;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_commons::LiveQueryId;
-use kalamdb_sql::KalamSql;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -25,14 +25,15 @@ pub struct LiveQueryManager {
     live_queries_provider: Arc<LiveQueriesTableProvider>,
     filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
     initial_data_fetcher: Arc<InitialDataFetcher>,
-    kalam_sql: Arc<KalamSql>,
+    schema_registry: Arc<SchemaRegistry>,
     node_id: NodeId,
 }
 
 impl LiveQueryManager {
     /// Create a new live query manager
     pub fn new(
-        kalam_sql: Arc<KalamSql>,
+        live_queries_provider: Arc<LiveQueriesTableProvider>,
+        schema_registry: Arc<SchemaRegistry>,
         node_id: NodeId,
         user_table_store: Option<Arc<UserTableStore>>,
         _shared_table_store: Option<Arc<SharedTableStore>>,
@@ -41,8 +42,6 @@ impl LiveQueryManager {
         let registry = Arc::new(tokio::sync::RwLock::new(LiveQueryRegistry::new(
             node_id.clone(),
         )));
-        let live_queries_provider =
-            Arc::new(LiveQueriesTableProvider::new(kalam_sql.adapter().backend()));
         let filter_cache = Arc::new(tokio::sync::RwLock::new(FilterCache::new()));
         let initial_data_fetcher = Arc::new(InitialDataFetcher::new(
             user_table_store.clone(),
@@ -54,7 +53,7 @@ impl LiveQueryManager {
             live_queries_provider,
             filter_cache,
             initial_data_fetcher,
-            kalam_sql,
+            schema_registry,
             node_id,
         }
     }
@@ -121,15 +120,10 @@ impl LiveQueryManager {
 
         let namespace_id = NamespaceId::from(namespace);
         let table_name = TableName::from(table);
+        let table_id = TableId::from(format!("{}.{}", namespace, table));
         let table_def = self
-            .kalam_sql
-            .get_table_definition(&namespace_id, &table_name)
-            .map_err(|e| {
-                KalamDbError::Other(format!(
-                    "Failed to load table definition for {}.{}: {}",
-                    namespace, table, e
-                ))
-            })?
+            .schema_registry
+            .get_table_definition(&table_id)
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table {}.{} not found for subscription",
@@ -263,15 +257,10 @@ impl LiveQueryManager {
 
             let namespace_id = NamespaceId::from(namespace);
             let table_name = TableName::from(table);
+            let table_id = TableId::from(format!("{}.{}", namespace, table));
             let table_def = self
-                .kalam_sql
-                .get_table_definition(&namespace_id, &table_name)
-                .map_err(|e| {
-                    KalamDbError::Other(format!(
-                        "Failed to load table definition for {}.{}: {}",
-                        namespace, table, e
-                    ))
-                })?
+                .schema_registry
+                .get_table_definition(&table_id)
                 .ok_or_else(|| {
                     KalamDbError::NotFound(format!(
                         "Table {}.{} not found for subscription",

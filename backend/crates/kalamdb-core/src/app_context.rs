@@ -112,10 +112,6 @@ impl AppContext {
     ) -> Arc<AppContext> {
         APP_CONTEXT
             .get_or_init(|| {
-                // Create KalamSql (temporary for information_schema providers - Phase 6 legacy)
-                let kalam_sql = Arc::new(KalamSql::new(storage_backend.clone())
-                    .expect("Failed to create KalamSql"));
-
                 // Create stores using constants from kalamdb_commons
                 let user_table_store = Arc::new(UserTableStore::new(
                     storage_backend.clone(),
@@ -130,20 +126,19 @@ impl AppContext {
                     ColumnFamilyNames::STREAM_TABLE_PREFIX.to_string(),
                 ));
 
-                // Create storage registry
+                // Create system table providers registry FIRST (needed by StorageRegistry and information_schema)
+                let system_tables = Arc::new(SystemTablesRegistry::new(
+                    storage_backend.clone(),
+                ));
+
+                // Create storage registry (uses StoragesTableProvider from system_tables)
                 let storage_registry = Arc::new(StorageRegistry::new(
-                    kalam_sql.clone(),
+                    system_tables.storages(),
                     storage_base_path,
                 ));
 
                 // Create schema cache (Phase 10 unified cache)
                 let schema_cache = Arc::new(SchemaCache::new(10000, Some(storage_registry.clone())));
-
-                // Create system table providers registry (needs kalam_sql too)
-                let system_tables = Arc::new(SystemTablesRegistry::new(
-                    storage_backend.clone(),
-                    kalam_sql.clone(),
-                ));
 
                 // Register all system tables in DataFusion
                 let session_factory = Arc::new(DataFusionSessionFactory::new()
@@ -193,6 +188,9 @@ impl AppContext {
                     schema_store,
                 ));
 
+                // NOW wire up information_schema providers with schema_registry
+                system_tables.set_information_schema_dependencies(schema_registry.clone());
+
                 // Create job registry and register all 8 executors (Phase 9, T154)
                 let job_registry = Arc::new(JobRegistry::new());
                 job_registry.register(Arc::new(FlushExecutor::new()));
@@ -213,7 +211,8 @@ impl AppContext {
 
                 // Create live query manager
                 let live_query_manager = Arc::new(LiveQueryManager::new(
-                    kalam_sql.clone(),
+                    system_tables.live_queries(),
+                    schema_registry.clone(),
                     node_id,
                     Some(user_table_store.clone()),
                     Some(shared_table_store.clone()),

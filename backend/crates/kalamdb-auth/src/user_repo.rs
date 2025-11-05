@@ -1,4 +1,4 @@
-use crate::error::{AuthError, AuthResult};
+use crate::error::AuthResult;
 use kalamdb_commons::system::User;
 
 /// Abstraction over user persistence for authentication flows.

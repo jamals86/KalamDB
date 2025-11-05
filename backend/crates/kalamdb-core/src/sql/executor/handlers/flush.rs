@@ -40,7 +40,7 @@ impl FlushHandler {
         // **Authorization**: Only Dba and System roles can flush tables
         // **Validation**: STREAM tables cannot be flushed manually (TTL-based)
         
-        Err(KalamDbError::UnsupportedOperation(
+        Err(KalamDbError::InvalidOperation(
             "FLUSH TABLE not yet implemented in FlushHandler".to_string(),
         ))
     }

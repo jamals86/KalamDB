@@ -2,8 +2,12 @@
 //!
 //! Provides column metadata by flattening the columns array from TableDefinition.
 //! Reads from information_schema_tables CF and exposes per-column records.
+//!
+//! **TODO (KalamSql Removal)**: This provider needs refactoring to use SchemaRegistry
+//! instead of KalamSql. Currently left as-is (not initialized in SystemTablesRegistry).
 
 use crate::error::KalamDbError;
+use crate::schema::registry::SchemaRegistry;
 use async_trait::async_trait;
 use datafusion::arrow::array::{BooleanArray, RecordBatch, StringArray, UInt32Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
@@ -12,12 +16,11 @@ use datafusion::datasource::TableProvider;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableType};
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_sql::KalamSql;
 use std::any::Any;
 use std::sync::Arc;
 
 pub struct InformationSchemaColumnsProvider {
-    kalam_sql: Arc<KalamSql>,
+    _schema_registry: Arc<SchemaRegistry>, // TODO: Use this instead of kalam_sql
     schema: SchemaRef,
 }
 
@@ -28,7 +31,7 @@ impl std::fmt::Debug for InformationSchemaColumnsProvider {
 }
 
 impl InformationSchemaColumnsProvider {
-    pub fn new(kalam_sql: Arc<KalamSql>) -> Self {
+    pub fn new(schema_registry: Arc<SchemaRegistry>) -> Self {
         let schema = Arc::new(Schema::new(vec![
             Field::new("table_catalog", DataType::Utf8, true),
             Field::new("table_schema", DataType::Utf8, false),
@@ -41,13 +44,18 @@ impl InformationSchemaColumnsProvider {
             Field::new("is_primary_key", DataType::Boolean, false),
         ]));
 
-        Self { kalam_sql, schema }
+        Self { 
+            _schema_registry: schema_registry,
+            schema 
+        }
     }
 
     async fn scan_all_columns(&self) -> Result<RecordBatch, KalamDbError> {
-        // Read all table definitions across all namespaces
-        let tables = self.kalam_sql.scan_all_table_definitions()?;
-
+        // TODO: Implement using schema_registry once refactored
+        // For now, return empty result
+        return Err(KalamDbError::Other("information_schema.columns not yet implemented (needs SchemaRegistry refactoring)".to_string()));
+        
+        /* OLD CODE - needs refactoring
         // Flatten columns from all tables
         let mut table_catalog_values = Vec::new();
         let mut table_schema_values = Vec::new();
@@ -59,7 +67,7 @@ impl InformationSchemaColumnsProvider {
         let mut column_default_values: Vec<Option<String>> = Vec::new();
         let mut is_primary_key_values = Vec::new();
 
-        for table_def in tables {
+        for _table_def in tables {
             for column in &table_def.columns {
                 table_catalog_values.push(None::<String>); // NULL for now
                 table_schema_values.push(table_def.namespace_id.to_string());
@@ -98,6 +106,7 @@ impl InformationSchemaColumnsProvider {
         .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))?;
 
         Ok(batch)
+        */
     }
 }
 
