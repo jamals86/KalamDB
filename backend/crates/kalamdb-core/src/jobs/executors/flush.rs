@@ -49,7 +49,7 @@ impl JobExecutor for FlushExecutor {
         JobType::Flush
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "FlushExecutor"
     }
 

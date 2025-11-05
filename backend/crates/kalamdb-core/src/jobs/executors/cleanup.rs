@@ -43,7 +43,7 @@ impl JobExecutor for CleanupExecutor {
         JobType::Cleanup
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "CleanupExecutor"
     }
 

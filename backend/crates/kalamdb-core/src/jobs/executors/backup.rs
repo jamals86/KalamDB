@@ -44,7 +44,7 @@ impl JobExecutor for BackupExecutor {
         JobType::Backup
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "BackupExecutor"
     }
 
