@@ -418,16 +418,7 @@ impl JobManager {
     /// - BK: Backup jobs (future)
     /// - RS: Restore jobs (future)
     fn generate_job_id(&self, job_type: &JobType) -> JobId {
-        let prefix = match job_type {
-            JobType::Flush => "FL",
-            JobType::Cleanup => "CL",
-            JobType::Retention => "RT",
-            JobType::StreamEviction => "SE",
-            JobType::UserCleanup => "UC",
-            JobType::Compact => "CO",
-            JobType::Backup => "BK",
-            JobType::Restore => "RS",
-        };
+        let prefix = job_type.short_prefix();
 
         // Generate UUID for uniqueness
         let uuid = uuid::Uuid::new_v4().to_string().replace("-", "");

@@ -21,6 +21,7 @@
 //! ```
 
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
+use crate::error::KalamDbError;
 use async_trait::async_trait;
 use kalamdb_commons::system::Job;
 use kalamdb_commons::JobType;
@@ -47,58 +48,47 @@ impl JobExecutor for RetentionExecutor {
         "RetentionExecutor"
     }
 
-    async fn validate_params(&self, job: &Job) -> Result<(), String> {
+    async fn validate_params(&self, job: &Job) -> Result<(), KalamDbError> {
         let params = job
             .parameters
             .as_ref()
-            .ok_or_else(|| "Missing parameters".to_string())?;
+            .ok_or_else(|| KalamDbError::invalid_input("Missing parameters"))?;
 
         let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| format!("Invalid JSON parameters: {}", e))?;
+            .map_err(|e| KalamDbError::invalid_input(format!("Invalid JSON parameters: {}", e)))?;
 
         // Validate required fields
         if params_obj.get("namespace_id").is_none() {
-            return Err("Missing required parameter: namespace_id".to_string());
+            return Err(KalamDbError::invalid_input("Missing required parameter: namespace_id"));
         }
         if params_obj.get("table_name").is_none() {
-            return Err("Missing required parameter: table_name".to_string());
+            return Err(KalamDbError::invalid_input("Missing required parameter: table_name"));
         }
         if params_obj.get("table_type").is_none() {
-            return Err("Missing required parameter: table_type".to_string());
+            return Err(KalamDbError::invalid_input("Missing required parameter: table_type"));
         }
         if params_obj.get("retention_hours").is_none() {
-            return Err("Missing required parameter: retention_hours".to_string());
+            return Err(KalamDbError::invalid_input("Missing required parameter: retention_hours"));
         }
 
         // Validate retention_hours is a number
         if !params_obj["retention_hours"].is_number() {
-            return Err("retention_hours must be a number".to_string());
+            return Err(KalamDbError::invalid_input("retention_hours must be a number"));
         }
 
         Ok(())
     }
 
-    async fn execute(&self, ctx: &JobContext, job: &Job) -> JobDecision {
+    async fn execute(&self, ctx: &JobContext, job: &Job) -> Result<JobDecision, KalamDbError> {
         ctx.log_info("Starting retention enforcement operation");
 
         // Validate parameters
-        if let Err(e) = self.validate_params(job).await {
-            ctx.log_error(&format!("Parameter validation failed: {}", e));
-            return JobDecision::Failed {
-                exception_trace: format!("Invalid parameters: {}", e),
-            };
-        }
+        self.validate_params(job).await?;
 
         // Parse parameters
         let params = job.parameters.as_ref().unwrap();
-        let params_obj: serde_json::Value = match serde_json::from_str(params) {
-            Ok(v) => v,
-            Err(e) => {
-                return JobDecision::Failed {
-                    exception_trace: format!("Failed to parse parameters: {}", e),
-                }
-            }
-        };
+        let params_obj: serde_json::Value = serde_json::from_str(params)
+            .map_err(|e| KalamDbError::invalid_input(format!("Failed to parse parameters: {}", e)))?;
 
         let namespace_id = params_obj["namespace_id"].as_str().unwrap();
         let table_name = params_obj["table_name"].as_str().unwrap();
@@ -112,20 +102,25 @@ impl JobExecutor for RetentionExecutor {
 
         // TODO: Implement actual retention enforcement logic
         // - Query soft-deleted records with deleted_at < (now - retention_hours)
-        // - Permanently delete matching records
+        // - Permanently delete matching records from RocksDB via store.delete()
         // - Track metrics (rows_deleted, bytes_freed)
+        // Implementation approach:
+        //   1. Get cutoff time: now - retention_hours
+        //   2. Scan table for rows with deleted_at != NULL AND deleted_at < cutoff
+        //   3. Delete matching rows in batches
+        //   4. Return metrics in message
 
         ctx.log_info("Retention enforcement completed successfully");
 
-        JobDecision::Completed {
+        Ok(JobDecision::Completed {
             message: Some(format!(
                 "Enforced retention policy for {}.{} ({}h)",
                 namespace_id, table_name, retention_hours
             )),
-        }
+        })
     }
 
-    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), String> {
+    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), KalamDbError> {
         ctx.log_warn("Retention job cancellation requested");
         // Allow cancellation since partial retention enforcement is acceptable
         Ok(())

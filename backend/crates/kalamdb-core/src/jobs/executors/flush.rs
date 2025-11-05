@@ -21,9 +21,15 @@
 //! ```
 
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
+use crate::error::KalamDbError;
+use crate::catalog::{NamespaceId, TableName};
+use crate::tables::{UserTableFlushJob, SharedTableFlushJob};
+use crate::tables::base_flush::TableFlush;
 use async_trait::async_trait;
 use kalamdb_commons::system::Job;
 use kalamdb_commons::JobType;
+use kalamdb_commons::models::TableId;
+use std::sync::Arc;
 
 /// Flush Job Executor
 ///
@@ -47,50 +53,39 @@ impl JobExecutor for FlushExecutor {
         "FlushExecutor"
     }
 
-    async fn validate_params(&self, job: &Job) -> Result<(), String> {
+    async fn validate_params(&self, job: &Job) -> Result<(), KalamDbError> {
         let params = job
             .parameters
             .as_ref()
-            .ok_or_else(|| "Missing parameters".to_string())?;
+            .ok_or_else(|| KalamDbError::invalid_input("Missing parameters"))?;
 
         let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| format!("Invalid JSON parameters: {}", e))?;
+            .map_err(|e| KalamDbError::invalid_input(format!("Invalid JSON parameters: {}", e)))?;
 
         // Validate required fields
         if params_obj.get("namespace_id").is_none() {
-            return Err("Missing required parameter: namespace_id".to_string());
+            return Err(KalamDbError::invalid_input("Missing required parameter: namespace_id"));
         }
         if params_obj.get("table_name").is_none() {
-            return Err("Missing required parameter: table_name".to_string());
+            return Err(KalamDbError::invalid_input("Missing required parameter: table_name"));
         }
         if params_obj.get("table_type").is_none() {
-            return Err("Missing required parameter: table_type".to_string());
+            return Err(KalamDbError::invalid_input("Missing required parameter: table_type"));
         }
 
         Ok(())
     }
 
-    async fn execute(&self, ctx: &JobContext, job: &Job) -> JobDecision {
+    async fn execute(&self, ctx: &JobContext, job: &Job) -> Result<JobDecision, KalamDbError> {
         ctx.log_info("Starting flush operation");
 
         // Validate parameters
-        if let Err(e) = self.validate_params(job).await {
-            ctx.log_error(&format!("Parameter validation failed: {}", e));
-            return JobDecision::Failed {
-                exception_trace: format!("Invalid parameters: {}", e),
-            };
-        }
+        self.validate_params(job).await?;
 
         // Parse parameters
         let params = job.parameters.as_ref().unwrap();
-        let params_obj: serde_json::Value = match serde_json::from_str(params) {
-            Ok(v) => v,
-            Err(e) => {
-                return JobDecision::Failed {
-                    exception_trace: format!("Failed to parse parameters: {}", e),
-                }
-            }
-        };
+        let params_obj: serde_json::Value = serde_json::from_str(params)
+            .map_err(|e| KalamDbError::invalid_input(format!("Failed to parse parameters: {}", e)))?;
 
         let namespace_id = params_obj["namespace_id"].as_str().unwrap();
         let table_name = params_obj["table_name"].as_str().unwrap();
@@ -101,39 +96,80 @@ impl JobExecutor for FlushExecutor {
             namespace_id, table_name, table_type
         ));
 
-        // TODO: Implement actual flush logic based on table type
-        // For now, simulate flush operation
-        match table_type {
+        // Get dependencies from AppContext
+        let app_ctx = &ctx.app_ctx;
+        let schema_cache = app_ctx.schema_cache();
+        let schema_registry = app_ctx.schema_registry();
+        let live_query_manager = app_ctx.live_query_manager();
+
+        // Create TableId for cache lookups
+        let table_id = Arc::new(TableId::new(namespace_id, table_name));
+
+        // Get table definition and schema
+        let table_def = schema_registry.get_table_definition(&table_id).await
+            .ok_or_else(|| KalamDbError::table_not_found(namespace_id, table_name))?;
+        let schema = schema_registry.get_arrow_schema(&table_id).await;
+
+        // Execute flush based on table type
+        let result = match table_type {
             "User" => {
                 ctx.log_info("Executing UserTableFlushJob");
-                // TODO: Call UserTableFlushJob::execute()
+                let store = app_ctx.user_table_store();
+                let flush_job = UserTableFlushJob::new(
+                    table_id.clone(),
+                    store,
+                    NamespaceId::new(namespace_id.to_string()),
+                    TableName::new(table_name.to_string()),
+                    schema,
+                    schema_cache.clone(),
+                )
+                .with_live_query_manager(live_query_manager);
+
+                flush_job.execute()
+                    .map_err(|e| KalamDbError::internal(format!("User table flush failed: {}", e)))?
             }
             "Shared" => {
                 ctx.log_info("Executing SharedTableFlushJob");
-                // TODO: Call SharedTableFlushJob::execute()
+                let store = app_ctx.shared_table_store();
+                let flush_job = SharedTableFlushJob::new(
+                    table_id.clone(),
+                    store,
+                    NamespaceId::new(namespace_id.to_string()),
+                    TableName::new(table_name.to_string()),
+                    schema,
+                    schema_cache.clone(),
+                )
+                .with_live_query_manager(live_query_manager);
+
+                flush_job.execute()
+                    .map_err(|e| KalamDbError::internal(format!("Shared table flush failed: {}", e)))?
             }
             "Stream" => {
-                ctx.log_info("Executing StreamTableFlushJob");
-                // TODO: Call StreamTableFlushJob::execute()
+                ctx.log_info("Stream table flush not yet implemented");
+                // TODO: Implement StreamTableFlushJob when stream tables support flush
+                return Ok(JobDecision::Completed {
+                    message: Some(format!("Stream flush not yet implemented for {}.{}", namespace_id, table_name)),
+                });
             }
             _ => {
-                return JobDecision::Failed {
-                    exception_trace: format!("Unknown table type: {}", table_type),
-                };
+                return Err(KalamDbError::invalid_input(format!("Unknown table type: {}", table_type)));
             }
-        }
+        };
 
-        ctx.log_info("Flush operation completed successfully");
+        ctx.log_info(&format!(
+            "Flush operation completed: {} rows flushed, {} files created",
+            result.rows_flushed, result.parquet_files.len()
+        ));
 
-        JobDecision::Completed {
+        Ok(JobDecision::Completed {
             message: Some(format!(
-                "Flushed {}.{} successfully",
-                namespace_id, table_name
+                "Flushed {}.{} successfully ({} rows, {} files)",
+                namespace_id, table_name, result.rows_flushed, result.parquet_files.len()
             )),
-        }
+        })
     }
 
-    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), String> {
+    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), KalamDbError> {
         ctx.log_warn("Flush job cancellation requested");
         // Flush jobs are typically fast, so cancellation is best-effort
         Ok(())

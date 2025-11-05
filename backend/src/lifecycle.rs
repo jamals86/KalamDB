@@ -13,7 +13,6 @@ use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
 use kalamdb_core::live_query::LiveQueryManager;
-// Services are created internally by AppContext/SqlExecutor in Phase 5+
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
 use kalamdb_store::RocksDBBackend;
@@ -96,13 +95,11 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
 
     // Get references from AppContext for services that need them
     let job_manager = app_context.job_manager();
-    let storage_registry = app_context.storage_registry();
     let live_query_manager = app_context.live_query_manager();
     let node_id = app_context.node_id();
     let session_factory = app_context.session_factory();
     
     // Get system table providers for job executor and flush scheduler
-    let jobs_provider = app_context.system_tables().jobs();
     let users_provider = app_context.system_tables().users();
     let user_repo: Arc<dyn kalamdb_auth::UserRepository> =
         Arc::new(kalamdb_api::repositories::CoreUsersRepo::new(users_provider));

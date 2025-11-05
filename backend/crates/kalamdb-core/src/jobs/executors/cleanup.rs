@@ -20,6 +20,7 @@
 //! ```
 
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
+use crate::error::KalamDbError;
 use async_trait::async_trait;
 use kalamdb_commons::system::Job;
 use kalamdb_commons::JobType;
@@ -46,47 +47,36 @@ impl JobExecutor for CleanupExecutor {
         "CleanupExecutor"
     }
 
-    async fn validate_params(&self, job: &Job) -> Result<(), String> {
+    async fn validate_params(&self, job: &Job) -> Result<(), KalamDbError> {
         let params = job
             .parameters
             .as_ref()
-            .ok_or_else(|| "Missing parameters".to_string())?;
+            .ok_or_else(|| KalamDbError::invalid_input("Missing parameters"))?;
 
         let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| format!("Invalid JSON parameters: {}", e))?;
+            .map_err(|e| KalamDbError::invalid_input(format!("Invalid JSON parameters: {}", e)))?;
 
         // Validate required fields
         if params_obj.get("table_id").is_none() {
-            return Err("Missing required parameter: table_id".to_string());
+            return Err(KalamDbError::invalid_input("Missing required parameter: table_id"));
         }
         if params_obj.get("operation").is_none() {
-            return Err("Missing required parameter: operation".to_string());
+            return Err(KalamDbError::invalid_input("Missing required parameter: operation"));
         }
 
         Ok(())
     }
 
-    async fn execute(&self, ctx: &JobContext, job: &Job) -> JobDecision {
+    async fn execute(&self, ctx: &JobContext, job: &Job) -> Result<JobDecision, KalamDbError> {
         ctx.log_info("Starting cleanup operation");
 
         // Validate parameters
-        if let Err(e) = self.validate_params(job).await {
-            ctx.log_error(&format!("Parameter validation failed: {}", e));
-            return JobDecision::Failed {
-                exception_trace: format!("Invalid parameters: {}", e),
-            };
-        }
+        self.validate_params(job).await?;
 
         // Parse parameters
         let params = job.parameters.as_ref().unwrap();
-        let params_obj: serde_json::Value = match serde_json::from_str(params) {
-            Ok(v) => v,
-            Err(e) => {
-                return JobDecision::Failed {
-                    exception_trace: format!("Failed to parse parameters: {}", e),
-                }
-            }
-        };
+        let params_obj: serde_json::Value = serde_json::from_str(params)
+            .map_err(|e| KalamDbError::invalid_input(format!("Failed to parse parameters: {}", e)))?;
 
         let table_id = params_obj["table_id"].as_str().unwrap();
         let operation = params_obj["operation"].as_str().unwrap();
@@ -99,19 +89,20 @@ impl JobExecutor for CleanupExecutor {
         // TODO: Implement actual cleanup logic
         // This is already implemented in DDL handler's cleanup methods
         // (cleanup_table_data_internal, cleanup_parquet_files_internal, cleanup_metadata_internal)
+        // Need to refactor those methods to be callable from here (make them public on a CleanupService)
         // For now, log success
 
         ctx.log_info("Cleanup operation completed successfully");
 
-        JobDecision::Completed {
+        Ok(JobDecision::Completed {
             message: Some(format!("Cleaned up table {} successfully", table_id)),
-        }
+        })
     }
 
-    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), String> {
+    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), KalamDbError> {
         ctx.log_warn("Cleanup job cancellation requested");
         // Cleanup jobs should complete to avoid orphaned data
-        Err("Cleanup jobs cannot be safely cancelled".to_string())
+        Err(KalamDbError::operation_not_supported("Cleanup jobs cannot be safely cancelled"))
     }
 }
 

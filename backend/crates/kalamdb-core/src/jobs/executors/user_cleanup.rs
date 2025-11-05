@@ -20,6 +20,7 @@
 //! ```
 
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
+use crate::error::KalamDbError;
 use async_trait::async_trait;
 use kalamdb_commons::system::Job;
 use kalamdb_commons::JobType;
@@ -46,54 +47,43 @@ impl JobExecutor for UserCleanupExecutor {
         "UserCleanupExecutor"
     }
 
-    async fn validate_params(&self, job: &Job) -> Result<(), String> {
+    async fn validate_params(&self, job: &Job) -> Result<(), KalamDbError> {
         let params = job
             .parameters
             .as_ref()
-            .ok_or_else(|| "Missing parameters".to_string())?;
+            .ok_or_else(|| KalamDbError::invalid_input("Missing parameters"))?;
 
         let params_obj: serde_json::Value = serde_json::from_str(params)
-            .map_err(|e| format!("Invalid JSON parameters: {}", e))?;
+            .map_err(|e| KalamDbError::invalid_input(format!("Invalid JSON parameters: {}", e)))?;
 
         // Validate required fields
         if params_obj.get("user_id").is_none() {
-            return Err("Missing required parameter: user_id".to_string());
+            return Err(KalamDbError::invalid_input("Missing required parameter: user_id"));
         }
         if params_obj.get("username").is_none() {
-            return Err("Missing required parameter: username".to_string());
+            return Err(KalamDbError::invalid_input("Missing required parameter: username"));
         }
 
         // Validate cascade if present
         if let Some(cascade) = params_obj.get("cascade") {
             if !cascade.is_boolean() {
-                return Err("cascade must be a boolean".to_string());
+                return Err(KalamDbError::invalid_input("cascade must be a boolean"));
             }
         }
 
         Ok(())
     }
 
-    async fn execute(&self, ctx: &JobContext, job: &Job) -> JobDecision {
+    async fn execute(&self, ctx: &JobContext, job: &Job) -> Result<JobDecision, KalamDbError> {
         ctx.log_info("Starting user cleanup operation");
 
         // Validate parameters
-        if let Err(e) = self.validate_params(job).await {
-            ctx.log_error(&format!("Parameter validation failed: {}", e));
-            return JobDecision::Failed {
-                exception_trace: format!("Invalid parameters: {}", e),
-            };
-        }
+        self.validate_params(job).await?;
 
         // Parse parameters
         let params = job.parameters.as_ref().unwrap();
-        let params_obj: serde_json::Value = match serde_json::from_str(params) {
-            Ok(v) => v,
-            Err(e) => {
-                return JobDecision::Failed {
-                    exception_trace: format!("Failed to parse parameters: {}", e),
-                }
-            }
-        };
+        let params_obj: serde_json::Value = serde_json::from_str(params)
+            .map_err(|e| KalamDbError::invalid_input(format!("Failed to parse parameters: {}", e)))?;
 
         let user_id = params_obj["user_id"].as_str().unwrap();
         let username = params_obj["username"].as_str().unwrap();
@@ -108,28 +98,35 @@ impl JobExecutor for UserCleanupExecutor {
         ));
 
         // TODO: Implement actual user cleanup logic
-        // - Permanently delete user record from system.users
+        // - Permanently delete user record from system.users via UsersTableProvider
         // - If cascade=true:
-        //   - Drop all user's tables
-        //   - Remove user from shared table ACLs
-        //   - Invalidate user's JWT tokens
-        //   - Clean up user's live queries
-        // - Track metrics (tables_deleted, acls_removed)
+        //   - Query TablesTableProvider for user's tables
+        //   - Drop all user's tables via execute_drop_table()
+        //   - Remove user from shared table ACLs (scan system.tables for access_level='restricted')
+        //   - Invalidate user's JWT tokens (no-op for stateless JWT - they'll expire naturally)
+        //   - Clean up user's live queries via LiveQueriesTableProvider
+        // - Track metrics (tables_deleted, acls_removed, live_queries_deleted)
+        // Implementation approach:
+        //   1. Delete from system.users
+        //   2. If cascade: scan system.tables for owner=user_id
+        //   3. If cascade: delete each table via cleanup job
+        //   4. If cascade: scan shared tables for ACLs containing user_id
+        //   5. Return metrics
 
         ctx.log_info("User cleanup completed successfully");
 
-        JobDecision::Completed {
+        Ok(JobDecision::Completed {
             message: Some(format!(
                 "Cleaned up user {} ({}) successfully",
                 username, user_id
             )),
-        }
+        })
     }
 
-    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), String> {
+    async fn cancel(&self, ctx: &JobContext, _job: &Job) -> Result<(), KalamDbError> {
         ctx.log_warn("User cleanup job cancellation requested");
         // User cleanup jobs should complete to avoid partial cleanup state
-        Err("User cleanup jobs cannot be safely cancelled".to_string())
+        Err(KalamDbError::operation_not_supported("User cleanup jobs cannot be safely cancelled"))
     }
 }
 
