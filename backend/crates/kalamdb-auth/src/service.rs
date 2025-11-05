@@ -6,10 +6,8 @@ use crate::context::AuthenticatedUser;
 use crate::error::{AuthError, AuthResult};
 use crate::jwt_auth;
 use crate::password;
-// use kalamdb_commons::{Role, UserId}; // Unused imports removed
-use chrono::{DateTime, Utc};
-use kalamdb_sql::RocksDbAdapter;
 use crate::user_repo::UserRepository;
+use chrono::{DateTime, Utc};
 use log::{info, warn};
 use moka::future::Cache;
 use std::sync::Arc;
