@@ -15,26 +15,246 @@
 use super::types::{ExecutionContext, ExecutionMetadata, ExecutionResult};
 use crate::catalog::TableType;
 use crate::error::KalamDbError;
-use crate::services::{NamespaceService, SharedTableService, StreamTableService, TableDeletionService, UserTableService};
 use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, UserId};
-use kalamdb_commons::models::system::TableSchema;
+use kalamdb_commons::system::Namespace;
 use kalamdb_commons::Role;
 use kalamdb_sql::ddl::{AlterTableStatement, ColumnOperation, CreateNamespaceStatement, CreateTableStatement, DropTableStatement, FlushPolicy};
+// KalamSql still needed for execute_alter_table (Phase 10.4 work - get_table/update_table operations)
 use kalamdb_sql::KalamSql;
 use serde_json::json;
+use std::sync::Arc;
 
 /// DDL Handler for Data Definition Language operations
 pub struct DDLHandler;
 
 impl DDLHandler {
+    // ============================================================================
+    // Helper Methods for Table Schema Transformations
+    // ============================================================================
+
+    /// Validate table name
+    ///
+    /// # Rules
+    /// - Must start with lowercase letter or underscore
+    /// - Cannot be a SQL keyword
+    ///
+    /// # Arguments
+    /// * `name` - Table name to validate
+    ///
+    /// # Returns
+    /// Ok(()) if valid, error otherwise
+    fn validate_table_name(name: &str) -> Result<(), String> {
+        // Check first character
+        let first_char = name.chars().next().ok_or_else(|| {
+            "Table name cannot be empty".to_string()
+        })?;
+
+        if !first_char.is_lowercase() && first_char != '_' {
+            return Err(format!(
+                "Table name must start with lowercase letter or underscore: {}",
+                name
+            ));
+        }
+
+        // Check for SQL keywords
+        let keywords = [
+            "select", "insert", "update", "delete", "table", "from", "where",
+        ];
+        if keywords.contains(&name.to_lowercase().as_str()) {
+            return Err(format!("Table name cannot be a SQL keyword: {}", name));
+        }
+
+        Ok(())
+    }
+
+    /// Inject auto-increment field if not present
+    ///
+    /// Adds a snowflake ID field named "id" as the first column if no field named "id" exists.
+    /// Uses Int64 type for snowflake IDs.
+    fn inject_auto_increment_field(
+        schema: Arc<arrow::datatypes::Schema>,
+    ) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
+        use arrow::datatypes::{DataType, Field, Schema};
+
+        // Check if "id" field already exists
+        if schema.field_with_name("id").is_ok() {
+            // ID field already exists, no injection needed
+            return Ok(schema);
+        }
+
+        // Create snowflake ID field
+        let id_field = Arc::new(Field::new("id", DataType::Int64, false)); // Not nullable
+
+        // Create new schema with ID field as first column
+        let mut fields = vec![id_field];
+        fields.extend(schema.fields().iter().cloned());
+
+        Ok(Arc::new(Schema::new(fields)))
+    }
+
+    /// Inject system columns for user tables
+    ///
+    /// Adds _updated (TIMESTAMP) and _deleted (BOOLEAN) columns.
+    /// For stream tables, this should NOT be called (handled in stream table service).
+    fn inject_system_columns(
+        schema: Arc<arrow::datatypes::Schema>,
+        table_type: TableType,
+    ) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
+        use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+
+        // Stream tables do NOT have system columns
+        if table_type == TableType::Stream {
+            return Ok(schema);
+        }
+
+        // Check if system columns already exist
+        let has_updated = schema.field_with_name("_updated").is_ok();
+        let has_deleted = schema.field_with_name("_deleted").is_ok();
+
+        if has_updated && has_deleted {
+            // System columns already exist
+            return Ok(schema);
+        }
+
+        // Create system columns
+        let mut fields: Vec<Arc<Field>> = schema.fields().iter().cloned().collect();
+
+        if !has_updated {
+            fields.push(Arc::new(Field::new(
+                "_updated",
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                false, // Not nullable
+            )));
+        }
+
+        if !has_deleted {
+            fields.push(Arc::new(Field::new("_deleted", DataType::Boolean, false)));
+            // Not nullable
+        }
+
+        Ok(Arc::new(Schema::new(fields)))
+    }
+
+    /// Create and save table definition to information_schema_tables.
+    /// Replaces fragmented schema storage with single atomic write.
+    ///
+    /// # Arguments
+    /// * `stmt` - CREATE TABLE statement with all metadata
+    /// * `schema` - Final Arrow schema (after auto-increment and system column injection)
+    ///
+    /// # Returns
+    /// Ok(()) on success, error on failure
+    fn save_table_definition(
+        stmt: &CreateTableStatement,
+        schema: &Arc<arrow::datatypes::Schema>,
+    ) -> Result<(), KalamDbError> {
+        use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, SchemaVersion};
+        use kalamdb_commons::types::{KalamDataType, FromArrowType};
+        use crate::schema::arrow_schema::ArrowSchemaWithOptions;
+        use crate::app_context::AppContext;
+
+        // Extract columns directly from Arrow schema
+        let columns: Vec<ColumnDefinition> = schema
+            .fields()
+            .iter()
+            .enumerate()
+            .map(|(idx, field)| {
+                let column_name = field.name().clone();
+                let is_primary_key = stmt.primary_key_column
+                    .as_ref()
+                    .map(|pk| pk.as_str() == column_name.as_str())
+                    .unwrap_or(false);
+                
+                // Convert Arrow DataType to KalamDataType
+                let data_type = KalamDataType::from_arrow_type(field.data_type())
+                    .unwrap_or(KalamDataType::Text);
+                
+                // Get default value from statement
+                let default_value = stmt.column_defaults
+                    .get(column_name.as_str())
+                    .cloned()
+                    .unwrap_or(kalamdb_commons::schemas::ColumnDefault::None);
+                
+                ColumnDefinition::new(
+                    column_name,
+                    (idx + 1) as u32,
+                    data_type,
+                    field.is_nullable(),
+                    is_primary_key,
+                    false, // is_partition_key
+                    default_value,
+                    None, // column_comment
+                )
+            })
+            .collect();
+
+        // Build table options based on table type
+        let table_options = match stmt.table_type {
+            kalamdb_commons::schemas::TableType::User => TableOptions::user(),
+            kalamdb_commons::schemas::TableType::Shared => TableOptions::shared(),
+            kalamdb_commons::schemas::TableType::Stream => {
+                // Stream tables require TTL from statement
+                let ttl_seconds = stmt.ttl_seconds.unwrap_or(3600); // Default 1 hour
+                TableOptions::stream(ttl_seconds)
+            },
+            kalamdb_commons::schemas::TableType::System => {
+                // System tables shouldn't be created via SQL, but handle gracefully
+                TableOptions::shared()
+            },
+        };
+
+        // Create NEW TableDefinition directly
+        let mut table_def = TableDefinition::new(
+            stmt.namespace_id.clone(),
+            stmt.table_name.clone(),
+            stmt.table_type,
+            columns,
+            table_options,
+            None, // table_comment
+        ).map_err(|e| KalamDbError::SchemaError(e))?;
+
+        // Initialize schema history with version 1 entry (Initial schema)
+        // Serialize Arrow schema (including any options if needed)
+        let schema_json = ArrowSchemaWithOptions::new(schema.clone())
+            .to_json_string()
+            .map_err(|e| KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e)))?;
+
+        // Push initial schema version (v1)
+        table_def.schema_history.push(SchemaVersion::initial(schema_json));
+
+        // Single atomic write to information_schema_tables
+        let ctx = AppContext::get();
+        let kalam_sql = ctx.kalam_sql();
+        kalam_sql
+            .upsert_table_definition(&table_def)
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to save table definition to information_schema.tables: {}",
+                    e
+                ))
+            })?;
+
+        log::info!(
+            "Table definition for {}.{} saved to information_schema.tables (version 1)",
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str()
+        );
+
+        Ok(())
+    }
+
+    // ============================================================================
+    // DDL Statement Handlers
+    // ============================================================================
+
     /// Execute CREATE NAMESPACE statement
     /// 
     /// Creates a new namespace in the system. Namespaces provide logical isolation
     /// for tables and other database objects.
     /// 
     /// # Arguments
-    /// * `namespace_service` - Service for namespace operations
+    /// * `namespaces_provider` - Provider for namespace operations
     /// * `session` - DataFusion session context (reserved for future use)
     /// * `sql` - Raw SQL statement
     /// * `exec_ctx` - Execution context with user information
@@ -48,7 +268,7 @@ impl DDLHandler {
     /// CREATE NAMESPACE IF NOT EXISTS staging;
     /// ```
     pub async fn execute_create_namespace(
-        namespace_service: &NamespaceService,
+        namespaces_provider: &Arc<crate::tables::system::NamespacesTableProvider>,
         _session: &SessionContext,
         sql: &str,
         _exec_ctx: &ExecutionContext,
@@ -58,16 +278,34 @@ impl DDLHandler {
             KalamDbError::InvalidSql(format!("Failed to parse CREATE NAMESPACE: {}", e))
         })?;
 
-        // Create namespace via service
-        let created = namespace_service.create(stmt.name.as_str(), stmt.if_not_exists)?;
+        let name = stmt.name.as_str();
 
-        // Generate appropriate success message
-        let message = if created {
-            format!("Namespace '{}' created successfully", stmt.name)
-        } else {
-            format!("Namespace '{}' already exists", stmt.name)
-        };
+        // Validate namespace name
+        Namespace::validate_name(name)?;
 
+        // Check if namespace already exists
+        let namespace_id = NamespaceId::new(name);
+        let existing = namespaces_provider.get_namespace(&namespace_id)?;
+
+        if existing.is_some() {
+            if stmt.if_not_exists {
+                let message = format!("Namespace '{}' already exists", name);
+                return Ok(ExecutionResult::Success(message));
+            } else {
+                return Err(KalamDbError::AlreadyExists(format!(
+                    "Namespace '{}' already exists",
+                    name
+                )));
+            }
+        }
+
+        // Create namespace entity with system as default owner
+        let namespace = Namespace::new(name);
+
+        // Insert namespace via provider
+        namespaces_provider.create_namespace(namespace)?;
+
+        let message = format!("Namespace '{}' created successfully", name);
         Ok(ExecutionResult::Success(message))
     }
 
@@ -76,7 +314,7 @@ impl DDLHandler {
     /// Drops a namespace from the system. Prevents dropping namespaces that contain tables.
     /// 
     /// # Arguments
-    /// * `namespace_service` - Service for namespace operations
+    /// * `namespaces_provider` - Provider for namespace operations
     /// * `session` - DataFusion session context (reserved for future use)
     /// * `sql` - Raw SQL statement
     /// * `exec_ctx` - Execution context with user information
@@ -90,7 +328,7 @@ impl DDLHandler {
     /// DROP NAMESPACE IF EXISTS staging;
     /// ```
     pub async fn execute_drop_namespace(
-        namespace_service: &NamespaceService,
+        namespaces_provider: &Arc<crate::tables::system::NamespacesTableProvider>,
         _session: &SessionContext,
         sql: &str,
         _exec_ctx: &ExecutionContext,
@@ -100,16 +338,38 @@ impl DDLHandler {
         // Parse DROP NAMESPACE statement
         let stmt = DropNamespaceStatement::parse(sql)?;
 
-        // Delete namespace via service
-        let deleted = namespace_service.delete(stmt.name.clone(), stmt.if_exists)?;
+        let name = stmt.name.as_str();
+        let namespace_id = NamespaceId::new(name);
 
-        // Generate appropriate success message
-        let message = if deleted {
-            format!("Namespace '{}' dropped successfully", stmt.name.as_str())
-        } else {
-            format!("Namespace '{}' does not exist", stmt.name.as_str())
+        // Check if namespace exists
+        let namespace = match namespaces_provider.get_namespace(&namespace_id)? {
+            Some(ns) => ns,
+            None => {
+                if stmt.if_exists {
+                    let message = format!("Namespace '{}' does not exist", name);
+                    return Ok(ExecutionResult::Success(message));
+                } else {
+                    return Err(KalamDbError::NotFound(format!(
+                        "Namespace '{}' not found",
+                        name
+                    )));
+                }
+            }
         };
 
+        // Check if namespace has tables
+        if !namespace.can_delete() {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "Cannot drop namespace '{}': namespace contains {} table(s). Drop all tables first.",
+                name,
+                namespace.table_count
+            )));
+        }
+
+        // Delete namespace via provider
+        namespaces_provider.delete_namespace(&namespace_id)?;
+
+        let message = format!("Namespace '{}' dropped successfully", name);
         Ok(ExecutionResult::Success(message))
     }
 
@@ -129,14 +389,14 @@ impl DDLHandler {
     /// 
     /// # Example SQL
     /// ```sql
-    /// CREATE STORAGE local_storage
-    ///   TYPE 'local'
+    /// CREATE STORAGE my_storage
+    ///   TYPE 'parquet'
     ///   BASE_DIRECTORY '/data/kalamdb'
     ///   SHARED_TABLES_TEMPLATE '{namespace}/{tableName}'
     ///   USER_TABLES_TEMPLATE '{namespace}/{tableName}/{userId}';
     /// ```
     pub async fn execute_create_storage(
-        kalam_sql: &Arc<KalamSql>,
+        storages_provider: &Arc<crate::tables::system::StoragesTableProvider>,
         storage_registry: &crate::storage::StorageRegistry,
         _session: &SessionContext,
         sql: &str,
@@ -151,9 +411,10 @@ impl DDLHandler {
 
         // Check if storage already exists
         let storage_id = StorageId::from(stmt.storage_id.as_str());
-        if (kalam_sql
-            .get_storage(&storage_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to check storage: {}", e)))?).is_some()
+        if storages_provider
+            .get_storage_by_id(&storage_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to check storage: {}", e)))?
+            .is_some()
         {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Storage '{}' already exists",
@@ -206,8 +467,8 @@ impl DDLHandler {
         };
 
         // Insert into system.storages
-        kalam_sql
-            .insert_storage(&storage)
+        storages_provider
+            .insert_storage(storage)
             .map_err(|e| KalamDbError::Other(format!("Failed to create storage: {}", e)))?;
 
         Ok(ExecutionResult::Success(format!(
@@ -224,10 +485,9 @@ impl DDLHandler {
     /// - STREAM tables: TTL-based ephemeral tables
     ///
     /// # Arguments
-    /// * `user_table_service` - Service for USER table operations
     /// * `shared_table_service` - Service for SHARED table operations  
     /// * `stream_table_service` - Service for STREAM table operations
-    /// * `kalam_sql` - SQL adapter for system table access
+    /// * `tables_provider` - TablesTableProvider for system.tables access
     /// * `cache_fn` - Closure for caching table metadata
     /// * `register_fn` - Closure for DataFusion registration
     /// * `validate_storage_fn` - Closure for storage_id validation
@@ -240,10 +500,9 @@ impl DDLHandler {
     /// Success message indicating table creation status
     #[allow(clippy::too_many_arguments)]
     pub async fn execute_create_table<CacheFn, RegisterFn, ValidateFn, EnsureFn>(
-        user_table_service: &UserTableService,
         shared_table_service: &SharedTableService,
         stream_table_service: &StreamTableService,
-        kalam_sql: &KalamSql,
+        tables_provider: &Arc<crate::tables::system::TablesTableProvider>,
         cache_fn: CacheFn,
         register_fn: RegisterFn,
         validate_storage_fn: ValidateFn,
@@ -271,8 +530,7 @@ impl DDLHandler {
         // Determine table type and route to appropriate service
         if sql_upper.contains("USER TABLE") || sql_upper.contains("${USER_ID}") || has_table_type_user {
             Self::create_user_table(
-                user_table_service,
-                kalam_sql,
+                tables_provider,
                 cache_fn,
                 register_fn,
                 validate_storage_fn,
@@ -286,7 +544,7 @@ impl DDLHandler {
         } else if sql_upper.contains("STREAM TABLE") || sql_upper.contains("TTL") || sql_upper.contains("BUFFER_SIZE") || has_table_type_stream {
             Self::create_stream_table(
                 stream_table_service,
-                kalam_sql,
+                tables_provider,
                 cache_fn,
                 register_fn,
                 ensure_namespace_fn,
@@ -300,7 +558,7 @@ impl DDLHandler {
             // Default to SHARED table (most common case)
             Self::create_shared_table(
                 shared_table_service,
-                kalam_sql,
+                tables_provider,
                 cache_fn,
                 register_fn,
                 validate_storage_fn,
@@ -317,8 +575,7 @@ impl DDLHandler {
     /// Create USER table (multi-tenant with automatic user_id filtering)
     #[allow(clippy::too_many_arguments)]
     async fn create_user_table<CacheFn, RegisterFn, ValidateFn, EnsureFn>(
-        user_table_service: &UserTableService,
-        kalam_sql: &KalamSql,
+        tables_provider: &Arc<crate::tables::system::TablesTableProvider>,
         cache_fn: CacheFn,
         register_fn: RegisterFn,
         validate_storage_fn: ValidateFn,
@@ -364,8 +621,77 @@ impl DDLHandler {
         ensure_namespace_fn(&namespace_id)?;
         let storage_id = validate_storage_fn(stmt_storage_id)?;
 
-        // Create table via service
-        user_table_service.create_table(stmt)?;
+        // ========================================================================
+        // Inlined Business Logic from UserTableService (Phase 8 - T108)
+        // ========================================================================
+
+        // Step 1: Validate table name
+        Self::validate_table_name(stmt.table_name.as_str())
+            .map_err(KalamDbError::InvalidOperation)?;
+
+        // Step 2: Check if table already exists
+        let ctx = crate::app_context::AppContext::get();
+        let kalam_sql = ctx.kalam_sql();
+        let existing_table = kalam_sql.get_table_definition(&namespace_id, &table_name)
+            .map_err(|e| KalamDbError::Other(format!("Failed to check table existence: {}", e)))?;
+
+        if existing_table.is_some() {
+            if stmt.if_not_exists {
+                // IF NOT EXISTS: Return success without creating
+                return Ok(ExecutionResult::Success(format!(
+                    "Table {}.{} already exists (IF NOT EXISTS)",
+                    namespace_id.as_str(),
+                    table_name.as_str()
+                )));
+            } else {
+                return Err(KalamDbError::AlreadyExists(format!(
+                    "Table {}.{} already exists",
+                    namespace_id.as_str(),
+                    table_name.as_str()
+                )));
+            }
+        }
+
+        // Step 3: Auto-increment field injection (id column)
+        let schema = Self::inject_auto_increment_field(schema)?;
+
+        // Step 4: System column injection (_updated, _deleted)
+        let schema = Self::inject_system_columns(schema, TableType::User)?;
+
+        // Step 5: Inject DEFAULT SNOWFLAKE_ID() for auto-injected id column
+        let mut modified_stmt = stmt.clone();
+        if !modified_stmt.column_defaults.contains_key("id") {
+            modified_stmt.column_defaults.insert(
+                "id".to_string(),
+                kalamdb_commons::schemas::ColumnDefault::function("SNOWFLAKE_ID", vec![]),
+            );
+        }
+
+        // Step 6: Save complete table definition to information_schema_tables
+        Self::save_table_definition(&modified_stmt, &schema)?;
+
+        // Step 7: Create RocksDB column family for this table
+        let user_table_store = ctx.user_table_store();
+        user_table_store
+            .create_column_family(namespace_id.as_str(), table_name.as_str())
+            .map_err(|e| {
+                KalamDbError::Other(format!(
+                    "Failed to create column family for user table {}.{}: {}",
+                    namespace_id.as_str(),
+                    table_name.as_str(),
+                    e
+                ))
+            })?;
+
+        log::info!(
+            "User table {}.{} created successfully (schema version 1)",
+            namespace_id.as_str(),
+            table_name.as_str()
+        );
+
+        // ========================================================================
+        // End Inlined Business Logic
+        // ========================================================================
 
         // Insert into system.tables
         let table = kalamdb_sql::Table {
@@ -382,7 +708,7 @@ impl DDLHandler {
             deleted_retention_hours: deleted_retention_hours.unwrap_or(0) as i32,
             access_level: None,
         };
-        kalam_sql.insert_table(&table).map_err(|e| {
+        tables_provider.create_table(table.into()).map_err(|e| {
             KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
         })?;
 
@@ -400,7 +726,7 @@ impl DDLHandler {
     #[allow(clippy::too_many_arguments)]
     async fn create_stream_table<CacheFn, RegisterFn, EnsureFn>(
         stream_table_service: &StreamTableService,
-        kalam_sql: &KalamSql,
+        tables_provider: &Arc<crate::tables::system::TablesTableProvider>,
         cache_fn: CacheFn,
         register_fn: RegisterFn,
         ensure_namespace_fn: EnsureFn,
@@ -460,7 +786,7 @@ impl DDLHandler {
             deleted_retention_hours: retention_seconds.map(|s| (s / 3600) as i32).unwrap_or(0),
             access_level: None,
         };
-        kalam_sql.insert_table(&table).map_err(|e| {
+        tables_provider.create_table(table.into()).map_err(|e| {
             KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
         })?;
 
@@ -477,7 +803,7 @@ impl DDLHandler {
     #[allow(clippy::too_many_arguments)]
     async fn create_shared_table<CacheFn, RegisterFn, ValidateFn, EnsureFn>(
         shared_table_service: &SharedTableService,
-        kalam_sql: &KalamSql,
+        tables_provider: &Arc<crate::tables::system::TablesTableProvider>,
         cache_fn: CacheFn,
         register_fn: RegisterFn,
         validate_storage_fn: ValidateFn,
@@ -537,7 +863,7 @@ impl DDLHandler {
                 deleted_retention_hours: deleted_retention.map(|s| (s / 3600) as i32).unwrap_or(0),
                 access_level: stmt_access_level,
             };
-            kalam_sql.insert_table(&table).map_err(|e| {
+            tables_provider.create_table(table.into()).map_err(|e| {
                 KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
             })?;
 
@@ -794,24 +1120,23 @@ mod tests {
         )
     }
 
-    /// Helper to create test namespace service
-    async fn create_test_namespace_service() -> NamespaceService {
+    /// Helper to get namespaces provider from AppContext
+    fn get_namespaces_provider() -> Arc<crate::tables::system::NamespacesTableProvider> {
         // Use AppContext test helper (Phase 5 pattern)
         use crate::test_helpers;
         
         let app_ctx = test_helpers::get_app_context();
-        let namespace_service = NamespaceService::new(app_ctx.namespace_store());
-        namespace_service
+        app_ctx.system_tables().namespaces()
     }
 
     #[tokio::test]
     async fn test_create_namespace_success() {
-        let service = create_test_namespace_service().await;
+        let provider = get_namespaces_provider();
         let session = SessionContext::new();
         let ctx = create_test_context();
 
         let sql = "CREATE NAMESPACE production";
-        let result = DDLHandler::execute_create_namespace(&service, &session, sql, &ctx)
+        let result = DDLHandler::execute_create_namespace(&provider, &session, sql, &ctx)
             .await
             .expect("Should create namespace");
 
@@ -826,14 +1151,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_namespace_if_not_exists() {
-        let service = create_test_namespace_service().await;
+        let provider = get_namespaces_provider();
         let session = SessionContext::new();
         let ctx = create_test_context();
 
         let sql = "CREATE NAMESPACE IF NOT EXISTS staging";
 
         // First creation should succeed
-        let result1 = DDLHandler::execute_create_namespace(&service, &session, sql, &ctx)
+        let result1 = DDLHandler::execute_create_namespace(&provider, &session, sql, &ctx)
             .await
             .expect("Should create namespace");
 
@@ -843,7 +1168,7 @@ mod tests {
         }
 
         // Second creation should succeed with "already exists" message
-        let result2 = DDLHandler::execute_create_namespace(&service, &session, sql, &ctx)
+        let result2 = DDLHandler::execute_create_namespace(&provider, &session, sql, &ctx)
             .await
             .expect("Should handle existing namespace");
 
@@ -855,19 +1180,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_namespace_duplicate_without_if_not_exists() {
-        let service = create_test_namespace_service().await;
+        let provider = get_namespaces_provider();
         let session = SessionContext::new();
         let ctx = create_test_context();
 
         let sql_without_if_not_exists = "CREATE NAMESPACE production";
 
         // First creation should succeed
-        DDLHandler::execute_create_namespace(&service, &session, sql_without_if_not_exists, &ctx)
+        DDLHandler::execute_create_namespace(&provider, &session, sql_without_if_not_exists, &ctx)
             .await
             .expect("Should create namespace");
 
         // Second creation without IF NOT EXISTS should fail
-        let result = DDLHandler::execute_create_namespace(&service, &session, sql_without_if_not_exists, &ctx)
+        let result = DDLHandler::execute_create_namespace(&provider, &session, sql_without_if_not_exists, &ctx)
             .await;
 
         assert!(result.is_err(), "Should fail on duplicate namespace without IF NOT EXISTS");
@@ -875,13 +1200,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_namespace_invalid_sql() {
-        let service = create_test_namespace_service().await;
+        let provider = get_namespaces_provider();
         let session = SessionContext::new();
         let ctx = create_test_context();
 
         let invalid_sql = "CREATE NAMESPACE";
 
-        let result = DDLHandler::execute_create_namespace(&service, &session, invalid_sql, &ctx)
+        let result = DDLHandler::execute_create_namespace(&provider, &session, invalid_sql, &ctx)
             .await;
 
         assert!(result.is_err(), "Should fail on invalid SQL");
@@ -895,13 +1220,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_namespace_empty_name() {
-        let service = create_test_namespace_service().await;
+        let provider = get_namespaces_provider();
         let session = SessionContext::new();
         let ctx = create_test_context();
 
         let sql = "CREATE NAMESPACE ''";
 
-        let result = DDLHandler::execute_create_namespace(&service, &session, sql, &ctx)
+        let result = DDLHandler::execute_create_namespace(&provider, &session, sql, &ctx)
             .await;
 
         assert!(result.is_err(), "Should fail on empty namespace name");

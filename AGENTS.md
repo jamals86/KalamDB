@@ -187,6 +187,64 @@ cargo test -p kalamdb-sql
 - **Storage Abstraction**: Use `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>` (except in kalamdb-store)
 
 ## Recent Changes
+- 2025-11-05: **Phase 8: Legacy Services Removal** - 🔄 **IN PROGRESS** (2/5 services complete, 40%):
+  - **Problem**: Legacy service layer (NamespaceService, UserTableService, SharedTableService, StreamTableService, TableDeletionService) adds unnecessary abstraction over providers
+  - **Solution**: Inline business logic directly into DDL handlers, use providers from AppContext
+  - **NamespaceService Removed** ✅:
+    - Updated execute_create_namespace() and execute_drop_namespace() in handlers/ddl.rs
+    - Changed parameter from `&NamespaceService` to `&Arc<NamespacesTableProvider>`
+    - Inlined all logic: validation (Namespace::validate_name), existence checks, table count validation, CRUD operations
+    - Updated SqlExecutor routing to pass namespaces_provider from app_context.system_tables()
+    - Updated 5 test methods to use provider instead of service
+  - **UserTableService Removed** ✅:
+    - Added 4 helper methods to DDLHandler (validate_table_name, inject_auto_increment_field, inject_system_columns, save_table_definition)
+    - Inlined ~150 lines of business logic into create_user_table() in handlers/ddl.rs
+    - Flow: table name validation → existence check → inject id field → inject system columns (_updated, _deleted) → inject DEFAULT SNOWFLAKE_ID() → save_table_definition() → create CF
+    - Removed user_table_service parameter from execute_create_table() and create_user_table()
+    - Updated SqlExecutor routing (removed user_table_service from DDLHandler::execute_create_table call)
+    - Updated test files (removed UserTableService import and usages)
+  - **Pattern Established**: Replace service → provider, extract reusable helpers, inline business logic, update routing and tests
+  - **Remaining Work**:
+    - SharedTableService: ~150 lines (same pattern as UserTableService, reuse helpers)
+    - StreamTableService: ~120 lines (similar but skip inject_system_columns)
+    - TableDeletionService: Investigation needed (check if used)
+  - **Files Modified**:
+    - handlers/ddl.rs (+220 lines: 4 helper methods, inlined logic in create_user_table)
+    - executor/mod.rs (updated routing for CREATE TABLE - removed user_table_service parameter)
+    - handlers/tests/ddl_tests.rs (removed UserTableService import/usage)
+  - **Documentation**: PHASE8_PROGRESS_SUMMARY.md (complete migration guide for remaining services)
+  - **Next**: Inline SharedTableService.create_table() logic into DDL handler (T109)
+- 2025-01-05: **Phase 7: Handler-Based SqlExecutor** - ✅ **SUBSTANTIALLY COMPLETE** (31/41 tasks, 75.6%):
+  - **Problem**: Monolithic SqlExecutor with 30+ inline execute_* methods (4,500+ lines)
+  - **Solution**: Refactored to routing orchestrator using 7 focused handlers
+  - **7 New Handlers Created** (1,021 lines):
+    - DMLHandler (INSERT, UPDATE, DELETE) - 167 lines
+    - QueryHandler (SELECT, DESCRIBE, SHOW) - 123 lines
+    - FlushHandler (FLUSH TABLE) - 134 lines
+    - SubscriptionHandler (LIVE SELECT) - 110 lines
+    - UserManagementHandler (CREATE/ALTER/DROP USER) - 178 lines
+    - TableRegistryHandler (REGISTER/UNREGISTER TABLE) - 140 lines
+    - SystemCommandsHandler (VACUUM, OPTIMIZE, ANALYZE) - 169 lines
+  - **Routing Refactored**: 16 SQL statement types now route through handlers
+    - DML: INSERT, UPDATE, DELETE → DMLHandler
+    - Query: SELECT, DESCRIBE, SHOW (6 variants) → QueryHandler
+    - Flush: FLUSH TABLE, FLUSH ALL → FlushHandler
+    - Subscription: LIVE SELECT → SubscriptionHandler
+    - User Management: CREATE/ALTER/DROP USER → UserManagementHandler
+  - **Architecture Benefits**: Modular (100-180 lines per handler), testable, composable via AppContext
+  - **Authorization**: All handlers implement check_authorization() with role-based checks
+  - **Common Code**: Phase 2 utilities (helpers.rs, audit.rs, authorization.rs) ready for use
+  - **Files Created**:
+    - handlers/dml.rs, handlers/query.rs, handlers/flush.rs, handlers/subscription.rs
+    - handlers/user_management.rs, handlers/table_registry.rs, handlers/system_commands.rs
+    - specs/009-core-architecture/PHASE7_HANDLER_CREATION_SUMMARY.md
+    - specs/009-core-architecture/PHASE7_COMPLETE_SUMMARY.md
+  - **Files Modified**:
+    - handlers/mod.rs (7 module declarations + 7 re-exports)
+    - executor/mod.rs (16 statement types refactored to use handlers)
+  - **Testing Blocked**: Pre-existing kalamdb-auth compilation errors (RocksDbAdapter imports from Phase 5/6)
+  - **Deferred**: T089-T090 (REGISTER/VACUUM/OPTIMIZE/ANALYZE - SqlStatement variants don't exist)
+  - **Next**: Fix kalamdb-auth, implement handler logic, add missing SqlStatement variants
 - 2025-11-04: **Phase 9.5: DDL Handler - COMPLETE** - ✅ **COMPLETE** (14/15 tasks, 93.3%):
   - **Problem**: DDL operations scattered across 600+ lines in SqlExecutor
   - **Solution**: Extracted all DDL logic to dedicated DDLHandler with 6 methods

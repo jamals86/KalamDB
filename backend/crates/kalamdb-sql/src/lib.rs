@@ -32,11 +32,14 @@
 //! # }
 //! ```
 
-pub mod adapter;
+// ============================================================================
+// PHASE 6: adapter module disabled (StorageAdapter removal)
+// ============================================================================
+// pub mod adapter; // PHASE 6: Disabled - file renamed to adapter.rs.disabled
+
 pub mod batch_execution;
 pub mod compatibility;
 pub mod ddl;
-pub mod executor;
 pub mod parser;
 pub mod query_cache;
 pub mod statement_classifier;
@@ -49,9 +52,9 @@ pub use kalamdb_commons::system::{
     SystemTable as Table, TableSchema, User, UserTableCounter,
 };
 
-pub use adapter::StorageAdapter;
+// pub use adapter::StorageAdapter; // PHASE 6: Disabled
 // Backwards-compatibility alias, TODO: Remove the alias and use only StorageAdapter
-pub type RocksDbAdapter = StorageAdapter;
+// pub type RocksDbAdapter = StorageAdapter; // PHASE 6: Disabled
 pub use batch_execution::split_statements;
 pub use compatibility::{
     format_mysql_column_not_found, format_mysql_error, format_mysql_syntax_error,
@@ -64,18 +67,37 @@ pub use ddl::{
     FlushAllTablesStatement, FlushTableStatement, JobCommand, ShowStoragesStatement,
     SubscribeOptions, SubscribeStatement,
 };
-pub use executor::SqlExecutor;
 pub use parser::SqlParser;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
 
 use anyhow::Result;
 use std::sync::Arc;
 
+// ============================================================================
+// PHASE 6: KalamSql STRUCT COMMENTED OUT
+// ============================================================================
+// This struct is being removed in Phase 6. All usages should migrate to
+// SystemTablesRegistry providers instead.
+// Uncomment to see all places that need migration.
+// ============================================================================
+
+
+// ============================================================================
+// PHASE 6: KalamSql STRUCT DISABLED
+// ============================================================================
+// All of KalamSql is commented out to find ALL usage sites.
+// Compiler will show everywhere that needs migration to SystemTablesRegistry.
+// ============================================================================
+
+/*
 /// Main SQL interface for system tables
+/// 
+/// NOTE (Phase 6): This struct is deprecated and will be removed.
+/// New code should use SystemTablesRegistry providers instead.
+/// Only kept for backward compatibility with background jobs.
 pub struct KalamSql {
     adapter: StorageAdapter,
     parser: SqlParser,
-    executor: SqlExecutor,
 }
 
 impl KalamSql {
@@ -83,12 +105,10 @@ impl KalamSql {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Result<Self> {
         let adapter = StorageAdapter::new(backend);
         let parser = SqlParser::new();
-        let executor = SqlExecutor::new(adapter.clone());
 
         Ok(Self {
             adapter,
             parser,
-            executor,
         })
     }
 
@@ -97,25 +117,8 @@ impl KalamSql {
         &self.adapter
     }
 
-    /// Execute a SQL statement against system tables
-    ///
-    /// Supports SELECT, INSERT, UPDATE, DELETE for all 7 system tables.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use kalamdb_sql::KalamSql;
-    /// # fn example(kalamdb: &KalamSql) -> anyhow::Result<()> {
-    /// let results = kalamdb.execute("SELECT * FROM system.users")?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn execute(&self, sql: &str) -> Result<Vec<serde_json::Value>> {
-        let statement = self.parser.parse(sql)?;
-        self.executor.execute(statement)
-    }
-
     // Typed helper methods
+    // NOTE (Phase 6): These methods are deprecated. Use SystemTablesRegistry providers instead.
 
     /// Get a user by username
     pub fn get_user(&self, username: &str) -> Result<Option<User>> {
@@ -417,3 +420,4 @@ mod tests {
         // Will be implemented in integration tests
     }
 }
+*/ // END PHASE 6: KalamSql disabled

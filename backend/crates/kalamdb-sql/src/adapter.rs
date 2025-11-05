@@ -2,6 +2,14 @@
 //!
 //! Provides low-level read/write operations for system tables in RocksDB.
 
+// ============================================================================
+// PHASE 6: StorageAdapter STRUCT COMMENTED OUT
+// ============================================================================
+// All imports and implementation commented out to find ALL usage sites.
+// Compiler will show everywhere that needs migration to SystemTablesRegistry.
+// ============================================================================
+
+/*
 // Import all system models from the crate root (which re-exports from commons)
 use crate::{AuditLogEntry, Job, LiveQuery, Namespace, Storage, Table, TableSchema, User};
 use anyhow::{anyhow, Result};
@@ -11,6 +19,15 @@ use kalamdb_commons::types::ToArrowType;
 use kalamdb_commons::{StoragePartition, SystemTable, TableId};
 use kalamdb_store::{EntityStoreV2, StorageBackend};
 use std::sync::Arc;
+
+// ============================================================================
+// PHASE 6: StorageAdapter STRUCT COMMENTED OUT
+// ============================================================================
+// This struct is being removed in Phase 6. All usages should migrate to
+// SystemTablesRegistry providers instead.
+// Uncomment to see all places that need migration.
+// ============================================================================
+
 
 /// Storage adapter for system tables (backend-agnostic)
 #[derive(Clone)]
@@ -601,3 +618,4 @@ mod tests {
         // Will be implemented in integration tests
     }
 }
+*/ // END PHASE 6 COMMENT BLOCK

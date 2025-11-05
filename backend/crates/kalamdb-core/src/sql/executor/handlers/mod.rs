@@ -17,7 +17,7 @@
 
 use crate::error::KalamDbError;
 use datafusion::execution::context::SessionContext;
-use kalamdb_sql::SqlStatement;
+use kalamdb_sql::statement_classifier::SqlStatement;
 
 pub mod types;
 pub mod authorization;
@@ -25,6 +25,15 @@ pub mod ddl;
 pub mod transaction;
 pub mod helpers;
 pub mod audit;
+
+// Phase 7 (US3): New handlers
+pub mod dml;
+pub mod query;
+pub mod flush;
+pub mod subscription;
+pub mod user_management;
+pub mod table_registry;
+pub mod system_commands;
 
 #[cfg(test)]
 mod tests;
@@ -34,6 +43,15 @@ pub use types::{ExecutionContext, ExecutionMetadata, ExecutionResult, ParamValue
 pub use authorization::AuthorizationHandler;
 pub use ddl::DDLHandler;
 pub use transaction::TransactionHandler;
+
+// Phase 7 (US3): Re-export new handlers
+pub use dml::DMLHandler;
+pub use query::QueryHandler;
+pub use flush::FlushHandler;
+pub use subscription::SubscriptionHandler;
+pub use user_management::UserManagementHandler;
+pub use table_registry::TableRegistryHandler;
+pub use system_commands::SystemCommandsHandler;
 
 /// Common trait for SQL statement handlers
 ///

@@ -9,7 +9,7 @@
 use crate::catalog::SchemaCache;
 use crate::error::KalamDbError;
 use crate::schema::SchemaRegistry;
-use crate::services::{NamespaceService, SharedTableService, TableDeletionService, UserTableService};
+use crate::services::{SharedTableService, TableDeletionService};
 use crate::sql::executor::handlers::{DDLHandler, ExecutionContext, ExecutionResult};
 use crate::sql::KalamSql;
 use datafusion::execution::context::SessionContext;
@@ -23,10 +23,9 @@ fn create_test_context() -> ExecutionContext {
 }
 
 /// Helper to get app context and services (Phase 5 pattern)
+/// Phase 8: UserTableService and NamespaceService removed (business logic inlined into handlers)
 fn get_test_dependencies() -> (
     Arc<crate::AppContext>,
-    NamespaceService,
-    UserTableService,
     SharedTableService,
     TableDeletionService,
     KalamSql,
@@ -37,15 +36,8 @@ fn get_test_dependencies() -> (
     
     let app_ctx = test_helpers::get_app_context();
     
-    let namespace_service = NamespaceService::new(app_ctx.namespace_store());
-    let user_table_service = UserTableService::new(app_ctx.user_table_store(), app_ctx.schema_cache());
-    let shared_table_service = SharedTableService::new(app_ctx.shared_table_store(), app_ctx.schema_cache());
-    let table_deletion_service = TableDeletionService::new(
-        app_ctx.user_table_store(),
-        app_ctx.shared_table_store(),
-        app_ctx.stream_table_store(),
-        app_ctx.schema_cache(),
-    );
+    let shared_table_service = SharedTableService::new();
+    let table_deletion_service = TableDeletionService::new();
     
     let kalam_sql = KalamSql::new(
         app_ctx.system_tables().users(),
@@ -61,8 +53,6 @@ fn get_test_dependencies() -> (
     
     (
         Arc::clone(&app_ctx),
-        namespace_service,
-        user_table_service,
         shared_table_service,
         table_deletion_service,
         kalam_sql,
@@ -76,8 +66,6 @@ fn get_test_dependencies() -> (
 async fn test_create_table_describe_schema_matches() {
     let (
         _app_ctx,
-        namespace_service,
-        user_table_service,
         shared_table_service,
         _deletion_service,
         kalam_sql,
@@ -110,12 +98,8 @@ async fn test_create_table_describe_schema_matches() {
     let ensure_namespace_fn = |_n: &NamespaceId| Ok(());
     
     let result = DDLHandler::execute_create_table(
-        &user_table_service,
         &shared_table_service,
-        &crate::services::StreamTableService::new(
-            _app_ctx.stream_table_store(),
-            _app_ctx.schema_cache(),
-        ),
+        &crate::services::StreamTableService::new(),
         &kalam_sql,
         cache_fn,
         register_fn,

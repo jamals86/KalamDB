@@ -734,30 +734,40 @@ impl SqlExecutor {
         // Classify the SQL statement and dispatch to appropriate handler
         match SqlStatement::classify(sql) {
             SqlStatement::CreateNamespace => {
-                // Route to DDL handler (Phase 9.5 - Step 1)
-                DDLHandler::execute_create_namespace(&self.namespace_service, session, sql, exec_ctx).await
+                // Route to DDL handler (Phase 8 - direct provider usage)
+                let namespaces_provider = self.app_context.system_tables().namespaces();
+                DDLHandler::execute_create_namespace(&namespaces_provider, session, sql, exec_ctx).await
             },
             SqlStatement::AlterNamespace => self.execute_alter_namespace(session, sql, exec_ctx).await,
             SqlStatement::DropNamespace => {
-                // Route to DDL handler (Phase 9.5 - T269)
-                DDLHandler::execute_drop_namespace(&self.namespace_service, session, sql, exec_ctx).await
+                // Route to DDL handler (Phase 8 - direct provider usage)
+                let namespaces_provider = self.app_context.system_tables().namespaces();
+                DDLHandler::execute_drop_namespace(&namespaces_provider, session, sql, exec_ctx).await
             },
-            SqlStatement::ShowNamespaces => self.execute_show_namespaces(session, sql, exec_ctx).await,
+            SqlStatement::ShowNamespaces => {
+                // Route to Query handler (Phase 7 - T082)
+                let handler = handlers::QueryHandler::new(self.app_context.clone());
+                handler.execute(session, SqlStatement::Show { .. }, vec![], exec_ctx).await
+            },
             SqlStatement::CreateStorage => {
-                // Route to DDL handler (Phase 9.5 - T270)
-                let kalam_sql = self.kalam_sql();
+                // Route to DDL handler (Phase 9.5 - T270, Phase 6 - provider migration)
+                let storages_provider = self.app_context.system_tables().storages();
                 let storage_registry = self.storage_registry();
-                DDLHandler::execute_create_storage(&kalam_sql, storage_registry, session, sql, exec_ctx).await
+                DDLHandler::execute_create_storage(&storages_provider, storage_registry, session, sql, exec_ctx).await
             },
             SqlStatement::AlterStorage => self.execute_alter_storage(session, sql, exec_ctx).await,
             SqlStatement::DropStorage => self.execute_drop_storage(session, sql, exec_ctx).await,
-            SqlStatement::ShowStorages => self.execute_show_storages(session, sql, exec_ctx).await,
+            SqlStatement::ShowStorages => {
+                // Route to Query handler (Phase 7 - T082)
+                let handler = handlers::QueryHandler::new(self.app_context.clone());
+                handler.execute(session, SqlStatement::Show { .. }, vec![], exec_ctx).await
+            },
             SqlStatement::CreateTable => {
-                // Route to DDL handler (Phase 9.5 - Step 3)
+                // Route to DDL handler (Phase 9.5 - Step 3, Phase 6 - provider migration)
                 let user_table_service = self.user_table_service.as_ref();
                 let shared_table_service = self.shared_table_service.as_ref();
                 let stream_table_service = self.stream_table_service.as_ref();
-                let kalam_sql = self.kalam_sql();
+                let tables_provider = self.app_context.system_tables().tables();
                 
                 // Closure for caching table metadata (simplified - no actual caching in handler)
                 let cache_fn = |_namespace_id: &kalamdb_commons::models::NamespaceId, 
@@ -795,10 +805,9 @@ impl SqlExecutor {
                 };
                 
                 DDLHandler::execute_create_table(
-                    user_table_service,
                     shared_table_service,
                     stream_table_service,
-                    &kalam_sql,
+                    &tables_provider,
                     cache_fn,
                     register_fn,
                     validate_storage_fn,
@@ -841,34 +850,79 @@ impl SqlExecutor {
                 };
                 DDLHandler::execute_drop_table(deletion_service, schema_registry, Some(cache), live_query_check, session, sql, exec_ctx).await
             },
-            SqlStatement::ShowTables => self.execute_show_tables(session, sql, exec_ctx).await,
-            SqlStatement::DescribeTable => self.execute_describe_table(session, sql, exec_ctx).await,
-            SqlStatement::ShowStats => self.execute_show_table_stats(session, sql, exec_ctx).await,
-            SqlStatement::FlushTable => self.execute_flush_table(session, sql, exec_ctx).await,
-            SqlStatement::FlushAllTables => self.execute_flush_all_tables(session, sql, exec_ctx).await,
+            SqlStatement::ShowTables => {
+                // Route to Query handler (Phase 7 - T082)
+                let handler = handlers::QueryHandler::new(self.app_context.clone());
+                handler.execute(session, SqlStatement::Show { .. }, vec![], exec_ctx).await
+            },
+            SqlStatement::DescribeTable => {
+                // Route to Query handler (Phase 7 - T082)
+                let handler = handlers::QueryHandler::new(self.app_context.clone());
+                handler.execute(session, SqlStatement::Describe { .. }, vec![], exec_ctx).await
+            },
+            SqlStatement::ShowStats => {
+                // Route to Query handler (Phase 7 - T082)
+                let handler = handlers::QueryHandler::new(self.app_context.clone());
+                handler.execute(session, SqlStatement::Show { .. }, vec![], exec_ctx).await
+            },
+            SqlStatement::FlushTable => {
+                // Route to Flush handler (Phase 7 - T086)
+                let handler = handlers::FlushHandler::new(self.app_context.clone());
+                handler.execute(session, SqlStatement::Flush { .. }, vec![], exec_ctx).await
+            },
+            SqlStatement::FlushAllTables => {
+                // Route to Flush handler (Phase 7 - T086)
+                let handler = handlers::FlushHandler::new(self.app_context.clone());
+                handler.execute(session, SqlStatement::Flush { .. }, vec![], exec_ctx).await
+            },
             SqlStatement::KillJob => self.execute_kill_job(session, sql, exec_ctx).await,
             SqlStatement::KillLiveQuery => self.execute_kill_live_query(session, sql, exec_ctx).await,
             SqlStatement::BeginTransaction => handlers::TransactionHandler::execute_begin(exec_ctx, sql).await,
             SqlStatement::CommitTransaction => handlers::TransactionHandler::execute_commit(exec_ctx).await,
             SqlStatement::RollbackTransaction => handlers::TransactionHandler::execute_rollback(exec_ctx).await,
-            SqlStatement::Subscribe => self.execute_subscribe(session, sql, exec_ctx).await,
-            SqlStatement::CreateUser => self.execute_create_user(session, sql, exec_ctx, metadata).await,
-            SqlStatement::AlterUser => self.execute_alter_user(session, sql, exec_ctx, metadata).await,
-            SqlStatement::DropUser => self.execute_drop_user(session, sql, exec_ctx, metadata).await,
-            SqlStatement::Update => self.execute_update(session, sql, exec_ctx).await,
-            SqlStatement::Delete => self.execute_delete(session, sql, exec_ctx).await,
+            SqlStatement::Subscribe => {
+                // Route to Subscription handler (Phase 7 - T087)
+                let handler = handlers::SubscriptionHandler::new(self.app_context.clone());
+                handler.execute(session, SqlStatement::LiveSelect { .. }, vec![], exec_ctx).await
+            },
+            SqlStatement::CreateUser => {
+                // Route to User Management handler (Phase 7 - T088)
+                let handler = handlers::UserManagementHandler::new(self.app_context.clone());
+                handler.execute(session, SqlStatement::CreateUser { .. }, vec![], exec_ctx).await
+            },
+            SqlStatement::AlterUser => {
+                // Route to User Management handler (Phase 7 - T088)
+                let handler = handlers::UserManagementHandler::new(self.app_context.clone());
+                handler.execute(session, SqlStatement::AlterUser { .. }, vec![], exec_ctx).await
+            },
+            SqlStatement::DropUser => {
+                // Route to User Management handler (Phase 7 - T088)
+                let handler = handlers::UserManagementHandler::new(self.app_context.clone());
+                handler.execute(session, SqlStatement::DropUser { .. }, vec![], exec_ctx).await
+            },
+            SqlStatement::Update => {
+                // Route to DML handler (Phase 7 - T084)
+                let handler = handlers::DMLHandler::new(self.app_context.clone());
+                handler.execute(session, SqlStatement::Update, vec![], exec_ctx).await
+            },
+            SqlStatement::Delete => {
+                // Route to DML handler (Phase 7 - T085)
+                let handler = handlers::DMLHandler::new(self.app_context.clone());
+                handler.execute(session, SqlStatement::Delete, vec![], exec_ctx).await
+            },
             SqlStatement::Insert => {
+                // Route to DML handler (Phase 7 - T083)
                 // Check write permissions for shared tables before executing
                 let referenced_tables = Self::extract_table_references(sql);
                 self.check_write_permissions(Some(&exec_ctx.user_id), &referenced_tables)?;
-                self.execute_datafusion_query_with_tables(session, sql, exec_ctx, referenced_tables)
-                    .await
+                
+                let handler = handlers::DMLHandler::new(self.app_context.clone());
+                handler.execute(session, SqlStatement::Insert, vec![], exec_ctx).await
             }
             SqlStatement::Select => {
-                // Extract referenced tables from SQL and load only those
-                let referenced_tables = Self::extract_table_references(sql);
-                self.execute_datafusion_query_with_tables(session, sql, exec_ctx, referenced_tables)
-                    .await
+                // Route to Query handler (Phase 7 - T082)
+                let handler = handlers::QueryHandler::new(self.app_context.clone());
+                handler.execute(session, SqlStatement::Select, vec![], exec_ctx).await
             }
             SqlStatement::Unknown => Err(KalamDbError::InvalidSql(format!(
                 "Unsupported SQL statement: {}",

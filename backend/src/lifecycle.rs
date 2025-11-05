@@ -22,7 +22,6 @@ use kalamdb_core::{
         UserCleanupConfig, UserCleanupJob,
     },
 };
-use kalamdb_sql::KalamSql;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
 use log::debug;
@@ -56,18 +55,25 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     // Initialize RocksDB backend for all components (single StorageBackend trait)
     let backend = Arc::new(RocksDBBackend::new(db.clone()));
 
-    // Initialize KalamSQL for system table access
-    let kalam_sql = Arc::new(KalamSql::new(backend.clone())?);
-    info!("KalamSQL initialized");
+    // Initialize core stores from generic backend (uses kalamdb_store::StorageBackend)
+    // Phase 5: AppContext now creates all dependencies internally!
+    // Uses constants from kalamdb_commons for table prefixes
+    let app_context = kalamdb_core::app_context::AppContext::init(
+        backend.clone(),
+        kalamdb_commons::NodeId::new(config.server.node_id.clone()),
+        config.storage.default_storage_path.clone(),
+    );
+    info!("AppContext initialized with all stores, managers, registries, and providers");
 
-    // Note: Authentication will use provider-backed repository (no direct adapter)
-
-    // Seed default storage if necessary
-    let storages = kalam_sql.scan_all_storages()?;
-    if storages.is_empty() {
+    // Seed default storage if necessary (using SystemTablesRegistry)
+    let storages_provider = app_context.system_tables().storages();
+    let existing_storages = storages_provider.scan_all_storages()?;
+    let storage_count = existing_storages.num_rows();
+    
+    if storage_count == 0 {
         info!("No storages found, creating default 'local' storage");
         let now = chrono::Utc::now().timestamp_millis();
-        let default_storage = kalamdb_sql::Storage {
+        let default_storage = kalamdb_commons::system::Storage {
             storage_id: StorageId::from("local"),
             storage_name: "Local Filesystem".to_string(),
             description: Some("Default local filesystem storage".to_string()),
@@ -79,21 +85,11 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
             created_at: now,
             updated_at: now,
         };
-        kalam_sql.insert_storage(&default_storage)?;
+        storages_provider.insert_storage(default_storage)?;
         info!("Default 'local' storage created successfully");
     } else {
-        info!("Found {} existing storage(s)", storages.len());
+        info!("Found {} existing storage(s)", storage_count);
     }
-
-    // Initialize core stores from generic backend (uses kalamdb_store::StorageBackend)
-    // Phase 5: AppContext now creates all dependencies internally!
-    // Uses constants from kalamdb_commons for table prefixes
-    let app_context = kalamdb_core::app_context::AppContext::init(
-        backend.clone(),
-        kalamdb_commons::NodeId::new(config.server.node_id.clone()),
-        config.storage.default_storage_path.clone(),
-    );
-    info!("AppContext initialized with all stores, managers, registries, and providers");
 
     // Get references from AppContext for services that need them
     let kalam_sql = app_context.kalam_sql();
@@ -254,17 +250,20 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     info!("FlushScheduler started (checking triggers every 5 seconds)");
 
     // Start stream eviction scheduler
-    stream_eviction_scheduler.start().await?;
+    stream_eviction_scheduler.start();
     info!(
         "Stream eviction scheduler started (running every {} seconds)",
         config.stream.eviction_interval_seconds
     );
 
+    // Get users provider for system user initialization
+    let users_provider_for_init = app_context.system_tables().users();
+
     // T125-T127: Create default system user on first startup
-    create_default_system_user(kalam_sql.clone()).await?;
+    create_default_system_user(users_provider_for_init.clone()).await?;
 
     // Security warning: Check if remote access is enabled with empty root password
-    check_remote_access_security(config, kalam_sql.clone()).await?;
+    check_remote_access_security(config, users_provider_for_init).await?;
 
     Ok(ApplicationComponents {
         session_factory,
@@ -365,16 +364,18 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
 /// On first startup, logs the credentials to stdout for the administrator to save.
 ///
 /// # Arguments
-/// * `kalam_sql` - KalamSQL adapter for system tables
+/// * `users_provider` - UsersTableProvider for system.users table
 ///
 /// # Returns
 /// Result indicating success or failure
-async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
+async fn create_default_system_user(
+    users_provider: Arc<kalamdb_core::tables::system::UsersTableProvider>,
+) -> Result<()> {
     use kalamdb_commons::constants::AuthConstants;
     use kalamdb_commons::system::User;
 
     // Check if root user already exists
-    let existing_user = kalam_sql.get_user(AuthConstants::DEFAULT_SYSTEM_USERNAME);
+    let existing_user = users_provider.get_user_by_username(AuthConstants::DEFAULT_SYSTEM_USERNAME);
 
     match existing_user {
         Ok(Some(_)) => {
@@ -414,7 +415,7 @@ async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
                 deleted_at: None,
             };
 
-            kalam_sql.insert_user(&user)?;
+            users_provider.create_user(user)?;
 
             // T127: Log system user information to stdout
             info!(
@@ -433,13 +434,13 @@ async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
 /// Informs users about password requirements for remote access
 async fn check_remote_access_security(
     config: &ServerConfig,
-    kalam_sql: Arc<KalamSql>,
+    users_provider: Arc<kalamdb_core::tables::system::UsersTableProvider>,
 ) -> Result<()> {
     use kalamdb_commons::constants::AuthConstants;
 
     // Check if root user exists and has empty password
     // Always show this info if root has no password, regardless of allow_remote_access setting
-    if let Ok(Some(user)) = kalam_sql.get_user(AuthConstants::DEFAULT_SYSTEM_USERNAME) {
+    if let Ok(Some(user)) = users_provider.get_user_by_username(AuthConstants::DEFAULT_SYSTEM_USERNAME) {
         if user.password_hash.is_empty() {
             // Root user has no password - this is secure for localhost-only but warn about limitations
             warn!("╔═══════════════════════════════════════════════════════════════════╗");
