@@ -173,6 +173,14 @@ impl SqlExecutor {
         self.app_context.system_tables().users()
     }
     
+    fn namespaces_provider(&self) -> Arc<crate::tables::system::NamespacesTableProvider> {
+        self.app_context.system_tables().namespaces()
+    }
+    
+    fn tables_provider(&self) -> Arc<crate::tables::system::TablesTableProvider> {
+        self.app_context.system_tables().tables()
+    }
+    
     fn session_factory(&self) -> Arc<DataFusionSessionFactory> {
         self.app_context.session_factory()
     }
@@ -499,7 +507,8 @@ impl SqlExecutor {
         namespace_id: &CommonNamespaceId,
     ) -> Result<(), KalamDbError> {
         let namespace_name = namespace_id.as_str();
-        let exists = self.namespace_service.namespace_exists(namespace_name)?;
+        let namespace_id_type = kalamdb_commons::models::NamespaceId::new(namespace_name);
+        let exists = self.namespaces_provider().get_namespace(&namespace_id_type)?.is_some();
         if !exists {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}.",
@@ -793,7 +802,7 @@ impl SqlExecutor {
                 let schema_registry = self.app_context.schema_registry();
                 let cache = self.app_context.schema_cache();
                 let live_query_check = |table_ref: &str| -> bool {
-                    if let Some(manager) = &self.live_query_manager {
+                    if let Some(manager) = &self.live_query_manager() {
                         // Synchronous check - can't await in closure
                         // This is acceptable as has_active_subscriptions_for is internally async
                         tokio::task::block_in_place(|| {
@@ -1538,9 +1547,28 @@ impl SqlExecutor {
     async fn execute_create_namespace(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let stmt = CreateNamespaceStatement::parse(sql)
             .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
-        let created = self
-            .namespace_service
-            .create(stmt.name.as_str(), stmt.if_not_exists)?;
+        
+        // Use namespaces provider to create namespace
+        let namespace_id = kalamdb_commons::models::NamespaceId::new(stmt.name.as_str());
+        let existing = self.namespaces_provider().get_namespace(&namespace_id)?;
+        
+        let created = if existing.is_some() {
+            if stmt.if_not_exists {
+                false // Already exists, IF NOT EXISTS specified
+            } else {
+                return Err(KalamDbError::InvalidOperation(format!("Namespace '{}' already exists", stmt.name.as_str())));
+            }
+        } else {
+            // Create new namespace
+            let namespace = kalamdb_commons::system::Namespace {
+                namespace_id: namespace_id.clone(),
+                namespace_name: stmt.name.as_str().to_string(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                deleted_at: None,
+            };
+            self.namespaces_provider().create_namespace(namespace)?;
+            true
+        };
 
         let message = if created {
             format!("Namespace '{}' created successfully", stmt.name.as_str())
@@ -1554,7 +1582,7 @@ impl SqlExecutor {
     /// Execute SHOW NAMESPACES
     async fn execute_show_namespaces(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let _stmt = ShowNamespacesStatement::parse(sql)?;
-        let namespaces = self.namespace_service.list()?;
+        let namespaces = self.namespaces_provider().scan_all_namespaces()?;
 
         // Convert to RecordBatch
         let batch = Self::namespaces_to_record_batch(namespaces)?;
@@ -1979,7 +2007,7 @@ impl SqlExecutor {
         ));
 
         // Phase 10: Use unified SchemaCache for dynamic path resolution
-        let unified_cache = self.unified_cache.as_ref()
+        let unified_cache = self.unified_cache()
             .ok_or_else(|| KalamDbError::Other(
                 "Unified cache not initialized - call with_storage_registry()".to_string()
             ))?
@@ -2206,7 +2234,7 @@ impl SqlExecutor {
         let stmt = DescribeTableStatement::parse(sql)?;
 
         // T314: Use unified cache for schema information
-        let cache = self.unified_cache.as_ref()
+        let cache = self.unified_cache()
             .ok_or_else(|| KalamDbError::Other("Unified cache not initialized".to_string()))?;
 
         // Construct TableId for cache lookup
@@ -2276,20 +2304,35 @@ impl SqlExecutor {
     /// Execute ALTER NAMESPACE
     async fn execute_alter_namespace(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let stmt = AlterNamespaceStatement::parse(sql)?;
-        self.namespace_service
-            .update_options(stmt.name.clone(), stmt.options)?;
+        
+        // TODO: Implement namespace options update via provider
+        // For now, return unsupported error
+        return Err(KalamDbError::InvalidOperation(
+            "ALTER NAMESPACE is not yet implemented".to_string()
+        ));
 
-        let message = format!("Namespace '{}' updated successfully", stmt.name.as_str());
-
-        Ok(ExecutionResult::Success(message))
+        // let message = format!("Namespace '{}' updated successfully", stmt.name.as_str());
+        // Ok(ExecutionResult::Success(message))
     }
 
     /// Execute DROP NAMESPACE
     async fn execute_drop_namespace(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
         let stmt = DropNamespaceStatement::parse(sql)?;
-        let deleted = self
-            .namespace_service
-            .delete(stmt.name.clone(), stmt.if_exists)?;
+        
+        // Delete namespace via provider
+        let namespace_id = kalamdb_commons::models::NamespaceId::new(stmt.name.as_str());
+        let existing = self.namespaces_provider().get_namespace(&namespace_id)?;
+        
+        let deleted = if existing.is_some() {
+            self.namespaces_provider().delete_namespace(&namespace_id)?;
+            true
+        } else {
+            if stmt.if_exists {
+                false // Doesn't exist, IF EXISTS specified
+            } else {
+                return Err(KalamDbError::NotFound(format!("Namespace '{}' not found", stmt.name.as_str())));
+            }
+        };
 
         let message = if deleted {
             format!("Namespace '{}' dropped successfully", stmt.name.as_str())
@@ -2405,9 +2448,7 @@ impl SqlExecutor {
         };
 
         // Save user via users table provider
-        let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
-            KalamDbError::InvalidOperation("User management not configured".to_string())
-        })?;
+        let users_provider = self.users_table_provider();
 
         users_provider.create_user(user.clone())?;
 
@@ -2456,9 +2497,7 @@ impl SqlExecutor {
         }
 
         // Get users provider
-        let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
-            KalamDbError::InvalidOperation("User management not configured".to_string())
-        })?;
+        let users_provider = self.users_table_provider();
 
         // Get existing user
         let target_user_id = UserId::new(&stmt.username);
@@ -2537,9 +2576,7 @@ impl SqlExecutor {
         }
 
         // Get users provider
-        let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
-            KalamDbError::InvalidOperation("User management not configured".to_string())
-        })?;
+        let users_provider = self.users_table_provider();
 
         // Soft delete the user
         let target_user_id = UserId::new(&stmt.username);
@@ -2582,9 +2619,7 @@ impl SqlExecutor {
         };
 
         // Get JobsTableProvider
-        let jobs_provider = self.jobs_table_provider.as_ref().ok_or_else(|| {
-            KalamDbError::InvalidOperation("Job management not configured".to_string())
-        })?;
+        let jobs_provider = self.jobs_table_provider();
 
         // Cancel the job
         jobs_provider
@@ -2598,7 +2633,7 @@ impl SqlExecutor {
     }
 
     async fn execute_kill_live_query(&self, _session: &SessionContext, sql: &str, _exec_ctx: &ExecutionContext) -> Result<ExecutionResult, KalamDbError> {
-        let manager = self.live_query_manager.as_ref().ok_or_else(|| {
+        let manager = self.live_query_manager().ok_or_else(|| {
             KalamDbError::InvalidOperation("Live query manager not configured".to_string())
         })?;
 
@@ -3247,7 +3282,7 @@ impl SqlExecutor {
             ));
         }
 
-        if let Some(manager) = &self.live_query_manager {
+        if let Some(manager) = &self.live_query_manager() {
             let table_ref = format!(
                 "{}.{}",
                 stmt.namespace_id.as_str(),
@@ -3351,9 +3386,7 @@ impl SqlExecutor {
             }
 
             // Perform restore
-            let users_provider = self.users_table_provider.as_ref().ok_or_else(|| {
-                KalamDbError::InvalidOperation("User management not configured".to_string())
-            })?;
+            let users_provider = self.users_table_provider();
 
             let mut user = users_provider
                 .get_user_by_username(&where_val)?
@@ -4221,11 +4254,7 @@ impl SqlExecutor {
     fn count_buffered_rows(&self, table: &kalamdb_sql::Table) -> Result<usize, KalamDbError> {
         match table.table_type {
             TableType::User => {
-                    let store = self.user_table_store().as_ref().ok_or_else(|| {
-                    KalamDbError::InvalidOperation(
-                        "User table store not configured for SHOW TABLE STATS".to_string(),
-                    )
-                })?;
+                    let store = self.user_table_store();
                 let rows = UserTableStoreExt::scan_all(
                     store.as_ref(),
                     table.namespace.as_str(),
@@ -4242,11 +4271,7 @@ impl SqlExecutor {
                 Ok(rows.len())
             }
             TableType::Shared => {
-                    let store = self.shared_table_store().as_ref().ok_or_else(|| {
-                    KalamDbError::InvalidOperation(
-                        "Shared table store not configured for SHOW TABLE STATS".to_string(),
-                    )
-                })?;
+                    let store = self.shared_table_store();
                 let rows = store
                     .scan(table.namespace.as_str(), table.table_name.as_str())
                     .map_err(|e| {
@@ -4260,11 +4285,7 @@ impl SqlExecutor {
                 Ok(rows.len())
             }
             TableType::Stream => {
-                    let store = self.stream_table_store().as_ref().ok_or_else(|| {
-                    KalamDbError::InvalidOperation(
-                        "Stream table store not configured for SHOW TABLE STATS".to_string(),
-                    )
-                })?;
+                    let store = self.stream_table_store();
                 let rows = store
                     .scan(table.namespace.as_str(), table.table_name.as_str())
                     .map_err(|e| {
