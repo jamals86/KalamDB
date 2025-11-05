@@ -90,6 +90,7 @@ pub mod schema_version;
 pub mod table_definition;
 pub mod table_options;
 pub mod table_type;
+pub mod policy;
 
 pub use column_default::ColumnDefault;
 pub use column_definition::ColumnDefinition;

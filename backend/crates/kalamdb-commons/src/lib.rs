@@ -42,7 +42,6 @@
 //! let id_str: &str = user_id.as_str();
 //! ```
 
-pub mod config;
 pub mod constants;
 pub mod errors;
 pub mod models;
@@ -56,6 +55,7 @@ pub use constants::{COLUMN_FAMILIES, SYSTEM_TABLES};
 pub use errors::{CommonError, Result};
 pub use models::{
     // Phase 15 (008-schema-consolidation): Re-export schema types
+    datatypes,
     schemas,
     system,
     types,
@@ -66,7 +66,7 @@ pub use models::{
     JobType,
     LiveQueryId,
     NamespaceId,
-        NodeId,
+    NodeId,
     Role,
     StorageId,
     StorageMode,
@@ -74,7 +74,7 @@ pub use models::{
     TableId,
     TableName,
     UserId,
-    UserName,
+    UserName
 };
 pub use schemas::TableType;
 pub use storage::{Operation, Partition, StorageBackend, StorageError};

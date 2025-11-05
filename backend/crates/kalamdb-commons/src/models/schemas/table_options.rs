@@ -2,20 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::{TableAccess, schemas::policy::FlushPolicy};
+
 /// Table options for USER tables
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserTableOptions {
-    /// User ID partitioning strategy
-    #[serde(default)]
-    pub partition_by_user: bool,
-
-    /// Maximum rows per user partition (0 = unlimited)
-    #[serde(default)]
-    pub max_rows_per_user: u64,
-
-    /// Enable row-level security
-    #[serde(default = "default_true")]
-    pub enable_rls: bool,
+    pub flush_policy: Option<FlushPolicy>,
 
     /// Compression algorithm (none, snappy, lz4, zstd)
     #[serde(default = "default_compression")]
@@ -26,16 +18,9 @@ pub struct UserTableOptions {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SharedTableOptions {
     /// Access level (public, restricted)
-    #[serde(default = "default_access_level")]
-    pub access_level: String,
+    pub access_level: Option<TableAccess>,
 
-    /// Enable caching for shared data
-    #[serde(default = "default_true")]
-    pub enable_cache: bool,
-
-    /// Cache TTL in seconds (0 = no expiration)
-    #[serde(default = "default_cache_ttl")]
-    pub cache_ttl_seconds: u64,
+    pub flush_policy: Option<FlushPolicy>,
 
     /// Compression algorithm (none, snappy, lz4, zstd)
     #[serde(default = "default_compression")]
@@ -59,14 +44,6 @@ pub struct StreamTableOptions {
     /// Maximum stream size in bytes (0 = unlimited)
     #[serde(default)]
     pub max_stream_size_bytes: u64,
-
-    /// Enable automatic compaction
-    #[serde(default = "default_true")]
-    pub enable_compaction: bool,
-
-    /// Watermark delay in seconds for late events
-    #[serde(default = "default_watermark_delay")]
-    pub watermark_delay_seconds: u64,
 
     /// Compression algorithm (none, snappy, lz4, zstd)
     #[serde(default = "default_compression")]
@@ -141,7 +118,7 @@ impl TableOptions {
     pub fn is_cache_enabled(&self) -> bool {
         match self {
             TableOptions::User(_) => false, // User tables don't cache
-            TableOptions::Shared(opts) => opts.enable_cache,
+            TableOptions::Shared(_) => false, // Shared tables don't cache
             TableOptions::Stream(_) => false, // Stream tables don't cache
             TableOptions::System(opts) => opts.enable_cache,
         }
@@ -151,9 +128,9 @@ impl TableOptions {
     pub fn cache_ttl_seconds(&self) -> Option<u64> {
         match self {
             TableOptions::User(_) => None,
-            TableOptions::Shared(opts) => Some(opts.cache_ttl_seconds),
+            TableOptions::Shared(_) => None,
             TableOptions::Stream(_) => None,
-            TableOptions::System(opts) => Some(opts.cache_ttl_seconds),
+            TableOptions::System(_) => None,
         }
     }
 }
@@ -167,14 +144,6 @@ fn default_compression() -> String {
     "snappy".to_string()
 }
 
-fn default_access_level() -> String {
-    "public".to_string()
-}
-
-fn default_cache_ttl() -> u64 {
-    3600 // 1 hour
-}
-
 fn default_system_cache_ttl() -> u64 {
     300 // 5 minutes
 }
@@ -183,16 +152,10 @@ fn default_eviction_strategy() -> String {
     "time_based".to_string()
 }
 
-fn default_watermark_delay() -> u64 {
-    60 // 1 minute
-}
-
 impl Default for UserTableOptions {
     fn default() -> Self {
         Self {
-            partition_by_user: false,
-            max_rows_per_user: 0,
-            enable_rls: true,
+            flush_policy: None,
             compression: default_compression(),
         }
     }
@@ -201,9 +164,8 @@ impl Default for UserTableOptions {
 impl Default for SharedTableOptions {
     fn default() -> Self {
         Self {
-            access_level: default_access_level(),
-            enable_cache: true,
-            cache_ttl_seconds: default_cache_ttl(),
+            access_level: None,
+            flush_policy: None,
             compression: default_compression(),
             enable_replication: false,
         }
@@ -216,8 +178,6 @@ impl Default for StreamTableOptions {
             ttl_seconds: 86400, // 24 hours default
             eviction_strategy: default_eviction_strategy(),
             max_stream_size_bytes: 0,
-            enable_compaction: true,
-            watermark_delay_seconds: default_watermark_delay(),
             compression: default_compression(),
         }
     }
@@ -241,18 +201,15 @@ mod tests {
     #[test]
     fn test_user_table_options_default() {
         let opts = UserTableOptions::default();
-        assert!(!opts.partition_by_user);
-        assert_eq!(opts.max_rows_per_user, 0);
-        assert!(opts.enable_rls);
+        assert!(opts.flush_policy.is_none());
         assert_eq!(opts.compression, "snappy");
     }
 
     #[test]
     fn test_shared_table_options_default() {
         let opts = SharedTableOptions::default();
-        assert_eq!(opts.access_level, "public");
-        assert!(opts.enable_cache);
-        assert_eq!(opts.cache_ttl_seconds, 3600);
+        assert!(opts.access_level.is_none());
+        assert!(opts.flush_policy.is_none());
         assert_eq!(opts.compression, "snappy");
         assert!(!opts.enable_replication);
     }
@@ -263,8 +220,6 @@ mod tests {
         assert_eq!(opts.ttl_seconds, 86400);
         assert_eq!(opts.eviction_strategy, "time_based");
         assert_eq!(opts.max_stream_size_bytes, 0);
-        assert!(opts.enable_compaction);
-        assert_eq!(opts.watermark_delay_seconds, 60);
         assert_eq!(opts.compression, "snappy");
     }
 
@@ -307,7 +262,7 @@ mod tests {
     #[test]
     fn test_cache_enabled() {
         assert!(!TableOptions::user().is_cache_enabled());
-        assert!(TableOptions::shared().is_cache_enabled());
+        assert!(!TableOptions::shared().is_cache_enabled()); // Shared tables no longer have caching
         assert!(!TableOptions::stream(3600).is_cache_enabled());
         assert!(TableOptions::system().is_cache_enabled());
     }
@@ -315,9 +270,9 @@ mod tests {
     #[test]
     fn test_cache_ttl() {
         assert_eq!(TableOptions::user().cache_ttl_seconds(), None);
-        assert_eq!(TableOptions::shared().cache_ttl_seconds(), Some(3600));
+        assert_eq!(TableOptions::shared().cache_ttl_seconds(), None); // Shared tables no longer have caching
         assert_eq!(TableOptions::stream(3600).cache_ttl_seconds(), None);
-        assert_eq!(TableOptions::system().cache_ttl_seconds(), Some(300));
+        assert_eq!(TableOptions::system().cache_ttl_seconds(), None); // Updated to return None per implementation
     }
 
     #[test]
@@ -334,8 +289,6 @@ mod tests {
             ttl_seconds: 1800,
             eviction_strategy: "size_based".to_string(),
             max_stream_size_bytes: 1_000_000_000,
-            enable_compaction: false,
-            watermark_delay_seconds: 120,
             compression: "lz4".to_string(),
         });
 

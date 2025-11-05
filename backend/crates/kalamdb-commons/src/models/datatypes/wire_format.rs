@@ -3,7 +3,7 @@
 //! Provides efficient binary serialization with tag bytes for type identification.
 //! Format: [tag byte][optional dimension for EMBEDDING]
 
-use crate::models::types::KalamDataType;
+use crate::models::datatypes::KalamDataType;
 use std::io::{Read, Write};
 use thiserror::Error;
 

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use super::namespace_id::NamespaceId;
-use super::table_name::TableName;
+use crate::models::table_name::TableName;
 
 /// Composite key for system.tables entries: {namespace_id}:{table_name}
 ///

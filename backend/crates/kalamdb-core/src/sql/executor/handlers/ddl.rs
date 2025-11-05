@@ -149,7 +149,7 @@ impl DDLHandler {
         schema: &Arc<arrow::datatypes::Schema>,
     ) -> Result<(), KalamDbError> {
         use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, SchemaVersion};
-        use kalamdb_commons::types::{KalamDataType, FromArrowType};
+        use kalamdb_commons::datatypes::{KalamDataType, FromArrowType};
         use crate::schema::arrow_schema::ArrowSchemaWithOptions;
         use crate::app_context::AppContext;
 

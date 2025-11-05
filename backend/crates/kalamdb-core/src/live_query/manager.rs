@@ -829,9 +829,9 @@ mod tests {
     use crate::tables::system::schemas::TableSchemaStore;
     use crate::tables::system::LiveQueriesTableProvider;
     use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
+    use kalamdb_commons::datatypes::KalamDataType;
     use kalamdb_commons::models::TableId;
     use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
-    use kalamdb_commons::types::KalamDataType;
     use kalamdb_commons::{NamespaceId, TableName};
     use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;

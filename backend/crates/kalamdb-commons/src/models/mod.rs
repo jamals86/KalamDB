@@ -6,14 +6,14 @@
 //!
 //! ## System Table Models
 //!
-//! The `system` submodule contains the SINGLE SOURCE OF TRUTH for all system table models.
-//! Import from `kalamdb_commons::system::*` to use these models.
+//! The `types` submodule contains the SINGLE SOURCE OF TRUTH for all system table models.
+//! Import from `kalamdb_commons::types::*` to use these models.
 //!
 //! ## Examples
 //!
 //! ```rust
 //! use kalamdb_commons::models::{UserId, NamespaceId, TableName};
-//! use kalamdb_commons::system::{User, Job, LiveQuery};
+//! use kalamdb_commons::types::{User, Job, LiveQuery};
 //!
 //! let user_id = UserId::new("user_123");
 //! let namespace_id = NamespaceId::new("default");
@@ -27,42 +27,16 @@
 //! let owned: String = user_id.into_string();
 //! ```
 
-mod audit_log_id;
-mod namespace_id;
-mod node_id;
-mod storage_id;
-pub mod system;
+// Submodules organized into logical groups
+pub mod ids;        // Type-safe identifier wrappers
+pub mod datatypes;  // Unified data type system (KalamDataType)
+pub mod schemas;    // Table and column schema definitions
+pub mod types;      // System table models (User, Job, Namespace, etc.)
+
+// Standalone type modules (not IDs, not system tables)
+mod audit_log_key;
 mod table_name;
-mod user_id;
-
-// Phase 14: Type-safe key models for EntityStore architecture
-mod job_id;
-mod live_query_id;
-mod row_id;
-mod table_id;
 mod user_name;
-mod user_row_id;
-
-// Phase 15 (008-schema-consolidation): Unified schema and type system
-pub mod schemas;
-pub mod types;
-
-pub use audit_log_id::AuditLogId;
-pub use namespace_id::NamespaceId;
-pub use node_id::NodeId;
-pub use storage_id::StorageId;
-pub use table_name::TableName;
-pub use user_id::UserId;
-
-// Phase 14: Export new key types
-pub use job_id::JobId;
-pub use live_query_id::LiveQueryId;
-pub use row_id::RowId;
-pub use table_id::TableId;
-pub use user_name::UserName;
-pub use user_row_id::UserRowId;
-
-// Split out previously inlined types into dedicated modules
 mod storage_type;
 mod job_status;
 mod job_type;
@@ -71,9 +45,12 @@ mod auth_type;
 mod storage_mode;
 mod table_access;
 mod storage_config;
-mod connection_id;
-mod live_id;
 
+// Re-export all types from submodules for convenience
+pub use ids::*;
+pub use audit_log_key::AuditLogKey;
+pub use table_name::TableName;
+pub use user_name::UserName;
 pub use storage_type::StorageType;
 pub use job_status::JobStatus;
 pub use job_type::JobType;
@@ -82,8 +59,10 @@ pub use auth_type::AuthType;
 pub use storage_mode::StorageMode;
 pub use table_access::TableAccess;
 pub use storage_config::StorageConfig;
-pub use connection_id::ConnectionId;
-pub use live_id::LiveId;
+
+// Legacy compatibility: re-export system types as `system` module
+// This allows existing code using `kalamdb_commons::system::User` to continue working
+pub use types as system;
 
 #[cfg(test)]
 mod tests {

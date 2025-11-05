@@ -168,8 +168,7 @@ mod tests {
     use super::*;
     use crate::test_helpers::init_test_app_context;
     use crate::app_context::AppContext;
-    use kalamdb_commons::schemas::{ColumnDefinition, TableType};
-    use kalamdb_commons::models::types::KalamDataType;
+    use kalamdb_commons::{datatypes::KalamDataType, schemas::{ColumnDefinition, TableType}};
 
     fn create_test_registry() -> Arc<SchemaRegistry> {
         init_test_app_context();

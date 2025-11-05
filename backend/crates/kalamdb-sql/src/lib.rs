@@ -42,12 +42,10 @@ pub mod parser;
 pub mod query_cache;
 pub mod statement_classifier;
 
-use kalamdb_commons::{NamespaceId, StorageId, TableName, UserId};
-use kalamdb_store::StorageBackend;
 // Re-export system models from kalamdb-commons (single source of truth)
 pub use kalamdb_commons::system::{
-    AuditLogEntry, InformationSchemaTable, Job, LiveQuery, Namespace, Storage,
-    SystemTable as Table, TableSchema, User, UserTableCounter,
+    AuditLogEntry, Job, LiveQuery, Namespace, Storage,
+    User, UserTableCounter,
 };
 
 // pub use adapter::StorageAdapter; // PHASE 6: Disabled

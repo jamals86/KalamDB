@@ -17,7 +17,7 @@ use kalamdb_commons::{NamespaceId, TableName};
 use kalamdb_commons::schemas::{
     ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType,
 };
-use kalamdb_commons::types::KalamDataType;
+use kalamdb_commons::datatypes::KalamDataType;
 
 /// Create TableDefinition for system.users table
 ///

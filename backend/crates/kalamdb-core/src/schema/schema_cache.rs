@@ -539,8 +539,8 @@ impl Default for SchemaCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::datatypes::KalamDataType;
     use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
-    use kalamdb_commons::models::types::KalamDataType;
     use std::thread;
     use std::time::Duration;
 

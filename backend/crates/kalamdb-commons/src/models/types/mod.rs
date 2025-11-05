@@ -1,117 +1,67 @@
-//! Unified Data Type System - Single Source of Truth for KalamDB Types
+//! System table models for KalamDB.
 //!
-//! This module provides the consolidated type system for KalamDB, implementing
-//! **Phase 4 (Unified Types)** from the 008-schema-consolidation feature.
+//! **CRITICAL**: This module is the SINGLE SOURCE OF TRUTH for all system table models.
+//! DO NOT create duplicate model definitions elsewhere in the codebase.
 //!
-//! # Architecture
+//! This module contains strongly-typed models for all system tables:
+//! - `User`: System users (authentication, authorization)
+//! - `Job`: Background jobs (flush, retention, cleanup)
+//! - `Namespace`: Database namespaces
+//! - `SystemTable`: Table metadata registry
+//! - `LiveQuery`: Active WebSocket subscriptions
+//! - `InformationSchemaTable`: SQL standard table metadata
+//! - `UserTableCounter`: Per-user table flush tracking
 //!
-//! The type system provides bidirectional conversion between KalamDB's unified
-//! type representation and Apache Arrow's type system:
+//! All system table models are serialized with bincode for performance.
+//! These models are re-exported at the crate root for easy access.
 //!
-//! ```text
-//! KalamDataType (16 variants)
-//!       ↕
-//! Arrow DataType
-//!       ↕
-//! Physical Storage (Parquet, Arrow IPC)
-//! ```
+//! ## Architecture
 //!
-//! # Core Types
+//! - **Location**: `kalamdb-commons/src/models/types/` (split into individual files)
+//! - **Purpose**: Canonical definitions for system table rows
+//! - **Serialization**: Bincode (for RocksDB storage) + Serde JSON (for API responses)
+//! - **Usage**: Import from `kalamdb_commons::types::*` or via re-exports at crate root
 //!
-//! - **`KalamDataType`**: Unified enum representing all supported data types
-//!   - Primitive: Boolean, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32, UInt64
-//!   - Numeric: Float32, Float64, Decimal(precision, scale)
-//!   - String: Utf8, LargeUtf8
-//!   - Binary: Binary, LargeBinary
-//!   - Temporal: Date32, Date64, Timestamp(unit, tz), Time32(unit), Time64(unit), Duration(unit), Interval(unit)
-//!   - Complex: List(inner), LargeList(inner), Struct(fields), Map(key, value, sorted)
-//!   - Special: Uuid, Json
-//!
-//! - **`ToArrowType`**: Convert KalamDataType → Arrow DataType
-//! - **`FromArrowType`**: Convert Arrow DataType → KalamDataType
-//! - **`WireFormat`**: JSON wire format for client-server communication
-//!
-//! # Key Features
-//!
-//! - **Type Safety**: Compile-time type checking prevents runtime errors
-//! - **Bidirectional Conversion**: Lossless KalamDataType ↔ Arrow DataType
-//! - **Validation**: Enforce constraints (e.g., BINARY max 8192 bytes, DECIMAL max precision 38)
-//! - **JSON Serialization**: Human-readable wire format for SDKs
-//! - **Apache Arrow Integration**: Zero-copy data processing with DataFusion
-//!
-//! # Type Mappings
-//!
-//! | KalamDataType | Arrow DataType | Parquet Type | JSON Wire Format |
-//! |---------------|----------------|--------------|------------------|
-//! | Boolean       | Boolean        | BOOLEAN      | "boolean"        |
-//! | Int32         | Int32          | INT32        | "int32"          |
-//! | Int64         | Int64          | INT64        | "int64"          |
-//! | Float64       | Float64        | DOUBLE       | "float64"        |
-//! | Utf8          | Utf8           | BYTE_ARRAY   | "utf8"           |
-//! | Uuid          | FixedSizeBinary(16) | FIXED_LEN_BYTE_ARRAY | "uuid" |
-//! | Json          | Utf8           | BYTE_ARRAY   | "json"           |
-//! | Decimal       | Decimal128     | DECIMAL      | "decimal(p,s)"   |
-//! | Timestamp     | Timestamp      | INT64        | "timestamp_ms"   |
-//!
-//! # Usage Example
+//! ## Example
 //!
 //! ```rust
-//! use kalamdb_commons::types::{KalamDataType, ToArrowType, FromArrowType};
-//! use arrow::datatypes::DataType as ArrowDataType;
+//! use kalamdb_commons::types::{User, Job, LiveQuery};
+//! use kalamdb_commons::{UserId, Role, AuthType, StorageMode, StorageId, JobType, JobStatus, NamespaceId, TableName};
 //!
-//! // Define a KalamDB type
-//! let kalam_type = KalamDataType::Decimal { precision: 10, scale: 2 };
-//!
-//! // Convert to Arrow for DataFusion execution
-//! let arrow_type = kalam_type.to_arrow_type();
-//! assert_eq!(arrow_type, ArrowDataType::Decimal128(10, 2));
-//!
-//! // Convert back from Arrow (round-trip)
-//! let recovered = KalamDataType::from_arrow_type(&arrow_type);
-//! assert_eq!(recovered, kalam_type);
+//! let user = User {
+//!     id: UserId::new("u_123"),
+//!     username: "alice".into(),
+//!     password_hash: "$2b$12$...".to_string(),
+//!     role: Role::User,
+//!     email: Some("alice@example.com".to_string()),
+//!     auth_type: AuthType::Password,
+//!     auth_data: None,
+//!     storage_mode: StorageMode::Table,
+//!     storage_id: Some(StorageId::new("storage_1")),
+//!     created_at: 1730000000000,
+//!     updated_at: 1730000000000,
+//!     last_seen: None,
+//!     deleted_at: None,
+//! };
 //! ```
-//!
-//! # Validation Rules
-//!
-//! - **BINARY(n)**: `1 ≤ n ≤ 8192` (8KB limit)
-//! - **DECIMAL(p,s)**: `1 ≤ p ≤ 38`, `0 ≤ s ≤ p`
-//! - **VARCHAR(n)**: No length limit (uses Utf8 with validation in application layer)
-//! - **UUID**: Always 16 bytes (FixedSizeBinary(16) in Arrow)
-//! - **JSON**: Stored as Utf8, validated as JSON on write
-//!
-//! # Wire Format
-//!
-//! The `WireFormat` trait provides JSON serialization for client SDKs:
-//!
-//! ```json
-//! {
-//!   "type": "decimal",
-//!   "precision": 10,
-//!   "scale": 2
-//! }
-//! ```
-//!
-//! This enables TypeScript/JavaScript SDKs to understand column types.
-//!
-//! # Migration Path
-//!
-//! - **Phase 3**: Introduced `KalamDataType` enum (completed)
-//! - **Phase 4**: Replaced scattered type strings with enum (completed)
-//! - **Phase 5**: Added Arrow ↔ KalamDataType conversion (completed)
-//! - **Phase 6**: Integrated with SchemaCache (completed)
-//! - **Phase 7**: Documentation and polish (current)
-//!
-//! # Related Modules
-//!
-//! - `kalamdb_commons::schemas` - Table and column definitions
-//! - `kalamdb_sql::ddl` - SQL DDL parsing and type inference
-//! - `kalamdb_core::schema_cache` - Cached type lookups
-//! - `link/sdks/typescript` - Client SDK type definitions
 
-pub mod arrow_conversion;
-pub mod kalam_data_type;
-pub mod wire_format;
+mod audit_log;
+mod job;
+mod live_query;
+mod namespace;
+mod storage;
+mod user;
+mod user_table_counter;
 
-pub use arrow_conversion::{ArrowConversionError, FromArrowType, ToArrowType};
-pub use kalam_data_type::KalamDataType;
-pub use wire_format::{WireFormat, WireFormatError};
+pub use audit_log::AuditLogEntry;
+pub use job::{Job, JobFilter, JobOptions};
+pub use live_query::LiveQuery;
+pub use namespace::Namespace;
+pub use storage::Storage;
+pub use user::User;
+pub use user_table_counter::UserTableCounter;
+
+// Re-export for backward compatibility (legacy imports from `system` module)
+// Users can now import from either:
+// - `kalamdb_commons::types::User` (new)
+// - `kalamdb_commons::system::User` (legacy, via crate root re-export)

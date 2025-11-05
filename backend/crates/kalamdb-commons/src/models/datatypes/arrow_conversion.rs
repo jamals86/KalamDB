@@ -2,7 +2,7 @@
 //!
 //! Provides bidirectional conversion between KalamDataType and Apache Arrow DataType.
 
-use crate::models::types::KalamDataType;
+use crate::models::datatypes::KalamDataType;
 use arrow_schema::DataType as ArrowDataType;
 use arrow_schema::{Field, TimeUnit};
 use thiserror::Error;

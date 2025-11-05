@@ -42,9 +42,9 @@
 // ============================================================================
 // PHASE 9: UNIFIED JOB MANAGEMENT (PRODUCTION-READY)
 // ============================================================================
-pub mod unified_manager;
+pub mod job_manager;
 pub mod executors;
 
 // Phase 9 exports (production API)
-pub use unified_manager::JobManager as UnifiedJobManager;
+pub use job_manager::JobManager;
 pub use executors::{JobContext, JobDecision, JobExecutor as JobExecutorTrait, JobRegistry};

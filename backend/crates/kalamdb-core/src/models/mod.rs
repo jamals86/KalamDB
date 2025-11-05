@@ -37,7 +37,7 @@ pub mod tables;
 
 // Re-export system table models from kalamdb_commons (SINGLE SOURCE OF TRUTH)
 pub use kalamdb_commons::system::{
-    InformationSchemaTable, Job, LiveQuery, Namespace, SystemTable, User, UserTableCounter,
+    Job, LiveQuery, Namespace, User, UserTableCounter,
 };
 
 // Re-export table row models

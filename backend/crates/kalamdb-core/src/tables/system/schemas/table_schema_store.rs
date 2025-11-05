@@ -188,9 +188,9 @@ impl EntityStore<TableId, TableDefinition> for TableSchemaStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kalamdb_commons::datatypes::KalamDataType;
     use kalamdb_commons::models::{NamespaceId, TableName};
     use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
-    use kalamdb_commons::types::KalamDataType;
     use kalamdb_store::test_utils::InMemoryBackend;
 
     fn create_test_table(namespace: &str, table: &str) -> (TableId, TableDefinition) {

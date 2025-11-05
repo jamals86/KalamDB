@@ -1,8 +1,8 @@
 //! Table definition - single source of truth for table schemas
 
 use crate::models::schemas::{ColumnDefinition, SchemaVersion, TableOptions, TableType};
-use crate::{NamespaceId, StorageId, TableAccess, TableId, TableName};
-use crate::models::types::{ArrowConversionError, ToArrowType};
+use crate::{NamespaceId, TableName};
+use crate::models::datatypes::{ArrowConversionError, ToArrowType};
 use arrow_schema::{Field, Schema as ArrowSchema};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -15,9 +15,6 @@ use std::sync::Arc;
 /// Now unified to eliminate duplication and simplify architecture.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TableDefinition {
-    /// Unique table identifier (composite key: namespace_id:table_name)
-    pub table_id: TableId,
-
     /// Namespace ID (e.g., "default", "user_123")
     pub namespace_id: NamespaceId,
 
@@ -48,21 +45,6 @@ pub struct TableDefinition {
 
     /// Last modification timestamp
     pub updated_at: DateTime<Utc>,
-
-    // ===== Storage Configuration (from SystemTable) =====
-    
-    /// Storage configuration ID (references system.storages)
-    pub storage_id: Option<StorageId>,
-
-    /// Whether to use user-specific storage partitioning
-    pub use_user_storage: bool,
-
-    /// Retention period for soft-deleted rows (in hours)
-    pub deleted_retention_hours: u32,
-
-    /// Access level for SHARED tables (public, private, restricted)
-    /// NULL for USER and SYSTEM tables (they have different access control)
-    pub access_level: Option<TableAccess>,
 }
 
 impl TableDefinition {
@@ -106,23 +88,17 @@ impl TableDefinition {
     /// ```
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        table_id: TableId,
         namespace_id: NamespaceId,
         table_name: TableName,
         table_type: TableType,
         columns: Vec<ColumnDefinition>,
         table_options: TableOptions,
-        table_comment: Option<String>,
-        storage_id: Option<StorageId>,
-        use_user_storage: bool,
-        deleted_retention_hours: u32,
-        access_level: Option<TableAccess>,
+        table_comment: Option<String>
     ) -> Result<Self, String> {
         let columns_sorted = Self::validate_and_sort_columns(columns)?;
         let now = Utc::now();
 
         Ok(Self {
-            table_id,
             namespace_id,
             table_name,
             table_type,
@@ -132,11 +108,7 @@ impl TableDefinition {
             table_options,
             table_comment,
             created_at: now,
-            updated_at: now,
-            storage_id,
-            use_user_storage,
-            deleted_retention_hours,
-            access_level,
+            updated_at: now
         })
     }
 
@@ -153,9 +125,7 @@ impl TableDefinition {
         table_type: TableType,
         columns: Vec<ColumnDefinition>,
         table_comment: Option<String>,
-    ) -> Result<Self, String> {
-        let table_id = TableId::new(namespace_id.clone(), table_name.clone());
-        
+    ) -> Result<Self, String> {        
         let table_options = match table_type {
             TableType::User => TableOptions::user(),
             TableType::Shared => TableOptions::shared(),
@@ -163,25 +133,13 @@ impl TableDefinition {
             TableType::System => TableOptions::system(),
         };
 
-        // Set access_level to Public for SHARED tables, None for others
-        let access_level = if table_type == TableType::Shared {
-            Some(TableAccess::Public)
-        } else {
-            None
-        };
-
         Self::new(
-            table_id,
             namespace_id,
             table_name,
             table_type,
             columns,
             table_options,
-            table_comment,
-            None,  // storage_id
-            false, // use_user_storage
-            24,    // deleted_retention_hours (24 hours default)
-            access_level,
+            table_comment
         )
     }
 
@@ -320,7 +278,7 @@ impl TableDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::types::KalamDataType;
+    use crate::models::datatypes::KalamDataType;
     use crate::{NamespaceId, TableName};
 
     fn sample_columns() -> Vec<ColumnDefinition> {
@@ -348,10 +306,6 @@ mod tests {
         assert_eq!(table.columns.len(), 3);
         assert_eq!(table.schema_version, 1);
         assert_eq!(table.qualified_name(), "default.users");
-        assert_eq!(table.deleted_retention_hours, 24);
-        assert!(table.storage_id.is_none());
-        assert!(!table.use_user_storage);
-        assert!(table.access_level.is_none()); // User table has no access_level
     }
 
     #[test]
@@ -581,13 +535,6 @@ mod tests {
             None,
         )
         .unwrap();
-
-        if let TableOptions::Shared(opts) = shared_table.options() {
-            assert!(opts.enable_cache);
-            assert_eq!(opts.access_level, "public");
-        } else {
-            panic!("Expected Shared options");
-        }
     }
 
     #[test]
@@ -607,8 +554,6 @@ mod tests {
             ttl_seconds: 1800,
             eviction_strategy: "size_based".to_string(),
             max_stream_size_bytes: 1_000_000_000,
-            enable_compaction: false,
-            watermark_delay_seconds: 120,
             compression: "lz4".to_string(),
         });
 
