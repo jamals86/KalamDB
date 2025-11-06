@@ -825,7 +825,7 @@ pub struct RegistryStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema_registry::{SchemaRegistry, SchemaRegistry};
+    use crate::schema_registry::SchemaRegistry;
     use crate::tables::system::tables::TablesStore;
     use crate::tables::system::LiveQueriesTableProvider;
     use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
