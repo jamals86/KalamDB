@@ -140,7 +140,7 @@ backend/crates/
 │   │   ├── mod.rs              # Routing orchestrator
 │   │   └── handlers/           # DDL, DML, Query, Flush, etc.
 │   ├── jobs/                   # Job management
-│   │   ├── unified_manager.rs  # UnifiedJobManager
+│   │   ├── jobs_manager.rs  # UnifiedJobManager
 │   │   └── executors/          # 8 job executors
 │   ├── flush/                  # Flush operations
 │   └── live_query/             # Live query manager
@@ -232,8 +232,8 @@ specs/010-core-architecture-v2/ # CURRENT: Arrow memoization, views
   - All handlers use AppContext for composability and testability
 - 2025-01-15: **Phase 9: Unified Job Management System** - ✅ **COMPLETE** (27/77 tasks, 35.1%):
   - **Problem**: Multiple legacy job managers (job_manager.rs, tokio_job_manager.rs) with no typed JobIds, idempotency, retry logic, or crash recovery
-  - **Solution**: Created UnifiedJobManager with typed JobIds, idempotency enforcement, retry logic, crash recovery, and trait-based executor dispatch
-  - **UnifiedJobManager Created** (~650 lines, jobs/unified_manager.rs):
+  - **Solution**: Created JobsManager with typed JobIds, idempotency enforcement, retry logic, crash recovery, and trait-based executor dispatch
+  - **JobsManager Created** (~650 lines, jobs/unified_manager.rs):
     - create_job(): Idempotency checking, JobId generation with prefixes (FL/CL/RT/SE/UC/CO/BK/RS)
     - cancel_job(): Status validation, safe cancellation
     - get_job() / list_jobs(): Job retrieval and filtering

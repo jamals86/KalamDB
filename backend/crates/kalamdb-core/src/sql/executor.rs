@@ -224,7 +224,7 @@ impl SqlExecutor {
         self.app_context.storage_registry()
     }
     
-    fn job_manager(&self) -> Arc<dyn crate::jobs::JobManager> {
+    fn job_manager(&self) -> Arc<dyn crate::jobs::JobsManager> {
         self.app_context.job_manager()
     }
     
@@ -293,7 +293,7 @@ impl SqlExecutor {
     }
 
     /// Set the job manager (optional, for FLUSH TABLE support)
-    pub fn with_job_manager(mut self, job_manager: Arc<dyn crate::jobs::JobManager>) -> Self {
+    pub fn with_job_manager(mut self, job_manager: Arc<dyn crate::jobs::JobsManager>) -> Self {
         self.job_manager = Some(job_manager);
         self
     }
@@ -2105,7 +2105,7 @@ impl SqlExecutor {
     /// Execute FLUSH TABLE
     ///
     /// Triggers asynchronous flush for a single table, returning job_id immediately.
-    /// The flush operation runs in the background via JobManager.
+    /// The flush operation runs in the background via JobsManager.
     async fn execute_flush_table(
         &self,
         _session: &SessionContext,
@@ -2159,7 +2159,7 @@ impl SqlExecutor {
         let job_manager = self
             .job_manager
             .as_ref()
-            .ok_or_else(|| KalamDbError::Other("JobManager not initialized".to_string()))?;
+            .ok_or_else(|| KalamDbError::Other("JobsManager not initialized".to_string()))?;
 
         let jobs_provider = self.jobs_table_provider.clone();
 
@@ -2286,7 +2286,7 @@ impl SqlExecutor {
         let storage_id_str = table.storage_id.as_ref().map(|s| s.as_str()).unwrap_or("local").to_string();
         let jobs_provider_clone = jobs_provider.clone();
 
-        // Spawn async flush task via JobManager
+        // Spawn async flush task via JobsManager
         let job_future = Box::pin(async move {
             log::info!(
                 "Executing flush job: job_id={}, table={}.{}",
@@ -2484,7 +2484,7 @@ impl SqlExecutor {
             job_ids.push(job_id);
         }
 
-        // TODO: Spawn async flush tasks via JobManager (T250)
+        // TODO: Spawn async flush tasks via JobsManager (T250)
 
         Ok(ExecutionResult::Success(format!(
             "Flush started for {} table(s) in namespace '{}'. Job IDs: [{}]",

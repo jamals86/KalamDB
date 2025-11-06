@@ -1,13 +1,13 @@
 //! # Job Management System
 //!
-//! **Phase 9 Status**: UnifiedJobManager with 8 concrete executors is production-ready.
+//! **Phase 9 Status**: UnifiedJobsManager with 8 concrete executors is production-ready.
 //! Legacy components (JobExecutor, old schedulers) are DEPRECATED and pending migration.
 //!
 //! ## Examples
 //!
 //! ```rust,no_run
 //! // Phase 9: Unified Job Management with typed JobIds
-//! use kalamdb_core::jobs::{UnifiedJobManager, JobRegistry};
+//! use kalamdb_core::jobs::{JobsManager, JobRegistry};
 //! use kalamdb_core::jobs::executors::*;
 //! use kalamdb_core::tables::system::JobsTableProvider;
 //! use kalamdb_store::test_utils::InMemoryBackend;
@@ -18,7 +18,7 @@
 //! # fn example() {
 //! let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
 //! let jobs_provider = Arc::new(JobsTableProvider::new(backend));
-//! let job_manager = Arc::new(UnifiedJobManager::new(jobs_provider));
+//! let job_manager = Arc::new(JobsManager::new(jobs_provider));
 //! 
 //! // Register executors (8 concrete implementations)
 //! let mut registry = JobRegistry::new();
@@ -42,9 +42,9 @@
 // ============================================================================
 // PHASE 9: UNIFIED JOB MANAGEMENT (PRODUCTION-READY)
 // ============================================================================
-pub mod job_manager;
+pub mod jobs_manager;
 pub mod executors;
 
 // Phase 9 exports (production API)
-pub use job_manager::JobManager;
+pub use jobs_manager::JobsManager;
 pub use executors::{JobContext, JobDecision, JobExecutor as JobExecutorTrait, JobRegistry};

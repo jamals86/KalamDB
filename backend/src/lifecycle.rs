@@ -56,16 +56,16 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     );
     info!("AppContext initialized with all stores, managers, registries, and providers");
 
-    // Start UnifiedJobManager run loop (Phase 9, T163)
+    // Start UnifiedJobsManager run loop (Phase 9, T163)
     let job_manager = app_context.job_manager();
     let max_concurrent = config.jobs.max_concurrent;
     tokio::spawn(async move {
-        info!("Starting UnifiedJobManager run loop with max {} concurrent jobs", max_concurrent);
+        info!("Starting UnifiedJobsManager run loop with max {} concurrent jobs", max_concurrent);
         if let Err(e) = job_manager.run_loop(max_concurrent as usize).await {
-            log::error!("UnifiedJobManager run loop failed: {}", e);
+            log::error!("UnifiedJobsManager run loop failed: {}", e);
         }
     });
-    info!("UnifiedJobManager background task spawned");
+    info!("UnifiedJobsManager background task spawned");
 
     // Seed default storage if necessary (using SystemTablesRegistry)
     let storages_provider = app_context.system_tables().storages();
@@ -140,12 +140,12 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
         config.rate_limit.max_subscriptions_per_user
     );
 
-    // Phase 9: All job scheduling now handled by UnifiedJobManager
-    // Crash recovery handled by UnifiedJobManager.recover_incomplete_jobs() in run_loop
+    // Phase 9: All job scheduling now handled by UnifiedJobsManager
+    // Crash recovery handled by UnifiedJobsManager.recover_incomplete_jobs() in run_loop
     // Flush scheduling via FLUSH TABLE/FLUSH ALL TABLES commands
     // Stream eviction and user cleanup via scheduled job creation (TODO: implement cron scheduler)
     
-    info!("Job management delegated to UnifiedJobManager (already running in background)");
+    info!("Job management delegated to UnifiedJobsManager (already running in background)");
 
     // Get users provider for system user initialization
     let users_provider_for_init = app_context.system_tables().users();
@@ -178,7 +178,7 @@ pub async fn run(
     info!("Starting HTTP server on {}", bind_addr);
     info!("Endpoints: POST /v1/api/sql, GET /v1/ws");
 
-    // Get UnifiedJobManager for graceful shutdown
+    // Get UnifiedJobsManager for graceful shutdown
     let job_manager_shutdown = app_context.job_manager();
     let shutdown_timeout_secs = config.shutdown.flush.timeout;
 
@@ -228,7 +228,7 @@ pub async fn run(
                 shutdown_timeout_secs
             );
             
-            // Signal shutdown to UnifiedJobManager
+            // Signal shutdown to UnifiedJobsManager
             job_manager_shutdown.shutdown().await;
             
             // Wait for active jobs with timeout

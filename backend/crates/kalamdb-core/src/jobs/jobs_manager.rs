@@ -1,6 +1,6 @@
 //! Unified Job Management System
 //!
-//! **Phase 9 (US6)**: Single JobManager with typed JobIds, richer statuses, idempotency, retry/backoff, dedicated logging
+//! **Phase 9 (US6)**: Single JobsManager with typed JobIds, richer statuses, idempotency, retry/backoff, dedicated logging
 //!
 //! This module provides a centralized job management system with:
 //! - Typed JobIds with prefixes (FL, CL, RT, SE, UC, CO, BK, RS)
@@ -13,7 +13,7 @@
 //! ## Architecture
 //!
 //! ```text
-//! JobManager
+//! JobsManager
 //! ├── JobsTableProvider    (persistence via system.jobs table)
 //! ├── JobRegistry         (dispatches to JobExecutor implementations)
 //! └── jobs.log            (dedicated log file with [JobId] prefix)
@@ -22,11 +22,11 @@
 //! ## Example Usage
 //!
 //! ```rust
-//! use kalamdb_core::jobs::JobManager;
+//! use kalamdb_core::jobs::JobsManager;
 //! use kalamdb_commons::{JobType, NamespaceId};
 //!
 //! // Create job manager
-//! let job_manager = JobManager::new(jobs_provider, job_registry);
+//! let job_manager = JobsManager::new(jobs_provider, job_registry);
 //!
 //! // Create a flush job
 //! let job_id = job_manager.create_job(
@@ -53,7 +53,7 @@ use tokio::time::{sleep, Duration};
 /// Unified Job Manager
 ///
 /// Provides centralized job creation, execution, tracking, and lifecycle management.
-pub struct JobManager {
+pub struct JobsManager {
     /// System table provider for job persistence
     jobs_provider: Arc<JobsTableProvider>,
     
@@ -67,8 +67,8 @@ pub struct JobManager {
     shutdown: Arc<RwLock<bool>>,
 }
 
-impl JobManager {
-    /// Create a new JobManager
+impl JobsManager {
+    /// Create a new JobsManager
     ///
     /// # Arguments
     /// * `jobs_provider` - System table provider for job persistence

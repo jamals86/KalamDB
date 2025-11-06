@@ -165,7 +165,7 @@ pub fn users_table_definition() -> TableDefinition {
     ];
 
     TableDefinition::new(
-        NamespaceId::new("system"),
+        NamespaceId::system(),
         TableName::new("users"),
         TableType::System,
         columns,
@@ -340,7 +340,7 @@ pub fn jobs_table_definition() -> TableDefinition {
     ];
 
     TableDefinition::new(
-        NamespaceId::new("system"),
+        NamespaceId::system(),
         TableName::new("jobs"),
         TableType::System,
         columns,
@@ -413,7 +413,7 @@ pub fn namespaces_table_definition() -> TableDefinition {
     ];
 
     TableDefinition::new(
-        NamespaceId::new("system"),
+        NamespaceId::system(),
         TableName::new("namespaces"),
         TableType::System,
         columns,
@@ -541,7 +541,7 @@ pub fn storages_table_definition() -> TableDefinition {
     ];
 
     TableDefinition::new(
-        NamespaceId::new("system"),
+        NamespaceId::system(),
         TableName::new("storages"),
         TableType::System,
         columns,
@@ -694,7 +694,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
     ];
 
     TableDefinition::new(
-        NamespaceId::new("system"),
+        NamespaceId::system(),
         TableName::new("live_queries"),
         TableType::System,
         columns,
@@ -800,7 +800,7 @@ pub fn tables_table_definition() -> TableDefinition {
     ];
 
     TableDefinition::new(
-        NamespaceId::new("system"),
+        NamespaceId::system(),
         TableName::new("tables"),
         TableType::System,
         columns,
@@ -873,7 +873,7 @@ pub fn table_schemas_table_definition() -> TableDefinition {
     ];
 
     TableDefinition::new(
-        NamespaceId::new("system"),
+        NamespaceId::system(),
         TableName::new("table_schemas"),
         TableType::System,
         columns,

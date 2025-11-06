@@ -5,7 +5,7 @@
 
 use crate::schema_registry::SchemaCache;
 use crate::schema_registry::registry::SchemaRegistry;
-// use crate::jobs::UnifiedJobManager; // TODO: Implement UnifiedJobManager
+// use crate::jobs::UnifiedJobsManager; // TODO: Implement UnifiedJobsManager
 use crate::jobs::executors::{
     BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor,
     JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor,
@@ -49,7 +49,7 @@ pub struct AppContext {
     storage_backend: Arc<dyn StorageBackend>,
     
     // ===== Managers =====
-    job_manager: Arc<crate::jobs::JobManager>,
+    job_manager: Arc<crate::jobs::JobsManager>,
     live_query_manager: Arc<LiveQueryManager>,
     
     // ===== Registries =====
@@ -72,7 +72,7 @@ impl std::fmt::Debug for AppContext {
             .field("shared_table_store", &"Arc<SharedTableStore>")
             .field("stream_table_store", &"Arc<StreamTableStore>")
             .field("storage_backend", &"Arc<dyn StorageBackend>")
-            .field("job_manager", &"Arc<UnifiedJobManager>")
+            .field("job_manager", &"Arc<UnifiedJobsManager>")
             .field("live_query_manager", &"Arc<LiveQueryManager>")
             .field("storage_registry", &"Arc<StorageRegistry>")
             .field("session_factory", &"Arc<DataFusionSessionFactory>")
@@ -206,7 +206,7 @@ impl AppContext {
 
                 // Create unified job manager (Phase 9, T154)
                 let jobs_provider = system_tables.jobs();
-                let job_manager = Arc::new(crate::jobs::JobManager::new(
+                let job_manager = Arc::new(crate::jobs::JobsManager::new(
                     jobs_provider,
                     job_registry,
                 ));
@@ -279,7 +279,7 @@ impl AppContext {
         self.storage_backend.clone()
     }
     
-    pub fn job_manager(&self) -> Arc<crate::jobs::JobManager> {
+    pub fn job_manager(&self) -> Arc<crate::jobs::JobsManager> {
         self.job_manager.clone()
     }
     

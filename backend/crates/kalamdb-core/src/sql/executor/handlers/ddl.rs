@@ -1112,7 +1112,7 @@ impl DDLHandler {
     pub async fn execute_drop_table<F>(
         schema_registry: &crate::schema::SchemaRegistry,
     cache: Option<&crate::schema::SchemaCache>,
-        job_manager: &crate::jobs::JobManager,
+        job_manager: &crate::jobs::JobsManager,
         live_query_check_fn: F,
         _session: &SessionContext,
         sql: &str,
@@ -1507,9 +1507,9 @@ impl DDLHandler {
         Ok(())
     }
 
-    /// Create deletion job for tracking (Phase 9, T165 - UnifiedJobManager)
+    /// Create deletion job for tracking (Phase 9, T165 - UnifiedJobsManager)
     async fn create_deletion_job_unified(
-        job_manager: &crate::jobs::JobManager,
+        job_manager: &crate::jobs::JobsManager,
         table_id: &str,
         namespace_id: &NamespaceId,
         table_name: &kalamdb_commons::models::TableName,
@@ -1528,7 +1528,7 @@ impl DDLHandler {
         // Create idempotency key from table ID to prevent duplicate deletion jobs
         let idempotency_key = Some(format!("drop-table-{}", table_id));
         
-        // Create job via UnifiedJobManager
+        // Create job via UnifiedJobsManager
         let job_id = job_manager
             .create_job(
                 JobType::Cleanup,
@@ -1543,9 +1543,9 @@ impl DDLHandler {
         Ok(job_id)
     }
 
-    /// Complete deletion job (Phase 9, T165 - UnifiedJobManager)
+    /// Complete deletion job (Phase 9, T165 - UnifiedJobsManager)
     async fn complete_deletion_job_unified(
-        job_manager: &crate::jobs::JobManager,
+        job_manager: &crate::jobs::JobsManager,
         job_id: &JobId,
         files_deleted: usize,
         bytes_freed: u64,
@@ -1556,9 +1556,9 @@ impl DDLHandler {
         Ok(())
     }
 
-    /// Fail deletion job (Phase 9, T165 - UnifiedJobManager)
+    /// Fail deletion job (Phase 9, T165 - UnifiedJobsManager)
     async fn fail_deletion_job_unified(
-        job_manager: &crate::jobs::JobManager,
+        job_manager: &crate::jobs::JobsManager,
         job_id: &JobId,
         error_message: &str,
     ) -> Result<(), KalamDbError> {

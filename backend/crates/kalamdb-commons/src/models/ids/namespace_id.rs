@@ -29,6 +29,11 @@ impl NamespaceId {
     pub fn into_string(self) -> String {
         self.0
     }
+
+    /// Create system namespace ID
+    pub fn system() -> Self {
+        Self("system".to_string())
+    }
 }
 
 impl fmt::Display for NamespaceId {

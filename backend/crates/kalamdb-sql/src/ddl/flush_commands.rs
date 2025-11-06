@@ -33,14 +33,14 @@
 //! ## Asynchronous Execution
 //!
 //! FLUSH commands return immediately with a job_id. The actual flush operation runs
-//! in the background via the JobManager. This design prevents long-running SQL
+//! in the background via the JobsManager. This design prevents long-running SQL
 //! commands from blocking the API.
 //!
 //! **Job Lifecycle**:
 //! 1. Parse FLUSH command → validate table/namespace exists
 //! 2. Create job record in system.jobs with status='running'
 //! 3. Return job_id to client (< 100ms)
-//! 4. JobManager spawns async task for flush execution
+//! 4. JobsManager spawns async task for flush execution
 //! 5. Flush task updates system.jobs.result with metrics
 //! 6. Final status: 'completed' (success) or 'failed' (error)
 //!

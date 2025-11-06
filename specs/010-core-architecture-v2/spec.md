@@ -52,7 +52,7 @@ System administrators and developers need a single, coherent component to manage
 
 1. **Given** a client establishes a WebSocket connection and subscribes to a query, **When** data matching the subscription filter is inserted, **Then** the unified LiveQueryManager detects the change and notifies the client within 100ms
 2. **Given** multiple clients subscribe to overlapping queries, **When** a developer inspects LiveQueryManager state, **Then** all active subscriptions, connections, and cached filters are visible in a single registry
-3. **Given** a client disconnects, **When** the LiveQueryManager cleans up resources, **Then** the corresponding subscription, socket, and filter cache entries are removed atomically
+3. **Given** a client disconnects or WebSocket connection closes, **When** the LiveQueryManager's event-driven cleanup triggers, **Then** the corresponding subscription, socket, and filter cache entries are removed atomically without requiring periodic jobs
 
 ---
 
@@ -67,8 +67,9 @@ Database administrators need system tables (users, jobs, namespaces, storages, l
 **Acceptance Scenarios**:
 
 1. **Given** the system initializes for the first time, **When** the database starts, **Then** system tables are created in storage with the same RocksDB/Parquet architecture as shared tables
-2. **Given** a DBA queries system.jobs, **When** the query executes, **Then** it uses the standard TableProvider interface and retrieves data from both RocksDB buffer and Parquet files
-3. **Given** a system table reaches flush threshold, **When** the flush job executes, **Then** buffered rows are written to Parquet files and removed from RocksDB exactly like user tables
+2. **Given** a database upgrade adds a new system table (e.g., system.audit_logs), **When** the system starts with stored schema version < current version, **Then** the missing system table is automatically created and schema version is updated (enabling future migrations using ALTER TABLE pattern)
+3. **Given** a DBA queries system.jobs, **When** the query executes, **Then** it uses the standard TableProvider interface and retrieves data from both RocksDB buffer and Parquet files
+4. **Given** a system table reaches flush threshold, **When** the flush job executes, **Then** buffered rows are written to Parquet files and removed from RocksDB exactly like user tables
 
 ---
 
@@ -85,16 +86,29 @@ Developers need the ability to define and query views that present alternative s
 1. **Given** a developer defines a view `v_active_users` as `SELECT * FROM system.users WHERE deleted_at IS NULL`, **When** the view is registered in SchemaRegistry, **Then** it appears in information_schema.tables with table_type='VIEW'
 2. **Given** a view is registered, **When** a user executes `SELECT * FROM v_active_users`, **Then** the query planner transparently rewrites it to the underlying table query
 3. **Given** the underlying table schema changes, **When** the SchemaRegistry invalidates cache, **Then** dependent views are also invalidated and rebuilt on next access
+4. **Given** a view `v_active_users` depends on system.users which is then dropped, **When** a user queries `SELECT * FROM v_active_users`, **Then** the query fails immediately with error message "View v_active_users references missing table system.users" (validation at query time, not DROP time)
+
+---
+
+## Clarifications
+
+### Session 2025-11-06
+
+- Q: What should be the SchemaRegistry cache size limit and eviction policy? → A: No limit needed - cache all tables. Table count won't exceed memory limits in practice.
+- Q: How should LiveQueryManager handle abandoned subscriptions cleanup? → A: Connection-based cleanup - Remove subscription when WebSocket closes (event-driven)
+- Q: How does system table initialization handle upgrades where new system tables are added? → A: Schema version comparison - Store schema version, compare on startup, create missing tables if version mismatch. This enables future migrations using same pattern as ALTER TABLE
+- Q: When should view dependency validation happen if underlying table is dropped? → A: Query-time validation - Check dependencies when view is queried, fail with clear error (no CASCADE logic needed)
+- Q: How should the 50-100× Arrow schema speedup be validated? → A: Benchmark test with 1000 queries - Automated test measures schema() latency for repeated queries (first call 50-100μs uncached, subsequent <2μs cached)
 
 ---
 
 ### Edge Cases
 
-- What happens when SchemaRegistry cache size exceeds memory limits? Should implement LRU eviction.
+- SchemaRegistry caches all tables without eviction since table count stays within memory limits
 - How does the system handle Arrow schema cache invalidation when tables are dropped? Must remove all cached entries.
-- What if LiveQueryManager registry grows unbounded with abandoned subscriptions? Need periodic cleanup job.
-- How does system table initialization handle upgrades where new system tables are added? Must detect missing tables and create them.
-- What happens if a view's underlying table is dropped? Query should fail with clear error message indicating broken view dependency.
+- LiveQueryManager cleans up subscriptions when WebSocket connections close (event-driven, no periodic job needed)
+- System table initialization uses schema version comparison on startup - compares stored version against current version, creates missing tables if mismatch. This pattern supports future migrations (same as ALTER TABLE).
+- View dependency validation happens at query time - if underlying table is dropped, querying the view fails with clear error message (no CASCADE logic during DROP TABLE)
 
 ## Requirements *(mandatory)*
 
@@ -103,22 +117,22 @@ Developers need the ability to define and query views that present alternative s
 #### Phase 1: Foundation (Must Complete First)
 
 - **FR-000**: AppContext MUST be the single source of truth for NodeId, loaded once from config.toml during initialization
-- **FR-001**: System MUST rename schema/ directory to schema_registry/ throughout the codebase
-- **FR-002**: SchemaCache MUST add arrow_schemas: DashMap<TableId, Arc<Schema>> field for Arrow schema memoization
-- **FR-003**: SchemaCache MUST expose get_arrow_schema(table_id) method that computes on first call (~50-100μs) and returns cached Arc::clone() on subsequent calls (~1-2μs)
-- **FR-004**: SchemaCache invalidate() and clear() methods MUST remove Arrow schema entries alongside table metadata
-- **FR-005**: TableProviderCore MUST add arrow_schema() method that calls SchemaCache.get_arrow_schema()
-- **FR-006**: All 11 TableProvider implementations (UserTableAccess, SharedTableProvider, StreamTableProvider, 8 system tables) MUST use arrow_schema() instead of schema_ref() in their schema() methods
+- **FR-001**: System MUST rename schema/ directory to schema_registry/ throughout the codebase (NOTE: SchemaCache struct will also be renamed to SchemaRegistry)
+- **FR-002**: CachedTableData MUST add arrow_schema: Arc<RwLock<Option<Arc<Schema>>>> field (using std::sync::RwLock) for lazy Arrow schema initialization
+- **FR-003**: CachedTableData MUST expose arrow_schema() method that computes on first call (~50-100μs) and returns cached Arc::clone() on subsequent calls (~1-2μs) via read-optimized RwLock with double-check locking
+- **FR-004**: SchemaCache invalidate() and clear() methods automatically remove Arrow schemas when CachedTableData is removed (embedded design eliminates separate cleanup)
+- **FR-005**: TableProviderCore MUST add arrow_schema() method that delegates to unified_cache.get_arrow_schema(&self.table_id). MUST also remove the old schema: SchemaRef field (redundant with memoization).
+- **FR-006**: All 11 TableProvider implementations (UserTableAccess, SharedTableProvider, StreamTableProvider, 8 system tables) MUST use arrow_schema() in their schema() methods and MUST panic on error (not return empty schema)
 
 #### Phase 2: Refactoring (Depends on Phase 1)
 
 - **FR-007**: System MUST consolidate UserConnections, UserTableChangeDetector, and LiveQueryManager into a single LiveQueryManager struct
 - **FR-008**: Unified LiveQueryManager MUST maintain registry of all active subscriptions with their WebSocket connections, filters, and metadata
-- **FR-009**: System MUST initialize system tables (users, jobs, namespaces, storages, live_queries, tables) using the same storage backend as shared tables
+- **FR-009**: System MUST initialize system tables (users, jobs, namespaces, storages, live_queries, tables) using the same storage backend as shared tables. On startup, compare schema version; if mismatch, create missing system tables to enable future migration path.
 - **FR-010**: System tables MUST support flush operations that write buffered rows from RocksDB to Parquet files
 - **FR-011**: System MUST support registering views in SchemaRegistry with view definitions stored separately from physical tables
 - **FR-012**: Views MUST be queryable via SELECT statements with transparent rewriting to underlying table queries
-- **FR-013**: SchemaRegistry MUST track view dependencies on base tables for cascade invalidation
+- **FR-013**: SchemaRegistry MUST track view dependencies on base tables for cascade invalidation. Views MUST validate dependencies at query time - if base table is missing, query fails with clear error indicating broken dependency (no CASCADE enforcement during DROP TABLE)
 - **FR-014**: All components requiring NodeId MUST receive it via AppContext parameter instead of instantiating NodeId locally
 - **FR-015**: SqlExecutor refactoring from executor.rs to executor/mod.rs MUST be completed AFTER FR-000 to FR-006 are done
 - **FR-016**: Refactored SqlExecutor MUST depend fully on AppContext and schema_registry (no legacy patterns)
@@ -127,9 +141,9 @@ Developers need the ability to define and query views that present alternative s
 ### Key Entities
 
 - **AppContext**: Singleton containing all global configuration and state. Single owner of NodeId loaded from config.toml. Passed by reference to all components requiring global state.
-- **SchemaCache**: Unified cache containing TableDefinition metadata AND memoized Arrow schemas. New arrow_schemas DashMap provides 50-100× speedup for repeated schema access.
-- **CachedTableData**: Contains Arc<TableDefinition> as single source of truth. Arrow schemas generated on-demand via to_arrow_schema() and cached separately in arrow_schemas map.
-- **TableProviderCore**: Common core for all providers, provides arrow_schema() method that delegates to SchemaCache.get_arrow_schema() for memoized access
+- **SchemaCache** (will be renamed to SchemaRegistry): Unified cache containing CachedTableData with embedded Arrow schema memoization. Single DashMap provides 50-100× speedup for repeated schema access.
+- **CachedTableData**: Contains Arc<TableDefinition> as single source of truth AND lazy-initialized Arc<Schema> (embedded via std::sync::RwLock<Option>). Arrow schema computed on first arrow_schema() call, cached forever until invalidation. Clone semantics: All clones share the same RwLock (intentional).
+- **TableProviderCore**: Common core for all providers. Has unified_cache: Arc<SchemaCache> field. Provides arrow_schema() method that delegates to unified_cache.get_arrow_schema(&table_id) → CachedTableData.arrow_schema() for memoized access. Will remove redundant schema: SchemaRef field.
 - **LiveQueryManager**: Consolidated struct containing subscription registry (RwLock<LiveQueryRegistry>), user connections (HashMap<ConnectionId, UserConnectionSocket>), filter cache (RwLock<FilterCache>), initial data fetcher, schema registry reference, and node ID
 - **SystemTableStorage**: New abstraction for system tables that uses standard TableProvider + StorageBackend pattern instead of custom system table logic
 - **ViewDefinition**: Metadata structure for virtual views containing view name, SQL definition, dependent table IDs, and cached rewritten query plan
@@ -140,7 +154,7 @@ Developers need the ability to define and query views that present alternative s
 
 - **SC-000**: NodeId is allocated exactly once per server instance and all logged events use the identical NodeId value
 - **SC-001**: Arrow schema cache hit rate exceeds 99% for workloads with stable table schemas
-- **SC-002**: Schema lookup latency reduces from 50-100μs (uncached) to under 2μs (memoized) for repeated accesses - achieving 50-100× speedup
+- **SC-002**: Schema lookup latency reduces from 50-100μs (uncached) to under 2μs (memoized) for repeated accesses - achieving 50-100× speedup. Validated via automated benchmark test with 1000 repeated queries.
 - **SC-003**: Arrow schema memoization adds less than 2MB memory overhead for 1000 tables (~1-2KB per table)
 - **SC-004**: All 11 TableProvider implementations successfully use SchemaCache.get_arrow_schema() with zero performance regressions
 - **SC-005**: LiveQueryManager consolidation reduces subscription management code by at least 30% (lines of code metric)
@@ -220,12 +234,16 @@ This refactoring MUST follow strict ordering to avoid breaking changes:
 
 ### Arrow Schema Memoization Details (FR-002 to FR-006)
 **Files to modify**:
-1. `schema_registry/schema_cache.rs`:
-   - Add `arrow_schemas: DashMap<TableId, Arc<Schema>>` field
-   - Implement `get_arrow_schema()` method (fast path: cache hit in 1-2μs, slow path: compute + cache in 50-100μs)
-   - Update `invalidate()` and `clear()` to remove Arrow schemas
+1. `schema_registry/schema_cache.rs` (will be renamed to schema_registry/registry.rs):
+   - Add `arrow_schema: Arc<RwLock<Option<Arc<Schema>>>>` field to CachedTableData (using std::sync::RwLock)
+   - Update CachedTableData::new() to initialize arrow_schema as Arc::new(RwLock::new(None))
+   - Implement CachedTableData::arrow_schema() with double-check locking
+   - Implement SchemaCache::get_arrow_schema() that delegates to CachedTableData
+   - Add Clone semantics documentation to CachedTableData
 2. `tables/base_table_provider.rs`:
-   - Add `arrow_schema()` method to TableProviderCore
+   - Remove `schema: SchemaRef` field from TableProviderCore (redundant)
+   - Add `arrow_schema()` method to TableProviderCore that delegates to unified_cache
+   - Update constructor to not require schema parameter
 3. All 11 TableProvider implementations:
    - `tables/user_tables/user_table_provider.rs` (UserTableAccess)
    - `tables/shared_tables/shared_table_provider.rs` (SharedTableProvider)
@@ -240,3 +258,5 @@ This refactoring MUST follow strict ordering to avoid breaking changes:
    - `tables/system/stats.rs` (StatsTableProvider)
 
 **Performance target**: 50-100× speedup for schema access (75μs → 1.5μs for repeated queries)
+
+**Testing strategy**: Create automated benchmark executing 1000 identical SELECT queries measuring schema() method call latency. Success criteria: First call 50-100μs (uncached), subsequent calls <2μs (cached).
