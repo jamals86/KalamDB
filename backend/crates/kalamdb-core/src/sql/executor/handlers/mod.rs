@@ -1,7 +1,7 @@
 //! SQL Execution Handlers
 //!
 //! This module provides modular handlers for different types of SQL operations:
-//! - **types**: Core types (ExecutionContext, ParamValue, ExecutionResult, ExecutionMetadata)
+//! - **models**: Core types (ExecutionContext, ScalarValue, ExecutionResult, ExecutionMetadata)
 //! - **authorization**: Authorization gateway (COMPLETE - Phase 9.3)
 //! - **transaction**: Transaction handling (COMPLETE - Phase 9.4)
 //! - **ddl**: DDL operations (future)
@@ -10,7 +10,7 @@
 //! - **flush**: Flush operations (future)
 //! - **subscription**: Live query subscriptions (future)
 //! - **user_management**: User CRUD operations (future)
-//! - **table_registry**: Table registration (future)
+//! - **table_registry**: Table registration (REMOVED - deprecated REGISTER/UNREGISTER)
 //! - **system_commands**: VACUUM, OPTIMIZE, ANALYZE (future)
 //! - **helpers**: Shared helper functions (future)
 //! - **audit**: Audit logging (future)
@@ -19,12 +19,9 @@ use crate::error::KalamDbError;
 use datafusion::execution::context::SessionContext;
 use kalamdb_sql::statement_classifier::SqlStatement;
 
-pub mod types;
+// Core types relocated to executor/models in v3
 pub mod authorization;
 pub mod ddl;
-pub mod transaction;
-pub mod helpers;
-pub mod audit;
 
 // Phase 7 (US3): New handlers
 pub mod dml;
@@ -32,14 +29,13 @@ pub mod query;
 pub mod flush;
 pub mod subscription;
 pub mod user_management;
-pub mod table_registry;
+// pub mod table_registry; // removed
 pub mod system_commands;
 
-// Re-export core types for convenience
-pub use types::{ExecutionContext, ExecutionMetadata, ExecutionResult, ParamValue};
+// Re-export core types from executor/models for convenience
+pub use crate::sql::executor::models::{ExecutionContext, ExecutionMetadata, ExecutionResult, ScalarValue};
 pub use authorization::AuthorizationHandler;
 pub use ddl::DDLHandler;
-pub use transaction::TransactionHandler;
 
 // Phase 7 (US3): Re-export new handlers
 pub use dml::DMLHandler;
@@ -47,7 +43,7 @@ pub use query::QueryHandler;
 pub use flush::FlushHandler;
 pub use subscription::SubscriptionHandler;
 pub use user_management::UserManagementHandler;
-pub use table_registry::TableRegistryHandler;
+// pub use table_registry::TableRegistryHandler; // removed
 pub use system_commands::SystemCommandsHandler;
 
 /// Common trait for SQL statement handlers
@@ -71,7 +67,7 @@ pub use system_commands::SystemCommandsHandler;
 ///         &self,
 ///         session: &SessionContext,
 ///         statement: SqlStatement,
-///         params: Vec<ParamValue>,
+///         params: Vec<ScalarValue>,
 ///         context: &ExecutionContext,
 ///     ) -> Result<ExecutionResult, KalamDbError> {
 ///         // Handler implementation
@@ -105,7 +101,7 @@ pub trait StatementHandler: Send + Sync {
         &self,
         session: &SessionContext,
         statement: SqlStatement,
-        params: Vec<ParamValue>,
+        params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError>;
 

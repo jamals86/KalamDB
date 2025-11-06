@@ -4,9 +4,8 @@
 //! **Phase 7 Task T069**: Implement subscription handler.
 
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::{
-    ExecutionContext, ExecutionResult, ParamValue, StatementHandler,
-};
+use crate::sql::executor::handlers::StatementHandler;
+use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use async_trait::async_trait;
 use datafusion::execution::context::SessionContext;
 use kalamdb_sql::statement_classifier::SqlStatement;
@@ -30,7 +29,7 @@ impl StatementHandler for SubscriptionHandler {
         &self,
         _session: &SessionContext,
         _statement: SqlStatement,
-        _params: Vec<ParamValue>,
+        _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         Err(KalamDbError::InvalidOperation(

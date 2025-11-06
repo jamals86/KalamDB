@@ -12,7 +12,7 @@
 //! - Phase 2: ALTER/DROP TABLE (moderate, ~151 lines)
 //! - Phase 3: CREATE TABLE (complex, 445 lines with 3 table type branches)
 
-use super::types::{ExecutionContext, ExecutionMetadata, ExecutionResult};
+use crate::sql::executor::models::{ExecutionContext, ExecutionMetadata, ExecutionResult};
 use kalamdb_commons::schemas::TableType;
 use crate::error::KalamDbError;
 use datafusion::execution::context::SessionContext;

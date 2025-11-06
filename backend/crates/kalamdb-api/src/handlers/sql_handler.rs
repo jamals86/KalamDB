@@ -8,7 +8,7 @@ use kalamdb_commons::models::UserId;
 use kalamdb_core::sql::ExecutionResult;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::{ExecutorMetadataAlias, SqlExecutor};
-use kalamdb_core::sql::executor::handlers::types::ExecutionContext;
+use kalamdb_core::sql::executor::models::ExecutionContext;
 use log::warn;
 use std::sync::Arc;
 use std::time::Instant;
@@ -199,7 +199,7 @@ async fn execute_single_statement(
         
         // Execute through SqlExecutor (handles both custom DDL and DataFusion)
         match sql_executor
-            .execute_with_metadata(&session, sql, &exec_ctx, metadata)
+            .execute_with_metadata(&session, sql, &exec_ctx, metadata, Vec::new())
             .await
         {
             Ok(result) => {

@@ -309,7 +309,7 @@ impl TestServer {
 
         // Try custom DDL/DML execution first (same as REST API)
         // Phase 10: execute() now requires ExecutionContext instead of Option<&UserId>
-        use kalamdb_core::sql::executor::handlers::types::ExecutionContext;
+    use kalamdb_core::sql::executor::models::ExecutionContext;
         use kalamdb_commons::Role;
         
         let exec_ctx = match &user_id_obj {
@@ -317,7 +317,7 @@ impl TestServer {
             None => ExecutionContext::new(UserId::system(), Role::System),
         };
         
-        match self.sql_executor.execute(&*self.session_context, sql, &exec_ctx).await {
+    match self.sql_executor.execute(&*self.session_context, sql, &exec_ctx, Vec::new()).await {
             Ok(result) => {
                 use kalamdb_core::sql::ExecutionResult;
                 match result {

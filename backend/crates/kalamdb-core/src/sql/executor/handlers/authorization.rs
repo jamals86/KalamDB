@@ -4,7 +4,7 @@
 //! implementing fail-fast permission validation before statement execution.
 
 use crate::error::KalamDbError;
-use super::types::ExecutionContext;
+use crate::sql::executor::models::ExecutionContext;
 use kalamdb_sql::statement_classifier::SqlStatement;
 use kalamdb_commons::{NamespaceId, UserId};
 
