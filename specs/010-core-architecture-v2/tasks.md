@@ -86,9 +86,9 @@ All paths are relative to `backend/crates/kalamdb-core/` unless otherwise specif
 
 ### Step 1: Directory Rename (FR-001)
 
-- [ ] T018 [US1] Rename directory `src/schema/` to `src/schema_registry/` in `backend/crates/kalamdb-core/`
-- [ ] T019 [US1] Update `src/lib.rs` to export `pub mod schema_registry;` (was `pub mod schema;`)
-- [ ] T020 [US1] Find and replace all imports: `use kalamdb_core::schema::` → `use kalamdb_core::schema_registry::` across kalamdb-core
+- [x] T018 [US1] Rename directory `src/schema/` to `src/schema_registry/` in `backend/crates/kalamdb-core/`
+- [x] T019 [US1] Update `src/lib.rs` to export `pub mod schema_registry;` (was `pub mod schema;`)
+- [x] T020 [US1] Find and replace all imports: `use kalamdb_core::schema::` → `use kalamdb_core::schema_registry::` across kalamdb-core
 
 ### Step 2: Add arrow_schema Field to CachedTableData (FR-002)
 
