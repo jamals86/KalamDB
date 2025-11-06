@@ -1,5 +1,41 @@
 # KalamDB Development Guidelines
 
+## 🎯 Core Coding Principles
+
+**ALWAYS follow these essential guidelines:**
+
+1. **Model Separation**: Each model MUST be in its own separate file
+   ```rust
+   // ✅ CORRECT: Separate files
+   models/user.rs        // User model only
+   models/job.rs         // Job model only
+   models/namespace.rs   // Namespace model only
+   
+   // ❌ WRONG: Multiple models in one file
+   models/all.rs         // Contains User, Job, Namespace together
+   ```
+
+2. **AppContext-First Pattern**: Use `Arc<AppContext>` parameter instead of individual fields
+   ```rust
+   // ✅ CORRECT: Pass AppContext
+   pub trait JobExecutor {
+       fn execute(&self, app_ctx: Arc<AppContext>) -> Result<()>;
+       // Access via: app_ctx.node_id(), app_ctx.schema_registry(), etc.
+   }
+   
+   // ❌ WRONG: Pass individual members
+   pub trait JobExecutor {
+       fn execute(&self, node_id: NodeId, schema: Arc<SchemaCache>) -> Result<()>;
+   }
+   ```
+
+3. **Performance & Memory Optimization**: Focus on lightweight memory usage and high concurrency
+   - Use `Arc<T>` for zero-copy sharing (no cloning data)
+   - DashMap for lock-free concurrent access
+   - Memoize expensive computations (e.g., Arrow schema construction)
+   - Separate large structs from hot-path metadata (LRU timestamps in separate map)
+   - Cache singleton instances (e.g., UserTableShared per table, not per user)
+
 ## ⚠️ CRITICAL: System Table Models Architecture
 
 **SINGLE SOURCE OF TRUTH**: All system table models are defined in `kalamdb-commons/src/models/system.rs`
@@ -10,7 +46,17 @@
 use kalamdb_commons::system::{User, Job, LiveQuery, Namespace, SystemTable, InformationSchemaTable, UserTableCounter};
 ```
 
-## ⚠️ CRITICAL: Module Organization (Phase 3 Consolidation)
+## ⚠️ CRITICAL: Module Organization (Phase 10 - Current)
+
+**Schema Registry** (Branch: 010-core-architecture-v2 - IN PROGRESS):
+```rust
+// ✅ CORRECT: Import from schema_registry module (renamed from schema/)
+use kalamdb_core::schema_registry::{SchemaCache, CachedTableData, ArrowSchemaWithOptions};
+use kalamdb_core::schema_registry::{SystemColumns, project_batch, schemas_compatible};
+
+// Arrow Schema Memoization (Phase 10 - Step 3):
+// SchemaCache.get_arrow_schema(table_id) -> Arc<Schema> (50-100× faster than to_arrow_schema())
+```
 
 **Table Row Models**: User/Shared/Stream table row models are in their respective modules:
 ```rust
@@ -18,27 +64,27 @@ use kalamdb_commons::system::{User, Job, LiveQuery, Namespace, SystemTable, Info
 use kalamdb_core::tables::user_tables::UserTableRow;
 use kalamdb_core::tables::shared_tables::SharedTableRow;
 use kalamdb_core::tables::stream_tables::StreamTableRow;
-
-// ✅ ALSO CORRECT: Re-exported in models/tables.rs for backward compatibility
-use kalamdb_core::models::tables::{UserTableRow, SharedTableRow, StreamTableRow};
 ```
 
-**Schema & Catalog**: SchemaRegistry exposed from both schema and catalog modules:
+**System Tables Registry** (Phase 5 Complete):
 ```rust
-// ✅ CORRECT: Direct import from schema module
-use kalamdb_core::schema::{SchemaRegistry, TableMetadata};
+// ✅ CORRECT: Access via AppContext
+let users_provider = app_context.system_tables().users();
+let jobs_provider = app_context.system_tables().jobs();
+let tables_provider = app_context.system_tables().tables();
 
-// ✅ ALSO CORRECT: Re-exported in catalog module (Phase 3)
-use kalamdb_core::catalog::{SchemaRegistry, TableMetadata, SchemaCache, CachedTableData};
+// All 10 system table providers centralized in SystemTablesRegistry
 ```
 
-**System Table Store**: Moved from stores/ to tables/system/:
+**AppContext Singleton Pattern** (Phase 5 Complete):
 ```rust
-// ✅ CORRECT: New location
-use kalamdb_core::tables::system::system_table_store::SystemTableStore;
+// ✅ CORRECT: Single source of truth for global state
+let app_ctx = AppContext::get();
+let node_id = app_ctx.node_id();           // From config.toml (allocated once)
+let schema_cache = app_ctx.schema_cache();  // Unified cache
+let system_tables = app_ctx.system_tables(); // SystemTablesRegistry
 
-// ✅ ALSO CORRECT: Re-exported in stores/mod.rs for backward compatibility
-use kalamdb_core::stores::system_table::SystemTableStore;
+// Pass Arc<AppContext> to components, not individual fields
 ```
 
 **ALWAYS prefer using enums instead of string**
@@ -90,15 +136,54 @@ tokio = { version = "1.48.0", features = ["full"] }
 ## Project Structure
 ```
 backend/                         # Server binary and core crates
-├── src/main.rs                  # kalamdb-server entry point
+├── src/
+│   ├── main.rs                  # kalamdb-server entry point
+│   ├── lifecycle.rs             # Server startup/shutdown
+│   ├── config.rs                # Configuration management
+│   └── routes.rs                # HTTP route handlers
 └── crates/                      # Supporting libraries
     ├── kalamdb-core/            # Core library (embeddable)
+    │   ├── app_context.rs       # Singleton AppContext (Phase 5)
+    │   ├── schema_registry/     # Schema management (renamed from schema/)
+    │   │   ├── schema_cache.rs  # Unified cache + Arrow memoization
+    │   │   ├── arrow_schema.rs  # Arrow schema utilities
+    │   │   ├── system_columns.rs # System column injection
+    │   │   └── views/           # Virtual views infrastructure
+    │   ├── tables/              # Table implementations
+    │   │   ├── base_table_provider.rs # Common provider interfaces
+    │   │   ├── user_tables/     # User table provider + row models
+    │   │   ├── shared_tables/   # Shared table provider + row models
+    │   │   ├── stream_tables/   # Stream table provider + row models
+    │   │   └── system/          # System tables (10 providers)
+    │   │       ├── registry.rs  # SystemTablesRegistry
+    │   │       ├── users/       # system.users provider
+    │   │       ├── jobs/        # system.jobs provider
+    │   │       ├── namespaces/  # system.namespaces provider
+    │   │       ├── storages/    # system.storages provider
+    │   │       ├── live_queries/ # system.live_queries provider
+    │   │       ├── tables/      # system.tables provider
+    │   │       └── audit_logs/  # system.audit_logs provider
+    │   ├── sql/                 # SQL execution
+    │   │   ├── executor/        # Handler-based executor (Phase 7)
+    │   │   │   ├── mod.rs       # Routing orchestrator
+    │   │   │   └── handlers/    # 7 focused handlers (DDL, DML, Query, etc.)
+    │   │   └── datafusion_session.rs
+    │   ├── jobs/                # Job management (Phase 9)
+    │   │   ├── unified_manager.rs # UnifiedJobManager
+    │   │   └── executors/       # 8 job executors (Flush, Cleanup, etc.)
+    │   ├── flush/               # Flush operations
+    │   ├── storage/             # Storage abstraction
+    │   └── live_query/          # Live query manager
     ├── kalamdb-api/             # REST API and WebSocket
-    ├── kalamdb-sql/             # SQL execution and DataFusion
+    ├── kalamdb-sql/             # SQL parsing and execution
     ├── kalamdb-store/           # RocksDB storage layer
     ├── kalamdb-live/            # Real-time subscriptions
     ├── kalamdb-auth/            # Authentication and authorization
     └── kalamdb-commons/         # Shared utilities and models
+        ├── models/              # Data models
+        │   ├── system.rs        # System table models (SINGLE SOURCE OF TRUTH)
+        │   └── schemas/         # TableDefinition, ColumnDefinition
+        └── constants.rs         # System constants
 
 cli/                             # CLI tool binary
 ├── src/main.rs                  # kalam-cli entry point
@@ -120,9 +205,11 @@ examples/                        # Example applications
     └── src/                     # Imports from '@kalamdb/client'
 
 specs/                           # Feature specifications
-└── 007-user-auth/               # Current feature
-    ├── plan.md                  # Implementation plan
-    └── tasks.md                 # Task breakdown
+├── 009-core-architecture/       # Phase 7-9 (Handler-based executor, Jobs)
+└── 010-core-architecture-v2/    # CURRENT: AppContext, schema_registry, Arrow cache
+    ├── spec.md                  # Feature specification (17 FRs, 11 SCs)
+    ├── checklists/              # Validation checklists
+    └── DATAFUSION_ARCHITECTURE_ANALYSIS.md # Performance analysis
 ```
 
 ## SDK Architecture Principles
@@ -185,6 +272,54 @@ cargo test -p kalamdb-sql
 - **Soft Deletes**: Set `deleted_at` timestamp, return same error as invalid credentials
 - **Authorization Checks**: Verify role permissions BEFORE executing database operations
 - **Storage Abstraction**: Use `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>` (except in kalamdb-store)
+
+## Recent Changes
+- 2025-11-06: **Phase 10 (010-core-architecture-v2): Schema Registry Refactoring** - 🔄 **IN PROGRESS**:
+  - **Branch**: 010-core-architecture-v2
+  - **Specification**: specs/010-core-architecture-v2/spec.md (17 FRs, 11 SCs, 14 acceptance scenarios)
+  - **Objective**: AppContext centralization, schema/ → schema_registry/ rename, Arrow schema memoization, LiveQueryManager consolidation
+  
+  **Phase 1: Foundation (Must Complete First)**:
+  - **FR-000**: AppContext as single source of truth for NodeId (loaded once from config.toml)
+  - **FR-001**: Rename schema/ directory to schema_registry/ throughout codebase
+  - **FR-002**: Add arrow_schemas: DashMap<TableId, Arc<Schema>> to SchemaCache for memoization
+  - **FR-003**: Implement SchemaCache.get_arrow_schema() with compute-once-cache-forever pattern
+  - **FR-004**: Update SchemaCache invalidate() and clear() to remove Arrow schemas
+  - **FR-005**: Add TableProviderCore.arrow_schema() method delegating to SchemaCache
+  - **FR-006**: Update all 11 TableProvider implementations to use memoized Arrow schemas
+    - 3 main types: UserTableAccess, SharedTableProvider, StreamTableProvider
+    - 8 system tables: users, jobs, namespaces, storages, live_queries, tables, audit_logs, stats
+  
+  **Performance Target**: 50-100× speedup for schema access (75μs → 1.5μs for repeated queries)
+  
+  **Phase 2: Refactoring (Depends on Phase 1)**:
+  - **FR-007-008**: LiveQueryManager consolidation (merge UserConnections, UserTableChangeDetector)
+  - **FR-009-010**: System tables as regular storage (RocksDB/Parquet like shared tables)
+  - **FR-011-013**: Views support (virtual tables with transparent query rewriting)
+  - **FR-014**: AppContext pattern (pass Arc<AppContext> instead of individual fields)
+  - **FR-015-016**: SqlExecutor migration (executor.rs → executor/mod.rs with AppContext dependencies)
+  - **FR-017**: All tests passing after refactoring
+  
+  **Implementation Order**:
+  1. AppContext centralization (NodeId from config.toml)
+  2. schema/ → schema_registry/ rename
+  3. Arrow schema memoization (Steps 1-6 above)
+  4. SqlExecutor migration (after foundations ready)
+  5. LiveQueryManager consolidation
+  6. System tables storage
+  7. Views support
+  8. Final testing
+  
+  **Files Modified** (pending):
+  - schema_registry/schema_cache.rs (add arrow_schemas map, get_arrow_schema() method)
+  - tables/base_table_provider.rs (add arrow_schema() to TableProviderCore)
+  - 11 TableProvider implementations (use memoized schemas)
+  
+  **Architecture Analysis**: specs/010-core-architecture-v2/DATAFUSION_ARCHITECTURE_ANALYSIS.md
+  - Verified table design follows DataFusion best practices perfectly
+  - Identified Arrow schema caching as 50-100× performance opportunity
+  - Memory overhead: 1-2MB for 1000 tables (negligible)
+  - Additional opportunities: projection schemas (10-20×), filter caching (5-10×)
 
 ## Recent Changes
 - 2025-01-05: **Phase 8: Legacy Services Removal + KalamSql Elimination** - ✅ **COMPLETE** (100%):
