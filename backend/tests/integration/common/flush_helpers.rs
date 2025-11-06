@@ -61,7 +61,7 @@ pub async fn execute_flush_synchronously(
 
     // Convert to Arrow schema
     let arrow_schema =
-        kalamdb_core::schema::arrow_schema::ArrowSchemaWithOptions::from_json_string(
+        kalamdb_core::schema_registry::arrow_schema::ArrowSchemaWithOptions::from_json_string(
             &latest_schema_version.arrow_schema_json,
         )
         .map_err(|e| format!("Failed to parse Arrow schema: {}", e))?;
@@ -146,7 +146,7 @@ pub async fn execute_shared_flush_synchronously(
     // Table metadata scan not needed for flush execution
 
     let arrow_schema =
-        kalamdb_core::schema::arrow_schema::ArrowSchemaWithOptions::from_json_string(
+        kalamdb_core::schema_registry::arrow_schema::ArrowSchemaWithOptions::from_json_string(
             &latest_schema_version.arrow_schema_json,
         )
         .map_err(|e| format!("Failed to parse Arrow schema: {}", e))?;

@@ -11,7 +11,7 @@
 //! - Memory savings: 6 fields → 3 fields (50% reduction per instance)
 
 use super::{UserTableDeleteHandler, UserTableInsertHandler, UserTableUpdateHandler};
-use crate::schema::{NamespaceId, SchemaCache, TableName, TableType, UserId};
+use crate::schema_registry::{NamespaceId, SchemaCache, TableName, TableType, UserId};
 use crate::tables::base_table_provider::{BaseTableProvider, UserTableShared};
 use crate::error::KalamDbError;
 use crate::ids::SnowflakeGenerator;
@@ -520,7 +520,7 @@ impl BaseTableProvider for UserTableAccess {
         self.shared.core().schema_ref()
     }
 
-    fn table_type(&self) -> crate::schema::TableType {
+    fn table_type(&self) -> crate::schema_registry::TableType {
         self.shared.core().table_type()
     }
 }
@@ -729,8 +729,8 @@ mod tests {
         ))
     }
 
-    fn create_test_metadata() -> Arc<crate::schema::SchemaCache> {
-        use crate::schema::{CachedTableData, SchemaCache};
+    fn create_test_metadata() -> Arc<crate::schema_registry::SchemaCache> {
+        use crate::schema_registry::{CachedTableData, SchemaCache};
         use kalamdb_commons::models::schemas::TableDefinition;
 
         let cache = Arc::new(SchemaCache::new(0, None));

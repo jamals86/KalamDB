@@ -137,24 +137,24 @@ fn test_cli_credential_rotation() {
     assert_eq!(retrieved_v1.password, "old_password");
 
     // Rotate credentials (update password)
-    let creds_v2 = Credentials::new(
+    let creds = Credentials::new(
         "production".to_string(),
         "admin".to_string(),
         "new_secure_password_123".to_string(),
     );
 
     store
-        .set_credentials(&creds_v2)
+        .set_credentials(&creds)
         .expect("Failed to update credentials");
 
     // Retrieve updated credentials
-    let retrieved_v2 = store
+    let retrieved = store
         .get_credentials("production")
         .expect("Failed to get credentials")
         .expect("Credentials should exist");
 
-    assert_eq!(retrieved_v2.password, "new_secure_password_123");
-    assert_eq!(retrieved_v2.username, "admin");
+    assert_eq!(retrieved.password, "new_secure_password_123");
+    assert_eq!(retrieved.username, "admin");
 
     // Verify only one instance exists (not duplicated)
     let instance_list = store.list_instances().expect("Failed to list instances");

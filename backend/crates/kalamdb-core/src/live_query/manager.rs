@@ -12,7 +12,7 @@ use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, In
 use crate::tables::system::LiveQueriesTableProvider;
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
-use crate::schema::registry::SchemaRegistry;
+use crate::schema_registry::registry::SchemaRegistry;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_commons::LiveQueryId;
@@ -825,8 +825,8 @@ pub struct RegistryStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{SchemaCache, SchemaRegistry};
-    use crate::tables::system::tables_v2::TablesStore;
+    use crate::schema_registry::{SchemaCache, SchemaRegistry};
+    use crate::tables::system::tables::TablesStore;
     use crate::tables::system::LiveQueriesTableProvider;
     use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
     use kalamdb_commons::datatypes::KalamDataType;

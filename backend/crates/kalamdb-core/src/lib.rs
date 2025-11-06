@@ -11,7 +11,7 @@ pub mod ids;
 pub mod jobs;
 pub mod live_query;
 pub mod models; // Domain models for system tables and table rows
-pub mod schema;
+pub mod schema_registry;
 pub mod app_context;
 pub mod sql;
 pub mod storage;

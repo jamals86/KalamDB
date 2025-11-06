@@ -7,7 +7,7 @@
 //!
 //! ## Architecture
 //!
-//! Follows the EntityStore pattern established by users_v2:
+//! Follows the EntityStore pattern established by users:
 //! 1. Single source of truth for schema (audit_logs_table.rs)
 //! 2. Type-safe store operations via SystemTableStore<AuditLogId, AuditLogEntry>
 //! 3. DataFusion integration for SQL queries

@@ -26,7 +26,7 @@ async fn setup_test_executor() -> (
     SqlExecutor,
     TempDir,
     Arc<KalamSql>,
-    Arc<kalamdb_core::tables::system::users_v2::UsersTableProvider>,
+    Arc<kalamdb_core::tables::system::users::UsersTableProvider>,
 ) {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let db_path = temp_dir.path().to_str().unwrap();
@@ -79,7 +79,7 @@ async fn setup_test_executor() -> (
     register_system_tables(&system_schema, backend.clone())
         .expect("Failed to register system tables");
     let users_provider =
-        Arc::new(kalamdb_core::tables::system::users_v2::UsersTableProvider::new(backend.clone()));
+        Arc::new(kalamdb_core::tables::system::users::UsersTableProvider::new(backend.clone()));
 
     // Create executor
     let executor = SqlExecutor::new(
@@ -102,7 +102,7 @@ async fn setup_test_executor() -> (
 
 /// Helper to create a system/DBA user for authorization tests
 async fn create_system_user(
-    users_provider: &Arc<kalamdb_core::tables::system::users_v2::UsersTableProvider>,
+    users_provider: &Arc<kalamdb_core::tables::system::users::UsersTableProvider>,
 ) -> UserId {
     let user_id = UserId::new("test_admin");
     let user = kalamdb_commons::system::User {

@@ -6,7 +6,7 @@
 
 use crate::error::KalamDbError;
 use crate::live_query::filter::FilterPredicate;
-use crate::schema::TableType;
+use crate::schema_registry::TableType;
 use crate::tables::system::system_table_store::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::{StreamTableStore, UserTableStore};
 use chrono::DateTime;

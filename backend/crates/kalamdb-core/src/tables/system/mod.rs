@@ -3,35 +3,33 @@
 //! All system tables now use EntityStore-based implementations.
 
 pub mod audit_logs;
-pub mod information_schema_columns;
-pub mod information_schema_tables;
 pub mod registry; // Phase 5: SystemTablesRegistry - centralized provider access
 pub mod system_table_definitions; // Phase 15: System table schema definitions
 pub mod system_table_trait;
 pub mod system_table_store; // Colocated SystemTableStore (moved from stores/)
 // EntityStore-based system tables (using SystemTableStore<K,V>)
-pub mod jobs_v2;
-pub mod live_queries_v2;
-pub mod namespaces_v2;
-// schemas module removed - tables_v2 now handles TableDefinition storage
+pub mod jobs;
+pub mod live_queries;
+pub mod namespaces;
+// schemas module removed - tables now handles TableDefinition storage
 pub mod stats;
-pub mod storages_v2;
-pub mod tables_v2;
-pub mod users_v2;
+pub mod storages;
+pub mod tables;
+pub mod users;
 
 // Export registry (Phase 5 completion)
 pub use registry::SystemTablesRegistry;
 
 // Export common trait
 pub use system_table_trait::SystemTableProviderExt;
-// Export all v2 providers as the standard names (no _v2 suffix in public API)
+// Export all v2 providers as the standard names (no  suffix in public API)
 pub use audit_logs::AuditLogsTableProvider;
 pub use information_schema_columns::InformationSchemaColumnsProvider;
 pub use information_schema_tables::InformationSchemaTablesProvider;
-pub use jobs_v2::JobsTableProvider;
-pub use live_queries_v2::LiveQueriesTableProvider;
-pub use namespaces_v2::NamespacesTableProvider;
+pub use jobs::JobsTableProvider;
+pub use live_queries::LiveQueriesTableProvider;
+pub use namespaces::NamespacesTableProvider;
 pub use stats::StatsTableProvider;
-pub use storages_v2::StoragesTableProvider;
-pub use tables_v2::TablesTableProvider;
-pub use users_v2::UsersTableProvider;
+pub use storages::StoragesTableProvider;
+pub use tables::TablesTableProvider;
+pub use users::UsersTableProvider;

@@ -444,8 +444,8 @@ impl SharedTableChangeDetector {
 mod tests {
     use super::*;
     use crate::live_query::connection_registry::NodeId;
-    use crate::schema::{SchemaCache, SchemaRegistry};
-    use crate::tables::system::tables_v2::TablesStore;
+    use crate::schema_registry::{SchemaCache, SchemaRegistry};
+    use crate::tables::system::tables::TablesStore;
     use crate::tables::system::LiveQueriesTableProvider;
     use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
     use kalamdb_commons::datatypes::KalamDataType;

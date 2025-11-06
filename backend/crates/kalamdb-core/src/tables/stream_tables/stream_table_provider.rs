@@ -7,7 +7,7 @@
 //! - Optional ephemeral mode (only store if subscribers exist)
 //! - Real-time event delivery to subscribers
 
-use crate::schema::{NamespaceId, SchemaCache, TableName, TableType};
+use crate::schema_registry::{NamespaceId, SchemaCache, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::tables::base_table_provider::{BaseTableProvider, TableProviderCore};
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
@@ -347,7 +347,7 @@ impl BaseTableProvider for StreamTableProvider {
         self.core.schema_ref()
     }
 
-    fn table_type(&self) -> crate::schema::TableType {
+    fn table_type(&self) -> crate::schema_registry::TableType {
         self.core.table_type()
     }
 }
@@ -518,7 +518,7 @@ impl TableProvider for StreamTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{CachedTableData, SchemaCache, TableType};
+    use crate::schema_registry::{CachedTableData, SchemaCache, TableType};
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_store::test_utils::TestDb;
     use serde_json::json;

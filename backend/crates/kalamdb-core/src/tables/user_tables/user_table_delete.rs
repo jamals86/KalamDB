@@ -7,7 +7,7 @@
 //! - Data isolation enforcement
 //! - Atomic delete operations
 
-use crate::schema::{NamespaceId, TableName, UserId};
+use crate::schema_registry::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::tables::system::system_table_store::UserTableStoreExt;

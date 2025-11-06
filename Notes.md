@@ -149,3 +149,35 @@ Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB
 Parquet Querying Limitation: After flush, data is removed from RocksDB but queries don't yet retrieve from Parquet files - this is a known gap
 
 
+
+
+
+Core restructuring:
+0) AppContext should be passed where - NodeId should be passed and used directly from the config.toml and allocated one time only, AppContext should have it once and AppContext single instance should be passed to everywhere that the NodeId or any thing is needed
+1) kalamdb-core\src\schema\schema_cache.rs - Must be renamed to SchemaRegistry
+2) kalamdb-core\src\schema\schema_cache.rs - should be also used for caching arrow_schemas or schemas for datafusion to not build them each time
+3) backend\crates\kalamdb-core\src\live_query need to be revisited and divide the models
+currently we have:
+pub struct UserConnections {
+    pub sockets: HashMap<ConnectionId, UserConnectionSocket>,
+}
+
+pub struct UserTableChangeDetector {
+    store: Arc<UserTableStore>,
+    live_query_manager: Arc<LiveQueryManager>,
+}
+
+pub struct LiveQueryManager {
+    registry: Arc<tokio::sync::RwLock<LiveQueryRegistry>>,
+    live_queries_provider: Arc<LiveQueriesTableProvider>,
+    filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
+    initial_data_fetcher: Arc<InitialDataFetcher>,
+    schema_registry: Arc<SchemaRegistry>,
+    node_id: NodeId,
+}
+
+we need to combine all of these in one LiveQueryManager struct
+
+5) Make the system so whenever the system initiated we create the system tables inside the storages, so it acts like any other table in the system, very similar to shared table
+6) we have views: backend\crates\kalamdb-core\src\schema_registry\views which is based on other table or tables but with different structure, these tables is not stored anywhere
+7) Making sure the code compiles and the tests also compiles

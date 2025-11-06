@@ -3,8 +3,8 @@
 //! Provides global access to all core resources with simplified 3-parameter initialization.
 //! Uses constants from kalamdb_commons for table prefixes.
 
-use crate::schema::SchemaCache;
-use crate::schema::registry::SchemaRegistry;
+use crate::schema_registry::SchemaCache;
+use crate::schema_registry::registry::SchemaRegistry;
 // use crate::jobs::UnifiedJobManager; // TODO: Implement UnifiedJobManager
 use crate::jobs::executors::{
     BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor,
@@ -15,7 +15,7 @@ use crate::live_query::LiveQueryManager;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::storage::storage_registry::StorageRegistry;
 use crate::tables::system::registry::SystemTablesRegistry;
-use crate::tables::system::tables_v2::TablesStore;
+use crate::tables::system::tables::TablesStore;
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
@@ -34,6 +34,8 @@ static APP_CONTEXT: OnceLock<Arc<AppContext>> = OnceLock::new();
 /// - Memory-efficient per-request operations
 /// - Single source of truth for all shared state
 pub struct AppContext {
+    node_id: NodeId,
+
     // ===== Caches =====
     schema_cache: Arc<SchemaCache>,
     schema_registry: Arc<SchemaRegistry>,
@@ -179,7 +181,7 @@ impl AppContext {
                         .expect("Failed to register information_schema table");
                 }
 
-                // Create schema store (for table definitions) - using TablesStore from tables_v2
+                // Create schema store (for table definitions) - using TablesStore from tables
                 let schema_store = Arc::new(TablesStore::new(storage_backend.clone(), "system_tables"));
 
                 // Create schema registry (Phase 5: unified cache + persistence)
@@ -220,6 +222,7 @@ impl AppContext {
                 ));
 
                 Arc::new(AppContext {
+                    node_id,
                     schema_cache,
                     schema_registry,
                     user_table_store,

@@ -1,11 +1,27 @@
 # Feature Specification: Core Architecture Refactoring v2
 
-**Feature Branch**: `1-core-architecture-v2`  
+**Feature Branch**: `010-core-architecture-v2`  
 **Created**: 2025-11-06  
 **Status**: Draft  
-**Input**: User description: "Core architecture refactoring: SchemaRegistry renaming, Arrow schema caching, LiveQueryManager consolidation, system tables initialization, and views implementation"
+**Input**: User description: "Core architecture refactoring: SchemaRegistry renaming, Arrow schema caching, LiveQueryManager consolidation, system tables initialization, views implementation, and AppContext centralization"
 
 ## User Scenarios & Testing *(mandatory)*
+
+### User Story 0 - AppContext Centralization with NodeId (Priority: P0)
+
+Developers and system components need a single source of truth for global configuration like NodeId. Currently, NodeId is instantiated multiple times across the codebase, leading to inconsistencies and configuration drift. AppContext should be the sole owner of NodeId (loaded once from config.toml) and passed everywhere NodeId or other global state is needed.
+
+**Why this priority**: This is P0 (foundational) because it affects all other refactoring work. Without centralized AppContext, components continue to create their own NodeId instances, making debugging distributed operations impossible and violating single-source-of-truth principles.
+
+**Independent Test**: Can be tested by starting the server, inspecting logs from multiple components (LiveQueryManager, job executors, audit logs), and verifying all log entries use the identical NodeId loaded from config.toml.
+
+**Acceptance Scenarios**:
+
+1. **Given** config.toml specifies `node_id = "node-prod-01"`, **When** the server initializes AppContext, **Then** NodeId is allocated exactly once and stored in AppContext
+2. **Given** AppContext is initialized with NodeId, **When** any component (LiveQueryManager, job executors, handlers) needs NodeId, **Then** it accesses NodeId via AppContext reference without creating new instances
+3. **Given** a developer inspects distributed logs from multiple operations, **When** correlating events by NodeId, **Then** all events from the same server instance share the identical NodeId value
+
+---
 
 ### User Story 1 - Schema Registry Performance Optimization (Priority: P1)
 
@@ -83,6 +99,7 @@ Developers need the ability to define and query views that present alternative s
 
 ### Functional Requirements
 
+- **FR-000**: AppContext MUST be the single source of truth for NodeId, loaded once from config.toml during initialization
 - **FR-001**: System MUST rename schema_cache.rs module to SchemaRegistry throughout the codebase
 - **FR-002**: SchemaRegistry MUST cache constructed Arrow schemas with DashMap-based memoization for zero-allocation repeated access
 - **FR-003**: SchemaRegistry MUST expose get_arrow_schema() method that returns cached Arc<Schema> on subsequent calls
@@ -94,10 +111,12 @@ Developers need the ability to define and query views that present alternative s
 - **FR-009**: System MUST support registering views in SchemaRegistry with view definitions stored separately from physical tables
 - **FR-010**: Views MUST be queryable via SELECT statements with transparent rewriting to underlying table queries
 - **FR-011**: SchemaRegistry MUST track view dependencies on base tables for cascade invalidation
-- **FR-012**: System MUST ensure all unit tests and integration tests compile and pass after refactoring
+- **FR-012**: All components requiring NodeId MUST receive it via AppContext parameter instead of instantiating NodeId locally
+- **FR-013**: System MUST ensure all unit tests and integration tests compile and pass after refactoring
 
 ### Key Entities
 
+- **AppContext**: Singleton containing all global configuration and state. Single owner of NodeId loaded from config.toml. Passed by reference to all components requiring global state.
 - **SchemaRegistry**: Centralized registry that manages TableDefinition cache, Arrow schema cache (new), and view definitions. Replaces scattered schema_cache references.
 - **CachedTableData**: Extended to include Arc<Schema> field for memoized Arrow schemas alongside existing TableDefinition
 - **LiveQueryManager**: Consolidated struct containing subscription registry (RwLock<LiveQueryRegistry>), user connections (HashMap<ConnectionId, UserConnectionSocket>), filter cache (RwLock<FilterCache>), initial data fetcher, schema registry reference, and node ID
@@ -108,17 +127,20 @@ Developers need the ability to define and query views that present alternative s
 
 ### Measurable Outcomes
 
+- **SC-000**: NodeId is allocated exactly once per server instance and all logged events use the identical NodeId value
 - **SC-001**: Arrow schema cache hit rate exceeds 99% for workloads with stable table schemas
 - **SC-002**: Schema lookup latency reduces from 50-100μs (current) to under 2μs (cached) for repeated accesses
 - **SC-003**: LiveQueryManager consolidation reduces subscription management code by at least 30% (lines of code metric)
 - **SC-004**: System table queries perform within 10% of equivalent shared table queries (no performance regression)
-- **SC-005**: All 477 existing kalamdb-core tests pass without modification or with minimal fixture updates
-- **SC-006**: View queries return results within 5% of direct table query performance (minimal rewriting overhead)
-- **SC-007**: Memory usage for schema caching increases by less than 50MB for workloads with 1000 tables
-- **SC-008**: System table initialization completes in under 100ms on database startup
+- **SC-005**: Zero duplicate NodeId instantiations detected in codebase after refactoring (validated via code review)
+- **SC-006**: All 477 existing kalamdb-core tests pass without modification or with minimal fixture updates
+- **SC-007**: View queries return results within 5% of direct table query performance (minimal rewriting overhead)
+- **SC-008**: Memory usage for schema caching increases by less than 50MB for workloads with 1000 tables
+- **SC-009**: System table initialization completes in under 100ms on database startup
 
 ## Assumptions *(optional)*
 
+- NodeId is currently instantiated multiple times using `NodeId::from(format!("node-{}", std::process::id()))` pattern
 - Arrow schema construction is currently a performance bottleneck based on profiling data
 - Existing SchemaCache implementation (DashMap-based) has sufficient concurrency for high-throughput workloads
 - System tables require persistent storage for disaster recovery and auditability

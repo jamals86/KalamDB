@@ -35,8 +35,8 @@
 
 **Validation Summary**:
 - Specification is complete with no clarifications needed
-- All 12 functional requirements are testable and unambiguous
-- 8 success criteria are measurable and technology-agnostic
-- 4 user stories prioritized (2×P1, 1×P2, 1×P3) with 10 acceptance scenarios
+- All 14 functional requirements are testable and unambiguous (FR-000 to FR-013)
+- 10 success criteria are measurable and technology-agnostic (SC-000 to SC-009)
+- 5 user stories prioritized (1×P0, 2×P1, 1×P2, 1×P3) with 13 acceptance scenarios
 - 5 edge cases identified, dependencies documented
 - Ready to proceed to `/speckit.clarify` or `/speckit.plan`

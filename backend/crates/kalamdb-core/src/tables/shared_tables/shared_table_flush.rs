@@ -9,8 +9,8 @@
 //! - Uses `FlushExecutor::execute_with_tracking()` for common workflow
 //! - Only implements unique logic: single-file flush for all rows
 
-use crate::schema::{NamespaceId, TableName};
-use crate::schema::SchemaCache; // Phase 10: Use unified cache instead of old TableCache
+use crate::schema_registry::{NamespaceId, TableName};
+use crate::schema_registry::SchemaCache; // Phase 10: Use unified cache instead of old TableCache
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::live_query::NodeId;
