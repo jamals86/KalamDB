@@ -126,11 +126,11 @@ impl UserRepository for CoreUsersRepo {
                 };
                 let created_at = created_at_col
                     .value_as_datetime(i)
-                    .map(|dt| dt.timestamp_millis())
+                    .map(|dt| dt.and_utc().timestamp_millis())
                     .unwrap_or(0);
                 let updated_at = updated_at_col
                     .value_as_datetime(i)
-                    .map(|dt| dt.timestamp_millis())
+                    .map(|dt| dt.and_utc().timestamp_millis())
                     .unwrap_or(0);
                 let last_seen = if last_seen_col.is_null(i) {
                     None
@@ -138,7 +138,7 @@ impl UserRepository for CoreUsersRepo {
                     Some(
                         last_seen_col
                             .value_as_datetime(i)
-                            .map(|dt| dt.timestamp_millis())
+                            .map(|dt| dt.and_utc().timestamp_millis())
                             .unwrap_or(0),
                     )
                 };
@@ -148,7 +148,7 @@ impl UserRepository for CoreUsersRepo {
                     Some(
                         deleted_at_col
                             .value_as_datetime(i)
-                            .map(|dt| dt.timestamp_millis())
+                            .map(|dt| dt.and_utc().timestamp_millis())
                             .unwrap_or(0),
                     )
                 };

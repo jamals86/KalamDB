@@ -146,17 +146,39 @@ impl Default for UserCleanupExecutor {
 mod tests {
     use super::*;
     use kalamdb_commons::{JobId, NamespaceId, NodeId};
+    use kalamdb_commons::system::Job;
+
+    fn make_job(id: &str, job_type: JobType, ns: &str) -> Job {
+        let now = chrono::Utc::now().timestamp_millis();
+        Job {
+            job_id: JobId::new(id),
+            job_type,
+            namespace_id: NamespaceId::new(ns),
+            table_name: None,
+            status: kalamdb_commons::JobStatus::Running,
+            parameters: None,
+            message: None,
+            exception_trace: None,
+            idempotency_key: None,
+            retry_count: 0,
+            max_retries: 3,
+            memory_used: None,
+            cpu_used: None,
+            created_at: now,
+            updated_at: now,
+            started_at: Some(now),
+            finished_at: None,
+            node_id: NodeId::from("node1"),
+            queue: None,
+            priority: None,
+        }
+    }
 
     #[tokio::test]
     async fn test_validate_params_success() {
         let executor = UserCleanupExecutor::new();
 
-        let job = Job::new(
-            JobId::new("UC-test123"),
-            JobType::UserCleanup,
-            NamespaceId::new("default"),
-            NodeId::from("node1"),
-        );
+        let job = make_job("UC-test123", JobType::UserCleanup, "default");
 
         let mut job = job;
         job.parameters = Some(
@@ -175,12 +197,7 @@ mod tests {
     async fn test_validate_params_missing_user_id() {
         let executor = UserCleanupExecutor::new();
 
-        let job = Job::new(
-            JobId::new("UC-test123"),
-            JobType::UserCleanup,
-            NamespaceId::new("default"),
-            NodeId::from("node1"),
-        );
+        let job = make_job("UC-test123", JobType::UserCleanup, "default");
 
         let mut job = job;
         job.parameters = Some(

@@ -20,7 +20,6 @@ use kalamdb_store::RocksDbInit;
 use log::debug;
 use log::{info, warn};
 use std::sync::Arc;
-use std::time::Duration;
 
 /// Aggregated application components that need to be shared across the
 /// HTTP server and shutdown handling.
@@ -60,16 +59,16 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     kalamdb_core::tables::system::initialize_system_tables(backend.clone()).await?;
     info!("System tables initialized with schema version tracking");
 
-    // Start UnifiedJobsManager run loop (Phase 9, T163)
+    // Start JobsManager run loop (Phase 9, T163)
     let job_manager = app_context.job_manager();
     let max_concurrent = config.jobs.max_concurrent;
     tokio::spawn(async move {
-        info!("Starting UnifiedJobsManager run loop with max {} concurrent jobs", max_concurrent);
+        info!("Starting JobsManager run loop with max {} concurrent jobs", max_concurrent);
         if let Err(e) = job_manager.run_loop(max_concurrent as usize).await {
-            log::error!("UnifiedJobsManager run loop failed: {}", e);
+            log::error!("JobsManager run loop failed: {}", e);
         }
     });
-    info!("UnifiedJobsManager background task spawned");
+    info!("UnifiedJoJobsManagerbsManager background task spawned");
 
     // Seed default storage if necessary (using SystemTablesRegistry)
     let storages_provider = app_context.system_tables().storages();
@@ -99,10 +98,9 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     }
 
     // Get references from AppContext for services that need them
-    let job_manager = app_context.job_manager();
     let live_query_manager = app_context.live_query_manager();
-    let node_id = app_context.node_id();
     let session_factory = app_context.session_factory();
+    // session_factory obtained above
     
     // Get system table providers for job executor and flush scheduler
     let users_provider = app_context.system_tables().users();
@@ -144,12 +142,12 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
         config.rate_limit.max_subscriptions_per_user
     );
 
-    // Phase 9: All job scheduling now handled by UnifiedJobsManager
-    // Crash recovery handled by UnifiedJobsManager.recover_incomplete_jobs() in run_loop
+    // Phase 9: All job scheduling now handled by JobsManager
+    // Crash recovery handled by JobsManager.recover_incomplete_jobs() in run_loop
     // Flush scheduling via FLUSH TABLE/FLUSH ALL TABLES commands
     // Stream eviction and user cleanup via scheduled job creation (TODO: implement cron scheduler)
     
-    info!("Job management delegated to UnifiedJobsManager (already running in background)");
+    info!("Job management delegated to JobsManager (already running in background)");
 
     // Get users provider for system user initialization
     let users_provider_for_init = app_context.system_tables().users();
@@ -182,7 +180,7 @@ pub async fn run(
     info!("Starting HTTP server on {}", bind_addr);
     info!("Endpoints: POST /v1/api/sql, GET /v1/ws");
 
-    // Get UnifiedJobsManager for graceful shutdown
+    // Get JobsManager for graceful shutdown
     let job_manager_shutdown = app_context.job_manager();
     let shutdown_timeout_secs = config.shutdown.flush.timeout;
 
@@ -231,8 +229,8 @@ pub async fn run(
                 "Waiting up to {}s for active jobs to complete...",
                 shutdown_timeout_secs
             );
-            
-            // Signal shutdown to UnifiedJobsManager
+
+            // Signal shutdown to JobsManager
             job_manager_shutdown.shutdown().await;
             
             // Wait for active jobs with timeout

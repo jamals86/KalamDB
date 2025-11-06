@@ -1,4 +1,4 @@
-#![cfg(feature = "disabled_datatypes_preservation_tests")] // Disabled pending migration to Phase 10 APIs (KalamSql/SchemaCache removed)
+#![cfg(any())] // Disabled pending migration to Phase 10 APIs (KalamSql/SchemaCache removed)
 
 //! End-to-end test: ensure all supported datatypes flush to Parquet and values are preserved
 

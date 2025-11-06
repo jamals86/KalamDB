@@ -620,7 +620,7 @@ impl DDLHandler {
         let flush_policy = stmt.flush_policy.clone();
         let deleted_retention_hours = stmt.deleted_retention_hours;
         let stmt_storage_id = stmt.storage_id.clone();
-        let stmt_use_user_storage = stmt.use_user_storage;
+    let _stmt_use_user_storage = stmt.use_user_storage;
 
         // Validate dependencies
         ensure_namespace_fn(&namespace_id)?;
@@ -892,7 +892,7 @@ impl DDLHandler {
         let flush_policy = stmt.flush_policy.clone();
         let deleted_retention = stmt.deleted_retention_hours.map(|h| h as u64 * 3600);
         let stmt_storage_id = stmt.storage_id.clone();
-        let stmt_access_level = stmt.access_level;
+    let _stmt_access_level = stmt.access_level;
 
         // Validate dependencies
         ensure_namespace_fn(&namespace_id)?;
@@ -1031,8 +1031,8 @@ impl DDLHandler {
     /// * `_metadata` - Optional execution metadata
     pub async fn execute_alter_table<F>(
         schema_registry: &crate::schema_registry::SchemaRegistry,
-        cache: Option<&crate::schema_registry::SchemaRegistry>,
-        log_fn: F,
+        _cache: Option<&crate::schema_registry::SchemaRegistry>,
+        _log_fn: F,
         _session: &SessionContext,
         sql: &str,
         exec_ctx: &ExecutionContext,
@@ -1354,6 +1354,7 @@ impl DDLHandler {
     }
 
     /// Cleanup Parquet files in a specific directory
+    #[allow(dead_code)]
     fn cleanup_directory_parquet_files(
         dir_path: &std::path::Path,
         files_deleted: &mut usize,
@@ -1406,6 +1407,7 @@ impl DDLHandler {
     }
 
     /// Cleanup Parquet files in user directories
+    #[allow(dead_code)]
     fn cleanup_user_parquet_files(
         storage_path: &std::path::Path,
         files_deleted: &mut usize,
@@ -1440,7 +1442,7 @@ impl DDLHandler {
 
     /// Delete Parquet files for dropped table
     fn cleanup_parquet_files_internal(
-        table_def: &TableDefinition,
+        _table_def: &TableDefinition,
         table_type: &TableType,
     ) -> Result<(usize, u64), KalamDbError> {
         // Stream tables don't have Parquet files
@@ -1513,7 +1515,7 @@ impl DDLHandler {
         Ok(())
     }
 
-    /// Create deletion job for tracking (Phase 9, T165 - UnifiedJobsManager)
+    /// Create deletion job for tracking (Phase 9, T165 - JobsManager)
     async fn create_deletion_job_unified(
         job_manager: &crate::jobs::JobsManager,
         table_id: &str,
@@ -1534,7 +1536,7 @@ impl DDLHandler {
         // Create idempotency key from table ID to prevent duplicate deletion jobs
         let idempotency_key = Some(format!("drop-table-{}", table_id));
         
-        // Create job via UnifiedJobsManager
+        // Create job via JobsManager
         let job_id = job_manager
             .create_job(
                 JobType::Cleanup,
@@ -1592,20 +1594,19 @@ mod tests {
         )
     }
 
-    /// Helper to get namespaces provider from AppContext
-    fn get_namespaces_provider() -> Arc<crate::tables::system::NamespacesTableProvider> {
-        let app_ctx = AppContext::get();
-        app_ctx.system_tables().namespaces()
+    /// Helper to get AppContext
+    fn get_app_context() -> Arc<AppContext> {
+        AppContext::get()
     }
 
     #[tokio::test]
     async fn test_create_namespace_success() {
-        let provider = get_namespaces_provider();
+        let app_ctx = get_app_context();
         let session = SessionContext::new();
         let ctx = create_test_context();
 
         let sql = "CREATE NAMESPACE production";
-        let result = DDLHandler::execute_create_namespace(&provider, &session, sql, &ctx)
+        let result = DDLHandler::execute_create_namespace(&app_ctx, &session, sql, &ctx)
             .await
             .expect("Should create namespace");
 
@@ -1620,14 +1621,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_namespace_if_not_exists() {
-        let provider = get_namespaces_provider();
+    let app_ctx = get_app_context();
         let session = SessionContext::new();
         let ctx = create_test_context();
 
         let sql = "CREATE NAMESPACE IF NOT EXISTS staging";
 
         // First creation should succeed
-        let result1 = DDLHandler::execute_create_namespace(&provider, &session, sql, &ctx)
+        let result1 = DDLHandler::execute_create_namespace(&app_ctx, &session, sql, &ctx)
             .await
             .expect("Should create namespace");
 
@@ -1637,7 +1638,7 @@ mod tests {
         }
 
         // Second creation should succeed with "already exists" message
-        let result2 = DDLHandler::execute_create_namespace(&provider, &session, sql, &ctx)
+        let result2 = DDLHandler::execute_create_namespace(&app_ctx, &session, sql, &ctx)
             .await
             .expect("Should handle existing namespace");
 
@@ -1649,19 +1650,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_namespace_duplicate_without_if_not_exists() {
-        let provider = get_namespaces_provider();
+    let app_ctx = get_app_context();
         let session = SessionContext::new();
         let ctx = create_test_context();
 
         let sql_without_if_not_exists = "CREATE NAMESPACE production";
 
         // First creation should succeed
-        DDLHandler::execute_create_namespace(&provider, &session, sql_without_if_not_exists, &ctx)
+        DDLHandler::execute_create_namespace(&app_ctx, &session, sql_without_if_not_exists, &ctx)
             .await
             .expect("Should create namespace");
 
         // Second creation without IF NOT EXISTS should fail
-        let result = DDLHandler::execute_create_namespace(&provider, &session, sql_without_if_not_exists, &ctx)
+        let result = DDLHandler::execute_create_namespace(&app_ctx, &session, sql_without_if_not_exists, &ctx)
             .await;
 
         assert!(result.is_err(), "Should fail on duplicate namespace without IF NOT EXISTS");
@@ -1669,13 +1670,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_namespace_invalid_sql() {
-        let provider = get_namespaces_provider();
+    let app_ctx = get_app_context();
         let session = SessionContext::new();
         let ctx = create_test_context();
 
         let invalid_sql = "CREATE NAMESPACE";
 
-        let result = DDLHandler::execute_create_namespace(&provider, &session, invalid_sql, &ctx)
+        let result = DDLHandler::execute_create_namespace(&app_ctx, &session, invalid_sql, &ctx)
             .await;
 
         assert!(result.is_err(), "Should fail on invalid SQL");
@@ -1689,13 +1690,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_namespace_empty_name() {
-        let provider = get_namespaces_provider();
+    let app_ctx = get_app_context();
         let session = SessionContext::new();
         let ctx = create_test_context();
 
         let sql = "CREATE NAMESPACE ''";
 
-        let result = DDLHandler::execute_create_namespace(&provider, &session, sql, &ctx)
+        let result = DDLHandler::execute_create_namespace(&app_ctx, &session, sql, &ctx)
             .await;
 
         assert!(result.is_err(), "Should fail on empty namespace name");

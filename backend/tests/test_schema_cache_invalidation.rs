@@ -1,5 +1,5 @@
 #![cfg(test)]
-#![cfg(feature = "deprecated_table_schema_cache_tests")] // Disabled - SchemaCache moved to catalog::SchemaCache, tested in unit tests
+#![cfg(any())] // Disabled - SchemaCache moved to catalog::SchemaCache, tested in unit tests
 
 //! Integration tests for schema cache invalidation on DDL operations
 //!

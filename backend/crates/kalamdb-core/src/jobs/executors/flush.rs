@@ -26,6 +26,7 @@ use crate::tables::{SharedTableFlushJob, UserTableFlushJob};
 use crate::tables::base_flush::TableFlush;
 use async_trait::async_trait;
 use kalamdb_commons::{JobType, NamespaceId, TableName, TableId};
+use kalamdb_commons::system::Job;
 use std::sync::Arc;
 
 /// Flush Job Executor
@@ -204,17 +205,39 @@ impl Default for FlushExecutor {
 mod tests {
     use super::*;
     use kalamdb_commons::{JobId, NamespaceId, NodeId};
+    use kalamdb_commons::system::Job;
+
+    fn make_job(id: &str, job_type: JobType, ns: &str) -> Job {
+        let now = chrono::Utc::now().timestamp_millis();
+        Job {
+            job_id: JobId::new(id),
+            job_type,
+            namespace_id: NamespaceId::new(ns),
+            table_name: None,
+            status: kalamdb_commons::JobStatus::Running,
+            parameters: None,
+            message: None,
+            exception_trace: None,
+            idempotency_key: None,
+            retry_count: 0,
+            max_retries: 3,
+            memory_used: None,
+            cpu_used: None,
+            created_at: now,
+            updated_at: now,
+            started_at: Some(now),
+            finished_at: None,
+            node_id: NodeId::default_node(),
+            queue: None,
+            priority: None,
+        }
+    }
 
     #[tokio::test]
     async fn test_validate_params_success() {
         let executor = FlushExecutor::new();
 
-        let job = Job::new(
-            JobId::new("FL-test123"),
-            JobType::Flush,
-            NamespaceId::new("default"),
-            NodeId::default_node(),
-        );
+        let job = make_job("FL-test123", JobType::Flush, "default");
 
         let mut job = job;
         job.parameters = Some(
@@ -234,12 +257,7 @@ mod tests {
     async fn test_validate_params_missing_fields() {
         let executor = FlushExecutor::new();
 
-        let job = Job::new(
-            JobId::new("FL-test123"),
-            JobType::Flush,
-            NamespaceId::new("default"),
-            NodeId::default_node(),
-        );
+        let job = make_job("FL-test123", JobType::Flush, "default");
 
         let mut job = job;
         job.parameters = Some(

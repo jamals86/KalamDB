@@ -1,5 +1,6 @@
 #![cfg(test)]
-#![cfg(feature = "deprecated_table_cache_tests")] // Disabled - TableCache removed in Phase 10, functionality integrated into SchemaCache
+#![cfg(any())]
+// Disabled - TableCache removed in Phase 10, functionality integrated into SchemaCache
 
 //! Integration tests for storage path resolution via TableCache
 //!

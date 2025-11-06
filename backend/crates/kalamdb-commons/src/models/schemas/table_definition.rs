@@ -525,8 +525,8 @@ mod tests {
             panic!("Expected Stream options");
         }
 
-        // Test SHARED table options
-        let shared_table = TableDefinition::new(
+    // Test SHARED table options
+    let _shared_table = TableDefinition::new(
             NamespaceId::new("default"),
             TableName::new("categories"),
             TableType::Shared,

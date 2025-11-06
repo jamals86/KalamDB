@@ -697,14 +697,12 @@ impl TableProvider for UserTableAccess {
 mod tests {
     use super::*;
     use crate::tables::UserTableStore;
-    use chrono::Utc;
     use datafusion::arrow::array::{
         BooleanArray, Int64Array, StringArray, TimestampMillisecondArray,
     };
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use datafusion::execution::context::SessionContext;
-    use kalamdb_commons::models::StorageId;
-    use kalamdb_commons::schemas::policy::FlushPolicy;
+    use kalamdb_commons::{TableId, TableType};
     use kalamdb_store::test_utils::TestDb;
     use serde_json::json;
 
@@ -731,8 +729,8 @@ mod tests {
     }
 
     fn create_test_metadata() -> Arc<crate::schema_registry::SchemaRegistry> {
-        use crate::schema_registry::{CachedTableData, SchemaRegistry};
-        use kalamdb_commons::models::schemas::TableDefinition;
+    use crate::schema_registry::{CachedTableData, SchemaRegistry};
+    use kalamdb_commons::models::schemas::TableDefinition;
 
         let cache = Arc::new(SchemaRegistry::new(0, None));
 
@@ -748,17 +746,7 @@ mod tests {
             ).unwrap()
         );
 
-        let data = CachedTableData::new(
-            table_id.clone(),
-            TableType::User,
-            Utc::now(),
-            Some(StorageId::new("s3://bucket/users/${user_id}/messages/")),
-            FlushPolicy::row_limit(1000).unwrap(),
-            "/data/{namespace}/{tableName}/".to_string(),
-            1,
-            Some(720),
-            td,
-        );
+        let data = CachedTableData::new(td);
 
         cache.insert(table_id, Arc::new(data));
         cache
@@ -800,9 +788,9 @@ mod tests {
 
     #[test]
     fn test_user_key_prefix() {
-        let store = create_test_db();
-        let schema = create_test_schema();
-        let metadata = create_test_metadata();
+    let _store = create_test_db();
+    let _schema = create_test_schema();
+    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
         let provider = UserTableAccess::new(create_test_user_table_shared(), user_id, Role::User);
@@ -816,7 +804,7 @@ mod tests {
     #[tokio::test]
     async fn test_scan_flattens_user_rows() {
         let shared = create_test_user_table_shared();
-        let schema = shared.core().schema_ref().clone();
+    let _schema = shared.core().schema_ref().clone();
         let user_id = UserId::new("user123".to_string());
 
         let provider = UserTableAccess::new(
@@ -901,9 +889,9 @@ mod tests {
 
     #[test]
     fn test_insert_row() {
-        let store = create_test_db();
-        let schema = create_test_schema();
-        let metadata = create_test_metadata();
+    let _store = create_test_db();
+    let _schema = create_test_schema();
+    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
         let provider = UserTableAccess::new(create_test_user_table_shared(), user_id, Role::User);
@@ -921,9 +909,9 @@ mod tests {
 
     #[test]
     fn test_insert_batch() {
-        let store = create_test_db();
-        let schema = create_test_schema();
-        let metadata = create_test_metadata();
+    let _store = create_test_db();
+    let _schema = create_test_schema();
+    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
         let provider = UserTableAccess::new(create_test_user_table_shared(), user_id, Role::User);
@@ -943,9 +931,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_row_excludes_soft_deleted_from_scan() {
-        let store = create_test_db();
-        let schema = create_test_schema();
-        let metadata = create_test_metadata();
+    let _store = create_test_db();
+    let _schema = create_test_schema();
+    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
         let provider =
@@ -1001,9 +989,9 @@ mod tests {
 
     #[test]
     fn test_update_row() {
-        let store = create_test_db();
-        let schema = create_test_schema();
-        let metadata = create_test_metadata();
+    let _store = create_test_db();
+    let _schema = create_test_schema();
+    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
         let provider = UserTableAccess::new(create_test_user_table_shared(), user_id, Role::User);
@@ -1021,9 +1009,9 @@ mod tests {
 
     #[test]
     fn test_delete_row() {
-        let store = create_test_db();
-        let schema = create_test_schema();
-        let metadata = create_test_metadata();
+    let _store = create_test_db();
+    let _schema = create_test_schema();
+    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
         let provider = UserTableAccess::new(create_test_user_table_shared(), user_id, Role::User);

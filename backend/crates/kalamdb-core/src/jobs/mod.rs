@@ -1,6 +1,6 @@
 //! # Job Management System
 //!
-//! **Phase 9 Status**: UnifiedJobsManager with 8 concrete executors is production-ready.
+//! **Phase 9 Status**: JobsManager with 8 concrete executors is production-ready.
 //! Legacy components (JobExecutor, old schedulers) are DEPRECATED and pending migration.
 //!
 //! ## Examples

@@ -103,7 +103,7 @@ impl TablesTableProvider {
         let mut table_comments = StringBuilder::new();
         let mut updated_ats = Vec::new();
 
-        for (table_id, table_def) in tables {
+    for (_table_id, table_def) in tables {
             // Convert TableId to string format: "namespace:table_name"
             let table_id_str = format!("{}:{}", table_def.namespace_id.as_str(), table_def.table_name.as_str());
             table_ids.append_value(&table_id_str);

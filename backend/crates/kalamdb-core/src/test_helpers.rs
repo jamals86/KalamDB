@@ -66,9 +66,9 @@ pub fn init_test_app_context() -> Arc<TestDb> {
     STORAGE_INIT.call_once(|| {
         use kalamdb_commons::system::Storage;
         
-        let ctx = AppContext::get();
+    let _ctx = AppContext::get();
         
-        let default_storage = Storage {
+        let _default_storage = Storage {
             storage_id: StorageId::local(),
             storage_name: "local".to_string(),
             description: Some("Default local storage for tests".to_string()),

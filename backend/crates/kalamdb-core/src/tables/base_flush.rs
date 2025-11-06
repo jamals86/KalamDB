@@ -465,7 +465,7 @@ mod tests {
             result.job_record.status,
             kalamdb_commons::JobStatus::Completed
         );
-        assert!(result.job_record.result.is_some());
+    assert!(result.job_record.message.is_some());
     }
 
     #[test]

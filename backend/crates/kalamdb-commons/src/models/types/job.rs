@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn test_job_cancel() {
-        let mut job = Job {
+    let job = Job {
             job_id: JobId::new("job_123"),
             job_type: JobType::Flush,
             namespace_id: NamespaceId::new("default"),

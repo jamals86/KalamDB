@@ -17,12 +17,11 @@
 
 use crate::error::KalamDbError;
 use crate::storage::StorageRegistry;
-use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use datafusion::datasource::TableProvider;
 use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName, UserId};
-use kalamdb_commons::schemas::{TableType, policy::FlushPolicy};
+use kalamdb_commons::schemas::TableType;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
@@ -747,7 +746,7 @@ mod tests {
 
     fn create_test_data(table_id: TableId) -> Arc<CachedTableData> {
         // Create partially-resolved template with {namespace} and {tableName} substituted
-        let storage_path_template = format!(
+        let _storage_path_template = format!(
             "/data/{}/{}/{{userId}}/{{shard}}/",
             table_id.namespace_id().as_str(),
             table_id.table_name().as_str()

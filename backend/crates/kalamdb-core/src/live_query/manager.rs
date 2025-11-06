@@ -826,7 +826,6 @@ pub struct RegistryStats {
 mod tests {
     use super::*;
     use crate::schema_registry::SchemaRegistry;
-    use crate::tables::system::tables::TablesStore;
     use crate::tables::system::LiveQueriesTableProvider;
     use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
     use kalamdb_commons::datatypes::KalamDataType;
@@ -843,10 +842,8 @@ mod tests {
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
 
-        let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(backend.clone()));
-        let schema_cache = Arc::new(SchemaRegistry::new(128, None));
-        let schema_store = Arc::new(TablesStore::new(backend.clone(), "system_tables"));
-        let schema_registry = Arc::new(SchemaRegistry::new(schema_cache, schema_store));
+    let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(backend.clone()));
+    let schema_registry = Arc::new(SchemaRegistry::new(128, None));
 
         // Create table stores for testing (using default namespace and table)
         let test_namespace = NamespaceId::new("user1");

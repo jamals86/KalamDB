@@ -444,8 +444,7 @@ impl SharedTableChangeDetector {
 mod tests {
     use super::*;
     use crate::live_query::connection_registry::NodeId;
-    use crate::schema_registry::{SchemaRegistry, SchemaRegistry};
-    use crate::tables::system::tables::TablesStore;
+    use crate::schema_registry::SchemaRegistry;
     use crate::tables::system::LiveQueriesTableProvider;
     use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
     use kalamdb_commons::datatypes::KalamDataType;
@@ -464,9 +463,7 @@ mod tests {
             Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
 
         let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(backend.clone()));
-        let schema_cache = Arc::new(SchemaRegistry::new(64, None));
-        let schema_store = Arc::new(TablesStore::new(backend.clone(), "system_tables"));
-        let schema_registry = Arc::new(SchemaRegistry::new(schema_cache, schema_store));
+    let schema_registry = Arc::new(SchemaRegistry::new(64, None));
 
         let default_ns = NamespaceId::new("default");
         let default_table = TableName::new("test");

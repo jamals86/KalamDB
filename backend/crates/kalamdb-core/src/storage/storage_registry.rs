@@ -18,7 +18,7 @@ pub struct StorageRegistry {
     storages_provider: Arc<StoragesTableProvider>,
     /// Default base path for local filesystem storage when base_directory is empty
     /// Comes from server config: storage.default_storage_path (e.g., "/data/storage")
-    default_storage_path: String,
+    _default_storage_path: String,
 }
 
 impl StorageRegistry {
@@ -37,7 +37,7 @@ impl StorageRegistry {
         };
         Self {
             storages_provider,
-            default_storage_path: normalized,
+            _default_storage_path: normalized,
         }
     }
 

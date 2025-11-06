@@ -94,6 +94,7 @@ where
 /// Authentication middleware service instance
 pub struct AuthMiddlewareService<S> {
     service: Rc<S>,
+    #[allow(dead_code)]
     repo: Arc<dyn UserRepository>,
 }
 
@@ -109,8 +110,7 @@ where
     forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        let service = self.service.clone();
-        let repo = self.repo.clone();
+    let service = self.service.clone();
 
         Box::pin(async move {
             // Extract remote address

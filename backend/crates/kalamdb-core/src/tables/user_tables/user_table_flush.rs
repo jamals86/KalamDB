@@ -354,7 +354,7 @@ impl TableFlush for UserTableFlushJob {
         );
 
         // Stream snapshot-backed scan
-        let mut iter = self
+        let iter = self
             .store
             .scan_iter(self.namespace_id.as_str(), self.table_name.as_str())
             .map_err(|e| {

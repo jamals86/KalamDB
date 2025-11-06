@@ -154,7 +154,7 @@ impl TableFlush for SharedTableFlushJob {
         );
 
         // Stream snapshot-backed scan and collect active rows
-        let mut iter = self
+        let iter = self
             .store
             .scan_iter(self.namespace_id.as_str(), self.table_name.as_str())
             .map_err(|e| {

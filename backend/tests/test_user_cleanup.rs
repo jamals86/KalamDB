@@ -1,4 +1,4 @@
-#![cfg(feature = "disabled_user_cleanup_tests")] // Disabled pending migration to UnifiedJobManager APIs
+#![cfg(any())] // Disabled pending migration to UnifiedJobManager APIs
  
 //! Integration tests for scheduled user cleanup job.
 //!

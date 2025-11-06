@@ -278,25 +278,39 @@ mod tests {
     use kalamdb_commons::{JobStatus, JobType, NamespaceId, NodeId, TableName};
     use kalamdb_store::test_utils::InMemoryBackend;
 
+    fn make_job(job_id: &str, job_type: JobType, ns: &str) -> Job {
+        let now = chrono::Utc::now().timestamp_millis();
+        Job {
+            job_id: JobId::new(job_id),
+            job_type,
+            namespace_id: NamespaceId::new(ns),
+            table_name: None,
+            status: JobStatus::Running,
+            parameters: None,
+            message: None,
+            exception_trace: None,
+            idempotency_key: None,
+            retry_count: 0,
+            max_retries: 3,
+            memory_used: None,
+            cpu_used: None,
+            created_at: now,
+            updated_at: now,
+            started_at: Some(now),
+            finished_at: None,
+            node_id: NodeId::from("server-01"),
+            queue: None,
+            priority: None,
+        }
+    }
+
     fn create_test_provider() -> JobsTableProvider {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
         JobsTableProvider::new(backend)
     }
 
     fn create_test_job(job_id: &str) -> Job {
-        let mut job = Job::new(
-            JobId::new(job_id),
-            JobType::Flush,
-            NamespaceId::new("default"),
-            NodeId::from("server-01"),
-        );
-        job.table_name = Some(TableName::new("events"));
-        job.status = JobStatus::Running;
-        job.created_at = 1000;
-        job.updated_at = 1000;
-        job.started_at = Some(1000);
-        job.finished_at = None;
-        job
+        make_job(job_id, JobType::Flush, "default").with_table_name(TableName::new("events"))
     }
 
     #[test]

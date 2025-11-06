@@ -23,8 +23,8 @@
 use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
 use crate::error::KalamDbError;
 use async_trait::async_trait;
-use kalamdb_commons::system::Job;
 use kalamdb_commons::JobType;
+use kalamdb_commons::system::Job;
 
 /// Retention Job Executor
 ///
@@ -147,17 +147,39 @@ impl Default for RetentionExecutor {
 mod tests {
     use super::*;
     use kalamdb_commons::{JobId, NamespaceId, NodeId};
+    use kalamdb_commons::system::Job;
+
+    fn make_job(id: &str, job_type: JobType, ns: &str) -> Job {
+        let now = chrono::Utc::now().timestamp_millis();
+        Job {
+            job_id: JobId::new(id),
+            job_type,
+            namespace_id: NamespaceId::new(ns),
+            table_name: None,
+            status: kalamdb_commons::JobStatus::Running,
+            parameters: None,
+            message: None,
+            exception_trace: None,
+            idempotency_key: None,
+            retry_count: 0,
+            max_retries: 3,
+            memory_used: None,
+            cpu_used: None,
+            created_at: now,
+            updated_at: now,
+            started_at: Some(now),
+            finished_at: None,
+            node_id: NodeId::from("node1"),
+            queue: None,
+            priority: None,
+        }
+    }
 
     #[tokio::test]
     async fn test_validate_params_success() {
         let executor = RetentionExecutor::new();
 
-        let job = Job::new(
-            JobId::new("RT-test123"),
-            JobType::Retention,
-            NamespaceId::new("default"),
-            NodeId::from("node1"),
-        );
+        let job = make_job("RT-test123", JobType::Retention, "default");
 
         let mut job = job;
         job.parameters = Some(
@@ -177,12 +199,7 @@ mod tests {
     async fn test_validate_params_missing_retention_hours() {
         let executor = RetentionExecutor::new();
 
-        let job = Job::new(
-            JobId::new("RT-test123"),
-            JobType::Retention,
-            NamespaceId::new("default"),
-            NodeId::from("node1"),
-        );
+        let job = make_job("RT-test123", JobType::Retention, "default");
 
         let mut job = job;
         job.parameters = Some(

@@ -4,7 +4,6 @@
 //! Uses constants from kalamdb_commons for table prefixes.
 
 use crate::schema_registry::SchemaRegistry;
-// use crate::jobs::UnifiedJobsManager; // TODO: Implement UnifiedJobsManager
 use crate::jobs::executors::{
     BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor,
     JobRegistry, RestoreExecutor, RetentionExecutor, StreamEvictionExecutor,
@@ -71,7 +70,7 @@ impl std::fmt::Debug for AppContext {
             .field("shared_table_store", &"Arc<SharedTableStore>")
             .field("stream_table_store", &"Arc<StreamTableStore>")
             .field("storage_backend", &"Arc<dyn StorageBackend>")
-            .field("job_manager", &"Arc<UnifiedJobsManager>")
+            .field("job_manager", &"Arc<JobsManager>")
             .field("live_query_manager", &"Arc<LiveQueryManager>")
             .field("storage_registry", &"Arc<StorageRegistry>")
             .field("session_factory", &"Arc<DataFusionSessionFactory>")

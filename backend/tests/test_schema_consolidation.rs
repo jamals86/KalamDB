@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-#![cfg(feature = "deprecated_schema_consolidation_tests")] // Disabled - Phase 8 TableSchemaStore separated cache deprecated in Phase 10 unified SchemaCache
+#![cfg(any())] // Disabled - Phase 8 TableSchemaStore separated cache deprecated in Phase 10 unified SchemaCache
 //! Integration tests for Phase 15 (008-schema-consolidation)
 //!
 //! Tests the consolidated schema infrastructure:

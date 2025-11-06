@@ -142,13 +142,15 @@ pub async fn initialize_system_tables(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_store::RocksDBBackend;
+    use kalamdb_store::{RocksDBBackend, RocksDbInit};
     use tempfile::TempDir;
 
     /// Helper to create temporary RocksDB backend for testing
     fn create_test_backend() -> (Arc<dyn StorageBackend>, TempDir) {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let backend = RocksDBBackend::new(temp_dir.path()).expect("Failed to create backend");
+        let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
+        let db = init.open().expect("Failed to open RocksDB");
+        let backend = RocksDBBackend::new(db);
         (Arc::new(backend), temp_dir)
     }
 

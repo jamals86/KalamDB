@@ -134,7 +134,7 @@ pub async fn execute_sql_v1(
         .app_data::<web::Data<Arc<SqlExecutor>>>()
         .map(|data| data.as_ref());
 
-    let resolved_ip = http_req
+    let _resolved_ip = http_req
         .extensions()
         .get::<AuthenticatedUser>()
         .and_then(|user| user.connection_info.remote_addr.clone())

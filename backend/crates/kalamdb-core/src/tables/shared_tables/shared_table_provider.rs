@@ -69,7 +69,7 @@ impl SharedTableProvider {
     pub fn new(
         table_id: Arc<TableId>,
         unified_cache: Arc<SchemaRegistry>,
-        schema: SchemaRef,
+        _schema: SchemaRef,
         store: Arc<SharedTableStore>,
     ) -> Self {
         let core = TableProviderCore::new(
@@ -536,7 +536,6 @@ mod tests {
     use super::*;
     use crate::schema_registry::TableType;
     use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-    use kalamdb_commons::StorageId;
     use kalamdb_store::test_utils::{InMemoryBackend, TestDb};
 
     /// Phase 10: Create Arc<TableId> for test providers (avoids allocation on every cache lookup)

@@ -519,7 +519,6 @@ impl TableProvider for StreamTableProvider {
 mod tests {
     use super::*;
     use crate::schema_registry::{CachedTableData, SchemaRegistry, TableType};
-    use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_store::test_utils::TestDb;
     use serde_json::json;
     use kalamdb_commons::models::schemas::TableDefinition;
@@ -534,12 +533,6 @@ mod tests {
 
     fn create_test_provider() -> (StreamTableProvider, TestDb) {
         let test_db = TestDb::new(&["stream_app:events"]).unwrap();
-
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-            Field::new("event_type", DataType::Utf8, false),
-            Field::new("data", DataType::Utf8, true),
-        ]));
         // Build unified cache with CachedTableData for tests
         let unified_cache = Arc::new(SchemaRegistry::new(0, None));
         let table_id = TableId::new(NamespaceId::new("app"), TableName::new("events"));
@@ -553,17 +546,7 @@ mod tests {
             ).unwrap()
         );
 
-        let data = CachedTableData::new(
-            table_id.clone(),
-            TableType::Stream,
-            chrono::Utc::now(),
-            None, // stream tables don't use Parquet storage
-            crate::flush::FlushPolicy::RowLimit { row_limit: 0 },
-            "/data/{namespace}/{tableName}/".to_string(),
-            1,
-            None,
-            td,
-        );
+        let data = CachedTableData::new(td);
 
         unified_cache.insert(table_id.clone(), Arc::new(data));
         let store = Arc::new(StreamTableStore::new(
@@ -574,7 +557,6 @@ mod tests {
         let provider = StreamTableProvider::new(
             create_test_table_id(),
             unified_cache.clone(),
-            schema,
             store,
             Some(300),   // 5 minute retention
             false,       // not ephemeral
@@ -671,10 +653,6 @@ mod tests {
     fn test_evict_expired() {
         // Create a provider with short TTL (1 second)
         let test_db = TestDb::new(&["stream_app:events"]).unwrap();
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-            Field::new("event_type", DataType::Utf8, false),
-        ]));
 
         let unified_cache = Arc::new(SchemaRegistry::new(0, None));
         let table_id = TableId::new(NamespaceId::new("app"), TableName::new("events"));
@@ -687,17 +665,7 @@ mod tests {
                 None,
             ).unwrap()
         );
-        let data = CachedTableData::new(
-            table_id.clone(),
-            TableType::Stream,
-            chrono::Utc::now(),
-            None,
-            crate::flush::FlushPolicy::RowLimit { row_limit: 0 },
-            "/data/{namespace}/{tableName}/".to_string(),
-            1,
-            None,
-            td,
-        );
+        let data = CachedTableData::new(td);
         unified_cache.insert(table_id.clone(), Arc::new(data));
         let store = Arc::new(StreamTableStore::new(
             Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone())),
@@ -707,7 +675,6 @@ mod tests {
         let provider = StreamTableProvider::new(
             create_test_table_id(),
             unified_cache.clone(),
-            schema,
             store,
             Some(1), // 1 second retention for this test
             false,
@@ -770,10 +737,6 @@ mod tests {
         // Test ephemeral mode when no LiveQueriesProvider is set
         // Should fall back to normal insert behavior
         let test_db = TestDb::new(&["stream_app:ephemeral_events"]).unwrap();
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-            Field::new("event_type", DataType::Utf8, false),
-        ]));
 
         let unified_cache = Arc::new(SchemaRegistry::new(0, None));
         let table_id = TableId::new(NamespaceId::new("app"), TableName::new("ephemeral_events"));
@@ -786,17 +749,7 @@ mod tests {
                 None,
             ).unwrap()
         );
-        let data = CachedTableData::new(
-            table_id.clone(),
-            TableType::Stream,
-            chrono::Utc::now(),
-            None,
-            crate::flush::FlushPolicy::RowLimit { row_limit: 0 },
-            "/data/{namespace}/{tableName}/".to_string(),
-            1,
-            None,
-            td,
-        );
+        let data = CachedTableData::new(td);
         unified_cache.insert(table_id.clone(), Arc::new(data));
         let store = Arc::new(StreamTableStore::new(
             Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone())),
@@ -806,7 +759,6 @@ mod tests {
         let provider = StreamTableProvider::new(
             create_test_table_id(),
             unified_cache.clone(),
-            schema,
             store,
             Some(300),
             true, // ephemeral = true
@@ -832,10 +784,6 @@ mod tests {
         // Events should be discarded
         let test_db =
             TestDb::new(&["stream_app:ephemeral_events2", "system_live_queries"]).unwrap();
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-            Field::new("event_type", DataType::Utf8, false),
-        ]));
 
         let unified_cache = Arc::new(SchemaRegistry::new(0, None));
         let table_id = TableId::new(NamespaceId::new("app"), TableName::new("ephemeral_events2"));
@@ -848,17 +796,7 @@ mod tests {
                 None,
             ).unwrap()
         );
-        let data = CachedTableData::new(
-            table_id.clone(),
-            TableType::Stream,
-            chrono::Utc::now(),
-            None,
-            crate::flush::FlushPolicy::RowLimit { row_limit: 0 },
-            "/data/{namespace}/{tableName}/".to_string(),
-            1,
-            None,
-            td,
-        );
+        let data = CachedTableData::new(td);
         unified_cache.insert(table_id.clone(), Arc::new(data));
         let store = Arc::new(StreamTableStore::new(
             Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone())),
@@ -870,7 +808,6 @@ mod tests {
         let provider = StreamTableProvider::new(
             create_test_table_id(),
             unified_cache.clone(),
-            schema,
             store,
             Some(300),
             true, // ephemeral = true
@@ -898,10 +835,6 @@ mod tests {
         // Test that non-ephemeral mode always stores events
         let test_db =
             TestDb::new(&["stream_app:persistent_events", "system_live_queries"]).unwrap();
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-            Field::new("event_type", DataType::Utf8, false),
-        ]));
 
         let unified_cache = Arc::new(SchemaRegistry::new(0, None));
         let table_id = TableId::new(NamespaceId::new("app"), TableName::new("persistent_events"));
@@ -914,17 +847,7 @@ mod tests {
                 None,
             ).unwrap()
         );
-        let data = CachedTableData::new(
-            table_id.clone(),
-            TableType::Stream,
-            chrono::Utc::now(),
-            None,
-            crate::flush::FlushPolicy::RowLimit { row_limit: 0 },
-            "/data/{namespace}/{tableName}/".to_string(),
-            1,
-            None,
-            td,
-        );
+        let data = CachedTableData::new(td);
         unified_cache.insert(table_id.clone(), Arc::new(data));
         let store = Arc::new(StreamTableStore::new(
             Arc::new(kalamdb_store::RocksDBBackend::new(test_db.db.clone())),
@@ -937,7 +860,6 @@ mod tests {
         let provider = StreamTableProvider::new(
             create_test_table_id(),
             unified_cache.clone(),
-            schema,
             store,
             Some(300),
             false, // ephemeral = false
