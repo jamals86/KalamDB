@@ -1,0 +1,33 @@
+//! Parent trait for parsed DDL statements and blanket impls
+
+use crate::ddl::*;
+
+/// Marker trait implemented by all parsed DDL statement types.
+///
+/// Enables writing generic handlers over a common parent type `T: DdlAst`.
+pub trait DdlAst: core::fmt::Debug + Send + Sync {}
+
+// Implement the marker trait for all exported DDL statement types
+impl DdlAst for AlterNamespaceStatement {}
+impl DdlAst for AlterTableStatement {}
+impl DdlAst for BackupDatabaseStatement {}
+impl DdlAst for CreateNamespaceStatement {}
+impl DdlAst for CreateTableStatement {}
+impl DdlAst for DescribeTableStatement {}
+impl DdlAst for DropNamespaceStatement {}
+impl DdlAst for DropTableStatement {}
+impl DdlAst for FlushAllTablesStatement {}
+impl DdlAst for FlushTableStatement {}
+impl DdlAst for KillLiveQueryStatement {}
+impl DdlAst for RestoreDatabaseStatement {}
+impl DdlAst for ShowBackupStatement {}
+impl DdlAst for ShowNamespacesStatement {}
+impl DdlAst for ShowTableStatsStatement {}
+impl DdlAst for ShowTablesStatement {}
+impl DdlAst for AlterStorageStatement {}
+impl DdlAst for CreateStorageStatement {}
+impl DdlAst for DropStorageStatement {}
+impl DdlAst for SubscribeStatement {}
+impl DdlAst for CreateUserStatement {}
+impl DdlAst for AlterUserStatement {}
+impl DdlAst for DropUserStatement {}

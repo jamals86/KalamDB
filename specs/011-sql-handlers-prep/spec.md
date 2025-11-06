@@ -50,6 +50,45 @@ Acceptance Scenarios:
 1. Given an ExecutionContext with request_id and ip_address, When I call log_ddl_operation, Then the returned AuditLogEntry includes these fields.
 2. Given a DML action, When I call log_dml_operation with rows_affected, Then details include the count.
 
+---
+
+### User Story 4 - Modular DML handlers (Priority: P2)
+
+As a developer, I want DML handling split into focused modules so INSERT, DELETE, and UPDATE logic are isolated, testable, and easy to evolve independently.
+
+Why this priority: Prepares the codebase for native write paths and reduces risk by isolating complex logic per operation.
+
+Target structure:
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/dml/`
+	- `insert.rs`
+	- `delete.rs`
+	- `update.rs`
+	- `mod.rs` (optional coordinator)
+
+Acceptance Scenarios:
+1. Given the new dml/ module layout, when building the workspace, then compilation succeeds and handlers are re-exported from `handlers::dml`.
+2. Given existing executor routing, when a DML statement is dispatched, then it can be routed to the corresponding handler without signature changes to public APIs.
+3. Given unit tests for each handler stub, when executed, then they return NotYetImplemented with correct operation name.
+
+---
+
+### User Story 5 - Full DML implementation with DataFusion parameters (Priority: P1)
+
+As a developer, I want INSERT, DELETE, and UPDATE to execute natively using our storage providers while accepting parameters provided as DataFusion `ScalarValue`s, so writes are safe, typed, and performant.
+
+Why this priority: Enables production-ready write paths without relying on DataFusion DML (which we don’t use for writes).
+
+Scope:
+- SELECT continues to use DataFusion.
+- INSERT/DELETE/UPDATE use native write paths (already present), wired to accept `Vec<ScalarValue>` for parameter binding.
+- Parameters are positional and validated against target table schema.
+
+Acceptance Scenarios:
+1. Given an INSERT with `$1, $2` placeholders and matching `Vec<ScalarValue>`, when executed, then rows are written to the correct table with values bound in-order.
+2. Given a DELETE with a parameterized predicate, when executed, then only matching rows are removed and `rows_affected` is returned.
+3. Given an UPDATE with parameterized SET/WHERE, when executed, then matching rows are updated and `rows_affected` is returned.
+4. Given a parameter count/type mismatch, when execution begins, then a clear validation error is returned before any writes occur.
+
 ### Edge Cases
 
 - Missing/empty SQL input returns a clear validation error.
@@ -81,6 +120,10 @@ Acceptance Scenarios:
 - FR-014: Move shared DDL utilities into `helpers.rs` with functions: `inject_auto_increment_field`, `inject_system_columns`, and `save_table_definition`.
 - FR-015: Preserve the public API by re-exporting a single `ddl` module from `handlers::ddl` so external call sites remain stable.
 - FR-016: Ensure all DDL-related tests compile and pass after the split, with no behavioral regressions.
+
+- FR-019: Create `handlers/dml/` directory with `insert.rs`, `delete.rs`, `update.rs` (and optional `mod.rs`) and re-export from `handlers::dml`.
+- FR-020: SELECT continues to use DataFusion; INSERT/DELETE/UPDATE use native handlers accepting `Vec<ScalarValue>` for parameters.
+- FR-021: Add lightweight parameter helpers for DML: `validate_param_count()` and a placeholder `coerce_params()` (future DataFusion coercion integration).
 
 ### Key Entities
 

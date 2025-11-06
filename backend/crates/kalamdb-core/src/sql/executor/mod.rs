@@ -9,12 +9,14 @@ pub mod handlers;
 pub mod models;
 
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::AuthorizationHandler;
+use crate::sql::executor::handlers::{CreateNamespaceHandler, TypedStatementHandler};
 use crate::sql::executor::models::{ExecutionContext, ExecutionMetadata, ExecutionResult};
 use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
+use kalamdb_commons::NamespaceId;
 use kalamdb_commons::models::UserId;
 use kalamdb_sql::statement_classifier::SqlStatement;
+use kalamdb_sql::ddl::CreateNamespaceStatement;
 use std::sync::Arc;
 
 // Re-export model types so external callers keep working without changes.
@@ -64,25 +66,41 @@ impl SqlExecutor {
         _metadata: Option<&ExecutionMetadata>,
         params: Vec<ScalarValue>,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let classified = SqlStatement::classify(sql);
-        AuthorizationHandler::check_authorization(exec_ctx, &classified)?;
+        // Step 1: Classify, authorize, and parse statement in one pass
+        // Prioritize SELECT/DML checks as they represent 99% of queries
+        // Authorization happens before parsing for fail-fast behavior
+        // TODO: Pass namespace context from ExecutionContext
+        let classified = SqlStatement::classify_and_parse(
+            sql,
+            &NamespaceId::new("default"),
+            exec_ctx.user_role.clone(),
+        )
+        .map_err(|msg| KalamDbError::Unauthorized(msg))?;
 
-        // Route based on statement type
+        // Step 2: Route based on statement type
         match classified {
+            // Hot path: Query and DML operations (99% of traffic)
             SqlStatement::Select | SqlStatement::Insert | SqlStatement::Delete => {
-                // Let DataFusion handle these statements with parameter binding
                 self.execute_via_datafusion(session, sql, params).await
             }
+            
             SqlStatement::Update => {
-                // UPDATE needs custom handling (not yet implemented)
                 Err(KalamDbError::InvalidOperation(
                     "UPDATE statement not yet supported".to_string()
                 ))
             }
+            
+            // DDL operations: Parse once and dispatch to typed handler
+            SqlStatement::CreateNamespace(stmt) => {
+                let handler = CreateNamespaceHandler::new(self.app_context.clone());
+                handler.check_authorization(&stmt, exec_ctx).await?;
+                handler.execute(session, stmt, params, exec_ctx).await
+            }
+            
+            // Other DDL/system commands not yet migrated to typed handlers
             _ => {
-                // All other statements (DDL, system commands, etc.)
                 Err(KalamDbError::InvalidOperation(format!(
-                    "Statement '{}' not yet supported in provider-only executor",
+                    "Statement '{}' not yet supported in typed executor (migration in progress)",
                     classified.name()
                 )))
             }

@@ -22,8 +22,10 @@ use kalamdb_sql::statement_classifier::SqlStatement;
 // Core types relocated to executor/models in v3
 pub mod authorization;
 pub mod ddl;
+pub mod ddl_typed; // Typed DDL handlers using parsed AST
 
 // Phase 7 (US3): New handlers
+// Legacy monolithic DML handler (to be split into dml/ submodules)
 pub mod dml;
 pub mod query;
 pub mod flush;
@@ -31,20 +33,23 @@ pub mod subscription;
 pub mod user_management;
 // pub mod table_registry; // removed
 pub mod system_commands;
+pub mod typed;
 
 // Re-export core types from executor/models for convenience
 pub use crate::sql::executor::models::{ExecutionContext, ExecutionMetadata, ExecutionResult, ScalarValue};
-pub use authorization::AuthorizationHandler;
+// pub use authorization::AuthorizationHandler;
 pub use ddl::DDLHandler;
 
 // Phase 7 (US3): Re-export new handlers
-pub use dml::DMLHandler;
+pub use dml::{InsertHandler, DeleteHandler, UpdateHandler};
 pub use query::QueryHandler;
 pub use flush::FlushHandler;
 pub use subscription::SubscriptionHandler;
 pub use user_management::UserManagementHandler;
 // pub use table_registry::TableRegistryHandler; // removed
 pub use system_commands::SystemCommandsHandler;
+pub use typed::TypedStatementHandler;
+pub use ddl_typed::CreateNamespaceHandler;
 
 /// Common trait for SQL statement handlers
 ///
@@ -123,6 +128,7 @@ pub trait StatementHandler: Send + Sync {
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
         // Default implementation: delegate to AuthorizationHandler
-        AuthorizationHandler::check_authorization(context, statement)
+        //AuthorizationHandler::check_authorization(context, statement)
+        statement.check_authorization(context.user_role.clone()).map_err(KalamDbError::PermissionDenied)
     }
 }
