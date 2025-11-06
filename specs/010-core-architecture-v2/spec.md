@@ -23,11 +23,11 @@ Developers and system components need a single source of truth for global config
 
 ---
 
-### User Story 1 - Schema Registry Performance Optimization (Priority: P1)
+### User Story 1 - Schema Registry Refactoring and Arrow Cache (Priority: P1)
 
-Developers and database operations require fast, repeated access to table schemas and Arrow schemas without rebuilding them on every query. The SchemaRegistry should act as a centralized cache that eliminates redundant schema construction overhead.
+Developers and database operations require fast, repeated access to table schemas and Arrow schemas without rebuilding them on every query. The schema/ directory must be renamed to schema_registry/ and SchemaRegistry should act as a centralized cache that eliminates redundant schema construction overhead.
 
-**Why this priority**: This is P1 because schema lookups happen on every query execution. Performance gains here directly impact all database operations. Without caching, DataFusion rebuilds Arrow schemas repeatedly, causing measurable latency.
+**Why this priority**: This is P1 because schema lookups happen on every query execution. Performance gains here directly impact all database operations. Without caching, DataFusion rebuilds Arrow schemas repeatedly, causing measurable latency. This must complete before executor refactoring.
 
 **Independent Test**: Can be tested by executing 1000 SELECT queries against the same table and measuring schema construction time. Success means zero schema reconstructions after initial cache load.
 
@@ -99,11 +99,16 @@ Developers need the ability to define and query views that present alternative s
 
 ### Functional Requirements
 
+#### Phase 1: Foundation (Must Complete First)
+
 - **FR-000**: AppContext MUST be the single source of truth for NodeId, loaded once from config.toml during initialization
-- **FR-001**: System MUST rename schema_cache.rs module to SchemaRegistry throughout the codebase
+- **FR-001**: System MUST rename schema/ directory to schema_registry/ throughout the codebase
 - **FR-002**: SchemaRegistry MUST cache constructed Arrow schemas with DashMap-based memoization for zero-allocation repeated access
 - **FR-003**: SchemaRegistry MUST expose get_arrow_schema() method that returns cached Arc<Schema> on subsequent calls
 - **FR-004**: SchemaRegistry cache MUST invalidate Arrow schemas when corresponding TableDefinition is modified via ALTER TABLE
+
+#### Phase 2: Refactoring (Depends on Phase 1)
+
 - **FR-005**: System MUST consolidate UserConnections, UserTableChangeDetector, and LiveQueryManager into a single LiveQueryManager struct
 - **FR-006**: Unified LiveQueryManager MUST maintain registry of all active subscriptions with their WebSocket connections, filters, and metadata
 - **FR-007**: System MUST initialize system tables (users, jobs, namespaces, storages, live_queries, tables) using the same storage backend as shared tables
@@ -112,7 +117,9 @@ Developers need the ability to define and query views that present alternative s
 - **FR-010**: Views MUST be queryable via SELECT statements with transparent rewriting to underlying table queries
 - **FR-011**: SchemaRegistry MUST track view dependencies on base tables for cascade invalidation
 - **FR-012**: All components requiring NodeId MUST receive it via AppContext parameter instead of instantiating NodeId locally
-- **FR-013**: System MUST ensure all unit tests and integration tests compile and pass after refactoring
+- **FR-013**: SqlExecutor refactoring from executor.rs to executor/mod.rs MUST be completed AFTER FR-000 to FR-004 are done
+- **FR-014**: Refactored SqlExecutor MUST depend fully on AppContext and schema_registry (no legacy patterns)
+- **FR-015**: System MUST ensure all unit tests and integration tests compile and pass after refactoring
 
 ### Key Entities
 
@@ -154,6 +161,21 @@ Developers need the ability to define and query views that present alternative s
 - **StorageBackend Abstraction**: Already implemented, enables system tables to use RocksDB/Parquet
 - **DataFusion 40.0**: Query planning infrastructure required for view rewriting logic
 
+## Implementation Order *(critical)*
+
+This refactoring MUST follow strict ordering to avoid breaking changes:
+
+1. **First**: AppContext centralization (FR-000, FR-012) - Establish single source of truth
+2. **Second**: schema/ → schema_registry/ rename (FR-001) - Update all imports
+3. **Third**: Arrow schema caching (FR-002 to FR-004) - Add memoization infrastructure
+4. **Fourth**: SqlExecutor migration (FR-013, FR-014) - Refactor executor.rs → executor/mod.rs with AppContext/schema_registry dependencies
+5. **Fifth**: LiveQueryManager consolidation (FR-005, FR-006) - Merge scattered structs
+6. **Sixth**: System tables storage (FR-007, FR-008) - Use standard storage backend
+7. **Seventh**: Views support (FR-009 to FR-011) - Add virtual table infrastructure
+8. **Final**: Testing (FR-015) - Ensure all tests pass
+
+**Note**: SqlExecutor refactoring (executor.rs → executor/mod.rs) was started but incomplete. It MUST wait until AppContext and schema_registry changes are complete to avoid rework.
+
 ## Out of Scope *(optional)*
 
 - Materialized views (views that physically store computed results)
@@ -162,3 +184,25 @@ Developers need the ability to define and query views that present alternative s
 - View permission inheritance from base tables (security model extension)
 - Automatic view dependency detection for circular reference prevention
 - Distributed live query federation across multiple nodes
+- Completing executor.rs → executor/mod.rs migration before AppContext/schema_registry are ready (DEFERRED)
+
+## Technical Notes *(for implementers)*
+
+### Current State
+- `backend/crates/kalamdb-core/src/sql/executor.rs` exists (legacy, large monolithic file)
+- `backend/crates/kalamdb-core/src/sql/executor/mod.rs` exists (partial migration, INCOMPLETE)
+- Migration was started but not completed - DO NOT continue until foundations are ready
+
+### Required Before SqlExecutor Migration
+1. AppContext must expose NodeId from config.toml (no more `NodeId::from(format!("node-{}", std::process::id()))`)
+2. schema_registry must be fully renamed and operational with Arrow caching
+3. All handlers/services must use AppContext reference pattern
+
+### SqlExecutor Migration Strategy (After Foundations)
+- Keep executor.rs as-is until FR-000 to FR-004 complete
+- Once ready, complete migration to executor/mod.rs with:
+  - All methods receive `&AppContext` parameter
+  - All schema lookups via `app_context.schema_registry()`
+  - All NodeId access via `app_context.node_id()`
+  - Zero direct RocksDB/storage dependencies (use providers)
+- Delete executor.rs only after executor/mod.rs is complete and tested
