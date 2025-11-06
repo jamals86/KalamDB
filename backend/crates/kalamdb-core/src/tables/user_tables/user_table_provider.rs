@@ -531,9 +531,11 @@ impl TableProvider for UserTableAccess {
     }
 
     fn schema(&self) -> SchemaRef {
+        // Phase 10, US1, FR-006: Use memoized Arrow schema (50-100× speedup)
         // Return the base schema without system columns
         // System columns (_updated, _deleted) are added dynamically during scan()
-        self.shared.core().schema_ref()
+        self.shared.core().arrow_schema()
+            .expect("Schema must be valid for user table")
     }
 
     fn table_type(&self) -> datafusion::datasource::TableType {

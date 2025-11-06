@@ -32,7 +32,9 @@ static APP_CONTEXT: OnceLock<Arc<AppContext>> = OnceLock::new();
 /// - Memory-efficient per-request operations
 /// - Single source of truth for all shared state
 pub struct AppContext {
-    node_id: NodeId,
+    /// Node identifier loaded once from config.toml (Phase 10, US0, FR-000)
+    /// Wrapped in Arc for zero-copy sharing across all components
+    node_id: Arc<NodeId>,
 
     // ===== Caches =====
     schema_registry: Arc<SchemaRegistry>,
@@ -80,14 +82,17 @@ impl std::fmt::Debug for AppContext {
 }
 
 impl AppContext {
-    /// Initialize AppContext singleton with 3 parameters
+    /// Initialize AppContext singleton with config-driven NodeId
     ///
     /// Creates all dependencies internally using constants from kalamdb_commons.
     /// Table prefixes are read from constants::USER_TABLE_PREFIX, etc.
     ///
+    /// **Phase 10, US0 (FR-000)**: NodeId is now loaded from config and wrapped in Arc
+    /// for zero-copy sharing across all components, eliminating duplicate instantiations.
+    ///
     /// # Parameters
     /// - `storage_backend`: Storage abstraction (RocksDB implementation)
-    /// - `node_id`: Node identifier for distributed coordination
+    /// - `node_id`: Node identifier loaded from config.toml (wrapped in Arc internally)
     /// - `storage_base_path`: Base directory for storage files
     ///
     /// # Example
@@ -98,9 +103,10 @@ impl AppContext {
     /// # use std::sync::Arc;
     ///
     /// let backend: Arc<dyn StorageBackend> = todo!();
+    /// let node_id = NodeId::new("prod-node-1".to_string()); // From config.toml
     /// AppContext::init(
     ///     backend,
-    ///     NodeId::new("prod-node-1".to_string()),
+    ///     node_id,
     ///     "data/storage".to_string(),
     /// );
     /// ```
@@ -109,6 +115,7 @@ impl AppContext {
         node_id: NodeId,
         storage_base_path: String,
     ) -> Arc<AppContext> {
+        let node_id = Arc::new(node_id); // Wrap NodeId in Arc for zero-copy sharing (FR-000)
         APP_CONTEXT
             .get_or_init(|| {
                 // Create stores using constants from kalamdb_commons
@@ -207,7 +214,7 @@ impl AppContext {
                 let live_query_manager = Arc::new(LiveQueryManager::new(
                     system_tables.live_queries(),
                     schema_registry.clone(),
-                    node_id.clone(),
+                    (*node_id).clone(), // Dereference Arc<NodeId> to NodeId for LiveQueryManager
                     Some(user_table_store.clone()),
                     Some(shared_table_store.clone()),
                     Some(stream_table_store.clone()),
@@ -278,8 +285,12 @@ impl AppContext {
         self.live_query_manager.clone()
     }
     
-    pub fn node_id(&self) -> NodeId {
-        self.live_query_manager.node_id().clone()
+    /// Get the NodeId loaded from config.toml (Phase 10, US0, FR-000)
+    ///
+    /// Returns an Arc reference for zero-copy sharing. This NodeId is allocated
+    /// exactly once per server instance during AppContext::init().
+    pub fn node_id(&self) -> &Arc<NodeId> {
+        &self.node_id
     }
     
     pub fn storage_registry(&self) -> Arc<StorageRegistry> {

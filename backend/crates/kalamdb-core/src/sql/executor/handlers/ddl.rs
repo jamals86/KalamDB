@@ -269,11 +269,14 @@ impl DDLHandler {
     /// CREATE NAMESPACE IF NOT EXISTS staging;
     /// ```
     pub async fn execute_create_namespace(
-        namespaces_provider: &Arc<crate::tables::system::NamespacesTableProvider>,
+        app_context: &Arc<crate::app_context::AppContext>,
         _session: &SessionContext,
         sql: &str,
         _exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
+        // Extract namespace provider from AppContext
+        let namespaces_provider = app_context.system_tables().namespaces();
+
         // Parse CREATE NAMESPACE statement
         let stmt = CreateNamespaceStatement::parse(sql).map_err(|e| {
             KalamDbError::InvalidSql(format!("Failed to parse CREATE NAMESPACE: {}", e))
@@ -329,12 +332,15 @@ impl DDLHandler {
     /// DROP NAMESPACE IF EXISTS staging;
     /// ```
     pub async fn execute_drop_namespace(
-        namespaces_provider: &Arc<crate::tables::system::NamespacesTableProvider>,
+        app_context: &Arc<crate::app_context::AppContext>,
         _session: &SessionContext,
         sql: &str,
         _exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::ddl::DropNamespaceStatement;
+
+        // Extract namespace provider from AppContext
+        let namespaces_provider = app_context.system_tables().namespaces();
 
         // Parse DROP NAMESPACE statement
         let stmt = DropNamespaceStatement::parse(sql)?;
@@ -397,13 +403,16 @@ impl DDLHandler {
     ///   USER_TABLES_TEMPLATE '{namespace}/{tableName}/{userId}';
     /// ```
     pub async fn execute_create_storage(
-        storages_provider: &Arc<crate::tables::system::StoragesTableProvider>,
-        storage_registry: &crate::storage::StorageRegistry,
+        app_context: &Arc<crate::app_context::AppContext>,
         _session: &SessionContext,
         sql: &str,
         _exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         use kalamdb_sql::CreateStorageStatement;
+
+        // Extract providers from AppContext
+        let storages_provider = app_context.system_tables().storages();
+        let storage_registry = app_context.storage_registry();
 
         // Parse CREATE STORAGE statement
         let stmt = CreateStorageStatement::parse(sql).map_err(|e| {

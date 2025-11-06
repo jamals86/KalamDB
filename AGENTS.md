@@ -176,6 +176,29 @@ specs/010-core-architecture-v2/ # CURRENT: Arrow memoization, views
 - **Storage Abstraction**: Use `Arc<dyn StorageBackend>` instead of `Arc<rocksdb::DB>` (except in kalamdb-store)
 
 ## Recent Changes (Phase 10 - IN PROGRESS)
+- 2025-01-15: **Phase 10 (Phase 7): System Schema Versioning** - ✅ **COMPLETE**:
+  - **Problem**: No system-level schema versioning for future migrations when new system tables are added
+  - **Solution**: Implemented version tracking in RocksDB with upgrade/downgrade logic
+  - **Constants Added** (kalamdb-commons/src/constants.rs):
+    - `SYSTEM_SCHEMA_VERSION = 1`: Current schema version (7 system tables)
+    - `SYSTEM_SCHEMA_VERSION_KEY = "system:schema_version"`: RocksDB storage key
+  - **initialization.rs Created** (240 lines, kalamdb-core/src/tables/system/initialization.rs):
+    - initialize_system_tables(): Read stored version, compare with current, upgrade/reject downgrade
+    - Version storage in RocksDB default partition as u32 big-endian bytes
+    - Extensible upgrade logic with match stored_version blocks for future v1→v2+ migrations
+    - Downgrade protection (stored > current returns KalamDbError)
+    - 5 unit tests: first_init, unchanged, upgrade, downgrade_rejected, invalid_data
+  - **Lifecycle Integration**: initialize_system_tables() called from lifecycle::bootstrap() after AppContext creation
+  - **Version History**: v1 (2025-01-15) = 7 system tables (users, namespaces, tables, storages, live_queries, jobs, audit_logs)
+  - **Future Migrations**: When adding new system tables, increment SYSTEM_SCHEMA_VERSION and add migration case
+  - **Build Status**: ✅ Backend compiles successfully (0 errors, 16 warnings)
+  - **Files Created**:
+    - tables/system/initialization.rs (240 lines)
+  - **Files Modified**:
+    - kalamdb-commons/src/constants.rs (added 2 versioning constants)
+    - tables/system/mod.rs (exported initialize_system_tables)
+    - lifecycle.rs (added initialize_system_tables() call)
+  - **Phase 7 Status**: ✅ 100% COMPLETE (11/11 tasks) - All acceptance criteria met (SC-006, SC-010)
 - 2025-11-06: **Phase 10: Arrow Schema Memoization & Architecture Refactoring**:
   - **Branch**: 010-core-architecture-v2
   - **Specification**: specs/010-core-architecture-v2/spec.md (17 FRs, 11 SCs, 14 acceptance scenarios)

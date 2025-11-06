@@ -15,7 +15,6 @@ use crate::schema_registry::SchemaRegistry;
 use datafusion::arrow::array::{ArrayRef, StringBuilder};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::error::DataFusionError;
 use std::sync::{Arc, OnceLock};
 
 /// Static schema for system.stats
@@ -110,7 +109,7 @@ pub type StatsTableProvider = super::view_base::ViewTableProvider<StatsView>;
 
 /// Helper function to create a stats table provider
 pub fn create_stats_provider(schema_registry: Option<Arc<SchemaRegistry>>) -> StatsTableProvider {
-    StatsTableProvider::new(StatsView::new(schema_registry))
+    StatsTableProvider::new(Arc::new(StatsView::new(schema_registry)))
 }
 
 #[cfg(test)]

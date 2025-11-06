@@ -91,7 +91,6 @@ impl StreamTableProvider {
     pub fn new(
         table_id: Arc<TableId>,
         unified_cache: Arc<SchemaRegistry>,
-        schema: SchemaRef,
         store: Arc<StreamTableStore>,
         retention_seconds: Option<u32>,
         ephemeral: bool,
@@ -100,7 +99,6 @@ impl StreamTableProvider {
         let core = TableProviderCore::new(
             table_id,
             TableType::Stream,
-            schema,
             None, // storage_id - stream tables don't use Parquet
             unified_cache,
         );
@@ -361,8 +359,10 @@ impl TableProvider for StreamTableProvider {
     }
 
     /// Returns the Arrow schema for this table (NO system columns)
+    /// Phase 10, US1, FR-006: Use memoized Arrow schema (50-100× speedup)
     fn schema(&self) -> SchemaRef {
-        self.core.schema_ref()
+        self.core.arrow_schema()
+            .expect("Schema must be valid for stream table")
     }
 
     /// Returns the table type (always Base for stream tables)

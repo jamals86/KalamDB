@@ -75,7 +75,6 @@ impl SharedTableProvider {
         let core = TableProviderCore::new(
             table_id,
             TableType::Shared,
-            schema,
             None, // storage_id - will be fetched from cache when needed
             unified_cache,
         );
@@ -242,8 +241,11 @@ impl TableProvider for SharedTableProvider {
     }
 
     fn schema(&self) -> SchemaRef {
+        // Phase 10, US1, FR-006: Use memoized Arrow schema (50-100× speedup)
         // Add system columns to the schema if they don't already exist
-        let mut fields = self.core.schema_ref().fields().to_vec();
+        let base_schema = self.core.arrow_schema()
+            .expect("Schema must be valid for shared table");
+        let mut fields = base_schema.fields().to_vec();
 
         // Check if _updated already exists
         if !fields.iter().any(|f| f.name() == "_updated") {

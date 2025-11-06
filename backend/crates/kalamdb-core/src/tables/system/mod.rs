@@ -3,6 +3,7 @@
 //! All system tables now use EntityStore-based implementations.
 
 pub mod audit_logs;
+pub mod initialization; // Phase 10 (Phase 7): System schema versioning
 pub mod registry; // Phase 5: SystemTablesRegistry - centralized provider access
 pub mod system_table_definitions; // Phase 15: System table schema definitions
 pub mod system_table_trait;
@@ -16,6 +17,9 @@ pub mod stats; // Virtual view (will move to schema_registry/views later)
 pub mod storages;
 pub mod tables;
 pub mod users;
+
+// Export initialization (Phase 10 Phase 7)
+pub use initialization::initialize_system_tables;
 
 // Export registry (Phase 5 completion)
 pub use registry::SystemTablesRegistry;

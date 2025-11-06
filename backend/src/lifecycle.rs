@@ -56,6 +56,10 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
     );
     info!("AppContext initialized with all stores, managers, registries, and providers");
 
+    // Initialize system tables and verify schema version (Phase 10 Phase 7, T075-T079)
+    kalamdb_core::tables::system::initialize_system_tables(backend.clone()).await?;
+    info!("System tables initialized with schema version tracking");
+
     // Start UnifiedJobsManager run loop (Phase 9, T163)
     let job_manager = app_context.job_manager();
     let max_concurrent = config.jobs.max_concurrent;
