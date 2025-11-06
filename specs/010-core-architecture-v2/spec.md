@@ -25,17 +25,18 @@ Developers and system components need a single source of truth for global config
 
 ### User Story 1 - Schema Registry Refactoring and Arrow Cache (Priority: P1)
 
-Developers and database operations require fast, repeated access to table schemas and Arrow schemas without rebuilding them on every query. The schema/ directory must be renamed to schema_registry/ and SchemaRegistry should act as a centralized cache that eliminates redundant schema construction overhead.
+Developers and database operations require fast, repeated access to table schemas and Arrow schemas without rebuilding them on every query. The schema/ directory must be renamed to schema_registry/ and SchemaRegistry should act as a centralized cache that eliminates redundant schema construction overhead. Arrow schema memoization must be added to SchemaCache for 50-100× performance improvement.
 
-**Why this priority**: This is P1 because schema lookups happen on every query execution. Performance gains here directly impact all database operations. Without caching, DataFusion rebuilds Arrow schemas repeatedly, causing measurable latency. This must complete before executor refactoring.
+**Why this priority**: This is P1 because schema lookups happen on every query execution. Performance gains here directly impact all database operations. Without caching, DataFusion rebuilds Arrow schemas repeatedly (~50-100μs per call), causing measurable latency for high-throughput workloads. This must complete before executor refactoring.
 
-**Independent Test**: Can be tested by executing 1000 SELECT queries against the same table and measuring schema construction time. Success means zero schema reconstructions after initial cache load.
+**Independent Test**: Can be tested by executing 1000 SELECT queries against the same table and measuring schema construction time. Success means zero schema reconstructions after initial cache load (1-2μs cached vs 50-100μs uncached).
 
 **Acceptance Scenarios**:
 
-1. **Given** a table has been queried once, **When** a developer executes subsequent queries against that table, **Then** the Arrow schema is retrieved from cache in under 1μs without reconstruction
-2. **Given** a table's schema has been modified via ALTER TABLE, **When** any subsequent query accesses that table, **Then** the cached schema is invalidated and rebuilt exactly once
-3. **Given** the SchemaRegistry is initialized, **When** a developer queries the cache statistics, **Then** cache hit rates above 99% are reported for stable workloads
+1. **Given** a table has been queried once, **When** a developer executes subsequent queries against that table, **Then** the Arrow schema is retrieved from memoized cache in under 2μs without reconstruction (50-100× faster than current)
+2. **Given** SchemaCache includes Arrow schema memoization map, **When** all 11 TableProvider implementations call schema(), **Then** they receive cached Arc<Schema> via SchemaCache.get_arrow_schema()
+3. **Given** a table's schema has been modified via ALTER TABLE, **When** any subsequent query accesses that table, **Then** the cached Arrow schema is invalidated and rebuilt exactly once
+4. **Given** the SchemaRegistry is initialized with 1000 tables, **When** queries execute repeatedly, **Then** cache hit rates above 99% are reported for stable workloads with <2MB memory overhead
 
 ---
 
@@ -103,29 +104,32 @@ Developers need the ability to define and query views that present alternative s
 
 - **FR-000**: AppContext MUST be the single source of truth for NodeId, loaded once from config.toml during initialization
 - **FR-001**: System MUST rename schema/ directory to schema_registry/ throughout the codebase
-- **FR-002**: SchemaRegistry MUST cache constructed Arrow schemas with DashMap-based memoization for zero-allocation repeated access
-- **FR-003**: SchemaRegistry MUST expose get_arrow_schema() method that returns cached Arc<Schema> on subsequent calls
-- **FR-004**: SchemaRegistry cache MUST invalidate Arrow schemas when corresponding TableDefinition is modified via ALTER TABLE
+- **FR-002**: SchemaCache MUST add arrow_schemas: DashMap<TableId, Arc<Schema>> field for Arrow schema memoization
+- **FR-003**: SchemaCache MUST expose get_arrow_schema(table_id) method that computes on first call (~50-100μs) and returns cached Arc::clone() on subsequent calls (~1-2μs)
+- **FR-004**: SchemaCache invalidate() and clear() methods MUST remove Arrow schema entries alongside table metadata
+- **FR-005**: TableProviderCore MUST add arrow_schema() method that calls SchemaCache.get_arrow_schema()
+- **FR-006**: All 11 TableProvider implementations (UserTableAccess, SharedTableProvider, StreamTableProvider, 8 system tables) MUST use arrow_schema() instead of schema_ref() in their schema() methods
 
 #### Phase 2: Refactoring (Depends on Phase 1)
 
-- **FR-005**: System MUST consolidate UserConnections, UserTableChangeDetector, and LiveQueryManager into a single LiveQueryManager struct
-- **FR-006**: Unified LiveQueryManager MUST maintain registry of all active subscriptions with their WebSocket connections, filters, and metadata
-- **FR-007**: System MUST initialize system tables (users, jobs, namespaces, storages, live_queries, tables) using the same storage backend as shared tables
-- **FR-008**: System tables MUST support flush operations that write buffered rows from RocksDB to Parquet files
-- **FR-009**: System MUST support registering views in SchemaRegistry with view definitions stored separately from physical tables
-- **FR-010**: Views MUST be queryable via SELECT statements with transparent rewriting to underlying table queries
-- **FR-011**: SchemaRegistry MUST track view dependencies on base tables for cascade invalidation
-- **FR-012**: All components requiring NodeId MUST receive it via AppContext parameter instead of instantiating NodeId locally
-- **FR-013**: SqlExecutor refactoring from executor.rs to executor/mod.rs MUST be completed AFTER FR-000 to FR-004 are done
-- **FR-014**: Refactored SqlExecutor MUST depend fully on AppContext and schema_registry (no legacy patterns)
-- **FR-015**: System MUST ensure all unit tests and integration tests compile and pass after refactoring
+- **FR-007**: System MUST consolidate UserConnections, UserTableChangeDetector, and LiveQueryManager into a single LiveQueryManager struct
+- **FR-008**: Unified LiveQueryManager MUST maintain registry of all active subscriptions with their WebSocket connections, filters, and metadata
+- **FR-009**: System MUST initialize system tables (users, jobs, namespaces, storages, live_queries, tables) using the same storage backend as shared tables
+- **FR-010**: System tables MUST support flush operations that write buffered rows from RocksDB to Parquet files
+- **FR-011**: System MUST support registering views in SchemaRegistry with view definitions stored separately from physical tables
+- **FR-012**: Views MUST be queryable via SELECT statements with transparent rewriting to underlying table queries
+- **FR-013**: SchemaRegistry MUST track view dependencies on base tables for cascade invalidation
+- **FR-014**: All components requiring NodeId MUST receive it via AppContext parameter instead of instantiating NodeId locally
+- **FR-015**: SqlExecutor refactoring from executor.rs to executor/mod.rs MUST be completed AFTER FR-000 to FR-006 are done
+- **FR-016**: Refactored SqlExecutor MUST depend fully on AppContext and schema_registry (no legacy patterns)
+- **FR-017**: System MUST ensure all unit tests and integration tests compile and pass after refactoring
 
 ### Key Entities
 
 - **AppContext**: Singleton containing all global configuration and state. Single owner of NodeId loaded from config.toml. Passed by reference to all components requiring global state.
-- **SchemaRegistry**: Centralized registry that manages TableDefinition cache, Arrow schema cache (new), and view definitions. Replaces scattered schema_cache references.
-- **CachedTableData**: Extended to include Arc<Schema> field for memoized Arrow schemas alongside existing TableDefinition
+- **SchemaCache**: Unified cache containing TableDefinition metadata AND memoized Arrow schemas. New arrow_schemas DashMap provides 50-100× speedup for repeated schema access.
+- **CachedTableData**: Contains Arc<TableDefinition> as single source of truth. Arrow schemas generated on-demand via to_arrow_schema() and cached separately in arrow_schemas map.
+- **TableProviderCore**: Common core for all providers, provides arrow_schema() method that delegates to SchemaCache.get_arrow_schema() for memoized access
 - **LiveQueryManager**: Consolidated struct containing subscription registry (RwLock<LiveQueryRegistry>), user connections (HashMap<ConnectionId, UserConnectionSocket>), filter cache (RwLock<FilterCache>), initial data fetcher, schema registry reference, and node ID
 - **SystemTableStorage**: New abstraction for system tables that uses standard TableProvider + StorageBackend pattern instead of custom system table logic
 - **ViewDefinition**: Metadata structure for virtual views containing view name, SQL definition, dependent table IDs, and cached rewritten query plan
@@ -136,14 +140,15 @@ Developers need the ability to define and query views that present alternative s
 
 - **SC-000**: NodeId is allocated exactly once per server instance and all logged events use the identical NodeId value
 - **SC-001**: Arrow schema cache hit rate exceeds 99% for workloads with stable table schemas
-- **SC-002**: Schema lookup latency reduces from 50-100μs (current) to under 2μs (cached) for repeated accesses
-- **SC-003**: LiveQueryManager consolidation reduces subscription management code by at least 30% (lines of code metric)
-- **SC-004**: System table queries perform within 10% of equivalent shared table queries (no performance regression)
-- **SC-005**: Zero duplicate NodeId instantiations detected in codebase after refactoring (validated via code review)
-- **SC-006**: All 477 existing kalamdb-core tests pass without modification or with minimal fixture updates
-- **SC-007**: View queries return results within 5% of direct table query performance (minimal rewriting overhead)
-- **SC-008**: Memory usage for schema caching increases by less than 50MB for workloads with 1000 tables
-- **SC-009**: System table initialization completes in under 100ms on database startup
+- **SC-002**: Schema lookup latency reduces from 50-100μs (uncached) to under 2μs (memoized) for repeated accesses - achieving 50-100× speedup
+- **SC-003**: Arrow schema memoization adds less than 2MB memory overhead for 1000 tables (~1-2KB per table)
+- **SC-004**: All 11 TableProvider implementations successfully use SchemaCache.get_arrow_schema() with zero performance regressions
+- **SC-005**: LiveQueryManager consolidation reduces subscription management code by at least 30% (lines of code metric)
+- **SC-006**: System table queries perform within 10% of equivalent shared table queries (no performance regression)
+- **SC-007**: Zero duplicate NodeId instantiations detected in codebase after refactoring (validated via code review)
+- **SC-008**: All 477 existing kalamdb-core tests pass without modification or with minimal fixture updates
+- **SC-009**: View queries return results within 5% of direct table query performance (minimal rewriting overhead)
+- **SC-010**: System table initialization completes in under 100ms on database startup
 
 ## Assumptions *(optional)*
 
@@ -165,16 +170,22 @@ Developers need the ability to define and query views that present alternative s
 
 This refactoring MUST follow strict ordering to avoid breaking changes:
 
-1. **First**: AppContext centralization (FR-000, FR-012) - Establish single source of truth
-2. **Second**: schema/ → schema_registry/ rename (FR-001) - Update all imports
-3. **Third**: Arrow schema caching (FR-002 to FR-004) - Add memoization infrastructure
-4. **Fourth**: SqlExecutor migration (FR-013, FR-014) - Refactor executor.rs → executor/mod.rs with AppContext/schema_registry dependencies
-5. **Fifth**: LiveQueryManager consolidation (FR-005, FR-006) - Merge scattered structs
-6. **Sixth**: System tables storage (FR-007, FR-008) - Use standard storage backend
-7. **Seventh**: Views support (FR-009 to FR-011) - Add virtual table infrastructure
-8. **Final**: Testing (FR-015) - Ensure all tests pass
+1. **First**: AppContext centralization (FR-000, FR-014) - Establish single source of truth for NodeId
+2. **Second**: schema/ → schema_registry/ rename (FR-001) - Update all imports and module paths
+3. **Third**: Arrow schema memoization (FR-002 to FR-006) - Complete implementation:
+   - Add arrow_schemas DashMap to SchemaCache
+   - Implement SchemaCache.get_arrow_schema() with compute-once-cache-forever pattern
+   - Update invalidation methods (invalidate(), clear())
+   - Add TableProviderCore.arrow_schema() method
+   - Update all 11 TableProvider.schema() implementations to use memoized schemas
+   - Add unit tests and benchmarks to verify 50-100× speedup
+4. **Fourth**: SqlExecutor migration (FR-015, FR-016) - Refactor executor.rs → executor/mod.rs with AppContext/schema_registry dependencies
+5. **Fifth**: LiveQueryManager consolidation (FR-007, FR-008) - Merge scattered structs
+6. **Sixth**: System tables storage (FR-009, FR-010) - Use standard storage backend
+7. **Seventh**: Views support (FR-011 to FR-013) - Add virtual table infrastructure
+8. **Final**: Testing (FR-017) - Ensure all tests pass
 
-**Note**: SqlExecutor refactoring (executor.rs → executor/mod.rs) was started but incomplete. It MUST wait until AppContext and schema_registry changes are complete to avoid rework.
+**Note**: SqlExecutor refactoring (executor.rs → executor/mod.rs) was started but incomplete. It MUST wait until AppContext and schema_registry changes (Steps 1-3) are complete to avoid rework.
 
 ## Out of Scope *(optional)*
 
@@ -199,10 +210,33 @@ This refactoring MUST follow strict ordering to avoid breaking changes:
 3. All handlers/services must use AppContext reference pattern
 
 ### SqlExecutor Migration Strategy (After Foundations)
-- Keep executor.rs as-is until FR-000 to FR-004 complete
+- Keep executor.rs as-is until FR-000 to FR-006 complete (AppContext + schema_registry + Arrow memoization)
 - Once ready, complete migration to executor/mod.rs with:
   - All methods receive `&AppContext` parameter
-  - All schema lookups via `app_context.schema_registry()`
+  - All schema lookups via `app_context.schema_registry().get_arrow_schema()` (memoized)
   - All NodeId access via `app_context.node_id()`
   - Zero direct RocksDB/storage dependencies (use providers)
 - Delete executor.rs only after executor/mod.rs is complete and tested
+
+### Arrow Schema Memoization Details (FR-002 to FR-006)
+**Files to modify**:
+1. `schema_registry/schema_cache.rs`:
+   - Add `arrow_schemas: DashMap<TableId, Arc<Schema>>` field
+   - Implement `get_arrow_schema()` method (fast path: cache hit in 1-2μs, slow path: compute + cache in 50-100μs)
+   - Update `invalidate()` and `clear()` to remove Arrow schemas
+2. `tables/base_table_provider.rs`:
+   - Add `arrow_schema()` method to TableProviderCore
+3. All 11 TableProvider implementations:
+   - `tables/user_tables/user_table_provider.rs` (UserTableAccess)
+   - `tables/shared_tables/shared_table_provider.rs` (SharedTableProvider)
+   - `tables/stream_tables/stream_table_provider.rs` (StreamTableProvider)
+   - `tables/system/users/users_provider.rs` (UsersTableProvider)
+   - `tables/system/jobs/jobs_provider.rs` (JobsTableProvider)
+   - `tables/system/namespaces/namespaces_provider.rs` (NamespacesTableProvider)
+   - `tables/system/storages/storages_provider.rs` (StoragesTableProvider)
+   - `tables/system/live_queries/live_queries_provider.rs` (LiveQueriesTableProvider)
+   - `tables/system/tables/tables_provider.rs` (TablesTableProvider)
+   - `tables/system/audit_logs/audit_logs_provider.rs` (AuditLogsTableProvider)
+   - `tables/system/stats.rs` (StatsTableProvider)
+
+**Performance target**: 50-100× speedup for schema access (75μs → 1.5μs for repeated queries)
