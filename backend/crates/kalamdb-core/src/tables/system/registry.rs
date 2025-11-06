@@ -7,11 +7,11 @@
 //! a single struct for cleaner AppContext API.
 
 use super::{
-    AuditLogsTableProvider, InformationSchemaColumnsProvider, InformationSchemaTablesProvider,
-    JobsTableProvider, LiveQueriesTableProvider, NamespacesTableProvider, StatsTableProvider,
-    StoragesTableProvider, TablesTableProvider, UsersTableProvider,
+    AuditLogsTableProvider, JobsTableProvider, LiveQueriesTableProvider, NamespacesTableProvider, 
+    StatsTableProvider, StoragesTableProvider, TablesTableProvider, UsersTableProvider,
 };
 use crate::schema_registry::SchemaRegistry;
+use datafusion::datasource::TableProvider;
 use kalamdb_store::StorageBackend;
 use std::sync::{Arc, RwLock};
 
@@ -33,9 +33,9 @@ pub struct SystemTablesRegistry {
     // ===== Virtual tables =====
     stats: Arc<StatsTableProvider>,
     
-    // ===== information_schema.* tables (lazy-initialized) =====
-    information_schema_tables: RwLock<Option<Arc<InformationSchemaTablesProvider>>>,
-    information_schema_columns: RwLock<Option<Arc<InformationSchemaColumnsProvider>>>,
+    // ===== information_schema.* tables (lazy-initialized, using VirtualView pattern) =====
+    information_schema_tables: RwLock<Option<Arc<dyn TableProvider>>>,
+    information_schema_columns: RwLock<Option<Arc<dyn TableProvider>>>,
 }
 
 impl SystemTablesRegistry {
@@ -83,15 +83,21 @@ impl SystemTablesRegistry {
     ///
     /// This is called from AppContext::init() after schema_registry is available.
     pub fn set_information_schema_dependencies(&self, schema_registry: Arc<SchemaRegistry>) {
-        // Initialize information_schema.tables
-        let tables_provider = Arc::new(InformationSchemaTablesProvider::new(
+        use crate::schema_registry::views::information_schema::{
+            create_information_schema_tables_provider,
+            create_information_schema_columns_provider,
+        };
+        
+        // Initialize information_schema.tables using VirtualView pattern
+        let tables_provider = create_information_schema_tables_provider(
             self.tables.clone(),
             schema_registry.clone(),
-        ));
+        );
         *self.information_schema_tables.write().unwrap() = Some(tables_provider);
 
-        // TODO: Initialize information_schema.columns (needs similar refactoring)
-        // For now, leave as None - this provider needs to be refactored too
+        // Initialize information_schema.columns using VirtualView pattern
+        let columns_provider = create_information_schema_columns_provider(schema_registry);
+        *self.information_schema_columns.write().unwrap() = Some(columns_provider);
     }
     
     // ===== Getter Methods =====
@@ -137,12 +143,12 @@ impl SystemTablesRegistry {
     }
     
     /// Get the information_schema.tables provider
-    pub fn information_schema_tables(&self) -> Option<Arc<InformationSchemaTablesProvider>> {
+    pub fn information_schema_tables(&self) -> Option<Arc<dyn TableProvider>> {
         self.information_schema_tables.read().unwrap().clone()
     }
     
     /// Get the information_schema.columns provider
-    pub fn information_schema_columns(&self) -> Option<Arc<InformationSchemaColumnsProvider>> {
+    pub fn information_schema_columns(&self) -> Option<Arc<dyn TableProvider>> {
         self.information_schema_columns.read().unwrap().clone()
     }
     
