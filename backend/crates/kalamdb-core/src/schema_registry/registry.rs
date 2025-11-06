@@ -78,7 +78,7 @@ impl CachedTableData {
 ///
 /// **Performance Optimization**: LRU timestamps are stored separately to avoid
 /// cloning large CachedTableData structs on every access.
-pub struct SchemaCache {
+pub struct SchemaRegistry {
     /// Cached table data indexed by TableId
     cache: DashMap<TableId, Arc<CachedTableData>>,
 
@@ -104,7 +104,7 @@ pub struct SchemaCache {
     misses: AtomicU64,
 }
 
-impl SchemaCache {
+impl SchemaRegistry {
     /// Create a new schema cache with specified maximum size
     ///
     /// # Arguments
@@ -507,9 +507,139 @@ impl SchemaCache {
 
         Ok(full_path)
     }
+
+    // ===== Persistence Methods (Phase 5: SchemaRegistry Consolidation) =====
+    
+    /// Get table definition from persistence layer (read-through pattern)
+    ///
+    /// Checks cache first, falls back to TablesTableProvider via AppContext if not cached.
+    /// This is the Phase 5 read-through pattern that consolidates TableSchemaStore into SchemaRegistry.
+    ///
+    /// # Arguments
+    /// * `table_id` - Table identifier
+    ///
+    /// # Returns
+    /// Table definition if found, None otherwise
+    pub fn get_table_definition(
+        &self,
+        table_id: &TableId,
+    ) -> Result<Option<Arc<TableDefinition>>, KalamDbError> {
+        // Fast path: check cache
+        if let Some(cached) = self.get(table_id) {
+            return Ok(Some(Arc::clone(&cached.table)));
+        }
+
+        // Slow path: query persistence layer via AppContext
+        let app_ctx = crate::app_context::AppContext::get();
+        let tables_provider = app_ctx.system_tables().tables();
+        
+        match tables_provider.get_table_by_id(table_id)? {
+            Some(table_def) => Ok(Some(Arc::new(table_def))),
+            None => Ok(None),
+        }
+    }
+
+    /// Store table definition to persistence layer (write-through pattern)
+    ///
+    /// Persists to TablesTableProvider and invalidates cache to force reload.
+    /// This is the Phase 5 write-through pattern.
+    ///
+    /// # Arguments
+    /// * `table_id` - Table identifier
+    /// * `table_def` - Table definition to store
+    pub fn put_table_definition(
+        &self,
+        table_id: &TableId,
+        table_def: &TableDefinition,
+    ) -> Result<(), KalamDbError> {
+        // Get tables provider via AppContext
+        let app_ctx = crate::app_context::AppContext::get();
+        let tables_provider = app_ctx.system_tables().tables();
+        
+        // Persist to storage
+        tables_provider.create_table(table_id, table_def)?;
+
+        // Invalidate cache to force reload on next access
+        self.invalidate(table_id);
+
+        Ok(())
+    }
+
+    /// Delete table definition from persistence layer (delete-through pattern)
+    ///
+    /// Removes from TablesTableProvider and invalidates cache.
+    /// This is the Phase 5 delete-through pattern.
+    ///
+    /// # Arguments
+    /// * `table_id` - Table identifier
+    pub fn delete_table_definition(
+        &self,
+        table_id: &TableId,
+    ) -> Result<(), KalamDbError> {
+        // Get tables provider via AppContext
+        let app_ctx = crate::app_context::AppContext::get();
+        let tables_provider = app_ctx.system_tables().tables();
+        
+        // Delete from storage
+        tables_provider.delete_table(&table_id)?;
+
+        // Invalidate cache
+        self.invalidate(table_id);
+
+        Ok(())
+    }
+
+    /// Check if table exists in persistence layer
+    ///
+    /// Checks cache first for performance, falls back to persistence.
+    ///
+    /// # Arguments
+    /// * `table_id` - Table identifier
+    ///
+    /// # Returns
+    /// true if table exists, false otherwise
+    pub fn table_exists(
+        &self,
+        table_id: &TableId,
+    ) -> Result<bool, KalamDbError> {
+        // Fast path: check cache
+        if self.get(table_id).is_some() {
+            return Ok(true);
+        }
+
+        // Slow path: query persistence via AppContext
+        let app_ctx = crate::app_context::AppContext::get();
+        let tables_provider = app_ctx.system_tables().tables();
+        
+        Ok(tables_provider.get_table_by_id(table_id)?.is_some())
+    }
+
+    /// Get Arrow schema for a table (Phase 10: Arrow Schema Memoization)
+    ///
+    /// This method will be implemented in Phase 10 to provide memoized Arrow schemas.
+    /// For now, it returns an error to unblock compilation.
+    ///
+    /// # Arguments
+    /// * `table_id` - Table identifier
+    ///
+    /// # Returns
+    /// Memoized Arrow schema wrapped in Arc
+    ///
+    /// # TODO
+    /// Phase 10 Step 3: Implement double-check locking pattern with arrow_schemas DashMap
+    pub fn get_arrow_schema(
+        &self,
+        _table_id: &TableId,
+    ) -> Result<Arc<arrow::datatypes::Schema>, KalamDbError> {
+        // TODO Phase 10: Implement arrow schema memoization
+        // This stub allows compilation to proceed while Phase 10 implementation is pending
+        Err(KalamDbError::NotImplemented(
+            "get_arrow_schema not yet implemented - Phase 10 pending".to_string(),
+        ))
+    }
 }
 
-impl Default for SchemaCache {
+impl Default for SchemaRegistry {
     fn default() -> Self {
         Self::new(10000, None) // Default max size: 10,000 tables
     }
@@ -571,7 +701,7 @@ mod tests {
 
     #[test]
     fn test_insert_and_get() {
-        let cache = SchemaCache::new(1000, None);
+        let cache = SchemaRegistry::new(1000, None);
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
         let data = create_test_data(table_id.clone());
 
@@ -585,7 +715,7 @@ mod tests {
 
     #[test]
     fn test_get_by_name() {
-        let cache = SchemaCache::new(1000, None);
+        let cache = SchemaRegistry::new(1000, None);
         let namespace = NamespaceId::new("ns1");
         let table_name = TableName::new("table1");
         let table_id = TableId::new(namespace.clone(), table_name.clone());
@@ -601,7 +731,7 @@ mod tests {
 
     #[test]
     fn test_lru_eviction() {
-        let cache = SchemaCache::new(3, None); // Small cache for testing
+        let cache = SchemaRegistry::new(3, None); // Small cache for testing
 
         // Insert 3 tables
         let table1 = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
@@ -634,7 +764,7 @@ mod tests {
 
     #[test]
     fn test_invalidate() {
-        let cache = SchemaCache::new(1000, None);
+        let cache = SchemaRegistry::new(1000, None);
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
         let data = create_test_data(table_id.clone());
 
@@ -647,7 +777,7 @@ mod tests {
 
     #[test]
     fn test_storage_path_resolution() {
-        let cache = SchemaCache::new(1000, None);
+        let cache = SchemaRegistry::new(1000, None);
         let table_id = TableId::new(NamespaceId::new("my_ns"), TableName::new("messages"));
         let data = create_test_data(table_id.clone());
 
@@ -662,7 +792,7 @@ mod tests {
 
     #[test]
     fn test_concurrent_access() {
-        let cache = Arc::new(SchemaCache::new(1000, None));
+        let cache = Arc::new(SchemaRegistry::new(1000, None));
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
         let data = create_test_data(table_id.clone());
 
@@ -693,7 +823,7 @@ mod tests {
 
     #[test]
     fn test_metrics() {
-        let cache = SchemaCache::new(1000, None);
+        let cache = SchemaRegistry::new(1000, None);
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
         let data = create_test_data(table_id.clone());
 
@@ -716,7 +846,7 @@ mod tests {
 
     #[test]
     fn test_clear() {
-        let cache = SchemaCache::new(1000, None);
+        let cache = SchemaRegistry::new(1000, None);
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("table1"));
         let data = create_test_data(table_id.clone());
 
@@ -737,7 +867,7 @@ mod tests {
     fn bench_cache_hit_rate() {
         use std::time::Instant;
 
-        let cache = SchemaCache::new(10000, None); // Large enough for all tables
+        let cache = SchemaRegistry::new(10000, None); // Large enough for all tables
         let num_tables = 1000;
         let queries_per_table = 100;
 
@@ -801,7 +931,7 @@ mod tests {
     fn bench_cache_memory_efficiency() {
         use std::mem;
 
-        let cache = SchemaCache::new(10000, None);
+        let cache = SchemaRegistry::new(10000, None);
         let num_tables = 1000;
 
         // Create 1000 CachedTableData entries
@@ -874,7 +1004,7 @@ mod tests {
     fn bench_provider_caching() {
         use std::sync::Arc as StdArc;
 
-        let cache = SchemaCache::new(1000, None);
+        let cache = SchemaRegistry::new(1000, None);
         let num_tables = 10;
         let num_users = 100;
         let queries_per_user = 10;
@@ -947,7 +1077,7 @@ mod tests {
         use std::thread;
         use std::time::Instant;
 
-        let cache = StdArc::new(SchemaCache::new(1000, None));
+        let cache = StdArc::new(SchemaRegistry::new(1000, None));
         let num_threads = 100;
         let ops_per_thread = 1000;
 
@@ -1033,7 +1163,7 @@ mod tests {
     #[test]
     fn test_provider_cache_insert_and_get() {
         use crate::tables::system::stats::StatsTableProvider;
-        let cache = SchemaCache::new(1000, None);
+        let cache = SchemaRegistry::new(1000, None);
         let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("stats"));
         let provider = Arc::new(StatsTableProvider::new(None)) as Arc<dyn TableProvider + Send + Sync>;
 

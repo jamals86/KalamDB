@@ -10,7 +10,7 @@
 //! - Only implements unique logic: single-file flush for all rows
 
 use crate::schema_registry::{NamespaceId, TableName};
-use crate::schema_registry::SchemaCache; // Phase 10: Use unified cache instead of old TableCache
+use crate::schema_registry::SchemaRegistry; // Phase 10: Use unified cache instead of old TableCache
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::live_query::NodeId;
@@ -51,7 +51,7 @@ pub struct SharedTableFlushJob {
     schema: SchemaRef,
 
     /// Unified SchemaCache for dynamic storage path resolution (Phase 10 - replaces TableCache)
-    unified_cache: Arc<SchemaCache>,
+    unified_cache: Arc<SchemaRegistry>,
 
     /// Node ID for job tracking
     node_id: NodeId,
@@ -76,7 +76,7 @@ impl SharedTableFlushJob {
         namespace_id: NamespaceId,
         table_name: TableName,
         schema: SchemaRef,
-        unified_cache: Arc<SchemaCache>,
+        unified_cache: Arc<SchemaRegistry>,
     ) -> Self {
         //TODO: Use the nodeId from global config or context
         let node_id = NodeId::from(format!("node-{}", std::process::id()));
@@ -371,9 +371,9 @@ mod tests {
     }
 
     /// Phase 10: Create mock unified cache for tests
-    fn create_test_cache() -> Arc<SchemaCache> {
+    fn create_test_cache() -> Arc<SchemaRegistry> {
         // For now, create empty cache - in real scenarios this would be populated
-        Arc::new(SchemaCache::new(100, None))
+        Arc::new(SchemaRegistry::new(100, None))
     }
 
     #[test]

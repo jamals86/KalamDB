@@ -8,7 +8,7 @@
 //! - UserTableShared: Singleton shared state for all users accessing the same table
 //! - Eliminates redundant handler/defaults allocations (30K Arc + 10K HashMap for 1000 users × 10 tables)
 
-use crate::schema_registry::{SchemaCache, TableType};
+use crate::schema_registry::{SchemaRegistry, TableType};
 use crate::live_query::manager::LiveQueryManager;
 use crate::tables::user_tables::{UserTableDeleteHandler, UserTableInsertHandler, UserTableUpdateHandler};
 use crate::tables::UserTableStore;
@@ -38,7 +38,7 @@ pub struct TableProviderCore {
     pub schema: SchemaRef,
     pub created_at_ms: u64,
     pub storage_id: Option<StorageId>,
-    pub unified_cache: Arc<SchemaCache>,
+    pub unified_cache: Arc<SchemaRegistry>,
 }
 
 impl TableProviderCore {
@@ -47,7 +47,7 @@ impl TableProviderCore {
         table_type: TableType,
         schema: SchemaRef,
         storage_id: Option<StorageId>,
-        unified_cache: Arc<SchemaCache>,
+        unified_cache: Arc<SchemaRegistry>,
     ) -> Self {
         use std::time::{SystemTime, UNIX_EPOCH};
         let created_at_ms = SystemTime::now()
@@ -88,7 +88,7 @@ impl TableProviderCore {
         self.storage_id.as_ref()
     }
 
-    pub fn cache(&self) -> &SchemaCache {
+    pub fn cache(&self) -> &SchemaRegistry {
         &self.unified_cache
     }
 }
@@ -139,7 +139,7 @@ impl UserTableShared {
     /// * `store` - UserTableStore for DML operations
     pub fn new(
         table_id: Arc<TableId>,
-        unified_cache: Arc<SchemaCache>,
+        unified_cache: Arc<SchemaRegistry>,
         schema: SchemaRef,
         store: Arc<UserTableStore>,
     ) -> Arc<Self> {

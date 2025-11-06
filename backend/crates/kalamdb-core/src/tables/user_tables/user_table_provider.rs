@@ -11,7 +11,7 @@
 //! - Memory savings: 6 fields → 3 fields (50% reduction per instance)
 
 use super::{UserTableDeleteHandler, UserTableInsertHandler, UserTableUpdateHandler};
-use crate::schema_registry::{NamespaceId, SchemaCache, TableName, TableType, UserId};
+use crate::schema_registry::{NamespaceId, SchemaRegistry, TableName, TableType, UserId};
 use crate::tables::base_table_provider::{BaseTableProvider, UserTableShared};
 use crate::error::KalamDbError;
 use kalamdb_commons::ids::SnowflakeGenerator;
@@ -729,11 +729,11 @@ mod tests {
         ))
     }
 
-    fn create_test_metadata() -> Arc<crate::schema_registry::SchemaCache> {
-        use crate::schema_registry::{CachedTableData, SchemaCache};
+    fn create_test_metadata() -> Arc<crate::schema_registry::SchemaRegistry> {
+        use crate::schema_registry::{CachedTableData, SchemaRegistry};
         use kalamdb_commons::models::schemas::TableDefinition;
 
-        let cache = Arc::new(SchemaCache::new(0, None));
+        let cache = Arc::new(SchemaRegistry::new(0, None));
 
         let table_id = TableId::new(NamespaceId::new("chat"), TableName::new("messages"));
 

@@ -7,7 +7,7 @@
 //! - Optional ephemeral mode (only store if subscribers exist)
 //! - Real-time event delivery to subscribers
 
-use crate::schema_registry::{NamespaceId, SchemaCache, TableName, TableType};
+use crate::schema_registry::{NamespaceId, SchemaRegistry, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::tables::base_table_provider::{BaseTableProvider, TableProviderCore};
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
@@ -90,7 +90,7 @@ impl StreamTableProvider {
     /// * `max_buffer` - Optional maximum buffer size
     pub fn new(
         table_id: Arc<TableId>,
-        unified_cache: Arc<SchemaCache>,
+        unified_cache: Arc<SchemaRegistry>,
         schema: SchemaRef,
         store: Arc<StreamTableStore>,
         retention_seconds: Option<u32>,
@@ -518,7 +518,7 @@ impl TableProvider for StreamTableProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema_registry::{CachedTableData, SchemaCache, TableType};
+    use crate::schema_registry::{CachedTableData, SchemaRegistry, TableType};
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_store::test_utils::TestDb;
     use serde_json::json;
@@ -541,7 +541,7 @@ mod tests {
             Field::new("data", DataType::Utf8, true),
         ]));
         // Build unified cache with CachedTableData for tests
-        let unified_cache = Arc::new(SchemaCache::new(0, None));
+        let unified_cache = Arc::new(SchemaRegistry::new(0, None));
         let table_id = TableId::new(NamespaceId::new("app"), TableName::new("events"));
         let td: Arc<TableDefinition> = Arc::new(
             TableDefinition::new_with_defaults(
@@ -676,7 +676,7 @@ mod tests {
             Field::new("event_type", DataType::Utf8, false),
         ]));
 
-        let unified_cache = Arc::new(SchemaCache::new(0, None));
+        let unified_cache = Arc::new(SchemaRegistry::new(0, None));
         let table_id = TableId::new(NamespaceId::new("app"), TableName::new("events"));
         let td: Arc<TableDefinition> = Arc::new(
             TableDefinition::new_with_defaults(
@@ -775,7 +775,7 @@ mod tests {
             Field::new("event_type", DataType::Utf8, false),
         ]));
 
-        let unified_cache = Arc::new(SchemaCache::new(0, None));
+        let unified_cache = Arc::new(SchemaRegistry::new(0, None));
         let table_id = TableId::new(NamespaceId::new("app"), TableName::new("ephemeral_events"));
         let td: Arc<TableDefinition> = Arc::new(
             TableDefinition::new_with_defaults(
@@ -837,7 +837,7 @@ mod tests {
             Field::new("event_type", DataType::Utf8, false),
         ]));
 
-        let unified_cache = Arc::new(SchemaCache::new(0, None));
+        let unified_cache = Arc::new(SchemaRegistry::new(0, None));
         let table_id = TableId::new(NamespaceId::new("app"), TableName::new("ephemeral_events2"));
         let td: Arc<TableDefinition> = Arc::new(
             TableDefinition::new_with_defaults(
@@ -903,7 +903,7 @@ mod tests {
             Field::new("event_type", DataType::Utf8, false),
         ]));
 
-        let unified_cache = Arc::new(SchemaCache::new(0, None));
+        let unified_cache = Arc::new(SchemaRegistry::new(0, None));
         let table_id = TableId::new(NamespaceId::new("app"), TableName::new("persistent_events"));
         let td: Arc<TableDefinition> = Arc::new(
             TableDefinition::new_with_defaults(

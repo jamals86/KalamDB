@@ -76,6 +76,9 @@ pub enum KalamDbError {
     #[error("Backup error: {0}")]
     Backup(#[from] BackupError),
 
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
+
     #[error("{0}")]
     Other(String),
 }

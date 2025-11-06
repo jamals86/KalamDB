@@ -180,6 +180,8 @@ impl InformationSchemaTablesProvider {
             let ttl = if kalam_type == "Stream" {
                 let tid = TableId::from_strings(namespace, table_name);
                 self.schema_registry.get_table_definition(&tid)
+                    .ok()
+                    .flatten()
                     .and_then(|def| {
                         use kalamdb_commons::schemas::TableOptions;
                         match &def.table_options {

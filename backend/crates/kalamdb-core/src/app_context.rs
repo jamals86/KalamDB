@@ -3,7 +3,7 @@
 //! Provides global access to all core resources with simplified 3-parameter initialization.
 //! Uses constants from kalamdb_commons for table prefixes.
 
-use crate::schema_registry::{SchemaCache, SchemaRegistry};
+use crate::schema_registry::{SchemaRegistry, SchemaRegistry};
 // use crate::jobs::UnifiedJobsManager; // TODO: Implement UnifiedJobsManager
 use crate::jobs::executors::{
     BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor,
@@ -36,7 +36,7 @@ pub struct AppContext {
     node_id: NodeId,
 
     // ===== Caches =====
-    schema_cache: Arc<SchemaCache>,
+    schema_cache: Arc<SchemaRegistry>,
     schema_registry: Arc<SchemaRegistry>,
     
     // ===== Stores =====
@@ -139,7 +139,7 @@ impl AppContext {
                 ));
 
                 // Create schema cache (Phase 10 unified cache)
-                let schema_cache = Arc::new(SchemaCache::new(10000, Some(storage_registry.clone())));
+                let schema_cache = Arc::new(SchemaRegistry::new(10000, Some(storage_registry.clone())));
 
                 // Register all system tables in DataFusion
                 let session_factory = Arc::new(DataFusionSessionFactory::new()
@@ -180,14 +180,9 @@ impl AppContext {
                         .expect("Failed to register information_schema table");
                 }
 
-                // Create schema store (for table definitions) - using TablesStore from tables
-                let schema_store = Arc::new(TablesStore::new(storage_backend.clone(), "system_tables"));
-
-                // Create schema registry (Phase 5: unified cache + persistence)
-                let schema_registry = Arc::new(SchemaRegistry::new(
-                    schema_cache.clone(),
-                    schema_store,
-                ));
+                // SchemaRegistry is just an alias for SchemaCache (Phase 5 complete)
+                // No separate schema_store needed - persistence methods use AppContext to access TablesTableProvider
+                let schema_registry = schema_cache.clone();
 
                 // NOW wire up information_schema providers with schema_registry
                 system_tables.set_information_schema_dependencies(schema_registry.clone());
@@ -254,7 +249,7 @@ impl AppContext {
 
     // ===== Getters =====
     
-    pub fn schema_cache(&self) -> Arc<SchemaCache> {
+    pub fn schema_cache(&self) -> Arc<SchemaRegistry> {
         self.schema_cache.clone()
     }
     

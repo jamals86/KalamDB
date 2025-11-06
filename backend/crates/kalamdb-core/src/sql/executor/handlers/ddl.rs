@@ -697,7 +697,7 @@ impl DDLHandler {
         
         // Get the TableDefinition that was just saved
         let table_def = schema_registry
-            .get_table_definition(&table_id)
+            .get_table_definition(&table_id)?
             .ok_or_else(|| {
                 KalamDbError::Other(format!(
                     "Failed to retrieve table definition for {}.{} after save",
@@ -824,7 +824,7 @@ impl DDLHandler {
         
         // Get the TableDefinition that was just saved
         let table_def = schema_registry
-            .get_table_definition(&table_id)
+            .get_table_definition(&table_id)?
             .ok_or_else(|| {
                 KalamDbError::Other(format!(
                     "Failed to retrieve table definition for {}.{} after save",
@@ -958,7 +958,7 @@ impl DDLHandler {
             
             // Get the TableDefinition that was just saved
             let table_def = schema_registry
-                .get_table_definition(&table_id)
+                .get_table_definition(&table_id)?
                 .ok_or_else(|| {
                     KalamDbError::Other(format!(
                         "Failed to retrieve table definition for {}.{} after save",
@@ -1022,8 +1022,8 @@ impl DDLHandler {
     /// * `exec_ctx` - Execution context with user information
     /// * `_metadata` - Optional execution metadata
     pub async fn execute_alter_table<F>(
-        schema_registry: &crate::schema::SchemaRegistry,
-    cache: Option<&crate::schema::SchemaCache>,
+        schema_registry: &crate::schema_registry::SchemaRegistry,
+        cache: Option<&crate::schema_registry::SchemaRegistry>,
         log_fn: F,
         _session: &SessionContext,
         sql: &str,
@@ -1050,13 +1050,13 @@ impl DDLHandler {
             // Get the table to verify it exists and is a SHARED table
             // Phase 10.2: Use SchemaRegistry for fast metadata lookup (1-2μs vs 50-100μs)
             let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
-            let table_metadata = schema_registry.get_table_metadata(&table_id)?
+            let table_def = schema_registry.get_table_definition(&table_id)?
                 .ok_or_else(|| {
-                    KalamDbError::table_not_found(format!("Table '{}' not found", table_id))
+                    KalamDbError::NotFound(format!("Table '{}' not found", table_id))
                 })?;
 
             // Verify table is SHARED type
-            if table_metadata.table_type != TableType::Shared {
+            if table_def.table_type != TableType::Shared {
                 return Err(KalamDbError::InvalidOperation(
                     "ACCESS LEVEL can only be set on SHARED tables".to_string(),
                 ));
@@ -1110,8 +1110,8 @@ impl DDLHandler {
     /// DROP USER TABLE user_settings;
     /// ```
     pub async fn execute_drop_table<F>(
-        schema_registry: &crate::schema::SchemaRegistry,
-    cache: Option<&crate::schema::SchemaCache>,
+        schema_registry: &crate::schema_registry::SchemaRegistry,
+        cache: Option<&crate::schema_registry::SchemaRegistry>,
         job_manager: &crate::jobs::JobsManager,
         live_query_check_fn: F,
         _session: &SessionContext,
@@ -1130,8 +1130,8 @@ impl DDLHandler {
         let table_identifier = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
 
         // Phase 10.2: Use SchemaRegistry for fast table type lookup (1-2μs vs 50-100μs)
-        let actual_table_type = match schema_registry.get_table_metadata(&table_identifier)? {
-            Some(metadata) => metadata.table_type,
+        let actual_table_type = match schema_registry.get_table_definition(&table_identifier)? {
+            Some(table_def) => table_def.table_type,
             None => requested_table_type, // Table doesn't exist, use requested type for RBAC check
         };
 

@@ -123,7 +123,7 @@ impl LiveQueryManager {
     let table_id = TableId::new(namespace_id.clone(), table_name.clone());
         let table_def = self
             .schema_registry
-            .get_table_definition(&table_id)
+            .get_table_definition(&table_id)?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table {}.{} not found for subscription",
@@ -260,7 +260,7 @@ impl LiveQueryManager {
             let table_id = TableId::new(namespace_id.clone(), table_name.clone());
             let table_def = self
                 .schema_registry
-                .get_table_definition(&table_id)
+                .get_table_definition(&table_id)?
                 .ok_or_else(|| {
                     KalamDbError::NotFound(format!(
                         "Table {}.{} not found for subscription",
@@ -825,7 +825,7 @@ pub struct RegistryStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema_registry::{SchemaCache, SchemaRegistry};
+    use crate::schema_registry::{SchemaRegistry, SchemaRegistry};
     use crate::tables::system::tables::TablesStore;
     use crate::tables::system::LiveQueriesTableProvider;
     use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
@@ -844,7 +844,7 @@ mod tests {
             Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
 
         let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(backend.clone()));
-        let schema_cache = Arc::new(SchemaCache::new(128, None));
+        let schema_cache = Arc::new(SchemaRegistry::new(128, None));
         let schema_store = Arc::new(TablesStore::new(backend.clone(), "system_tables"));
         let schema_registry = Arc::new(SchemaRegistry::new(schema_cache, schema_store));
 

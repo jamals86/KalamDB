@@ -125,6 +125,13 @@ If the user already specified primary key then we dont do that, the _id we add a
 111) Add virtualTables module to kalamdb-core/src/tables/virtual_tables to include all virtual tables for example information_schema and other virtual tables we may have in the future, virtual tables should be also registered with schema registry
 112) In JobType add another model for each type with the parameters it should have in the Json in this way we can validate it easily by deserializing into the right struct for each job type
 113) Check if we need to remove ColumnFamilyManager
+114) Make sure when we are writing to a table with secondary index we do it in a transaction style like this:
+Transaction:
+  1️⃣ Insert actual value into main table (or CF)
+  2️⃣ Insert corresponding key/value into secondary index CF
+  3️⃣ Commit atomically
+115) we are having so much AppContext:get() calls in schema_registry add it to the struct as a member and use it in all methods
+
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
@@ -148,36 +155,3 @@ Key Findings
 Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB column families yet, resulting in 0 rows flushed
 Parquet Querying Limitation: After flush, data is removed from RocksDB but queries don't yet retrieve from Parquet files - this is a known gap
 
-
-
-
-
-Core restructuring:
-0) AppContext should be passed where - NodeId should be passed and used directly from the config.toml and allocated one time only, AppContext should have it once and AppContext single instance should be passed to everywhere that the NodeId or any thing is needed
-1) kalamdb-core\src\schema\schema_cache.rs - Must be renamed to SchemaRegistry
-2) kalamdb-core\src\schema\schema_cache.rs - should be also used for caching arrow_schemas or schemas for datafusion to not build them each time
-3) backend\crates\kalamdb-core\src\live_query need to be revisited and divide the models
-currently we have:
-pub struct UserConnections {
-    pub sockets: HashMap<ConnectionId, UserConnectionSocket>,
-}
-
-pub struct UserTableChangeDetector {
-    store: Arc<UserTableStore>,
-    live_query_manager: Arc<LiveQueryManager>,
-}
-
-pub struct LiveQueryManager {
-    registry: Arc<tokio::sync::RwLock<LiveQueryRegistry>>,
-    live_queries_provider: Arc<LiveQueriesTableProvider>,
-    filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
-    initial_data_fetcher: Arc<InitialDataFetcher>,
-    schema_registry: Arc<SchemaRegistry>,
-    node_id: NodeId,
-}
-
-we need to combine all of these in one LiveQueryManager struct
-
-5) Make the system so whenever the system initiated we create the system tables inside the storages, so it acts like any other table in the system, very similar to shared table
-6) we have views: backend\crates\kalamdb-core\src\schema_registry\views which is based on other table or tables but with different structure, these tables is not stored anywhere
-7) Making sure the code compiles and the tests also compiles

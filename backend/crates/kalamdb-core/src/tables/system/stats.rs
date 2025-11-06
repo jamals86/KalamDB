@@ -3,7 +3,7 @@
 //! Provides runtime metrics as key-value pairs for observability.
 //! Initial implementation focuses on schema cache metrics.
 
-use crate::schema_registry::SchemaCache;
+use crate::schema_registry::SchemaRegistry;
 use crate::error::KalamDbError;
 use crate::tables::system::SystemTableProviderExt;
 use async_trait::async_trait;
@@ -43,7 +43,7 @@ impl StatsTableSchema {
 /// Virtual table that emits key-value metrics
 pub struct StatsTableProvider {
     schema: SchemaRef,
-    unified_cache: Option<Arc<SchemaCache>>, // unified schema cache from catalog
+    unified_cache: Option<Arc<SchemaRegistry>>, // unified schema cache from catalog
 }
 
 impl std::fmt::Debug for StatsTableProvider {
@@ -54,7 +54,7 @@ impl std::fmt::Debug for StatsTableProvider {
 
 impl StatsTableProvider {
     /// Create a new stats table provider
-    pub fn new(unified_cache: Option<Arc<SchemaCache>>) -> Self {
+    pub fn new(unified_cache: Option<Arc<SchemaRegistry>>) -> Self {
         Self {
             schema: StatsTableSchema::schema(),
             unified_cache,

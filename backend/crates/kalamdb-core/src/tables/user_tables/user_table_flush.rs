@@ -10,7 +10,7 @@
 //! - Only implements unique logic: multi-file flush grouped by user_id
 
 use crate::schema_registry::{NamespaceId, TableName, UserId};
-use crate::schema_registry::SchemaCache; // Phase 10: Use unified cache instead of old TableCache
+use crate::schema_registry::SchemaRegistry; // Phase 10: Use unified cache instead of old TableCache
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::live_query::NodeId;
@@ -52,7 +52,7 @@ pub struct UserTableFlushJob {
     schema: SchemaRef,
 
     /// Unified SchemaCache for dynamic storage path resolution (Phase 10 - replaces TableCache)
-    unified_cache: Arc<SchemaCache>,
+    unified_cache: Arc<SchemaRegistry>,
 
     /// Node ID for job tracking
     node_id: NodeId,
@@ -77,7 +77,7 @@ impl UserTableFlushJob {
         namespace_id: NamespaceId,
         table_name: TableName,
         schema: SchemaRef,
-        unified_cache: Arc<SchemaCache>,
+        unified_cache: Arc<SchemaRegistry>,
     ) -> Self {
         //TODO: Use the nodeId from global config or context
         let node_id = NodeId::from(format!("node-{}", std::process::id()));
