@@ -116,10 +116,9 @@ impl JobExecutor for FlushExecutor {
         let _table_def = schema_registry
             .get_table_definition(&table_id)?
             .ok_or_else(|| KalamDbError::NotFound(format!("Table {}.{} not found", namespace_id_str, table_name_str)))?;
-        let schema_ref = schema_registry
+        let schema = schema_registry
             .get_arrow_schema(&table_id)
             .map_err(|e| KalamDbError::NotFound(format!("Arrow schema not found for {}.{}: {}", namespace_id_str, table_name_str, e)))?;
-        let schema = schema_ref.as_ref().clone();
 
         // Execute flush based on table type
         let result = match table_type {

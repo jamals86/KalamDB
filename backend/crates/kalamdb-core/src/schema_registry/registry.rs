@@ -1,7 +1,7 @@
-//! Unified schema cache for table metadata and schemas
+//! Unified schema registry for table metadata and schemas
 //!
-//! **Phase 10: Cache Consolidation** - Replaces dual-cache architecture (TableCache + SchemaCache)
-//! with single unified cache to eliminate ~50% memory waste and synchronization complexity.
+//! **Phase 10: Cache Consolidation** - Replaces dual-cache architecture
+//! with single unified SchemaRegistry to eliminate ~50% memory waste and synchronization complexity.
 //!
 //! **Architecture**:
 //! - Single DashMap<TableId, Arc<CachedTableData>> for all table metadata + schemas
@@ -28,10 +28,10 @@ use std::sync::Arc;
 
 /// Cached table data containing all metadata and schema information
 ///
-/// This struct consolidates data previously split between TableCache (path resolution)
-/// and SchemaCache (schema queries) to eliminate duplication.
+/// This struct consolidates data previously split between separate caches
+/// to eliminate duplication.
 ///
-/// **Performance Note**: `last_accessed` timestamp is stored separately in SchemaCache
+/// **Performance Note**: `last_accessed` timestamp is stored separately in SchemaRegistry
 /// to avoid cloning this entire struct on every cache access.
 #[derive(Debug, Clone)]
 pub struct CachedTableData {
@@ -113,9 +113,9 @@ impl SchemaRegistry {
     ///
     /// # Example
     /// ```ignore
-    /// // Creating a SchemaCache without a StorageRegistry (path resolution disabled)
-    /// use kalamdb_core::catalog::SchemaCache;
-    /// let cache = SchemaCache::new(10_000, None);
+    /// // Creating a SchemaRegistry without a StorageRegistry (path resolution disabled)
+    /// use kalamdb_core::schema_registry::SchemaRegistry;
+    /// let registry = SchemaRegistry::new(10_000, None);
     ///
     /// // If you need storage path template resolution, construct a StorageRegistry
     /// // with the required dependencies and pass `Some(Arc<StorageRegistry>)` instead.
@@ -154,9 +154,9 @@ impl SchemaRegistry {
     ///
     /// # Example
     /// ```no_run
-    /// # use kalamdb_core::catalog::SchemaCache;
+    /// # use kalamdb_core::schema_registry::SchemaRegistry;
     /// # use kalamdb_commons::models::{TableId, NamespaceId, TableName};
-    /// # let cache = SchemaCache::new(1000, None);
+    /// # let cache = SchemaRegistry::new(1000, None);
     /// let table_id = TableId::new(
     ///     NamespaceId::new("my_namespace"),
     ///     TableName::new("my_table")
@@ -195,9 +195,9 @@ impl SchemaRegistry {
     ///
     /// # Example
     /// ```no_run
-    /// # use kalamdb_core::catalog::SchemaCache;
+    /// # use kalamdb_core::schema_registry::SchemaRegistry;
     /// # use kalamdb_commons::models::{NamespaceId, TableName};
-    /// # let cache = SchemaCache::new(1000, None);
+    /// # let cache = SchemaRegistry::new(1000, None);
     /// if let Some(data) = cache.get_by_name(
     ///     &NamespaceId::new("my_namespace"),
     ///     &TableName::new("my_table")
@@ -247,9 +247,9 @@ impl SchemaRegistry {
     ///
     /// # Example
     /// ```no_run
-    /// # use kalamdb_core::catalog::SchemaCache;
+    /// # use kalamdb_core::schema_registry::SchemaRegistry;
     /// # use kalamdb_commons::models::{TableId, NamespaceId, TableName};
-    /// # let cache = SchemaCache::new(1000, None);
+    /// # let cache = SchemaRegistry::new(1000, None);
     /// let table_id = TableId::new(
     ///     NamespaceId::new("my_namespace"),
     ///     TableName::new("my_table")
@@ -302,9 +302,9 @@ impl SchemaRegistry {
     ///
     /// # Example
     /// ```no_run
-    /// # use kalamdb_core::catalog::SchemaCache;
+    /// # use kalamdb_core::schema_registry::SchemaRegistry;
     /// # use kalamdb_commons::models::{TableId, NamespaceId, TableName, UserId};
-    /// # let cache = SchemaCache::new(1000, None);
+    /// # let cache = SchemaRegistry::new(1000, None);
     /// # let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("tbl"));
     /// let path = cache.get_storage_path(
     ///     &table_id,
@@ -449,7 +449,7 @@ impl SchemaRegistry {
     /// # Example
     /// ```ignore
     /// // Requires a properly constructed StorageRegistry; see crate docs for setup.
-    /// // let cache = SchemaCache::new(1000, Some(registry));
+    /// // let registry = SchemaRegistry::new(1000, Some(storage_registry));
     /// // let template = cache.resolve_storage_path_template(
     /// //     &NamespaceId::new("my_ns"),
     /// //     &TableName::new("messages"),
@@ -468,7 +468,7 @@ impl SchemaRegistry {
         // Get storage registry (required for resolution)
         let registry = self.storage_registry.as_ref().ok_or_else(|| {
             KalamDbError::Other(
-                "StorageRegistry not set on SchemaCache - call with_storage_registry()".to_string(),
+                "StorageRegistry not set on SchemaRegistry - call with_storage_registry()".to_string(),
             )
         })?;
 

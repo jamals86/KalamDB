@@ -3,7 +3,7 @@
 //! Provides global access to all core resources with simplified 3-parameter initialization.
 //! Uses constants from kalamdb_commons for table prefixes.
 
-use crate::schema_registry::{SchemaRegistry, SchemaRegistry};
+use crate::schema_registry::SchemaRegistry;
 // use crate::jobs::UnifiedJobsManager; // TODO: Implement UnifiedJobsManager
 use crate::jobs::executors::{
     BackupExecutor, CleanupExecutor, CompactExecutor, FlushExecutor,
@@ -209,7 +209,7 @@ impl AppContext {
                 let live_query_manager = Arc::new(LiveQueryManager::new(
                     system_tables.live_queries(),
                     schema_registry.clone(),
-                    node_id,
+                    node_id.clone(),
                     Some(user_table_store.clone()),
                     Some(shared_table_store.clone()),
                     Some(stream_table_store.clone()),
