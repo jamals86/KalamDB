@@ -64,15 +64,10 @@ impl CachedTableData {
         schema: Arc<TableDefinition>,
     ) -> Self {
         Self {
-            table_id,
-            table_type,
-            created_at,
+            table: schema,
             storage_id,
-            flush_policy,
             storage_path_template,
             schema_version,
-            deleted_retention_hours,
-            schema,
         }
     }
 }

@@ -17,9 +17,11 @@ use crate::schema::TableType;
 use crate::error::KalamDbError;
 use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::{JobId, NamespaceId, StorageId, TableId, UserId};
+use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::system::Namespace;
 use kalamdb_commons::Role;
-use kalamdb_sql::ddl::{AlterTableStatement, ColumnOperation, CreateNamespaceStatement, CreateTableStatement, DropTableStatement, FlushPolicy};
+use kalamdb_sql::ddl::{AlterTableStatement, ColumnOperation, CreateNamespaceStatement, CreateTableStatement, DropTableStatement};
+use kalamdb_commons::schemas::policy::FlushPolicy;
 // Phase 8 Complete: All KalamSql usages replaced with SchemaRegistry and system table providers
 use serde_json::json;
 use std::sync::Arc;
@@ -691,21 +693,20 @@ impl DDLHandler {
         // ========================================================================
 
         // Insert into system.tables
-        let table = kalamdb_sql::Table {
-            table_id: TableId::from_strings(namespace_id.as_str(), table_name.as_str()),
-            table_name: table_name.clone(),
-            namespace: namespace_id.clone(),
-            table_type: TableType::User,
-            created_at: chrono::Utc::now().timestamp_millis(),
-            storage_id: Some(storage_id.clone()),
-            use_user_storage: stmt_use_user_storage,
-            flush_policy: serde_json::to_string(&flush_policy.clone().unwrap_or_default())
-                .unwrap_or_else(|_| "{}".to_string()),
-            schema_version: 1,
-            deleted_retention_hours: deleted_retention_hours.unwrap_or(0) as i32,
-            access_level: None,
-        };
-        tables_provider.create_table(table.into()).map_err(|e| {
+        let table_id = TableId::from_strings(namespace_id.as_str(), table_name.as_str());
+        
+        // Get the TableDefinition that was just saved
+        let table_def = schema_registry
+            .get_table_definition(&table_id)
+            .ok_or_else(|| {
+                KalamDbError::Other(format!(
+                    "Failed to retrieve table definition for {}.{} after save",
+                    namespace_id.as_str(),
+                    table_name.as_str()
+                ))
+            })?;
+        
+        tables_provider.create_table(&table_id, &table_def).map_err(|e| {
             KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
         })?;
 
@@ -818,22 +819,21 @@ impl DDLHandler {
         // ========================================================================
 
         // Insert into system.tables
-        let storage_id = StorageId::from("local");
-        let table = kalamdb_sql::Table {
-            table_id: TableId::from_strings(namespace_id.as_str(), table_name.as_str()),
-            table_name: table_name.clone(),
-            namespace: namespace_id.clone(),
-            table_type: TableType::Stream,
-            created_at: chrono::Utc::now().timestamp_millis(),
-            storage_id: Some(storage_id.clone()),
-            use_user_storage: false,
-            flush_policy: serde_json::to_string(&flush_policy.clone().unwrap_or_default())
-                .unwrap_or_else(|_| "{}".to_string()),
-            schema_version: 1,
-            deleted_retention_hours: retention_seconds.map(|s| (s / 3600) as i32).unwrap_or(0),
-            access_level: None,
-        };
-        tables_provider.create_table(table.into()).map_err(|e| {
+        let table_id = TableId::from_strings(namespace_id.as_str(), table_name.as_str());
+        let storage_id = StorageId::from("local"); // Keep for cache_fn call
+        
+        // Get the TableDefinition that was just saved
+        let table_def = schema_registry
+            .get_table_definition(&table_id)
+            .ok_or_else(|| {
+                KalamDbError::Other(format!(
+                    "Failed to retrieve table definition for {}.{} after save",
+                    namespace_id.as_str(),
+                    table_name.as_str()
+                ))
+            })?;
+        
+        tables_provider.create_table(&table_id, &table_def).map_err(|e| {
             KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
         })?;
 
@@ -954,21 +954,20 @@ impl DDLHandler {
 
         if was_created {
             // Insert into system.tables
-            let table = kalamdb_sql::Table {
-                table_id: TableId::from_strings(namespace_id.as_str(), table_name.as_str()),
-                table_name: table_name.clone(),
-                namespace: namespace_id.clone(),
-                table_type: TableType::Shared,
-                created_at: chrono::Utc::now().timestamp_millis(),
-                storage_id: Some(storage_id.clone()),
-                use_user_storage: false,
-                flush_policy: serde_json::to_string(&flush_policy.clone().unwrap_or_default())
-                    .unwrap_or_else(|_| "{}".to_string()),
-                schema_version: 1,
-                deleted_retention_hours: deleted_retention.map(|s| (s / 3600) as i32).unwrap_or(0),
-                access_level: stmt_access_level,
-            };
-            tables_provider.create_table(table.into()).map_err(|e| {
+            let table_id = TableId::from_strings(namespace_id.as_str(), table_name.as_str());
+            
+            // Get the TableDefinition that was just saved
+            let table_def = schema_registry
+                .get_table_definition(&table_id)
+                .ok_or_else(|| {
+                    KalamDbError::Other(format!(
+                        "Failed to retrieve table definition for {}.{} after save",
+                        namespace_id.as_str(),
+                        table_name.as_str()
+                    ))
+                })?;
+            
+            tables_provider.create_table(&table_id, &table_def).map_err(|e| {
                 KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
             })?;
 
@@ -1113,7 +1112,7 @@ impl DDLHandler {
     pub async fn execute_drop_table<F>(
         schema_registry: &crate::schema::SchemaRegistry,
     cache: Option<&crate::schema::SchemaCache>,
-        job_manager: &crate::jobs::UnifiedJobManager,
+        job_manager: &crate::jobs::JobManager,
         live_query_check_fn: F,
         _session: &SessionContext,
         sql: &str,
@@ -1158,8 +1157,9 @@ impl DDLHandler {
         let _jobs_provider = ctx.system_tables().jobs();
 
         // Check if table exists
+        let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
         let table_metadata = tables_provider
-            .get_table_by_id(&table_id_str)
+            .get_table_by_id(&table_id)
             .map_err(|e| KalamDbError::IoError(format!("Failed to get table: {}", e)))?;
 
         if table_metadata.is_none() {
@@ -1230,13 +1230,9 @@ impl DDLHandler {
         }
 
         // Step 6: Update storage location usage count (currently disabled)
-        // TODO: Phase 9 - Update to use storage_id and StorageRegistry
-        if let Some(storage_id) = &table.storage_id {
-            if let Err(e) = Self::decrement_storage_usage_internal(storage_id.as_str()) {
-                log::warn!("Failed to decrement storage usage count: {}", e);
-                // Don't fail the operation for this
-            }
-        }
+        // TODO: Phase 9 - Update to use storage_id from table_options or cache
+        // storage_id is not directly available in TableDefinition
+        log::debug!("Storage usage count decrement skipped (storage_id not available in TableDefinition)");
 
         // Step 7: Complete job successfully (Phase 9, T165)
         Self::complete_deletion_job_unified(&job_manager, &job_id, files_deleted, bytes_freed).await?;
@@ -1436,7 +1432,7 @@ impl DDLHandler {
 
     /// Delete Parquet files for dropped table
     fn cleanup_parquet_files_internal(
-        table: &kalamdb_sql::Table,
+        table_def: &TableDefinition,
         table_type: &TableType,
     ) -> Result<(usize, u64), KalamDbError> {
         use std::path::Path;
@@ -1447,40 +1443,29 @@ impl DDLHandler {
         }
 
         // TODO: Phase 9 - Use TableCache for dynamic path resolution
-        let storage_path_str = table.storage_id.as_ref().map(|s| s.as_str()).unwrap_or("local");
-        let storage_path = Path::new(storage_path_str);
-
-        // Check if path exists
-        if !storage_path.exists() {
-            log::warn!("Storage path does not exist: {}", storage_path_str);
-            return Ok((0, 0));
-        }
-
-        let mut files_deleted = 0;
-        let mut bytes_freed = 0u64;
+        // storage_id is not directly available in TableDefinition, needs to be retrieved from table_options or cache
+        log::warn!("cleanup_parquet_files_internal: Storage path resolution not implemented for TableDefinition");
+        return Ok((0, 0));
         
-        match table_type {
-            TableType::User => {
-                // User tables: iterate directories and delete batch-*.parquet files
-                Self::cleanup_user_parquet_files(
-                    storage_path,
-                    &mut files_deleted,
-                    &mut bytes_freed,
-                )?;
-            }
-            TableType::Shared => {
-                // Shared tables: delete files in shared/${table_name}/ directory
-                let table_path = storage_path.join("shared").join(table.table_name.as_str());
-                Self::cleanup_directory_parquet_files(
-                    &table_path,
-                    &mut files_deleted,
-                    &mut bytes_freed,
-                )?;
-            }
-            _ => {}
-        }
-
-        Ok((files_deleted, bytes_freed))
+        // TODO: Implement proper storage path resolution
+        // let storage_path_str = ... get from table_def.table_options or cache
+        // let storage_path = Path::new(storage_path_str);
+        // 
+        // let mut files_deleted = 0;
+        // let mut bytes_freed = 0u64;
+        // 
+        // match table_type {
+        //     TableType::User => {
+        //         Self::cleanup_user_parquet_files(storage_path, &mut files_deleted, &mut bytes_freed)?;
+        //     }
+        //     TableType::Shared => {
+        //         let table_path = storage_path.join("shared").join(table_def.table_name.as_str());
+        //         Self::cleanup_directory_parquet_files(&table_path, &mut files_deleted, &mut bytes_freed)?;
+        //     }
+        //     _ => {}
+        // }
+        // 
+        // Ok((files_deleted, bytes_freed))
     }
 
     /// Delete metadata from system tables
@@ -1491,20 +1476,23 @@ impl DDLHandler {
         let tables_provider = ctx.system_tables().tables();
         let schema_registry = ctx.schema_registry();
 
+        // Parse namespace:table_name format
+        let parts: Vec<&str> = table_id_str.split(':').collect();
+        if parts.len() != 2 {
+            return Err(KalamDbError::IoError(format!("Invalid table_id format: {}", table_id_str)));
+        }
+        
+        let table_id = TableId::from_strings(parts[0], parts[1]);
+        
         // Delete from system.tables
         tables_provider
-            .delete_table(table_id_str)
+            .delete_table(&table_id)
             .map_err(|e| KalamDbError::IoError(format!("Failed to delete from system.tables: {}", e)))?;
         
         // Delete from information_schema.tables (SchemaRegistry)
-        // Parse namespace:table_name format
-        let parts: Vec<&str> = table_id_str.split(':').collect();
-        if parts.len() == 2 {
-            let table_id = TableId::from_strings(parts[0], parts[1]);
-            schema_registry
-                .delete_table_definition(&table_id)
-                .map_err(|e| KalamDbError::IoError(format!("Failed to delete table definition: {}", e)))?;
-        }
+        schema_registry
+            .delete_table_definition(&table_id)
+            .map_err(|e| KalamDbError::IoError(format!("Failed to delete table definition: {}", e)))?;
 
         Ok(())
     }
@@ -1521,7 +1509,7 @@ impl DDLHandler {
 
     /// Create deletion job for tracking (Phase 9, T165 - UnifiedJobManager)
     async fn create_deletion_job_unified(
-        job_manager: &crate::jobs::UnifiedJobManager,
+        job_manager: &crate::jobs::JobManager,
         table_id: &str,
         namespace_id: &NamespaceId,
         table_name: &kalamdb_commons::models::TableName,
@@ -1557,7 +1545,7 @@ impl DDLHandler {
 
     /// Complete deletion job (Phase 9, T165 - UnifiedJobManager)
     async fn complete_deletion_job_unified(
-        job_manager: &crate::jobs::UnifiedJobManager,
+        job_manager: &crate::jobs::JobManager,
         job_id: &JobId,
         files_deleted: usize,
         bytes_freed: u64,
@@ -1570,7 +1558,7 @@ impl DDLHandler {
 
     /// Fail deletion job (Phase 9, T165 - UnifiedJobManager)
     async fn fail_deletion_job_unified(
-        job_manager: &crate::jobs::UnifiedJobManager,
+        job_manager: &crate::jobs::JobManager,
         job_id: &JobId,
         error_message: &str,
     ) -> Result<(), KalamDbError> {

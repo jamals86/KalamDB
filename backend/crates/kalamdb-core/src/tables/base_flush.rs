@@ -29,7 +29,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::LiveQueryManager;
 use chrono::Utc;
 use kalamdb_commons::system::Job;
-use kalamdb_commons::{JobId, JobType, NodeId};
+use kalamdb_commons::{JobId, JobStatus, JobType, NodeId};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -214,12 +214,29 @@ pub trait TableFlush: Send + Sync {
     ///
     /// NOTE: Requires namespace_id to be provided by implementation
     fn create_job_record(&self, job_id: &str, namespace_id: kalamdb_commons::NamespaceId) -> Job {
-        Job::new(
-            JobId::new(job_id.to_string()),
-            JobType::Flush,
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        Job {
+            job_id: JobId::new(job_id.to_string()),
+            job_type: JobType::Flush,
             namespace_id,
-            self.node_id(),
-        )
+            table_name: None,
+            status: JobStatus::Running,
+            parameters: None,
+            message: None,
+            exception_trace: None,
+            idempotency_key: None,
+            retry_count: 0,
+            max_retries: 3,
+            memory_used: None,
+            cpu_used: None,
+            created_at: now_ms,
+            updated_at: now_ms,
+            started_at: Some(now_ms),
+            finished_at: None,
+            node_id: self.node_id(),
+            queue: None,
+            priority: None,
+        }
     }
 
     /// Send LiveQuery notification after successful flush (optional)
@@ -325,7 +342,10 @@ impl FlushExecutor {
                 })?;
 
                 // Update job record with success
-                let completed_job = job_record.complete(Some(
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                let mut completed_job = job_record;
+                completed_job.status = JobStatus::Completed;
+                completed_job.message = Some(
                     serde_json::json!({
                         "rows_flushed": result.rows_flushed,
                         "duration_ms": duration_ms,
@@ -333,7 +353,9 @@ impl FlushExecutor {
                         "metadata": metadata_json,
                     })
                     .to_string(),
-                ));
+                );
+                completed_job.updated_at = now_ms;
+                completed_job.finished_at = Some(now_ms);
 
                 // Send notification
                 flush_job.notify_flush(result.rows_flushed, &result.parquet_files);
@@ -354,7 +376,13 @@ impl FlushExecutor {
                 );
 
                 // Update job record with failure
-                let failed_job = job_record.fail(format!("Flush failed: {}", e), None);
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                let mut failed_job = job_record;
+                failed_job.status = JobStatus::Failed;
+                failed_job.message = Some(format!("Flush failed: {}", e));
+                failed_job.updated_at = now_ms;
+                failed_job.finished_at = Some(now_ms);
+                
                 // Return error
                 Err(e)
             }

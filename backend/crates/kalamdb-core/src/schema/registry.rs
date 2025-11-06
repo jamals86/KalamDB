@@ -50,7 +50,7 @@ impl SchemaRegistry {
     pub fn get_table_definition(&self, table_id: &TableId) -> Option<Arc<TableDefinition>> {
         // Fast path: check cache first
         if let Some(data) = self.cache.get(table_id) {
-            return Some(data.schema.clone());
+            return Some(data.table.clone());
         }
         
         // Cache miss: read from persistent store
@@ -135,8 +135,8 @@ impl SchemaRegistry {
         if let Some(cached) = self.cache.get(table_id) {
             return Ok(Some(TableMetadata {
                 table_id: table_id.clone(),
-                table_type: cached.table_type,
-                created_at: cached.created_at,
+                table_type: cached.table.table_type,
+                created_at: cached.table.created_at,
                 storage_id: cached.storage_id.clone(),
             }));
         }

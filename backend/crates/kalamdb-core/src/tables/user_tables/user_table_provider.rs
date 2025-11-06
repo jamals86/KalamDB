@@ -119,8 +119,8 @@ impl UserTableAccess {
     pub fn get_cached_metadata(&self) -> Option<(NamespaceId, TableName)> {
         if let Some(cached_data) = self.shared.core().cache().get(self.shared.core().table_id()) {
             Some((
-                cached_data.table_id.namespace_id().clone(),
-                cached_data.table_id.table_name().clone(),
+                cached_data.table.namespace_id.clone(),
+                cached_data.table.table_name.clone(),
             ))
         } else {
             None
@@ -695,7 +695,6 @@ impl TableProvider for UserTableAccess {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flush::FlushPolicy;
     use crate::tables::UserTableStore;
     use chrono::Utc;
     use datafusion::arrow::array::{
@@ -704,6 +703,7 @@ mod tests {
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use datafusion::execution::context::SessionContext;
     use kalamdb_commons::models::StorageId;
+    use kalamdb_commons::schemas::policy::FlushPolicy;
     use kalamdb_store::test_utils::TestDb;
     use serde_json::json;
 

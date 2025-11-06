@@ -129,10 +129,30 @@ impl JobManager {
         // Generate job ID with type-specific prefix
         let job_id = self.generate_job_id(&job_type);
 
-        // Create job with New status
-        let mut job = Job::new(job_id.clone(), job_type, namespace_id, self.node_id.clone());
-        job.parameters = Some(parameters.to_string());
-        job.idempotency_key = idempotency_key;
+        // Create job with Queued status
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let mut job = Job {
+            job_id: job_id.clone(),
+            job_type,
+            namespace_id,
+            table_name: None,
+            status: JobStatus::Queued,
+            parameters: Some(parameters.to_string()),
+            message: None,
+            exception_trace: None,
+            idempotency_key,
+            retry_count: 0,
+            max_retries: 3,
+            memory_used: None,
+            cpu_used: None,
+            created_at: now_ms,
+            updated_at: now_ms,
+            started_at: None,
+            finished_at: None,
+            node_id: self.node_id.clone(),
+            queue: None,
+            priority: None,
+        };
 
         // Apply options if provided
         if let Some(opts) = options {
@@ -274,13 +294,18 @@ impl JobManager {
     /// # Returns
     /// Ok if job completed successfully
     pub async fn complete_job(&self, job_id: &JobId, message: Option<String>) -> Result<(), crate::error::KalamDbError> {
-        let job = self.get_job(job_id).await?
+        let mut job = self.get_job(job_id).await?
             .ok_or_else(|| crate::error::KalamDbError::Other(format!("Job {} not found", job_id)))?;
         
-        let completed_job = job.complete(message);
+        // Update job to completed status
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        job.status = JobStatus::Completed;
+        job.message = message;
+        job.updated_at = now_ms;
+        job.finished_at = Some(now_ms);
         
         self.jobs_provider
-            .update_job(completed_job.clone())
+            .update_job(job.clone())
             .map_err(|e| crate::error::KalamDbError::Other(format!("Failed to complete job: {}", e)))?;
         
         self.log_job_event(job_id, "info", &format!("Job completed successfully"));
@@ -296,13 +321,19 @@ impl JobManager {
     /// # Returns
     /// Ok if job marked as failed successfully
     pub async fn fail_job(&self, job_id: &JobId, error_message: String) -> Result<(), crate::error::KalamDbError> {
-        let job = self.get_job(job_id).await?
+        let mut job = self.get_job(job_id).await?
             .ok_or_else(|| crate::error::KalamDbError::Other(format!("Job {} not found", job_id)))?;
         
-        let failed_job = job.fail(error_message.clone(), None);
+        // Manually update job to failed state
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        job.status = JobStatus::Failed;
+        job.message = Some(error_message.clone());
+        job.exception_trace = None;
+        job.updated_at = now_ms;
+        job.finished_at = Some(now_ms);
         
         self.jobs_provider
-            .update_job(failed_job.clone())
+            .update_job(job)
             .map_err(|e| crate::error::KalamDbError::Other(format!("Failed to mark job as failed: {}", e)))?;
         
         self.log_job_event(job_id, "error", &format!("Job failed: {}", error_message));
@@ -400,9 +431,15 @@ impl JobManager {
         // Handle execution result
         match decision {
             JobDecision::Completed { message } => {
-                let completed_job = job.complete(message.clone());
+                // Manually update job to completed state
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                job.status = JobStatus::Completed;
+                job.message = message.clone();
+                job.updated_at = now_ms;
+                job.finished_at = Some(now_ms);
+                
                 self.jobs_provider
-                    .update_job(completed_job.clone())
+                    .update_job(job.clone())
                     .map_err(|e| crate::error::KalamDbError::IoError(format!("Failed to complete job: {}", e)))?;
 
                 self.log_job_event(&job_id, "info", &format!("Job completed: {}", message.unwrap_or_default()));
@@ -433,18 +470,31 @@ impl JobManager {
                     sleep(Duration::from_millis(backoff_ms)).await;
                 } else {
                     // Max retries exceeded, mark as failed
-                    let failed_job = job.fail("Max retries exceeded".to_string(), exception_trace);
+                    let now_ms = chrono::Utc::now().timestamp_millis();
+                    job.status = JobStatus::Failed;
+                    job.message = Some("Max retries exceeded".to_string());
+                    job.exception_trace = exception_trace;
+                    job.updated_at = now_ms;
+                    job.finished_at = Some(now_ms);
+                    
                     self.jobs_provider
-                        .update_job(failed_job.clone())
+                        .update_job(job.clone())
                         .map_err(|e| crate::error::KalamDbError::IoError(format!("Failed to fail job: {}", e)))?;
 
                     self.log_job_event(&job_id, "error", "Job failed: max retries exceeded");
                 }
             }
             JobDecision::Failed { message, exception_trace } => {
-                let failed_job = job.fail(message.clone(), exception_trace.clone());
+                // Manually update job to failed state
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                job.status = JobStatus::Failed;
+                job.message = Some(message.clone());
+                job.exception_trace = exception_trace.clone();
+                job.updated_at = now_ms;
+                job.finished_at = Some(now_ms);
+                
                 self.jobs_provider
-                    .update_job(failed_job.clone())
+                    .update_job(job.clone())
                     .map_err(|e| crate::error::KalamDbError::IoError(format!("Failed to fail job: {}", e)))?;
 
                 self.log_job_event(&job_id, "error", &format!("Job failed: {}", message));
@@ -502,17 +552,20 @@ impl JobManager {
 
         log::warn!("Recovering {} incomplete jobs from previous run", running_jobs.len());
 
-        for job in running_jobs {
-            let failed_job = job.fail(
-                "Server restarted".to_string(),
-                Some("Job was running when server shut down".to_string()),
-            );
+        for mut job in running_jobs {
+            // Manually update job to failed state
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            job.status = JobStatus::Failed;
+            job.message = Some("Server restarted".to_string());
+            job.exception_trace = Some("Job was running when server shut down".to_string());
+            job.updated_at = now_ms;
+            job.finished_at = Some(now_ms);
 
             self.jobs_provider
-                .update_job(failed_job.clone())
+                .update_job(job.clone())
                 .map_err(|e| crate::error::KalamDbError::IoError(format!("Failed to recover job: {}", e)))?;
 
-            self.log_job_event(&failed_job.job_id, "error", "Job marked as failed (server restart)");
+            self.log_job_event(&job.job_id, "error", "Job marked as failed (server restart)");
         }
 
         Ok(())
