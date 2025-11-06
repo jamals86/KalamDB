@@ -10,8 +10,8 @@
 //! - After: UserTableAccess wraps Arc<UserTableShared> (created once per table, cached)
 //! - Memory savings: 6 fields → 3 fields (50% reduction per instance)
 
-use super::{UserTableDeleteHandler, UserTableInsertHandler, UserTableUpdateHandler};
-use crate::schema_registry::{NamespaceId, SchemaRegistry, TableName, TableType, UserId};
+use super::UserTableInsertHandler;
+use crate::schema_registry::{NamespaceId, TableName, UserId};
 use crate::tables::base_table_provider::{BaseTableProvider, UserTableShared};
 use crate::error::KalamDbError;
 use kalamdb_commons::ids::SnowflakeGenerator;
@@ -28,7 +28,6 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::models::TableId;
 use kalamdb_commons::Role;
 use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;

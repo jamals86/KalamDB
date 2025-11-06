@@ -23,7 +23,6 @@ use kalamdb_commons::Role;
 use kalamdb_sql::ddl::{AlterTableStatement, ColumnOperation, CreateNamespaceStatement, CreateTableStatement, DropTableStatement};
 use kalamdb_commons::schemas::policy::FlushPolicy;
 // Phase 8 Complete: All KalamSql usages replaced with SchemaRegistry and system table providers
-use serde_json::json;
 use std::sync::Arc;
 
 /// DDL Handler for Data Definition Language operations
@@ -580,7 +579,7 @@ impl DDLHandler {
         session: &SessionContext,
         sql: &str,
         namespace_id: &NamespaceId,
-        default_user_id: UserId,
+        _default_user_id: UserId,
         exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError>
     where
@@ -1435,8 +1434,6 @@ impl DDLHandler {
         table_def: &TableDefinition,
         table_type: &TableType,
     ) -> Result<(usize, u64), KalamDbError> {
-        use std::path::Path;
-        
         // Stream tables don't have Parquet files
         if matches!(table_type, TableType::Stream) {
             return Ok((0, 0));

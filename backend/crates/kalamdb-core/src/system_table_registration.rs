@@ -14,7 +14,6 @@ use crate::tables::system::StatsTableProvider;
 use datafusion::catalog::memory::MemorySchemaProvider;
 use datafusion::catalog::SchemaProvider;
 use kalamdb_commons::system_tables::SystemTable;
-use kalamdb_store::entity_store::EntityStore;
 use std::sync::Arc;
 
 /// Return type for register_system_tables

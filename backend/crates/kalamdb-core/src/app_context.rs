@@ -14,7 +14,6 @@ use crate::live_query::LiveQueryManager;
 use crate::sql::datafusion_session::DataFusionSessionFactory;
 use crate::storage::storage_registry::StorageRegistry;
 use crate::tables::system::registry::SystemTablesRegistry;
-use crate::tables::system::tables::TablesStore;
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
@@ -248,7 +247,7 @@ impl AppContext {
     // ===== Getters =====
     
     pub fn schema_cache(&self) -> Arc<SchemaRegistry> {
-        self.schema_cache.clone()
+        self.schema_registry.clone()
     }
     
     pub fn schema_registry(&self) -> Arc<SchemaRegistry> {

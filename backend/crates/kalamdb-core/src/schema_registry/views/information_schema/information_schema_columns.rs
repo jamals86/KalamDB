@@ -9,7 +9,7 @@
 use crate::error::KalamDbError;
 use crate::schema_registry::SchemaRegistry;
 use async_trait::async_trait;
-use datafusion::arrow::array::{BooleanArray, RecordBatch, StringArray, UInt32Array};
+use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::datasource::MemTable;
 use datafusion::datasource::TableProvider;
