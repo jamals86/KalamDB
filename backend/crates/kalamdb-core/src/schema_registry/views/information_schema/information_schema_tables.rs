@@ -7,7 +7,7 @@
 //! of fragmented system.tables storage.
 
 use crate::error::KalamDbError;
-use crate::schema::registry::SchemaRegistry;
+use crate::schema_registry::SchemaRegistry;
 use crate::tables::system::{SystemTableProviderExt, TablesTableProvider};
 use async_trait::async_trait;
 use datafusion::arrow::array::{

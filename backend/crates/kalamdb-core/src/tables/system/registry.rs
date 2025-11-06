@@ -11,7 +11,7 @@ use super::{
     JobsTableProvider, LiveQueriesTableProvider, NamespacesTableProvider, StatsTableProvider,
     StoragesTableProvider, TablesTableProvider, UsersTableProvider,
 };
-use crate::schema_registry::registry::SchemaRegistry;
+use crate::schema_registry::SchemaRegistry;
 use kalamdb_store::StorageBackend;
 use std::sync::{Arc, RwLock};
 

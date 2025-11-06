@@ -14,7 +14,7 @@ use super::{UserTableDeleteHandler, UserTableInsertHandler, UserTableUpdateHandl
 use crate::schema_registry::{NamespaceId, SchemaCache, TableName, TableType, UserId};
 use crate::tables::base_table_provider::{BaseTableProvider, UserTableShared};
 use crate::error::KalamDbError;
-use crate::ids::SnowflakeGenerator;
+use kalamdb_commons::ids::SnowflakeGenerator;
 use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::arrow_json_conversion::{
     arrow_batch_to_json, json_rows_to_arrow_batch, validate_insert_rows,

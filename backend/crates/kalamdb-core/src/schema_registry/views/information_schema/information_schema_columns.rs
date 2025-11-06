@@ -7,7 +7,7 @@
 //! instead of KalamSql. Currently left as-is (not initialized in SystemTablesRegistry).
 
 use crate::error::KalamDbError;
-use crate::schema::registry::SchemaRegistry;
+use crate::schema_registry::SchemaRegistry;
 use async_trait::async_trait;
 use datafusion::arrow::array::{BooleanArray, RecordBatch, StringArray, UInt32Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};

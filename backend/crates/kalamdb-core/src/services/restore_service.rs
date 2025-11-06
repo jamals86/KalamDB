@@ -11,7 +11,8 @@
 //! - File system operations for Parquet files
 //! - No direct RocksDB access
 
-use crate::schema::{NamespaceId, TableType};
+use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::schemas::TableType;
 use crate::error::KalamDbError;
 use crate::services::backup_service::BackupManifest;
 use kalamdb_commons::models::{JobId, JobStatus, JobType, NodeId};

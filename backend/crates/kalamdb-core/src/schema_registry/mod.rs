@@ -22,15 +22,18 @@
 pub mod arrow_schema;
 pub mod projection;
 pub mod system_columns;
+pub mod views;
 
 pub use arrow_schema::ArrowSchemaWithOptions;
 pub use projection::{project_batch, schemas_compatible};
 pub use system_columns::SystemColumns;
-pub use registry::{SchemaRegistry, TableMetadata};
 
 pub mod schema_cache; // Phase 10: Unified cache implementation
 
 pub use schema_cache::{CachedTableData, SchemaCache};
+
+// Alias SchemaCache as SchemaRegistry for Phase 5 compatibility
+pub type SchemaRegistry = SchemaCache;
 
 // Re-export SchemaRegistry from schema module (Phase 3: Module Consolidation)
 

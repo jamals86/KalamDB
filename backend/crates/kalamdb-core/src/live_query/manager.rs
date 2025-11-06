@@ -12,7 +12,7 @@ use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, In
 use crate::tables::system::LiveQueriesTableProvider;
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
-use crate::schema_registry::registry::SchemaRegistry;
+use crate::schema_registry::SchemaRegistry;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_commons::LiveQueryId;

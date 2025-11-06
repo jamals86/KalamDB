@@ -409,7 +409,7 @@ impl UserTableInsertHandler {
                     }
                     "SNOWFLAKE_ID" => {
                         // Generate snowflake ID
-                        use crate::ids::SnowflakeGenerator;
+                        use kalamdb_commons::ids::SnowflakeGenerator;
                         let generator = SnowflakeGenerator::new(0);
                         let id = generator.next_id().map_err(|e| {
                             KalamDbError::InvalidOperation(format!(

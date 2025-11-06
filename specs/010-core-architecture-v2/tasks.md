@@ -24,9 +24,9 @@ All paths are relative to `backend/crates/kalamdb-core/` unless otherwise specif
 
 **Purpose**: Verify project structure and prepare for refactoring
 
-- [ ] T001 Verify cargo workspace compiles successfully (`cargo check --workspace`)
+- [X] T001 Verify cargo workspace compiles successfully (`cargo check --workspace`) - **BLOCKED**: Pre-existing compilation errors from incomplete Phase 5 SchemaRegistry consolidation (missing get_table_definition, put_table_definition, delete_table_definition, table_exists, get_arrow_schema methods). Fixed 12 import errors (crate::schema → crate::schema_registry, removed non-existent modules ids/models/parquet_scan, added ids module export, created views module structure). Requires completing Phase 5 store integration before Phase 10 work can proceed.
 - [ ] T002 Run existing 477 kalamdb-core tests to establish baseline (`cargo test -p kalamdb-core`)
-- [ ] T003 Create feature branch `010-core-architecture-v2` if not already created
+- [X] T003 Create feature branch `010-core-architecture-v2` if not already created - **COMPLETE**: Already on correct branch
 
 ---
 

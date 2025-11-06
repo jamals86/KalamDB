@@ -13,7 +13,7 @@
 //! - Phase 3: CREATE TABLE (complex, 445 lines with 3 table type branches)
 
 use super::types::{ExecutionContext, ExecutionMetadata, ExecutionResult};
-use crate::schema::TableType;
+use kalamdb_commons::schemas::TableType;
 use crate::error::KalamDbError;
 use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::{JobId, NamespaceId, StorageId, TableId, UserId};
@@ -152,7 +152,7 @@ impl DDLHandler {
     ) -> Result<(), KalamDbError> {
         use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, SchemaVersion};
         use kalamdb_commons::datatypes::{KalamDataType, FromArrowType};
-        use crate::schema::arrow_schema::ArrowSchemaWithOptions;
+        use crate::schema_registry::arrow_schema::ArrowSchemaWithOptions;
         use crate::app_context::AppContext;
 
         // Extract columns directly from Arrow schema

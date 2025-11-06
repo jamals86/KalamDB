@@ -9,7 +9,6 @@
 pub mod arrow_json_conversion;
 pub mod base_table_provider;
 pub mod base_flush;
-pub mod parquet_scan;
 pub mod shared_tables;
 pub mod stream_tables;
 pub mod system;
