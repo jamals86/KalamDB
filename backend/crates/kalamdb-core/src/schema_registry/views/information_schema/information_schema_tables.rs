@@ -3,41 +3,31 @@
 //! This module provides a DataFusion TableProvider for the information_schema.tables
 //! virtual table, which exposes all table metadata from information_schema_tables CF.
 //!
-//! **Updated**: Now uses unified TableDefinition from information_schema_tables instead
-//! of fragmented system.tables storage.
+//! **Updated**: Now uses unified VirtualView pattern from view_base.rs
 
 use crate::error::KalamDbError;
+use crate::schema_registry::views::VirtualView;
 use crate::schema_registry::SchemaRegistry;
-use crate::tables::system::{SystemTableProviderExt, TablesTableProvider};
-use async_trait::async_trait;
+use crate::tables::system::TablesTableProvider;
 use datafusion::arrow::array::{
     ArrayRef, BooleanArray, RecordBatch, StringBuilder, TimestampMillisecondArray, UInt32Array,
     UInt64Array,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
-use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::logical_expr::Expr;
-use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::models::TableId;
-use std::any::Any;
 use std::sync::Arc;
 
-/// InformationSchemaTablesProvider exposes all table metadata from information_schema_tables CF
-pub struct InformationSchemaTablesProvider {
+/// InformationSchemaTablesView exposes all table metadata from information_schema_tables CF
+/// using the unified VirtualView pattern
+#[derive(Debug)]
+pub struct InformationSchemaTablesView {
     tables_provider: Arc<TablesTableProvider>,
     schema_registry: Arc<SchemaRegistry>,
     schema: SchemaRef,
 }
 
-impl std::fmt::Debug for InformationSchemaTablesProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InformationSchemaTablesProvider").finish()
-    }
-}
-
-impl InformationSchemaTablesProvider {
-    /// Create a new information_schema.tables provider
+impl InformationSchemaTablesView {
+    /// Create a new information_schema.tables view
     ///
     /// # Arguments
     /// * `tables_provider` - TablesTableProvider for accessing system.tables metadata
@@ -76,7 +66,7 @@ impl InformationSchemaTablesProvider {
     }
 
     /// Scan all tables across all namespaces and return as RecordBatch
-    pub fn scan_all_tables(&self) -> Result<RecordBatch, KalamDbError> {
+    fn scan_all_tables(&self) -> Result<RecordBatch, KalamDbError> {
         // Get table metadata from system.tables
         let tables_batch = self
             .tables_provider
@@ -218,54 +208,30 @@ impl InformationSchemaTablesProvider {
     }
 }
 
-impl SystemTableProviderExt for InformationSchemaTablesProvider {
-    fn table_name(&self) -> &str {
-        "information_schema.tables"
-    }
-
-    fn schema_ref(&self) -> SchemaRef {
-        self.schema.clone()
-    }
-
-    fn load_batch(&self) -> Result<RecordBatch, KalamDbError> {
-        self.scan_all_tables()
-    }
-}
-
-#[async_trait]
-impl TableProvider for InformationSchemaTablesProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
+impl VirtualView for InformationSchemaTablesView {
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
 
-    fn table_type(&self) -> TableType {
-        TableType::View
+    fn compute_batch(&self) -> Result<RecordBatch, KalamDbError> {
+        self.scan_all_tables()
     }
 
-    async fn scan(
-        &self,
-        _state: &dyn datafusion::catalog::Session,
-        projection: Option<&Vec<usize>>,
-        _filters: &[Expr],
-        _limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        use datafusion::datasource::MemTable;
-        let schema = self.schema.clone();
-        let batch = self.scan_all_tables().map_err(|e| {
-            DataFusionError::Execution(format!(
-                "Failed to build information_schema.tables batch: {}",
-                e
-            ))
-        })?;
-        let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions)
-            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-        table.scan(_state, projection, &[], _limit).await
+    fn view_name(&self) -> &str {
+        "information_schema.tables"
     }
+}
+
+/// Helper function to create information_schema.tables TableProvider
+///
+/// This wraps the InformationSchemaTablesView in a ViewTableProvider for use in DataFusion.
+pub fn create_information_schema_tables_provider(
+    tables_provider: Arc<TablesTableProvider>,
+    schema_registry: Arc<SchemaRegistry>,
+) -> Arc<dyn datafusion::datasource::TableProvider> {
+    use crate::schema_registry::views::ViewTableProvider;
+    let view = Arc::new(InformationSchemaTablesView::new(tables_provider, schema_registry));
+    Arc::new(ViewTableProvider::new(view))
 }
 
 #[cfg(test)]

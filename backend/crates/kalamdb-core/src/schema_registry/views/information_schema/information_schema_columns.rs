@@ -3,34 +3,22 @@
 //! Provides column metadata by flattening the columns array from TableDefinition.
 //! Reads from information_schema_tables CF and exposes per-column records.
 //!
-//! **TODO (KalamSql Removal)**: This provider needs refactoring to use SchemaRegistry
-//! instead of KalamSql. Currently left as-is (not initialized in SystemTablesRegistry).
+//! **Updated**: Now uses unified VirtualView pattern from view_base.rs
 
 use crate::error::KalamDbError;
+use crate::schema_registry::views::VirtualView;
 use crate::schema_registry::SchemaRegistry;
-use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use datafusion::datasource::MemTable;
-use datafusion::datasource::TableProvider;
-use datafusion::error::Result as DataFusionResult;
-use datafusion::logical_expr::{Expr, TableType};
-use datafusion::physical_plan::ExecutionPlan;
-use std::any::Any;
 use std::sync::Arc;
 
-pub struct InformationSchemaColumnsProvider {
+#[derive(Debug)]
+pub struct InformationSchemaColumnsView {
     _schema_registry: Arc<SchemaRegistry>, // TODO: Use this instead of kalam_sql
     schema: SchemaRef,
 }
 
-impl std::fmt::Debug for InformationSchemaColumnsProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InformationSchemaColumnsProvider").finish()
-    }
-}
-
-impl InformationSchemaColumnsProvider {
+impl InformationSchemaColumnsView {
     pub fn new(schema_registry: Arc<SchemaRegistry>) -> Self {
         let schema = Arc::new(Schema::new(vec![
             Field::new("table_catalog", DataType::Utf8, true),
@@ -50,7 +38,7 @@ impl InformationSchemaColumnsProvider {
         }
     }
 
-    async fn scan_all_columns(&self) -> Result<RecordBatch, KalamDbError> {
+    fn scan_all_columns(&self) -> Result<RecordBatch, KalamDbError> {
         // TODO: Implement using schema_registry once refactored
         // For now, return empty result
         return Err(KalamDbError::Other("information_schema.columns not yet implemented (needs SchemaRegistry refactoring)".to_string()));
@@ -110,36 +98,31 @@ impl InformationSchemaColumnsProvider {
     }
 }
 
-#[async_trait]
-impl TableProvider for InformationSchemaColumnsProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
+impl VirtualView for InformationSchemaColumnsView {
     fn schema(&self) -> SchemaRef {
-        Arc::clone(&self.schema)
+        self.schema.clone()
     }
 
-    fn table_type(&self) -> TableType {
-        TableType::View
+    fn compute_batch(&self) -> Result<RecordBatch, KalamDbError> {
+        self.scan_all_columns()
     }
 
-    async fn scan(
-        &self,
-        _state: &dyn datafusion::catalog::Session,
-        projection: Option<&Vec<usize>>,
-        _filters: &[Expr],
-        _limit: Option<usize>,
-    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        let schema = Arc::clone(&self.schema);
-        let batch = self
-            .scan_all_columns()
-            .await
-            .map_err(|e| datafusion::error::DataFusionError::Execution(e.to_string()))?;
-
-        let partitions = vec![vec![batch]];
-        let table = MemTable::try_new(schema, partitions)
-            .map_err(|e| datafusion::error::DataFusionError::Execution(e.to_string()))?;
-        table.scan(_state, projection, &[], _limit).await
+    fn view_name(&self) -> &str {
+        "information_schema.columns"
     }
 }
+
+/// Helper function to create information_schema.columns TableProvider
+///
+/// This wraps the InformationSchemaColumnsView in a ViewTableProvider for use in DataFusion.
+pub fn create_information_schema_columns_provider(
+    schema_registry: Arc<SchemaRegistry>,
+) -> Arc<dyn datafusion::datasource::TableProvider> {
+    use crate::schema_registry::views::ViewTableProvider;
+    let view = Arc::new(InformationSchemaColumnsView::new(schema_registry));
+    Arc::new(ViewTableProvider::new(view))
+}
+
+// Keep old name for backward compatibility (deprecated)
+#[deprecated(note = "Use InformationSchemaColumnsView instead")]
+pub type InformationSchemaColumnsProvider = InformationSchemaColumnsView;

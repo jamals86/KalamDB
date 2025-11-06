@@ -6,5 +6,10 @@
 mod information_schema_columns;
 mod information_schema_tables;
 
+// Export view structs
+pub use information_schema_columns::{InformationSchemaColumnsView, create_information_schema_columns_provider};
+pub use information_schema_tables::{InformationSchemaTablesView, create_information_schema_tables_provider};
+
+// Backward compatibility (deprecated)
+#[allow(deprecated)]
 pub use information_schema_columns::InformationSchemaColumnsProvider;
-pub use information_schema_tables::InformationSchemaTablesProvider;

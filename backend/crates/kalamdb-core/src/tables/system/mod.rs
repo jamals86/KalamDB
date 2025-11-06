@@ -24,9 +24,6 @@ pub use registry::SystemTablesRegistry;
 pub use system_table_trait::SystemTableProviderExt;
 // Export all v2 providers as the standard names (no suffix in public API)
 pub use audit_logs::AuditLogsTableProvider;
-pub use crate::schema_registry::views::information_schema::{
-    InformationSchemaColumnsProvider, InformationSchemaTablesProvider,
-};
 pub use stats::StatsTableProvider; // Virtual view
 pub use jobs::JobsTableProvider;
 pub use live_queries::LiveQueriesTableProvider;

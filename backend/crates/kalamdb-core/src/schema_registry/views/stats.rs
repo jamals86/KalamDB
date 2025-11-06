@@ -39,6 +39,7 @@ fn stats_schema() -> SchemaRef {
 /// - Implements VirtualView trait
 /// - Returns TableType::View
 /// - Computes batch dynamically in compute_batch()
+#[derive(Debug)]
 pub struct StatsView {
     schema_registry: Option<Arc<SchemaRegistry>>,
 }
@@ -55,7 +56,7 @@ impl VirtualView for StatsView {
         stats_schema()
     }
 
-    fn compute_batch(&self) -> Result<RecordBatch, DataFusionError> {
+    fn compute_batch(&self) -> Result<RecordBatch, crate::error::KalamDbError> {
         let mut names = StringBuilder::new();
         let mut values = StringBuilder::new();
 
@@ -96,7 +97,7 @@ impl VirtualView for StatsView {
                 Arc::new(values.finish()) as ArrayRef,
             ],
         )
-        .map_err(|e| DataFusionError::Execution(format!("Failed to build stats batch: {}", e)))
+        .map_err(|e| crate::error::KalamDbError::Other(format!("Failed to build stats batch: {}", e)))
     }
 
     fn view_name(&self) -> &str {
@@ -134,7 +135,8 @@ mod tests {
 
     #[test]
     fn test_table_provider() {
-        let provider = create_stats_provider(None);
+        let view = Arc::new(StatsView::new(None));
+        let provider = StatsTableProvider::new(view);
         use datafusion::datasource::TableProvider;
         use datafusion::datasource::TableType;
         
