@@ -90,7 +90,7 @@ impl TableProvider for UserTableAccess {
 
 ### 3. Phase 10 Cache Foundation ✅
 
-**Current SchemaCache** (schema_registry/schema_cache.rs):
+**Current SchemaCache** (schema_registry/registry.rs):
 ```rust
 pub struct SchemaCache {
     /// Cached table data (includes Arc<TableDefinition>)
@@ -156,7 +156,7 @@ pub struct SchemaCache {
 
 ### Step 1: Extend SchemaCache with Arrow Memoization
 
-**File**: `backend/crates/kalamdb-core/src/schema_registry/schema_cache.rs`
+**File**: `backend/crates/kalamdb-core/src/schema_registry/registry.rs`
 
 ```rust
 impl SchemaCache {
@@ -369,7 +369,7 @@ system_enhanced_schemas: DashMap<TableId, Arc<Schema>>,
 
 ## Testing Strategy
 
-### Unit Tests (Add to schema_cache.rs)
+### Unit Tests (Add to registry.rs)
 ```rust
 #[test]
 fn test_arrow_schema_memoization() {

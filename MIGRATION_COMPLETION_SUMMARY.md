@@ -65,7 +65,7 @@
 5. `app_context.rs` - TablesStore import
 6. `system_table_registration.rs` - TablesStore import
 7. `schema/registry.rs` - TablesStore import
-8. `schema/schema_cache.rs` - FlushPolicy import
+8. `schema/registry.rs` - FlushPolicy import
 9. `live_query/change_detector.rs` - TablesStore import
 10. `live_query/manager.rs` - TablesStore import
 11. `tables/system/mod.rs` - Module declaration

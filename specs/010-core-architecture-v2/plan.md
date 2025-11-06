@@ -66,7 +66,7 @@ backend/crates/
 │   ├── src/
 │   │   ├── app_context.rs               # MODIFY: Add NodeId ownership (FR-000)
 │   │   ├── schema_registry/             # RENAME from schema/ (FR-001)
-│   │   │   ├── schema_cache.rs          # MODIFY: Add arrow_schemas DashMap (FR-002-004)
+│   │   │   ├── registry.rs          # MODIFY: Add arrow_schemas DashMap (FR-002-004)
 │   │   │   ├── arrow_schema.rs          # Schema utilities (existing)
 │   │   │   └── system_columns.rs        # System column injection (existing)
 │   │   ├── tables/

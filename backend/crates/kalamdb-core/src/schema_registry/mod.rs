@@ -12,7 +12,7 @@
 //! **Phase 5 Complete**: SchemaRegistry provides read-through/write-through persistence
 //! **Phase 10 Complete**: Unified SchemaRegistry replaces old dual-cache architecture
 //! - Deleted: table_cache.rs (516 lines) - old TableCache implementation
-//! - Deleted: tables/system/schemas/schema_cache.rs (443 lines) - old system cache
+//! - Deleted: tables/system/schemas/registry.rs (443 lines) - old system cache
 //! - Deleted: table_metadata.rs (252 lines) - replaced by CachedTableData
 //! - Single source of truth: CachedTableData in unified SchemaRegistry
 

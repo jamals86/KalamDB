@@ -31,7 +31,7 @@
 - Updated tables/system/mod.rs to remove schemas module
 
 ### 6. Fixed compilation errors ✅
-- Added FlushPolicy import in schema_cache.rs
+- Added FlushPolicy import in registry.rs
 - Created missing kalamdb-live/src/lib.rs file
 - Fixed TableId.to_string() conversion issue
 - Added EntityStoreV2 import in tables_provider.rs
@@ -56,7 +56,7 @@ These errors existed before the migration and should be fixed separately.
 - backend/crates/kalamdb-core/src/app_context.rs
 - backend/crates/kalamdb-core/src/system_table_registration.rs
 - backend/crates/kalamdb-core/src/schema/registry.rs
-- backend/crates/kalamdb-core/src/schema/schema_cache.rs
+- backend/crates/kalamdb-core/src/schema/registry.rs
 - backend/crates/kalamdb-core/src/live_query/change_detector.rs
 - backend/crates/kalamdb-core/src/live_query/manager.rs
 - backend/crates/kalamdb-core/src/tables/system/mod.rs

@@ -67,7 +67,7 @@ This session completed:
 - **No additional implementation needed**
 
 ### T206: SchemaCache ✅
-- **File**: `/backend/crates/kalamdb-core/src/sql/schema_cache.rs`
+- **File**: `/backend/crates/kalamdb-core/src/sql/registry.rs`
 - **Tests**: 9 passing
 - **Performance**: 200-400x improvement (2-3ms → 0.01ms)
 - **Features**:
@@ -160,7 +160,7 @@ cargo test --package kalamdb-core metrics             # 12 passed
 1. `/backend/crates/kalamdb-core/src/sql/ddl/alter_table.rs`
 2. `/backend/crates/kalamdb-core/src/services/schema_evolution_service.rs`
 3. `/backend/crates/kalamdb-core/src/schema/projection.rs`
-4. `/backend/crates/kalamdb-core/src/sql/schema_cache.rs`
+4. `/backend/crates/kalamdb-core/src/sql/registry.rs`
 5. `/backend/crates/kalamdb-sql/src/query_cache.rs`
 6. `/backend/crates/kalamdb-core/src/metrics/mod.rs`
 7. `/PHASE_11_COMPLETE.md`

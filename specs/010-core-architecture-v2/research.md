@@ -25,7 +25,7 @@
 
 **Implementation Pattern**:
 ```rust
-// schema_registry/schema_cache.rs (will be renamed to schema_registry/registry.rs)
+// schema_registry/registry.rs (will be renamed to schema_registry/registry.rs)
 use std::sync::RwLock;
 
 /// **Clone Semantics**: Cloning creates a new Arc pointing to the same RwLock,

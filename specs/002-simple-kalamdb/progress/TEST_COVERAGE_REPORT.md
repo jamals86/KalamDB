@@ -183,7 +183,7 @@ test result: ok. 11 passed; 0 failed
 ### Performance Optimization (36 tests)
 
 #### T206: SchemaCache (9 tests) ✅
-**File**: `/backend/crates/kalamdb-core/src/sql/schema_cache.rs`
+**File**: `/backend/crates/kalamdb-core/src/sql/registry.rs`
 
 ```bash
 cargo test --package kalamdb-core schema_cache

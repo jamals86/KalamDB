@@ -37,7 +37,7 @@ All now use `TablesStore` from `tables_v2`
 - Updated `tables/system/mod.rs` to remove schemas module
 
 ### ✅ 6. Fixed migration-related compilation errors
-- Added `FlushPolicy` import in schema_cache.rs
+- Added `FlushPolicy` import in registry.rs
 - Created missing kalamdb-live/src/lib.rs placeholder
 - Fixed TableId string conversion in tables_provider.rs
 - Added `EntityStoreV2` import
@@ -112,7 +112,7 @@ These are **independent fixes** that should be addressed **outside** this migrat
 - `app_context.rs` - Import change
 - `system_table_registration.rs` - Import change
 - `schema/registry.rs` - Import change
-- `schema/schema_cache.rs` - Import fix
+- `schema/registry.rs` - Import fix
 - `live_query/change_detector.rs` - Import change
 - `live_query/manager.rs` - Import change
 - `tables/system/mod.rs` - Module removal

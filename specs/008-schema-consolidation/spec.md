@@ -250,7 +250,7 @@ Developers need a single unified cache for all table-related data instead of mai
 
 7. **Given** memory profiling before and after consolidation, **When** measuring cache memory usage, **Then** unified SchemaCache uses ~50% less memory than TableCache + SchemaCache combined
 
-8. **Given** old TableCache (catalog/table_cache.rs, 516 lines) and old SchemaCache (tables/system/schemas/schema_cache.rs, 443 lines) and TableMetadata (catalog/table_metadata.rs, 252 lines), **When** replaced with unified SchemaCache, **Then** ~1,200 lines of duplicate code deleted
+8. **Given** old TableCache (catalog/table_cache.rs, 516 lines) and old SchemaCache (tables/system/schemas/registry.rs, 443 lines) and TableMetadata (catalog/table_metadata.rs, 252 lines), **When** replaced with unified SchemaCache, **Then** ~1,200 lines of duplicate code deleted
 
 9. **Given** concurrent access from multiple threads, **When** reading/writing to SchemaCache, **Then** DashMap provides lock-free concurrent access with no deadlocks
 

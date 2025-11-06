@@ -136,7 +136,7 @@ let provider = UserTableAccess::new(shared, user_id, role);  // Just 3 Arc::clon
    - Builder methods: `with_live_query_manager()`, `with_storage_registry()`
    - Accessor methods for all shared state
 
-2. **backend/crates/kalamdb-core/src/catalog/schema_cache.rs** (~50 lines)
+2. **backend/crates/kalamdb-core/src/catalog/registry.rs** (~50 lines)
    - Added `user_table_shared: DashMap<TableId, Arc<UserTableShared>>` field
    - Added `insert_user_table_shared()` and `get_user_table_shared()` methods
    - Updated `invalidate()` and `clear()` to handle user_table_shared map

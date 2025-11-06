@@ -14,7 +14,7 @@
 
 ### ✅ Migration-Specific Fixes (11 errors resolved)
 1. Fixed Job struct field access (message, exception_trace)
-2. Fixed FlushPolicy import in schema_cache.rs
+2. Fixed FlushPolicy import in registry.rs
 3. Fixed CachedTableData struct definition (4 fields → 9 fields)
 4. Created kalamdb-live/src/lib.rs placeholder
 5. Fixed TableId string conversion
@@ -72,7 +72,7 @@ These errors **existed before** the migration and are **not caused by** our chan
 5. `app_context.rs` - Import change
 6. `system_table_registration.rs` - Import change
 7. `schema/registry.rs` - Import change
-8. `schema/schema_cache.rs` - Import fix + struct fix (TODAY)
+8. `schema/registry.rs` - Import fix + struct fix (TODAY)
 9. `live_query/change_detector.rs` - Import change
 10. `live_query/manager.rs` - Import change
 11. `tables/system/mod.rs` - Module removal

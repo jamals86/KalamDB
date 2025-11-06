@@ -17,7 +17,7 @@ Successfully replaced KalamDB's dual-cache architecture (TableCache + SchemaCach
 
 ### Phase 1: Unified SchemaCache Creation ✅ **COMPLETE** (T300-T308, 9/9 tasks)
 
-**File**: `backend/crates/kalamdb-core/src/catalog/schema_cache.rs` (350+ lines)
+**File**: `backend/crates/kalamdb-core/src/catalog/registry.rs` (350+ lines)
 
 **Key Components**:
 - `CachedTableData` struct: Consolidated table metadata + schema + storage config
@@ -97,7 +97,7 @@ let cached_data = cache.get(&table_id).ok_or_else(...)?;
 
 **Deleted Files** (1,211 lines removed):
 1. `catalog/table_cache.rs` (516 lines)
-2. `tables/system/schemas/schema_cache.rs` (443 lines)
+2. `tables/system/schemas/registry.rs` (443 lines)
 3. `catalog/table_metadata.rs` (252 lines)
 
 **Modified Files**:
@@ -111,7 +111,7 @@ let cached_data = cache.get(&table_id).ok_or_else(...)?;
 
 ### Phase 5: Performance Testing & Validation ✅ **COMPLETE** (T340-T347, 8/8 tasks)
 
-**New Benchmark Tests** (4 tests added to `schema_cache.rs`):
+**New Benchmark Tests** (4 tests added to `registry.rs`):
 
 **T340 - `bench_cache_hit_rate`**:
 - Test: 1,000 tables × 100 queries each = 100,000 total lookups
@@ -197,7 +197,7 @@ SchemaCache (single source of truth)
 ## Files Modified
 
 **Created** (1 file):
-- `backend/crates/kalamdb-core/src/catalog/schema_cache.rs` (1,027 lines)
+- `backend/crates/kalamdb-core/src/catalog/registry.rs` (1,027 lines)
   - 19 unit tests (15 functional + 4 benchmarks)
 
 **Modified** (8 files):
@@ -212,13 +212,13 @@ SchemaCache (single source of truth)
 
 **Deleted** (3 files, 1,211 lines removed):
 - `catalog/table_cache.rs` (516 lines)
-- `tables/system/schemas/schema_cache.rs` (443 lines)
+- `tables/system/schemas/registry.rs` (443 lines)
 - `catalog/table_metadata.rs` (252 lines)
 
 ## Test Results
 
 **Unit Tests**: 477/486 passing (98.1%)
-- 19 tests in `schema_cache.rs` (15 functional + 4 benchmarks)
+- 19 tests in `registry.rs` (15 functional + 4 benchmarks)
 - All existing tests still pass after refactoring
 
 **Benchmark Tests** (new):

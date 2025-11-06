@@ -36,7 +36,6 @@ pub struct AppContext {
     node_id: NodeId,
 
     // ===== Caches =====
-    schema_cache: Arc<SchemaRegistry>,
     schema_registry: Arc<SchemaRegistry>,
     
     // ===== Stores =====
@@ -217,7 +216,6 @@ impl AppContext {
 
                 Arc::new(AppContext {
                     node_id,
-                    schema_cache,
                     schema_registry,
                     user_table_store,
                     shared_table_store,

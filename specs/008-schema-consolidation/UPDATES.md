@@ -180,7 +180,7 @@ pub enum TableType {
 backend/crates/kalamdb-core/src/tables/system/schemas/
 ├── mod.rs
 ├── table_schema_store.rs  # EntityStore<TableId, TableDefinition>
-└── schema_cache.rs        # DashMap-based cache
+└── registry.rs        # DashMap-based cache
 ```
 
 ---

@@ -171,7 +171,7 @@ Successfully implemented **116 out of 157 tasks (74% complete)** for the Schema 
 **EntityStore** (kalamdb-core):
 - `backend/crates/kalamdb-core/src/tables/system/schemas/mod.rs`
 - `backend/crates/kalamdb-core/src/tables/system/schemas/table_schema_store.rs`
-- `backend/crates/kalamdb-core/src/tables/system/schemas/schema_cache.rs`
+- `backend/crates/kalamdb-core/src/tables/system/schemas/registry.rs`
 - `backend/crates/kalamdb-core/src/tables/system/system_table_definitions.rs`
 
 **Integration Tests**:

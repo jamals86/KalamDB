@@ -111,7 +111,7 @@ Phase 3B consolidates common fields across all table providers (User, Stream, Sh
 ---
 
 ### ✅ T327: Provider Caching in SchemaCache
-**File**: `backend/crates/kalamdb-core/src/catalog/schema_cache.rs`
+**File**: `backend/crates/kalamdb-core/src/catalog/registry.rs`
 
 **Implementation**:
 ```rust
@@ -227,7 +227,7 @@ Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.42s
   - TableProviderCore struct with 9 helper methods
 
 ### Modified
-- `backend/crates/kalamdb-core/src/catalog/schema_cache.rs`
+- `backend/crates/kalamdb-core/src/catalog/registry.rs`
   - Added `providers: DashMap<TableId, Arc<dyn TableProvider + Send + Sync>>`
   - Added `insert_provider()` and `get_provider()` methods
   - Updated `invalidate()` and `clear()` to handle providers map

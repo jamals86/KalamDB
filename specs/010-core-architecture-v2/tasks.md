@@ -36,8 +36,8 @@ All paths are relative to `backend/crates/kalamdb-core/` unless otherwise specif
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete. These tasks establish the foundation for Arrow schema memoization.
 
-- [ ] T004 Add `std::sync::RwLock` import to `src/schema_registry/schema_cache.rs`
-- [ ] T005 [P] Add Clone semantics documentation comment to `CachedTableData` struct in `src/schema_registry/schema_cache.rs`
+- [ ] T004 Add `std::sync::RwLock` import to `src/schema_registry/registry.rs`
+- [ ] T005 [P] Add Clone semantics documentation comment to `CachedTableData` struct in `src/schema_registry/registry.rs`
 - [ ] T006 Verify all 11 TableProvider implementations compile before modifications (`cargo check -p kalamdb-core`)
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in strict sequential order (NOT parallel due to dependencies)
@@ -92,26 +92,26 @@ All paths are relative to `backend/crates/kalamdb-core/` unless otherwise specif
 
 ### Step 2: Add arrow_schema Field to CachedTableData (FR-002)
 
-- [ ] T021 [US1] Add `arrow_schema: Arc<RwLock<Option<Arc<Schema>>>>` field to `CachedTableData` struct in `src/schema_registry/schema_cache.rs`
-- [ ] T022 [US1] Update `CachedTableData::new()` constructor to initialize `arrow_schema: Arc::new(RwLock::new(None))` in `src/schema_registry/schema_cache.rs`
+- [ ] T021 [US1] Add `arrow_schema: Arc<RwLock<Option<Arc<Schema>>>>` field to `CachedTableData` struct in `src/schema_registry/registry.rs`
+- [ ] T022 [US1] Update `CachedTableData::new()` constructor to initialize `arrow_schema: Arc::new(RwLock::new(None))` in `src/schema_registry/registry.rs`
 
 ### Step 3: Implement arrow_schema() Method (FR-003)
 
-- [ ] T023 [US1] Implement `CachedTableData::arrow_schema()` method with double-check locking pattern in `src/schema_registry/schema_cache.rs`
+- [ ] T023 [US1] Implement `CachedTableData::arrow_schema()` method with double-check locking pattern in `src/schema_registry/registry.rs`
 - [ ] T024 [US1] Add fast path: read lock → check Some → return Arc::clone in `arrow_schema()` method
 - [ ] T025 [US1] Add slow path: write lock → double-check → compute via `to_arrow_schema()` → cache → return in `arrow_schema()` method
 - [ ] T026 [US1] Add `.expect("RwLock poisoned")` handling for lock acquisition in `arrow_schema()` method
 
 ### Step 4: Implement SchemaCache Delegation (FR-003 continued)
 
-- [ ] T027 [US1] Implement `SchemaCache::get_arrow_schema(&self, table_id: &TableId)` method in `src/schema_registry/schema_cache.rs`
+- [ ] T027 [US1] Implement `SchemaCache::get_arrow_schema(&self, table_id: &TableId)` method in `src/schema_registry/registry.rs`
 - [ ] T028 [US1] Make `get_arrow_schema()` delegate to `cached_data.arrow_schema()` with proper error handling
 
 ### Step 5: Update Invalidation Methods (FR-004)
 
-- [ ] T029 [US1] Verify `SchemaCache::invalidate()` signature is `&self` (not `&mut self`) for DashMap in `src/schema_registry/schema_cache.rs`
-- [ ] T030 [US1] Add `self.providers.remove(table_id)` to `invalidate()` method in `src/schema_registry/schema_cache.rs`
-- [ ] T031 [US1] Verify `clear()` method clears all DashMaps including providers in `src/schema_registry/schema_cache.rs`
+- [ ] T029 [US1] Verify `SchemaCache::invalidate()` signature is `&self` (not `&mut self`) for DashMap in `src/schema_registry/registry.rs`
+- [ ] T030 [US1] Add `self.providers.remove(table_id)` to `invalidate()` method in `src/schema_registry/registry.rs`
+- [ ] T031 [US1] Verify `clear()` method clears all DashMaps including providers in `src/schema_registry/registry.rs`
 
 ### Step 6: Update TableProviderCore (FR-005)
 

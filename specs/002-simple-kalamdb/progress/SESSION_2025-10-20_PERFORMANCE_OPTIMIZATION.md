@@ -52,7 +52,7 @@ Following speckit.implement.prompt.md instructions, I completed Phase 11 tasks a
 
 #### T206: Schema Cache ✅
 - **Status**: Complete - 9 tests passing
-- File: `/backend/crates/kalamdb-core/src/sql/schema_cache.rs`
+- File: `/backend/crates/kalamdb-core/src/sql/registry.rs`
 - **Features**:
   - Thread-safe RwLock<HashMap> cache
   - TTL-based expiration (default 5 minutes)
@@ -114,7 +114,7 @@ cargo test --lib query_cache           # 9 passed (kalamdb-sql)
 ## Files Created/Modified
 
 ### Created Files (3)
-1. `/backend/crates/kalamdb-core/src/sql/schema_cache.rs` (350 lines)
+1. `/backend/crates/kalamdb-core/src/sql/registry.rs` (350 lines)
    - Schema caching for DataFusion sessions
    - SchemaCacheKey, SchemaCache, get_or_load_schema helper
 

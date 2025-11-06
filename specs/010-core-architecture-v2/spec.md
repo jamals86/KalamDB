@@ -234,7 +234,7 @@ This refactoring MUST follow strict ordering to avoid breaking changes:
 
 ### Arrow Schema Memoization Details (FR-002 to FR-006)
 **Files to modify**:
-1. `schema_registry/schema_cache.rs` (will be renamed to schema_registry/registry.rs):
+1. `schema_registry/registry.rs` (will be renamed to schema_registry/registry.rs):
    - Add `arrow_schema: Arc<RwLock<Option<Arc<Schema>>>>` field to CachedTableData (using std::sync::RwLock)
    - Update CachedTableData::new() to initialize arrow_schema as Arc::new(RwLock::new(None))
    - Implement CachedTableData::arrow_schema() with double-check locking

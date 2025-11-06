@@ -8,7 +8,7 @@ Currently we have **two separate caches** for table data:
    - Purpose: Storage path resolution for flush operations
    - Key: `(NamespaceId, TableName)`
 
-2. **SchemaCache** (`tables/system/schemas/schema_cache.rs`):
+2. **SchemaCache** (`tables/system/schemas/registry.rs`):
    - Data: `TableDefinition` (full schema with columns)
    - Purpose: DESCRIBE TABLE, schema validation
    - Key: `TableId`
@@ -27,7 +27,7 @@ Currently we have **two separate caches** for table data:
 
 ```rust
 /// Unified cache for all table-related data (replaces both TableCache and SchemaCache)
-/// Location: backend/crates/kalamdb-core/src/catalog/schema_cache.rs
+/// Location: backend/crates/kalamdb-core/src/catalog/registry.rs
 pub struct SchemaCache {
     /// Main cache: TableId → CachedTableData
     /// TableId already contains (namespace_id, table_name) so no reverse index needed!
@@ -92,7 +92,7 @@ struct CachedTableData {
 ### Migration Path
 
 **Phase 1: Create New SchemaCache**
-- [ ] T300: Create `catalog/schema_cache.rs` with simplified design
+- [ ] T300: Create `catalog/registry.rs` with simplified design
 - [ ] T301: Implement CachedTableData struct with all fields
 - [ ] T302: Implement SchemaCache::new(max_size) constructor
 - [ ] T303: Implement get(&table_id) → Option<Arc<CachedTableData>>
@@ -117,7 +117,7 @@ struct CachedTableData {
 
 **Phase 4: Remove Old Caches**
 - [ ] T318: Delete `catalog/table_cache.rs` (516 lines removed)
-- [ ] T319: Delete `tables/system/schemas/schema_cache.rs` (443 lines removed)
+- [ ] T319: Delete `tables/system/schemas/registry.rs` (443 lines removed)
 - [ ] T320: Delete `catalog/table_metadata.rs` (replaced by CachedTableData)
 - [ ] T321: Update `catalog/mod.rs` to export only SchemaCache
 - [ ] T322: Update all imports across codebase

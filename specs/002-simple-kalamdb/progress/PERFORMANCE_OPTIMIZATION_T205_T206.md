@@ -36,7 +36,7 @@ pub fn new(db: Arc<DB>) -> Result<Self> {
 ### T206: Schema Cache ✅
 **Status**: Complete - 9 tests passing
 
-**File Created**: `/backend/crates/kalamdb-core/src/sql/schema_cache.rs`
+**File Created**: `/backend/crates/kalamdb-core/src/sql/registry.rs`
 
 **Features Implemented**:
 
@@ -181,7 +181,7 @@ Same as before + cache insertion
 ## Files Modified/Created
 
 ### Created Files
-- `/backend/crates/kalamdb-core/src/sql/schema_cache.rs` (350 lines)
+- `/backend/crates/kalamdb-core/src/sql/registry.rs` (350 lines)
 
 ### Modified Files
 - `/backend/crates/kalamdb-core/src/sql/mod.rs` - Added schema_cache exports

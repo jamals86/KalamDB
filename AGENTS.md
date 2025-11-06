@@ -126,7 +126,7 @@ backend/crates/
 ├── kalamdb-core/               # Core library (embeddable)
 │   ├── app_context.rs          # Singleton AppContext
 │   ├── schema_registry/        # Schema management
-│   │   ├── schema_cache.rs     # Unified cache + Arrow memoization
+│   │   ├── registry.rs     # Unified cache + Arrow memoization
 │   │   └── arrow_schema.rs     # Arrow schema utilities
 │   ├── tables/                 # Table implementations
 │   │   ├── base_table_provider.rs # Common interfaces
@@ -213,7 +213,7 @@ specs/010-core-architecture-v2/ # CURRENT: Arrow memoization, views
   8. Final testing
   
   **Files Modified** (pending):
-  - schema_registry/schema_cache.rs (add arrow_schemas map, get_arrow_schema() method)
+  - schema_registry/registry.rs (add arrow_schemas map, get_arrow_schema() method)
   - tables/base_table_provider.rs (add arrow_schema() to TableProviderCore)
   - 11 TableProvider implementations (use memoized schemas)
   

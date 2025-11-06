@@ -89,7 +89,7 @@
 - [X] T024 [P] [US1] Create directory `backend/crates/kalamdb-core/src/tables/system/schemas/`
 - [X] T025 [P] [US1] Implement TableSchemaStore in `backend/crates/kalamdb-core/src/tables/system/schemas/table_schema_store.rs` following SystemTableStore<TableId, TableDefinition> pattern
 - [X] T026 [US1] Implement EntityStore<TableId, TableDefinition> trait in `backend/crates/kalamdb-core/src/tables/system/schemas/table_schema_store.rs` with get(), put(), delete(), get_all() methods
-- [X] T027 [P] [US1] Implement SchemaCache with DashMap in `backend/crates/kalamdb-core/src/tables/system/schemas/schema_cache.rs` with get(), invalidate(), insert(), max_size LRU eviction
+- [X] T027 [P] [US1] Implement SchemaCache with DashMap in `backend/crates/kalamdb-core/src/tables/system/schemas/registry.rs` with get(), invalidate(), insert(), max_size LRU eviction
 - [X] T028 [US1] Add cache integration to TableSchemaStore: check cache before EntityStore reads in `backend/crates/kalamdb-core/src/tables/system/schemas/table_schema_store.rs`
 - [X] T029 [P] [US1] Update `backend/crates/kalamdb-core/src/tables/system/schemas/mod.rs` to export TableSchemaStore and SchemaCache
 
@@ -602,8 +602,8 @@
 
 ### Cache Performance Optimization for US4
 
-- [X] T107 [P] [US4] Implement LRU eviction policy in SchemaCache in `backend/crates/kalamdb-core/src/tables/system/schemas/schema_cache.rs` with max_size configuration ✅ **COMPLETE** (2025-11-01)
-- [X] T108 [P] [US4] Add cache metrics (hit rate, miss rate, eviction count) to SchemaCache in `backend/crates/kalamdb-core/src/tables/system/schemas/schema_cache.rs` ✅ **COMPLETE** (2025-11-01)
+- [X] T107 [P] [US4] Implement LRU eviction policy in SchemaCache in `backend/crates/kalamdb-core/src/tables/system/schemas/registry.rs` with max_size configuration ✅ **COMPLETE** (2025-11-01)
+- [X] T108 [P] [US4] Add cache metrics (hit rate, miss rate, eviction count) to SchemaCache in `backend/crates/kalamdb-core/src/tables/system/schemas/registry.rs` ✅ **COMPLETE** (2025-11-01)
 - [X] T109 [US4] Implement cache warming on server startup in `backend/src/lifecycle.rs` (preload frequently accessed system table schemas) ✅ **COMPLETE** (2025-11-01)
 - [X] T110 [P] [US4] Create system.stats virtual table in `backend/crates/kalamdb-core/src/tables/system/stats.rs` with columns (metric_name TEXT, metric_value TEXT) returning key-value pairs for: schema_cache_hit_rate, schema_cache_size, type_conversion_cache_hit_rate, server_uptime_seconds, memory_usage_bytes, cpu_usage_percent, total_tables, total_namespaces, total_storages, total_users, total_jobs, total_live_queries, avg_query_latency_ms, disk_space_used_bytes, disk_space_available_bytes, queries_per_second, active_connections (admin-only access via RBAC) ✅ **COMPLETE (initial metrics)** (2025-11-01)
   - Implemented metrics: schema_cache_hit_rate, schema_cache_size, schema_cache_hits, schema_cache_misses, schema_cache_evictions; placeholders for others
@@ -1138,15 +1138,15 @@ Final path: /data/storage/my_ns/messages/user_alice/
 
 ### Phase 1: Create New Unified SchemaCache
 
-- [X] T300 [P] [US7] Create `backend/crates/kalamdb-core/src/catalog/schema_cache.rs` with unified design using DashMap<TableId, Arc<CachedTableData>>
-- [X] T301 [P] [US7] Implement CachedTableData struct in schema_cache.rs with fields: table_id, table_type, created_at, storage_id, flush_policy, storage_path_template, schema_version, deleted_retention_hours, schema (Arc<TableDefinition>)
+- [X] T300 [P] [US7] Create `backend/crates/kalamdb-core/src/catalog/registry.rs` with unified design using DashMap<TableId, Arc<CachedTableData>>
+- [X] T301 [P] [US7] Implement CachedTableData struct in registry.rs with fields: table_id, table_type, created_at, storage_id, flush_policy, storage_path_template, schema_version, deleted_retention_hours, schema (Arc<TableDefinition>)
 - [X] T302 [P] [US7] Implement SchemaCache::new(max_size, storage_registry) constructor
 - [X] T303 [P] [US7] Implement get(&table_id) → Option<Arc<CachedTableData>> with LRU access tracking
 - [X] T304 [P] [US7] Implement get_by_name(namespace, table_name) → Option<Arc<CachedTableData>> by creating TableId first
 - [X] T305 [US7] Implement insert(table_id, data) with LRU eviction logic (evict oldest when exceeding max_size)
 - [X] T306 [P] [US7] Implement invalidate(&table_id) to remove entry from cache
 - [X] T307 [US7] Implement get_storage_path(table_id, user_id, shard) for dynamic placeholder resolution ({userId}, {shard})
-- [X] T308 [P] [US7] Write unit tests in schema_cache.rs module: test_insert_and_get, test_get_by_name, test_lru_eviction, test_invalidate, test_storage_path_resolution, test_concurrent_access, test_metrics (15+ tests total)
+- [X] T308 [P] [US7] Write unit tests in registry.rs module: test_insert_and_get, test_get_by_name, test_lru_eviction, test_invalidate, test_storage_path_resolution, test_concurrent_access, test_metrics (15+ tests total)
 
 ### Phase 2: Update SqlExecutor Integration
 
@@ -1286,7 +1286,7 @@ Final path: /data/storage/my_ns/messages/user_alice/
 ### Phase 4: Remove Old Cache Implementations
 
 - [X] T333 [P] [US7] Delete `backend/crates/kalamdb-core/src/catalog/table_cache.rs` (516 lines removed)
-- [X] T334 [P] [US7] Delete `backend/crates/kalamdb-core/src/tables/system/schemas/schema_cache.rs` (443 lines removed)
+- [X] T334 [P] [US7] Delete `backend/crates/kalamdb-core/src/tables/system/schemas/registry.rs` (443 lines removed)
 - [X] T335 [P] [US7] Delete `backend/crates/kalamdb-core/src/catalog/table_metadata.rs` (252 lines removed) - replaced by CachedTableData
 - [X] T336 [US7] Update `backend/crates/kalamdb-core/src/catalog/mod.rs` to export only SchemaCache (remove TableCache and TableMetadata exports)
 - [X] T337 [US7] Update all imports across codebase: replace `use crate::catalog::TableCache` with `use crate::catalog::SchemaCache` (search and replace)
@@ -1473,7 +1473,7 @@ Final path: /data/my_ns/messages/user_alice/shard_0/
 
 **Key Benefits**:
 1. **Memory Efficiency**: ~50% reduction in cache memory (duplicate data eliminated)
-2. **Code Simplicity**: 1,200+ lines deleted (table_cache.rs + schema_cache.rs + table_metadata.rs)
+2. **Code Simplicity**: 1,200+ lines deleted (table_cache.rs + registry.rs + table_metadata.rs)
 3. **Consistency Guarantee**: Single source of truth eliminates sync bugs
 4. **Performance**: Single cache lookup instead of potentially two
 5. **Maintainability**: One cache implementation to test and evolve

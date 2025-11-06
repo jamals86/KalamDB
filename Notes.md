@@ -118,7 +118,7 @@ If the user already specified primary key then we dont do that, the _id we add a
                 vec![], // parquet_paths - empty for now
             );
 
-107) Check if we can here combine this with our main cache: backend\crates\kalamdb-core\src\sql\schema_cache.rs, or if this needed anymore?
+107) Check if we can here combine this with our main cache: backend\crates\kalamdb-core\src\sql\registry.rs, or if this needed anymore?
 108) Prevent creating namespace with names like: sys/system/root/kalamdb/kalam/main/default/sql and name these as SYSTEM_RESERVED_NAMES, also add function to Namespaceid.isSystem() to check if the namespace is a system one
 109) why do we need backend/crates/kalamdb-auth/src/user_repo.rs anymore? we have kalamdb-core/src/auth/user_repo.rs
 110) Instead of having system.<system table> we can use sys.<system table> for less typing and easier to remember

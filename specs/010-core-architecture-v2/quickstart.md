@@ -171,7 +171,7 @@ cargo test -p kalamdb-core   # All 477 tests must pass
 
 ### 3.1 Add arrow_schema to CachedTableData (FR-002)
 
-**File**: `backend/crates/kalamdb-core/src/schema_registry/schema_cache.rs`
+**File**: `backend/crates/kalamdb-core/src/schema_registry/registry.rs`
 
 **Note**: This file will later be renamed to `schema_registry/registry.rs` when SchemaCache becomes SchemaRegistry.
 

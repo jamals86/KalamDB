@@ -89,7 +89,7 @@ backend/
 │   │   │   │   │   ├── schemas/  # NEW: EntityStore<TableId, TableDefinition>
 │   │   │   │   │   │   ├── mod.rs
 │   │   │   │   │   │   ├── table_schema_store.rs
-│   │   │   │   │   │   └── schema_cache.rs  # DashMap-based cache
+│   │   │   │   │   │   └── registry.rs  # DashMap-based cache
 │   │   │   │   │   ├── tables_v2/  # DELETE: Obsolete with new schema store
 │   │   │   │   │   └── information_*.rs  # DELETE: Obsolete files
 │   │   │   │   ├── arrow_json_conversion.rs  # UPDATE: Use KalamDataType conversions
@@ -410,7 +410,7 @@ Eliminate redundant `storage_location` field from both `SystemTable` and `TableM
 
 #### Existing Infrastructure
 
-**SchemaCache** (`backend/crates/kalamdb-core/src/tables/system/schemas/schema_cache.rs`):
+**SchemaCache** (`backend/crates/kalamdb-core/src/tables/system/schemas/registry.rs`):
 - DashMap-based cache for `TableDefinition` (schema-only)
 - LRU eviction policy, metrics tracking
 - ~440 lines, fully implemented in Phase 3
