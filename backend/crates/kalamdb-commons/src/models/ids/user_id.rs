@@ -29,6 +29,11 @@ impl UserId {
     pub fn into_string(self) -> String {
         self.0
     }
+
+    /// Creates a default 'system' user ID.
+    pub fn system() -> Self {
+        Self("system".to_string())
+    }
 }
 
 impl fmt::Display for UserId {

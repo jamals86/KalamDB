@@ -312,4 +312,20 @@ impl AppContext {
     pub fn system_tables(&self) -> Arc<SystemTablesRegistry> {
         self.system_tables.clone()
     }
+    
+    // ===== Convenience methods for backward compatibility =====
+    
+    /// Insert a job into the jobs table
+    /// 
+    /// Convenience wrapper for system_tables().jobs().create_job()
+    pub fn insert_job(&self, job: &kalamdb_commons::system::Job) -> Result<(), crate::error::KalamDbError> {
+        self.system_tables.jobs().create_job(job.clone())
+    }
+    
+    /// Scan all jobs from the jobs table
+    ///
+    /// Convenience wrapper for system_tables().jobs().list_jobs()
+    pub fn scan_all_jobs(&self) -> Result<Vec<kalamdb_commons::system::Job>, crate::error::KalamDbError> {
+        self.system_tables.jobs().list_jobs()
+    }
 }

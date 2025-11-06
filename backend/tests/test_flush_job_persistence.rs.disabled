@@ -3,74 +3,39 @@
 //! Bug: FLUSH TABLE creates a job but doesn't persist it to system.jobs,
 //! while FLUSH ALL TABLES does persist jobs correctly.
 
-use kalamdb_core::services::{
-    NamespaceService, SharedTableService, StreamTableService, UserTableService,
-};
+use kalamdb_commons::NodeId;
+use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_core::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
 use kalamdb_store::{RocksDBBackend, RocksDbInit, StorageBackend};
 use std::sync::Arc;
 use tempfile::TempDir;
 
-async fn setup_test_environment() -> (SqlExecutor, TempDir, Arc<KalamSql>) {
+async fn setup_test_environment() -> (SqlExecutor, TempDir, Arc<AppContext>) {
     let temp_dir = TempDir::new().unwrap();
     let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
     let db = init.open().unwrap();
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
-    let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
-
-    // Create generic stores (used for registration)
-    let user_table_store = Arc::new(new_user_table_store(
+    
+    // Initialize AppContext (Phase 10 pattern)
+    let app_context = AppContext::init(
         backend.clone(),
-        &kalamdb_commons::NamespaceId::new("default"),
-        &kalamdb_commons::TableName::new("default"),
-    ));
-    let shared_table_store = Arc::new(new_shared_table_store(
-        backend.clone(),
-        &kalamdb_commons::NamespaceId::new("default"),
-        &kalamdb_commons::TableName::new("default"),
-    ));
-    let stream_table_store = Arc::new(new_stream_table_store(
-        &kalamdb_commons::NamespaceId::new("default"),
-        &kalamdb_commons::TableName::new("default"),
-    ));
+        NodeId::new("test-node".to_string()),
+        temp_dir.path().join("storage").to_str().unwrap().to_string(),
+    );
 
-    // Create services
-    let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
-    let user_table_service = Arc::new(UserTableService::new(
-        kalam_sql.clone(),
-        user_table_store.clone(),
-    ));
-    let shared_table_service = Arc::new(SharedTableService::new(
-        shared_table_store.clone(),
-        kalam_sql.clone(),
-        "./data/storage".to_string(),
-    ));
-    let stream_table_service = Arc::new(StreamTableService::new(
-        stream_table_store.clone(),
-        kalam_sql.clone(),
-    ));
-
-    // Create DataFusion session
-    let session_context = Arc::new(datafusion::prelude::SessionContext::new());
-
-    // Create executor
+    // Create executor with password complexity disabled
     let executor = SqlExecutor::new(
-        namespace_service,
-        session_context,
-        user_table_service,
-        shared_table_service,
-        stream_table_service,
-    )
-    .with_stores(
-        user_table_store,
-        shared_table_store,
-        stream_table_store,
-        kalam_sql.clone(),
-    )
-    .with_storage_backend(backend.clone());
+        app_context.clone(),
+        false,
+    );
 
-    (executor, temp_dir, kalam_sql)
+    (executor, temp_dir, app_context)
+}
+
+use kalamdb_core::sql::executor::handlers::types::ExecutionContext;
+
+fn make_exec_ctx(user_id: kalamdb_commons::UserId, role: kalamdb_commons::Role) -> ExecutionContext {
+    ExecutionContext::new(user_id, role)
 }
 
 #[tokio::test]
@@ -79,7 +44,7 @@ async fn test_flush_table_persists_job() {
     // We can't easily run a full flush without complex setup, but we can verify
     // the job record is created which is what the bug report is about
 
-    let (_executor, _temp_dir, kalam_sql) = setup_test_environment().await;
+    let (_executor, _temp_dir, app_context) = setup_test_environment().await;
 
     // Create a job directly using the Jobs API
     use kalamdb_commons::{JobId, JobType, NamespaceId, NodeId, TableName};
@@ -92,10 +57,10 @@ async fn test_flush_table_persists_job() {
     .with_table_name(TableName::new("app.conversations"));
 
     // Insert the job
-    kalam_sql.insert_job(&job).expect("Failed to insert job");
+    app_context.insert_job(&job).expect("Failed to insert job");
 
     // Verify it was persisted
-    let jobs = kalam_sql.scan_all_jobs().expect("Failed to scan jobs");
+    let jobs = app_context.scan_all_jobs().expect("Failed to scan jobs");
     assert_eq!(jobs.len(), 1, "Should have exactly 1 job");
 
     let retrieved_job = &jobs[0];
@@ -112,7 +77,7 @@ async fn test_flush_table_persists_job() {
 
 #[tokio::test]
 async fn test_flush_all_tables_persists_jobs() {
-    let (executor, _temp_dir, kalam_sql) = setup_test_environment().await;
+    let (executor, _temp_dir, app_context) = setup_test_environment().await;
 
     // Create a DBA user to execute admin operations
     let admin_username = "test_admin";
@@ -133,7 +98,7 @@ async fn test_flush_all_tables_persists_jobs() {
         last_seen: None,
         deleted_at: None,
     };
-    kalam_sql
+    app_context
         .insert_user(&admin_user)
         .expect("Failed to insert admin user");
     let admin_id = kalamdb_commons::UserId::new(admin_username);
@@ -179,7 +144,7 @@ async fn test_flush_all_tables_persists_jobs() {
     println!("Flush all result: {:?}", flush_result);
 
     // Verify jobs were persisted
-    let jobs = kalam_sql.scan_all_jobs().expect("Failed to scan jobs");
+    let jobs = app_context.scan_all_jobs().expect("Failed to scan jobs");
 
     let flush_jobs: Vec<_> = jobs
         .iter()

@@ -225,7 +225,7 @@ mod tests {
 
         provider.create_storage(storage.clone()).unwrap();
 
-        let storage_id = StorageId::new("local");
+        let storage_id = StorageId::local();
         let retrieved = provider.get_storage(&storage_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
@@ -244,7 +244,7 @@ mod tests {
         provider.update_storage(storage.clone()).unwrap();
 
         // Verify
-        let storage_id = StorageId::new("local");
+        let storage_id = StorageId::local();
         let retrieved = provider.get_storage(&storage_id).unwrap().unwrap();
         assert_eq!(
             retrieved.description,
@@ -259,7 +259,7 @@ mod tests {
 
         provider.create_storage(storage).unwrap();
 
-        let storage_id = StorageId::new("local");
+        let storage_id = StorageId::local();
         provider.delete_storage(&storage_id).unwrap();
 
         let retrieved = provider.get_storage(&storage_id).unwrap();

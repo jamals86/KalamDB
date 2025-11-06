@@ -11,7 +11,8 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::datasource::TableProvider;
 use datafusion::execution::context::SessionState;
 use datafusion::prelude::*;
-use kalamdb_core::catalog::{NamespaceId, SchemaCache, TableName};
+use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_core::schema_registry::SchemaRegistry;
 use kalamdb_core::tables::stream_tables::{StreamTableProvider, StreamTableStore};
 use kalamdb_commons::models::TableId;
 use kalamdb_store::test_utils::TestDb;
@@ -42,12 +43,11 @@ async fn test_stream_table_ttl_eviction_with_select() {
         NamespaceId::new("test"),
         TableName::new("test_events"),
     ));
-    let unified_cache = Arc::new(SchemaCache::new(0, None));
+    let unified_cache = Arc::new(SchemaRegistry::new(0, None));
     
     let provider = Arc::new(StreamTableProvider::new(
         table_id,
         unified_cache.clone(),
-        schema.clone(),
         stream_store.clone(),
         Some(1), // 1-second TTL
         false,
@@ -144,12 +144,11 @@ async fn test_stream_table_select_with_projection() {
         NamespaceId::new("test"),
         TableName::new("events"),
     ));
-    let unified_cache = Arc::new(SchemaCache::new(0, None));
+    let unified_cache = Arc::new(SchemaRegistry::new(0, None));
     
     let provider = Arc::new(StreamTableProvider::new(
         table_id,
         unified_cache.clone(),
-        schema.clone(),
         stream_store.clone(),
         None, // No TTL for this test
         false,
@@ -208,12 +207,11 @@ async fn test_stream_table_select_with_limit() {
         NamespaceId::new("test"),
         TableName::new("events"),
     ));
-    let unified_cache = Arc::new(SchemaCache::new(0, None));
+    let unified_cache = Arc::new(SchemaRegistry::new(0, None));
     
     let provider = Arc::new(StreamTableProvider::new(
         table_id,
         unified_cache.clone(),
-        schema.clone(),
         stream_store.clone(),
         None,
         false,

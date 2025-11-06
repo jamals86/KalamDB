@@ -18,7 +18,7 @@ mod common;
 
 use common::TestServer;
 use kalamdb_commons::{NamespaceId, TableName, StorageId};
-use kalamdb_core::catalog::SchemaCache;
+use kalamdb_core::schema_registry::SchemaRegistry;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::system::FlushPolicy;
 use chrono::Utc;
@@ -36,7 +36,7 @@ fn populate_table_cache(
         table_type,
         namespace: NamespaceId::new(namespace),
         created_at: Utc::now(),
-        storage_id: Some(StorageId::new("local")),
+        storage_id: Some(StorageId::local()),
         flush_policy: FlushPolicy::row_limit(1000).unwrap(),
         schema_version: 1,
         deleted_retention_hours: None,

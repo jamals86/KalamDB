@@ -59,7 +59,7 @@ mod tests {
     #[test]
     fn test_put_and_get_storage() {
         let store = create_test_store();
-        let storage_id = StorageId::new("local");
+        let storage_id = StorageId::local();
         let storage = create_test_storage("local", "Local Storage");
 
         // Put storage
@@ -76,7 +76,7 @@ mod tests {
     #[test]
     fn test_delete_storage() {
         let store = create_test_store();
-        let storage_id = StorageId::new("local");
+        let storage_id = StorageId::local();
         let storage = create_test_storage("local", "Local Storage");
 
         // Put then delete

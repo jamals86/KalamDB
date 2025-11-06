@@ -99,9 +99,9 @@ async fn test_jwt_auth_success() {
     // Initialize app with authentication middleware
     let app = test::init_service(
         App::new()
-            .app_data(web::Data::new(server.session_factory.clone()))
+            .app_data(web::Data::new(server.app_context.session_factory()))
             .app_data(web::Data::new(server.sql_executor.clone()))
-            .app_data(web::Data::new(server.live_query_manager.clone()))
+            .app_data(web::Data::new(server.app_context.live_query_manager()))
             .configure(kalamdb_api::routes::configure_routes),
     )
     .await;
@@ -154,9 +154,9 @@ async fn test_jwt_auth_expired_token() {
     // Initialize app
     let app = test::init_service(
         App::new()
-            .app_data(web::Data::new(server.session_factory.clone()))
+            .app_data(web::Data::new(server.app_context.session_factory()))
             .app_data(web::Data::new(server.sql_executor.clone()))
-            .app_data(web::Data::new(server.live_query_manager.clone()))
+            .app_data(web::Data::new(server.app_context.live_query_manager()))
             .configure(kalamdb_api::routes::configure_routes),
     )
     .await;
@@ -203,9 +203,9 @@ async fn test_jwt_auth_invalid_signature() {
     // Initialize app
     let app = test::init_service(
         App::new()
-            .app_data(web::Data::new(server.session_factory.clone()))
+            .app_data(web::Data::new(server.app_context.session_factory()))
             .app_data(web::Data::new(server.sql_executor.clone()))
-            .app_data(web::Data::new(server.live_query_manager.clone()))
+            .app_data(web::Data::new(server.app_context.live_query_manager()))
             .configure(kalamdb_api::routes::configure_routes),
     )
     .await;
@@ -252,9 +252,9 @@ async fn test_jwt_auth_untrusted_issuer() {
     // Initialize app
     let app = test::init_service(
         App::new()
-            .app_data(web::Data::new(server.session_factory.clone()))
+            .app_data(web::Data::new(server.app_context.session_factory()))
             .app_data(web::Data::new(server.sql_executor.clone()))
-            .app_data(web::Data::new(server.live_query_manager.clone()))
+            .app_data(web::Data::new(server.app_context.live_query_manager()))
             .configure(kalamdb_api::routes::configure_routes),
     )
     .await;
@@ -316,9 +316,9 @@ async fn test_jwt_auth_missing_sub_claim() {
     // Initialize app
     let app = test::init_service(
         App::new()
-            .app_data(web::Data::new(server.session_factory.clone()))
+            .app_data(web::Data::new(server.app_context.session_factory()))
             .app_data(web::Data::new(server.sql_executor.clone()))
-            .app_data(web::Data::new(server.live_query_manager.clone()))
+            .app_data(web::Data::new(server.app_context.live_query_manager()))
             .configure(kalamdb_api::routes::configure_routes),
     )
     .await;
@@ -364,9 +364,9 @@ async fn test_jwt_auth_malformed_header() {
         // Initialize app
         let app = test::init_service(
             App::new()
-                .app_data(web::Data::new(server.session_factory.clone()))
+                .app_data(web::Data::new(server.app_context.session_factory()))
                 .app_data(web::Data::new(server.sql_executor.clone()))
-                .app_data(web::Data::new(server.live_query_manager.clone()))
+                .app_data(web::Data::new(server.app_context.live_query_manager()))
                 .configure(kalamdb_api::routes::configure_routes),
         )
         .await;

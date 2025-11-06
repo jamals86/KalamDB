@@ -102,6 +102,11 @@ impl NamespacesTableProvider {
         Ok(namespaces.into_iter().map(|(_, ns)| ns).collect())
     }
 
+    /// Alias for list_namespaces (backward compatibility)
+    pub fn scan_all(&self) -> Result<Vec<Namespace>, KalamDbError> {
+        self.list_namespaces()
+    }
+
     /// Scan all namespaces and return as RecordBatch
     pub fn scan_all_namespaces(&self) -> Result<RecordBatch, KalamDbError> {
         let namespaces = self.store.scan_all()?;

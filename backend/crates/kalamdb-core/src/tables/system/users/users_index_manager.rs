@@ -217,7 +217,7 @@ mod tests {
             last_seen: None,
             deleted_at: deleted_at_ms,
             storage_mode: StorageMode::Table,
-            storage_id: Some(StorageId::new("local")),
+            storage_id: Some(StorageId::local()),
         }
     }
 

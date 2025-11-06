@@ -45,7 +45,7 @@ mod tests {
             auth_type: AuthType::Password,
             auth_data: None,
             storage_mode: StorageMode::Table,
-            storage_id: Some(StorageId::new("local")),
+            storage_id: Some(StorageId::local()),
             created_at: 1000,
             updated_at: 1000,
             last_seen: None,

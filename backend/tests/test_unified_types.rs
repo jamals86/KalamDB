@@ -3,7 +3,7 @@
 //! Tests that all 13 KalamDataTypes convert to Arrow and back losslessly
 
 use datafusion::arrow::datatypes::{DataType as ArrowDataType, Field, TimeUnit};
-use kalamdb_commons::types::{FromArrowType, KalamDataType, ToArrowType};
+use kalamdb_commons::models::datatypes::{FromArrowType, KalamDataType, ToArrowType};
 use std::sync::Arc;
 
 #[test]

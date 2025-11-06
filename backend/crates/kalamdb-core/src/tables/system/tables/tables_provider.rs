@@ -77,6 +77,17 @@ impl TablesTableProvider {
         Ok(self.store.get(table_id)?)
     }
 
+    /// List all table definitions
+    pub fn list_tables(&self) -> Result<Vec<TableDefinition>, KalamDbError> {
+        let tables = self.store.scan_all()?;
+        Ok(tables.into_iter().map(|(_, table_def)| table_def).collect())
+    }
+
+    /// Alias for list_tables (backward compatibility)
+    pub fn scan_all(&self) -> Result<Vec<TableDefinition>, KalamDbError> {
+        self.list_tables()
+    }
+
     /// Scan all tables and return as RecordBatch
     pub fn scan_all_tables(&self) -> Result<RecordBatch, KalamDbError> {
         use kalamdb_store::EntityStoreV2;

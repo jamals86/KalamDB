@@ -25,7 +25,6 @@ use crate::jobs::executors::{JobContext, JobDecision, JobExecutor};
 use crate::tables::{SharedTableFlushJob, UserTableFlushJob};
 use crate::tables::base_flush::TableFlush;
 use async_trait::async_trait;
-use kalamdb_commons::system::Job;
 use kalamdb_commons::{JobType, NamespaceId, TableName, TableId};
 use std::sync::Arc;
 

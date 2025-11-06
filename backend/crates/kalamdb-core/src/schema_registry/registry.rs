@@ -519,7 +519,7 @@ impl SchemaRegistry {
     /// //     &NamespaceId::new("my_ns"),
     /// //     &TableName::new("messages"),
     /// //     TableType::User,
-    /// //     &StorageId::new("local")
+    /// //     &StorageId::local()
     /// // )?;
     /// // Returns: "/data/my_ns/messages/{userId}/"
     /// ```

@@ -27,7 +27,12 @@ async fn insert_user(server: &TestServer, username: &str, role: Role) -> UserId 
         last_seen: None,
         deleted_at: None,
     };
-    server.kalam_sql.insert_user(&user).expect("insert user");
+    server
+        .app_context
+        .system_tables()
+        .users()
+        .create_user(user)
+        .expect("insert user");
     user_id
 }
 

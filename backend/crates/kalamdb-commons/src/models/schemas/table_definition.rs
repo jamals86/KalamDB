@@ -75,7 +75,7 @@ impl TableDefinition {
     ///     columns,
     ///     TableOptions::user(),
     ///     Some("User accounts table".into()),
-    ///     Some(StorageId::new("local")),
+    ///     Some(StorageId::local()),
     ///     false,
     ///     24,
     ///     None,

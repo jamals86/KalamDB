@@ -578,17 +578,7 @@ mod tests {
             ).unwrap()
         );
 
-        let data = CachedTableData::new(
-            table_id.clone(),
-            TableType::Shared,
-            chrono::Utc::now(),
-            Some(StorageId::new("local")),
-            crate::flush::FlushPolicy::RowLimit { row_limit: 1000 },
-            "/data/{namespace}/{tableName}/".to_string(),
-            1,
-            Some(24),
-            td,
-        );
+        let data = CachedTableData::new(td);
 
         unified_cache.insert(table_id.clone(), Arc::new(data));
 

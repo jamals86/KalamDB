@@ -72,7 +72,7 @@ async fn test_schema_store_persistence() {
 #[tokio::test]
 async fn test_schema_cache_basic_operations() {
     use kalamdb_core::tables::system::schemas::TableSchemaStore;
-    use kalamdb_core::catalog::SchemaCache;
+    use kalamdb_core::schema_registry::SchemaRegistry;
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let db = Arc::new(

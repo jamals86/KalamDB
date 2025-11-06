@@ -1,3 +1,6 @@
+// TODO: Migrate to Phase 10 AppContext pattern
+// This test uses deprecated kalamdb_core::services or kalamdb_auth::service::AuthService
+#[cfg(feature = "phase10-migration-todo")]
 #![allow(unused_imports, dead_code, deprecated)]
 //! Integration tests for OAuth authentication (Phase 10, User Story 8)
 //!

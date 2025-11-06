@@ -3,7 +3,7 @@
 //! Tests that SELECT * returns columns in ordinal_position order
 
 use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableType};
-use kalamdb_commons::types::KalamDataType;
+use kalamdb_commons::models::datatypes::KalamDataType;
 use kalamdb_commons::{NamespaceId, TableId, TableName};
 use kalamdb_core::system_table_registration::register_system_tables;
 use kalamdb_store::{EntityStoreV2, RocksDBBackend};
@@ -21,7 +21,7 @@ async fn test_select_star_returns_columns_in_ordinal_order() {
 
     // Register system tables
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store) =
+    let system_tables_registry =
         register_system_tables(&system_schema, backend.clone())
             .expect("Failed to register system tables");
 
@@ -89,7 +89,7 @@ async fn test_alter_table_add_column_assigns_next_ordinal() {
     let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
 
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store) =
+    let system_tables_registry =
         register_system_tables(&system_schema, backend.clone())
             .expect("Failed to register system tables");
 
@@ -147,7 +147,7 @@ async fn test_alter_table_drop_column_preserves_ordinals() {
     let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
 
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store) =
+    let system_tables_registry =
         register_system_tables(&system_schema, backend.clone())
             .expect("Failed to register system tables");
 
@@ -211,7 +211,7 @@ async fn test_system_tables_have_correct_column_ordering() {
     let backend: Arc<dyn kalamdb_store::StorageBackend> = Arc::new(RocksDBBackend::new(db));
 
     let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
-    let (_jobs_provider, schema_store) =
+    let system_tables_registry =
         register_system_tables(&system_schema, backend.clone())
             .expect("Failed to register system tables");
 

@@ -24,6 +24,11 @@
    - Separate large structs from hot-path metadata (LRU timestamps in separate map)
    - Cache singleton instances (e.g., UserTableShared per table, not per user)
 
+4. instead than doing user_id.map(kalamdb_commons::models::UserId::from); always add it to the head of the file:
+```rust
+use kalamdb_commons::models::UserId;
+```
+
 ## ⚠️ CRITICAL: System Table Models Architecture
 
 **SINGLE SOURCE OF TRUTH**: System table models are defined in `kalamdb-commons/src/system_tables.rs`

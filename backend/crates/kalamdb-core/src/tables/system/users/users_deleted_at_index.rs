@@ -231,7 +231,7 @@ mod tests {
             auth_type: AuthType::Password,
             auth_data: None,
             storage_mode: StorageMode::Table,
-            storage_id: Some(StorageId::new("local")),
+            storage_id: Some(StorageId::local()),
             created_at: Utc::now().timestamp_millis(),
             updated_at: Utc::now().timestamp_millis(),
             last_seen: None,

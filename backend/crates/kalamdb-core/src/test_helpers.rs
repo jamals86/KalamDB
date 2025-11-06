@@ -69,7 +69,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
         let ctx = AppContext::get();
         
         let default_storage = Storage {
-            storage_id: StorageId::new("local"),
+            storage_id: StorageId::local(),
             storage_name: "local".to_string(),
             description: Some("Default local storage for tests".to_string()),
             storage_type: "filesystem".to_string(),

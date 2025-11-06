@@ -149,7 +149,7 @@ mod tests {
     use datafusion::catalog::MemorySchemaProvider;
     use kalamdb_commons::schemas::TableType;
     use kalamdb_commons::{NamespaceId, TableId, TableName};
-    use kalamdb_store::RocksDBBackend;
+    use kalamdb_store::{EntityStoreV2, RocksDBBackend};
     use rocksdb::DB;
     use tempfile::TempDir;
 

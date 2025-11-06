@@ -303,7 +303,7 @@ mod tests {
         "#;
 
         let stmt = CreateStorageStatement::parse(sql).unwrap();
-        assert_eq!(stmt.storage_id, StorageId::new("local"));
+        assert_eq!(stmt.storage_id, StorageId::local());
         assert_eq!(stmt.storage_type, StorageType::Filesystem);
         assert_eq!(stmt.storage_name, "Local Storage");
         assert_eq!(
