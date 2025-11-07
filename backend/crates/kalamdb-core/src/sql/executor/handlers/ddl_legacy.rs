@@ -125,15 +125,15 @@ impl DDLHandler {
                 "_updated",
                 DataType::Timestamp(TimeUnit::Millisecond, None),
                 false, // Not nullable
-            });
+            )));
         }
 
         if !has_deleted {
-            fields.push(Arc::new(Field::new("_deleted", DataType::Boolean, false));
+            fields.push(Arc::new(Field::new("_deleted", DataType::Boolean, false)));
             // Not nullable
         }
 
-        Ok(Arc::new(Schema::new(fields))
+        Ok(Arc::new(Schema::new(fields)))
     }
 
     /// Create and save table definition to information_schema_tables.
@@ -218,7 +218,7 @@ impl DDLHandler {
         // Serialize Arrow schema (including any options if needed)
         let schema_json = ArrowSchemaWithOptions::new(schema.clone())
             .to_json_string()
-            .map_err(|e| KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e})?;
+            .map_err(|e| KalamDbError::SchemaError(format!("Failed to serialize Arrow schema: {}", e)))?;
 
         // Push initial schema version (v1)
         table_def.schema_history.push(SchemaVersion::initial(schema_json));
@@ -299,7 +299,7 @@ impl DDLHandler {
                 return Err(KalamDbError::AlreadyExists(format!(
                     "Namespace '{}' already exists",
                     name
-                });
+                )));
             }
         }
 
@@ -359,7 +359,7 @@ impl DDLHandler {
                     return Err(KalamDbError::NotFound(format!(
                         "Namespace '{}' not found",
                         name
-                    });
+                    )));
                 }
             }
         };
@@ -370,7 +370,7 @@ impl DDLHandler {
                 "Cannot drop namespace '{}': namespace contains {} table(s). Drop all tables first.",
                 name,
                 namespace.table_count
-            });
+            )));
         }
 
         // Delete namespace via provider
@@ -417,19 +417,19 @@ impl DDLHandler {
         // Parse CREATE STORAGE statement
         let stmt = CreateStorageStatement::parse(sql).map_err(|e| {
             KalamDbError::InvalidOperation(format!("CREATE STORAGE parse error: {}", e))
-        })?;
+        ?;
 
         // Check if storage already exists
         let storage_id = StorageId::from(stmt.storage_id.as_str());
         if storages_provider
             .get_storage_by_id(&storage_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to check storage: {}", e})?
+            .map_err(|e| KalamDbError::Other(format!("Failed to check storage: {}", e))?
             .is_some()
         {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Storage '{}' already exists",
                 stmt.storage_id
-            });
+            ));
         }
 
         // Validate templates using StorageRegistry
@@ -444,7 +444,7 @@ impl DDLHandler {
         let normalized_credentials = if let Some(raw) = stmt.credentials.as_ref() {
             let value: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
                 KalamDbError::InvalidOperation(format!("Invalid credentials JSON: {}", e))
-            })?;
+            ?;
 
             if !value.is_object() {
                 return Err(KalamDbError::InvalidOperation(
@@ -479,7 +479,7 @@ impl DDLHandler {
         // Insert into system.storages
         storages_provider
             .insert_storage(storage)
-            .map_err(|e| KalamDbError::Other(format!("Failed to create storage: {}", e})?;
+            .map_err(|e| KalamDbError::Other(format!("Failed to create storage: {}", e))?;
 
         Ok(ExecutionResult::Success { message: format!(
             "Storage '{}' created successfully",
@@ -606,11 +606,11 @@ impl DDLHandler {
 
         // Parse statement
         let stmt = CreateTableStatement::parse(sql, namespace_id)
-            .map_err(|e| KalamDbError::InvalidSql(e.to_string(})?;
+            .map_err(|e| KalamDbError::InvalidSql(e.to_string(?;
 
         // Verify table type
         if stmt.table_type != kalamdb_commons::schemas::TableType::User {
-            return Err(KalamDbError::InvalidSql("Expected CREATE USER TABLE statement".to_string(});
+            return Err(KalamDbError::InvalidSql("Expected CREATE USER TABLE statement".to_string());
         }
 
         // Extract fields
@@ -639,7 +639,7 @@ impl DDLHandler {
         let schema_registry = ctx.schema_registry();
         let table_id = TableId::from_strings(namespace_id.as_str(), table_name.as_str());
         let table_exists = schema_registry.table_exists(&table_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to check table existence: {}", e})?;
+            .map_err(|e| KalamDbError::Other(format!("Failed to check table existence: {}", e))?;
 
         if table_exists {
             if stmt.if_not_exists {
@@ -648,13 +648,13 @@ impl DDLHandler {
                     "Table {}.{} already exists (IF NOT EXISTS)",
                     namespace_id.as_str(),
                     table_name.as_str()
-                });
+                ));
             } else {
                 return Err(KalamDbError::AlreadyExists(format!(
                     "Table {}.{} already exists",
                     namespace_id.as_str(),
                     table_name.as_str()
-                });
+                ));
             }
         }
 
@@ -688,7 +688,7 @@ impl DDLHandler {
                     table_name.as_str(),
                     e
                 ))
-            })?;
+            ?;
 
         log::info!(
             "User table {}.{} created successfully (schema version 1)",
@@ -712,11 +712,11 @@ impl DDLHandler {
                     namespace_id.as_str(),
                     table_name.as_str()
                 ))
-            })?;
+            ?;
         
         tables_provider.create_table(&table_id, &table_def).map_err(|e| {
             KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
-        })?;
+        ?;
 
         // Register with DataFusion (skipped for USER tables - registered dynamically per user)
         let dummy_user_id = UserId::from("system");
@@ -755,11 +755,11 @@ impl DDLHandler {
 
         // Parse statement
         let stmt = CreateTableStatement::parse(sql, namespace_id)
-            .map_err(|e| KalamDbError::InvalidSql(e.to_string(})?;
+            .map_err(|e| KalamDbError::InvalidSql(e.to_string(?;
 
         // Verify table type
         if stmt.table_type != kalamdb_commons::schemas::TableType::Stream {
-            return Err(KalamDbError::InvalidSql("Expected CREATE STREAM TABLE statement".to_string(});
+            return Err(KalamDbError::InvalidSql("Expected CREATE STREAM TABLE statement".to_string());
         }
 
         // Extract fields
@@ -785,7 +785,7 @@ impl DDLHandler {
         let schema_registry = ctx.schema_registry();
         let table_id = TableId::from_strings(namespace_id.as_str(), table_name.as_str());
         let table_exists = schema_registry.table_exists(&table_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to check table existence: {}", e})?;
+            .map_err(|e| KalamDbError::Other(format!("Failed to check table existence: {}", e))?;
 
         if table_exists {
             if stmt.if_not_exists {
@@ -794,13 +794,13 @@ impl DDLHandler {
                     "Stream table {}.{} already exists (IF NOT EXISTS)",
                     namespace_id.as_str(),
                     table_name.as_str()
-                });
+                ));
             } else {
                 return Err(KalamDbError::AlreadyExists(format!(
                     "Stream table {}.{} already exists",
                     namespace_id.as_str(),
                     table_name.as_str()
-                });
+                ));
             }
         }
 
@@ -839,11 +839,11 @@ impl DDLHandler {
                     namespace_id.as_str(),
                     table_name.as_str()
                 ))
-            })?;
+            ?;
         
         tables_provider.create_table(&table_id, &table_def).map_err(|e| {
             KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
-        })?;
+        ?;
 
         // Register with DataFusion
         register_fn(session, &namespace_id, &table_name, TableType::Stream, schema.clone(), default_user_id).await?;
@@ -851,7 +851,7 @@ impl DDLHandler {
         // Cache metadata
         cache_fn(&namespace_id, &table_name, TableType::Stream, &storage_id, flush_policy, schema, 1, retention_seconds)?;
 
-        Ok(ExecutionResult::Success { message: "Stream table created successfully".to_string() }
+        Ok(ExecutionResult::Success { message: "Stream table created successfully".to_string() })
     }
 
     /// Create SHARED table (single-tenant with access control)
@@ -883,7 +883,7 @@ impl DDLHandler {
 
         // Parse statement
         let stmt = CreateTableStatement::parse(sql, namespace_id)
-            .map_err(|e| KalamDbError::InvalidSql(e.to_string(})?;
+            .map_err(|e| KalamDbError::InvalidSql(e.to_string(?;
 
         // Extract fields before moving stmt
         let table_name = stmt.table_name.clone();
@@ -911,7 +911,7 @@ impl DDLHandler {
         let schema_registry = ctx.schema_registry();
         let table_id = TableId::from_strings(namespace_id.as_str(), table_name.as_str());
         let table_exists = schema_registry.table_exists(&table_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to check table existence: {}", e})?;
+            .map_err(|e| KalamDbError::Other(format!("Failed to check table existence: {}", e))?;
 
         let was_created = if table_exists {
             if stmt.if_not_exists {
@@ -922,7 +922,7 @@ impl DDLHandler {
                     "Table {}.{} already exists",
                     namespace_id.as_str(),
                     table_name.as_str()
-                });
+                ));
             }
         } else {
             // Step 3: Auto-increment field injection (id column)
@@ -973,7 +973,7 @@ impl DDLHandler {
                         namespace_id.as_str(),
                         table_name.as_str()
                     ))
-                })?;
+                )?;
             
             tables_provider.create_table(&table_id, &table_def).map_err(|e| {
                 KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
@@ -1044,7 +1044,7 @@ impl DDLHandler {
         // Parse ALTER TABLE statement (use default namespace for now)
         let default_namespace = kalamdb_commons::NamespaceId::new("default");
         let stmt = AlterTableStatement::parse(sql, &default_namespace)
-            .map_err(|e| KalamDbError::InvalidSql(e.to_string(})?;
+            .map_err(|e| KalamDbError::InvalidSql(e.to_string(?;
 
         // Handle SET ACCESS LEVEL operation
         if let ColumnOperation::SetAccessLevel { access_level } = &stmt.operation {
@@ -1061,7 +1061,7 @@ impl DDLHandler {
             let table_def = schema_registry.get_table_definition(&table_id)?
                 .ok_or_else(|| {
                     KalamDbError::NotFound(format!("Table '{}' not found", table_id))
-                })?;
+                ?;
 
             // Verify table is SHARED type
             if table_def.table_type != TableType::Shared {
@@ -1132,7 +1132,7 @@ impl DDLHandler {
         // Use default namespace - the SQL parser will extract namespace from qualified name (namespace.table)
         let default_namespace = kalamdb_commons::NamespaceId::new("default".to_string();
         let stmt = DropTableStatement::parse(sql, &default_namespace)
-            .map_err(|e| KalamDbError::InvalidSql(e.to_string(})?;
+            .map_err(|e| KalamDbError::InvalidSql(e.to_string(?;
 
         let requested_table_type: TableType = stmt.table_type.into();
         let table_identifier = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
@@ -1168,7 +1168,7 @@ impl DDLHandler {
         let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
         let table_metadata = tables_provider
             .get_table_by_id(&table_id)
-            .map_err(|e| KalamDbError::IoError(format!("Failed to get table: {}", e})?;
+            .map_err(|e| KalamDbError::IoError(format!("Failed to get table: {}", e))?;
 
         if table_metadata.is_none() {
             if stmt.if_exists {
@@ -1176,13 +1176,13 @@ impl DDLHandler {
                     "Table {}.{} does not exist (skipped)",
                     stmt.namespace_id.as_str(),
                     stmt.table_name.as_str()
-                });
+                ));
             } else {
                 return Err(KalamDbError::NotFound(format!(
                     "Table '{}' not found in namespace '{}'",
                     stmt.table_name.as_str(),
                     stmt.namespace_id.as_str()
-                });
+                ));
             }
         }
 
@@ -1197,7 +1197,7 @@ impl DDLHandler {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Cannot drop table {} while active live queries exist",
                 table_ref
-            });
+            ));
         }
 
         // Step 2: Create job record for tracking (Phase 9, T165)
@@ -1279,7 +1279,7 @@ impl DDLHandler {
 
         let batch = live_queries_provider
             .scan_all_live_queries()
-            .map_err(|e| KalamDbError::IoError(format!("Failed to scan live queries: {}", e})?;
+            .map_err(|e| KalamDbError::IoError(format!("Failed to scan live queries: {}", e))?;
         
         // Extract live queries from RecordBatch
         let table_name_array = batch.column(4).as_string::<i32>(); // table_name is column 4
@@ -1307,7 +1307,7 @@ impl DDLHandler {
                 table_name.as_str(),
                 subscription_details.len(),
                 subscription_details.join("; ")
-            });
+            ));
         }
 
         Ok(())
@@ -1333,13 +1333,13 @@ impl DDLHandler {
                 namespace_id.as_str(),
                 table_name.as_str(),
             )
-            .map_err(|e| KalamDbError::IoError(format!("Failed to drop user table data: {}", e}),
+            .map_err(|e| KalamDbError::IoError(format!("Failed to drop user table data: {}", e)),
             TableType::Shared => SharedTableStoreExt::drop_table(
                 shared_table_store.as_ref(),
                 namespace_id.as_str(),
                 table_name.as_str(),
             )
-            .map_err(|e| KalamDbError::IoError(format!("Failed to drop shared table data: {}", e}),
+            .map_err(|e| KalamDbError::IoError(format!("Failed to drop shared table data: {}", e)),
             TableType::Stream => stream_table_store
                 .drop_table(namespace_id.as_str(), table_name.as_str())
                 .map_err(|e| {
@@ -1371,11 +1371,11 @@ impl DDLHandler {
         }
 
         let entries = fs::read_dir(dir_path)
-            .map_err(|e| KalamDbError::IoError(format!("Failed to read directory: {}", e})?;
+            .map_err(|e| KalamDbError::IoError(format!("Failed to read directory: {}", e))?;
 
         for entry in entries {
             let entry =
-                entry.map_err(|e| KalamDbError::IoError(format!("Failed to read entry: {}", e})?;
+                entry.map_err(|e| KalamDbError::IoError(format!("Failed to read entry: {}", e))?;
 
             let path = entry.path();
 
@@ -1395,7 +1395,7 @@ impl DDLHandler {
 
                 // Delete the file
                 fs::remove_file(&path)
-                    .map_err(|e| KalamDbError::IoError(format!("Failed to delete file: {}", e})?;
+                    .map_err(|e| KalamDbError::IoError(format!("Failed to delete file: {}", e))?;
 
                 *files_deleted += 1;
 
@@ -1422,12 +1422,12 @@ impl DDLHandler {
         // Iterate over user directories
         let entries = fs::read_dir(storage_path).map_err(|e| {
             KalamDbError::IoError(format!("Failed to read storage directory: {}", e))
-        })?;
+        ?;
 
         for entry in entries {
             let entry = entry.map_err(|e| {
                 KalamDbError::IoError(format!("Failed to read directory entry: {}", e))
-            })?;
+            ?;
 
             let path = entry.path();
 
@@ -1487,7 +1487,7 @@ impl DDLHandler {
         // Parse namespace:table_name format
         let parts: Vec<&str> = table_id_str.split(':').collect();
         if parts.len() != 2 {
-            return Err(KalamDbError::IoError(format!("Invalid table_id format: {}", table_id_str});
+            return Err(KalamDbError::IoError(format!("Invalid table_id format: {}", table_id_str));
         }
         
         let table_id = TableId::from_strings(parts[0], parts[1]);
@@ -1495,12 +1495,12 @@ impl DDLHandler {
         // Delete from system.tables
         tables_provider
             .delete_table(&table_id)
-            .map_err(|e| KalamDbError::IoError(format!("Failed to delete from system.tables: {}", e})?;
+            .map_err(|e| KalamDbError::IoError(format!("Failed to delete from system.tables: {}", e))?;
         
         // Delete from information_schema.tables (SchemaRegistry)
         schema_registry
             .delete_table_definition(&table_id)
-            .map_err(|e| KalamDbError::IoError(format!("Failed to delete table definition: {}", e})?;
+            .map_err(|e| KalamDbError::IoError(format!("Failed to delete table definition: {}", e))?;
 
         Ok(())
     }
@@ -1531,7 +1531,7 @@ impl DDLHandler {
             "table_name": table_name.as_str(),
             "table_type": format!("{:?}", table_type),
             "operation": "drop_table"
-        });
+        ));
         
         // Create idempotency key from table ID to prevent duplicate deletion jobs
         let idempotency_key = Some(format!("drop-table-{}", table_id));

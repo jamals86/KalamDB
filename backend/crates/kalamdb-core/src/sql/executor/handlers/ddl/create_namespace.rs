@@ -1,6 +1,6 @@
-//! Typed DDL handlers using TypedStatementHandler pattern
+//! Typed DDL handler for CREATE NAMESPACE statements
 //!
-//! This module demonstrates the new typed handler approach where handlers
+//! This module demonstrates the TypedStatementHandler pattern where handlers
 //! receive fully parsed AST structs instead of raw SQL strings.
 
 use crate::app_context::AppContext;
@@ -46,7 +46,7 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
         if existing.is_some() {
             if statement.if_not_exists {
                 let message = format!("Namespace '{}' already exists", name);
-                return Ok(ExecutionResult::Success(message));
+                return Ok(ExecutionResult::Success { message });
             } else {
                 return Err(KalamDbError::AlreadyExists(format!(
                     "Namespace '{}' already exists",
@@ -62,7 +62,7 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
         namespaces_provider.create_namespace(namespace)?;
 
         let message = format!("Namespace '{}' created successfully", name);
-        Ok(ExecutionResult::Success(message))
+        Ok(ExecutionResult::Success { message })
     }
 
     async fn check_authorization(
@@ -86,6 +86,7 @@ mod tests {
     use super::*;
     use kalamdb_commons::Role;
     use kalamdb_commons::models::UserId;
+    use crate::test_helpers::init_test_app_context;
 
     fn test_context() -> ExecutionContext {
         ExecutionContext::new(UserId::from("test_user"), Role::Dba)
@@ -93,6 +94,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_typed_create_namespace() {
+        init_test_app_context();
         let app_ctx = AppContext::get();
         let handler = CreateNamespaceHandler::new(app_ctx);
         let session = SessionContext::new();
@@ -103,13 +105,15 @@ mod tests {
             if_not_exists: false,
         };
 
-        let result = handler.execute(&session, stmt, vec![], &ctx).await;
+        let result = handler
+            .execute(&session, stmt, vec![], &ctx)
+            .await;
         assert!(result.is_ok());
 
         match result.unwrap() {
-            ExecutionResult::Success(msg) => {
-                assert!(msg.contains("test_typed_ns"));
-                assert!(msg.contains("created successfully"));
+            ExecutionResult::Success { message } => {
+                assert!(message.contains("test_typed_ns"));
+                assert!(message.contains("created successfully"));
             }
             _ => panic!("Expected Success result"),
         }
@@ -117,6 +121,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_typed_create_namespace_if_not_exists() {
+        init_test_app_context();
         let app_ctx = AppContext::get();
         let handler = CreateNamespaceHandler::new(app_ctx);
         let session = SessionContext::new();
@@ -128,21 +133,26 @@ mod tests {
         };
 
         // First creation should succeed
-        let result1 = handler.execute(&session, stmt.clone(), vec![], &ctx).await;
+        let result1 = handler
+            .execute(&session, stmt.clone(), vec![], &ctx)
+            .await;
         assert!(result1.is_ok());
 
         // Second creation with IF NOT EXISTS should also succeed
-        let result2 = handler.execute(&session, stmt, vec![], &ctx).await;
+        let result2 = handler
+            .execute(&session, stmt, vec![], &ctx)
+            .await;
         assert!(result2.is_ok());
 
         match result2.unwrap() {
-            ExecutionResult::Success(msg) => assert!(msg.contains("already exists")),
+            ExecutionResult::Success { message } => assert!(message.contains("already exists")),
             _ => panic!("Expected Success result"),
         }
     }
 
     #[tokio::test]
     async fn test_typed_authorization_check() {
+        init_test_app_context();
         let app_ctx = AppContext::get();
         let handler = CreateNamespaceHandler::new(app_ctx);
         let user_ctx = ExecutionContext::new(UserId::from("regular_user"), Role::User);

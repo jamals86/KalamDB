@@ -189,14 +189,14 @@ async fn execute_single_statement(
     auth: &kalamdb_auth::AuthenticatedRequest,
     metadata: Option<&ExecutorMetadataAlias>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
-    // Create execution context from authenticated user
-    let exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role);
+    // Phase 3 (T033): Construct ExecutionContext with user identity and DataFusion session
+    let session = Arc::new(session_factory.create_session());
+    let exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role)
+        .with_session(session.clone());
+    // TODO: Add request_id and ip_address extraction from headers/connection_info
     
     // If sql_executor is available, use it (production path)
     if let Some(sql_executor) = sql_executor {
-        // Create a per-request session
-        let session = session_factory.create_session();
-        
         // Execute through SqlExecutor (handles both custom DDL and DataFusion)
         match sql_executor
             .execute_with_metadata(&session, sql, &exec_ctx, metadata, Vec::new())
@@ -204,17 +204,51 @@ async fn execute_single_statement(
         {
             Ok(result) => {
                 // Convert ExecutionResult to QueryResult
+                // Phase 3 (T036-T038): Use new ExecutionResult struct variants with row counts
                 match result {
-                    ExecutionResult::Success(message) => Ok(QueryResult::with_message(message)),
-                    ExecutionResult::RecordBatch(batch) => {
-                        record_batch_to_query_result(vec![batch], Some(&auth.user_id))
-                    }
-                    ExecutionResult::RecordBatches(batches) => {
+                    ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
+                    ExecutionResult::Rows { batches, row_count } => {
                         record_batch_to_query_result(batches, Some(&auth.user_id))
                     }
-                    ExecutionResult::Subscription(subscription_data) => {
-                        // Return subscription metadata as a special query result
-                        Ok(QueryResult::subscription(subscription_data))
+                    ExecutionResult::Inserted { rows_affected } => {
+                        Ok(QueryResult::with_affected_rows(
+                            rows_affected,
+                            Some(format!("Inserted {} row(s)", rows_affected)),
+                        ))
+                    }
+                    ExecutionResult::Updated { rows_affected } => {
+                        Ok(QueryResult::with_affected_rows(
+                            rows_affected,
+                            Some(format!("Updated {} row(s)", rows_affected)),
+                        ))
+                    }
+                    ExecutionResult::Deleted { rows_affected } => {
+                        Ok(QueryResult::with_affected_rows(
+                            rows_affected,
+                            Some(format!("Deleted {} row(s)", rows_affected)),
+                        ))
+                    }
+                    ExecutionResult::Flushed { tables, bytes_written } => {
+                        Ok(QueryResult::with_affected_rows(
+                            tables.len(),
+                            Some(format!(
+                                "Flushed {} table(s), {} bytes written",
+                                tables.len(),
+                                bytes_written
+                            )),
+                        ))
+                    }
+                    ExecutionResult::Subscription { subscription_id, channel } => {
+                        // Create subscription result as JSON
+                        let sub_data = serde_json::json!({
+                            "subscription_id": subscription_id,
+                            "channel": channel,
+                            "status": "active"
+                        });
+                        Ok(QueryResult::subscription(sub_data))
+                    }
+                    ExecutionResult::JobKilled { job_id, status } => {
+                        Ok(QueryResult::with_message(format!("Job {} killed: {}", job_id, status)))
                     }
                 }
             }

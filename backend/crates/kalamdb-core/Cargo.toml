@@ -18,6 +18,9 @@ kalamdb-auth = { path = "../kalamdb-auth" }
 arrow = { workspace = true }
 datafusion = { workspace = true }
 
+# SQL parsing (for native DML handlers)
+sqlparser = { workspace = true }
+
 # Concurrent data structures
 dashmap = { workspace = true }
 

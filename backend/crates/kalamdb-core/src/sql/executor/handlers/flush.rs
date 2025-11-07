@@ -29,6 +29,7 @@ impl StatementHandler for FlushHandler {
         &self,
         _session: &SessionContext,
         _statement: SqlStatement,
+        _sql_text: String,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {

@@ -84,22 +84,24 @@ impl SqlExecutor {
         .map_err(|msg| KalamDbError::Unauthorized(msg))?;
 
         // Step 2: Route based on statement type
-        match classified {
-            // Hot path: Query and DML operations (99% of traffic)
-            SqlStatement::Select | SqlStatement::Insert | SqlStatement::Delete => {
+        use kalamdb_sql::statement_classifier::SqlStatementKind;
+        match classified.kind() {
+            // Hot path: SELECT queries use DataFusion
+            SqlStatementKind::Select => {
                 self.execute_via_datafusion(session, sql, params).await
             }
             
-            SqlStatement::Update => {
-                Err(KalamDbError::InvalidOperation(
-                    "UPDATE statement not yet supported".to_string()
-                ))
-            }
+            // // Phase 7: INSERT/DELETE/UPDATE use native handlers with TypedStatementHandler
+            // SqlStatementKind::Insert(_) | SqlStatementKind::Delete(_) | SqlStatementKind::Update(_) => {
+            //     self.handler_registry
+            //         .handle(session, classified, sql.to_string(), params, exec_ctx)
+            //         .await
+            // }
             
             // All other statements: Delegate to handler registry
             _ => {
                 self.handler_registry
-                    .handle(session, classified, params, exec_ctx)
+                    .handle(session, classified, sql.to_string(), params, exec_ctx)
                     .await
             }
         }
@@ -132,14 +134,11 @@ impl SqlExecutor {
             .await
             .map_err(|e| KalamDbError::Other(format!("Error executing query: {}", e)))?;
 
-        // Return batches
-        if batches.is_empty() {
-            Ok(ExecutionResult::RecordBatches(vec![]))
-        } else if batches.len() == 1 {
-            Ok(ExecutionResult::RecordBatch(batches[0].clone()))
-        } else {
-            Ok(ExecutionResult::RecordBatches(batches))
-        }
+        // Calculate total row count
+        let row_count: usize = batches.iter().map(|b| b.num_rows()).sum();
+
+        // Return batches with row count
+        Ok(ExecutionResult::Rows { batches, row_count })
     }
 
     /// Legacy bootstrap hook (currently a no-op until handler wiring lands).

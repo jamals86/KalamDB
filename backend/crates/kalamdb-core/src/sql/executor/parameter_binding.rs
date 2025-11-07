@@ -6,6 +6,7 @@
 //! - ScalarValue type checking
 
 use crate::error::KalamDbError;
+use arrow::array::Array;
 use datafusion::scalar::ScalarValue;
 use datafusion::logical_expr::{Expr, LogicalPlan};
 use datafusion::common::tree_node::TreeNodeRewriter;
@@ -63,10 +64,10 @@ fn estimate_scalar_value_size(value: &ScalarValue) -> usize {
         ScalarValue::Binary(b) | ScalarValue::LargeBinary(b) | ScalarValue::FixedSizeBinary(_, b) => {
             b.as_ref().map(|b| b.len()).unwrap_or(0)
         }
-        ScalarValue::List(arr) | ScalarValue::LargeList(arr) | ScalarValue::FixedSizeList(arr) => {
-            // Rough estimate: 64 bytes per array element
-            arr.len() * 64
-        }
+        // ScalarValue::List(arr) | ScalarValue::LargeList(arr) | ScalarValue::FixedSizeList(arr) => {
+        //     // Rough estimate: 64 bytes per array element
+        //     arr.len() * 64
+        // }
         ScalarValue::Date32(_) | ScalarValue::Date64(_) => 8,
         ScalarValue::Time32Second(_) | ScalarValue::Time32Millisecond(_) => 4,
         ScalarValue::Time64Microsecond(_) | ScalarValue::Time64Nanosecond(_) => 8,

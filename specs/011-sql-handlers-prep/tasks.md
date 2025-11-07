@@ -161,16 +161,16 @@ This is a Rust workspace project:
 
 ### Implementation for User Story 4
 
-- [ ] T052 [P] [US4] Create InsertHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/dml/insert.rs`
-- [ ] T053 [P] [US4] Create UpdateHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/dml/update.rs`
-- [ ] T054 [P] [US4] Create DeleteHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/dml/delete.rs`
-- [ ] T055 [US4] Create DML module re-exports in `backend/crates/kalamdb-core/src/sql/executor/handlers/dml/mod.rs`
-- [ ] T056 [US4] Register InsertHandler in HandlerRegistry with extractor closure
-- [ ] T057 [US4] Register UpdateHandler in HandlerRegistry with extractor closure
-- [ ] T058 [US4] Register DeleteHandler in HandlerRegistry with extractor closure
-- [ ] T059 [P] [US4] Add unit tests for InsertHandler in insert.rs (success + authorization)
-- [ ] T060 [P] [US4] Add unit tests for UpdateHandler in update.rs (success + authorization)
-- [ ] T061 [P] [US4] Add unit tests for DeleteHandler in delete.rs (success + authorization)
+- [X] T052 [P] [US4] Create InsertHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/dml/insert.rs`
+- [X] T053 [P] [US4] Create UpdateHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/dml/update.rs`
+- [X] T054 [P] [US4] Create DeleteHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/dml/delete.rs`
+- [X] T055 [US4] Create DML module re-exports in `backend/crates/kalamdb-core/src/sql/executor/handlers/dml/mod.rs`
+- [X] T056 [US4] Register InsertHandler in HandlerRegistry via register_dynamic()
+- [X] T057 [US4] Register UpdateHandler in HandlerRegistry via register_dynamic()
+- [X] T058 [US4] Register DeleteHandler in HandlerRegistry via register_dynamic()
+- [X] T059 [P] [US4] Add unit tests for InsertHandler in insert.rs (success + authorization)
+- [X] T060 [P] [US4] Add unit tests for UpdateHandler in update.rs (success + authorization)
+- [X] T061 [P] [US4] Add unit tests for DeleteHandler in delete.rs (success + authorization)
 
 **Checkpoint**: User Story 4 complete - DML operations route to dedicated handlers
 

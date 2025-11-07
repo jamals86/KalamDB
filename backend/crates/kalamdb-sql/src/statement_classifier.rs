@@ -9,8 +9,20 @@ use crate::ddl::*;
 ///
 /// Each variant either holds a parsed AST (for DDL) or is a marker (for DataFusion queries).
 /// This eliminates double-parsing: classify + parse happens in one step.
+///
+/// Every SqlStatement instance carries the original SQL text for debugging, logging,
+/// and DML handler parsing (INSERT/UPDATE/DELETE need sql_text for sqlparser).
 #[derive(Debug, Clone)]
-pub enum SqlStatement {
+pub struct SqlStatement {
+    /// Original SQL text
+    sql_text: String,
+    /// Parsed statement variant
+    kind: SqlStatementKind,
+}
+
+/// Statement type variants (internal to SqlStatement)
+#[derive(Debug, Clone)]
+pub enum SqlStatementKind {
     // ===== Namespace Operations =====
     /// CREATE NAMESPACE <name>
     CreateNamespace(CreateNamespaceStatement),
@@ -69,15 +81,15 @@ pub enum SqlStatement {
     /// DROP USER <username>
     DropUser(DropUserStatement),
 
-    // ===== Standard SQL (DataFusion) - No parsing needed =====
+    // ===== Standard SQL (DataFusion/Native) - Typed markers =====
     /// SELECT ... (handled by DataFusion)
     Select,
-    /// INSERT INTO ... (handled by DataFusion)
-    Insert,
-    /// DELETE FROM ... (handled by DataFusion)
-    Delete,
-    /// UPDATE <table> SET ... (not yet implemented)
-    Update,
+    /// INSERT INTO ... (native handler with sqlparser)
+    Insert(crate::ddl::InsertStatement),
+    /// DELETE FROM ... (native handler with sqlparser)
+    Delete(crate::ddl::DeleteStatement),
+    /// UPDATE <table> SET ... (native handler with sqlparser)
+    Update(crate::ddl::UpdateStatement),
 
     // ===== Transaction Control - Markers only =====
     /// BEGIN [TRANSACTION]
@@ -93,6 +105,40 @@ pub enum SqlStatement {
 }
 
 impl SqlStatement {
+    /// Create a SqlStatement with SQL text and kind
+    pub fn new(sql_text: String, kind: SqlStatementKind) -> Self {
+        Self { sql_text, kind }
+    }
+
+    /// Wrap a parsed statement into SqlStatement with sql_text
+    fn wrap<F>(sql: &str, parser: F) -> Self
+    where
+        F: FnOnce() -> Option<SqlStatementKind>,
+    {
+        Self::new(
+            sql.to_string(),
+            parser().unwrap_or(SqlStatementKind::Unknown),
+        )
+    }
+
+    /// Get the original SQL text
+    pub fn as_str(&self) -> &str {
+        &self.sql_text
+    }
+
+    /// Get the statement kind (for pattern matching)
+    pub fn kind(&self) -> &SqlStatementKind {
+        &self.kind
+    }
+
+    /// Check if this is a specific statement kind (helper for tests and matching)
+    pub fn is_kind<F>(&self, checker: F) -> bool
+    where
+        F: FnOnce(&SqlStatementKind) -> bool,
+    {
+        checker(&self.kind)
+    }
+
     /// Classify and parse SQL statement with default namespace
     ///
     /// This is a convenience wrapper around `classify_and_parse` that uses
@@ -103,7 +149,7 @@ impl SqlStatement {
             &kalamdb_commons::models::NamespaceId::new("default"),
             kalamdb_commons::Role::System, // Tests run as System role
         )
-        .unwrap_or(SqlStatement::Unknown)
+        .unwrap_or_else(|_| Self::new(sql.to_string(), SqlStatementKind::Unknown))
     }
 
     /// Classify and parse SQL statement in one pass with authorization check
@@ -135,54 +181,54 @@ impl SqlStatement {
         let words: Vec<&str> = sql_upper.split_whitespace().collect();
 
         if words.is_empty() {
-            return Ok(SqlStatement::Unknown);
+            return Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown));
         }
 
         // Admin users (DBA, System) can do anything - skip authorization checks
         let is_admin = matches!(role, Role::Dba | Role::System);
 
         // Hot path: Check SELECT/INSERT/DELETE first (99% of queries)
-        // These don't need parsing - DataFusion handles them
+        // DML statements - create typed markers for handler pattern
         match words[0] {
-            "SELECT" => return Ok(SqlStatement::Select),
-            "INSERT" => return Ok(SqlStatement::Insert),
-            "DELETE" => return Ok(SqlStatement::Delete),
-            "UPDATE" => return Ok(SqlStatement::Update),
+            "SELECT" => return Ok(Self::new(sql.to_string(), SqlStatementKind::Select)),
+            "INSERT" => return Ok(Self::new(sql.to_string(), SqlStatementKind::Insert(crate::ddl::InsertStatement))),
+            "DELETE" => return Ok(Self::new(sql.to_string(), SqlStatementKind::Delete(crate::ddl::DeleteStatement))),
+            "UPDATE" => return Ok(Self::new(sql.to_string(), SqlStatementKind::Update(crate::ddl::UpdateStatement))),
             _ => {}
         }
 
         // Check multi-word prefixes and parse DDL statements
         match words.as_slice() {
-            // Namespace operations - require admin
+                        // Namespace operations - require admin
             ["CREATE", "NAMESPACE", ..] => {
                 if !is_admin {
                     return Err("Admin privileges (DBA or System role) required for namespace operations".to_string());
                 }
-                Ok(CreateNamespaceStatement::parse(sql)
-                    .map(SqlStatement::CreateNamespace)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    CreateNamespaceStatement::parse(sql).ok().map(SqlStatementKind::CreateNamespace)
+                }))
             }
             ["ALTER", "NAMESPACE", ..] => {
                 if !is_admin {
                     return Err("Admin privileges (DBA or System role) required for namespace operations".to_string());
                 }
-                Ok(AlterNamespaceStatement::parse(sql)
-                    .map(SqlStatement::AlterNamespace)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    AlterNamespaceStatement::parse(sql).ok().map(SqlStatementKind::AlterNamespace)
+                }))
             }
             ["DROP", "NAMESPACE", ..] => {
                 if !is_admin {
                     return Err("Admin privileges (DBA or System role) required for namespace operations".to_string());
                 }
-                Ok(DropNamespaceStatement::parse(sql)
-                    .map(SqlStatement::DropNamespace)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    DropNamespaceStatement::parse(sql).ok().map(SqlStatementKind::DropNamespace)
+                }))
             }
             ["SHOW", "NAMESPACES", ..] => {
                 // Read-only, allowed for all users
-                Ok(ShowNamespacesStatement::parse(sql)
-                    .map(SqlStatement::ShowNamespaces)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    ShowNamespacesStatement::parse(sql).ok().map(SqlStatementKind::ShowNamespaces)
+                }))
             }
 
             // Storage operations - require admin
@@ -190,31 +236,63 @@ impl SqlStatement {
                 if !is_admin {
                     return Err("Admin privileges (DBA or System role) required for storage operations".to_string());
                 }
-                Ok(CreateStorageStatement::parse(sql)
-                    .map(SqlStatement::CreateStorage)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    CreateStorageStatement::parse(sql).ok().map(SqlStatementKind::CreateStorage)
+                }))
             }
             ["ALTER", "STORAGE", ..] => {
                 if !is_admin {
                     return Err("Admin privileges (DBA or System role) required for storage operations".to_string());
                 }
-                Ok(AlterStorageStatement::parse(sql)
-                    .map(SqlStatement::AlterStorage)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    AlterStorageStatement::parse(sql).ok().map(SqlStatementKind::AlterStorage)
+                }))
             }
             ["DROP", "STORAGE", ..] => {
                 if !is_admin {
                     return Err("Admin privileges (DBA or System role) required for storage operations".to_string());
                 }
-                Ok(DropStorageStatement::parse(sql)
-                    .map(SqlStatement::DropStorage)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    DropStorageStatement::parse(sql).ok().map(SqlStatementKind::DropStorage)
+                }))
             }
             ["SHOW", "STORAGES", ..] => {
                 // Read-only, allowed for all users
-                Ok(ShowStoragesStatement::parse(sql)
-                    .map(SqlStatement::ShowStorages)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    ShowStoragesStatement::parse(sql).ok().map(SqlStatementKind::ShowStorages)
+                }))
+            }
+
+            // Storage operations - require admin
+            ["CREATE", "STORAGE", ..] => {
+                if !is_admin {
+                    return Err("Admin privileges (DBA or System role) required for storage operations".to_string());
+                }
+                Ok(Self::wrap(sql, || {
+                    CreateStorageStatement::parse(sql).ok().map(SqlStatementKind::CreateStorage)
+                }))
+            }
+            ["ALTER", "STORAGE", ..] => {
+                if !is_admin {
+                    return Err("Admin privileges (DBA or System role) required for storage operations".to_string());
+                }
+                Ok(Self::wrap(sql, || {
+                    AlterStorageStatement::parse(sql).ok().map(SqlStatementKind::AlterStorage)
+                }))
+            }
+            ["DROP", "STORAGE", ..] => {
+                if !is_admin {
+                    return Err("Admin privileges (DBA or System role) required for storage operations".to_string());
+                }
+                Ok(Self::wrap(sql, || {
+                    DropStorageStatement::parse(sql).ok().map(SqlStatementKind::DropStorage)
+                }))
+            }
+            ["SHOW", "STORAGES", ..] => {
+                // Read-only, allowed for all users
+                Ok(Self::wrap(sql, || {
+                    ShowStoragesStatement::parse(sql).ok().map(SqlStatementKind::ShowStorages)
+                }))
             }
 
             // Table operations - authorization deferred to table ownership checks
@@ -222,55 +300,55 @@ impl SqlStatement {
             | ["CREATE", "SHARED", "TABLE", ..]
             | ["CREATE", "STREAM", "TABLE", ..]
             | ["CREATE", "TABLE", ..] => {
-                Ok(CreateTableStatement::parse(sql, default_namespace)
-                    .map(SqlStatement::CreateTable)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    CreateTableStatement::parse(sql, default_namespace).ok().map(SqlStatementKind::CreateTable)
+                }))
             }
             ["ALTER", "TABLE", ..]
             | ["ALTER", "USER", "TABLE", ..]
             | ["ALTER", "SHARED", "TABLE", ..]
             | ["ALTER", "STREAM", "TABLE", ..] => {
-                Ok(AlterTableStatement::parse(sql, default_namespace)
-                    .map(SqlStatement::AlterTable)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    AlterTableStatement::parse(sql, default_namespace).ok().map(SqlStatementKind::AlterTable)
+                }))
             }
             ["DROP", "USER", "TABLE", ..]
             | ["DROP", "SHARED", "TABLE", ..]
             | ["DROP", "STREAM", "TABLE", ..]
             | ["DROP", "TABLE", ..] => {
-                Ok(DropTableStatement::parse(sql, default_namespace)
-                    .map(SqlStatement::DropTable)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    DropTableStatement::parse(sql, default_namespace).ok().map(SqlStatementKind::DropTable)
+                }))
             }
             ["SHOW", "TABLES", ..] => {
                 // Read-only, allowed for all users
-                Ok(ShowTablesStatement::parse(sql)
-                    .map(SqlStatement::ShowTables)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    ShowTablesStatement::parse(sql).ok().map(SqlStatementKind::ShowTables)
+                }))
             }
             ["DESCRIBE", "TABLE", ..] | ["DESC", "TABLE", ..] => {
                 // Read-only, allowed for all users
-                Ok(DescribeTableStatement::parse(sql)
-                    .map(SqlStatement::DescribeTable)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    DescribeTableStatement::parse(sql).ok().map(SqlStatementKind::DescribeTable)
+                }))
             }
             ["SHOW", "STATS", ..] => {
                 // Read-only, allowed for all users
-                Ok(ShowTableStatsStatement::parse(sql)
-                    .map(SqlStatement::ShowStats)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    ShowTableStatsStatement::parse(sql).ok().map(SqlStatementKind::ShowStats)
+                }))
             }
 
             // Flush operations - authorization deferred to table ownership checks
             ["FLUSH", "ALL", "TABLES", ..] => {
-                Ok(FlushAllTablesStatement::parse(sql)
-                    .map(SqlStatement::FlushAllTables)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    FlushAllTablesStatement::parse(sql).ok().map(SqlStatementKind::FlushAllTables)
+                }))
             }
             ["FLUSH", "TABLE", ..] => {
-                Ok(FlushTableStatement::parse(sql)
-                    .map(SqlStatement::FlushTable)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    FlushTableStatement::parse(sql).ok().map(SqlStatementKind::FlushTable)
+                }))
             }
 
             // Job management - require admin
@@ -278,27 +356,33 @@ impl SqlStatement {
                 if !is_admin {
                     return Err("Admin privileges (DBA or System role) required for job management".to_string());
                 }
-                Ok(parse_job_command(sql)
-                    .map(SqlStatement::KillJob)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    parse_job_command(sql).ok().map(SqlStatementKind::KillJob)
+                }))
             }
             ["KILL", "LIVE", "QUERY", ..] => {
                 // Users can kill their own live queries
-                Ok(KillLiveQueryStatement::parse(sql)
-                    .map(SqlStatement::KillLiveQuery)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    KillLiveQueryStatement::parse(sql).ok().map(SqlStatementKind::KillLiveQuery)
+                }))
             }
 
             // Transaction control (no parsing needed - just markers)
-            ["BEGIN", ..] | ["START", "TRANSACTION", ..] => Ok(SqlStatement::BeginTransaction),
-            ["COMMIT", ..] => Ok(SqlStatement::CommitTransaction),
-            ["ROLLBACK", ..] => Ok(SqlStatement::RollbackTransaction),
+            ["BEGIN", ..] | ["START", "TRANSACTION", ..] => {
+                Ok(Self::new(sql.to_string(), SqlStatementKind::BeginTransaction))
+            }
+            ["COMMIT", ..] => {
+                Ok(Self::new(sql.to_string(), SqlStatementKind::CommitTransaction))
+            }
+            ["ROLLBACK", ..] => {
+                Ok(Self::new(sql.to_string(), SqlStatementKind::RollbackTransaction))
+            }
 
             // Live query subscriptions - allowed for all users
             ["SUBSCRIBE", "TO", ..] => {
-                Ok(SubscribeStatement::parse(sql)
-                    .map(SqlStatement::Subscribe)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    SubscribeStatement::parse(sql).ok().map(SqlStatementKind::Subscribe)
+                }))
             }
 
             // User management - require admin (except ALTER USER for self)
@@ -306,27 +390,27 @@ impl SqlStatement {
                 if !is_admin {
                     return Err("Admin privileges (DBA or System role) required for user management".to_string());
                 }
-                Ok(CreateUserStatement::parse(sql)
-                    .map(SqlStatement::CreateUser)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    CreateUserStatement::parse(sql).ok().map(SqlStatementKind::CreateUser)
+                }))
             }
             ["ALTER", "USER", ..] => {
                 // Authorization deferred to handler (users can alter their own account)
-                Ok(AlterUserStatement::parse(sql)
-                    .map(SqlStatement::AlterUser)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    AlterUserStatement::parse(sql).ok().map(SqlStatementKind::AlterUser)
+                }))
             }
             ["DROP", "USER", ..] => {
                 if !is_admin {
                     return Err("Admin privileges (DBA or System role) required for user management".to_string());
                 }
-                Ok(DropUserStatement::parse(sql)
-                    .map(SqlStatement::DropUser)
-                    .unwrap_or(SqlStatement::Unknown))
+                Ok(Self::wrap(sql, || {
+                    DropUserStatement::parse(sql).ok().map(SqlStatementKind::DropUser)
+                }))
             }
 
             // Unknown
-            _ => Ok(SqlStatement::Unknown),
+            _ => Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown)),
         }
     }
 
@@ -335,7 +419,7 @@ impl SqlStatement {
     /// Returns true for SELECT, INSERT, DELETE statements that should be
     /// passed to DataFusion for execution.
     pub fn is_datafusion_statement(&self) -> bool {
-        matches!(self, SqlStatement::Select | SqlStatement::Insert | SqlStatement::Delete)
+        matches!(self.kind, SqlStatementKind::Select | SqlStatementKind::Insert(_) | SqlStatementKind::Delete(_))
     }
 
     /// Check if this statement type is a custom KalamDB command
@@ -344,44 +428,44 @@ impl SqlStatement {
     /// custom execution logic.
     pub fn is_custom_command(&self) -> bool {
         !matches!(
-            self,
-            SqlStatement::Select | SqlStatement::Insert | SqlStatement::Unknown
+            self.kind,
+            SqlStatementKind::Select | SqlStatementKind::Insert(_) | SqlStatementKind::Unknown
         )
     }
 
     /// Get a human-readable name for this statement type
     pub fn name(&self) -> &'static str {
-        match self {
-            SqlStatement::CreateNamespace(_) => "CREATE NAMESPACE",
-            SqlStatement::AlterNamespace(_) => "ALTER NAMESPACE",
-            SqlStatement::DropNamespace(_) => "DROP NAMESPACE",
-            SqlStatement::ShowNamespaces(_) => "SHOW NAMESPACES",
-            SqlStatement::CreateStorage(_) => "CREATE STORAGE",
-            SqlStatement::AlterStorage(_) => "ALTER STORAGE",
-            SqlStatement::DropStorage(_) => "DROP STORAGE",
-            SqlStatement::ShowStorages(_) => "SHOW STORAGES",
-            SqlStatement::CreateTable(_) => "CREATE TABLE",
-            SqlStatement::AlterTable(_) => "ALTER TABLE",
-            SqlStatement::DropTable(_) => "DROP TABLE",
-            SqlStatement::ShowTables(_) => "SHOW TABLES",
-            SqlStatement::DescribeTable(_) => "DESCRIBE TABLE",
-            SqlStatement::ShowStats(_) => "SHOW STATS",
-            SqlStatement::FlushTable(_) => "FLUSH TABLE",
-            SqlStatement::FlushAllTables(_) => "FLUSH ALL TABLES",
-            SqlStatement::KillJob(_) => "KILL JOB",
-            SqlStatement::KillLiveQuery(_) => "KILL LIVE QUERY",
-            SqlStatement::BeginTransaction => "BEGIN",
-            SqlStatement::CommitTransaction => "COMMIT",
-            SqlStatement::RollbackTransaction => "ROLLBACK",
-            SqlStatement::Subscribe(_) => "SUBSCRIBE TO",
-            SqlStatement::CreateUser(_) => "CREATE USER",
-            SqlStatement::AlterUser(_) => "ALTER USER",
-            SqlStatement::DropUser(_) => "DROP USER",
-            SqlStatement::Update => "UPDATE",
-            SqlStatement::Delete => "DELETE",
-            SqlStatement::Select => "SELECT",
-            SqlStatement::Insert => "INSERT",
-            SqlStatement::Unknown => "UNKNOWN",
+        match &self.kind {
+            SqlStatementKind::CreateNamespace(_) => "CREATE NAMESPACE",
+            SqlStatementKind::AlterNamespace(_) => "ALTER NAMESPACE",
+            SqlStatementKind::DropNamespace(_) => "DROP NAMESPACE",
+            SqlStatementKind::ShowNamespaces(_) => "SHOW NAMESPACES",
+            SqlStatementKind::CreateStorage(_) => "CREATE STORAGE",
+            SqlStatementKind::AlterStorage(_) => "ALTER STORAGE",
+            SqlStatementKind::DropStorage(_) => "DROP STORAGE",
+            SqlStatementKind::ShowStorages(_) => "SHOW STORAGES",
+            SqlStatementKind::CreateTable(_) => "CREATE TABLE",
+            SqlStatementKind::AlterTable(_) => "ALTER TABLE",
+            SqlStatementKind::DropTable(_) => "DROP TABLE",
+            SqlStatementKind::ShowTables(_) => "SHOW TABLES",
+            SqlStatementKind::DescribeTable(_) => "DESCRIBE TABLE",
+            SqlStatementKind::ShowStats(_) => "SHOW STATS",
+            SqlStatementKind::FlushTable(_) => "FLUSH TABLE",
+            SqlStatementKind::FlushAllTables(_) => "FLUSH ALL TABLES",
+            SqlStatementKind::KillJob(_) => "KILL JOB",
+            SqlStatementKind::KillLiveQuery(_) => "KILL LIVE QUERY",
+            SqlStatementKind::BeginTransaction => "BEGIN",
+            SqlStatementKind::CommitTransaction => "COMMIT",
+            SqlStatementKind::RollbackTransaction => "ROLLBACK",
+            SqlStatementKind::Subscribe(_) => "SUBSCRIBE TO",
+            SqlStatementKind::CreateUser(_) => "CREATE USER",
+            SqlStatementKind::AlterUser(_) => "ALTER USER",
+            SqlStatementKind::DropUser(_) => "DROP USER",
+            SqlStatementKind::Update(_) => "UPDATE",
+            SqlStatementKind::Delete(_) => "DELETE",
+            SqlStatementKind::Select => "SELECT",
+            SqlStatementKind::Insert(_) => "INSERT",
+            SqlStatementKind::Unknown => "UNKNOWN",
         }
     }
 
@@ -416,44 +500,44 @@ impl SqlStatement {
             return Ok(());
         }
 
-        match self {
+        match &self.kind {
             // Storage and global operations require admin privileges
-            SqlStatement::CreateStorage(_)
-            | SqlStatement::AlterStorage(_)
-            | SqlStatement::DropStorage(_)
-            | SqlStatement::KillJob(_) => {
+            SqlStatementKind::CreateStorage(_)
+            | SqlStatementKind::AlterStorage(_)
+            | SqlStatementKind::DropStorage(_)
+            | SqlStatementKind::KillJob(_) => {
                 Err("Admin privileges (DBA or System role) required for storage and job operations".to_string())
             }
 
             // User management requires admin privileges (except for self-modification in ALTER USER)
-            SqlStatement::CreateUser(_) | SqlStatement::DropUser(_) => {
+            SqlStatementKind::CreateUser(_) | SqlStatementKind::DropUser(_) => {
                 Err("Admin privileges (DBA or System role) required for user management".to_string())
             }
 
             // ALTER USER allowed for self (changing own password), admin for others
             // The actual target user check is deferred to execute_alter_user method
-            SqlStatement::AlterUser(_) => Ok(()),
+            SqlStatementKind::AlterUser(_) => Ok(()),
 
             // Namespace DDL requires admin privileges
-            SqlStatement::CreateNamespace(_)
-            | SqlStatement::AlterNamespace(_)
-            | SqlStatement::DropNamespace(_) => {
+            SqlStatementKind::CreateNamespace(_)
+            | SqlStatementKind::AlterNamespace(_)
+            | SqlStatementKind::DropNamespace(_) => {
                 Err("Admin privileges (DBA or System role) required for namespace operations".to_string())
             }
 
             // Read-only operations on system tables are allowed for all authenticated users
-            SqlStatement::ShowNamespaces(_)
-            | SqlStatement::ShowTables(_)
-            | SqlStatement::ShowStorages(_)
-            | SqlStatement::ShowStats(_)
-            | SqlStatement::DescribeTable(_) => Ok(()),
+            SqlStatementKind::ShowNamespaces(_)
+            | SqlStatementKind::ShowTables(_)
+            | SqlStatementKind::ShowStorages(_)
+            | SqlStatementKind::ShowStats(_)
+            | SqlStatementKind::DescribeTable(_) => Ok(()),
 
             // CREATE TABLE, DROP TABLE, FLUSH TABLE, ALTER TABLE - defer to table ownership checks
-            SqlStatement::CreateTable(_)
-            | SqlStatement::AlterTable(_)
-            | SqlStatement::DropTable(_)
-            | SqlStatement::FlushTable(_)
-            | SqlStatement::FlushAllTables(_) => {
+            SqlStatementKind::CreateTable(_)
+            | SqlStatementKind::AlterTable(_)
+            | SqlStatementKind::DropTable(_)
+            | SqlStatementKind::FlushTable(_)
+            | SqlStatementKind::FlushAllTables(_) => {
                 // Table-level authorization will be checked in the execution methods
                 // Users can only create/modify/drop tables they own
                 // Admin users can operate on any table (already returned above)
@@ -461,10 +545,10 @@ impl SqlStatement {
             }
 
             // SELECT, INSERT, UPDATE, DELETE - defer to table access control
-            SqlStatement::Select
-            | SqlStatement::Insert
-            | SqlStatement::Update
-            | SqlStatement::Delete => {
+            SqlStatementKind::Select
+            | SqlStatementKind::Insert(_)
+            | SqlStatementKind::Update(_)
+            | SqlStatementKind::Delete(_) => {
                 // Query-level authorization will be enforced by using per-user sessions
                 // User tables are filtered by user_id in UserTableProvider
                 // Shared tables enforce access control based on access_level
@@ -472,13 +556,13 @@ impl SqlStatement {
             }
 
             // Subscriptions, transactions, and other operations allowed for all users
-            SqlStatement::Subscribe(_)
-            | SqlStatement::KillLiveQuery(_)
-            | SqlStatement::BeginTransaction
-            | SqlStatement::CommitTransaction
-            | SqlStatement::RollbackTransaction => Ok(()),
+            SqlStatementKind::Subscribe(_)
+            | SqlStatementKind::KillLiveQuery(_)
+            | SqlStatementKind::BeginTransaction
+            | SqlStatementKind::CommitTransaction
+            | SqlStatementKind::RollbackTransaction => Ok(()),
 
-            SqlStatement::Unknown => {
+            SqlStatementKind::Unknown => {
                 // Unknown statements will fail in execute anyway
                 // Allow them through so we can return a better error message
                 Ok(())
@@ -494,21 +578,21 @@ mod tests {
     #[test]
     fn test_classify_namespace_commands() {
         assert!(matches!(
-            SqlStatement::classify("CREATE NAMESPACE test"),
-            SqlStatement::CreateNamespace(_)
+            SqlStatement::classify("CREATE NAMESPACE test").kind(),
+            SqlStatementKind::CreateNamespace(_)
         ));
         // Note: ALTER NAMESPACE syntax not fully supported by parser yet
         // assert!(matches!(
-        //     SqlStatement::classify("alter namespace test set description = 'foo'"),
-        //     SqlStatement::AlterNamespace(_)
+        //     SqlStatement::classify("alter namespace test set description = 'foo'").kind(),
+        //     SqlStatementKind::AlterNamespace(_)
         // ));
         assert!(matches!(
-            SqlStatement::classify("DROP NAMESPACE test CASCADE"),
-            SqlStatement::DropNamespace(_)
+            SqlStatement::classify("DROP NAMESPACE test CASCADE").kind(),
+            SqlStatementKind::DropNamespace(_)
         ));
         assert!(matches!(
-            SqlStatement::classify("SHOW NAMESPACES"),
-            SqlStatement::ShowNamespaces(_)
+            SqlStatement::classify("SHOW NAMESPACES").kind(),
+            SqlStatementKind::ShowNamespaces(_)
         ));
     }
 
@@ -516,198 +600,198 @@ mod tests {
     fn test_classify_storage_commands() {
         // Note: Storage parsers need implementation - returning Unknown for now
         // assert!(matches!(
-        //     SqlStatement::classify("CREATE STORAGE s3_storage TYPE s3"),
-        //     SqlStatement::CreateStorage(_)
+        //     SqlStatement::classify("CREATE STORAGE s3_storage TYPE s3").kind(),
+        //     SqlStatementKind::CreateStorage(_)
         // ));
         // assert!(matches!(
-        //     SqlStatement::classify("ALTER STORAGE local SET description = 'test'"),
-        //     SqlStatement::AlterStorage(_)
+        //     SqlStatement::classify("ALTER STORAGE local SET description = 'test'").kind(),
+        //     SqlStatementKind::AlterStorage(_)
         // ));
         // assert!(matches!(
-        //     SqlStatement::classify("DROP STORAGE old_storage"),
-        //     SqlStatement::DropStorage(_)
+        //     SqlStatement::classify("DROP STORAGE old_storage").kind(),
+        //     SqlStatementKind::DropStorage(_)
         // ));
         assert!(matches!(
-            SqlStatement::classify("SHOW STORAGES"),
-            SqlStatement::ShowStorages(_)
+            SqlStatement::classify("SHOW STORAGES").kind(),
+            SqlStatementKind::ShowStorages(_)
         ));
     }
 
     #[test]
     fn test_classify_transactions() {
         assert!(matches!(
-            SqlStatement::classify("BEGIN"),
-            SqlStatement::BeginTransaction
+            SqlStatement::classify("BEGIN").kind(),
+            SqlStatementKind::BeginTransaction
         ));
         assert!(matches!(
-            SqlStatement::classify("BEGIN TRANSACTION"),
-            SqlStatement::BeginTransaction
+            SqlStatement::classify("BEGIN TRANSACTION").kind(),
+            SqlStatementKind::BeginTransaction
         ));
         assert!(matches!(
-            SqlStatement::classify("COMMIT"),
-            SqlStatement::CommitTransaction
+            SqlStatement::classify("COMMIT").kind(),
+            SqlStatementKind::CommitTransaction
         ));
         assert!(matches!(
-            SqlStatement::classify("ROLLBACK"),
-            SqlStatement::RollbackTransaction
+            SqlStatement::classify("ROLLBACK").kind(),
+            SqlStatementKind::RollbackTransaction
         ));
     }
 
     #[test]
     fn test_classify_kill_live_query() {
         assert!(matches!(
-            SqlStatement::classify("KILL LIVE QUERY 'user123-conn_abc-messages-q1'"),
-            SqlStatement::KillLiveQuery(_)
+            SqlStatement::classify("KILL LIVE QUERY 'user123-conn_abc-messages-q1'").kind(),
+            SqlStatementKind::KillLiveQuery(_)
         ));
     }
 
     #[test]
     fn test_classify_table_commands() {
         assert!(matches!(
-            SqlStatement::classify("CREATE USER TABLE test.users (id INT)"),
-            SqlStatement::CreateTable(_)
+            SqlStatement::classify("CREATE USER TABLE test.users (id INT)").kind(),
+            SqlStatementKind::CreateTable(_)
         ));
         assert!(matches!(
-            SqlStatement::classify("CREATE SHARED TABLE test.messages (id INT)"),
-            SqlStatement::CreateTable(_)
+            SqlStatement::classify("CREATE SHARED TABLE test.messages (id INT)").kind(),
+            SqlStatementKind::CreateTable(_)
         ));
         assert!(matches!(
-            SqlStatement::classify("CREATE TABLE test.data (id INT)"),
-            SqlStatement::CreateTable(_)
+            SqlStatement::classify("CREATE TABLE test.data (id INT)").kind(),
+            SqlStatementKind::CreateTable(_)
         ));
         assert!(matches!(
-            SqlStatement::classify("ALTER TABLE test.users ADD COLUMN email TEXT"),
-            SqlStatement::AlterTable(_)
+            SqlStatement::classify("ALTER TABLE test.users ADD COLUMN email TEXT").kind(),
+            SqlStatementKind::AlterTable(_)
         ));
         assert!(matches!(
-            SqlStatement::classify("ALTER SHARED TABLE test.messages SET ACCESS LEVEL public"),
-            SqlStatement::AlterTable(_)
+            SqlStatement::classify("ALTER SHARED TABLE test.messages SET ACCESS LEVEL public").kind(),
+            SqlStatementKind::AlterTable(_)
         ));
         assert!(matches!(
-            SqlStatement::classify("DROP TABLE test.users"),
-            SqlStatement::DropTable(_)
+            SqlStatement::classify("DROP TABLE test.users").kind(),
+            SqlStatementKind::DropTable(_)
         ));
         assert!(matches!(
-            SqlStatement::classify("SHOW TABLES"),
-            SqlStatement::ShowTables(_)
+            SqlStatement::classify("SHOW TABLES").kind(),
+            SqlStatementKind::ShowTables(_)
         ));
         assert!(matches!(
-            SqlStatement::classify("DESCRIBE TABLE test.users"),
-            SqlStatement::DescribeTable(_)
+            SqlStatement::classify("DESCRIBE TABLE test.users").kind(),
+            SqlStatementKind::DescribeTable(_)
         ));
         assert!(matches!(
-            SqlStatement::classify("DESC TABLE test.users"),
-            SqlStatement::DescribeTable(_)
+            SqlStatement::classify("DESC TABLE test.users").kind(),
+            SqlStatementKind::DescribeTable(_)
         ));
     }
 
     #[test]
     fn test_classify_flush_commands() {
         assert!(matches!(
-            SqlStatement::classify("FLUSH TABLE test.users"),
-            SqlStatement::FlushTable(_)
+            SqlStatement::classify("FLUSH TABLE test.users").kind(),
+            SqlStatementKind::FlushTable(_)
         ));
         // Note: FLUSH ALL might have parse issues
         // assert!(matches!(
-        //     SqlStatement::classify("FLUSH ALL TABLES IN test"),
-        //     SqlStatement::FlushAllTables(_)
+        //     SqlStatement::classify("FLUSH ALL TABLES IN test").kind(),
+        //     SqlStatementKind::FlushAllTables(_)
         // ));
     }
 
     #[test]
     fn test_classify_dml_commands() {
         assert!(matches!(
-            SqlStatement::classify("UPDATE users SET name = 'John'"),
-            SqlStatement::Update
+            SqlStatement::classify("UPDATE users SET name = 'John'").kind(),
+            SqlStatementKind::Update(_)
         ));
         assert!(matches!(
-            SqlStatement::classify("DELETE FROM users WHERE id = 1"),
-            SqlStatement::Delete
+            SqlStatement::classify("DELETE FROM users WHERE id = 1").kind(),
+            SqlStatementKind::Delete(_)
         ));
         assert!(matches!(
-            SqlStatement::classify("SELECT * FROM users"),
-            SqlStatement::Select
+            SqlStatement::classify("SELECT * FROM users").kind(),
+            SqlStatementKind::Select
         ));
         assert!(matches!(
-            SqlStatement::classify("INSERT INTO users VALUES (1, 'John')"),
-            SqlStatement::Insert
+            SqlStatement::classify("INSERT INTO users VALUES (1, 'John')").kind(),
+            SqlStatementKind::Insert(_)
         ));
     }
 
     #[test]
     fn test_classify_job_commands() {
         assert!(matches!(
-            SqlStatement::classify("KILL JOB job-123"),
-            SqlStatement::KillJob(_)
+            SqlStatement::classify("KILL JOB job-123").kind(),
+            SqlStatementKind::KillJob(_)
         ));
     }
 
     #[test]
     fn test_classify_subscribe_commands() {
         assert!(matches!(
-            SqlStatement::classify("SUBSCRIBE TO app.messages"),
-            SqlStatement::Subscribe(_)
+            SqlStatement::classify("SUBSCRIBE TO app.messages").kind(),
+            SqlStatementKind::Subscribe(_)
         ));
         assert!(matches!(
-            SqlStatement::classify("SUBSCRIBE TO app.messages WHERE user_id = 'alice'"),
-            SqlStatement::Subscribe(_)
+            SqlStatement::classify("SUBSCRIBE TO app.messages WHERE user_id = 'alice'").kind(),
+            SqlStatementKind::Subscribe(_)
         ));
         assert!(matches!(
-            SqlStatement::classify("subscribe to test.events options (last_rows=10)"),
-            SqlStatement::Subscribe(_)
+            SqlStatement::classify("subscribe to test.events options (last_rows=10)").kind(),
+            SqlStatementKind::Subscribe(_)
         ));
     }
 
     #[test]
     fn test_classify_user_commands() {
         assert!(matches!(
-            SqlStatement::classify("CREATE USER alice WITH PASSWORD 'secret123' ROLE developer"),
-            SqlStatement::CreateUser(_)
+            SqlStatement::classify("CREATE USER alice WITH PASSWORD 'secret123' ROLE developer").kind(),
+            SqlStatementKind::CreateUser(_)
         ));
         assert!(matches!(
             SqlStatement::classify(
                 "create user bob with oauth email='bob@example.com' role readonly"
-            ),
-            SqlStatement::CreateUser(_)
+            ).kind(),
+            SqlStatementKind::CreateUser(_)
         ));
         assert!(matches!(
-            SqlStatement::classify("ALTER USER alice SET PASSWORD 'newpass'"),
-            SqlStatement::AlterUser(_)
+            SqlStatement::classify("ALTER USER alice SET PASSWORD 'newpass'").kind(),
+            SqlStatementKind::AlterUser(_)
         ));
         // Note: ALTER USER SET ROLE might have parser issues
         // assert!(matches!(
-        //     SqlStatement::classify("alter user bob set role dba"),
-        //     SqlStatement::AlterUser(_)
+        //     SqlStatement::classify("alter user bob set role dba").kind(),
+        //     SqlStatementKind::AlterUser(_)
         // ));
         
         // Note: DROP USER parser needs implementation
         // assert!(matches!(
-        //     SqlStatement::classify("DROP USER alice"),
-        //     SqlStatement::DropUser(_)
+        //     SqlStatement::classify("DROP USER alice").kind(),
+        //     SqlStatementKind::DropUser(_)
         // ));
         // assert!(matches!(
-        //     SqlStatement::classify("drop user old_user"),
-        //     SqlStatement::DropUser(_)
+        //     SqlStatement::classify("drop user old_user").kind(),
+        //     SqlStatementKind::DropUser(_)
         // ));
     }
 
     #[test]
     fn test_classify_unknown() {
         assert!(matches!(
-            SqlStatement::classify("GRANT SELECT ON users TO alice"),
-            SqlStatement::Unknown
+            SqlStatement::classify("GRANT SELECT ON users TO alice").kind(),
+            SqlStatementKind::Unknown
         ));
-        assert!(matches!(SqlStatement::classify(""), SqlStatement::Unknown));
+        assert!(matches!(SqlStatement::classify("").kind(), SqlStatementKind::Unknown));
     }
 
     #[test]
     fn test_is_datafusion_statement() {
-        assert!(SqlStatement::Select.is_datafusion_statement());
-        assert!(SqlStatement::Insert.is_datafusion_statement());
-        assert!(SqlStatement::Delete.is_datafusion_statement());
+        assert!(SqlStatement::new("SELECT".to_string(), SqlStatementKind::Select).is_datafusion_statement());
+        assert!(SqlStatement::new("INSERT".to_string(), SqlStatementKind::Insert(crate::ddl::InsertStatement)).is_datafusion_statement());
+        assert!(SqlStatement::new("DELETE".to_string(), SqlStatementKind::Delete(crate::ddl::DeleteStatement)).is_datafusion_statement());
         let create_table = SqlStatement::classify("CREATE TABLE test (id INT)");
         assert!(!create_table.is_datafusion_statement());
-        assert!(!SqlStatement::Update.is_datafusion_statement());
+        assert!(!SqlStatement::new("UPDATE".to_string(), SqlStatementKind::Update(crate::ddl::UpdateStatement)).is_datafusion_statement());
     }
 
     #[test]
@@ -716,8 +800,8 @@ mod tests {
         assert!(create_ns.is_custom_command());
         let flush = SqlStatement::classify("FLUSH TABLE test.users");  // Use full table name
         assert!(flush.is_custom_command());
-        assert!(SqlStatement::Update.is_custom_command());
-        assert!(!SqlStatement::Select.is_custom_command());
-        assert!(!SqlStatement::Insert.is_custom_command());
+        assert!(SqlStatement::new("UPDATE".to_string(), SqlStatementKind::Update(crate::ddl::UpdateStatement)).is_custom_command());
+        assert!(!SqlStatement::new("SELECT".to_string(), SqlStatementKind::Select).is_custom_command());
+        assert!(!SqlStatement::new("INSERT".to_string(), SqlStatementKind::Insert(crate::ddl::InsertStatement)).is_custom_command());
     }
 }

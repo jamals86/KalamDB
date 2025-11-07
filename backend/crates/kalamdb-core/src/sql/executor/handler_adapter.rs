@@ -100,6 +100,60 @@ where
     }
 }
 
+/// Adapter that bridges StatementHandler to SqlStatementHandler
+///
+/// This adapter wraps handlers that work directly with SqlStatement variants
+/// (like DML handlers for INSERT/UPDATE/DELETE) rather than typed AST.
+///
+/// # Type Parameters
+/// - `H`: The handler type implementing `StatementHandler`
+///
+/// # Example
+/// ```ignore
+/// let handler = InsertHandler::new(app_context);
+/// let adapter = DynamicHandlerAdapter::new(handler);
+/// registry.register(discriminant, Arc::new(adapter));
+/// ```
+pub struct DynamicHandlerAdapter<H>
+where
+    H: crate::sql::executor::handlers::StatementHandler,
+{
+    handler: H,
+}
+
+impl<H> DynamicHandlerAdapter<H>
+where
+    H: crate::sql::executor::handlers::StatementHandler,
+{
+    pub fn new(handler: H) -> Self {
+        Self { handler }
+    }
+}
+
+#[async_trait::async_trait]
+impl<H> SqlStatementHandler for DynamicHandlerAdapter<H>
+where
+    H: crate::sql::executor::handlers::StatementHandler + Send + Sync,
+{
+    async fn execute(
+        &self,
+        session: &SessionContext,
+        statement: SqlStatement,
+        params: Vec<ScalarValue>,
+        context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        self.handler.execute(session, statement, params, context).await
+    }
+
+    async fn check_authorization(
+        &self,
+        statement: &SqlStatement,
+        context: &ExecutionContext,
+    ) -> Result<(), KalamDbError> {
+        self.handler.check_authorization(statement, context).await
+    }
+}
+
 /// Macro to create an extractor function for a statement variant
 ///
 /// # Example
@@ -120,7 +174,8 @@ macro_rules! extract_statement {
 mod tests {
     use super::*;
     use crate::app_context::AppContext;
-    use crate::sql::executor::handlers::ddl_typed::CreateNamespaceHandler;
+    use crate::sql::executor::handlers::InsertHandler;
+    use crate::sql::executor::handlers::ddl::CreateNamespaceHandler;
     use crate::test_helpers::init_test_app_context;
     use kalamdb_commons::models::{NamespaceId, UserId};
     use kalamdb_commons::Role;
@@ -132,20 +187,25 @@ mod tests {
         let app_ctx = AppContext::get();
         let handler = CreateNamespaceHandler::new(app_ctx);
 
-        let adapter = TypedHandlerAdapter::new(handler, |stmt| match stmt {
-            SqlStatement::CreateNamespace(s) => Some(s),
+        let adapter = TypedHandlerAdapter::new(handler, |stmt| match stmt.kind() {
+            kalamdb_sql::statement_classifier::SqlStatementKind::CreateNamespace(s) => Some(s.clone()),
             _ => None,
         });
 
         let session = SessionContext::new();
         let ctx = ExecutionContext::new(UserId::from("test_user"), Role::Dba);
 
-        let stmt = SqlStatement::CreateNamespace(CreateNamespaceStatement {
-            name: NamespaceId::new("test_adapter_ns"),
-            if_not_exists: false,
-        });
+        let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(
+            "CREATE NAMESPACE test_adapter_ns".to_string(),
+            kalamdb_sql::statement_classifier::SqlStatementKind::CreateNamespace(CreateNamespaceStatement {
+                name: NamespaceId::new("test_adapter_ns"),
+                if_not_exists: false,
+            }),
+        );
 
-        let result = adapter.execute(&session, stmt, vec![], &ctx).await;
+        let result = adapter
+            .execute(&session, stmt, vec![], &ctx)
+            .await;
         assert!(result.is_ok());
     }
 
@@ -155,8 +215,8 @@ mod tests {
         let app_ctx = AppContext::get();
         let handler = CreateNamespaceHandler::new(app_ctx);
 
-        let adapter = TypedHandlerAdapter::new(handler, |stmt| match stmt {
-            SqlStatement::CreateNamespace(s) => Some(s),
+        let adapter = TypedHandlerAdapter::new(handler, |stmt| match stmt.kind() {
+            kalamdb_sql::statement_classifier::SqlStatementKind::CreateNamespace(s) => Some(s.clone()),
             _ => None,
         });
 
@@ -164,7 +224,10 @@ mod tests {
         let ctx = ExecutionContext::new(UserId::from("test_user"), Role::Dba);
 
         // Pass wrong statement type
-        let stmt = SqlStatement::Select;
+        let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(
+            "SELECT 1".to_string(),
+            kalamdb_sql::statement_classifier::SqlStatementKind::Select,
+        );
 
         let result = adapter.execute(&session, stmt, vec![], &ctx).await;
         assert!(result.is_err());
@@ -175,4 +238,27 @@ mod tests {
             _ => panic!("Expected InvalidOperation error"),
         }
     }
+
+    #[tokio::test]
+    async fn test_dynamic_adapter_insert() {
+        init_test_app_context();
+        let handler = InsertHandler::new();
+
+        let adapter = DynamicHandlerAdapter::new(handler);
+
+        let session = SessionContext::new();
+        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::User);
+
+        let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(
+            "INSERT INTO t VALUES (1)".to_string(),
+            kalamdb_sql::statement_classifier::SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement),
+        );
+
+        // Should execute (placeholder returns success for now)
+        let result = adapter
+            .execute(&session, stmt, vec![], &ctx)
+            .await;
+        assert!(result.is_ok());
+    }
 }
+

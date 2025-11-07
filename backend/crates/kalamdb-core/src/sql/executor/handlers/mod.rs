@@ -22,7 +22,6 @@ use kalamdb_sql::statement_classifier::SqlStatement;
 // Core types relocated to executor/models in v3
 pub mod authorization;
 pub mod ddl;
-pub mod ddl_typed; // Typed DDL handlers using parsed AST
 
 // Phase 7 (US3): New handlers
 // Legacy monolithic DML handler (to be split into dml/ submodules)
@@ -38,7 +37,7 @@ pub mod typed;
 // Re-export core types from executor/models for convenience
 pub use crate::sql::executor::models::{ExecutionContext, ExecutionMetadata, ExecutionResult, ScalarValue};
 // pub use authorization::AuthorizationHandler;
-pub use ddl::DDLHandler;
+// pub use ddl::DDLHandler; // DEPRECATED: Use modular ddl::namespace::*, ddl::storage::*, ddl::table::* instead
 
 // Phase 7 (US3): Re-export new handlers
 pub use dml::{InsertHandler, DeleteHandler, UpdateHandler};
@@ -49,7 +48,6 @@ pub use user_management::UserManagementHandler;
 // pub use table_registry::TableRegistryHandler; // removed
 pub use system_commands::SystemCommandsHandler;
 pub use typed::TypedStatementHandler;
-pub use ddl_typed::CreateNamespaceHandler;
 
 /// Common trait for SQL statement handlers
 ///
@@ -89,6 +87,7 @@ pub use ddl_typed::CreateNamespaceHandler;
 ///     }
 /// }
 /// ```
+/// TODO: Do we still need this? we have the newer  impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler {
 #[async_trait::async_trait]
 pub trait StatementHandler: Send + Sync {
     /// Execute a SQL statement with full context
@@ -96,6 +95,7 @@ pub trait StatementHandler: Send + Sync {
     /// # Arguments
     /// * `session` - DataFusion session context for query execution
     /// * `statement` - Parsed SQL statement (from kalamdb_sql)
+    /// * `sql_text` - Original SQL text (for DML handlers that need to parse SQL)
     /// * `params` - Parameter values for prepared statements (? placeholders)
     /// * `context` - Execution context (user, role, namespace, audit info)
     ///

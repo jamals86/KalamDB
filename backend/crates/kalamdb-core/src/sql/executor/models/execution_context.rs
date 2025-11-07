@@ -5,7 +5,7 @@ use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 
 /// Unified execution context for SQL queries
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ExecutionContext {
     /// User ID executing the query (public for backward compatibility)
     pub user_id: UserId,
@@ -35,7 +35,7 @@ impl ExecutionContext {
             ip_address: None,
             timestamp: SystemTime::now(),
             params: Vec::new(),
-            session: Arc::new(SessionContext::new()),
+            session: Arc::new(SessionContext::new())
         }
     }
 
@@ -48,7 +48,7 @@ impl ExecutionContext {
             ip_address: None,
             timestamp: SystemTime::now(),
             params: Vec::new(),
-            session: Arc::new(SessionContext::new()),
+            session: Arc::new(SessionContext::new())
         }
     }
 
@@ -67,7 +67,7 @@ impl ExecutionContext {
             ip_address,
             timestamp: SystemTime::now(),
             params: Vec::new(),
-            session: Arc::new(SessionContext::new()),
+            session: Arc::new(SessionContext::new())
         }
     }
 
@@ -80,7 +80,7 @@ impl ExecutionContext {
             ip_address: None,
             timestamp: SystemTime::now(),
             params: Vec::new(),
-            session: Arc::new(SessionContext::new()),
+            session: Arc::new(SessionContext::new())
         }
     }
 
@@ -93,4 +93,25 @@ impl ExecutionContext {
     pub fn request_id(&self) -> Option<&str> { self.request_id.as_deref() }
     pub fn ip_address(&self) -> Option<&str> { self.ip_address.as_deref() }
     pub fn timestamp(&self) -> SystemTime { self.timestamp }
+
+    // Builder methods for Phase 3
+    pub fn with_params(mut self, params: Vec<ScalarValue>) -> Self {
+        self.params = params;
+        self
+    }
+
+    pub fn with_session(mut self, session: Arc<SessionContext>) -> Self {
+        self.session = session;
+        self
+    }
+
+    pub fn with_request_id(mut self, request_id: String) -> Self {
+        self.request_id = Some(request_id);
+        self
+    }
+
+    pub fn with_ip(mut self, ip_address: String) -> Self {
+        self.ip_address = Some(ip_address);
+        self
+    }
 }
