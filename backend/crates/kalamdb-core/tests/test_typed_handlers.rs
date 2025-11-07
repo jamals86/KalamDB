@@ -30,9 +30,9 @@ async fn test_typed_handler_create_namespace() {
     assert!(result.is_ok(), "CREATE NAMESPACE should succeed");
     
     match result.unwrap() {
-        ExecutionResult::Success(msg) => {
-            assert!(msg.contains("integration_test_ns"));
-            assert!(msg.contains("created successfully"));
+        ExecutionResult::Success { message } => {
+            assert!(message.contains("integration_test_ns"));
+            assert!(message.contains("created successfully"));
         }
         _ => panic!("Expected Success result"),
     }

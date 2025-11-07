@@ -204,100 +204,126 @@ This is a Rust workspace project:
 
 **Independent Test**: Execute one statement from each category (DDL, DML, Flush, Jobs, Subscription, User, Transaction) via REST API, verify correct routing and authorization
 
-### DDL Handlers (14 handlers)
+### Namespace Handlers (4 handlers) - Migrate from ddl_legacy.rs
 
-**Note**: CreateNamespaceHandler already exists as reference implementation
+**Note**: CreateNamespaceHandler already implemented as reference (✅ COMPLETE)
 
-- [ ] T071 [P] [US6] Implement AlterNamespaceHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl/alter_namespace.rs`
-- [ ] T072 [P] [US6] Implement DropNamespaceHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl/drop_namespace.rs`
-- [ ] T073 [P] [US6] Implement ShowNamespacesHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl/show_namespaces.rs`
-- [ ] T074 [P] [US6] Implement CreateStorageHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl/create_storage.rs`
-- [ ] T075 [P] [US6] Implement AlterStorageHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl/alter_storage.rs`
-- [ ] T076 [P] [US6] Implement DropStorageHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl/drop_storage.rs`
-- [ ] T077 [P] [US6] Implement ShowStoragesHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl/show_storages.rs`
-- [ ] T078 [P] [US6] Implement CreateTableHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl/create_table.rs`
-- [ ] T079 [P] [US6] Implement AlterTableHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl/alter_table.rs`
-- [ ] T080 [P] [US6] Implement DropTableHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl/drop_table.rs`
-- [ ] T081 [P] [US6] Implement ShowTablesHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl/show_tables.rs`
-- [ ] T082 [P] [US6] Implement DescribeTableHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl/describe_table.rs`
-- [ ] T083 [P] [US6] Implement ShowStatsHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl/show_stats.rs`
+- [X] T071 [US6] CreateNamespaceHandler - ✅ COMPLETE (reference implementation in `handlers/namespace/create.rs`)
+- [ ] T072 [P] [US6] Migrate AlterNamespaceHandler logic from ddl_legacy.rs to `handlers/namespace/alter.rs` (impl TypedStatementHandler)
+- [ ] T073 [P] [US6] Migrate DropNamespaceHandler logic from ddl_legacy.rs (execute_drop_namespace) to `handlers/namespace/drop.rs` (impl TypedStatementHandler)
+- [ ] T074 [P] [US6] Migrate ShowNamespacesHandler logic to `handlers/namespace/show.rs` (impl TypedStatementHandler, use AppContext.system_tables().namespaces())
 
-### DDL Handler Registration
+### Storage Handlers (4 handlers) - Migrate from ddl_legacy.rs
 
-- [ ] T084 [US6] Register all DDL handlers in HandlerRegistry.new() with extractor closures
-- [ ] T085 [US6] Add DDL module re-exports in `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl/mod.rs`
+- [ ] T075 [P] [US6] Migrate CreateStorageHandler logic from ddl_legacy.rs (execute_create_storage) to `handlers/storage/create.rs` (impl TypedStatementHandler)
+- [ ] T076 [P] [US6] Migrate AlterStorageHandler logic to `handlers/storage/alter.rs` (impl TypedStatementHandler)
+- [ ] T077 [P] [US6] Migrate DropStorageHandler logic to `handlers/storage/drop.rs` (impl TypedStatementHandler)
+- [ ] T078 [P] [US6] Migrate ShowStoragesHandler logic to `handlers/storage/show.rs` (impl TypedStatementHandler, use AppContext.system_tables().storages())
 
-### DDL Handler Tests
+### Table Handlers (7 handlers) - Migrate from ddl_legacy.rs
 
-- [ ] T086 [P] [US6] Add unit tests for AlterNamespaceHandler (success + authorization)
-- [ ] T087 [P] [US6] Add unit tests for DropNamespaceHandler (success + authorization)
-- [ ] T088 [P] [US6] Add unit tests for ShowNamespacesHandler (success + authorization)
-- [ ] T089 [P] [US6] Add unit tests for CreateStorageHandler (success + authorization)
-- [ ] T090 [P] [US6] Add unit tests for AlterStorageHandler (success + authorization)
-- [ ] T091 [P] [US6] Add unit tests for DropStorageHandler (success + authorization)
-- [ ] T092 [P] [US6] Add unit tests for ShowStoragesHandler (success + authorization)
-- [ ] T093 [P] [US6] Add unit tests for CreateTableHandler (success + authorization)
-- [ ] T094 [P] [US6] Add unit tests for AlterTableHandler (success + authorization)
-- [ ] T095 [P] [US6] Add unit tests for DropTableHandler (success + authorization)
-- [ ] T096 [P] [US6] Add unit tests for ShowTablesHandler (success + authorization)
-- [ ] T097 [P] [US6] Add unit tests for DescribeTableHandler (success + authorization)
-- [ ] T098 [P] [US6] Add unit tests for ShowStatsHandler (success + authorization)
+**Note**: Table handlers are complex (445+ lines in ddl_legacy.rs) - split by table type (USER/SHARED/STREAM)
 
-### Flush Handlers (2 handlers)
+- [ ] T079 [US6] Migrate CreateTableHandler logic from ddl_legacy.rs (execute_create_table + create_user_table/create_shared_table/create_stream_table) to `handlers/table/create.rs` (~500 lines with helper methods)
+- [ ] T080 [US6] Migrate AlterTableHandler logic from ddl_legacy.rs (execute_alter_table, Phase 10.2 SchemaRegistry pattern) to `handlers/table/alter.rs` (impl TypedStatementHandler)
+- [ ] T081 [US6] Migrate DropTableHandler logic from ddl_legacy.rs (execute_drop_table + 6 helper methods) to `handlers/table/drop.rs` (~400 lines, Phase 9 JobsManager pattern)
+- [ ] T082 [P] [US6] Migrate ShowTablesHandler logic to `handlers/table/show.rs` (impl TypedStatementHandler, use SchemaRegistry.scan_namespace())
+- [ ] T083 [P] [US6] Migrate DescribeTableHandler logic to `handlers/table/describe.rs` (impl TypedStatementHandler, use SchemaRegistry.get_table_definition())
+- [ ] T084 [P] [US6] Migrate ShowStatsHandler logic to `handlers/table/show_stats.rs` (impl TypedStatementHandler)
 
-- [ ] T099 [P] [US6] Implement FlushTableHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/flush/flush_table.rs`
-- [ ] T100 [P] [US6] Implement FlushAllTablesHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/flush/flush_all_tables.rs`
-- [ ] T101 [US6] Register flush handlers in HandlerRegistry.new()
-- [ ] T102 [US6] Add flush module re-exports in `backend/crates/kalamdb-core/src/sql/executor/handlers/flush/mod.rs`
-- [ ] T103 [P] [US6] Add unit tests for FlushTableHandler (success + authorization)
-- [ ] T104 [P] [US6] Add unit tests for FlushAllTablesHandler (success + authorization + rows_affected count)
+### Handler Registration & Module Exports
 
-### Job Handlers (2 handlers)
+- [ ] T085 [US6] Register all namespace/storage/table handlers in HandlerRegistry::new() with extractor closures
+- [ ] T086 [US6] Update mod.rs files in namespace/, storage/, table/ directories to re-export all handlers
 
-- [ ] T105 [P] [US6] Implement KillJobHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/jobs/kill_job.rs`
-- [ ] T106 [P] [US6] Implement KillLiveQueryHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/jobs/kill_live_query.rs`
-- [ ] T107 [US6] Register job handlers in HandlerRegistry.new()
-- [ ] T108 [US6] Add jobs module re-exports in `backend/crates/kalamdb-core/src/sql/executor/handlers/jobs/mod.rs`
-- [ ] T109 [P] [US6] Add unit tests for KillJobHandler (success + authorization + self-service)
-- [ ] T110 [P] [US6] Add unit tests for KillLiveQueryHandler (success + authorization)
+### Handler Unit Tests (run after migration complete)
 
-### Subscription Handler (1 handler)
+- [ ] T087 [P] [US6] Add unit tests for AlterNamespaceHandler in alter.rs (success + authorization)
+- [ ] T088 [P] [US6] Add unit tests for DropNamespaceHandler in drop.rs (success + authorization + can_delete check)
+- [ ] T089 [P] [US6] Add unit tests for ShowNamespacesHandler in show.rs (success + authorization)
+- [ ] T090 [P] [US6] Add unit tests for CreateStorageHandler in create.rs (success + authorization + template validation)
+- [ ] T091 [P] [US6] Add unit tests for AlterStorageHandler in alter.rs (success + authorization)
+- [ ] T092 [P] [US6] Add unit tests for DropStorageHandler in drop.rs (success + authorization)
+- [ ] T093 [P] [US6] Add unit tests for ShowStoragesHandler in show.rs (success + authorization)
+- [ ] T094 [P] [US6] Add unit tests for CreateTableHandler in create.rs (success + USER/SHARED/STREAM table types + auto-increment injection)
+- [ ] T095 [P] [US6] Add unit tests for AlterTableHandler in alter.rs (success + authorization + SchemaRegistry usage)
+- [ ] T096 [P] [US6] Add unit tests for DropTableHandler in drop.rs (success + authorization + JobsManager integration + subscription check)
+- [ ] T097 [P] [US6] Add unit tests for ShowTablesHandler in show.rs (success + authorization)
+- [ ] T098 [P] [US6] Add unit tests for DescribeTableHandler in describe.rs (success + authorization)
+- [ ] T099 [P] [US6] Add unit tests for ShowStatsHandler in show_stats.rs (success + authorization)
 
-- [ ] T111 [US6] Implement SubscribeHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/subscription/subscribe.rs`
-- [ ] T112 [US6] Register SubscribeHandler in HandlerRegistry.new()
-- [ ] T113 [US6] Add subscription module re-exports in `backend/crates/kalamdb-core/src/sql/executor/handlers/subscription/mod.rs`
-- [ ] T114 [US6] Add unit tests for SubscribeHandler (success + authorization + subscription_id generation)
+### Flush Handlers (2 handlers) - Implement with JobsManager pattern
 
-### User Management Handlers (3 handlers)
+**Note**: These are NOT in ddl_legacy.rs - implement from scratch following Phase 9 patterns
 
-- [ ] T115 [P] [US6] Implement CreateUserHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/user/create_user.rs`
-- [ ] T116 [P] [US6] Implement AlterUserHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/user/alter_user.rs`
-- [ ] T117 [P] [US6] Implement DropUserHandler in `backend/crates/kalamdb-core/src/sql/executor/handlers/user/drop_user.rs`
-- [ ] T118 [US6] Register user handlers in HandlerRegistry.new()
-- [ ] T119 [US6] Add user module re-exports in `backend/crates/kalamdb-core/src/sql/executor/handlers/user/mod.rs`
-- [ ] T120 [P] [US6] Add unit tests for CreateUserHandler (success + authorization)
-- [ ] T121 [P] [US6] Add unit tests for AlterUserHandler (success + self-service password + admin-only role change)
-- [ ] T122 [P] [US6] Add unit tests for DropUserHandler (success + authorization)
+- [ ] T100 [P] [US6] Implement FlushTableHandler in `handlers/flush/flush_table.rs` (impl TypedStatementHandler, use JobsManager.create_job with JobType::Flush)
+- [ ] T101 [P] [US6] Implement FlushAllTablesHandler in `handlers/flush/flush_all_tables.rs` (impl TypedStatementHandler, use SchemaRegistry.scan_namespace + JobsManager)
+- [ ] T102 [US6] Register flush handlers in HandlerRegistry::new()
+- [ ] T103 [US6] Add flush module re-exports in `handlers/flush/mod.rs`
+- [ ] T104 [P] [US6] Add unit tests for FlushTableHandler (success + authorization + job creation)
+- [ ] T105 [P] [US6] Add unit tests for FlushAllTablesHandler (success + authorization + rows_affected count)
+
+### Job Handlers (2 handlers) - Implement with JobsManager pattern
+
+**Note**: These are NOT in ddl_legacy.rs - implement from scratch
+
+- [ ] T106 [P] [US6] Implement KillJobHandler in `handlers/jobs/kill_job.rs` (impl TypedStatementHandler, use JobsManager.cancel_job)
+- [ ] T107 [P] [US6] Implement KillLiveQueryHandler in `handlers/jobs/kill_live_query.rs` (impl TypedStatementHandler, use LiveQueryManager)
+- [ ] T108 [US6] Register job handlers in HandlerRegistry::new()
+- [ ] T109 [US6] Add jobs module re-exports in `handlers/jobs/mod.rs`
+- [ ] T110 [P] [US6] Add unit tests for KillJobHandler (success + authorization + self-service check)
+- [ ] T111 [P] [US6] Add unit tests for KillLiveQueryHandler (success + authorization)
+
+### Subscription Handler (1 handler) - Implement with LiveQueryManager
+
+**Note**: This is NOT in ddl_legacy.rs - implement from scratch
+
+- [ ] T112 [US6] Implement SubscribeHandler in `handlers/subscription/subscribe.rs` (impl TypedStatementHandler, use LiveQueryManager)
+- [ ] T113 [US6] Register SubscribeHandler in HandlerRegistry::new()
+- [ ] T114 [US6] Add subscription module re-exports in `handlers/subscription/mod.rs`
+- [ ] T115 [US6] Add unit tests for SubscribeHandler (success + authorization + subscription_id generation)
+
+### User Management Handlers (3 handlers) - Implement from scratch
+
+**Note**: These are NOT in ddl_legacy.rs - implement from scratch with bcrypt/JWT patterns
+
+- [ ] T116 [P] [US6] Implement CreateUserHandler in `handlers/user/create.rs` (impl TypedStatementHandler, use AppContext.system_tables().users(), bcrypt password hashing)
+- [ ] T117 [P] [US6] Implement AlterUserHandler in `handlers/user/alter.rs` (impl TypedStatementHandler, self-service password change + admin-only role change)
+- [ ] T118 [P] [US6] Implement DropUserHandler in `handlers/user/drop.rs` (impl TypedStatementHandler, soft delete with deleted_at timestamp)
+- [ ] T119 [US6] Register user handlers in HandlerRegistry::new()
+- [ ] T120 [US6] Add user module re-exports in `handlers/user/mod.rs`
+- [ ] T121 [P] [US6] Add unit tests for CreateUserHandler (success + authorization + password validation)
+- [ ] T122 [P] [US6] Add unit tests for AlterUserHandler (success + self-service password + admin-only role change)
+- [ ] T123 [P] [US6] Add unit tests for DropUserHandler (success + authorization + soft delete)
 
 ### Transaction Handlers (3 handlers - placeholders)
 
-- [ ] T123 [P] [US6] Implement BeginTransactionHandler (returns NotImplemented) in `backend/crates/kalamdb-core/src/sql/executor/handlers/transaction/begin.rs`
-- [ ] T124 [P] [US6] Implement CommitTransactionHandler (returns NotImplemented) in `backend/crates/kalamdb-core/src/sql/executor/handlers/transaction/commit.rs`
-- [ ] T125 [P] [US6] Implement RollbackTransactionHandler (returns NotImplemented) in `backend/crates/kalamdb-core/src/sql/executor/handlers/transaction/rollback.rs`
-- [ ] T126 [US6] Register transaction handlers in HandlerRegistry.new()
-- [ ] T127 [US6] Add transaction module re-exports in `backend/crates/kalamdb-core/src/sql/executor/handlers/transaction/mod.rs`
-- [ ] T128 [P] [US6] Add unit tests for transaction handlers (verify NotImplemented error with "Phase 11" message)
+**Note**: Return NotImplemented with "Transaction support planned for Phase 11" message
+
+- [ ] T124 [P] [US6] Implement BeginTransactionHandler (returns KalamDbError::NotImplemented) in `handlers/transaction/begin.rs`
+- [ ] T125 [P] [US6] Implement CommitTransactionHandler (returns KalamDbError::NotImplemented) in `handlers/transaction/commit.rs`
+- [ ] T126 [P] [US6] Implement RollbackTransactionHandler (returns KalamDbError::NotImplemented) in `handlers/transaction/rollback.rs`
+- [ ] T127 [US6] Register transaction handlers in HandlerRegistry::new()
+- [ ] T128 [US6] Add transaction module re-exports in `handlers/transaction/mod.rs`
+- [ ] T129 [P] [US6] Add unit tests for transaction handlers (verify NotImplemented error with "Phase 11" message)
+
+### Legacy Code Cleanup
+
+- [ ] T130 [US6] Delete ddl_legacy.rs after all handler migrations verified complete (⚠️ DO THIS LAST - only after T072-T084 complete)
+- [ ] T131 [US6] Remove any remaining references to ddl_legacy.rs from imports/mod.rs files
 
 ### Integration Tests
 
-- [ ] T129 [US6] Add integration test for DDL handlers in `backend/tests/integration/test_ddl_handlers.rs`
-- [ ] T130 [US6] Add integration test for flush handlers in `backend/tests/integration/test_flush_handlers.rs`
-- [ ] T131 [US6] Add integration test for job handlers in `backend/tests/integration/test_job_handlers.rs`
-- [ ] T132 [US6] Add integration test for subscription handler in `backend/tests/integration/test_subscription_handler.rs`
-- [ ] T133 [US6] Add integration test for user handlers in `backend/tests/integration/test_user_handlers.rs`
-- [ ] T134 [US6] Add integration test for transaction handlers (verify 501 NotImplemented) in `backend/tests/integration/test_transaction_handlers.rs`
+- [ ] T132 [US6] Add integration test for namespace handlers in `backend/tests/integration/test_namespace_handlers.rs` (CREATE/ALTER/DROP/SHOW)
+- [ ] T133 [US6] Add integration test for storage handlers in `backend/tests/integration/test_storage_handlers.rs` (CREATE/ALTER/DROP/SHOW)
+- [ ] T134 [US6] Add integration test for table handlers in `backend/tests/integration/test_table_handlers.rs` (CREATE/ALTER/DROP/SHOW/DESCRIBE all 3 types)
+- [ ] T135 [US6] Add integration test for flush handlers in `backend/tests/integration/test_flush_handlers.rs` (FLUSH TABLE/ALL TABLES)
+- [ ] T136 [US6] Add integration test for job handlers in `backend/tests/integration/test_job_handlers.rs` (KILL JOB/LIVE QUERY)
+- [ ] T137 [US6] Add integration test for subscription handler in `backend/tests/integration/test_subscription_handler.rs` (SUBSCRIBE)
+- [ ] T138 [US6] Add integration test for user handlers in `backend/tests/integration/test_user_handlers.rs` (CREATE/ALTER/DROP USER)
+- [ ] T139 [US6] Add integration test for transaction handlers (verify 501 NotImplemented) in `backend/tests/integration/test_transaction_handlers.rs`
 
-**Checkpoint**: User Story 6 complete - all 28 handlers implemented and tested
+**Checkpoint**: User Story 6 complete - all 28 handlers implemented and tested (⚠️ Verify ddl_legacy.rs deleted before marking complete)
 
 ---
 
@@ -435,29 +461,55 @@ With multiple developers after Foundational phase complete:
 
 ## Task Count Summary
 
-- **Phase 1 (Setup)**: 9 tasks
+- **Phase 1 (Setup)**: 9 tasks (✅ COMPLETE - directory structure exists)
 - **Phase 2 (Foundational)**: 23 tasks (BLOCKING)
 - **Phase 3 (US1)**: 6 tasks
 - **Phase 4 (US2)**: 9 tasks
 - **Phase 5 (US3)**: 4 tasks
 - **Phase 6 (US4)**: 10 tasks
 - **Phase 7 (US5)**: 9 tasks
-- **Phase 8 (US6)**: 64 tasks (largest phase - all handlers)
+- **Phase 8 (US6)**: 70 tasks (migration + implementation + cleanup)
+  - Handler migrations: 13 tasks (namespace/storage/table from ddl_legacy.rs)
+  - Handler implementations: 16 tasks (flush/jobs/subscription/user/transaction)
+  - Registration & exports: 2 tasks
+  - Unit tests: 27 tasks
+  - Integration tests: 8 tasks
+  - Legacy cleanup: 2 tasks (delete ddl_legacy.rs)
+  - DML handlers (T052-T061): Already created/complete (10 tasks)
 - **Phase 9 (Polish)**: 11 tasks
 
-**Total**: 145 tasks
+**Total**: 151 tasks (was 145, +6 for explicit migration tasks and legacy cleanup)
 
 **Parallel Opportunities**: 
-- Phase 1: 8 tasks parallelizable
+- Phase 1: 8 tasks parallelizable (✅ COMPLETE)
 - Phase 2: 12 tasks parallelizable
 - Phase 4: 2 tasks parallelizable
 - Phase 5: 2 tasks parallelizable
-- Phase 6: 7 tasks parallelizable
+- Phase 6: 7 tasks parallelizable (✅ COMPLETE - DML handlers exist)
 - Phase 7: 6 tasks parallelizable
-- Phase 8: 51 tasks parallelizable (DDL handlers + tests + other categories)
+- Phase 8: 45 tasks parallelizable (handler migrations + implementations + unit tests)
 - Phase 9: 6 tasks parallelizable
 
-**Total Parallelizable**: 94 tasks (65% of all tasks)
+**Total Parallelizable**: 88 tasks (58% of all tasks)
+
+**Critical Path for Phase 8 (US6)**:
+1. Migrate all handlers from ddl_legacy.rs (T072-T084) - 13 tasks - MUST complete first
+2. Implement new handlers (flush/jobs/subscription/user/transaction) (T100-T129) - 30 tasks - can run in parallel with migrations
+3. Registration & exports (T085-T086) - 2 tasks - depends on handler completion
+4. Unit tests (T087-T129) - 43 tasks total - can run in parallel after handlers done
+5. Integration tests (T132-T139) - 8 tasks - can run in parallel after handlers done
+6. Delete ddl_legacy.rs (T130-T131) - 2 tasks - MUST be last (after all migrations verified)
+
+**Migration Priority** (Phase 8):
+- **High Priority** (blocking other work):
+  - T079: CreateTableHandler (445+ lines, complex, needed for integration tests)
+  - T081: DropTableHandler (400+ lines, JobsManager integration pattern)
+  - T073: DropNamespaceHandler (needed for namespace tests)
+- **Medium Priority** (simpler migrations):
+  - T072, T074, T075-T078: Namespace/Storage handlers (~50-100 lines each)
+  - T080, T082-T084: Alter/Show handlers (straightforward CRUD)
+- **Low Priority** (implement from scratch, not migrations):
+  - T100-T129: Flush/Jobs/Subscription/User/Transaction handlers (no legacy code to migrate)
 
 ---
 
@@ -466,11 +518,15 @@ With multiple developers after Foundational phase complete:
 - [P] tasks = different files, no dependencies - can run in parallel
 - [Story] label maps task to specific user story (US1-US6) for traceability
 - Each user story should be independently testable at its checkpoint
-- CreateNamespaceHandler exists as reference implementation (follow its pattern)
-- All handlers use Arc<AppContext> pattern (Phase 10 architecture)
-- All handlers use SchemaRegistry for 50-100× faster schema lookups (no SQL queries)
-- DML handlers delegate to execute_via_datafusion with ScalarValue parameters
-- Transaction handlers return NotImplemented until Phase 11 transaction manager
-- Commit after each logical group of tasks
-- Stop at any checkpoint to validate story independently
-- US6 is the largest phase (64 tasks) - can parallelize 13 DDL + 2 flush + 2 job + 1 subscription + 3 user + 3 transaction = 24 handlers
+- **Migration Strategy**: Copy logic from ddl_legacy.rs → individual handlers → delete ddl_legacy.rs (T130-T131 LAST)
+- **Reference Implementation**: CreateNamespaceHandler in handlers/namespace/create.rs (✅ COMPLETE - follow this pattern)
+- **Required Pattern**: All handlers MUST use `impl TypedStatementHandler` trait
+- **Data Access**: All handlers use Arc<AppContext> pattern (Phase 10 architecture)
+- **Schema Access**: All handlers use SchemaRegistry for 50-100× faster schema lookups (no SQL queries)
+- **DML Delegation**: DML handlers (INSERT/UPDATE/DELETE) delegate to execute_via_datafusion with ScalarValue parameters
+- **Transaction Placeholders**: Transaction handlers return KalamDbError::NotImplemented until Phase 11 transaction manager
+- **Job Integration**: Flush/Job handlers use Phase 9 UnifiedJobManager with typed JobIds and idempotency
+- **Commit Strategy**: Commit after each logical group of tasks (per handler or per category)
+- **Checkpoint Validation**: Stop at any checkpoint to validate story independently
+- **Phase 8 Size**: Largest phase (70 tasks) - focus on migrations first (T072-T084), then new handlers
+- **⚠️ CRITICAL**: Do NOT delete ddl_legacy.rs until ALL handler migrations (T072-T084) are complete and tested

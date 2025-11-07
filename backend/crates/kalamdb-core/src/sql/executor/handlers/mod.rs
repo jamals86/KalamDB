@@ -23,6 +23,8 @@ use kalamdb_sql::statement_classifier::SqlStatement;
 pub mod authorization;
 
 // Typed handlers organized by category
+pub mod namespace;
+pub mod storage;
 pub mod table;
 pub mod dml;
 pub mod flush;

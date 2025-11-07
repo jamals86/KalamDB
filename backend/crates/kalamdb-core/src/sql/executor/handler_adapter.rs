@@ -174,7 +174,7 @@ macro_rules! extract_statement {
 mod tests {
     use super::*;
     use crate::app_context::AppContext;
-    use crate::sql::executor::handlers::InsertHandler;
+    use crate::sql::executor::handlers::namespace::CreateNamespaceHandler;
     use crate::test_helpers::init_test_app_context;
     use kalamdb_commons::models::{NamespaceId, UserId};
     use kalamdb_commons::Role;
@@ -222,10 +222,10 @@ mod tests {
         let session = SessionContext::new();
         let ctx = ExecutionContext::new(UserId::from("test_user"), Role::Dba);
 
-        // Pass wrong statement type
+        // Pass wrong statement type (ShowNamespaces instead of CreateNamespace)
         let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(
-            "SELECT 1".to_string(),
-            kalamdb_sql::statement_classifier::SqlStatementKind::Select,
+            "SHOW NAMESPACES".to_string(),
+            kalamdb_sql::statement_classifier::SqlStatementKind::ShowNamespaces(kalamdb_sql::ddl::ShowNamespacesStatement),
         );
 
         let result = adapter.execute(&session, stmt, vec![], &ctx).await;
@@ -238,26 +238,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_dynamic_adapter_insert() {
-        init_test_app_context();
-        let handler = InsertHandler::new();
-
-        let adapter = DynamicHandlerAdapter::new(handler);
-
-        let session = SessionContext::new();
-        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::User);
-
-        let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(
-            "INSERT INTO t VALUES (1)".to_string(),
-            kalamdb_sql::statement_classifier::SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement),
-        );
-
-        // Should execute (placeholder returns success for now)
-        let result = adapter
-            .execute(&session, stmt, vec![], &ctx)
-            .await;
-        assert!(result.is_ok());
-    }
+    // NOTE: DynamicHandlerAdapter test removed - DML handlers now use TypedStatementHandler pattern
+    // and no longer implement StatementHandler trait. The test_generic_adapter test above demonstrates
+    // the TypedHandlerAdapter pattern which is the new approach.
 }
 

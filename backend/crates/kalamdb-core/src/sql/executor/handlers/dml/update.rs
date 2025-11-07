@@ -72,10 +72,7 @@ mod tests {
     async fn test_update_authorization_user() {
         let handler = UpdateHandler::new();
         let ctx = test_context(Role::User);
-        let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(
-            "UPDATE t SET x = 1".to_string(),
-            kalamdb_sql::statement_classifier::SqlStatementKind::Update(kalamdb_sql::ddl::UpdateStatement),
-        );
+        let stmt = kalamdb_sql::ddl::UpdateStatement; // Typed statement marker
 
         let result = handler.check_authorization(&stmt, &ctx).await;
         assert!(result.is_ok());
@@ -85,10 +82,7 @@ mod tests {
     async fn test_update_authorization_dba() {
         let handler = UpdateHandler::new();
         let ctx = test_context(Role::Dba);
-        let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(
-            "UPDATE t SET x = 1".to_string(),
-            kalamdb_sql::statement_classifier::SqlStatementKind::Update(kalamdb_sql::ddl::UpdateStatement),
-        );
+        let stmt = kalamdb_sql::ddl::UpdateStatement;
 
         let result = handler.check_authorization(&stmt, &ctx).await;
         assert!(result.is_ok());
@@ -98,34 +92,15 @@ mod tests {
     async fn test_update_authorization_service() {
         let handler = UpdateHandler::new();
         let ctx = test_context(Role::Service);
-        let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(
-            "UPDATE t SET x = 1".to_string(),
-            kalamdb_sql::statement_classifier::SqlStatementKind::Update(kalamdb_sql::ddl::UpdateStatement),
-        );
+        let stmt = kalamdb_sql::ddl::UpdateStatement;
 
         let result = handler.check_authorization(&stmt, &ctx).await;
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
-    async fn test_update_wrong_statement_type() {
-        let handler = UpdateHandler::new();
-        let ctx = test_context(Role::User);
-        let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(
-            "SELECT 1".to_string(),
-            kalamdb_sql::statement_classifier::SqlStatementKind::Select,
-        ); // Wrong type
-
-        let result = handler.check_authorization(&stmt, &ctx).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            KalamDbError::InvalidOperation(msg) => {
-                assert!(msg.contains("non-UPDATE"));
-            }
-            _ => panic!("Expected InvalidOperation error"),
-        }
-    }
-
-    // Note: Actual UPDATE execution tests require table creation and SQL text,
+    // Note: TypedStatementHandler pattern doesn't require wrong-type checking -
+    // type safety is enforced at compile time by the type parameter.
+    //
+    // Actual UPDATE execution tests require table creation and SQL text parsing,
     // which are better suited for integration tests in Phase 7.
 }
