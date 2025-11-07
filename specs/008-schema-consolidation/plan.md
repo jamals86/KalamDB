@@ -89,7 +89,7 @@ backend/
 │   │   │   │   │   ├── schemas/  # NEW: EntityStore<TableId, TableDefinition>
 │   │   │   │   │   │   ├── mod.rs
 │   │   │   │   │   │   ├── table_schema_store.rs
-│   │   │   │   │   │   └── schema_cache.rs  # DashMap-based cache
+│   │   │   │   │   │   └── registry.rs  # DashMap-based cache
 │   │   │   │   │   ├── tables_v2/  # DELETE: Obsolete with new schema store
 │   │   │   │   │   └── information_*.rs  # DELETE: Obsolete files
 │   │   │   │   ├── arrow_json_conversion.rs  # UPDATE: Use KalamDataType conversions
@@ -410,7 +410,7 @@ Eliminate redundant `storage_location` field from both `SystemTable` and `TableM
 
 #### Existing Infrastructure
 
-**SchemaCache** (`backend/crates/kalamdb-core/src/tables/system/schemas/schema_cache.rs`):
+**SchemaCache** (`backend/crates/kalamdb-core/src/tables/system/schemas/registry.rs`):
 - DashMap-based cache for `TableDefinition` (schema-only)
 - LRU eviction policy, metrics tracking
 - ~440 lines, fully implemented in Phase 3
@@ -677,9 +677,1562 @@ Field::new("storage_id", DataType::Utf8, true),
 
 ---
 
-**Plan Updated**: 2025-11-02  
+## User Story 10 - SQL Executor Refactoring (Priority: P0)
+
+### Overview
+
+**Goal**: Refactor monolithic SQL executor (4,956 lines) into modular handler architecture with single-pass parsing, authorization gateway, and type-safe routing.
+
+**Current State**:
+- `backend/crates/kalamdb-core/src/sql/executor.rs`: All SQL execution logic in one file
+- Statement parsing happens multiple times (in classify + handlers)
+- Authorization checks scattered across individual operations
+- No parameterized query support
+- Manual statement classification (duplicate SqlStatement enum from kalamdb-sql)
+
+**Target Architecture**:
+```
+backend/crates/kalamdb-core/src/sql/executor/
+├── mod.rs                       (orchestrator, ~300 lines)
+└── handlers/
+    ├── types.rs                 (ExecutionResult, ExecutionContext, ParamValue)
+    ├── authorization.rs         (check_authorization gateway)
+    ├── transaction.rs           (BEGIN, COMMIT, ROLLBACK)
+    ├── ddl.rs                   (CREATE, ALTER, DROP tables/namespaces/storages)
+    ├── dml.rs                   (INSERT, UPDATE, DELETE)
+    ├── query.rs                 (SELECT, DESCRIBE, SHOW)
+    ├── flush.rs                 (FLUSH TABLE)
+    ├── subscription.rs          (LIVE SELECT)
+    ├── user_management.rs       (CREATE/ALTER/DROP USER)
+    ├── table_registry.rs        (REGISTER/UNREGISTER TABLE)
+    ├── system_commands.rs       (VACUUM, OPTIMIZE, ANALYZE)
+    ├── helpers.rs               (Common utilities)
+    ├── audit.rs                 (Audit logging)
+    └── mod.rs                   (Handler exports)
+```
+
+**Key Principles**:
+1. **Single-Pass Parsing**: Parse SQL once via kalamdb_sql, pass Statement to handlers
+2. **Authorization Gateway**: Fail-fast security check before routing
+3. **Type-Safe Routing**: Use kalamdb_sql::SqlStatement enum (30+ variants already exist!)
+4. **Parameter Binding**: Support `?` placeholders via `params: Vec<ParamValue>`
+5. **Namespace Extraction**: Extract NamespaceId from statement, fallback if not specified
+6. **Type-Safe Identifiers**: Use NamespaceId, UserId, TableName, TableId (NOT strings!)
+7. **DataFusion Caching**: Investigate built-in query caching (v40.0+) before custom implementation
+
+**Dependencies**:
+- **User Story 8**: SchemaRegistry for cache invalidation integration
+- **AppContext**: Dependency injection for all handlers
+- **kalamdb-sql crate**: SqlStatement enum, parser, QueryCache (existing infrastructure)
+
+### Phase 1: Directory Structure & Type Extraction (Day 1 - 3 hours)
+
+**Goal**: Create executor/ directory structure and extract shared types without changing behavior
+
+**Files to Create**:
+- `backend/crates/kalamdb-core/src/sql/executor/mod.rs` (move from executor.rs)
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/types.rs`
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/mod.rs`
+
+**Changes**:
+```rust
+// handlers/types.rs (NEW FILE)
+use kalamdb_commons::{NamespaceId, UserId, TableName, TableId, StorageId, JobId, Role};
+use kalamdb_sql::statement_classifier::SqlStatement; // Import from kalamdb-sql!
+
+/// Execution result (unchanged from current executor)
+pub type ExecutionResult = Result<DataFrame, KalamDbError>;
+
+/// Unified execution context for SQL queries and DataFusion sessions
+/// 
+/// **IMPORTANT**: This struct consolidates the previous `ExecutionContext` and 
+/// `KalamSessionState` to eliminate duplication. It contains ALL context needed for:
+/// - SQL executor authorization (user_id, user_role)
+/// - DataFusion session creation (namespace_id)
+/// - Audit logging (request_id, ip_address, timestamp)
+///
+/// This single struct is used for BOTH creating DataFusion SessionContext 
+/// AND executing SQL statements with authorization checks.
+#[derive(Debug, Clone)]
+pub struct ExecutionContext {
+    /// User ID executing the query (type-safe wrapper)
+    pub user_id: UserId,
+    
+    /// User role for authorization checks (User, Service, Dba, System)
+    pub user_role: Role,
+    
+    /// Namespace for the query (for DataFusion catalog context)
+    /// This was previously in KalamSessionState, now consolidated here
+    pub namespace_id: NamespaceId,
+    
+    /// Optional request ID for distributed tracing and audit logging
+    pub request_id: Option<String>,
+    
+    /// Optional client IP address for audit logging
+    pub ip_address: Option<String>,
+    
+    /// Timestamp when the context was created
+    pub timestamp: SystemTime,
+}
+
+impl ExecutionContext {
+    /// Create a new execution context with all required fields
+    pub fn new(
+        user_id: UserId,
+        user_role: Role,
+        namespace_id: NamespaceId,
+    ) -> Self {
+        Self {
+            user_id,
+            user_role,
+            namespace_id,
+            request_id: None,
+            ip_address: None,
+            timestamp: SystemTime::now(),
+        }
+    }
+    
+    /// Create with optional audit fields
+    pub fn with_audit_info(
+        user_id: UserId,
+        user_role: Role,
+        namespace_id: NamespaceId,
+        request_id: Option<String>,
+        ip_address: Option<String>,
+    ) -> Self {
+        Self {
+            user_id,
+            user_role,
+            namespace_id,
+            request_id,
+            ip_address,
+            timestamp: SystemTime::now(),
+        }
+    }
+    
+    /// Create an anonymous execution context with User role
+    pub fn anonymous(namespace_id: NamespaceId) -> Self {
+        Self {
+            user_id: UserId::from("anonymous"),
+            user_role: Role::User,
+            namespace_id,
+            request_id: None,
+            ip_address: None,
+            timestamp: SystemTime::now(),
+        }
+    }
+    
+    /// Check if the user is an administrator (Dba or System role)
+    pub fn is_admin(&self) -> bool {
+        matches!(self.user_role, Role::Dba | Role::System)
+    }
+    
+    /// Check if the user is a system user
+    pub fn is_system(&self) -> bool {
+        matches!(self.user_role, Role::System)
+    }
+}
+
+/// Execution metadata (unchanged from current executor)
+pub struct ExecutionMetadata {
+    pub rows_affected: u64,
+    pub execution_time_ms: u64,
+    pub statement_type: SqlStatement, // Use kalamdb-sql enum
+}
+
+/// Parameter values for prepared statements (NEW)
+#[derive(Debug, Clone)]
+pub enum ParamValue {
+    Int(i32),
+    BigInt(i64),
+    Float(f32),
+    Double(f64),
+    Text(String),
+    Boolean(bool),
+    Null,
+}
+
+// handlers/mod.rs (NEW FILE)
+pub mod types;
+
+pub use types::{ExecutionResult, ExecutionContext, ExecutionMetadata, ParamValue};
+```
+
+**executor/mod.rs Changes**:
+```rust
+// BEFORE:
+pub struct SqlExecutor { /* ... */ }
+
+impl SqlExecutor {
+    pub async fn execute_with_metadata(
+        &self,
+        sql: &str,
+        namespace: &str, // WRONG: String slice
+        execution_context: &ExecutionContext,
+    ) -> Result<(ExecutionResult, ExecutionMetadata), KalamDbError> {
+        // ... existing implementation
+    }
+}
+
+// AFTER:
+use kalamdb_sql::statement_classifier::SqlStatement;
+
+mod handlers;
+pub use handlers::{ExecutionResult, ExecutionContext, ExecutionMetadata, ParamValue};
+
+pub struct SqlExecutor {
+    kalam_sql: Arc<KalamSql>,
+    // ... existing fields
+}
+
+impl SqlExecutor {
+    /// Execute SQL with metadata (refactored signature)
+    pub async fn execute_with_metadata(
+        &self,
+        session: &SessionContext,
+        sql: &str,
+        params: Vec<ParamValue>,                    // NEW: Parameter binding
+        fallback_namespace: Option<NamespaceId>,   // CHANGED: Type-safe + optional
+        execution_context: &ExecutionContext,
+    ) -> Result<(ExecutionResult, ExecutionMetadata), KalamDbError> {
+        // Step 1: Fast classification (before full parse)
+        let stmt_type = SqlStatement::classify(sql);
+        
+        // Step 2: Parse SQL ONCE (single-pass parsing)
+        let statement = self.kalam_sql.parse_statement(sql)?;
+        
+        // Step 3: Extract namespace from statement (with fallback)
+        let namespace_id = statement.extract_namespace()
+            .or(fallback_namespace)
+            .ok_or_else(|| KalamDbError::MissingNamespace(
+                "Statement must specify namespace or provide fallback".to_string()
+            ))?;
+        
+        // TODO: Step 4 (Phase 3): Authorization gateway
+        // TODO: Step 5 (Phase 4-8): Route to handlers
+        
+        // Temporary: Keep existing implementation for now
+        self.execute_internal(session, sql, execution_context).await
+    }
+}
+```
+
+**Tests**:
+- Existing tests should pass unchanged (internal refactoring only)
+- Add test: `test_execute_with_metadata_signature()` verifies new params parameter
+- Add test: `test_namespace_extraction_from_statement()` verifies NamespaceId extraction
+- Add test: `test_namespace_fallback()` verifies fallback mechanism
+
+**Deliverable**: Directory structure created, types extracted, execute_with_metadata() signature updated, all existing tests pass
+
+**Migration Note - ExecutionContext Consolidation**:
+
+**Previous Duplication**:
+- `ExecutionContext` (executor.rs): Had `user_id` + `user_role` (missing `namespace_id`)
+- `KalamSessionState` (datafusion_session.rs): Had `user_id` + `namespace_id` (missing `user_role`)
+
+**Solution**: 
+- **Consolidated** both structs into single `ExecutionContext` with ALL fields
+- **Fields**: `user_id`, `user_role`, `namespace_id`, `request_id`, `ip_address`, `timestamp`
+- **Benefits**: One struct for BOTH DataFusion session creation AND SQL authorization
+- **Migration**: Update `DataFusionSessionFactory::create_session_for_user()` to use `ExecutionContext` instead of `KalamSessionState`
+- **Deprecation**: `KalamSessionState` will be removed in Phase 1
+
+This eliminates duplication and provides complete context for both query execution and session management.
+
+### Phase 2: Statement Classification Integration (Day 1 - 2 hours)
+
+**Goal**: Replace manual statement classification with kalamdb_sql::SqlStatement enum
+
+**Files to Modify**:
+- `backend/crates/kalamdb-core/src/sql/executor/mod.rs`
+
+**Changes**:
+```rust
+// BEFORE (manual classification):
+let stmt_type = if sql.trim_start().to_uppercase().starts_with("SELECT") {
+    "SELECT"
+} else if sql.trim_start().to_uppercase().starts_with("INSERT") {
+    "INSERT"
+} // ... 30+ more manual checks
+
+// AFTER (use kalamdb-sql):
+use kalamdb_sql::statement_classifier::SqlStatement;
+
+let stmt_type = SqlStatement::classify(sql); // Fast classification (~10 lines)
+
+// stmt_type is now SqlStatement enum with 30+ variants:
+// SqlStatement::Select, SqlStatement::Insert, SqlStatement::CreateTable, etc.
+```
+
+**Benefits**:
+- Remove ~200 lines of duplicate classification code
+- Use battle-tested kalamdb-sql infrastructure
+- Consistent classification across codebase
+- Add new statement types in one place (kalamdb-sql)
+
+**Tests**:
+- Verify SqlStatement::classify() returns correct variant for all statement types
+- Test coverage: SELECT, INSERT, UPDATE, DELETE, CREATE TABLE, ALTER TABLE, DROP TABLE, BEGIN, COMMIT, ROLLBACK, FLUSH, LIVE SELECT, CREATE USER, etc.
+
+**Deliverable**: Manual classification code removed, kalamdb-sql SqlStatement enum used throughout, all tests pass
+
+### Phase 3: Authorization Gateway (Day 2 - 3 hours)
+
+**Goal**: Extract authorization logic into dedicated handler, enforce fail-fast security
+
+**Files to Create**:
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/authorization.rs`
+
+**Files to Modify**:
+- `backend/crates/kalamdb-core/src/sql/executor/mod.rs`
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/mod.rs`
+
+**Changes**:
+```rust
+// handlers/authorization.rs (NEW FILE)
+use kalamdb_commons::{NamespaceId, UserId, UserRole, TableName};
+use kalamdb_sql::{SqlStatement, Statement};
+
+pub struct AuthorizationHandler;
+
+impl AuthorizationHandler {
+    /// Check authorization BEFORE executing statement (fail-fast gateway)
+    pub fn check_authorization(
+        stmt_type: &SqlStatement,
+        statement: &Statement,
+        namespace_id: &NamespaceId,
+        execution_context: &ExecutionContext,
+    ) -> Result<(), KalamDbError> {
+        // System namespace: Only 'dba' and 'system' roles
+        if namespace_id.as_str() == "system" {
+            match execution_context.role {
+                UserRole::System | UserRole::Dba => Ok(()),
+                _ => Err(KalamDbError::InsufficientPermissions(
+                    "Only 'dba' and 'system' roles can access system namespace".to_string()
+                ))
+            }?;
+        }
+        
+        // DDL operations: Require 'dba' or 'system' role
+        match stmt_type {
+            SqlStatement::CreateTable | SqlStatement::AlterTable | SqlStatement::DropTable
+            | SqlStatement::CreateNamespace | SqlStatement::DropNamespace
+            | SqlStatement::CreateStorage | SqlStatement::AlterStorage => {
+                match execution_context.role {
+                    UserRole::System | UserRole::Dba => Ok(()),
+                    _ => Err(KalamDbError::InsufficientPermissions(
+                        format!("Role '{}' cannot execute DDL statements", execution_context.role)
+                    ))
+                }?;
+            }
+            _ => {} // DML/queries allowed for all roles
+        }
+        
+        // User management: Only 'system' role
+        match stmt_type {
+            SqlStatement::CreateUser | SqlStatement::AlterUser | SqlStatement::DropUser => {
+                if execution_context.role != UserRole::System {
+                    return Err(KalamDbError::InsufficientPermissions(
+                        "Only 'system' role can manage users".to_string()
+                    ));
+                }
+            }
+            _ => {}
+        }
+        
+        Ok(())
+    }
+}
+
+// executor/mod.rs (MODIFIED)
+impl SqlExecutor {
+    pub async fn execute_with_metadata(
+        &self,
+        session: &SessionContext,
+        sql: &str,
+        params: Vec<ParamValue>,
+        fallback_namespace: Option<NamespaceId>,
+        execution_context: &ExecutionContext,
+    ) -> Result<(ExecutionResult, ExecutionMetadata), KalamDbError> {
+        // Step 1: Fast classification
+        let stmt_type = SqlStatement::classify(sql);
+        
+        // Step 2: Parse ONCE
+        let statement = self.kalam_sql.parse_statement(sql)?;
+        
+        // Step 3: Extract namespace
+        let namespace_id = statement.extract_namespace()
+            .or(fallback_namespace)
+            .ok_or_else(|| KalamDbError::MissingNamespace(...))?;
+        
+        // Step 4: Authorization gateway (FAIL-FAST)
+        AuthorizationHandler::check_authorization(
+            &stmt_type, 
+            &statement, 
+            &namespace_id, 
+            execution_context
+        )?; // Fails BEFORE handler invocation
+        
+        // Step 5: Route to handlers (TODO: Phase 4-8)
+        
+        // Temporary: Keep existing implementation
+        self.execute_internal(session, sql, execution_context).await
+    }
+}
+```
+
+**Tests** (`handlers/tests/authorization_tests.rs`):
+```rust
+#[tokio::test]
+async fn test_authorization_system_namespace_user_role_denied() {
+    let context = ExecutionContext {
+        user_id: UserId::new("alice"),
+        role: UserRole::User,
+        namespace_id: NamespaceId::new("system"),
+        ...
+    };
+    
+    let result = AuthorizationHandler::check_authorization(
+        &SqlStatement::Select,
+        &statement,
+        &NamespaceId::new("system"),
+        &context,
+    );
+    
+    assert!(result.is_err());
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "Only 'dba' and 'system' roles can access system namespace"
+    );
+}
+
+#[tokio::test]
+async fn test_authorization_ddl_user_role_denied() {
+    let result = AuthorizationHandler::check_authorization(
+        &SqlStatement::CreateTable,
+        &statement,
+        &NamespaceId::new("mydb"),
+        &user_context, // role: User
+    );
+    
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_authorization_ddl_dba_role_allowed() {
+    let result = AuthorizationHandler::check_authorization(
+        &SqlStatement::CreateTable,
+        &statement,
+        &NamespaceId::new("mydb"),
+        &dba_context, // role: Dba
+    );
+    
+    assert!(result.is_ok());
+}
+
+// Total: 20+ authorization test scenarios
+```
+
+**Deliverable**: Authorization gateway implemented, fail-fast security enforced, 20+ authorization tests pass
+
+### Phase 4: Transaction Handler (Day 2 - 2 hours)
+
+**Goal**: Extract transaction logic (BEGIN, COMMIT, ROLLBACK) into dedicated handler
+
+**Files to Create**:
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/transaction.rs`
+
+**Files to Modify**:
+- `backend/crates/kalamdb-core/src/sql/executor/mod.rs`
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/mod.rs`
+
+**Changes**:
+```rust
+// handlers/transaction.rs (NEW FILE)
+pub struct TransactionHandler;
+
+impl TransactionHandler {
+    pub async fn execute_begin(
+        session: &SessionContext,
+        namespace_id: NamespaceId, // Type-safe wrapper
+        statement: &Statement,
+        execution_context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        // Extract isolation level from statement (if specified)
+        let isolation_level = statement.transaction_isolation_level()
+            .unwrap_or(IsolationLevel::ReadCommitted);
+        
+        // Begin transaction in session
+        session.begin_transaction(isolation_level).await?;
+        
+        // Audit log
+        log_audit_event(
+            execution_context.user_id.clone(),
+            AuditAction::TransactionBegin,
+            namespace_id,
+        );
+        
+        Ok(DataFrame::empty())
+    }
+    
+    pub async fn execute_commit(
+        session: &SessionContext,
+        namespace_id: NamespaceId,
+        execution_context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        session.commit_transaction().await?;
+        
+        log_audit_event(
+            execution_context.user_id.clone(),
+            AuditAction::TransactionCommit,
+            namespace_id,
+        );
+        
+        Ok(DataFrame::empty())
+    }
+    
+    pub async fn execute_rollback(
+        session: &SessionContext,
+        namespace_id: NamespaceId,
+        execution_context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        session.rollback_transaction().await?;
+        
+        log_audit_event(
+            execution_context.user_id.clone(),
+            AuditAction::TransactionRollback,
+            namespace_id,
+        );
+        
+        Ok(DataFrame::empty())
+    }
+}
+
+// executor/mod.rs (MODIFIED - add routing)
+impl SqlExecutor {
+    pub async fn execute_with_metadata(...) -> Result<...> {
+        // ... Steps 1-4 (classification, parsing, namespace, authorization)
+        
+        // Step 5: Route to handlers
+        let result = match stmt_type {
+            SqlStatement::BeginTransaction => {
+                TransactionHandler::execute_begin(
+                    session, 
+                    namespace_id.clone(), 
+                    &statement, 
+                    execution_context
+                ).await?
+            }
+            SqlStatement::Commit => {
+                TransactionHandler::execute_commit(
+                    session, 
+                    namespace_id.clone(), 
+                    execution_context
+                ).await?
+            }
+            SqlStatement::Rollback => {
+                TransactionHandler::execute_rollback(
+                    session, 
+                    namespace_id.clone(), 
+                    execution_context
+                ).await?
+            }
+            _ => {
+                // TODO: Other handlers (Phase 5-8)
+                return Err(KalamDbError::UnsupportedStatement(stmt_type.name().to_string()));
+            }
+        };
+        
+        Ok((result, execution_metadata))
+    }
+}
+```
+
+**Tests** (`handlers/tests/transaction_tests.rs`):
+```rust
+#[tokio::test]
+async fn test_transaction_begin_commit() {
+    let session = create_test_session();
+    let context = create_test_context();
+    
+    // BEGIN TRANSACTION
+    let result = TransactionHandler::execute_begin(
+        &session,
+        NamespaceId::new("mydb"),
+        &begin_statement,
+        &context,
+    ).await;
+    assert!(result.is_ok());
+    
+    // INSERT within transaction
+    // ...
+    
+    // COMMIT
+    let result = TransactionHandler::execute_commit(
+        &session,
+        NamespaceId::new("mydb"),
+        &context,
+    ).await;
+    assert!(result.is_ok());
+    
+    // Verify data persisted
+}
+
+#[tokio::test]
+async fn test_transaction_rollback() {
+    // BEGIN → INSERT → ROLLBACK → Verify data NOT persisted
+}
+
+// Total: 15+ transaction test scenarios
+```
+
+**Deliverable**: Transaction handler implemented, transaction tests pass, routing logic updated
+
+### Phase 5: DDL Handler (Day 3 - 4 hours)
+
+**Goal**: Extract DDL logic (CREATE, ALTER, DROP tables/namespaces/storages) into dedicated handler
+
+**Files to Create**:
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl.rs`
+
+**Changes**:
+```rust
+// handlers/ddl.rs (NEW FILE)
+pub struct DdlHandler;
+
+impl DdlHandler {
+    pub async fn execute_create_table(
+        session: &SessionContext,
+        namespace_id: NamespaceId,   // Type-safe wrapper
+        table_name: TableName,       // Type-safe wrapper
+        statement: &Statement,
+        execution_context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        // Extract table definition from statement
+        let table_def = statement.extract_table_definition()?;
+        
+        // Validate schema (column types, constraints)
+        table_def.validate()?;
+        
+        // Store in system.tables
+        let table_id = TableId::new(&namespace_id, &table_name);
+        let system_table = SystemTable {
+            table_id: table_id.clone(),
+            namespace_id: namespace_id.clone(),
+            table_name: table_name.clone(),
+            table_type: table_def.table_type,
+            storage_id: table_def.storage_id,
+            // ... other fields
+        };
+        
+        AppContext::get()
+            .system_tables()
+            .tables()
+            .insert(&table_id, &system_table)?;
+        
+        // Invalidate SchemaRegistry cache
+        AppContext::get()
+            .schema_registry()
+            .invalidate(&table_id);
+        
+        // Audit log
+        log_audit_event(
+            execution_context.user_id.clone(),
+            AuditAction::CreateTable,
+            table_id,
+        );
+        
+        Ok(DataFrame::empty())
+    }
+    
+    pub async fn execute_alter_table(
+        session: &SessionContext,
+        namespace_id: NamespaceId,
+        table_name: TableName,
+        statement: &Statement,
+        execution_context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        // Extract ALTER operation (ADD COLUMN, DROP COLUMN, etc.)
+        let alter_op = statement.extract_alter_operation()?;
+        
+        // Load current table definition
+        let table_id = TableId::new(&namespace_id, &table_name);
+        let mut table_def = AppContext::get()
+            .schema_registry()
+            .get_table_definition(&table_id)?;
+        
+        // Apply alteration
+        match alter_op {
+            AlterOperation::AddColumn(col) => table_def.add_column(col)?,
+            AlterOperation::DropColumn(name) => table_def.drop_column(&name)?,
+            AlterOperation::RenameColumn(old, new) => table_def.rename_column(&old, &new)?,
+        }
+        
+        // Update system.tables
+        AppContext::get()
+            .system_tables()
+            .tables()
+            .update(&table_id, &table_def.to_system_table())?;
+        
+        // Invalidate cache (schema changed)
+        AppContext::get()
+            .schema_registry()
+            .invalidate(&table_id);
+        
+        // Audit log
+        log_audit_event(
+            execution_context.user_id.clone(),
+            AuditAction::AlterTable,
+            table_id,
+        );
+        
+        Ok(DataFrame::empty())
+    }
+    
+    pub async fn execute_drop_table(
+        session: &SessionContext,
+        namespace_id: NamespaceId,
+        table_name: TableName,
+        execution_context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        let table_id = TableId::new(&namespace_id, &table_name);
+        
+        // Soft delete in system.tables
+        AppContext::get()
+            .system_tables()
+            .tables()
+            .soft_delete(&table_id)?;
+        
+        // Invalidate cache
+        AppContext::get()
+            .schema_registry()
+            .invalidate(&table_id);
+        
+        // Audit log
+        log_audit_event(
+            execution_context.user_id.clone(),
+            AuditAction::DropTable,
+            table_id,
+        );
+        
+        Ok(DataFrame::empty())
+    }
+    
+    // Similar methods for CREATE/ALTER/DROP NAMESPACE, STORAGE
+}
+
+// executor/mod.rs (MODIFIED - add DDL routing)
+let result = match stmt_type {
+    SqlStatement::CreateTable => {
+        let table_name = TableName::from_statement(&statement)?;
+        DdlHandler::execute_create_table(
+            session, 
+            namespace_id.clone(), 
+            table_name, 
+            &statement, 
+            execution_context
+        ).await?
+    }
+    SqlStatement::AlterTable => {
+        let table_name = TableName::from_statement(&statement)?;
+        DdlHandler::execute_alter_table(
+            session, 
+            namespace_id.clone(), 
+            table_name, 
+            &statement, 
+            execution_context
+        ).await?
+    }
+    SqlStatement::DropTable => {
+        let table_name = TableName::from_statement(&statement)?;
+        DdlHandler::execute_drop_table(
+            session, 
+            namespace_id.clone(), 
+            table_name, 
+            execution_context
+        ).await?
+    }
+    // ... transaction handlers, other handlers
+};
+```
+
+**Tests** (`handlers/tests/ddl_tests.rs`):
+```rust
+#[tokio::test]
+async fn test_create_table_user_table() {
+    let statement = parse_sql("CREATE TABLE mydb.users (id INT, name TEXT)");
+    
+    let result = DdlHandler::execute_create_table(
+        &session,
+        NamespaceId::new("mydb"),
+        TableName::new("users"),
+        &statement,
+        &context,
+    ).await;
+    
+    assert!(result.is_ok());
+    
+    // Verify table exists in system.tables
+    let table_id = TableId::new(&NamespaceId::new("mydb"), &TableName::new("users"));
+    let table = AppContext::get()
+        .system_tables()
+        .tables()
+        .get(&table_id)?;
+    assert!(table.is_some());
+}
+
+#[tokio::test]
+async fn test_alter_table_add_column() {
+    // CREATE TABLE → ALTER TABLE ADD COLUMN → Verify schema updated
+}
+
+#[tokio::test]
+async fn test_drop_table_soft_delete() {
+    // CREATE TABLE → DROP TABLE → Verify deleted_at set
+}
+
+// Total: 30+ DDL test scenarios
+```
+
+**Deliverable**: DDL handler implemented, DDL tests pass, routing logic updated
+
+### Phase 6: DML Handler (Day 4 - 4 hours)
+
+**Goal**: Extract DML logic (INSERT, UPDATE, DELETE) with parameter binding support
+
+**Files to Create**:
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/dml.rs`
+
+**Changes**:
+```rust
+// handlers/dml.rs (NEW FILE)
+pub struct DmlHandler;
+
+impl DmlHandler {
+    pub async fn execute_insert(
+        session: &SessionContext,
+        namespace_id: NamespaceId,
+        table_name: TableName,
+        statement: &Statement,
+        params: Vec<ParamValue>, // Parameter binding!
+        execution_context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        // Load table definition
+        let table_id = TableId::new(&namespace_id, &table_name);
+        let table_def = AppContext::get()
+            .schema_registry()
+            .get_table_definition(&table_id)?;
+        
+        // Bind parameters to INSERT VALUES (?, ?)
+        let values = bind_insert_parameters(&statement, params)?;
+        
+        // Apply column defaults
+        let complete_values = apply_column_defaults(&table_def, values)?;
+        
+        // Validate data types
+        validate_insert_values(&table_def, &complete_values)?;
+        
+        // Execute insert (delegate to table provider)
+        let provider = get_table_provider(session, &table_id, &execution_context.user_id)?;
+        let rows_affected = provider.insert(complete_values).await?;
+        
+        // Audit log
+        log_audit_event(
+            execution_context.user_id.clone(),
+            AuditAction::Insert,
+            table_id,
+        );
+        
+        Ok(DataFrame::from_rows_affected(rows_affected))
+    }
+    
+    pub async fn execute_update(
+        session: &SessionContext,
+        namespace_id: NamespaceId,
+        table_name: TableName,
+        statement: &Statement,
+        params: Vec<ParamValue>, // Parameters for SET and WHERE clauses
+        execution_context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        let table_id = TableId::new(&namespace_id, &table_name);
+        
+        // Bind parameters to UPDATE SET col1 = ?, col2 = ? WHERE id = ?
+        let set_values = bind_update_set_parameters(&statement, &params)?;
+        let where_params = bind_where_parameters(&statement, &params)?;
+        
+        // Execute update
+        let provider = get_table_provider(session, &table_id, &execution_context.user_id)?;
+        let rows_affected = provider.update(set_values, where_params).await?;
+        
+        // Audit log
+        log_audit_event(
+            execution_context.user_id.clone(),
+            AuditAction::Update,
+            table_id,
+        );
+        
+        Ok(DataFrame::from_rows_affected(rows_affected))
+    }
+    
+    pub async fn execute_delete(
+        session: &SessionContext,
+        namespace_id: NamespaceId,
+        table_name: TableName,
+        statement: &Statement,
+        params: Vec<ParamValue>, // Parameters for WHERE clause
+        execution_context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        let table_id = TableId::new(&namespace_id, &table_name);
+        
+        // Bind parameters to DELETE WHERE id = ?
+        let where_params = bind_where_parameters(&statement, &params)?;
+        
+        // Execute delete (soft delete for user tables)
+        let provider = get_table_provider(session, &table_id, &execution_context.user_id)?;
+        let rows_affected = provider.delete(where_params).await?;
+        
+        // Audit log
+        log_audit_event(
+            execution_context.user_id.clone(),
+            AuditAction::Delete,
+            table_id,
+        );
+        
+        Ok(DataFrame::from_rows_affected(rows_affected))
+    }
+}
+
+/// Bind parameters to INSERT VALUES
+fn bind_insert_parameters(
+    statement: &Statement,
+    params: Vec<ParamValue>,
+) -> Result<Vec<ScalarValue>, KalamDbError> {
+    let value_exprs = statement.extract_insert_values()?;
+    
+    let mut bound_values = Vec::new();
+    let mut param_idx = 0;
+    
+    for expr in value_exprs {
+        match expr {
+            Expr::Placeholder(_) => {
+                if param_idx >= params.len() {
+                    return Err(KalamDbError::InvalidParameterCount(
+                        format!("Expected {} parameters, got {}", value_exprs.len(), params.len())
+                    ));
+                }
+                bound_values.push(params[param_idx].to_scalar_value());
+                param_idx += 1;
+            }
+            Expr::Literal(lit) => {
+                bound_values.push(lit.to_scalar_value());
+            }
+            _ => {
+                return Err(KalamDbError::UnsupportedExpression(
+                    "Only literals and placeholders allowed in INSERT VALUES".to_string()
+                ));
+            }
+        }
+    }
+    
+    Ok(bound_values)
+}
+
+// executor/mod.rs (MODIFIED - add DML routing)
+let result = match stmt_type {
+    SqlStatement::Insert => {
+        let table_name = TableName::from_statement(&statement)?;
+        DmlHandler::execute_insert(
+            session, 
+            namespace_id.clone(), 
+            table_name, 
+            &statement, 
+            params, // Pass parameters!
+            execution_context
+        ).await?
+    }
+    SqlStatement::Update => {
+        let table_name = TableName::from_statement(&statement)?;
+        DmlHandler::execute_update(
+            session, 
+            namespace_id.clone(), 
+            table_name, 
+            &statement, 
+            params, 
+            execution_context
+        ).await?
+    }
+    SqlStatement::Delete => {
+        let table_name = TableName::from_statement(&statement)?;
+        DmlHandler::execute_delete(
+            session, 
+            namespace_id.clone(), 
+            table_name, 
+            &statement, 
+            params, 
+            execution_context
+        ).await?
+    }
+    // ... DDL, transaction, other handlers
+};
+```
+
+**Tests** (`handlers/tests/dml_tests.rs`):
+```rust
+#[tokio::test]
+async fn test_insert_with_parameters() {
+    let statement = parse_sql("INSERT INTO users (id, name) VALUES (?, ?)");
+    let params = vec![ParamValue::Int(123), ParamValue::Text("alice".to_string())];
+    
+    let result = DmlHandler::execute_insert(
+        &session,
+        NamespaceId::new("mydb"),
+        TableName::new("users"),
+        &statement,
+        params,
+        &context,
+    ).await;
+    
+    assert!(result.is_ok());
+    
+    // Verify row inserted
+    let rows = query_table(&table_id, "SELECT * FROM users WHERE id = 123").await?;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get_string("name")?, "alice");
+}
+
+#[tokio::test]
+async fn test_update_with_parameters() {
+    // INSERT → UPDATE SET name = ? WHERE id = ? → Verify updated
+}
+
+#[tokio::test]
+async fn test_delete_with_parameters() {
+    // INSERT → DELETE WHERE id = ? → Verify soft deleted
+}
+
+#[tokio::test]
+async fn test_insert_parameter_count_mismatch() {
+    // INSERT VALUES (?, ?) with 1 parameter → Error
+}
+
+// Total: 25+ DML test scenarios
+```
+
+**Deliverable**: DML handler implemented with parameter binding, DML tests pass, routing logic updated
+
+### Phase 7: Query Handler (Day 5 - 4 hours)
+
+**Goal**: Extract query logic (SELECT, DESCRIBE, SHOW) with parameter binding support
+
+**Files to Create**:
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/query.rs`
+
+**Changes**:
+```rust
+// handlers/query.rs (NEW FILE)
+pub struct QueryHandler;
+
+impl QueryHandler {
+    pub async fn execute_query(
+        session: &SessionContext,
+        namespace_id: NamespaceId,
+        statement: &Statement,
+        params: Vec<ParamValue>, // Parameters for WHERE clauses
+        execution_context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        // Bind parameters to SELECT WHERE id = ? AND name = ?
+        let bound_statement = bind_query_parameters(statement, params)?;
+        
+        // Execute query via DataFusion
+        let df = session
+            .sql(&bound_statement.to_sql())
+            .await?;
+        
+        // DataFusion automatically caches LogicalPlan and PhysicalPlan internally!
+        // No need for custom plan caching (Phase 11 investigation confirms this)
+        
+        // Audit log (for sensitive queries)
+        if is_sensitive_query(&statement) {
+            log_audit_event(
+                execution_context.user_id.clone(),
+                AuditAction::Query,
+                extract_table_ids(&statement),
+            );
+        }
+        
+        Ok(df)
+    }
+    
+    pub async fn execute_describe(
+        session: &SessionContext,
+        namespace_id: NamespaceId,
+        table_name: TableName,
+        execution_context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        // Load table definition from SchemaRegistry
+        let table_id = TableId::new(&namespace_id, &table_name);
+        let table_def = AppContext::get()
+            .schema_registry()
+            .get_table_definition(&table_id)?;
+        
+        // Convert to DataFrame (schema description)
+        let df = table_def_to_dataframe(&table_def)?;
+        
+        Ok(df)
+    }
+    
+    pub async fn execute_show(
+        session: &SessionContext,
+        statement: &Statement,
+        execution_context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        match statement.show_type()? {
+            ShowType::Tables(namespace) => {
+                // Query system.tables
+                let tables = AppContext::get()
+                    .system_tables()
+                    .tables()
+                    .list_by_namespace(&namespace)?;
+                
+                Ok(tables_to_dataframe(tables))
+            }
+            ShowType::Namespaces => {
+                // Query system.namespaces
+                let namespaces = AppContext::get()
+                    .system_tables()
+                    .namespaces()
+                    .list_all()?;
+                
+                Ok(namespaces_to_dataframe(namespaces))
+            }
+            ShowType::Storages => {
+                // Query system.storages
+                let storages = AppContext::get()
+                    .system_tables()
+                    .storages()
+                    .list_all()?;
+                
+                Ok(storages_to_dataframe(storages))
+            }
+        }
+    }
+}
+
+/// Bind parameters to SELECT query
+fn bind_query_parameters(
+    statement: &Statement,
+    params: Vec<ParamValue>,
+) -> Result<Statement, KalamDbError> {
+    let mut bound_statement = statement.clone();
+    let mut param_idx = 0;
+    
+    // Find all placeholders in WHERE clause, ORDER BY, LIMIT, etc.
+    bound_statement.visit_exprs_mut(|expr| {
+        if let Expr::Placeholder(_) = expr {
+            if param_idx >= params.len() {
+                return Err(KalamDbError::InvalidParameterCount(...));
+            }
+            *expr = params[param_idx].to_expr();
+            param_idx += 1;
+        }
+        Ok(())
+    })?;
+    
+    Ok(bound_statement)
+}
+
+// executor/mod.rs (MODIFIED - add Query routing)
+let result = match stmt_type {
+    SqlStatement::Select => {
+        QueryHandler::execute_query(
+            session, 
+            namespace_id.clone(), 
+            &statement, 
+            params, // Pass parameters!
+            execution_context
+        ).await?
+    }
+    SqlStatement::Describe => {
+        let table_name = TableName::from_statement(&statement)?;
+        QueryHandler::execute_describe(
+            session, 
+            namespace_id.clone(), 
+            table_name, 
+            execution_context
+        ).await?
+    }
+    SqlStatement::Show => {
+        QueryHandler::execute_show(
+            session, 
+            &statement, 
+            execution_context
+        ).await?
+    }
+    // ... DML, DDL, transaction, other handlers
+};
+```
+
+**Tests** (`handlers/tests/query_tests.rs`):
+```rust
+#[tokio::test]
+async fn test_select_with_parameters() {
+    let statement = parse_sql("SELECT * FROM users WHERE id = ? AND name = ?");
+    let params = vec![ParamValue::Int(123), ParamValue::Text("alice".to_string())];
+    
+    let result = QueryHandler::execute_query(
+        &session,
+        NamespaceId::new("mydb"),
+        &statement,
+        params,
+        &context,
+    ).await;
+    
+    assert!(result.is_ok());
+    let df = result.unwrap();
+    assert_eq!(df.count().await?, 1);
+}
+
+#[tokio::test]
+async fn test_describe_table() {
+    let result = QueryHandler::execute_describe(
+        &session,
+        NamespaceId::new("mydb"),
+        TableName::new("users"),
+        &context,
+    ).await;
+    
+    assert!(result.is_ok());
+    let df = result.unwrap();
+    // Verify schema columns: name, type, nullable, default
+}
+
+#[tokio::test]
+async fn test_show_tables() {
+    // SHOW TABLES IN mydb → Verify table list returned
+}
+
+// Total: 40+ query test scenarios
+```
+
+**Deliverable**: Query handler implemented with parameter binding, query tests pass, routing logic updated
+
+### Phase 8: Remaining Handlers (Day 6 - 6 hours)
+
+**Goal**: Extract remaining handler logic (flush, subscription, user management, table registry, system commands, helpers, audit)
+
+**Files to Create**:
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/flush.rs`
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/subscription.rs`
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/user_management.rs`
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/table_registry.rs`
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/system_commands.rs`
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/helpers.rs`
+- `backend/crates/kalamdb-core/src/sql/executor/handlers/audit.rs`
+
+**Changes** (high-level, full details in spec.md):
+```rust
+// handlers/flush.rs
+pub struct FlushHandler;
+impl FlushHandler {
+    pub async fn execute_flush_table(namespace_id: NamespaceId, table_name: TableName, ...) -> Result<...>;
+    pub async fn execute_flush_all_tables(namespace_id: NamespaceId, ...) -> Result<...>;
+}
+
+// handlers/subscription.rs
+pub struct SubscriptionHandler;
+impl SubscriptionHandler {
+    pub async fn execute_subscribe(namespace_id: NamespaceId, statement: &Statement, params: Vec<ParamValue>, ...) -> Result<...>;
+}
+
+// handlers/user_management.rs
+pub struct UserManagementHandler;
+impl UserManagementHandler {
+    pub async fn execute_create_user(username: UserName, ...) -> Result<...>;
+    pub async fn execute_alter_user(user_id: UserId, ...) -> Result<...>;
+    pub async fn execute_drop_user(user_id: UserId, ...) -> Result<...>;
+}
+
+// handlers/table_registry.rs
+pub struct TableRegistryHandler;
+impl TableRegistryHandler {
+    pub async fn execute_register_table(namespace_id: NamespaceId, table_name: TableName, ...) -> Result<...>;
+    pub async fn execute_unregister_table(namespace_id: NamespaceId, table_name: TableName, ...) -> Result<...>;
+}
+
+// handlers/system_commands.rs
+pub struct SystemCommandsHandler;
+impl SystemCommandsHandler {
+    pub async fn execute_vacuum(table_id: TableId, ...) -> Result<...>;
+    pub async fn execute_optimize(table_id: TableId, ...) -> Result<...>;
+    pub async fn execute_analyze(table_id: TableId, ...) -> Result<...>;
+}
+
+// handlers/helpers.rs
+pub fn resolve_table_id(namespace_id: &NamespaceId, table_name: &TableName) -> Result<TableId, KalamDbError>;
+pub fn get_table_provider(session: &SessionContext, table_id: &TableId, user_id: &UserId) -> Result<Arc<dyn TableProvider>, KalamDbError>;
+pub fn apply_column_defaults(table_def: &TableDefinition, values: Vec<ScalarValue>) -> Result<Vec<ScalarValue>, KalamDbError>;
+
+// handlers/audit.rs
+pub fn log_audit_event(user_id: UserId, action: AuditAction, resource_id: impl Into<String>);
+pub fn is_sensitive_query(statement: &Statement) -> bool;
+
+// executor/mod.rs (MODIFIED - add routing for all handlers)
+let result = match stmt_type {
+    // ... existing handlers (Transaction, DDL, DML, Query)
+    
+    SqlStatement::FlushTable => {
+        let table_name = TableName::from_statement(&statement)?;
+        FlushHandler::execute_flush_table(namespace_id.clone(), table_name, execution_context).await?
+    }
+    SqlStatement::Subscribe => {
+        SubscriptionHandler::execute_subscribe(namespace_id.clone(), &statement, params, execution_context).await?
+    }
+    SqlStatement::CreateUser => {
+        let username = UserName::from_statement(&statement)?;
+        UserManagementHandler::execute_create_user(username, &statement, execution_context).await?
+    }
+    SqlStatement::RegisterTable => {
+        let table_name = TableName::from_statement(&statement)?;
+        TableRegistryHandler::execute_register_table(namespace_id.clone(), table_name, &statement, execution_context).await?
+    }
+    SqlStatement::Vacuum => {
+        let table_id = TableId::from_statement(&statement)?;
+        SystemCommandsHandler::execute_vacuum(table_id, execution_context).await?
+    }
+    // ... all other SqlStatement variants
+    
+    _ => {
+        return Err(KalamDbError::UnsupportedStatement(stmt_type.name().to_string()));
+    }
+};
+```
+
+**Tests**:
+- `handlers/tests/flush_tests.rs`: FLUSH TABLE, FLUSH ALL TABLES
+- `handlers/tests/subscription_tests.rs`: LIVE SELECT with parameters
+- `handlers/tests/user_management_tests.rs`: CREATE/ALTER/DROP USER
+- `handlers/tests/table_registry_tests.rs`: REGISTER/UNREGISTER TABLE
+- `handlers/tests/system_commands_tests.rs`: VACUUM, OPTIMIZE, ANALYZE
+
+**Deliverable**: All 7 remaining handlers implemented, all tests pass, routing complete for all 30+ SqlStatement variants
+
+### Phase 9: Single-Pass Parsing Optimization (Day 7 - 2 hours)
+
+**Goal**: Audit and verify single-pass parsing throughout handler chain
+
+**Tasks**:
+1. Audit all handler methods: Ensure Statement is passed (not &str)
+2. Remove any redundant parse_statement() calls
+3. Verify namespace extraction happens once in execute_with_metadata()
+4. Add performance test: Verify single parse per query
+
+**Validation**:
+```rust
+#[tokio::test]
+async fn test_single_pass_parsing() {
+    // Instrument parser to count parse calls
+    let parse_count = Arc::new(AtomicUsize::new(0));
+    let instrumented_parser = InstrumentedParser::new(parse_count.clone());
+    
+    // Execute query
+    executor.execute_with_metadata(
+        &session,
+        "SELECT * FROM mydb.users WHERE id = ?",
+        vec![ParamValue::Int(123)],
+        None,
+        &context,
+    ).await?;
+    
+    // Verify parse called exactly ONCE
+    assert_eq!(parse_count.load(Ordering::SeqCst), 1);
+}
+```
+
+**Deliverable**: Single-pass parsing verified, performance test passes
+
+### Phase 10: Memory Profiling (Day 7 - 3 hours)
+
+**Goal**: Measure and optimize memory allocations in query hot path
+
+**Tasks**:
+1. Add memory benchmarks: Measure allocations in QueryHandler
+2. Optimize Arc cloning: Use Arc::clone() for SchemaCache lookups
+3. Verify String interning: System columns use interned strings
+4. Verify type-safe wrappers have zero overhead (NamespaceId, TableId, etc.)
+
+**Benchmarks** (`benches/memory_usage_bench.rs`):
+```rust
+#[bench]
+fn bench_query_handler_allocations(b: &mut Bencher) {
+    let session = create_test_session();
+    let context = create_test_context();
+    
+    b.iter(|| {
+        // Execute simple query
+        QueryHandler::execute_query(
+            &session,
+            NamespaceId::new("mydb"),
+            &statement,
+            vec![],
+            &context,
+        ).await
+    });
+    
+    // Measure: Should be <100 bytes allocated per iteration
+}
+```
+
+**Deliverable**: Memory benchmarks show <100 bytes allocated per simple query, Arc cloning optimized, String interning verified
+
+### Phase 11: DataFusion Query Caching Investigation (Day 8 - 4 hours)
+
+**Goal**: Research DataFusion 40.0+ built-in query caching capabilities
+
+**Tasks**:
+1. Review DataFusion SessionContext documentation for query plan caching
+2. Test LogicalPlan caching behavior (reuse on same query)
+3. Test PhysicalPlan caching behavior (execution plan reuse)
+4. Measure cache hit rates and performance improvements
+5. Document DataFusion caching features and limitations
+6. Determine if custom QueryCache layer needed (likely NOT needed if DataFusion caching sufficient)
+
+**Experiments**:
+```rust
+#[tokio::test]
+async fn test_datafusion_logical_plan_caching() {
+    let session = SessionContext::new();
+    
+    // Register table
+    session.register_table("users", user_table_provider).unwrap();
+    
+    // Execute query TWICE with same SQL
+    let df1 = session.sql("SELECT * FROM users WHERE id = 123").await?;
+    let df2 = session.sql("SELECT * FROM users WHERE id = 123").await?;
+    
+    // Measure: Does DataFusion reuse LogicalPlan?
+    // Expected: df1 and df2 share same plan instance (Arc)
+    
+    // Execute query with DIFFERENT literal
+    let df3 = session.sql("SELECT * FROM users WHERE id = 456").await?;
+    
+    // Measure: Does DataFusion create new plan? (YES, literals differ)
+}
+
+#[tokio::test]
+async fn test_datafusion_physical_plan_caching() {
+    // Execute same logical plan twice
+    // Measure: Does DataFusion reuse PhysicalPlan?
+    // Expected: PhysicalPlan cached per logical plan
+}
+```
+
+**Documentation**: `docs/architecture/DATAFUSION_QUERY_CACHING.md`
+- SessionContext caching capabilities
+- LogicalPlan vs PhysicalPlan caching
+- Cache invalidation behavior
+- Performance characteristics
+- Recommendation: Use DataFusion caching OR build custom layer
+
+**Deliverable**: DataFusion caching documented, performance measured, decision made on custom QueryCache necessity
+
+### Phase 12: Query Cache Design (Future - P2, if DataFusion insufficient)
+
+**Goal**: Design parameterized query cache layer (ONLY if DataFusion caching insufficient)
+
+**Note**: This phase is P2 (future work) and may not be needed if Phase 11 investigation shows DataFusion caching is sufficient.
+
+**Design** (if needed):
+- Cache key: Normalized SQL with placeholders (e.g., "SELECT * FROM users WHERE id = ?")
+- Cache value: Parsed Statement + parameter positions
+- DataFusion handles LogicalPlan/PhysicalPlan caching internally
+- Our layer normalizes SQL + binds parameters
+- Scope: Only DML + queries (NOT DDL, admin commands, transactions)
+- Invalidation: On ALTER TABLE, DROP TABLE (via SchemaRegistry integration)
+- Memory: LRU cache with configurable size (default 1000 queries)
+
+**Implementation** (if needed):
+```rust
+// executor/query_cache.rs (NEW FILE, P2)
+pub struct QueryCache {
+    cache: Arc<DashMap<String, Arc<CachedQuery>>>,
+    lru: Arc<Mutex<LruCache<String, ()>>>,
+    max_size: usize,
+    session_context: Arc<SessionContext>, // DataFusion handles plan caching
+}
+
+impl QueryCache {
+    pub fn get(&self, normalized_sql: &str) -> Option<Arc<CachedQuery>>;
+    pub fn insert(&self, normalized_sql: String, query: Arc<CachedQuery>);
+    pub fn invalidate_table(&self, table_id: &TableId);
+}
+
+struct CachedQuery {
+    statement: Statement,
+    referenced_tables: Vec<TableId>,
+    parameters: Vec<ParameterPosition>,
+}
+```
+
+**Deliverable** (if implemented): QueryCache designed, cache hit rate >80% in benchmark, invalidation correct
+
+---
+
+**Plan Updated**: 2025-11-05  
 **Branch**: 008-schema-consolidation  
 **Command**: /speckit.plan  
 **Next Command**: /speckit.tasks
 
 ````
+
+---
+
+## StorageAdapter → SchemaRegistry Migration Plan
+
+### Executive Summary
+
+**Problem Discovered**: During Phase 9.5 (DDL Handler extraction), we identified that 20+ callsites across the codebase use `KalamSql` (heavyweight SQL-based queries) instead of `SchemaRegistry` (optimized cache layer) for table metadata lookups.
+
+**Impact**:
+- **Performance**: 50-100× slower lookups using KalamSql vs SchemaRegistry cache
+- **Architecture**: 3 overlapping systems (KalamSql, SchemaRegistry, TableSchemaStore)
+- **Cache Bypass**: Most code bypasses the cache layer
+- **Priority**: P0 for DDL handlers (blocks CREATE TABLE completion)
+
+**Timeline**: 6 hours across 4 phases  
+**Reference**: See `STORAGE_ADAPTER_DUPLICATION_ANALYSIS.md`
+
+### Migration Phases
+
+#### Phase 1: SchemaRegistry Enhancement (1 hour)
+- Add `scan_namespace()`, `table_exists()`, `get_table_metadata()`, `delete_table_definition()`
+- 4 new tests
+
+#### Phase 2: DDL Handler Migration (1-2 hours) - P0 CRITICAL
+- Update `handlers/ddl.rs` lines 466, 556 to use SchemaRegistry
+- Remove KalamSql parameters from execute_alter_table() and execute_drop_table()
+- Update executor routing
+- 2 new tests
+
+#### Phase 3: Service Migration (2-3 hours) - P1
+- Update 8 service callsites (user_table_service, shared_table_service, etc.)
+- 6 new tests
+
+#### Phase 4: KalamSql Delegation (1 hour) - P3
+- Make KalamSql internally delegate to SchemaRegistry
+- Backward compatibility for remaining callsites
+- 2 new tests
+
+### Integration with Phase 9
+
+**Blocking**: Phase 9.5 Step 3 (CREATE TABLE) blocked until Phase 2 complete
+
+**Strategy**:
+1. Complete Phases 1-2 (SchemaRegistry + DDL migration)
+2. UNBLOCK: Implement CREATE TABLE with correct pattern
+3. Continue Phase 9.6-9.12 with SchemaRegistry pattern
+4. Complete Phases 3-4 in parallel
+
+**Migration Plan Created**: 2025-11-05  
+**Next**: Implement Phase 1 (SchemaRegistry enhancement)
+

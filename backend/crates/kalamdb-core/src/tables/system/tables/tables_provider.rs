@@ -1,0 +1,316 @@
+//! System.tables table provider
+//!
+//! This module provides a DataFusion TableProvider implementation for the system.tables table.
+//! Uses the new EntityStore architecture with TableId keys and TableDefinition values.
+
+use super::super::SystemTableProviderExt;
+use super::{new_tables_store, TablesStore, TablesTableSchema};
+use crate::error::KalamDbError;
+use async_trait::async_trait;
+use datafusion::arrow::array::{
+    ArrayRef, Int32Array, RecordBatch, StringBuilder, TimestampMillisecondArray,
+};
+use datafusion::arrow::datatypes::SchemaRef;
+use datafusion::datasource::{TableProvider, TableType};
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::logical_expr::Expr;
+use datafusion::physical_plan::ExecutionPlan;
+use kalamdb_commons::models::TableId;
+use kalamdb_commons::schemas::TableDefinition;
+use kalamdb_store::{StorageBackend, EntityStoreV2};
+use std::any::Any;
+use std::sync::Arc;
+
+/// System.tables table provider using EntityStore architecture
+pub struct TablesTableProvider {
+    store: TablesStore,
+    schema: SchemaRef,
+}
+
+impl std::fmt::Debug for TablesTableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TablesTableProvider").finish()
+    }
+}
+
+impl TablesTableProvider {
+    /// Create a new tables table provider
+    ///
+    /// # Arguments
+    /// * `backend` - Storage backend (RocksDB or mock)
+    ///
+    /// # Returns
+    /// A new TablesTableProvider instance
+    pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
+        Self {
+            store: new_tables_store(backend),
+            schema: TablesTableSchema::schema(),
+        }
+    }
+
+    pub fn create_table(&self, table_id: &TableId, table_def: &TableDefinition) -> Result<(), KalamDbError> {
+        self.store.put(table_id, table_def)?;
+        Ok(())
+    }
+
+    pub fn update_table(&self, table_id: &TableId, table_def: &TableDefinition) -> Result<(), KalamDbError> {
+        // Check if table exists
+        if self.store.get(table_id)?.is_none() {
+            return Err(KalamDbError::NotFound(format!(
+                "Table not found: {}",
+                table_id
+            )));
+        }
+
+        self.store.put(table_id, table_def)?;
+        Ok(())
+    }
+
+    /// Delete a table entry
+    pub fn delete_table(&self, table_id: &TableId) -> Result<(), KalamDbError> {
+        self.store.delete(table_id)?;
+        Ok(())
+    }
+
+    /// Get a table by ID
+    pub fn get_table_by_id(&self, table_id: &TableId) -> Result<Option<TableDefinition>, KalamDbError> {
+        Ok(self.store.get(table_id)?)
+    }
+
+    /// List all table definitions
+    pub fn list_tables(&self) -> Result<Vec<TableDefinition>, KalamDbError> {
+        let tables = self.store.scan_all()?;
+        Ok(tables.into_iter().map(|(_, table_def)| table_def).collect())
+    }
+
+    /// Alias for list_tables (backward compatibility)
+    pub fn scan_all(&self) -> Result<Vec<TableDefinition>, KalamDbError> {
+        self.list_tables()
+    }
+
+    /// Scan all tables and return as RecordBatch
+    pub fn scan_all_tables(&self) -> Result<RecordBatch, KalamDbError> {
+        use kalamdb_store::EntityStoreV2;
+        
+        let tables = self.store.scan_all()?;
+
+        let mut table_ids = StringBuilder::new();
+        let mut table_names = StringBuilder::new();
+        let mut namespaces = StringBuilder::new();
+        let mut table_types = StringBuilder::new();
+        let mut created_ats = Vec::new();
+        let mut schema_versions = Vec::new();
+        let mut table_comments = StringBuilder::new();
+        let mut updated_ats = Vec::new();
+
+    for (_table_id, table_def) in tables {
+            // Convert TableId to string format: "namespace:table_name"
+            let table_id_str = format!("{}:{}", table_def.namespace_id.as_str(), table_def.table_name.as_str());
+            table_ids.append_value(&table_id_str);
+            table_names.append_value(table_def.table_name.as_str());
+            namespaces.append_value(table_def.namespace_id.as_str());
+            table_types.append_value(table_def.table_type.as_str());
+            created_ats.push(Some(table_def.created_at.timestamp_millis()));
+            schema_versions.push(Some(table_def.schema_version as i32));
+            table_comments.append_option(table_def.table_comment.as_deref());
+            updated_ats.push(Some(table_def.updated_at.timestamp_millis()));
+        }
+
+        let batch = RecordBatch::try_new(
+            self.schema.clone(),
+            vec![
+                Arc::new(table_ids.finish()) as ArrayRef,
+                Arc::new(table_names.finish()) as ArrayRef,
+                Arc::new(namespaces.finish()) as ArrayRef,
+                Arc::new(table_types.finish()) as ArrayRef,
+                Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
+                Arc::new(Int32Array::from(schema_versions)) as ArrayRef,
+                Arc::new(table_comments.finish()) as ArrayRef,
+                Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef,
+            ],
+        )
+        .map_err(|e| KalamDbError::Other(format!("Arrow error: {}", e)))?;
+
+        Ok(batch)
+    }
+}
+
+#[async_trait]
+impl TableProvider for TablesTableProvider {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    fn table_type(&self) -> TableType {
+        TableType::Base
+    }
+
+    async fn scan(
+        &self,
+        _state: &dyn datafusion::catalog::Session,
+        projection: Option<&Vec<usize>>,
+        _filters: &[Expr],
+        _limit: Option<usize>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        use datafusion::datasource::MemTable;
+        let schema = self.schema.clone();
+        let batch = self.scan_all_tables().map_err(|e| {
+            DataFusionError::Execution(format!("Failed to build tables batch: {}", e))
+        })?;
+        let partitions = vec![vec![batch]];
+        let table = MemTable::try_new(schema, partitions)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
+        table.scan(_state, projection, &[], _limit).await
+    }
+}
+
+impl SystemTableProviderExt for TablesTableProvider {
+    fn table_name(&self) -> &str {
+        "system.tables"
+    }
+
+    fn schema_ref(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    fn load_batch(&self) -> Result<RecordBatch, KalamDbError> {
+        self.scan_all_tables()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kalamdb_commons::{
+        NamespaceId, TableId, TableName,
+    };
+    use kalamdb_commons::datatypes::KalamDataType;
+    use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType as KalamTableType};
+    use kalamdb_store::test_utils::InMemoryBackend;
+
+    fn create_test_provider() -> TablesTableProvider {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        TablesTableProvider::new(backend)
+    }
+
+    fn create_test_table(namespace: &str, table_name: &str) -> (TableId, TableDefinition) {
+        let namespace_id = NamespaceId::new(namespace);
+        let table_name_id = TableName::new(table_name);
+        let table_id = TableId::new(namespace_id.clone(), table_name_id.clone());
+        
+        let columns = vec![
+            ColumnDefinition::new(
+                "id",
+                1,
+                KalamDataType::Uuid,
+                false,
+                true,
+                false,
+                kalamdb_commons::schemas::ColumnDefault::None,
+                None,
+            ),
+            ColumnDefinition::new(
+                "name",
+                2,
+                KalamDataType::Text,
+                false,
+                false,
+                false,
+                kalamdb_commons::schemas::ColumnDefault::None,
+                None,
+            ),
+        ];
+
+        let table_def = TableDefinition::new(
+            namespace_id,
+            table_name_id,
+            KalamTableType::User,
+            columns,
+            TableOptions::user(),
+            None,
+        ).expect("Failed to create table definition");
+
+        (table_id, table_def)
+    }
+
+    #[test]
+    fn test_create_and_get_table() {
+        let provider = create_test_provider();
+        let (table_id, table_def) = create_test_table("default", "conversations");
+
+        provider.create_table(&table_id, &table_def).unwrap();
+
+        let retrieved = provider.get_table_by_id(&table_id).unwrap();
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.namespace_id.as_str(), "default");
+        assert_eq!(retrieved.table_name.as_str(), "conversations");
+    }
+
+    #[test]
+    fn test_update_table() {
+        let provider = create_test_provider();
+        let (table_id, mut table_def) = create_test_table("default", "conversations");
+        provider.create_table(&table_id, &table_def).unwrap();
+
+        // Update
+        table_def.schema_version = 2;
+        provider.update_table(&table_id, &table_def).unwrap();
+
+        // Verify
+        let retrieved = provider
+            .get_table_by_id(&table_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(retrieved.schema_version, 2);
+    }
+
+    #[test]
+    fn test_delete_table() {
+        let provider = create_test_provider();
+        let (table_id, table_def) = create_test_table("default", "conversations");
+
+        provider.create_table(&table_id, &table_def).unwrap();
+        provider.delete_table(&table_id).unwrap();
+
+        let retrieved = provider.get_table_by_id(&table_id).unwrap();
+        assert!(retrieved.is_none());
+    }
+
+    #[test]
+    fn test_scan_all_tables() {
+        let provider = create_test_provider();
+
+        // Insert multiple tables
+        for i in 1..=3 {
+            let (table_id, table_def) = create_test_table("default", &format!("table{}", i));
+            provider.create_table(&table_id, &table_def).unwrap();
+        }
+
+        // Scan
+        let batch = provider.scan_all_tables().unwrap();
+        assert_eq!(batch.num_rows(), 3);
+        assert_eq!(batch.num_columns(), 8); // TableDefinition has 8 fields: table_id, table_name, namespace, table_type, created_at, schema_version, table_comment, updated_at
+    }
+
+    #[tokio::test]
+    async fn test_datafusion_scan() {
+        let provider = create_test_provider();
+
+        // Insert test data
+        let (table_id, table_def) = create_test_table("default", "conversations");
+        provider.create_table(&table_id, &table_def).unwrap();
+
+        // Create DataFusion session
+        let ctx = datafusion::execution::context::SessionContext::new();
+        let state = ctx.state();
+
+        // Scan via DataFusion
+        let plan = provider.scan(&state, None, &[], None).await.unwrap();
+        assert!(plan.schema().fields().len() > 0);
+    }
+}

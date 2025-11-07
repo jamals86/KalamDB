@@ -56,8 +56,10 @@ async fn create_system_user(
     };
 
     server
-        .kalam_sql
-        .insert_user(&user)
+        .app_context
+        .system_tables()
+        .users()
+        .create_user(user.clone())
         .expect("Failed to insert system user");
 
     user
@@ -89,9 +91,9 @@ async fn test_system_user_localhost_no_password() {
     // Initialize app with authentication middleware
     let app = test::init_service(
         App::new()
-            .app_data(web::Data::new(server.session_factory.clone()))
+            .app_data(web::Data::new(server.app_context.session_factory()))
             .app_data(web::Data::new(server.sql_executor.clone()))
-            .app_data(web::Data::new(server.live_query_manager.clone()))
+            .app_data(web::Data::new(server.app_context.live_query_manager()))
             .configure(kalamdb_api::routes::configure_routes),
     )
     .await;
@@ -141,9 +143,9 @@ async fn test_system_user_remote_denied_by_default() {
     // Initialize app
     let app = test::init_service(
         App::new()
-            .app_data(web::Data::new(server.session_factory.clone()))
+            .app_data(web::Data::new(server.app_context.session_factory()))
             .app_data(web::Data::new(server.sql_executor.clone()))
-            .app_data(web::Data::new(server.live_query_manager.clone()))
+            .app_data(web::Data::new(server.app_context.live_query_manager()))
             .configure(kalamdb_api::routes::configure_routes),
     )
     .await;
@@ -193,9 +195,9 @@ async fn test_system_user_remote_with_password() {
     // Initialize app
     let app = test::init_service(
         App::new()
-            .app_data(web::Data::new(server.session_factory.clone()))
+            .app_data(web::Data::new(server.app_context.session_factory()))
             .app_data(web::Data::new(server.sql_executor.clone()))
-            .app_data(web::Data::new(server.live_query_manager.clone()))
+            .app_data(web::Data::new(server.app_context.live_query_manager()))
             .configure(kalamdb_api::routes::configure_routes),
     )
     .await;
@@ -243,9 +245,9 @@ async fn test_system_user_remote_no_password_denied() {
     // Initialize app
     let app = test::init_service(
         App::new()
-            .app_data(web::Data::new(server.session_factory.clone()))
+            .app_data(web::Data::new(server.app_context.session_factory()))
             .app_data(web::Data::new(server.sql_executor.clone()))
-            .app_data(web::Data::new(server.live_query_manager.clone()))
+            .app_data(web::Data::new(server.app_context.live_query_manager()))
             .configure(kalamdb_api::routes::configure_routes),
     )
     .await;

@@ -41,16 +41,11 @@ pub mod stress_utils;
 
 use anyhow::Result;
 use kalamdb_api::models::{QueryResult, SqlResponse};
+use kalamdb_commons::UserId;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableName};
-use kalamdb_core::live_query::{LiveQueryManager, NodeId};
-use kalamdb_core::services::{
-    NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
-    UserTableService,
-};
-use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
+use kalamdb_core::app_context::AppContext;
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_core::tables::{SharedTableStore, StreamTableStore, UserTableStore};
-use kalamdb_store::{Partition as StorePartition, RocksDBBackend, StorageBackend};
+use kalamdb_store::{RocksDBBackend, StorageBackend};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -62,7 +57,7 @@ pub mod websocket;
 ///
 /// This struct manages a complete test environment including:
 /// - Temporary RocksDB database
-/// - KalamSQL instance
+/// - AppContext with all services
 /// - DataFusion session factory
 /// - SQL executor
 ///
@@ -71,21 +66,15 @@ pub struct TestServer {
     /// Temporary directory for database files (shared via Arc to allow cloning)
     pub temp_dir: Arc<TempDir>,
     /// Base directory for table storage (Parquet outputs)
-    storage_base_path: Arc<PathBuf>,
+    pub storage_base_path: Arc<PathBuf>,
     /// Underlying RocksDB handle for tests that need direct access
     pub db: Arc<rocksdb::DB>,
     /// Shared DataFusion session context used by SqlExecutor (providers registered here)
     pub session_context: Arc<datafusion::prelude::SessionContext>,
-    /// KalamSQL instance for direct database access
-    pub kalam_sql: Arc<kalamdb_sql::KalamSql>,
     /// SQL executor for query execution
     pub sql_executor: Arc<SqlExecutor>,
-    /// Namespace service for namespace operations
-    pub namespace_service: Arc<NamespaceService>,
-    /// DataFusion session factory (needed for fallback SQL execution)
-    pub session_factory: Arc<DataFusionSessionFactory>,
-    /// Live query manager for WebSocket coordination
-    pub live_query_manager: Arc<LiveQueryManager>,
+    /// AppContext singleton with all services
+    pub app_context: Arc<AppContext>,
 }
 
 impl Clone for TestServer {
@@ -95,11 +84,8 @@ impl Clone for TestServer {
             storage_base_path: Arc::clone(&self.storage_base_path),
             db: Arc::clone(&self.db),
             session_context: Arc::clone(&self.session_context),
-            kalam_sql: Arc::clone(&self.kalam_sql),
             sql_executor: Arc::clone(&self.sql_executor),
-            namespace_service: Arc::clone(&self.namespace_service),
-            session_factory: Arc::clone(&self.session_factory),
-            live_query_manager: Arc::clone(&self.live_query_manager),
+            app_context: Arc::clone(&self.app_context),
         }
     }
 }
@@ -136,6 +122,8 @@ impl TestServer {
     ///
     /// * `data_dir` - Optional path to existing database directory
     pub async fn new_with_data_dir(data_dir: Option<String>) -> Self {
+        use kalamdb_commons::{AuthType, NodeId, Role, StorageMode, UserId};
+        
         // Create temporary database
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let db_path = data_dir.unwrap_or_else(|| {
@@ -156,40 +144,25 @@ impl TestServer {
         let db_init = kalamdb_store::RocksDbInit::new(&db_path);
         let db = db_init.open().expect("Failed to open RocksDB");
 
-        // Initialize KalamSQL via StorageBackend abstraction
+        // Initialize StorageBackend
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
-        let kalam_sql =
-            Arc::new(kalamdb_sql::KalamSql::new(backend).expect("Failed to create KalamSQL"));
 
-        // Create default 'local' storage if system.storages is empty
-        let storages = kalam_sql
-            .scan_all_storages()
-            .expect("Failed to scan storages");
-        if storages.is_empty() {
-            let now = chrono::Utc::now().timestamp_millis();
-            let default_storage = kalamdb_sql::Storage {
-                storage_id: StorageId::new("local"),
-                storage_name: "Local Filesystem".to_string(),
-                description: Some("Default local filesystem storage".to_string()),
-                storage_type: "filesystem".to_string(),
-                base_directory: storage_base_path.to_str().unwrap().to_string(),
-                credentials: None,
-                shared_tables_template: "shared/{namespace}/{tableName}".to_string(),
-                user_tables_template: "users/{userId}/tables/{namespace}/{tableName}".to_string(),
-                created_at: now,
-                updated_at: now,
-            };
-            kalam_sql
-                .insert_storage(&default_storage)
-                .expect("Failed to create default storage");
-        }
+        // Initialize AppContext with Phase 10 pattern (3 parameters)
+        let app_context = AppContext::init(
+            backend.clone(),
+            NodeId::new("test-node".to_string()),
+            storage_base_path.to_str().unwrap().to_string(),
+        );
+
+        // Get session context from AppContext
+        let session_context = app_context.base_session_context();
 
         // Bootstrap: ensure a default 'system' user exists for admin operations in tests
         {
-            use kalamdb_commons::{AuthType, Role, StorageMode, UserId};
+            use kalamdb_commons::types::User;
             let sys_id = UserId::new("system");
             let now = chrono::Utc::now().timestamp_millis();
-            let sys_user = kalamdb_commons::system::User {
+            let sys_user = User {
                 id: sys_id.clone(),
                 username: "system".into(),
                 password_hash: String::new(),
@@ -204,120 +177,48 @@ impl TestServer {
                 last_seen: None,
                 deleted_at: None,
             };
-            let _ = kalam_sql.insert_user(&sys_user);
+                        // Insert via system tables provider
+            let _ = app_context.system_tables().users().create_user(sys_user);
         }
 
-        // Initialize stores (needed by some services)
-        let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
-        for partition_name in ["user_tables", "shared_tables", "stream_tables"] {
-            let partition = StorePartition::new(partition_name);
-            if let Err(err) = backend.create_partition(&partition) {
-                eprintln!(
-                    "Warning: failed to create partition {}: {}",
-                    partition_name, err
-                );
+        // Create default 'local' storage if system.storages is empty
+        {
+            use kalamdb_commons::types::Storage;
+            let storages_provider = app_context.system_tables().storages();
+            let storages = storages_provider.list_storages().expect("Failed to scan storages");
+            if storages.is_empty() {
+                let now = chrono::Utc::now().timestamp_millis();
+                let default_storage = Storage {
+                    storage_id: StorageId::new("local"),
+                    storage_name: "Local Filesystem".to_string(),
+                    description: Some("Default local filesystem storage".to_string()),
+                    storage_type: "filesystem".to_string(),
+                    base_directory: storage_base_path.to_str().unwrap().to_string(),
+                    credentials: None,
+                    shared_tables_template: "shared/{namespace}/{tableName}".to_string(),
+                    user_tables_template: "users/{userId}/tables/{namespace}/{tableName}".to_string(),
+                    created_at: now,
+                    updated_at: now,
+                };
+                storages_provider
+                    .insert_storage(default_storage)
+                    .expect("Failed to create default storage");
             }
         }
-        let user_table_store = Arc::new(UserTableStore::new(backend.clone(), "user_tables"));
-        let shared_table_store = Arc::new(SharedTableStore::new(backend.clone(), "shared_tables"));
-        let stream_table_store = Arc::new(StreamTableStore::new(backend.clone(), "stream_tables"));
 
-        // Initialize services
-        let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
-        let user_table_service = Arc::new(UserTableService::new());
-        let shared_table_service = Arc::new(SharedTableService::new());
-        let stream_table_service = Arc::new(StreamTableService::new());
-
-        // Initialize TableDeletionService for DROP TABLE support
-        let table_deletion_service = Arc::new(TableDeletionService::new());
-
-        // Initialize DataFusion session factory
-        let session_factory = Arc::new(
-            DataFusionSessionFactory::new().expect("Failed to create DataFusion session factory"),
-        );
-
-        // Create session context
-        let session_context = Arc::new(session_factory.create_session());
-
-        // Create "system" schema in DataFusion and register system table providers
-        use datafusion::catalog::memory::MemorySchemaProvider;
-
-        let system_schema = Arc::new(MemorySchemaProvider::new());
-        let catalog_name = "kalam";
-
-        session_context
-            .catalog(catalog_name)
-            .expect("Failed to get kalam catalog")
-            .register_schema("system", system_schema.clone())
-            .expect("Failed to register system schema");
-
-        // Register all system tables using centralized function
-        let providers =
-            kalamdb_core::system_table_registration::register_system_tables(
-                &system_schema,
-                backend.clone(),
-            )
-            .expect("Failed to register system tables");
-
-        // Initialize StorageRegistry for template validation
-        let storage_registry = Arc::new(kalamdb_core::storage::StorageRegistry::new(
-            kalam_sql.clone(),
-            storage_base_path
-                .to_str()
-                .unwrap_or("./data/storage")
-                .to_string(),
+        // Initialize SqlExecutor with new pattern (Phase 10: takes app_context + enforce_password_complexity)
+        let sql_executor = Arc::new(SqlExecutor::new(
+            app_context.clone(),
+            false, // disable password complexity enforcement in tests
         ));
-
-        // Initialize JobManager for FLUSH TABLE support
-        let job_manager = Arc::new(kalamdb_core::jobs::TokioJobManager::new());
-
-        // Initialize live query manager
-        let live_query_manager = Arc::new(LiveQueryManager::new(
-            kalam_sql.clone(),
-            NodeId::new("test-node".to_string()),
-            Some(user_table_store.clone()),
-            Some(shared_table_store.clone()),
-            Some(stream_table_store.clone()),
-        ));
-
-        // Initialize SqlExecutor with builder pattern (Phase 5: no SessionContext parameter)
-        let sql_executor = Arc::new(
-            SqlExecutor::new(
-                namespace_service.clone(),
-                user_table_service.clone(),
-                shared_table_service.clone(),
-                stream_table_service.clone(),
-            )
-            .with_table_deletion_service(table_deletion_service)
-            .with_storage_registry(storage_registry)
-            .with_job_manager(job_manager)
-            .with_live_query_manager(live_query_manager.clone())
-            .with_stores(
-                user_table_store.clone(),
-                shared_table_store.clone(),
-                stream_table_store.clone(),
-                kalam_sql.clone(),
-            )
-            .with_storage_backend(backend.clone()),
-        );
-
-        // Load existing tables from system_tables
-        let default_user_id = kalamdb_core::catalog::UserId::from("system");
-        sql_executor
-            .load_existing_tables(default_user_id)
-            .await
-            .expect("Failed to load existing tables");
 
         Self {
             temp_dir: Arc::new(temp_dir),
             storage_base_path: Arc::new(storage_base_path),
             db,
-            session_context: session_context.clone(),
-            kalam_sql,
+            session_context,
             sql_executor,
-            namespace_service,
-            session_factory,
-            live_query_manager,
+            app_context,
         }
     }
 
@@ -384,7 +285,7 @@ impl TestServer {
     ///
     /// `SqlResponse` containing status, results, and any errors
     pub async fn execute_sql_with_user(&self, sql: &str, user_id: Option<&str>) -> SqlResponse {
-        let mut user_id_obj = user_id.map(kalamdb_core::catalog::UserId::from);
+        let mut user_id_obj = user_id.map(UserId::from);
 
         // Auto-escalate to 'system' for admin-only namespace DDL when no user provided
         if user_id_obj.is_none() {
@@ -393,7 +294,7 @@ impl TestServer {
                 || sql_u.starts_with("ALTER NAMESPACE")
                 || sql_u.starts_with("DROP NAMESPACE")
             {
-                user_id_obj = Some(kalamdb_core::catalog::UserId::from("system"));
+                user_id_obj = Some(UserId::system());
             }
         }
 
@@ -407,8 +308,16 @@ impl TestServer {
         let mask_credentials = !is_admin;
 
         // Try custom DDL/DML execution first (same as REST API)
-        // Phase 5: execute() now requires SessionContext as first parameter
-        match self.sql_executor.execute(&*self.session_context, sql, user_id_obj.as_ref()).await {
+        // Phase 10: execute() now requires ExecutionContext instead of Option<&UserId>
+        use kalamdb_core::sql::executor::handlers::types::ExecutionContext;
+        use kalamdb_commons::Role;
+        
+        let exec_ctx = match &user_id_obj {
+            Some(user_id) => ExecutionContext::new(user_id.clone(), Role::System),
+            None => ExecutionContext::new(UserId::system(), Role::System),
+        };
+        
+        match self.sql_executor.execute(&*self.session_context, sql, &exec_ctx).await {
             Ok(result) => {
                 use kalamdb_core::sql::ExecutionResult;
                 match result {
@@ -666,20 +575,22 @@ impl TestServer {
     /// This drops all non-system namespaces and their tables.
     /// System tables (users, live_queries, etc.) are preserved.
     pub async fn cleanup(&self) -> Result<()> {
-        // Get all namespaces
+        // Get all namespaces from system tables
         let namespaces = self
-            .kalam_sql
-            .scan_all_namespaces()
+            .app_context
+            .system_tables()
+            .namespaces()
+            .scan_all()
             .map_err(|e| anyhow::anyhow!("Failed to list namespaces: {:?}", e))?;
 
         // Drop each namespace (this will cascade delete tables)
         for ns in namespaces {
-            let sql = format!("DROP NAMESPACE {} CASCADE", ns.name);
+            let sql = format!("DROP NAMESPACE {} CASCADE", ns.namespace_id);
             let response = self.execute_sql(&sql).await;
             if response.status != "success" {
                 eprintln!(
                     "Warning: Failed to drop namespace {}: {:?}",
-                    ns.name, response.error
+                    ns.namespace_id, response.error
                 );
             }
         }
@@ -693,16 +604,18 @@ impl TestServer {
     ///
     /// * `namespace` - Name of the namespace
     pub async fn cleanup_namespace(&self, namespace: &str) -> Result<()> {
-        // Get all tables in namespace
+        // Get all tables from system tables
         let tables = self
-            .kalam_sql
-            .scan_all_tables()
+            .app_context
+            .system_tables()
+            .tables()
+            .scan_all()
             .map_err(|e| anyhow::anyhow!("Failed to list tables: {:?}", e))?;
 
         // Filter tables in this namespace
         let ns_tables: Vec<_> = tables
             .into_iter()
-            .filter(|t| t.namespace == NamespaceId::new(namespace))
+            .filter(|t| t.namespace_id == NamespaceId::new(namespace))
             .collect();
 
         // Drop each table
@@ -741,8 +654,8 @@ impl TestServer {
     ///
     /// * `namespace` - Name of the namespace to check
     pub async fn namespace_exists(&self, namespace: &str) -> bool {
-        match self.kalam_sql.scan_all_namespaces() {
-            Ok(namespaces) => namespaces.iter().any(|ns| ns.name == namespace),
+        match self.app_context.system_tables().namespaces().scan_all() {
+            Ok(namespaces) => namespaces.iter().any(|ns| ns.namespace_id.as_str() == namespace),
             Err(_) => false,
         }
     }
@@ -754,9 +667,9 @@ impl TestServer {
     /// * `namespace` - Name of the namespace
     /// * `table_name` - Name of the table
     pub async fn table_exists(&self, namespace: &str, table_name: &str) -> bool {
-        match self.kalam_sql.scan_all_tables() {
+        match self.app_context.system_tables().tables().scan_all() {
             Ok(tables) => tables.iter().any(|t| {
-                t.namespace == NamespaceId::new(namespace)
+                t.namespace_id == NamespaceId::new(namespace)
                     && t.table_name == TableName::new(table_name)
             }),
             Err(_) => false,

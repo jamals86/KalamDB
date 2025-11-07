@@ -9,12 +9,7 @@
 //!
 //! This module now re-exports from new locations for backward compatibility.
 
-pub mod policy;
-pub mod trigger;
 pub mod util;
-
-pub use policy::FlushPolicy;
-pub use trigger::{FlushTriggerMonitor, FlushTriggerState};
 
 // Re-export from new locations (Phase 14 Step 11)
 pub use crate::tables::base_flush::FlushJobResult;

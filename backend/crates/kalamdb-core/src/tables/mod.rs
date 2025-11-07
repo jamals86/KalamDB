@@ -9,7 +9,6 @@
 pub mod arrow_json_conversion;
 pub mod base_table_provider;
 pub mod base_flush;
-pub mod parquet_scan;
 pub mod shared_tables;
 pub mod stream_tables;
 pub mod system;
@@ -19,6 +18,8 @@ pub mod user_tables;
 pub use base_flush::{
     FlushJobResult, FlushMetadata, SharedTableFlushMetadata, TableFlush, UserTableFlushMetadata,
 };
+pub use shared_tables::SharedTableFlushJob;
+pub use user_tables::UserTableFlushJob;
 
 // Re-export base provider traits
 pub use base_table_provider::{BaseTableProvider, TableProviderCore};

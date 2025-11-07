@@ -2,7 +2,7 @@
 
 ## T206: SchemaCache
 
-**File**: `/backend/crates/kalamdb-core/src/sql/schema_cache.rs`
+**File**: `/backend/crates/kalamdb-core/src/sql/registry.rs`
 
 ```rust
 use kalamdb_core::sql::schema_cache::{SchemaCache, get_or_load_schema};

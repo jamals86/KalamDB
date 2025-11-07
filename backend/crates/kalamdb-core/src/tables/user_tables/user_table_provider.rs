@@ -10,12 +10,12 @@
 //! - After: UserTableAccess wraps Arc<UserTableShared> (created once per table, cached)
 //! - Memory savings: 6 fields → 3 fields (50% reduction per instance)
 
-use super::{UserTableDeleteHandler, UserTableInsertHandler, UserTableUpdateHandler};
-use crate::catalog::{NamespaceId, SchemaCache, TableName, TableType, UserId};
+use super::UserTableInsertHandler;
+use crate::schema_registry::{NamespaceId, TableName, UserId};
 use crate::tables::base_table_provider::{BaseTableProvider, UserTableShared};
 use crate::error::KalamDbError;
-use crate::ids::SnowflakeGenerator;
-use crate::stores::system_table::UserTableStoreExt;
+use kalamdb_commons::ids::SnowflakeGenerator;
+use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::arrow_json_conversion::{
     arrow_batch_to_json, json_rows_to_arrow_batch, validate_insert_rows,
 };
@@ -28,7 +28,6 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::dml::InsertOp;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use kalamdb_commons::models::TableId;
 use kalamdb_commons::Role;
 use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
@@ -119,8 +118,8 @@ impl UserTableAccess {
     pub fn get_cached_metadata(&self) -> Option<(NamespaceId, TableName)> {
         if let Some(cached_data) = self.shared.core().cache().get(self.shared.core().table_id()) {
             Some((
-                cached_data.table_id.namespace_id().clone(),
-                cached_data.table_id.table_name().clone(),
+                cached_data.table.namespace_id.clone(),
+                cached_data.table.table_name.clone(),
             ))
         } else {
             None
@@ -376,76 +375,60 @@ impl UserTableAccess {
         use std::fs;
         use std::path::Path;
 
-        // Resolve full storage path using StorageRegistry (same logic as flush job)
-        let storage_path = if let Some(ref registry) = self.shared.storage_registry() {
-            // Use StorageRegistry to get full path (includes base_directory)
-            match registry.get_storage_config("local") {
-                Ok(Some(storage)) => {
-                    let path = storage
-                        .user_tables_template()
-                        .replace("{namespace}", self.namespace_id().as_str())
-                        .replace("{tableName}", self.table_name().as_str())
+        let resolve_template_fallback = || {
+            self.shared
+                .core()
+                .cache()
+                .get(self.shared.core().table_id())
+                .map(|cached_data| {
+                    cached_data
+                        .storage_path_template
                         .replace("{userId}", self.current_user_id.as_str())
-                        .replace("{shard}", "");
-
-                    if storage.base_directory().is_empty() {
-                        path
-                    } else {
-                        format!(
-                            "{}/{}",
-                            storage.base_directory().trim_end_matches('/'),
-                            path.trim_start_matches('/')
-                        )
-                }
-            }
-            _ => {
-                // Fallback to template substitution if registry lookup fails
-                let storage_id_str = if let Some(cached_data) = self.shared.core().cache().get(self.shared.core().table_id()) {
-                    cached_data.storage_id.as_ref()
-                        .map(|s| s.as_str().to_string())
-                        .unwrap_or_else(|| "local".to_string())
-                } else {
-                    "local".to_string() // Fallback
-                };
-                storage_id_str
-                    .replace("${user_id}", self.current_user_id.as_str())
-                    .replace("{userId}", self.current_user_id.as_str())
-                    .replace("{namespace}", self.namespace_id().as_str())
-                    .replace("{tableName}", self.table_name().as_str())
-                    .replace("{shard}", "")
-            }
-        }
-    } else {
-        // No registry available - use template substitution (legacy)
-        let storage_id_str = if let Some(cached_data) = self.shared.core().cache().get(self.shared.core().table_id()) {
-            cached_data.storage_id.as_ref()
-                .map(|s| s.as_str().to_string())
-                .unwrap_or_else(|| "local".to_string())
-        } else {
-            "local".to_string() // Fallback
+                        .replace("{shard}", "")
+                })
+                .unwrap_or_else(|| String::new())
         };
-        storage_id_str
-            .replace("${user_id}", self.current_user_id.as_str())
-            .replace("{userId}", self.current_user_id.as_str())
-            .replace("{namespace}", self.namespace_id().as_str())
-            .replace("{tableName}", self.table_name().as_str())
-            .replace("{shard}", "")
-    };
 
-    let storage_dir = Path::new(&storage_path);
+        let storage_path = self
+            .shared
+            .core()
+            .cache()
+            .get_storage_path(
+                self.shared.core().table_id(),
+                Some(&self.current_user_id),
+                None,
+            )
+            .unwrap_or_else(|err| {
+                log::warn!(
+                    "Failed to resolve storage path via cache for table {}.{}: {}",
+                    self.namespace_id().as_str(),
+                    self.table_name().as_str(),
+                    err
+                );
+                resolve_template_fallback()
+            });
+
+        if storage_path.is_empty() {
+            log::debug!(
+                "Storage path resolution returned empty string for table {}.{}, skipping Parquet scan",
+                self.namespace_id().as_str(),
+                self.table_name().as_str()
+            );
+            return Ok(Vec::new());
+        }
+
+        let storage_dir = Path::new(&storage_path);
         log::debug!(
             "Scanning Parquet files in: {} (exists: {})",
             storage_path,
             storage_dir.exists()
         );
 
-        // If directory doesn't exist, no Parquet files to scan
         if !storage_dir.exists() {
             log::debug!("Storage directory does not exist, returning empty result");
             return Ok(Vec::new());
         }
 
-        // List all .parquet files in the directory
         let parquet_files: Vec<_> = fs::read_dir(storage_dir)
             .map_err(|e| {
                 DataFusionError::Execution(format!("Failed to read storage directory: {}", e))
@@ -463,7 +446,6 @@ impl UserTableAccess {
 
         let mut all_json_rows = Vec::new();
 
-        // Read each Parquet file
         for parquet_file in parquet_files {
             log::debug!("Reading Parquet file: {:?}", parquet_file);
 
@@ -488,7 +470,6 @@ impl UserTableAccess {
                 ))
             })?;
 
-            // Read all batches from this file
             for batch_result in reader {
                 let batch = batch_result.map_err(|e| {
                     DataFusionError::Execution(format!(
@@ -497,33 +478,27 @@ impl UserTableAccess {
                     ))
                 })?;
 
-                // Convert Arrow batch to JSON rows
                 let json_rows = arrow_batch_to_json(&batch, true).map_err(|e| {
                     DataFusionError::Execution(format!("Arrow to JSON conversion failed: {}", e))
                 })?;
 
-                // Filter out soft-deleted rows and add system columns if missing
                 for mut row in json_rows {
-                    // Ensure _deleted field exists (default to false for Parquet rows)
                     if let Some(obj) = row.as_object_mut() {
                         if !obj.contains_key("_deleted") {
                             obj.insert("_deleted".to_string(), JsonValue::Bool(false));
                         }
 
-                        // Ensure _updated field exists (use current time as fallback)
                         if !obj.contains_key("_updated") {
                             let now = chrono::Utc::now().to_rfc3339();
                             obj.insert("_updated".to_string(), JsonValue::String(now));
                         }
                     }
 
-                    // Check if row is deleted
                     if let Some(deleted) = row.get("_deleted").and_then(|v| v.as_bool()) {
                         if !deleted {
                             all_json_rows.push(row);
                         }
                     } else {
-                        // If _deleted field is missing or not a bool, include the row
                         all_json_rows.push(row);
                     }
                 }
@@ -544,7 +519,7 @@ impl BaseTableProvider for UserTableAccess {
         self.shared.core().schema_ref()
     }
 
-    fn table_type(&self) -> crate::catalog::TableType {
+    fn table_type(&self) -> crate::schema_registry::TableType {
         self.shared.core().table_type()
     }
 }
@@ -556,9 +531,11 @@ impl TableProvider for UserTableAccess {
     }
 
     fn schema(&self) -> SchemaRef {
+        // Phase 10, US1, FR-006: Use memoized Arrow schema (50-100× speedup)
         // Return the base schema without system columns
         // System columns (_updated, _deleted) are added dynamically during scan()
-        self.shared.core().schema_ref()
+        self.shared.core().arrow_schema()
+            .expect("Schema must be valid for user table")
     }
 
     fn table_type(&self) -> datafusion::datasource::TableType {
@@ -719,15 +696,13 @@ impl TableProvider for UserTableAccess {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flush::FlushPolicy;
     use crate::tables::UserTableStore;
-    use chrono::Utc;
     use datafusion::arrow::array::{
         BooleanArray, Int64Array, StringArray, TimestampMillisecondArray,
     };
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use datafusion::execution::context::SessionContext;
-    use kalamdb_commons::models::StorageId;
+    use kalamdb_commons::{TableId, TableType};
     use kalamdb_store::test_utils::TestDb;
     use serde_json::json;
 
@@ -753,11 +728,11 @@ mod tests {
         ))
     }
 
-    fn create_test_metadata() -> Arc<crate::catalog::SchemaCache> {
-        use crate::catalog::{CachedTableData, SchemaCache};
-        use kalamdb_commons::models::schemas::TableDefinition;
+    fn create_test_metadata() -> Arc<crate::schema_registry::SchemaRegistry> {
+    use crate::schema_registry::{CachedTableData, SchemaRegistry};
+    use kalamdb_commons::models::schemas::TableDefinition;
 
-        let cache = Arc::new(SchemaCache::new(0, None));
+        let cache = Arc::new(SchemaRegistry::new(0, None));
 
         let table_id = TableId::new(NamespaceId::new("chat"), TableName::new("messages"));
 
@@ -771,17 +746,7 @@ mod tests {
             ).unwrap()
         );
 
-        let data = CachedTableData::new(
-            table_id.clone(),
-            TableType::User,
-            Utc::now(),
-            Some(StorageId::new("s3://bucket/users/${user_id}/messages/")),
-            FlushPolicy::row_limit(1000).unwrap(),
-            "/data/{namespace}/{tableName}/".to_string(),
-            1,
-            Some(720),
-            td,
-        );
+        let data = CachedTableData::new(td);
 
         cache.insert(table_id, Arc::new(data));
         cache
@@ -823,9 +788,9 @@ mod tests {
 
     #[test]
     fn test_user_key_prefix() {
-        let store = create_test_db();
-        let schema = create_test_schema();
-        let metadata = create_test_metadata();
+    let _store = create_test_db();
+    let _schema = create_test_schema();
+    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
         let provider = UserTableAccess::new(create_test_user_table_shared(), user_id, Role::User);
@@ -839,7 +804,7 @@ mod tests {
     #[tokio::test]
     async fn test_scan_flattens_user_rows() {
         let shared = create_test_user_table_shared();
-        let schema = shared.core().schema_ref().clone();
+    let _schema = shared.core().schema_ref().clone();
         let user_id = UserId::new("user123".to_string());
 
         let provider = UserTableAccess::new(
@@ -924,9 +889,9 @@ mod tests {
 
     #[test]
     fn test_insert_row() {
-        let store = create_test_db();
-        let schema = create_test_schema();
-        let metadata = create_test_metadata();
+    let _store = create_test_db();
+    let _schema = create_test_schema();
+    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
         let provider = UserTableAccess::new(create_test_user_table_shared(), user_id, Role::User);
@@ -944,9 +909,9 @@ mod tests {
 
     #[test]
     fn test_insert_batch() {
-        let store = create_test_db();
-        let schema = create_test_schema();
-        let metadata = create_test_metadata();
+    let _store = create_test_db();
+    let _schema = create_test_schema();
+    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
         let provider = UserTableAccess::new(create_test_user_table_shared(), user_id, Role::User);
@@ -966,9 +931,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_row_excludes_soft_deleted_from_scan() {
-        let store = create_test_db();
-        let schema = create_test_schema();
-        let metadata = create_test_metadata();
+    let _store = create_test_db();
+    let _schema = create_test_schema();
+    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
         let provider =
@@ -1024,9 +989,9 @@ mod tests {
 
     #[test]
     fn test_update_row() {
-        let store = create_test_db();
-        let schema = create_test_schema();
-        let metadata = create_test_metadata();
+    let _store = create_test_db();
+    let _schema = create_test_schema();
+    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
         let provider = UserTableAccess::new(create_test_user_table_shared(), user_id, Role::User);
@@ -1044,9 +1009,9 @@ mod tests {
 
     #[test]
     fn test_delete_row() {
-        let store = create_test_db();
-        let schema = create_test_schema();
-        let metadata = create_test_metadata();
+    let _store = create_test_db();
+    let _schema = create_test_schema();
+    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
         let provider = UserTableAccess::new(create_test_user_table_shared(), user_id, Role::User);

@@ -118,8 +118,19 @@ If the user already specified primary key then we dont do that, the _id we add a
                 vec![], // parquet_paths - empty for now
             );
 
-107) Check if we can here combine this with our main cache: backend\crates\kalamdb-core\src\sql\schema_cache.rs, or if this needed anymore?
-
+107) Check if we can here combine this with our main cache: backend\crates\kalamdb-core\src\sql\registry.rs, or if this needed anymore?
+108) Prevent creating namespace with names like: sys/system/root/kalamdb/kalam/main/default/sql and name these as SYSTEM_RESERVED_NAMES, also add function to Namespaceid.isSystem() to check if the namespace is a system one
+109) why do we need backend/crates/kalamdb-auth/src/user_repo.rs anymore? we have kalamdb-core/src/auth/user_repo.rs
+110) Instead of having system.<system table> we can use sys.<system table> for less typing and easier to remember
+111) Add virtualTables module to kalamdb-core/src/tables/virtual_tables to include all virtual tables for example information_schema and other virtual tables we may have in the future, virtual tables should be also registered with schema registry
+112) In JobType add another model for each type with the parameters it should have in the Json in this way we can validate it easily by deserializing into the right struct for each job type
+113) Check if we need to remove ColumnFamilyManager
+114) Make sure when we are writing to a table with secondary index we do it in a transaction style like this:
+Transaction:
+  1️⃣ Insert actual value into main table (or CF)
+  2️⃣ Insert corresponding key/value into secondary index CF
+  3️⃣ Commit atomically
+115) we are having so much AppContext:get() calls in schema_registry add it to the struct as a member and use it in all methods
 
 
 
@@ -143,5 +154,4 @@ IMPORTANT:
 Key Findings
 Flush Timing Issue: Data inserted immediately before flush may not be in RocksDB column families yet, resulting in 0 rows flushed
 Parquet Querying Limitation: After flush, data is removed from RocksDB but queries don't yet retrieve from Parquet files - this is a known gap
-
 

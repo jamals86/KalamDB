@@ -6,7 +6,7 @@
 //! - RocksDB buffer with Parquet persistence
 //! - Flush policy support (row/time/combined)
 
-use crate::catalog::{NamespaceId, SchemaCache, TableName, TableType};
+use crate::schema_registry::{NamespaceId, SchemaRegistry, TableName, TableType};
 use crate::error::KalamDbError;
 use crate::tables::base_table_provider::{BaseTableProvider, TableProviderCore};
 use crate::tables::arrow_json_conversion::{
@@ -68,14 +68,13 @@ impl SharedTableProvider {
     /// * `store` - SharedTableStore for data operations
     pub fn new(
         table_id: Arc<TableId>,
-        unified_cache: Arc<SchemaCache>,
-        schema: SchemaRef,
+        unified_cache: Arc<SchemaRegistry>,
+        _schema: SchemaRef,
         store: Arc<SharedTableStore>,
     ) -> Self {
         let core = TableProviderCore::new(
             table_id,
             TableType::Shared,
-            schema,
             None, // storage_id - will be fetched from cache when needed
             unified_cache,
         );
@@ -229,7 +228,7 @@ impl BaseTableProvider for SharedTableProvider {
         self.core.schema_ref()
     }
 
-    fn table_type(&self) -> crate::catalog::TableType {
+    fn table_type(&self) -> crate::schema_registry::TableType {
         self.core.table_type()
     }
 }
@@ -242,8 +241,11 @@ impl TableProvider for SharedTableProvider {
     }
 
     fn schema(&self) -> SchemaRef {
+        // Phase 10, US1, FR-006: Use memoized Arrow schema (50-100× speedup)
         // Add system columns to the schema if they don't already exist
-        let mut fields = self.core.schema_ref().fields().to_vec();
+        let base_schema = self.core.arrow_schema()
+            .expect("Schema must be valid for shared table");
+        let mut fields = base_schema.fields().to_vec();
 
         // Check if _updated already exists
         if !fields.iter().any(|f| f.name() == "_updated") {
@@ -532,9 +534,8 @@ fn shared_rows_to_arrow_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::TableType;
+    use crate::schema_registry::TableType;
     use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-    use kalamdb_commons::StorageId;
     use kalamdb_store::test_utils::{InMemoryBackend, TestDb};
 
     /// Phase 10: Create Arc<TableId> for test providers (avoids allocation on every cache lookup)
@@ -560,10 +561,10 @@ mod tests {
         ]));
 
         // Build unified cache with CachedTableData for tests
-        use crate::catalog::{CachedTableData, SchemaCache};
+        use crate::schema_registry::{CachedTableData, SchemaRegistry};
         use kalamdb_commons::models::schemas::TableDefinition;
 
-        let unified_cache = Arc::new(SchemaCache::new(0, None));
+        let unified_cache = Arc::new(SchemaRegistry::new(0, None));
 
         let table_id = TableId::new(NamespaceId::new("app"), TableName::new("config"));
         let td: Arc<TableDefinition> = Arc::new(
@@ -576,17 +577,7 @@ mod tests {
             ).unwrap()
         );
 
-        let data = CachedTableData::new(
-            table_id.clone(),
-            TableType::Shared,
-            chrono::Utc::now(),
-            Some(StorageId::new("local")),
-            crate::flush::FlushPolicy::RowLimit { row_limit: 1000 },
-            "/data/{namespace}/{tableName}/".to_string(),
-            1,
-            Some(24),
-            td,
-        );
+        let data = CachedTableData::new(td);
 
         unified_cache.insert(table_id.clone(), Arc::new(data));
 

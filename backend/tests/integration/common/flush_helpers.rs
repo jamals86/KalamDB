@@ -8,7 +8,9 @@
 //! - Verifying job completion metrics
 
 use super::TestServer;
-use kalamdb_commons::models::StorageId;
+use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName};
+use kalamdb_core::tables::user_tables::UserTableFlushJob;
+use kalamdb_core::tables::shared_tables::SharedTableFlushJob;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,19 +35,15 @@ pub async fn execute_flush_synchronously(
     namespace: &str,
     table_name: &str,
 ) -> Result<kalamdb_core::tables::base_flush::FlushJobResult, String> {
-    use kalamdb_commons::models::{NamespaceId as ModelNamespaceId, TableName as ModelTableName};
-    use kalamdb_core::catalog::{NamespaceId, SchemaCache, TableName};
-    use kalamdb_core::tables::user_tables::UserTableFlushJob;
-    use kalamdb_commons::models::TableId;
-    use kalamdb_store::StorageBackend;
+    // Get table definition from schema registry via AppContext
+    let namespace_id = NamespaceId::new(namespace);
+    let table_name_id = TableName::new(table_name);
+    let table_id = TableId::new(namespace_id.clone(), table_name_id.clone());
 
-    // Get table definition from kalam_sql
-    let kalam_sql = &server.kalam_sql;
-    let namespace_id = NamespaceId::from(namespace);
-    let table_name_id = TableName::from(table_name);
-
-    let table_def = kalam_sql
-        .get_table_definition(&namespace_id, &table_name_id)
+    let table_def = server
+        .app_context
+        .schema_registry()
+        .get_table_definition(&table_id)
         .map_err(|e| format!("Failed to get table definition: {}", e))?
         .ok_or_else(|| format!("Table {}.{} not found", namespace, table_name))?;
 
@@ -61,46 +59,22 @@ pub async fn execute_flush_synchronously(
 
     // Convert to Arrow schema
     let arrow_schema =
-        kalamdb_core::schema::arrow_schema::ArrowSchemaWithOptions::from_json_string(
+        kalamdb_core::schema_registry::arrow_schema::ArrowSchemaWithOptions::from_json_string(
             &latest_schema_version.arrow_schema_json,
         )
         .map_err(|e| format!("Failed to parse Arrow schema: {}", e))?;
 
     // Table metadata scan not needed for flush execution
 
-    // Create storage backend and user table store
-    let backend: Arc<dyn StorageBackend> =
-        Arc::new(kalamdb_store::RocksDBBackend::new(server.db.clone()));
-    let model_namespace = ModelNamespaceId::new(namespace);
-    let model_table = ModelTableName::new(table_name);
-    let user_table_store = Arc::new(kalamdb_core::tables::new_user_table_store(
-        backend.clone(),
-        &model_namespace,
-        &model_table,
-    ));
-
-    let namespace_id = NamespaceId::from(namespace);
-    let table_name_id = TableName::from(table_name);
-
-    // Create storage registry (needed for path resolution)
-    let storage_registry = Arc::new(kalamdb_core::storage::StorageRegistry::new(
-        server.kalam_sql.clone(),
-        server
-            .storage_base_path
-            .to_str()
-            .unwrap_or("./data/storage")
-            .to_string(),
-    ));
-
-    let table_id = Arc::new(TableId::new(
-        model_namespace.clone(),
-        model_table.clone(),
-    ));
-    let unified_cache = Arc::new(SchemaCache::new(0, None));
+    // Get stores and registry from AppContext
+    let user_table_store = server.app_context.user_table_store();
+    let unified_cache = server.app_context.schema_registry();
+    
+    let table_id_arc = Arc::new(table_id.clone());
     
     let flush_job = UserTableFlushJob::new(
-        table_id,
-        user_table_store.clone(),
+        table_id_arc,
+        user_table_store,
         namespace_id,
         table_name_id,
         arrow_schema.schema.clone(),
@@ -118,19 +92,14 @@ pub async fn execute_shared_flush_synchronously(
     namespace: &str,
     table_name: &str,
 ) -> Result<kalamdb_core::tables::base_flush::FlushJobResult, String> {
-    use kalamdb_core::catalog::{NamespaceId, TableName};
-    use kalamdb_commons::models::{NamespaceId as ModelNamespaceId, TableName as ModelTableName, TableId};
-    use kalamdb_core::catalog::SchemaCache;
-    use kalamdb_core::tables::shared_tables::SharedTableFlushJob;
-    use kalamdb_core::tables::SharedTableStore;
-    use kalamdb_store::StorageBackend;
+    let namespace_id = NamespaceId::new(namespace);
+    let table_name_id = TableName::new(table_name);
+    let table_id = TableId::new(namespace_id.clone(), table_name_id.clone());
 
-    let kalam_sql = &server.kalam_sql;
-    let namespace_id = NamespaceId::from(namespace);
-    let table_name_id = TableName::from(table_name);
-
-    let table_def = kalam_sql
-        .get_table_definition(&namespace_id, &table_name_id)
+    let table_def = server
+        .app_context
+        .schema_registry()
+        .get_table_definition(&table_id)
         .map_err(|e| format!("Failed to get table definition: {}", e))?
         .ok_or_else(|| format!("Table {}.{} not found", namespace, table_name))?;
 
@@ -146,36 +115,22 @@ pub async fn execute_shared_flush_synchronously(
     // Table metadata scan not needed for flush execution
 
     let arrow_schema =
-        kalamdb_core::schema::arrow_schema::ArrowSchemaWithOptions::from_json_string(
+        kalamdb_core::schema_registry::arrow_schema::ArrowSchemaWithOptions::from_json_string(
             &latest_schema_version.arrow_schema_json,
         )
         .map_err(|e| format!("Failed to parse Arrow schema: {}", e))?;
 
-    let backend: Arc<dyn StorageBackend> =
-        Arc::new(kalamdb_store::RocksDBBackend::new(server.db.clone()));
-    let model_namespace = ModelNamespaceId::new(namespace);
-    let model_table = ModelTableName::new(table_name);
-    let shared_table_store = Arc::new(SharedTableStore::new(backend, "shared_tables"));
-
-    // Create storage registry and TableCache (needed for template-based path resolution)
-    let storage_registry = Arc::new(kalamdb_core::storage::StorageRegistry::new(
-        server.kalam_sql.clone(),
-        server
-            .storage_base_path
-            .to_str()
-            .unwrap_or("./data/storage")
-            .to_string(),
-    ));
+    // Get stores and registry from AppContext
+    let shared_table_store = server.app_context.shared_table_store();
+    let unified_cache = server.app_context.schema_registry();
     
-    let table_id = Arc::new(TableId::new(
-        model_namespace,
-        model_table,
-    ));
-    let unified_cache = Arc::new(SchemaCache::new(0, None));
+    let namespace_id = NamespaceId::new(namespace);
+    let table_name_id = TableName::new(table_name);
+    let table_id = Arc::new(TableId::new(namespace_id.clone(), table_name_id.clone()));
     
     let flush_job = SharedTableFlushJob::new(
         table_id,
-        shared_table_store.clone(),
+        shared_table_store,
         namespace_id,
         table_name_id,
         arrow_schema.schema.clone(),
@@ -461,8 +416,10 @@ fn resolve_user_table_storage_path(
     user_id: Option<&str>,
 ) -> PathBuf {
     let storage = server
-        .kalam_sql
-        .get_storage(&StorageId::new("local"))
+        .app_context
+        .system_tables()
+        .storages()
+        .get_storage(&StorageId::local())
         .expect("Failed to get local storage")
         .expect("Local storage configuration missing");
 
@@ -494,7 +451,9 @@ fn resolve_shared_table_storage_path(
     table_name: &str,
 ) -> PathBuf {
     let storage = server
-        .kalam_sql
+        .app_context
+        .system_tables()
+        .storages()
         .get_storage(&StorageId::new("local"))
         .expect("Failed to get local storage")
         .expect("Local storage configuration missing");

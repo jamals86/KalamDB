@@ -11,11 +11,11 @@ use crate::live_query::filter::FilterCache;
 use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
 use crate::tables::system::LiveQueriesTableProvider;
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
-use kalamdb_commons::models::{NamespaceId, TableName, UserId};
+use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
+use crate::schema_registry::SchemaRegistry;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_commons::system::LiveQuery as SystemLiveQuery;
 use kalamdb_commons::LiveQueryId;
-use kalamdb_sql::KalamSql;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -25,14 +25,15 @@ pub struct LiveQueryManager {
     live_queries_provider: Arc<LiveQueriesTableProvider>,
     filter_cache: Arc<tokio::sync::RwLock<FilterCache>>,
     initial_data_fetcher: Arc<InitialDataFetcher>,
-    kalam_sql: Arc<KalamSql>,
+    schema_registry: Arc<SchemaRegistry>,
     node_id: NodeId,
 }
 
 impl LiveQueryManager {
     /// Create a new live query manager
     pub fn new(
-        kalam_sql: Arc<KalamSql>,
+        live_queries_provider: Arc<LiveQueriesTableProvider>,
+        schema_registry: Arc<SchemaRegistry>,
         node_id: NodeId,
         user_table_store: Option<Arc<UserTableStore>>,
         _shared_table_store: Option<Arc<SharedTableStore>>,
@@ -41,8 +42,6 @@ impl LiveQueryManager {
         let registry = Arc::new(tokio::sync::RwLock::new(LiveQueryRegistry::new(
             node_id.clone(),
         )));
-        let live_queries_provider =
-            Arc::new(LiveQueriesTableProvider::new(kalam_sql.adapter().backend()));
         let filter_cache = Arc::new(tokio::sync::RwLock::new(FilterCache::new()));
         let initial_data_fetcher = Arc::new(InitialDataFetcher::new(
             user_table_store.clone(),
@@ -54,7 +53,7 @@ impl LiveQueryManager {
             live_queries_provider,
             filter_cache,
             initial_data_fetcher,
-            kalam_sql,
+            schema_registry,
             node_id,
         }
     }
@@ -119,17 +118,12 @@ impl LiveQueryManager {
             ))
         })?;
 
-        let namespace_id = NamespaceId::from(namespace);
-        let table_name = TableName::from(table);
+    let namespace_id = NamespaceId::from(namespace);
+    let table_name = TableName::from(table);
+    let table_id = TableId::new(namespace_id.clone(), table_name.clone());
         let table_def = self
-            .kalam_sql
-            .get_table_definition(&namespace_id, &table_name)
-            .map_err(|e| {
-                KalamDbError::Other(format!(
-                    "Failed to load table definition for {}.{}: {}",
-                    namespace, table, e
-                ))
-            })?
+            .schema_registry
+            .get_table_definition(&table_id)?
             .ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "Table {}.{} not found for subscription",
@@ -263,15 +257,10 @@ impl LiveQueryManager {
 
             let namespace_id = NamespaceId::from(namespace);
             let table_name = TableName::from(table);
+            let table_id = TableId::new(namespace_id.clone(), table_name.clone());
             let table_def = self
-                .kalam_sql
-                .get_table_definition(&namespace_id, &table_name)
-                .map_err(|e| {
-                    KalamDbError::Other(format!(
-                        "Failed to load table definition for {}.{}: {}",
-                        namespace, table, e
-                    ))
-                })?
+                .schema_registry
+                .get_table_definition(&table_id)?
                 .ok_or_else(|| {
                     KalamDbError::NotFound(format!(
                         "Table {}.{} not found for subscription",
@@ -836,9 +825,12 @@ pub struct RegistryStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema_registry::SchemaRegistry;
+    use crate::tables::system::LiveQueriesTableProvider;
     use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
+    use kalamdb_commons::datatypes::KalamDataType;
+    use kalamdb_commons::models::TableId;
     use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
-    use kalamdb_commons::types::KalamDataType;
     use kalamdb_commons::{NamespaceId, TableName};
     use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
@@ -849,7 +841,9 @@ mod tests {
         let db = Arc::new(init.open().unwrap());
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
-        let kalam_sql = Arc::new(KalamSql::new(backend.clone()).unwrap());
+
+    let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(backend.clone()));
+    let schema_registry = Arc::new(SchemaRegistry::new(128, None));
 
         // Create table stores for testing (using default namespace and table)
         let test_namespace = NamespaceId::new("user1");
@@ -866,7 +860,7 @@ mod tests {
         ));
         let stream_table_store = Arc::new(new_stream_table_store(&test_namespace, &test_table));
 
-        // Create test tables in information_schema_tables using NEW schema
+        // Create test table definitions via SchemaRegistry
         let messages_table = TableDefinition::new(
             NamespaceId::new("user1"),
             TableName::new("messages"),
@@ -876,8 +870,8 @@ mod tests {
                     "id",
                     1,
                     KalamDataType::Int,
-                    false, // not nullable
-                    true,  // is primary key
+                    false,
+                    true,
                     false,
                     kalamdb_commons::schemas::ColumnDefault::None,
                     None,
@@ -886,7 +880,7 @@ mod tests {
                     "user_id",
                     2,
                     KalamDataType::Text,
-                    true, // nullable
+                    true,
                     false,
                     false,
                     kalamdb_commons::schemas::ColumnDefault::None,
@@ -895,8 +889,15 @@ mod tests {
             ],
             TableOptions::user(),
             None,
-        ).unwrap();
-        kalam_sql.upsert_table_definition(&messages_table).unwrap();
+        )
+        .unwrap();
+        let messages_table_id = TableId::new(
+            messages_table.namespace_id.clone(),
+            messages_table.table_name.clone(),
+        );
+        schema_registry
+            .put_table_definition(&messages_table_id, &messages_table)
+            .unwrap();
 
         let notifications_table = TableDefinition::new(
             NamespaceId::new("user1"),
@@ -907,8 +908,8 @@ mod tests {
                     "id",
                     1,
                     KalamDataType::Int,
-                    false, // not nullable
-                    true,  // is primary key
+                    false,
+                    true,
                     false,
                     kalamdb_commons::schemas::ColumnDefault::None,
                     None,
@@ -917,7 +918,7 @@ mod tests {
                     "user_id",
                     2,
                     KalamDataType::Text,
-                    true, // nullable
+                    true,
                     false,
                     false,
                     kalamdb_commons::schemas::ColumnDefault::None,
@@ -926,18 +927,23 @@ mod tests {
             ],
             TableOptions::user(),
             None,
-        ).unwrap();
-        kalam_sql
-            .upsert_table_definition(&notifications_table)
+        )
+        .unwrap();
+        let notifications_table_id = TableId::new(
+            notifications_table.namespace_id.clone(),
+            notifications_table.table_name.clone(),
+        );
+        schema_registry
+            .put_table_definition(&notifications_table_id, &notifications_table)
             .unwrap();
 
-        let node_id = NodeId::new("test_node".to_string());
         let manager = LiveQueryManager::new(
-            kalam_sql,
-            node_id,
-            Some(user_table_store),
-            Some(shared_table_store),
-            Some(stream_table_store),
+            live_queries_provider,
+            schema_registry,
+            NodeId::from("test_node"),
+            Some(Arc::clone(&user_table_store)),
+            Some(Arc::clone(&shared_table_store)),
+            Some(Arc::clone(&stream_table_store)),
         );
         (manager, temp_dir)
     }

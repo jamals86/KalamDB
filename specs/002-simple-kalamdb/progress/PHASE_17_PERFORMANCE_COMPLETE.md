@@ -21,7 +21,7 @@ Successfully completed all Performance Optimization tasks from Phase 17, impleme
 ---
 
 ### T206: Schema Caching ✅
-**Implementation**: `/backend/crates/kalamdb-core/src/sql/schema_cache.rs`  
+**Implementation**: `/backend/crates/kalamdb-core/src/sql/registry.rs`  
 **Tests**: 9 passing  
 **Performance**: ~200-400x improvement (2-3ms → 0.01ms)
 
@@ -218,7 +218,7 @@ cargo test --package kalamdb-core describe_table     # 11 passed
 ## Files Created/Modified
 
 ### Created Files (5):
-1. `/backend/crates/kalamdb-core/src/sql/schema_cache.rs` - Schema caching (T206)
+1. `/backend/crates/kalamdb-core/src/sql/registry.rs` - Schema caching (T206)
 2. `/backend/crates/kalamdb-sql/src/query_cache.rs` - Query result caching (T207)
 3. `/backend/crates/kalamdb-core/src/metrics/mod.rs` - Metrics collection (T209)
 4. `/PHASE_11_COMPLETE.md` - Phase 11 completion summary

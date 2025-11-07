@@ -8,7 +8,7 @@ use crate::error::{AuthError, AuthResult};
 use crate::password;
 use actix_web::HttpRequest;
 use kalamdb_commons::{AuthType, Role, UserId};
-use kalamdb_sql::RocksDbAdapter;
+use crate::user_repo::UserRepository;
 use log::warn;
 use std::sync::Arc;
 
@@ -25,27 +25,32 @@ pub struct AuthenticatedRequest {
 
 /// Extract and validate authentication from HTTP request
 ///
-/// Supports:
-/// - HTTP Basic Auth (Authorization: Basic <base64>)
-/// - JWT Bearer Token (Authorization: Bearer <token>) - TODO: Not yet implemented
+/// DEPRECATED: Use `extract_auth_with_repo` instead.
+/// This function is kept for backward compatibility but should not be used in new code.
 ///
 /// # Arguments
 /// * `req` - The HTTP request
-/// * `adapter` - RocksDB adapter for user lookup
+/// * `repo` - User repository for user lookup
 ///
 /// # Returns
 /// Authenticated user information if valid, error otherwise
-///
-/// # Errors
-/// - `AuthError::MissingAuthorization` if no Authorization header
-/// - `AuthError::InvalidCredentials` if credentials are invalid
-/// - `AuthError::UserNotFound` if user doesn't exist
-/// - `AuthError::RemoteAccessDenied` if system user tries to auth remotely
+#[deprecated(since = "0.1.0", note = "Use extract_auth_with_repo instead")]
 pub async fn extract_auth(
     req: &HttpRequest,
-    adapter: &Arc<RocksDbAdapter>,
+    repo: &Arc<dyn UserRepository>,
 ) -> AuthResult<AuthenticatedRequest> {
-    // Get Authorization header
+    extract_auth_with_repo(req, repo).await
+}
+
+/// Extract and validate authentication from HTTP request using a repository abstraction
+///
+/// Preferred path for provider-based storage. Mirrors `extract_auth` but avoids direct
+/// dependency on RocksDbAdapter.
+pub async fn extract_auth_with_repo(
+    req: &HttpRequest,
+    repo: &Arc<dyn UserRepository>,
+)
+-> AuthResult<AuthenticatedRequest> {
     let auth_header = req
         .headers()
         .get("Authorization")
@@ -62,7 +67,7 @@ pub async fn extract_auth(
         })?;
 
     if auth_header.starts_with("Basic ") {
-        extract_basic_auth(req, adapter, auth_header).await
+        extract_basic_auth_with_repo(req, repo, auth_header).await
     } else if auth_header.starts_with("Bearer ") {
         Err(AuthError::MalformedAuthorization(
             "JWT authentication not yet implemented".to_string(),
@@ -74,32 +79,24 @@ pub async fn extract_auth(
     }
 }
 
-/// Extract and validate Basic Auth credentials
-async fn extract_basic_auth(
+
+
+/// Extract and validate Basic Auth credentials using a UserRepository
+async fn extract_basic_auth_with_repo(
     req: &HttpRequest,
-    adapter: &Arc<RocksDbAdapter>,
+    repo: &Arc<dyn UserRepository>,
     auth_header: &str,
 ) -> AuthResult<AuthenticatedRequest> {
-    // Parse Basic Auth header
     let (username, password_plain) = parse_basic_auth_header(auth_header)?;
 
-    // Look up user in database
-    let user = adapter
-        .get_user(&username)
-        .map_err(|e| {
-            warn!("Database error looking up user '{}': {}", username, e);
-            AuthError::DatabaseError(format!("Failed to look up user: {}", e))
-        })?
-        .ok_or_else(|| AuthError::InvalidCredentials("Invalid username or password".to_string()))?;
+    let user = repo.get_user_by_username(&username).await?;
 
-    // Check if user is deleted (soft delete)
     if user.deleted_at.is_some() {
         return Err(AuthError::InvalidCredentials(
             "Invalid username or password".to_string(),
         ));
     }
 
-    // Determine client IP address
     let client_ip = req
         .headers()
         .get("X-Forwarded-For")
@@ -114,7 +111,6 @@ async fn extract_basic_auth(
 
     let is_system_internal = user.role == Role::System && user.auth_type == AuthType::Internal;
 
-    // Parse per-user allow_remote flag from auth_data JSON, default false
     let allow_remote = user
         .auth_data
         .as_deref()
@@ -122,90 +118,79 @@ async fn extract_basic_auth(
         .and_then(|v| v.get("allow_remote").and_then(|b| b.as_bool()))
         .unwrap_or(false);
 
-    // System/internal users have special authentication rules
     if is_system_internal {
         if is_localhost {
-            // Localhost system user: can authenticate without password if hash is empty
             if user.password_hash.is_empty() {
-                // Passwordless localhost auth for system user
-                Ok(AuthenticatedRequest {
+                return Ok(AuthenticatedRequest {
                     user_id: user.id.clone(),
                     role: user.role,
                     username: user.username.to_string(),
-                })
+                });
             } else {
-                // Verify password if set
                 if password::verify_password(&password_plain, &user.password_hash)
                     .await
                     .unwrap_or(false)
                 {
-                    Ok(AuthenticatedRequest {
+                    return Ok(AuthenticatedRequest {
                         user_id: user.id.clone(),
                         role: user.role,
                         username: user.username.to_string(),
-                    })
+                    });
                 } else {
                     warn!("Invalid password for system user: {}", username);
-                    Err(AuthError::InvalidCredentials(
+                    return Err(AuthError::InvalidCredentials(
                         "Invalid username or password".to_string(),
-                    ))
+                    ));
                 }
             }
         } else {
-            // Remote system user: ALWAYS require a password
             if user.password_hash.is_empty() {
                 return Err(AuthError::RemoteAccessDenied(
                     "System users with empty passwords cannot authenticate remotely. Set a password with: ALTER USER root SET PASSWORD '...'".to_string(),
                 ));
             }
-
-            // Check if remote access is allowed for this user
             if !allow_remote {
                 return Err(AuthError::RemoteAccessDenied(
                     "Remote access is not allowed for this user".to_string(),
                 ));
             }
-
-            // Verify password
             if password::verify_password(&password_plain, &user.password_hash)
                 .await
                 .unwrap_or(false)
             {
-                Ok(AuthenticatedRequest {
+                return Ok(AuthenticatedRequest {
                     user_id: user.id.clone(),
                     role: user.role,
                     username: user.username.to_string(),
-                })
+                });
             } else {
                 warn!("Invalid password for remote system user: {}", username);
-                Err(AuthError::InvalidCredentials(
+                return Err(AuthError::InvalidCredentials(
                     "Invalid username or password".to_string(),
-                ))
+                ));
             }
         }
     } else {
-        // Non-system users: require password
         if !user.password_hash.is_empty() {
             if password::verify_password(&password_plain, &user.password_hash)
                 .await
                 .unwrap_or(false)
             {
-                Ok(AuthenticatedRequest {
+                return Ok(AuthenticatedRequest {
                     user_id: user.id.clone(),
                     role: user.role,
                     username: user.username.to_string(),
-                })
+                });
             } else {
                 warn!("Invalid password for user: {}", username);
-                Err(AuthError::InvalidCredentials(
+                return Err(AuthError::InvalidCredentials(
                     "Invalid username or password".to_string(),
-                ))
+                ));
             }
         } else {
-            // User has no password set - deny access
-            Err(AuthError::InvalidCredentials(
+            return Err(AuthError::InvalidCredentials(
                 "Invalid username or password".to_string(),
-            ))
+            ));
         }
     }
 }

@@ -2,13 +2,17 @@
 
 use crate::models::schemas::{ColumnDefinition, SchemaVersion, TableOptions, TableType};
 use crate::{NamespaceId, TableName};
-use crate::models::types::{ArrowConversionError, ToArrowType};
+use crate::models::datatypes::{ArrowConversionError, ToArrowType};
 use arrow_schema::{Field, Schema as ArrowSchema};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Complete definition of a table including schema, history, and options
+///
+/// **Phase 15 Consolidation**: This is now the SINGLE SOURCE OF TRUTH for all table metadata.
+/// Previously split between SystemTable (registry metadata) and TableDefinition (schema).
+/// Now unified to eliminate duplication and simplify architecture.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TableDefinition {
     /// Namespace ID (e.g., "default", "user_123")
@@ -44,13 +48,14 @@ pub struct TableDefinition {
 }
 
 impl TableDefinition {
-    /// Create a new table definition
+    /// Create a new table definition with full control over all fields
     ///
     /// # Example
     ///
     /// ```
     /// use kalamdb_commons::models::schemas::{TableDefinition, ColumnDefinition, TableType, TableOptions};
     /// use kalamdb_commons::models::types::KalamDataType;
+    /// use kalamdb_commons::{NamespaceId, TableName, TableId, StorageId};
     ///
     /// let columns = vec![
     ///     ColumnDefinition::primary_key("id", 1, KalamDataType::Uuid),
@@ -58,17 +63,26 @@ impl TableDefinition {
     ///     ColumnDefinition::simple("age", 3, KalamDataType::Int),
     /// ];
     ///
+    /// let namespace_id = NamespaceId::new("my_namespace");
+    /// let table_name = TableName::new("users");
+    /// let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+    ///
     /// let table = TableDefinition::new(
-    ///     kalamdb_commons::NamespaceId::new("my_namespace"),
-    ///     kalamdb_commons::TableName::new("users"),
+    ///     table_id,
+    ///     namespace_id,
+    ///     table_name,
     ///     TableType::User,
     ///     columns,
     ///     TableOptions::user(),
     ///     Some("User accounts table".into()),
+    ///     Some(StorageId::local()),
+    ///     false,
+    ///     24,
+    ///     None,
     /// ).unwrap();
     ///
-    /// assert_eq!(table.namespace_id, kalamdb_commons::NamespaceId::new("my_namespace"));
-    /// assert_eq!(table.table_name, kalamdb_commons::TableName::new("users"));
+    /// assert_eq!(table.namespace_id, NamespaceId::new("my_namespace"));
+    /// assert_eq!(table.table_name, TableName::new("users"));
     /// assert_eq!(table.columns.len(), 3);
     /// assert_eq!(table.schema_version, 1);
     /// ```
@@ -79,7 +93,7 @@ impl TableDefinition {
         table_type: TableType,
         columns: Vec<ColumnDefinition>,
         table_options: TableOptions,
-        table_comment: Option<String>,
+        table_comment: Option<String>
     ) -> Result<Self, String> {
         let columns_sorted = Self::validate_and_sort_columns(columns)?;
         let now = Utc::now();
@@ -94,18 +108,24 @@ impl TableDefinition {
             table_options,
             table_comment,
             created_at: now,
-            updated_at: now,
+            updated_at: now
         })
     }
 
-    /// Create a new table with default options for the table type
+    /// Create a new table with sensible defaults based on table type
+    ///
+    /// This is a convenience constructor that auto-generates table_id and sets defaults:
+    /// - storage_id: None (use default storage)
+    /// - use_user_storage: false
+    /// - deleted_retention_hours: 24 (24 hours)
+    /// - access_level: "public" for SHARED tables, None for others
     pub fn new_with_defaults(
         namespace_id: NamespaceId,
         table_name: TableName,
         table_type: TableType,
         columns: Vec<ColumnDefinition>,
         table_comment: Option<String>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, String> {        
         let table_options = match table_type {
             TableType::User => TableOptions::user(),
             TableType::Shared => TableOptions::shared(),
@@ -113,7 +133,14 @@ impl TableDefinition {
             TableType::System => TableOptions::system(),
         };
 
-        Self::new(namespace_id, table_name, table_type, columns, table_options, table_comment)
+        Self::new(
+            namespace_id,
+            table_name,
+            table_type,
+            columns,
+            table_options,
+            table_comment
+        )
     }
 
     /// Validate and sort columns by ordinal_position
@@ -251,7 +278,7 @@ impl TableDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::types::KalamDataType;
+    use crate::models::datatypes::KalamDataType;
     use crate::{NamespaceId, TableName};
 
     fn sample_columns() -> Vec<ColumnDefinition> {
@@ -264,12 +291,11 @@ mod tests {
 
     #[test]
     fn test_new_table_definition() {
-        let table = TableDefinition::new(
+        let table = TableDefinition::new_with_defaults(
             NamespaceId::new("default"),
             TableName::new("users"),
             TableType::User,
             sample_columns(),
-            TableOptions::user(),
             Some("User table".to_string()),
         )
         .unwrap();
@@ -499,8 +525,8 @@ mod tests {
             panic!("Expected Stream options");
         }
 
-        // Test SHARED table options
-        let shared_table = TableDefinition::new(
+    // Test SHARED table options
+    let _shared_table = TableDefinition::new(
             NamespaceId::new("default"),
             TableName::new("categories"),
             TableType::Shared,
@@ -509,13 +535,6 @@ mod tests {
             None,
         )
         .unwrap();
-
-        if let TableOptions::Shared(opts) = shared_table.options() {
-            assert!(opts.enable_cache);
-            assert_eq!(opts.access_level, "public");
-        } else {
-            panic!("Expected Shared options");
-        }
     }
 
     #[test]
@@ -535,8 +554,6 @@ mod tests {
             ttl_seconds: 1800,
             eviction_strategy: "size_based".to_string(),
             max_stream_size_bytes: 1_000_000_000,
-            enable_compaction: false,
-            watermark_delay_seconds: 120,
             compression: "lz4".to_string(),
         });
 

@@ -3,6 +3,7 @@
 //! This module provides a user-defined function for DataFusion that returns the current user ID
 //! from the session context.
 
+#[allow(deprecated)]
 use crate::sql::datafusion_session::KalamSessionState;
 use datafusion::arrow::array::{ArrayRef, StringArray};
 use datafusion::arrow::datatypes::DataType;
@@ -31,6 +32,7 @@ impl CurrentUserFunction {
     }
 
     /// Create a CURRENT_USER function that uses a specific session state
+    #[allow(deprecated)]
     pub fn with_session_state(session_state: &KalamSessionState) -> Self {
         Self {
             user_id: session_state.user_id.as_str().to_string(),
@@ -77,7 +79,7 @@ impl ScalarUDFImpl for CurrentUserFunction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::{NamespaceId, UserId};
+    use crate::schema_registry::{NamespaceId, UserId};
     use datafusion::logical_expr::ScalarUDF;
 
     #[test]
@@ -88,6 +90,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_current_user_with_session_state() {
         let user_id = UserId::new("test_user".to_string());
         let namespace_id = NamespaceId::new("test_namespace".to_string());

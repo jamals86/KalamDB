@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-#![cfg(feature = "deprecated_schema_consolidation_tests")] // Disabled - Phase 8 TableSchemaStore separated cache deprecated in Phase 10 unified SchemaCache
+#![cfg(any())] // Disabled - Phase 8 TableSchemaStore separated cache deprecated in Phase 10 unified SchemaCache
 //! Integration tests for Phase 15 (008-schema-consolidation)
 //!
 //! Tests the consolidated schema infrastructure:
@@ -72,7 +72,7 @@ async fn test_schema_store_persistence() {
 #[tokio::test]
 async fn test_schema_cache_basic_operations() {
     use kalamdb_core::tables::system::schemas::TableSchemaStore;
-    use kalamdb_core::catalog::SchemaCache;
+    use kalamdb_core::schema_registry::SchemaRegistry;
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let db = Arc::new(
@@ -354,7 +354,7 @@ async fn test_cache_invalidation_on_alter_table() {
     assert_eq!(cached_v1.columns.len(), 2, "Should have 2 columns");
 
     // 3. Create version 2 with an added column
-    let columns_v2 = vec![
+    let columns = vec![
         ColumnDefinition {
             column_name: "id".to_string(),
             ordinal_position: 1,
@@ -387,11 +387,11 @@ async fn test_cache_invalidation_on_alter_table() {
         },
     ];
 
-    let table_def_v2 = TableDefinition::new_with_defaults(
+    let table_def = TableDefinition::new_with_defaults(
         test_namespace.clone(),
         TableName::new("test_table"),
         kalamdb_commons::models::schemas::TableType::User,
-        columns_v2.clone(),
+        columns.clone(),
         None,
     )
     .expect("Failed to create updated table definition");
@@ -401,33 +401,33 @@ async fn test_cache_invalidation_on_alter_table() {
 
     // 5. Update schema in store
     schema_store
-        .put(&test_table_id, &table_def_v2)
+        .put(&test_table_id, &table_def)
         .expect("Failed to put updated schema");
 
     // 6. Verify cache was invalidated - should fetch fresh from store
-    let cached_v2 = schema_store
+    let cached = schema_store
         .get(&test_table_id)
         .expect("Failed to get schema after update")
         .expect("Schema should exist after update");
 
     assert_eq!(
-        cached_v2.columns.len(),
+        cached.columns.len(),
         3,
         "Should have 3 columns after update"
     );
     assert_eq!(
-        cached_v2.columns[2].column_name, "email",
+        cached.columns[2].column_name, "email",
         "New column should be 'email'"
     );
 
-    // 7. Verify subsequent read comes from fresh cache (cached_v2 should equal a new read)
-    let cached_v2_again = schema_store
+    // 7. Verify subsequent read comes from fresh cache (cached should equal a new read)
+    let cached_again = schema_store
         .get(&test_table_id)
         .expect("Failed to get schema again")
         .expect("Schema should exist");
 
     assert_eq!(
-        cached_v2_again.columns.len(),
+        cached_again.columns.len(),
         3,
         "Cache should have 3 columns"
     );

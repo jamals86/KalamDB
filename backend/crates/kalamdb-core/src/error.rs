@@ -64,6 +64,9 @@ pub enum KalamDbError {
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 
+    #[error("Idempotent conflict: {0}")]
+    IdempotentConflict(String),
+
     #[error("Column family error: {0}")]
     ColumnFamily(#[from] ColumnFamilyError),
 
@@ -72,6 +75,9 @@ pub enum KalamDbError {
 
     #[error("Backup error: {0}")]
     Backup(#[from] BackupError),
+
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
 
     #[error("{0}")]
     Other(String),

@@ -36,7 +36,7 @@
 
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, ChangeType, LiveQueryManager};
-use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
+use crate::tables::system::system_table_store::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::{SharedTableRow, SharedTableStore, UserTableStore};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
@@ -444,9 +444,13 @@ impl SharedTableChangeDetector {
 mod tests {
     use super::*;
     use crate::live_query::connection_registry::NodeId;
+    use crate::schema_registry::SchemaRegistry;
+    use crate::tables::system::LiveQueriesTableProvider;
     use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
+    use kalamdb_commons::datatypes::KalamDataType;
+    use kalamdb_commons::models::TableId;
+    use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
     use kalamdb_commons::{NamespaceId, TableName};
-    use kalamdb_sql::KalamSql;
     use kalamdb_store::RocksDbInit;
     use tempfile::TempDir;
 
@@ -458,30 +462,71 @@ mod tests {
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(Arc::clone(&db)));
 
+        let live_queries_provider = Arc::new(LiveQueriesTableProvider::new(backend.clone()));
+    let schema_registry = Arc::new(SchemaRegistry::new(64, None));
+
+        let default_ns = NamespaceId::new("default");
+        let default_table = TableName::new("test");
         let user_table_store = Arc::new(new_user_table_store(
             backend.clone(),
-            &NamespaceId::new("default"),
-            &TableName::new("test"),
+            &default_ns,
+            &default_table,
         ));
         let shared_table_store = Arc::new(new_shared_table_store(
             backend.clone(),
-            &NamespaceId::new("default"),
-            &TableName::new("test"),
+            &default_ns,
+            &default_table,
         ));
-        let stream_table_store = Arc::new(new_stream_table_store(
-            &NamespaceId::new("default"),
-            &TableName::new("test"),
-        ));
-        let kalam_sql = Arc::new(KalamSql::new(backend).unwrap());
+        let stream_table_store = Arc::new(new_stream_table_store(&default_ns, &default_table));
+
+        let messages_table = TableDefinition::new(
+            NamespaceId::new("default"),
+            TableName::new("messages"),
+            TableType::User,
+            vec![
+                ColumnDefinition::new(
+                    "id",
+                    1,
+                    KalamDataType::Int,
+                    false,
+                    true,
+                    false,
+                    kalamdb_commons::schemas::ColumnDefault::None,
+                    None,
+                ),
+                ColumnDefinition::new(
+                    "user_id",
+                    2,
+                    KalamDataType::Text,
+                    true,
+                    false,
+                    false,
+                    kalamdb_commons::schemas::ColumnDefault::None,
+                    None,
+                ),
+            ],
+            TableOptions::user(),
+            None,
+        )
+        .unwrap();
+        let messages_table_id = TableId::new(
+            messages_table.namespace_id.clone(),
+            messages_table.table_name.clone(),
+        );
+        schema_registry
+            .put_table_definition(&messages_table_id, &messages_table)
+            .unwrap();
+
         let live_query_manager = Arc::new(LiveQueryManager::new(
-            kalam_sql,
-            NodeId::new("test".to_string()),
-            Some(user_table_store.clone()),
-            Some(shared_table_store.clone()),
-            Some(stream_table_store.clone()),
+            live_queries_provider,
+            schema_registry,
+            NodeId::from("node1"),
+            Some(Arc::clone(&user_table_store)),
+            Some(Arc::clone(&shared_table_store)),
+            Some(Arc::clone(&stream_table_store)),
         ));
 
-        let detector = UserTableChangeDetector::new(user_table_store, live_query_manager);
+        let detector = UserTableChangeDetector::new(Arc::clone(&user_table_store), live_query_manager);
 
         (detector, temp_dir)
     }

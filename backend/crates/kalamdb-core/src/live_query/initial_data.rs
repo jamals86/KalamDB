@@ -4,10 +4,10 @@
 // Provides "changes since timestamp" functionality to populate client state
 // before real-time notifications begin.
 
-use crate::catalog::TableType;
 use crate::error::KalamDbError;
 use crate::live_query::filter::FilterPredicate;
-use crate::stores::system_table::{SharedTableStoreExt, UserTableStoreExt};
+use crate::schema_registry::TableType;
+use crate::tables::system::system_table_store::{SharedTableStoreExt, UserTableStoreExt};
 use crate::tables::{StreamTableStore, UserTableStore};
 use chrono::DateTime;
 use kalamdb_commons::TableName;
@@ -307,6 +307,7 @@ impl InitialDataFetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tables::system::system_table_store::UserTableStoreExt;
     use crate::tables::user_tables::user_table_store::{new_user_table_store, UserTableRow};
     use kalamdb_commons::models::{NamespaceId, TableName};
     use kalamdb_commons::models::{ConnectionId as ConnId, LiveId as CommonsLiveId};

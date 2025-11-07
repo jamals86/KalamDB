@@ -9,13 +9,13 @@
 //! - Uses `FlushExecutor::execute_with_tracking()` for common workflow
 //! - Only implements unique logic: multi-file flush grouped by user_id
 
-use crate::catalog::{NamespaceId, TableName, UserId};
-use crate::catalog::SchemaCache; // Phase 10: Use unified cache instead of old TableCache
+use crate::schema_registry::{NamespaceId, TableName, UserId};
+use crate::schema_registry::SchemaRegistry; // Phase 10: Use unified cache instead of old TableCache
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::live_query::NodeId;
 use crate::storage::ParquetWriter;
-use crate::stores::system_table::UserTableStoreExt;
+use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::base_flush::{FlushExecutor, FlushJobResult, TableFlush};
 use crate::tables::UserTableStore;
 use chrono::Utc;
@@ -52,7 +52,7 @@ pub struct UserTableFlushJob {
     schema: SchemaRef,
 
     /// Unified SchemaCache for dynamic storage path resolution (Phase 10 - replaces TableCache)
-    unified_cache: Arc<SchemaCache>,
+    unified_cache: Arc<SchemaRegistry>,
 
     /// Node ID for job tracking
     node_id: NodeId,
@@ -77,7 +77,7 @@ impl UserTableFlushJob {
         namespace_id: NamespaceId,
         table_name: TableName,
         schema: SchemaRef,
-        unified_cache: Arc<SchemaCache>,
+        unified_cache: Arc<SchemaRegistry>,
     ) -> Self {
         //TODO: Use the nodeId from global config or context
         let node_id = NodeId::from(format!("node-{}", std::process::id()));
@@ -354,7 +354,7 @@ impl TableFlush for UserTableFlushJob {
         );
 
         // Stream snapshot-backed scan
-        let mut iter = self
+        let iter = self
             .store
             .scan_iter(self.namespace_id.as_str(), self.table_name.as_str())
             .map_err(|e| {
@@ -371,10 +371,22 @@ impl TableFlush for UserTableFlushJob {
         let mut rows_by_user: HashMap<String, Vec<(Vec<u8>, JsonValue)>> = HashMap::new();
         let mut rows_scanned = 0;
 
-        while let Some(Ok((key_bytes, value_bytes))) = iter.next() {
+        for entry in iter {
+            let (key_bytes, value_bytes) = match entry {
+                Ok(pair) => pair,
+                Err(e) => {
+                    log::warn!(
+                        "Skipping row due to iterator error (table={}.{}): {}",
+                        self.namespace_id.as_str(),
+                        self.table_name.as_str(),
+                        e
+                    );
+                    continue;
+                }
+            };
+
             rows_scanned += 1;
 
-            // Decode row
             let user_table_row: crate::tables::user_tables::user_table_store::UserTableRow =
                 match serde_json::from_slice(&value_bytes) {
                     Ok(v) => v,

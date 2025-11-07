@@ -9,13 +9,13 @@
 //! - Uses `FlushExecutor::execute_with_tracking()` for common workflow
 //! - Only implements unique logic: single-file flush for all rows
 
-use crate::catalog::{NamespaceId, TableName};
-use crate::catalog::SchemaCache; // Phase 10: Use unified cache instead of old TableCache
+use crate::schema_registry::{NamespaceId, TableName};
+use crate::schema_registry::SchemaRegistry; // Phase 10: Use unified cache instead of old TableCache
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::live_query::NodeId;
 use crate::storage::ParquetWriter;
-use crate::stores::system_table::SharedTableStoreExt;
+use crate::tables::system::system_table_store::SharedTableStoreExt;
 use crate::tables::base_flush::{FlushExecutor, FlushJobResult, TableFlush};
 use crate::tables::shared_tables::shared_table_store::SharedTableRow;
 use crate::tables::SharedTableStore;
@@ -51,7 +51,7 @@ pub struct SharedTableFlushJob {
     schema: SchemaRef,
 
     /// Unified SchemaCache for dynamic storage path resolution (Phase 10 - replaces TableCache)
-    unified_cache: Arc<SchemaCache>,
+    unified_cache: Arc<SchemaRegistry>,
 
     /// Node ID for job tracking
     node_id: NodeId,
@@ -76,7 +76,7 @@ impl SharedTableFlushJob {
         namespace_id: NamespaceId,
         table_name: TableName,
         schema: SchemaRef,
-        unified_cache: Arc<SchemaCache>,
+        unified_cache: Arc<SchemaRegistry>,
     ) -> Self {
         //TODO: Use the nodeId from global config or context
         let node_id = NodeId::from(format!("node-{}", std::process::id()));
@@ -154,7 +154,7 @@ impl TableFlush for SharedTableFlushJob {
         );
 
         // Stream snapshot-backed scan and collect active rows
-        let mut iter = self
+        let iter = self
             .store
             .scan_iter(self.namespace_id.as_str(), self.table_name.as_str())
             .map_err(|e| {
@@ -170,10 +170,22 @@ impl TableFlush for SharedTableFlushJob {
         let mut rows: Vec<(Vec<u8>, JsonValue)> = Vec::new();
         let mut scanned: usize = 0;
 
-        while let Some(Ok((key_bytes, value_bytes))) = iter.next() {
+        for entry in iter {
+            let (key_bytes, value_bytes) = match entry {
+                Ok(pair) => pair,
+                Err(e) => {
+                    log::warn!(
+                        "Skipping row due to iterator error (table={}.{}): {}",
+                        self.namespace_id.as_str(),
+                        self.table_name.as_str(),
+                        e
+                    );
+                    continue;
+                }
+            };
+
             scanned += 1;
 
-            // Decode row
             let row: SharedTableRow = match serde_json::from_slice(&value_bytes) {
                 Ok(v) => v,
                 Err(e) => {
@@ -359,9 +371,9 @@ mod tests {
     }
 
     /// Phase 10: Create mock unified cache for tests
-    fn create_test_cache() -> Arc<SchemaCache> {
+    fn create_test_cache() -> Arc<SchemaRegistry> {
         // For now, create empty cache - in real scenarios this would be populated
-        Arc::new(SchemaCache::new(100, None))
+        Arc::new(SchemaRegistry::new(100, None))
     }
 
     #[test]

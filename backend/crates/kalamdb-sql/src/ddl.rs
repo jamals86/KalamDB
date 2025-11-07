@@ -33,7 +33,7 @@ pub use alter_namespace::AlterNamespaceStatement;
 pub use alter_table::{AlterTableStatement, ColumnOperation};
 pub use backup_namespace::BackupDatabaseStatement;
 pub use create_namespace::CreateNamespaceStatement;
-pub use create_table::{CreateTableStatement, FlushPolicy};
+pub use create_table::{CreateTableStatement};
 pub use describe_table::DescribeTableStatement;
 pub use drop_namespace::DropNamespaceStatement;
 pub use drop_table::{DropTableStatement, TableKind};

@@ -3,10 +3,8 @@
 pub mod datafusion_session;
 pub mod executor;
 pub mod functions;
-pub mod query_rewriter;
-pub mod schema_cache;
 
 pub use datafusion_session::{DataFusionSessionFactory, KalamSessionState};
-pub use executor::{ExecutionResult, SqlExecutor};
+pub use executor::SqlExecutor;
+pub use executor::handlers::ExecutionResult;
 pub use functions::CurrentUserFunction;
-pub use schema_cache::{get_or_load_schema, SchemaCache, SchemaCacheKey};

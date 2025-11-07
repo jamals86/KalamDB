@@ -8,10 +8,10 @@
 //! - kalamdb-store for RocksDB operations
 //! - Data isolation enforcement
 
-use crate::catalog::{NamespaceId, TableName, UserId};
+use crate::schema_registry::{NamespaceId, TableName, UserId};
 use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
-use crate::stores::system_table::UserTableStoreExt;
+use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId};
 use crate::tables::UserTableStore;
 use arrow::datatypes::Schema;
@@ -409,7 +409,7 @@ impl UserTableInsertHandler {
                     }
                     "SNOWFLAKE_ID" => {
                         // Generate snowflake ID
-                        use crate::ids::SnowflakeGenerator;
+                        use kalamdb_commons::ids::SnowflakeGenerator;
                         let generator = SnowflakeGenerator::new(0);
                         let id = generator.next_id().map_err(|e| {
                             KalamDbError::InvalidOperation(format!(

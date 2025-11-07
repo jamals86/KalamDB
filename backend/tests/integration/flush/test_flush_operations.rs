@@ -4,7 +4,7 @@
 mod common;
 
 use common::{fixtures, flush_helpers, TestServer};
-use kalamdb_core::catalog::UserId as ExecutorUserId;
+use kalamdb_commons::UserId as ExecutorUserId;
 use std::sync::Arc;
 
 /// Manual flush on a user table should create Parquet files under the configured storage path.
@@ -75,7 +75,7 @@ async fn test_user_table_manual_flush_creates_parquet() {
         use kalamdb_commons::models::{
             NamespaceId as ModelNamespaceId, TableName as ModelTableName,
         };
-        use kalamdb_core::stores::system_table::UserTableStoreExt;
+        use kalamdb_core::tables::system::system_table_store::UserTableStoreExt;
 
         let backend = Arc::new(kalamdb_store::RocksDBBackend::new(server.db.clone()));
         let model_namespace = ModelNamespaceId::new(namespace);

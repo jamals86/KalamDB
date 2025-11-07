@@ -112,7 +112,7 @@ async fn test_manual_flush_multiple_batches() {
             use kalamdb_commons::models::{
                 NamespaceId as ModelNamespaceId, TableName as ModelTableName,
             };
-            use kalamdb_core::stores::system_table::UserTableStoreExt;
+            use kalamdb_core::tables::system::system_table_store::UserTableStoreExt;
 
             let backend = Arc::new(kalamdb_store::RocksDBBackend::new(server.db.clone()));
             let model_namespace = ModelNamespaceId::new(namespace);

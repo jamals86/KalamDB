@@ -1,0 +1,13 @@
+# cargo-license-check.toml
+
+[licenses]
+# List of allowed license types for dependencies
+allow = ["Apache-2.0", "MIT", "BSD-3-Clause", "ISC"]
+
+# Deny copyleft or unclear licenses
+deny = ["GPL-2.0", "GPL-3.0", "LGPL-3.0", "AGPL-3.0"]
+
+# Require SPDX identifiers in all source files
+[[licenses.exceptions]]
+name = "SPDX-Header-Check"
+check = "spdx"

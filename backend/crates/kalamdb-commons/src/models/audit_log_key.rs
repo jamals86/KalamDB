@@ -3,7 +3,7 @@
 //! Combines a millisecond timestamp with the `AuditLogId` to produce a
 //! lexicographically sortable key suitable for RocksDB column families.
 
-use crate::models::audit_log_id::AuditLogId;
+use crate::models::ids::AuditLogId;
 use std::fmt;
 
 /// Composite key for audit log entries.

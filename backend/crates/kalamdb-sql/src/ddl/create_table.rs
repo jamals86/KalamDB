@@ -7,10 +7,10 @@ use crate::compatibility::map_sql_type_to_arrow;
 use crate::ddl::DdlResult;
 use arrow::datatypes::{Field, Schema};
 use kalamdb_commons::models::{NamespaceId, StorageId, TableAccess, TableName};
+use kalamdb_commons::schemas::policy::FlushPolicy;
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
 use once_cell::sync::Lazy;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
 use sqlparser::ast::{ColumnDef, Statement};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -63,23 +63,13 @@ static TTL_MATCH_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)TTL\s+(\d+)").u
 static ACCESS_LEVEL_MATCH_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?i)ACCESS\s+LEVEL\s+(?:'([^']+)'|"([^"]+)"|([a-z]+))"#).unwrap());
 
-/// Common flush policy for all table types
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum FlushPolicy {
-    /// Flush after N rows inserted
-    RowLimit { row_limit: u32 },
-    /// Flush every N seconds
-    TimeInterval { interval_seconds: u32 },
-    /// Flush when either limit is reached
-    Combined {
-        row_limit: u32,
-        interval_seconds: u32,
-    },
+/// Extension trait for FlushPolicy validation
+pub trait FlushPolicyExt {
+    fn validate(&self) -> Result<(), String>;
 }
 
-impl FlushPolicy {
-    pub fn validate(&self) -> Result<(), String> {
+impl FlushPolicyExt for FlushPolicy {
+    fn validate(&self) -> Result<(), String> {
         match self {
             FlushPolicy::RowLimit { row_limit } => {
                 if *row_limit == 0 {
@@ -121,11 +111,6 @@ impl FlushPolicy {
     }
 }
 
-impl Default for FlushPolicy {
-    fn default() -> Self {
-        FlushPolicy::RowLimit { row_limit: 10_000 }
-    }
-}
 
 /// Unified CREATE TABLE statement that works for USER, SHARED, and STREAM tables
 #[derive(Debug, Clone, PartialEq)]

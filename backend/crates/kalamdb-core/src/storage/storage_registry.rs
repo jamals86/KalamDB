@@ -3,8 +3,9 @@
 //! Provides centralized access to storage configurations and path template validation.
 
 use crate::error::KalamDbError;
-use kalamdb_commons::models::{StorageConfig, StorageId, StorageType};
-use kalamdb_sql::{KalamSql, Storage};
+use crate::tables::system::StoragesTableProvider;
+use kalamdb_commons::models::StorageId;
+use kalamdb_commons::system::Storage;
 use std::sync::Arc;
 
 /// Registry for managing storage backends
@@ -14,15 +15,15 @@ use std::sync::Arc;
 /// - List all available storages
 /// - Validate path templates for correctness
 pub struct StorageRegistry {
-    kalam_sql: Arc<KalamSql>,
+    storages_provider: Arc<StoragesTableProvider>,
     /// Default base path for local filesystem storage when base_directory is empty
     /// Comes from server config: storage.default_storage_path (e.g., "/data/storage")
-    default_storage_path: String,
+    _default_storage_path: String,
 }
 
 impl StorageRegistry {
     /// Create a new StorageRegistry
-    pub fn new(kalam_sql: Arc<KalamSql>, default_storage_path: String) -> Self {
+    pub fn new(storages_provider: Arc<StoragesTableProvider>, default_storage_path: String) -> Self {
         use std::path::{Path, PathBuf};
         // Normalize default path: if relative, resolve against current working directory
         let normalized = if Path::new(&default_storage_path).is_absolute() {
@@ -35,8 +36,8 @@ impl StorageRegistry {
                 .into_owned()
         };
         Self {
-            kalam_sql,
-            default_storage_path: normalized,
+            storages_provider,
+            _default_storage_path: normalized,
         }
     }
 
@@ -49,52 +50,16 @@ impl StorageRegistry {
     /// * `Ok(Some(Storage))` - Storage found
     /// * `Ok(None)` - Storage not found
     /// * `Err` - Database error
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use kalamdb_core::storage::StorageRegistry;
-    /// # fn example(registry: &StorageRegistry) -> Result<(), kalamdb_core::error::KalamDbError> {
-    /// let storage = registry.get_storage("local")?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn get_storage(&self, storage_id: &str) -> Result<Option<Storage>, KalamDbError> {
-        let storage_id_typed = StorageId::from(storage_id);
-        self.kalam_sql.get_storage(&storage_id_typed).map_err(|e| {
-            KalamDbError::Other(format!("Failed to get storage '{}': {}", storage_id, e))
-        })
+    pub fn get_storage_by_id(&self, storage_id: &StorageId) -> Result<Option<Storage>, KalamDbError> {
+        self.storages_provider
+            .get_storage(storage_id)
+            .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))
     }
 
-    /// Get a typed storage configuration (including credentials).
-    pub fn get_storage_config(
-        &self,
-        storage_id: &str,
-    ) -> Result<Option<StorageConfig>, KalamDbError> {
-        match self.get_storage(storage_id)? {
-            Some(storage) => {
-                let storage_type = StorageType::from(storage.storage_type.as_str());
-
-                // If base_directory is empty (common for 'local'), substitute default_storage_path
-                let base_directory = if storage.base_directory.trim().is_empty() {
-                    // Normalize to not end with '/'
-                    self.default_storage_path.trim_end_matches('/').to_string()
-                } else {
-                    storage.base_directory
-                };
-
-                let config = StorageConfig::new(
-                    storage.storage_id,
-                    storage_type,
-                    base_directory,
-                    storage.shared_tables_template,
-                    storage.user_tables_template,
-                    storage.credentials,
-                );
-
-                Ok(Some(config))
-            }
-            None => Ok(None),
-        }
+    /// Backward compatible helper that accepts a raw storage ID string.
+    pub fn get_storage_config(&self, storage_id: &str) -> Result<Option<Storage>, KalamDbError> {
+        let storage_id = StorageId::from(storage_id);
+        self.get_storage_by_id(&storage_id)
     }
 
     /// List all storage configurations
@@ -118,8 +83,8 @@ impl StorageRegistry {
     /// ```
     pub fn list_storages(&self) -> Result<Vec<Storage>, KalamDbError> {
         let mut storages = self
-            .kalam_sql
-            .scan_all_storages()
+            .storages_provider
+            .list_storages()
             .map_err(|e| KalamDbError::Other(format!("Failed to list storages: {}", e)))?;
 
         // Sort: 'local' first, then alphabetically
@@ -276,77 +241,6 @@ impl StorageRegistry {
 
         Ok(())
     }
-
-    /// Resolve the storage ID for a user based on table configuration
-    ///
-    /// Implements the 5-step storage lookup chain (T169-T169e):
-    /// 1. If table.use_user_storage=false, return table.storage_id
-    /// 2. If table.use_user_storage=true, query user.storage_mode
-    /// 3. If user.storage_mode='region', return user.storage_id
-    /// 4. If user.storage_mode='table' (or NULL), fallback to table.storage_id
-    /// 5. If table.storage_id is NULL, fallback to storage_id='local'
-    ///
-    /// # Arguments
-    /// * `table_id` - The table identifier (namespace:table_name)
-    /// * `user_id` - The user identifier
-    ///
-    /// # Returns
-    /// * `Ok(String)` - Resolved storage ID
-    /// * `Err` - Database error or invalid configuration
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use kalamdb_core::storage::StorageRegistry;
-    /// # async fn example(registry: &StorageRegistry) -> Result<(), kalamdb_core::error::KalamDbError> {
-    /// let storage_id = registry.resolve_storage_for_user("ns:users", "user123").await?;
-    /// println!("Using storage: {}", storage_id);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn resolve_storage_for_user(
-        &self,
-        table_id: &str,
-        user_id: &str,
-    ) -> Result<String, KalamDbError> {
-        // Get table configuration
-        let table = self
-            .kalam_sql
-            .get_table(table_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to get table '{}': {}", table_id, e)))?
-            .ok_or_else(|| KalamDbError::NotFound(format!("Table '{}' not found", table_id)))?;
-
-        // T169a: Step 1 - If table.use_user_storage=false, return table.storage_id
-        if !table.use_user_storage {
-            return Ok(table
-                .storage_id
-                .unwrap_or_else(|| StorageId::from("local"))
-                .into_string());
-        }
-
-        // T169b: Step 2 - If table.use_user_storage=true, query user.storage_mode
-        let _user = self
-            .kalam_sql
-            .get_user(user_id)
-            .map_err(|e| KalamDbError::Other(format!("Failed to get user '{}': {}", user_id, e)))?
-            .ok_or_else(|| KalamDbError::NotFound(format!("User '{}' not found", user_id)))?;
-
-        // T169c: Step 3 - If user.storage_mode='region', return user.storage_id
-        // TODO: User storage preferences (storage_mode, storage_id) not yet implemented in User model
-        // if let Some(storage_mode) = &user.storage_mode {
-        //     if storage_mode == "region" {
-        //         if let Some(user_storage_id) = &user.storage_id {
-        //             return Ok(user_storage_id.clone());
-        //         }
-        //     }
-        // }
-
-        // T169d: Step 4 - If user.storage_mode='table' (or NULL), fallback to table.storage_id
-        // T169e: Step 5 - If table.storage_id is NULL, fallback to storage_id='local'
-        Ok(table
-            .storage_id
-            .unwrap_or_else(|| StorageId::from("local"))
-            .into_string())
-    }
 }
 
 #[cfg(test)]
@@ -450,9 +344,9 @@ mod tests {
 
         let backend: Arc<dyn kalamdb_store::StorageBackend> =
             Arc::new(kalamdb_store::RocksDBBackend::new(db.clone()));
-        let kalam_sql = Arc::new(
-            KalamSql::new(backend).expect("Failed to create KalamSQL for storage registry tests"),
-        );
+        
+        // Create StoragesTableProvider for tests
+        let storages_provider = Arc::new(crate::tables::system::StoragesTableProvider::new(backend));
 
         // Use a temp storage base under the temp dir for tests
         let default_storage_path = db_path
@@ -461,6 +355,6 @@ mod tests {
             .join("storage")
             .to_string_lossy()
             .into_owned();
-        StorageRegistry::new(kalam_sql, default_storage_path)
+        StorageRegistry::new(storages_provider, default_storage_path)
     }
 }

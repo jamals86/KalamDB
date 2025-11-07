@@ -30,6 +30,8 @@ pub struct ServerConfig {
     pub user_management: UserManagementSettings,
     #[serde(default)]
     pub shutdown: ShutdownSettings,
+    #[serde(default)]
+    pub jobs: JobsSettings,
 }
 
 /// Server settings
@@ -208,6 +210,22 @@ pub struct UserManagementSettings {
     /// Cron expression for scheduling the cleanup job
     #[serde(default = "default_cleanup_job_schedule")]
     pub cleanup_job_schedule: String,
+}
+
+/// Job management settings (Phase 9, T163)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobsSettings {
+    /// Maximum number of concurrent jobs (default: 10)
+    #[serde(default = "default_jobs_max_concurrent")]
+    pub max_concurrent: u32,
+
+    /// Maximum number of retry attempts (default: 3)
+    #[serde(default = "default_jobs_max_retries")]
+    pub max_retries: u32,
+
+    /// Initial retry backoff delay in milliseconds (default: 100ms)
+    #[serde(default = "default_jobs_retry_backoff_ms")]
+    pub retry_backoff_ms: u64,
 }
 
 /// Shutdown settings
@@ -432,6 +450,16 @@ impl Default for UserManagementSettings {
     }
 }
 
+impl Default for JobsSettings {
+    fn default() -> Self {
+        Self {
+            max_concurrent: default_jobs_max_concurrent(),
+            max_retries: default_jobs_max_retries(),
+            retry_backoff_ms: default_jobs_retry_backoff_ms(),
+        }
+    }
+}
+
 
 impl Default for ShutdownFlushSettings {
     fn default() -> Self {
@@ -560,6 +588,19 @@ fn default_user_deletion_grace_period() -> i64 {
 
 fn default_cleanup_job_schedule() -> String {
     "0 2 * * *".to_string()
+}
+
+// Jobs defaults (Phase 9, T163)
+fn default_jobs_max_concurrent() -> u32 {
+    10 // 10 concurrent jobs
+}
+
+fn default_jobs_max_retries() -> u32 {
+    3 // 3 retry attempts
+}
+
+fn default_jobs_retry_backoff_ms() -> u64 {
+    100 // 100ms initial backoff
 }
 
 // Rate limiter defaults
@@ -849,6 +890,7 @@ impl ServerConfig {
             oauth: OAuthSettings::default(),
             user_management: UserManagementSettings::default(),
             shutdown: ShutdownSettings::default(),
+            jobs: JobsSettings::default(),
         }
     }
 }

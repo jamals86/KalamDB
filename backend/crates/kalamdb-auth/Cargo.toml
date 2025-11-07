@@ -40,3 +40,4 @@ chrono = { workspace = true }
 
 # Caching
 moka = { workspace = true }
+async-trait = { workspace = true }

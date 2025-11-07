@@ -66,11 +66,10 @@ pub fn init_test_app_context() -> Arc<TestDb> {
     STORAGE_INIT.call_once(|| {
         use kalamdb_commons::system::Storage;
         
-        let ctx = AppContext::get();
-        let kalam_sql = ctx.kalam_sql();
+    let _ctx = AppContext::get();
         
-        let default_storage = Storage {
-            storage_id: StorageId::new("local"),
+        let _default_storage = Storage {
+            storage_id: StorageId::local(),
             storage_name: "local".to_string(),
             description: Some("Default local storage for tests".to_string()),
             storage_type: "filesystem".to_string(),
@@ -81,13 +80,35 @@ pub fn init_test_app_context() -> Arc<TestDb> {
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
         };
-        
-        // Insert using KalamSql
-        if let Err(e) = kalam_sql.insert_storage(&default_storage) {
-            eprintln!("Warning: Failed to create default storage: {:?}", e);
-        }
     });
 
     // Return the test DB (guaranteed to be set by Once)
     TEST_DB.get().expect("TEST_DB should be initialized").clone()
+}
+
+/// Create a JobsTableProvider for testing
+///
+/// Returns the jobs provider from the initialized AppContext.
+pub fn create_test_jobs_provider() -> Arc<crate::tables::system::JobsTableProvider> {
+    init_test_app_context();
+    let ctx = AppContext::get();
+    ctx.system_tables().jobs().clone()
+}
+
+/// Create a JobRegistry with all executors for testing
+pub fn create_test_job_registry() -> crate::jobs::JobRegistry {
+    use crate::jobs::executors::*;
+    let registry = crate::jobs::JobRegistry::new();
+    
+    // Register all 8 executors
+    registry.register(Arc::new(FlushExecutor::new()));
+    registry.register(Arc::new(CleanupExecutor::new()));
+    registry.register(Arc::new(RetentionExecutor::new()));
+    registry.register(Arc::new(StreamEvictionExecutor::new()));
+    registry.register(Arc::new(UserCleanupExecutor::new()));
+    registry.register(Arc::new(CompactExecutor::new()));
+    registry.register(Arc::new(BackupExecutor::new()));
+    registry.register(Arc::new(RestoreExecutor::new()));
+    
+    registry
 }

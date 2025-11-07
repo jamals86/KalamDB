@@ -54,8 +54,8 @@ async fn main() -> Result<()> {
     info!("Host: {}  Port: {}", config.server.host, config.server.port);
 
     // Build application state and kick off background services
-    let components = bootstrap(&config).await?;
+    let (components, app_context) = bootstrap(&config).await?;
 
     // Run HTTP server until termination signal is received
-    run(&config, components).await
+    run(&config, components, app_context).await
 }

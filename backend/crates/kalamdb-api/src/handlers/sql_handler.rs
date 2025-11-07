@@ -3,10 +3,12 @@
 //! This module provides HTTP handlers for executing SQL statements via the REST API.
 
 use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, Responder};
-use kalamdb_auth::{extract_auth, AuthenticatedUser};
+use kalamdb_auth::{extract_auth_with_repo, AuthenticatedUser, UserRepository};
 use kalamdb_commons::models::UserId;
+use kalamdb_core::sql::ExecutionResult;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
-use kalamdb_core::sql::executor::{ExecutionContext, ExecutionMetadata, ExecutionResult, SqlExecutor};
+use kalamdb_core::sql::executor::{ExecutorMetadataAlias, SqlExecutor};
+use kalamdb_core::sql::executor::handlers::types::ExecutionContext;
 use log::warn;
 use std::sync::Arc;
 use std::time::Instant;
@@ -62,28 +64,13 @@ pub async fn execute_sql_v1(
     http_req: HttpRequest,
     req: web::Json<SqlRequest>,
     session_factory: web::Data<Arc<DataFusionSessionFactory>>,
+    user_repo: web::Data<Arc<dyn UserRepository>>,
     rate_limiter: Option<web::Data<Arc<RateLimiter>>>,
 ) -> impl Responder {
     let start_time = Instant::now();
 
-    // Extract and validate authentication from request
-    let sql_executor: Option<&Arc<SqlExecutor>> = http_req
-        .app_data::<web::Data<Arc<SqlExecutor>>>()
-        .map(|data| data.as_ref());
-
-    let adapter = match sql_executor.and_then(|exec| exec.get_rocks_adapter()) {
-        Some(adapter) => adapter,
-        None => {
-            let took_ms = start_time.elapsed().as_millis() as u64;
-            return HttpResponse::InternalServerError().json(SqlResponse::error(
-                "CONFIGURATION_ERROR",
-                "Database adapter not configured",
-                took_ms,
-            ));
-        }
-    };
-
-    let auth_result = match extract_auth(&http_req, &adapter).await {
+    // Extract and validate authentication from request using repo
+    let auth_result = match extract_auth_with_repo(&http_req, user_repo.get_ref()).await {
         Ok(auth) => auth,
         Err(e) => {
             let took_ms = start_time.elapsed().as_millis() as u64;
@@ -147,7 +134,7 @@ pub async fn execute_sql_v1(
         .app_data::<web::Data<Arc<SqlExecutor>>>()
         .map(|data| data.as_ref());
 
-    let resolved_ip = http_req
+    let _resolved_ip = http_req
         .extensions()
         .get::<AuthenticatedUser>()
         .and_then(|user| user.connection_info.remote_addr.clone())
@@ -165,17 +152,13 @@ pub async fn execute_sql_v1(
                 .realip_remote_addr()
                 .map(|s| s.to_string())
         });
-    let execution_metadata = ExecutionMetadata {
-        ip_address: resolved_ip,
-    };
-
     for (idx, sql) in statements.iter().enumerate() {
         match execute_single_statement(
             sql,
             session_factory.get_ref(),
             sql_executor,
             &auth_result,
-            Some(&execution_metadata),
+            None,
         )
         .await
         {
@@ -204,7 +187,7 @@ async fn execute_single_statement(
     session_factory: &Arc<DataFusionSessionFactory>,
     sql_executor: Option<&Arc<SqlExecutor>>,
     auth: &kalamdb_auth::AuthenticatedRequest,
-    metadata: Option<&ExecutionMetadata>,
+    metadata: Option<&ExecutorMetadataAlias>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     // Create execution context from authenticated user
     let exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role);

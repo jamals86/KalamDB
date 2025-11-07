@@ -491,7 +491,7 @@ If you encounter issues:
 
 - **Schema Models**: `backend/crates/kalamdb-commons/src/models/schemas/`
 - **Data Types**: `backend/crates/kalamdb-commons/src/models/types/`
-- **Schema Cache**: `backend/crates/kalamdb-core/src/tables/system/schemas/schema_cache.rs`
+- **Schema Cache**: `backend/crates/kalamdb-core/src/tables/system/schemas/registry.rs`
 - **EntityStore**: `backend/crates/kalamdb-core/src/tables/system/schemas/table_schema_store.rs`
 
 ### Test Suites

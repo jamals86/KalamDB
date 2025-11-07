@@ -1,7 +1,7 @@
 //! Column definition for table schemas
 
 use crate::models::schemas::column_default::ColumnDefault;
-use crate::models::types::KalamDataType;
+use crate::models::datatypes::KalamDataType;
 use serde::{Deserialize, Serialize};
 
 /// Complete definition of a table column

@@ -1,0 +1,36 @@
+//! Type-safe identifier types for KalamDB entities.
+//!
+//! This module contains newtype wrappers around String to enforce type safety
+//! at compile time, preventing accidental mixing of different identifier types.
+//!
+//! All ID types implement:
+//! - `Clone`, `Debug`, `PartialEq`, `Eq`, `Hash` for collections
+//! - `Serialize`, `Deserialize` for JSON/bincode serialization
+//! - `Display` for string formatting
+//! - Conversion traits: `AsRef<str>`, `From<String>`, `From<&str>`
+
+mod audit_log_id;
+mod connection_id;
+mod job_id;
+mod live_id;
+mod live_query_id;
+mod namespace_id;
+mod node_id;
+mod row_id;
+mod storage_id;
+mod table_id;
+mod user_id;
+mod user_row_id;
+
+pub use audit_log_id::AuditLogId;
+pub use connection_id::ConnectionId;
+pub use job_id::JobId;
+pub use live_id::LiveId;
+pub use live_query_id::LiveQueryId;
+pub use namespace_id::NamespaceId;
+pub use node_id::NodeId;
+pub use row_id::RowId;
+pub use storage_id::StorageId;
+pub use table_id::TableId;
+pub use user_id::UserId;
+pub use user_row_id::UserRowId;

@@ -13,26 +13,13 @@ use kalamdb_api::auth::jwt::JwtAuth;
 use kalamdb_api::rate_limiter::{RateLimitConfig, RateLimiter};
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
 use kalamdb_core::live_query::LiveQueryManager;
-use kalamdb_core::services::{
-    NamespaceService, SharedTableService, StreamTableService, TableDeletionService,
-    UserTableService,
-};
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::SqlExecutor;
-use kalamdb_core::{
-    jobs::{
-        JobCleanupTask, JobExecutor, JobResult, StreamEvictionJob, StreamEvictionScheduler,
-        UserCleanupConfig, UserCleanupJob,
-    },
-};
-use kalamdb_sql::KalamSql;
-use kalamdb_sql::RocksDbAdapter;
 use kalamdb_store::RocksDBBackend;
 use kalamdb_store::RocksDbInit;
 use log::debug;
 use log::{info, warn};
 use std::sync::Arc;
-use std::time::Duration;
 
 /// Aggregated application components that need to be shared across the
 /// HTTP server and shutdown handling.
@@ -41,14 +28,12 @@ pub struct ApplicationComponents {
     pub sql_executor: Arc<SqlExecutor>,
     pub jwt_auth: Arc<JwtAuth>,
     pub rate_limiter: Arc<RateLimiter>,
-    pub job_executor: Arc<JobExecutor>,
     pub live_query_manager: Arc<LiveQueryManager>,
-    pub stream_eviction_scheduler: Arc<StreamEvictionScheduler>,
-    pub rocks_db_adapter: Arc<RocksDbAdapter>,
+    pub user_repo: Arc<dyn kalamdb_auth::UserRepository>,
 }
 
 /// Initialize RocksDB, DataFusion, services, rate limiter, and flush scheduler.
-pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
+pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     // Initialize RocksDB
     let db_path = std::path::PathBuf::from(&config.storage.rocksdb_path);
     std::fs::create_dir_all(&db_path)?;
@@ -60,19 +45,41 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
     // Initialize RocksDB backend for all components (single StorageBackend trait)
     let backend = Arc::new(RocksDBBackend::new(db.clone()));
 
-    // Initialize KalamSQL for system table access
-    let kalam_sql = Arc::new(KalamSql::new(backend.clone())?);
-    info!("KalamSQL initialized");
+    // Initialize core stores from generic backend (uses kalamdb_store::StorageBackend)
+    // Phase 5: AppContext now creates all dependencies internally!
+    // Uses constants from kalamdb_commons for table prefixes
+    let app_context = kalamdb_core::app_context::AppContext::init(
+        backend.clone(),
+        kalamdb_commons::NodeId::new(config.server.node_id.clone()),
+        config.storage.default_storage_path.clone(),
+    );
+    info!("AppContext initialized with all stores, managers, registries, and providers");
 
-    // Extract RocksDbAdapter for API key authentication
-    let rocks_db_adapter = Arc::new(kalam_sql.adapter().clone());
+    // Initialize system tables and verify schema version (Phase 10 Phase 7, T075-T079)
+    kalamdb_core::tables::system::initialize_system_tables(backend.clone()).await?;
+    info!("System tables initialized with schema version tracking");
 
-    // Seed default storage if necessary
-    let storages = kalam_sql.scan_all_storages()?;
-    if storages.is_empty() {
+    // Start JobsManager run loop (Phase 9, T163)
+    let job_manager = app_context.job_manager();
+    let max_concurrent = config.jobs.max_concurrent;
+    tokio::spawn(async move {
+        info!("Starting JobsManager run loop with max {} concurrent jobs", max_concurrent);
+        if let Err(e) = job_manager.run_loop(max_concurrent as usize).await {
+            log::error!("JobsManager run loop failed: {}", e);
+        }
+    });
+    info!("UnifiedJoJobsManagerbsManager background task spawned");
+
+    // Seed default storage if necessary (using SystemTablesRegistry)
+    let storages_provider = app_context.system_tables().storages();
+    let existing_storages = storages_provider.scan_all_storages()?;
+    let storage_count = existing_storages.num_rows();
+    
+    //TODO: Extract as a separate function create_default_storage_if_needed
+    if storage_count == 0 {
         info!("No storages found, creating default 'local' storage");
         let now = chrono::Utc::now().timestamp_millis();
-        let default_storage = kalamdb_sql::Storage {
+        let default_storage = kalamdb_commons::system::Storage {
             storage_id: StorageId::from("local"),
             storage_name: "Local Filesystem".to_string(),
             description: Some("Default local filesystem storage".to_string()),
@@ -84,63 +91,27 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
             created_at: now,
             updated_at: now,
         };
-        kalam_sql.insert_storage(&default_storage)?;
+        storages_provider.insert_storage(default_storage)?;
         info!("Default 'local' storage created successfully");
     } else {
-        info!("Found {} existing storage(s)", storages.len());
+        info!("Found {} existing storage(s)", storage_count);
     }
 
-    // Initialize core stores from generic backend (uses kalamdb_store::StorageBackend)
-    // Phase 5: AppContext now creates all dependencies internally!
-    // Uses constants from kalamdb_commons for table prefixes
-    let app_context = kalamdb_core::app_context::AppContext::init(
-        backend.clone(),
-        kalamdb_commons::NodeId::new(config.server.node_id.clone()),
-        config.storage.default_storage_path.clone(),
-    );
-    info!("AppContext initialized with all stores, managers, registries, and providers");
-
     // Get references from AppContext for services that need them
-    let kalam_sql = app_context.kalam_sql();
-    let user_table_store = app_context.user_table_store();
-    let shared_table_store = app_context.shared_table_store();
-    let stream_table_store = app_context.stream_table_store();
-    let job_manager = app_context.job_manager();
-    let storage_registry = app_context.storage_registry();
     let live_query_manager = app_context.live_query_manager();
-    let node_id = app_context.node_id();
     let session_factory = app_context.session_factory();
+    // session_factory obtained above
     
     // Get system table providers for job executor and flush scheduler
-    let jobs_provider = app_context.system_tables().jobs();
+    let users_provider = app_context.system_tables().users();
+    let user_repo: Arc<dyn kalamdb_auth::UserRepository> =
+        Arc::new(kalamdb_api::repositories::CoreUsersRepo::new(users_provider));
     
-    // Create services (zero-sized structs)
-    let namespace_service = Arc::new(NamespaceService::new(kalam_sql.clone()));
-    let user_table_service = Arc::new(UserTableService::new());
-    let shared_table_service = Arc::new(SharedTableService::new());
-    let stream_table_service = Arc::new(StreamTableService::new());
-    let table_deletion_service = Arc::new(TableDeletionService::new());
-
-    let sql_executor = Arc::new(
-        SqlExecutor::new(
-            namespace_service.clone(),
-            user_table_service.clone(),
-            shared_table_service.clone(),
-            stream_table_service.clone(),
-        )
-        .with_table_deletion_service(table_deletion_service)
-        .with_storage_registry(storage_registry.clone())
-        .with_job_manager(job_manager.clone())
-        .with_live_query_manager(live_query_manager.clone())
-        .with_stores(
-            user_table_store.clone(),
-            shared_table_store.clone(),
-            stream_table_store.clone(),
-            kalam_sql.clone(),
-        )
-        .with_password_complexity(config.auth.enforce_password_complexity)
-        .with_storage_backend(backend.clone()),
-    );
+    // SqlExecutor now uses AppContext directly
+    let sql_executor = Arc::new(SqlExecutor::new(
+        app_context.clone(),
+        config.auth.enforce_password_complexity,
+    ));
 
     info!(
         "SqlExecutor initialized with DROP TABLE support, storage registry, job manager, and table registration"
@@ -171,145 +142,46 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<ApplicationComponents> {
         config.rate_limit.max_subscriptions_per_user
     );
 
-    // Job executor for stream eviction (now includes flush scheduling)
-    let job_executor = Arc::new(JobExecutor::new(
-        jobs_provider.clone(),
-        node_id.clone(),
-        job_manager.clone(),
-        std::time::Duration::from_secs(5),
-    ));
+    // Phase 9: All job scheduling now handled by JobsManager
+    // Crash recovery handled by JobsManager.recover_incomplete_jobs() in run_loop
+    // Flush scheduling via FLUSH TABLE/FLUSH ALL TABLES commands
+    // Stream eviction and user cleanup via scheduled job creation (TODO: implement cron scheduler)
+    
+    info!("Job management delegated to JobsManager (already running in background)");
 
-    // Stream eviction job and scheduler
-    let stream_eviction_job = Arc::new(StreamEvictionJob::with_defaults(
-        stream_table_store.clone(),
-        kalam_sql.clone(),
-        job_executor.clone(),
-    ));
-
-    let eviction_interval = Duration::from_secs(config.stream.eviction_interval_seconds);
-    let stream_eviction_scheduler = Arc::new(StreamEvictionScheduler::new(
-        stream_eviction_job,
-        eviction_interval,
-    ));
-    info!(
-        "Stream eviction scheduler initialized (interval: {} seconds)",
-        config.stream.eviction_interval_seconds
-    );
-
-    // User cleanup job (scheduled background task)
-    let user_cleanup_job = Arc::new(UserCleanupJob::new(
-        kalam_sql.clone(),
-        user_table_store.clone(),
-        UserCleanupConfig {
-            grace_period_days: config.user_management.deletion_grace_period_days,
-        },
-    ));
-
-    let cleanup_interval =
-        JobCleanupTask::parse_cron_schedule(&config.user_management.cleanup_job_schedule);
-    let cleanup_job_manager = job_manager.clone();
-    let cleanup_job_executor = job_executor.clone();
-    let scheduled_cleanup_job = Arc::clone(&user_cleanup_job);
-
-    tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(cleanup_interval);
-
-        loop {
-            ticker.tick().await;
-
-            let job_id = format!("user-cleanup-{}", chrono::Utc::now().timestamp_millis());
-            let job_id_clone = job_id.clone();
-            let job_executor = Arc::clone(&cleanup_job_executor);
-            let job_instance = Arc::clone(&scheduled_cleanup_job);
-            let grace_period = job_instance.config().grace_period_days;
-
-            let job_future = Box::pin(async move {
-                let executor_job_id = job_id;
-                let cleanup_job = Arc::clone(&job_instance);
-                let result = job_executor.execute_job(
-                    executor_job_id,
-                    "user_cleanup".to_string(),
-                    None,
-                    vec![format!("grace_period_days={}", grace_period)],
-                    move || {
-                        cleanup_job
-                            .enforce()
-                            .map(|count| format!("Deleted {} expired users", count))
-                            .map_err(|err| err.to_string())
-                    },
-                );
-
-                match result {
-                    Ok(JobResult::Success(msg)) => Ok(msg),
-                    Ok(JobResult::Failure(msg)) => Err(msg),
-                    Err(err) => Err(err.to_string()),
-                }
-            });
-
-            if let Err(e) = cleanup_job_manager
-                .start_job(job_id_clone, "user_cleanup".to_string(), job_future)
-                .await
-            {
-                log::error!("Failed to start user cleanup job: {}", e);
-            }
-        }
-    });
-    info!(
-        "User cleanup job scheduled (grace period: {} days, schedule: {})",
-        config.user_management.deletion_grace_period_days,
-        config.user_management.cleanup_job_schedule
-    );
-
-    // Resume crash recovery jobs
-    match job_executor.resume_incomplete_jobs().await {
-        Ok(count) if count > 0 => {
-            info!(
-                "Resumed {} incomplete flush jobs from previous session",
-                count
-            );
-        }
-        Ok(_) => {}
-        Err(e) => {
-            log::warn!("Failed to resume incomplete jobs: {}", e);
-        }
-    }
-
-    job_executor.start_flush_scheduler().await?;
-    info!("FlushScheduler started (checking triggers every 5 seconds)");
-
-    // Start stream eviction scheduler
-    stream_eviction_scheduler.start().await?;
-    info!(
-        "Stream eviction scheduler started (running every {} seconds)",
-        config.stream.eviction_interval_seconds
-    );
+    // Get users provider for system user initialization
+    let users_provider_for_init = app_context.system_tables().users();
 
     // T125-T127: Create default system user on first startup
-    create_default_system_user(kalam_sql.clone()).await?;
+    create_default_system_user(users_provider_for_init.clone()).await?;
 
     // Security warning: Check if remote access is enabled with empty root password
-    check_remote_access_security(config, kalam_sql.clone()).await?;
+    check_remote_access_security(config, users_provider_for_init).await?;
 
-    Ok(ApplicationComponents {
+    let components = ApplicationComponents {
         session_factory,
         sql_executor,
         jwt_auth,
         rate_limiter,
-        job_executor,
         live_query_manager,
-        stream_eviction_scheduler,
-        rocks_db_adapter,
-    })
+        user_repo,
+    };
+
+    Ok((components, app_context))
 }
 
 /// Start the HTTP server and manage graceful shutdown.
-pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Result<()> {
+pub async fn run(
+    config: &ServerConfig, 
+    components: ApplicationComponents,
+    app_context: Arc<kalamdb_core::app_context::AppContext>,
+) -> Result<()> {
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     info!("Starting HTTP server on {}", bind_addr);
     info!("Endpoints: POST /v1/api/sql, GET /v1/ws");
 
-    let job_executor_shutdown = components.job_executor.clone();
-    let stream_eviction_scheduler_shutdown = components.stream_eviction_scheduler.clone();
+    // Get JobsManager for graceful shutdown
+    let job_manager_shutdown = app_context.job_manager();
     let shutdown_timeout_secs = config.shutdown.flush.timeout;
 
     let session_factory = components.session_factory.clone();
@@ -317,7 +189,7 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
     let jwt_auth = components.jwt_auth.clone();
     let rate_limiter = components.rate_limiter.clone();
     let live_query_manager = components.live_query_manager.clone();
-    let rocks_db_adapter = components.rocks_db_adapter.clone();
+    let user_repo = components.user_repo.clone();
 
     let server = HttpServer::new(move || {
         App::new()
@@ -328,7 +200,7 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
             .app_data(web::Data::new(jwt_auth.clone()))
             .app_data(web::Data::new(rate_limiter.clone()))
             .app_data(web::Data::new(live_query_manager.clone()))
-            .app_data(web::Data::new(rocks_db_adapter.clone()))
+        .app_data(web::Data::new(user_repo.clone()))
             .configure(routes::configure)
     })
     .bind(&bind_addr)?
@@ -354,22 +226,41 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
             server_handle.stop(true).await;
 
             info!(
-                "Waiting up to {}s for active flush jobs to complete...",
+                "Waiting up to {}s for active jobs to complete...",
                 shutdown_timeout_secs
             );
+
+            // Signal shutdown to JobsManager
+            job_manager_shutdown.shutdown().await;
+            
+            // Wait for active jobs with timeout
             let timeout = std::time::Duration::from_secs(shutdown_timeout_secs as u64);
-
-            match job_executor_shutdown.wait_for_active_flush_jobs(timeout).await {
-                Ok(_) => info!("All flush jobs completed successfully"),
-                Err(e) => log::warn!("Flush jobs did not complete within timeout: {}", e),
-            }
-
-            if let Err(e) = job_executor_shutdown.stop_flush_scheduler().await {
-                log::error!("Error stopping flush scheduler: {}", e);
-            }
-
-            if let Err(e) = stream_eviction_scheduler_shutdown.stop().await {
-                log::error!("Error stopping stream eviction scheduler: {}", e);
+            let start = std::time::Instant::now();
+            
+            loop {
+                // Check for Running jobs
+                let filter = kalamdb_commons::system::JobFilter {
+                    status: Some(kalamdb_commons::JobStatus::Running),
+                    ..Default::default()
+                };
+                
+                match job_manager_shutdown.list_jobs(filter).await {
+                    Ok(jobs) if jobs.is_empty() => {
+                        info!("All jobs completed successfully");
+                        break;
+                    }
+                    Ok(jobs) => {
+                        if start.elapsed() > timeout {
+                            warn!("Timeout waiting for {} active jobs to complete", jobs.len());
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    }
+                    Err(e) => {
+                        log::error!("Error checking job status during shutdown: {}", e);
+                        break;
+                    }
+                }
             }
         }
     }
@@ -389,16 +280,18 @@ pub async fn run(config: &ServerConfig, components: ApplicationComponents) -> Re
 /// On first startup, logs the credentials to stdout for the administrator to save.
 ///
 /// # Arguments
-/// * `kalam_sql` - KalamSQL adapter for system tables
+/// * `users_provider` - UsersTableProvider for system.users table
 ///
 /// # Returns
 /// Result indicating success or failure
-async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
+async fn create_default_system_user(
+    users_provider: Arc<kalamdb_core::tables::system::UsersTableProvider>,
+) -> Result<()> {
     use kalamdb_commons::constants::AuthConstants;
     use kalamdb_commons::system::User;
 
     // Check if root user already exists
-    let existing_user = kalam_sql.get_user(AuthConstants::DEFAULT_SYSTEM_USERNAME);
+    let existing_user = users_provider.get_user_by_username(AuthConstants::DEFAULT_SYSTEM_USERNAME);
 
     match existing_user {
         Ok(Some(_)) => {
@@ -438,7 +331,7 @@ async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
                 deleted_at: None,
             };
 
-            kalam_sql.insert_user(&user)?;
+            users_provider.create_user(user)?;
 
             // T127: Log system user information to stdout
             info!(
@@ -457,13 +350,13 @@ async fn create_default_system_user(kalam_sql: Arc<KalamSql>) -> Result<()> {
 /// Informs users about password requirements for remote access
 async fn check_remote_access_security(
     config: &ServerConfig,
-    kalam_sql: Arc<KalamSql>,
+    users_provider: Arc<kalamdb_core::tables::system::UsersTableProvider>,
 ) -> Result<()> {
     use kalamdb_commons::constants::AuthConstants;
 
     // Check if root user exists and has empty password
     // Always show this info if root has no password, regardless of allow_remote_access setting
-    if let Ok(Some(user)) = kalam_sql.get_user(AuthConstants::DEFAULT_SYSTEM_USERNAME) {
+    if let Ok(Some(user)) = users_provider.get_user_by_username(AuthConstants::DEFAULT_SYSTEM_USERNAME) {
         if user.password_hash.is_empty() {
             // Root user has no password - this is secure for localhost-only but warn about limitations
             warn!("╔═══════════════════════════════════════════════════════════════════╗");

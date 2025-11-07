@@ -9,7 +9,7 @@
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-use kalamdb_commons::system::User;
+use kalamdb_commons::types::User;
 use kalamdb_commons::{AuthType, Role, StorageId, StorageMode, UserId};
 use serde::{Deserialize, Serialize};
 
@@ -57,10 +57,12 @@ pub async fn create_test_user(
     );
 
     // Use system user to create the user
+    use kalamdb_core::sql::executor::handlers::types::ExecutionContext;
     let system_user_id = UserId::new("system");
+    let exec_ctx = ExecutionContext::new(system_user_id, Role::System);
     let result = server
         .sql_executor
-        .execute(&*server.session_context, &create_user_sql.as_str(), Some(&system_user_id))
+        .execute(&*server.session_context, &create_user_sql.as_str(), &exec_ctx)
         .await;
 
     if let Err(e) = &result {
@@ -222,8 +224,10 @@ pub async fn create_system_user(server: &super::TestServer, username: &str) -> U
     };
 
     server
-        .kalam_sql
-        .insert_user(&user)
+        .app_context
+        .system_tables()
+        .users()
+        .create_user(user.clone())
         .expect("Failed to insert system user");
 
     user
