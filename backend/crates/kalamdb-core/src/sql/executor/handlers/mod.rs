@@ -21,32 +21,23 @@ use kalamdb_sql::statement_classifier::SqlStatement;
 
 // Core types relocated to executor/models in v3
 pub mod authorization;
-pub mod ddl;
 
-// Phase 7 (US3): New handlers
-// Legacy monolithic DML handler (to be split into dml/ submodules)
+// Typed handlers organized by category
+pub mod table;
 pub mod dml;
-pub mod query;
 pub mod flush;
+pub mod jobs;
 pub mod subscription;
-pub mod user_management;
-// pub mod table_registry; // removed
-pub mod system_commands;
+pub mod user;
 pub mod typed;
 
 // Re-export core types from executor/models for convenience
 pub use crate::sql::executor::models::{ExecutionContext, ExecutionMetadata, ExecutionResult, ScalarValue};
-// pub use authorization::AuthorizationHandler;
-// pub use ddl::DDLHandler; // DEPRECATED: Use modular ddl::namespace::*, ddl::storage::*, ddl::table::* instead
 
-// Phase 7 (US3): Re-export new handlers
+// Re-export DML handlers (keeping old exports for compatibility)
 pub use dml::{InsertHandler, DeleteHandler, UpdateHandler};
-pub use query::QueryHandler;
-pub use flush::FlushHandler;
-pub use subscription::SubscriptionHandler;
-pub use user_management::UserManagementHandler;
-// pub use table_registry::TableRegistryHandler; // removed
-pub use system_commands::SystemCommandsHandler;
+
+// Re-export legacy placeholder handlers
 pub use typed::TypedStatementHandler;
 
 /// Common trait for SQL statement handlers
@@ -95,7 +86,6 @@ pub trait StatementHandler: Send + Sync {
     /// # Arguments
     /// * `session` - DataFusion session context for query execution
     /// * `statement` - Parsed SQL statement (from kalamdb_sql)
-    /// * `sql_text` - Original SQL text (for DML handlers that need to parse SQL)
     /// * `params` - Parameter values for prepared statements (? placeholders)
     /// * `context` - Execution context (user, role, namespace, audit info)
     ///

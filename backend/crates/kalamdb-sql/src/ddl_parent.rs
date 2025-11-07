@@ -27,7 +27,9 @@ impl DdlAst for ShowTablesStatement {}
 impl DdlAst for AlterStorageStatement {}
 impl DdlAst for CreateStorageStatement {}
 impl DdlAst for DropStorageStatement {}
+impl DdlAst for ShowStoragesStatement {}
 impl DdlAst for SubscribeStatement {}
 impl DdlAst for CreateUserStatement {}
 impl DdlAst for AlterUserStatement {}
 impl DdlAst for DropUserStatement {}
+impl DdlAst for JobCommand {}

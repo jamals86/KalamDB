@@ -3,11 +3,11 @@
 //! Handles UPDATE statements with parameter binding support via DataFusion.
 
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::StatementHandler;
+use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use async_trait::async_trait;
 use datafusion::execution::context::SessionContext;
-use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
+use kalamdb_sql::ddl::UpdateStatement;
 
 /// Handler for UPDATE statements
 ///
@@ -28,49 +28,25 @@ impl Default for UpdateHandler {
 }
 
 #[async_trait]
-impl StatementHandler for UpdateHandler {
+impl TypedStatementHandler<UpdateStatement> for UpdateHandler {
     async fn execute(
         &self,
-        session: &SessionContext,
-        statement: SqlStatement,
-        sql_text: String,
-        params: Vec<ScalarValue>,
-        context: &ExecutionContext,
+        _session: &SessionContext,
+        _statement: UpdateStatement,
+        _params: Vec<ScalarValue>,
+        _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        // Validate statement type
-        if !matches!(statement.kind(), SqlStatementKind::Update(_)) {
-            return Err(KalamDbError::InvalidOperation(
-                "UpdateHandler received non-UPDATE statement".into(),
-            ));
-        }
-
-        // For Phase 6, UPDATE execution via DataFusion requires SQL text
-        // which isn't available in SqlStatement::Update enum variant.
-        // This will be improved in Phase 7 when proper statement parsing is added.
-        
-        // In Phase 7, the actual implementation will be:
-        // 1. Parse UPDATE statement to extract table, SET clause, WHERE clause
-        // 2. Bind parameters to expressions
-        // 3. Execute via native write path or DataFusion
-        // 4. Return ExecutionResult::Updated { rows_affected } (only rows with changes)
-        
+        // TODO: Implement UPDATE handler with TypedStatementHandler pattern
         Err(KalamDbError::InvalidOperation(
-            format!("UPDATE execution requires Phase 7 DML implementation (SQL: {})", sql_text),
+            "UPDATE handler not yet implemented for TypedStatementHandler pattern".into(),
         ))
     }
 
     async fn check_authorization(
         &self,
-        statement: &SqlStatement,
+        _statement: &UpdateStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        // Validate statement type
-        if !matches!(statement.kind(), SqlStatementKind::Update(_)) {
-            return Err(KalamDbError::InvalidOperation(
-                "UpdateHandler received non-UPDATE statement".into(),
-            ));
-        }
-
         // UPDATE requires at least User role
         use kalamdb_commons::Role;
         match context.user_role {

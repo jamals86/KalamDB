@@ -3,12 +3,11 @@
 //! Handles DELETE statements with parameter binding support via DataFusion.
 
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::StatementHandler;
+use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use async_trait::async_trait;
 use datafusion::execution::context::SessionContext;
-use kalamdb_sql::statement_classifier::SqlStatement;
-use kalamdb_sql::statement_classifier::SqlStatementKind;
+use kalamdb_sql::ddl::DeleteStatement;
 
 /// Handler for DELETE statements
 ///
@@ -29,49 +28,25 @@ impl Default for DeleteHandler {
 }
 
 #[async_trait]
-impl StatementHandler for DeleteHandler {
+impl TypedStatementHandler<DeleteStatement> for DeleteHandler {
     async fn execute(
         &self,
-        session: &SessionContext,
-        statement: SqlStatement,
-        sql_text: String,
-        params: Vec<ScalarValue>,
-        context: &ExecutionContext,
+        _session: &SessionContext,
+        _statement: DeleteStatement,
+        _params: Vec<ScalarValue>,
+        _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        // Validate statement type
-        if !matches!(statement.kind(), SqlStatementKind::Delete(_)) {
-            return Err(KalamDbError::InvalidOperation(
-                "DeleteHandler received non-DELETE statement".into(),
-            ));
-        }
-
-        // For Phase 6, DELETE execution via DataFusion requires SQL text
-        // which isn't available in SqlStatement::Delete enum variant.
-        // This will be improved in Phase 7 when proper statement parsing is added.
-        
-        // In Phase 7, the actual implementation will be:
-        // 1. Parse DELETE statement to extract table and WHERE clause
-        // 2. Bind parameters to WHERE expressions
-        // 3. Execute via native write path or DataFusion
-        // 4. Return ExecutionResult::Deleted { rows_affected }
-        
+        // TODO: Implement DELETE handler with TypedStatementHandler pattern
         Err(KalamDbError::InvalidOperation(
-            format!("DELETE execution requires Phase 7 DML implementation (SQL: {})", sql_text),
+            "DELETE handler not yet implemented for TypedStatementHandler pattern".into(),
         ))
     }
 
     async fn check_authorization(
         &self,
-        statement: &SqlStatement,
+        _statement: &DeleteStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        // Validate statement type
-        if !matches!(statement.kind(), SqlStatementKind::Delete(_)) {
-            return Err(KalamDbError::InvalidOperation(
-                "DeleteHandler received non-DELETE statement".into(),
-            ));
-        }
-
         // DELETE requires at least User role
         use kalamdb_commons::Role;
         match context.user_role {

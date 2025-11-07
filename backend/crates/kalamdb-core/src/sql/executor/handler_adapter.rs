@@ -175,7 +175,6 @@ mod tests {
     use super::*;
     use crate::app_context::AppContext;
     use crate::sql::executor::handlers::InsertHandler;
-    use crate::sql::executor::handlers::ddl::CreateNamespaceHandler;
     use crate::test_helpers::init_test_app_context;
     use kalamdb_commons::models::{NamespaceId, UserId};
     use kalamdb_commons::Role;
