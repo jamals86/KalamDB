@@ -96,6 +96,10 @@ Acceptance Scenarios:
 - Multiple statements in a single payload succeed sequentially until a failure; the failing statement returns an error annotated with statement index.
 - Parameters are provided for a statement with no placeholders; this results in a parameter count error before execution.
 - Parameters are provided for unsupported statement types (DDL, system commands, transactions); an error is returned indicating parameters are not supported for that statement.
+- Concurrent DML operations on the same row use last-write-wins semantics; no conflict detection or locking (most recent write based on timestamp prevails).
+- Parameter array exceeding 50 elements returns validation error before execution.
+- Individual parameter value exceeding 512KB returns validation error before execution.
+- Handler execution exceeding configured timeout (default 30s) returns timeout error with elapsed time; partial results are discarded.
 
 ## Requirements (mandatory)
 
@@ -106,6 +110,8 @@ Acceptance Scenarios:
 - FR-003: The legacy `handlers/table_registry.rs` MUST be removed from the handler registry and not compiled.
 - FR-004: DataFusion session factory MUST stop using KalamSessionState; CURRENT_USER registration MUST work via user id only.
 - FR-005: SqlExecutor public API MUST accept `Vec<ScalarValue>` (from datafusion::scalar::ScalarValue) and pass it to DataFusion's `with_params()` method.
+- FR-005a: Parameter validation MUST enforce maximum 50 parameters per statement and maximum 512KB per individual parameter value to prevent memory exhaustion.
+- FR-005b: Handler execution MUST enforce a configurable timeout (default 30 seconds, configured via `[execution].handler_timeout_seconds` in config.toml). On timeout, handler MUST return `KalamDbError::Timeout` with elapsed time.
 - FR-006: REST API path MUST construct ExecutionContext from authenticated user and pass it into the executor.
 - FR-007: Authorization MUST be applied per classified statement prior to handler execution; non-admin admin-only ops MUST be rejected.
 - FR-008: All imports, modules, and re-exports MUST compile across workspace and tests after refactor.
@@ -131,6 +137,44 @@ Acceptance Scenarios:
 - ScalarValue: DataFusion's native parameter type (Int64, Utf8, Float64, Boolean, Null, etc.).
 - ExecutionResult: Success message, single/multiple batches, or subscription metadata.
 - AuditLogEntry: Existing system type consumed by helpers (not modified here).
+- ErrorResponse: Structured error format with `code` (machine-readable string), `message` (human-readable description), and `details` (contextual JSON object with fields like `expected`, `actual`, `elapsed_ms`).
+
+### Row Count Behavior
+
+All SQL operations MUST return a `row_count` or `rows_affected` field in the response, following MySQL semantics:
+
+| Statement | Field Name | Meaning | Example |
+|-----------|------------|---------|---------|
+| **SELECT** | `row_count` | Number of rows returned in result set | `SELECT * FROM users WHERE country = 'US'` → `10 rows in set` |
+| **INSERT** | `rows_affected` | Number of rows inserted | `INSERT INTO users (name) VALUES ('Alice'), ('Bob')` → `2 rows affected` |
+| **UPDATE** | `rows_affected` | Number of rows with actual changes (not rows matched) | `UPDATE users SET active = 1 WHERE country = 'US'` → `5 rows affected` (only if value changed) |
+| **DELETE** | `rows_affected` | Number of rows removed | `DELETE FROM users WHERE active = 0` → `3 rows affected` |
+| **CREATE NAMESPACE** | `rows_affected` | Always 1 (namespace created) | `CREATE NAMESPACE prod` → `1 row affected` |
+| **DROP NAMESPACE** | `rows_affected` | Always 1 (namespace dropped) | `DROP NAMESPACE test` → `1 row affected` |
+| **CREATE TABLE** | `rows_affected` | Always 1 (table created) | `CREATE TABLE users (...)` → `1 row affected` |
+| **ALTER TABLE** | `rows_affected` | Always 1 (table altered) | `ALTER TABLE users ADD COLUMN age INT` → `1 row affected` |
+| **DROP TABLE** | `rows_affected` | Always 1 (table dropped) | `DROP TABLE users` → `1 row affected` |
+| **CREATE STORAGE** | `rows_affected` | Always 1 (storage created) | `CREATE STORAGE s3_prod` → `1 row affected` |
+| **DROP STORAGE** | `rows_affected` | Always 1 (storage dropped) | `DROP STORAGE s3_test` → `1 row affected` |
+| **CREATE USER** | `rows_affected` | Always 1 (user created) | `CREATE USER alice` → `1 row affected` |
+| **ALTER USER** | `rows_affected` | Always 1 (user altered) | `ALTER USER alice SET PASSWORD '...'` → `1 row affected` |
+| **DROP USER** | `rows_affected` | Always 1 (user dropped) | `DROP USER bob` → `1 row affected` |
+| **FLUSH TABLE** | `rows_affected` | Number of tables flushed (always 1) | `FLUSH TABLE users` → `1 row affected` |
+| **FLUSH ALL TABLES** | `rows_affected` | Number of tables flushed | `FLUSH ALL TABLES` → `15 rows affected` (15 tables) |
+| **KILL JOB** | `rows_affected` | Always 1 (job killed) | `KILL JOB 'FL-abc123'` → `1 row affected` |
+| **KILL LIVE QUERY** | `rows_affected` | Always 1 (subscription cancelled) | `KILL LIVE QUERY 'sub_xyz789'` → `1 row affected` |
+| **SHOW NAMESPACES** | `row_count` | Number of namespaces returned | `SHOW NAMESPACES` → `5 rows in set` |
+| **SHOW TABLES** | `row_count` | Number of tables returned | `SHOW TABLES` → `12 rows in set` |
+| **SHOW STORAGES** | `row_count` | Number of storages returned | `SHOW STORAGES` → `3 rows in set` |
+| **DESCRIBE TABLE** | `row_count` | Number of columns returned | `DESCRIBE users` → `8 rows in set` |
+
+**Implementation Notes**:
+- DML operations (INSERT/UPDATE/DELETE): Use `RecordBatch.num_rows()` sum from DataFusion execution
+- UPDATE: Only count rows where values actually changed (not rows matched by WHERE clause)
+- DDL operations: Always return 1 (single entity created/modified/dropped)
+- SHOW/DESCRIBE: Return count of result rows
+- FLUSH ALL TABLES: Return count of tables flushed
+- CREATE IF NOT EXISTS: Return 1 if created, 0 if already exists (with warning message)
 
 ## Success Criteria (mandatory)
 
@@ -147,12 +191,27 @@ Acceptance Scenarios:
 - Parameter binding remains positional (Vec order) unless/until named params are introduced.
 - System namespace operations are restricted to System/DBA roles per existing RBAC rules.
 
+## Clarifications
+
+### Session 2025-11-07
+
+- Q: What should BEGIN/COMMIT/ROLLBACK handlers do if transaction manager isn't implemented yet (FR-029 placeholder implementations)? → A: Return "NotImplemented" error with message "Transaction support planned for Phase 11" - clear failure indicating feature unavailability
+- Q: How should concurrent DML operations on the same row be handled? → A: Last-write-wins - no conflict detection, most recent write overwrites previous (timestamp-based)
+- Q: What are the maximum allowed parameter array sizes and individual parameter sizes? → A: Max 50 parameters, 512KB per parameter
+- Q: Should handlers have execution timeouts? What happens on timeout? → A: 30 seconds default timeout, configurable via config.toml
+- Q: Should parameter validation errors return structured error codes or just messages? → A: Structured error codes + messages - e.g., `{"code": "PARAM_COUNT_MISMATCH", "message": "...", "expected": 2, "actual": 3}` (machine-readable, enables client-side handling)
+
 ## Decisions
 
 - Parameter Semantics: Use DataFusion's native `ScalarValue` and `with_params()` API for parameter binding; DataFusion handles count/type validation during query planning (no custom validator needed).
 - Role Matrix Granularity: Allow self ALTER USER for password changes (non-admins may modify their own account only). All other user modifications require DBA/System roles.
 - Parameterized Scope: Limit parameterized execution to SELECT/INSERT/UPDATE/DELETE only; other statement types return a "parameters not supported" error at the executor boundary.
 - Schema Awareness: DataFusion's query planner validates parameter types against table schemas automatically; no SchemaRegistry pre-validation needed.
+- Transaction Handler Placeholders: BEGIN/COMMIT/ROLLBACK handlers return `KalamDbError::NotImplemented` with message "Transaction support planned for Phase 11" until full transaction manager is implemented.
+- Concurrent Write Semantics: DML operations use last-write-wins with no conflict detection; most recent write (by timestamp) overwrites previous values without locking or version checks.
+- Parameter Size Limits: Maximum 50 parameters per statement and 512KB per individual parameter value enforced at API boundary to prevent memory exhaustion and DoS attacks.
+- Handler Execution Timeout: Default 30-second timeout for all handler executions, configurable via `[execution].handler_timeout_seconds` in config.toml. Timeout returns error with elapsed time; partial results discarded.
+- Error Response Format: All errors return structured JSON with machine-readable `code` field (e.g., `PARAM_COUNT_MISMATCH`), human-readable `message`, and contextual `details` object for client-side parsing and handling.
 
 ## DDL handler modularization
 
@@ -172,12 +231,158 @@ Acceptance Scenarios:
 2. Given existing DDL call sites in the executor, when refactor is complete, then no call sites require signature changes (only import paths change inside handlers).
 3. Given unit tests for CREATE/DROP NAMESPACE, CREATE TABLE, and ALTER TABLE, when run after the split, then they pass unchanged (behavior preserved).
 
+---
+
+### User Story 6 - Complete Handler Implementation for All SQL Statements (Priority: P0)
+
+As a developer, I want every SQL statement type (except SELECT, which is handled directly by DataFusion) to have a dedicated typed handler in its own file so that the codebase is fully modular, maintainable, and follows the established handler registry pattern.
+
+Why this priority: This completes the handler architecture migration started with CreateNamespaceHandler, ensuring all 28 statement types (excluding SELECT) have consistent implementation patterns with zero boilerplate.
+
+**Current Status**: 1/28 handlers implemented (CreateNamespace). SELECT is handled directly in `execute_via_datafusion()` and does not need a separate handler.
+
+**Target Architecture**:
+```
+backend/crates/kalamdb-core/src/sql/executor/handlers/
+├── ddl/
+│   ├── mod.rs
+│   ├── create_namespace.rs      # CreateNamespaceHandler
+│   ├── alter_namespace.rs       # AlterNamespaceHandler
+│   ├── drop_namespace.rs        # DropNamespaceHandler
+│   ├── show_namespaces.rs       # ShowNamespacesHandler
+│   ├── create_storage.rs        # CreateStorageHandler
+│   ├── alter_storage.rs         # AlterStorageHandler
+│   ├── drop_storage.rs          # DropStorageHandler
+│   ├── show_storages.rs         # ShowStoragesHandler
+│   ├── create_table.rs          # CreateTableHandler
+│   ├── alter_table.rs           # AlterTableHandler
+│   ├── drop_table.rs            # DropTableHandler
+│   ├── show_tables.rs           # ShowTablesHandler
+│   ├── describe_table.rs        # DescribeTableHandler
+│   └── show_stats.rs            # ShowStatsHandler
+├── dml/
+│   ├── mod.rs
+│   ├── insert.rs                # InsertHandler (delegates to execute_via_datafusion)
+│   ├── update.rs                # UpdateHandler (delegates to execute_via_datafusion)
+│   └── delete.rs                # DeleteHandler (delegates to execute_via_datafusion)
+├── flush/
+│   ├── mod.rs
+│   ├── flush_table.rs           # FlushTableHandler
+│   └── flush_all_tables.rs      # FlushAllTablesHandler
+├── jobs/
+│   ├── mod.rs
+│   ├── kill_job.rs              # KillJobHandler
+│   └── kill_live_query.rs       # KillLiveQueryHandler
+├── subscription/
+│   ├── mod.rs
+│   └── subscribe.rs             # SubscribeHandler
+├── user/
+│   ├── mod.rs
+│   ├── create_user.rs           # CreateUserHandler
+│   ├── alter_user.rs            # AlterUserHandler
+│   └── drop_user.rs             # DropUserHandler
+├── transaction/
+│   ├── mod.rs
+│   ├── begin.rs                 # BeginTransactionHandler
+│   ├── commit.rs                # CommitTransactionHandler
+│   └── rollback.rs              # RollbackTransactionHandler
+├── ddl_typed.rs                 # Legacy - to be migrated
+├── typed.rs                     # TypedStatementHandler trait
+└── mod.rs                       # Re-exports all handlers
+```
+
+**Implementation Checklist** (28 handlers total, SELECT handled separately):
+
+**DDL Handlers (14):**
+- [x] CreateNamespace - `ddl/create_namespace.rs` ✅ COMPLETE
+- [ ] AlterNamespace - `ddl/alter_namespace.rs`
+- [ ] DropNamespace - `ddl/drop_namespace.rs`
+- [ ] ShowNamespaces - `ddl/show_namespaces.rs`
+- [ ] CreateStorage - `ddl/create_storage.rs`
+- [ ] AlterStorage - `ddl/alter_storage.rs`
+- [ ] DropStorage - `ddl/drop_storage.rs`
+- [ ] ShowStorages - `ddl/show_storages.rs`
+- [ ] CreateTable - `ddl/create_table.rs`
+- [ ] AlterTable - `ddl/alter_table.rs`
+- [ ] DropTable - `ddl/drop_table.rs`
+- [ ] ShowTables - `ddl/show_tables.rs`
+- [ ] DescribeTable - `ddl/describe_table.rs`
+- [ ] ShowStats - `ddl/show_stats.rs`
+
+**DML Handlers (3):**
+- [ ] Insert - `dml/insert.rs` (delegates to DataFusion via `execute_via_datafusion` with params)
+- [ ] Update - `dml/update.rs` (delegates to DataFusion via `execute_via_datafusion` with params)
+- [ ] Delete - `dml/delete.rs` (delegates to DataFusion via `execute_via_datafusion` with params)
+
+**Note**: SELECT is handled directly in `execute_via_datafusion()` and does NOT need a separate handler. The 3 DML handlers above are thin wrappers that delegate to the same DataFusion execution path.
+
+**Flush Handlers (2):**
+- [ ] FlushTable - `flush/flush_table.rs`
+- [ ] FlushAllTables - `flush/flush_all_tables.rs`
+
+**Job Management Handlers (2):**
+- [ ] KillJob - `jobs/kill_job.rs`
+- [ ] KillLiveQuery - `jobs/kill_live_query.rs`
+
+**Subscription Handler (1):**
+- [ ] Subscribe - `subscription/subscribe.rs`
+
+**User Management Handlers (3):**
+- [ ] CreateUser - `user/create_user.rs`
+- [ ] AlterUser - `user/alter_user.rs`
+- [ ] DropUser - `user/drop_user.rs`
+
+**Transaction Handlers (3):**
+- [ ] BeginTransaction - `transaction/begin.rs`
+- [ ] CommitTransaction - `transaction/commit.rs`
+- [ ] RollbackTransaction - `transaction/rollback.rs`
+
+**Per-Handler Requirements**:
+1. Each handler MUST be in its own file (one handler per file)
+2. Each handler MUST implement `TypedStatementHandler<T>` trait
+3. Each handler MUST have `execute()` and `check_authorization()` methods
+4. Each handler MUST be registered in `HandlerRegistry::new()` using the generic adapter
+5. Each handler MUST have unit tests (at least 2: success case + authorization check)
+6. Each handler MUST use `Arc<AppContext>` for data access
+7. Each handler MUST return descriptive error messages using `KalamDbError` variants
+
+**Registration Pattern** (zero boilerplate):
+```rust
+// In handler_registry.rs
+registry.register_typed(
+    SqlStatement::MyStatement(MyStatement { /* placeholder */ }),
+    MyStatementHandler::new(app_context.clone()),
+    |stmt| match stmt {
+        SqlStatement::MyStatement(s) => Some(s),
+        _ => None,
+    },
+);
+```
+
+**Reference Implementation**: See `docs/how-to-add-sql-statement.md` for complete guide
+
+Acceptance Scenarios:
+1. Given all 28 handlers implemented, when building kalamdb-core, then compilation succeeds with zero errors.
+2. Given all handlers registered, when HandlerRegistry is created, then `has_handler()` returns true for all 28 statement types (SELECT routes directly to DataFusion).
+3. Given any SQL statement type, when executed via SqlExecutor, then it routes to the correct handler (or DataFusion for SELECT) and returns appropriate ExecutionResult.
+4. Given each handler's unit tests, when running `cargo test`, then all tests pass with 100% handler coverage.
+5. Given the handler registry guide, when a developer adds a new statement, then they can follow the 3-step process in under 30 minutes.
+
+Independent Test: 
+- Execute one statement from each category (DDL, DML, Flush, Jobs, Subscription, User, Transaction) via REST API
+- Verify all 7 categories route correctly to their handlers
+- Verify authorization is enforced for admin-only operations
+- Verify non-admin operations succeed for regular users
+
 ## Parameter Binding Implementation Notes
 
-**DataFusion Native Approach**: Instead of custom `ParamValue` wrapper, use DataFusion's `ScalarValue` directly:
+**Unified DataFusion Approach**: All DML operations (SELECT, INSERT, UPDATE, DELETE) use DataFusion's native parameter binding with `ScalarValue`:
+
+### Architecture Overview
 
 ```rust
 use datafusion::scalar::ScalarValue;
+use datafusion::logical_expr::Expr;
 
 // API layer: deserialize JSON params to Vec<ScalarValue>
 let params: Vec<ScalarValue> = vec![
@@ -185,26 +390,137 @@ let params: Vec<ScalarValue> = vec![
     ScalarValue::Utf8(Some("Alice".to_string())),
 ];
 
-// Executor: pass to DataFusion
-let df = session.sql("SELECT * FROM users WHERE id = $1 AND name = $2").await?;
-// TODO: Parameter binding will be implemented via LogicalPlan manipulation
-// DataFrame API doesn't expose with_params() directly in DataFusion 50.x
-let batches = df.collect().await?;
+// Executor: pass to DataFusion via execute_via_datafusion()
+async fn execute_via_datafusion(
+    ctx: &ExecutionContext,
+    sql: &str,
+    params: Vec<ScalarValue>,
+) -> Result<Vec<RecordBatch>, KalamDbError> {
+    let df = ctx.session.sql(sql).await?;
+    
+    // Parameter binding via LogicalPlan manipulation:
+    // 1. Parse SQL with DataFusion (uses sqlparser-rs internally)
+    // 2. DataFusion recognizes $1, $2, etc. as Expr::Placeholder
+    // 3. Replace placeholders in LogicalPlan with ScalarValue literals
+    // 4. Execute modified plan
+    
+    // TODO: Implement LogicalPlan traversal and placeholder replacement
+    // Reference: DataFusion's PREPARE/EXECUTE implementation
+    let batches = df.collect().await?;
+    Ok(batches)
+}
 ```
 
-**Current Status**:
-- ✅ SELECT/INSERT/DELETE route to DataFusion (without params for now)
-- ✅ UPDATE reserved for custom handling
-- ⏳ Parameter binding deferred until query handler implementation (requires LogicalPlan rewrite)
+### Parsing Strategy
 
-**Benefits**:
-- Zero conversion overhead (no ParamValue → ScalarValue mapping)
-- DataFusion validates parameter count, types, and schema compatibility automatically (when implemented)
-- Handlers receive already-validated RecordBatch results (no placeholder visibility)
-- API only needs JSON → ScalarValue deserialization logic
+**Use DataFusion's Native Parser** (wraps sqlparser-rs):
+- DataFusion already parses INSERT/UPDATE/DELETE statements
+- Recognizes `$1`, `$2` positional placeholders automatically
+- Converts to `Expr::Placeholder` in LogicalPlan
+- No need for separate sqlparser-rs parsing in handlers
+
+**Placeholder Replacement Logic**:
+```rust
+// Pseudo-code for parameter binding implementation
+fn replace_placeholders_in_plan(
+    plan: LogicalPlan,
+    params: &[ScalarValue],
+) -> Result<LogicalPlan> {
+    // Traverse LogicalPlan recursively
+    // Find all Expr::Placeholder nodes
+    // Replace with Expr::Literal(params[placeholder_id - 1])
+    // Validate placeholder count matches params.len()
+    
+    // DataFusion provides utilities for plan transformation:
+    // - TreeNode trait for traversal
+    // - ExprRewriter for expression replacement
+    unimplemented!("See DataFusion's PreparedStatement implementation")
+}
+```
+
+### DML Handler Strategy
+
+- ✅ **SELECT**: Handled directly in `execute_via_datafusion()` - NO separate handler needed
+- ✅ **INSERT/UPDATE/DELETE**: Thin wrapper handlers that delegate to `execute_via_datafusion()` with same parameter logic
+- ⏳ **Parameter Binding**: Deferred until query handler implementation (requires LogicalPlan rewrite for `$1`, `$2` placeholder replacement)
+
+### Implementation Pattern for INSERT/UPDATE/DELETE Handlers
+
+```rust
+impl TypedStatementHandler<InsertStatement> for InsertHandler {
+    async fn execute(
+        &self,
+        stmt: &InsertStatement,
+        ctx: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        // Convert statement to SQL string with placeholders
+        // DataFusion's sql() method already parses this correctly
+        let sql = format!("INSERT INTO {} VALUES ($1, $2)", stmt.table_name);
+        
+        // Delegate to DataFusion with params
+        // DataFusion recognizes $1, $2 as placeholders
+        let batches = execute_via_datafusion(ctx, &sql, ctx.params.clone()).await?;
+        
+        // Return execution result
+        Ok(ExecutionResult::Inserted {
+            rows_affected: batches.iter().map(|b| b.num_rows()).sum(),
+        })
+    }
+}
+```
+
+### Supported Placeholder Syntax
+
+DataFusion supports PostgreSQL-style positional parameters:
+- `$1`, `$2`, `$3`, ... (1-indexed)
+- Example: `INSERT INTO users (id, name) VALUES ($1, $2)`
+- Example: `UPDATE users SET name = $1 WHERE id = $2`
+- Example: `DELETE FROM users WHERE id = $1`
+- Example: `SELECT * FROM users WHERE id = $1 AND name = $2`
+
+### Parameter Type Validation
+
+DataFusion automatically validates:
+- Parameter count (placeholder IDs must be ≤ params.len())
+- Parameter types (via schema compatibility checks during planning)
+- No custom validation needed in handlers
+
+### Benefits
+
+- **Zero conversion overhead**: No ParamValue → ScalarValue mapping
+- **Unified parsing**: DataFusion handles all SQL parsing (wraps sqlparser-rs internally)
+- **Automatic validation**: DataFusion validates parameter count, types, and schema compatibility
+- **Consistent behavior**: All DML operations (SELECT, INSERT, UPDATE, DELETE) use identical parameter logic
+- **No AST walking needed**: DataFusion's LogicalPlan provides structured access to placeholders
+- **Battle-tested**: Leverages DataFusion's PREPARE/EXECUTE statement implementation
+
+### Implementation References
+
+- **DataFusion Prepared Statements**: `docs/source/user-guide/sql/prepared_statements.md`
+- **Placeholder Expression**: `Expr::Placeholder` in DataFusion's logical expression tree
+- **Example**: `PREPARE stmt(INT, VARCHAR) AS SELECT * FROM t WHERE id = $1 AND name = $2`
 
 Functional Requirements:
 - FR-013: Create `handlers/ddl/` directory and split responsibilities into `namespace.rs`, `create_table.rs`, `alter_table.rs`, and `helpers.rs`.
 - FR-014: Move shared DDL utilities into `helpers.rs` with functions: `inject_auto_increment_field`, `inject_system_columns`, and `save_table_definition`.
 - FR-015: Preserve the public API by re-exporting a single `ddl` module from `handlers::ddl` so external call sites remain stable.
 - FR-016: Ensure all DDL-related tests compile and pass after the split, with no behavioral regressions.
+
+### Handler Structure Requirements (User Story 6)
+
+- FR-017: Create `handlers/ddl/` directory structure with separate files for namespace operations (`namespace.rs`), storage operations (`storage.rs`), and table operations (`table.rs`).
+- FR-018: Create `handlers/dml/` directory with files for `insert.rs`, `update.rs`, and `delete.rs` (all delegate to `execute_via_datafusion` with DataFusion's ScalarValue parameter binding). SELECT is handled directly in `execute_via_datafusion()` and does NOT need a separate handler.
+- FR-019: Create `handlers/flush/` directory with `table.rs` (FLUSH TABLE) and `all_tables.rs` (FLUSH ALL TABLES).
+- FR-020: Create `handlers/jobs/` directory with `kill_job.rs` and `kill_live_query.rs` handlers.
+- FR-021: Create `handlers/subscription/` directory with `subscribe.rs` handler for live query subscriptions.
+- FR-022: Create `handlers/user/` directory with `create_user.rs`, `alter_user.rs`, and `drop_user.rs` handlers.
+- FR-023: Create `handlers/transaction/` directory with `begin.rs`, `commit.rs`, and `rollback.rs` handlers.
+- FR-024: Each handler file must contain: (1) struct implementing `TypedStatementHandler<T>`, (2) unit tests, (3) integration test hooks.
+- FR-025: All handlers must accept `Arc<AppContext>` via constructor following Phase 10 patterns (no individual field passing).
+- FR-026: DDL handlers must use `SchemaRegistry` for 50-100× faster lookups (no SQL queries via KalamSql).
+- FR-027: DML handlers must delegate to DataFusion using `ScalarValue` for parameter binding. DataFusion's native parser (wrapping sqlparser-rs) recognizes `$1`, `$2` placeholders as `Expr::Placeholder` in LogicalPlan. Implement placeholder replacement by traversing the LogicalPlan and substituting placeholders with `Expr::Literal` values from `params: Vec<ScalarValue>`.
+- FR-028: Job-related handlers must use `UnifiedJobManager` with typed JobIds and idempotency enforcement (Phase 9 patterns).
+- FR-029: Transaction handlers must integrate with future transaction manager (placeholder implementations for Phase 11). Until transaction manager is implemented, BEGIN/COMMIT/ROLLBACK handlers must return `KalamDbError::NotImplemented` with explicit message: "Transaction support planned for Phase 11".
+- FR-030: All handlers must return `Result<ExecutionResult, KalamDbError>` with appropriate success messages and error context.
+- FR-030a: Error responses MUST use structured format with machine-readable error codes, human-readable messages, and contextual details. Format: `{"code": "ERROR_CODE", "message": "description", "details": {...}}`. Common codes: `PARAM_COUNT_MISMATCH`, `PARAM_SIZE_EXCEEDED`, `PARAM_TYPE_MISMATCH`, `TIMEOUT`, `AUTHORIZATION_FAILED`, `NOT_IMPLEMENTED`.
+- FR-031: Handler registration in `HandlerRegistry::new()` must use zero-boilerplate pattern: `registry.register_typed(handler, |stmt| match stmt { Variant(s) => Some(s), _ => None })`.

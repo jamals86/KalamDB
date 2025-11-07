@@ -5,18 +5,19 @@
 //! limited for now; most statements return a structured error until
 //! handler implementations are in place.
 
+pub mod handler_adapter;
+pub mod handler_registry;
 pub mod handlers;
 pub mod models;
 
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::{CreateNamespaceHandler, TypedStatementHandler};
+use crate::sql::executor::handler_registry::HandlerRegistry;
 use crate::sql::executor::models::{ExecutionContext, ExecutionMetadata, ExecutionResult};
 use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::NamespaceId;
 use kalamdb_commons::models::UserId;
 use kalamdb_sql::statement_classifier::SqlStatement;
-use kalamdb_sql::ddl::CreateNamespaceStatement;
 use std::sync::Arc;
 
 // Re-export model types so external callers keep working without changes.
@@ -25,6 +26,7 @@ pub use models::{ExecutionContext as ExecutorContextAlias, ExecutionMetadata as 
 /// Public facade for SQL execution routing.
 pub struct SqlExecutor {
     app_context: Arc<crate::app_context::AppContext>,
+    handler_registry: Arc<HandlerRegistry>,
     enforce_password_complexity: bool,
 }
 
@@ -34,8 +36,10 @@ impl SqlExecutor {
         app_context: Arc<crate::app_context::AppContext>,
         enforce_password_complexity: bool,
     ) -> Self {
+        let handler_registry = Arc::new(HandlerRegistry::new(app_context.clone()));
         Self {
             app_context,
+            handler_registry,
             enforce_password_complexity,
         }
     }
@@ -90,19 +94,11 @@ impl SqlExecutor {
                 ))
             }
             
-            // DDL operations: Parse once and dispatch to typed handler
-            SqlStatement::CreateNamespace(stmt) => {
-                let handler = CreateNamespaceHandler::new(self.app_context.clone());
-                handler.check_authorization(&stmt, exec_ctx).await?;
-                handler.execute(session, stmt, params, exec_ctx).await
-            }
-            
-            // Other DDL/system commands not yet migrated to typed handlers
+            // All other statements: Delegate to handler registry
             _ => {
-                Err(KalamDbError::InvalidOperation(format!(
-                    "Statement '{}' not yet supported in typed executor (migration in progress)",
-                    classified.name()
-                )))
+                self.handler_registry
+                    .handle(session, classified, params, exec_ctx)
+                    .await
             }
         }
     }
