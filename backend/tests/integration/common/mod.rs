@@ -318,86 +318,86 @@ impl TestServer {
         };
         
     match self.sql_executor.execute(&*self.session_context, sql, &exec_ctx, Vec::new()).await {
-            Ok(result) => {
-                use kalamdb_core::sql::ExecutionResult;
-                match result {
-                    ExecutionResult::Success(msg) => SqlResponse {
+        Ok(result) => {
+            use kalamdb_core::sql::ExecutionResult;
+            match result {
+                ExecutionResult::Success { msg } => SqlResponse {
+                    status: "success".to_string(),
+                    results: vec![QueryResult {
+                        rows: None,
+                        row_count: 0,
+                        columns: vec![],
+                        message: Some(msg),
+                    }],
+                    took_ms: 0,
+                    error: None,
+                },
+                ExecutionResult::RecordBatch(batch) => {
+                    // Convert single batch to JSON
+                    let query_result = record_batch_to_query_result(&batch, mask_credentials);
+                    SqlResponse {
                         status: "success".to_string(),
-                        results: vec![QueryResult {
-                            rows: None,
-                            row_count: 0,
-                            columns: vec![],
-                            message: Some(msg),
-                        }],
+                        results: vec![query_result],
                         took_ms: 0,
                         error: None,
-                    },
-                    ExecutionResult::RecordBatch(batch) => {
-                        // Convert single batch to JSON
-                        let query_result = record_batch_to_query_result(&batch, mask_credentials);
+                    }
+                }
+                ExecutionResult::RecordBatches(batches) => {
+                    // Convert multiple batches to JSON
+                    if batches.is_empty() {
+                        // Return empty result with 0 rows instead of empty results array
                         SqlResponse {
                             status: "success".to_string(),
-                            results: vec![query_result],
+                            results: vec![QueryResult {
+                                rows: Some(vec![]),
+                                row_count: 0,
+                                columns: vec![],
+                                message: None,
+                            }],
                             took_ms: 0,
                             error: None,
                         }
-                    }
-                    ExecutionResult::RecordBatches(batches) => {
-                        // Convert multiple batches to JSON
-                        if batches.is_empty() {
-                            // Return empty result with 0 rows instead of empty results array
-                            SqlResponse {
-                                status: "success".to_string(),
-                                results: vec![QueryResult {
-                                    rows: Some(vec![]),
-                                    row_count: 0,
-                                    columns: vec![],
-                                    message: None,
-                                }],
-                                took_ms: 0,
-                                error: None,
-                            }
-                        } else {
-                            let results: Vec<_> = batches
-                                .iter()
-                                .map(|batch| record_batch_to_query_result(batch, mask_credentials))
-                                .collect();
-                            SqlResponse {
-                                status: "success".to_string(),
-                                results,
-                                took_ms: 0,
-                                error: None,
-                            }
-                        }
-                    }
-                    ExecutionResult::Subscription(subscription_data) => {
-                        // Convert subscription metadata to SqlResponse
-                        let mut row = std::collections::HashMap::new();
-                        if let serde_json::Value::Object(map) = subscription_data {
-                            for (key, value) in map {
-                                row.insert(key, value);
-                            }
-                        }
-                        let query_result = QueryResult {
-                            rows: Some(vec![row]),
-                            row_count: 1,
-                            columns: vec![
-                                "status".to_string(),
-                                "ws_url".to_string(),
-                                "subscription".to_string(),
-                                "message".to_string(),
-                            ],
-                            message: None,
-                        };
+                    } else {
+                        let results: Vec<_> = batches
+                            .iter()
+                            .map(|batch| record_batch_to_query_result(batch, mask_credentials))
+                            .collect();
                         SqlResponse {
                             status: "success".to_string(),
-                            results: vec![query_result],
+                            results,
                             took_ms: 0,
                             error: None,
                         }
                     }
                 }
+                ExecutionResult::Subscription(subscription_data) => {
+                    // Convert subscription metadata to SqlResponse
+                    let mut row = std::collections::HashMap::new();
+                    if let serde_json::Value::Object(map) = subscription_data {
+                        for (key, value) in map {
+                            row.insert(key, value);
+                        }
+                    }
+                    let query_result = QueryResult {
+                        rows: Some(vec![row]),
+                        row_count: 1,
+                        columns: vec![
+                            "status".to_string(),
+                            "ws_url".to_string(),
+                            "subscription".to_string(),
+                            "message".to_string(),
+                        ],
+                        message: None,
+                    };
+                    SqlResponse {
+                        status: "success".to_string(),
+                        results: vec![query_result],
+                        took_ms: 0,
+                        error: None,
+                    }
+                }
             }
+        }
             Err(kalamdb_core::error::KalamDbError::InvalidSql(_)) => {
                 // Any error from custom executor: fall back to DataFusion using the shared session_context
                 // where providers are registered by SqlExecutor.

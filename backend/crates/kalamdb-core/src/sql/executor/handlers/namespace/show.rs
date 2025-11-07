@@ -28,9 +28,17 @@ impl TypedStatementHandler<ShowNamespacesStatement> for ShowNamespacesHandler {
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        Err(KalamDbError::InvalidOperation(
-            "SHOW NAMESPACES not yet implemented".to_string(),
-        ))
+        let namespaces_provider = self.app_context.system_tables().namespaces();
+        
+        // Query all namespaces via the table provider (returns RecordBatch)
+        let batches = namespaces_provider.scan_all_namespaces()?;
+        
+        // Return as query result
+            let row_count = batches.num_rows();
+            Ok(ExecutionResult::Rows {
+                batches: vec![batches],
+                row_count,
+            })
     }
 
     async fn check_authorization(
@@ -40,5 +48,46 @@ impl TypedStatementHandler<ShowNamespacesStatement> for ShowNamespacesHandler {
     ) -> Result<(), KalamDbError> {
         // SHOW NAMESPACES allowed for all authenticated users
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kalamdb_commons::Role;
+    use kalamdb_commons::models::UserId;
+
+    fn create_test_context() -> ExecutionContext {
+        ExecutionContext::new(UserId::new("test_user"), Role::User)
+    }
+
+    #[tokio::test]
+    async fn test_show_namespaces_authorization() {
+        let app_ctx = AppContext::get();
+        let handler = ShowNamespacesHandler::new(app_ctx);
+        let stmt = ShowNamespacesStatement {};
+        
+        // All users can show namespaces
+        let ctx = create_test_context();
+        let result = handler.check_authorization(&stmt, &ctx).await;
+        
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_show_namespaces_success() {
+        let app_ctx = AppContext::get();
+        let handler = ShowNamespacesHandler::new(app_ctx);
+        let stmt = ShowNamespacesStatement {};
+        let ctx = create_test_context();
+        let session = SessionContext::new();
+
+        let result = handler.execute(&session, stmt, vec![], &ctx).await;
+        
+        // Should return batches
+        assert!(result.is_ok());
+            if let Ok(ExecutionResult::Rows { batches, .. }) = result {
+            assert!(!batches.is_empty());
+        }
     }
 }

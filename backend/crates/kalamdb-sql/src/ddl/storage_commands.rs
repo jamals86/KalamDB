@@ -164,7 +164,7 @@ impl CreateStorageStatement {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AlterStorageStatement {
     /// Storage identifier to alter
-    pub storage_id: String, //TODO: use StorageId type
+    pub storage_id: StorageId,
 
     /// New storage name (if updating)
     pub storage_name: Option<String>,
@@ -204,7 +204,7 @@ impl AlterStorageStatement {
             Self::extract_set_value(&normalized, "USER_TABLES_TEMPLATE").ok();
 
         Ok(AlterStorageStatement {
-            storage_id,
+                storage_id: StorageId::from(storage_id.as_str()),
             storage_name,
             description,
             shared_tables_template,
@@ -243,7 +243,7 @@ impl AlterStorageStatement {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DropStorageStatement {
     /// Storage identifier to drop
-    pub storage_id: String, //TODO: use StorageId type
+    pub storage_id: StorageId,
 }
 
 impl DropStorageStatement {

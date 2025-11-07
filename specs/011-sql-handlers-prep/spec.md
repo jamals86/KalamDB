@@ -235,107 +235,118 @@ Acceptance Scenarios:
 
 ### User Story 6 - Complete Handler Implementation for All SQL Statements (Priority: P0)
 
-As a developer, I want every SQL statement type (except SELECT, which is handled directly by DataFusion) to have a dedicated typed handler in its own file so that the codebase is fully modular, maintainable, and follows the established handler registry pattern.
+As a developer, I want every SQL statement type (except SELECT, which is handled directly by DataFusion) to have a fully implemented typed handler in its own file so that the codebase is modular, maintainable, and follows the established handler registry pattern.
 
 Why this priority: This completes the handler architecture migration started with CreateNamespaceHandler, ensuring all 28 statement types (excluding SELECT) have consistent implementation patterns with zero boilerplate.
 
-**Current Status**: 1/28 handlers implemented (CreateNamespace). SELECT is handled directly in `execute_via_datafusion()` and does not need a separate handler.
+**Current Status**: 
+- ✅ 1/28 handlers implemented (CreateNamespace in handlers/namespace/create.rs)
+- ⚠️ 13/28 handlers need migration from ddl_legacy.rs (namespace/storage/table operations)
+- ⏳ 14/28 handlers need new implementation (flush/jobs/subscription/user/transaction)
+- SELECT is handled directly in `execute_via_datafusion()` and does not need a separate handler.
+
+**Migration Source**: All DDL logic exists in `backend/crates/kalamdb-core/src/sql/executor/handlers/ddl_legacy.rs` (1500+ lines) and must be migrated to individual handler files before deletion.
 
 **Target Architecture**:
 ```
 backend/crates/kalamdb-core/src/sql/executor/handlers/
-├── ddl/
+├── namespace/                   # ✅ Directory exists
 │   ├── mod.rs
-│   ├── create_namespace.rs      # CreateNamespaceHandler
-│   ├── alter_namespace.rs       # AlterNamespaceHandler
-│   ├── drop_namespace.rs        # DropNamespaceHandler
-│   ├── show_namespaces.rs       # ShowNamespacesHandler
-│   ├── create_storage.rs        # CreateStorageHandler
-│   ├── alter_storage.rs         # AlterStorageHandler
-│   ├── drop_storage.rs          # DropStorageHandler
-│   ├── show_storages.rs         # ShowStoragesHandler
-│   ├── create_table.rs          # CreateTableHandler
-│   ├── alter_table.rs           # AlterTableHandler
-│   ├── drop_table.rs            # DropTableHandler
-│   ├── show_tables.rs           # ShowTablesHandler
-│   ├── describe_table.rs        # DescribeTableHandler
-│   └── show_stats.rs            # ShowStatsHandler
-├── dml/
+│   ├── create.rs               # ✅ CreateNamespaceHandler (reference implementation)
+│   ├── alter.rs                # ⚠️ Stub - needs migration from ddl_legacy.rs
+│   ├── drop.rs                 # ⚠️ Stub - needs execute_drop_namespace logic
+│   └── show.rs                 # ⚠️ Stub - needs implementation
+├── storage/                     # ✅ Directory exists
 │   ├── mod.rs
-│   ├── insert.rs                # InsertHandler (delegates to execute_via_datafusion)
-│   ├── update.rs                # UpdateHandler (delegates to execute_via_datafusion)
-│   └── delete.rs                # DeleteHandler (delegates to execute_via_datafusion)
-├── flush/
+│   ├── create.rs               # ⚠️ Stub - needs execute_create_storage logic
+│   ├── alter.rs                # ⚠️ Stub - needs migration
+│   ├── drop.rs                 # ⚠️ Stub - needs migration
+│   └── show.rs                 # ⚠️ Stub - needs implementation
+├── table/                       # ✅ Directory exists
 │   ├── mod.rs
-│   ├── flush_table.rs           # FlushTableHandler
-│   └── flush_all_tables.rs      # FlushAllTablesHandler
-├── jobs/
+│   ├── create.rs               # ⚠️ Stub - needs execute_create_table + helpers (445+ lines)
+│   ├── alter.rs                # ⚠️ Stub - needs execute_alter_table (Phase 10.2 patterns)
+│   ├── drop.rs                 # ⚠️ Stub - needs execute_drop_table + 6 helpers (400+ lines)
+│   ├── show.rs                 # ⚠️ Stub - needs SchemaRegistry.scan_namespace logic
+│   ├── describe.rs             # ⚠️ Stub - needs SchemaRegistry.get_table_definition logic
+│   └── show_stats.rs           # ⚠️ Stub - needs implementation
+├── dml/                         # ✅ Directory exists + handlers created
 │   ├── mod.rs
-│   ├── kill_job.rs              # KillJobHandler
-│   └── kill_live_query.rs       # KillLiveQueryHandler
-├── subscription/
+│   ├── insert.rs               # ✅ InsertHandler created (delegates to DataFusion)
+│   ├── update.rs               # ✅ UpdateHandler created (delegates to DataFusion)
+│   └── delete.rs               # ✅ DeleteHandler created (delegates to DataFusion)
+├── flush/                       # ✅ Directory exists
 │   ├── mod.rs
-│   └── subscribe.rs             # SubscribeHandler
-├── user/
+│   ├── flush_table.rs          # ⏳ New implementation needed (JobsManager pattern)
+│   └── flush_all_tables.rs     # ⏳ New implementation needed (JobsManager + SchemaRegistry)
+├── jobs/                        # ✅ Directory exists
 │   ├── mod.rs
-│   ├── create_user.rs           # CreateUserHandler
-│   ├── alter_user.rs            # AlterUserHandler
-│   └── drop_user.rs             # DropUserHandler
-├── transaction/
+│   ├── kill_job.rs             # ⏳ New implementation needed (JobsManager.cancel_job)
+│   └── kill_live_query.rs      # ⏳ New implementation needed (LiveQueryManager)
+├── subscription/                # ✅ Directory exists
 │   ├── mod.rs
-│   ├── begin.rs                 # BeginTransactionHandler
-│   ├── commit.rs                # CommitTransactionHandler
-│   └── rollback.rs              # RollbackTransactionHandler
-├── ddl_typed.rs                 # Legacy - to be migrated
-├── typed.rs                     # TypedStatementHandler trait
-└── mod.rs                       # Re-exports all handlers
+│   └── subscribe.rs            # ⏳ New implementation needed (LiveQueryManager)
+├── user/                        # ✅ Directory exists
+│   ├── mod.rs
+│   ├── create.rs               # ⏳ New implementation needed (bcrypt password hashing)
+│   ├── alter.rs                # ⏳ New implementation needed (self-service + admin checks)
+│   └── drop.rs                 # ⏳ New implementation needed (soft delete)
+└── transaction/                 # ✅ Directory exists
+    ├── mod.rs
+    ├── begin.rs                # ⏳ Placeholder (returns NotImplemented)
+    ├── commit.rs               # ⏳ Placeholder (returns NotImplemented)
+    └── rollback.rs             # ⏳ Placeholder (returns NotImplemented)
 ```
 
 **Implementation Checklist** (28 handlers total, SELECT handled separately):
 
-**DDL Handlers (14):**
-- [x] CreateNamespace - `ddl/create_namespace.rs` ✅ COMPLETE
-- [ ] AlterNamespace - `ddl/alter_namespace.rs`
-- [ ] DropNamespace - `ddl/drop_namespace.rs`
-- [ ] ShowNamespaces - `ddl/show_namespaces.rs`
-- [ ] CreateStorage - `ddl/create_storage.rs`
-- [ ] AlterStorage - `ddl/alter_storage.rs`
-- [ ] DropStorage - `ddl/drop_storage.rs`
-- [ ] ShowStorages - `ddl/show_storages.rs`
-- [ ] CreateTable - `ddl/create_table.rs`
-- [ ] AlterTable - `ddl/alter_table.rs`
-- [ ] DropTable - `ddl/drop_table.rs`
-- [ ] ShowTables - `ddl/show_tables.rs`
-- [ ] DescribeTable - `ddl/describe_table.rs`
-- [ ] ShowStats - `ddl/show_stats.rs`
+**Namespace Handlers (4):**
+- [x] CreateNamespace - ✅ COMPLETE (handlers/namespace/create.rs)
+- [ ] AlterNamespace - Migrate from ddl_legacy.rs
+- [ ] DropNamespace - Migrate execute_drop_namespace from ddl_legacy.rs
+- [ ] ShowNamespaces - Implement using AppContext.system_tables().namespaces()
+
+**Storage Handlers (4):**
+- [ ] CreateStorage - Migrate execute_create_storage from ddl_legacy.rs
+- [ ] AlterStorage - Migrate from ddl_legacy.rs
+- [ ] DropStorage - Migrate from ddl_legacy.rs
+- [ ] ShowStorages - Implement using AppContext.system_tables().storages()
+
+**Table Handlers (7):**
+- [ ] CreateTable - Migrate execute_create_table + 3 helpers from ddl_legacy.rs (~500 lines)
+- [ ] AlterTable - Migrate execute_alter_table from ddl_legacy.rs (Phase 10.2 SchemaRegistry pattern)
+- [ ] DropTable - Migrate execute_drop_table + 6 helpers from ddl_legacy.rs (~400 lines)
+- [ ] ShowTables - Implement using SchemaRegistry.scan_namespace()
+- [ ] DescribeTable - Implement using SchemaRegistry.get_table_definition()
+- [ ] ShowStats - Implement new (system statistics)
 
 **DML Handlers (3):**
-- [ ] Insert - `dml/insert.rs` (delegates to DataFusion via `execute_via_datafusion` with params)
-- [ ] Update - `dml/update.rs` (delegates to DataFusion via `execute_via_datafusion` with params)
-- [ ] Delete - `dml/delete.rs` (delegates to DataFusion via `execute_via_datafusion` with params)
+- [x] Insert - ✅ Created in handlers/dml/insert.rs (delegates to DataFusion)
+- [x] Update - ✅ Created in handlers/dml/update.rs (delegates to DataFusion)
+- [x] Delete - ✅ Created in handlers/dml/delete.rs (delegates to DataFusion)
 
 **Note**: SELECT is handled directly in `execute_via_datafusion()` and does NOT need a separate handler. The 3 DML handlers above are thin wrappers that delegate to the same DataFusion execution path.
 
 **Flush Handlers (2):**
-- [ ] FlushTable - `flush/flush_table.rs`
-- [ ] FlushAllTables - `flush/flush_all_tables.rs`
+- [ ] FlushTable - Implement using JobsManager (Phase 9 pattern)
+- [ ] FlushAllTables - Implement using JobsManager + SchemaRegistry
 
 **Job Management Handlers (2):**
-- [ ] KillJob - `jobs/kill_job.rs`
-- [ ] KillLiveQuery - `jobs/kill_live_query.rs`
+- [ ] KillJob - Implement using JobsManager.cancel_job()
+- [ ] KillLiveQuery - Implement using LiveQueryManager
 
 **Subscription Handler (1):**
-- [ ] Subscribe - `subscription/subscribe.rs`
+- [ ] Subscribe - Implement using LiveQueryManager
 
 **User Management Handlers (3):**
-- [ ] CreateUser - `user/create_user.rs`
-- [ ] AlterUser - `user/alter_user.rs`
-- [ ] DropUser - `user/drop_user.rs`
+- [ ] CreateUser - Implement using AppContext.system_tables().users() + bcrypt
+- [ ] AlterUser - Implement with self-service password + admin-only role change
+- [ ] DropUser - Implement with soft delete (deleted_at timestamp)
 
 **Transaction Handlers (3):**
-- [ ] BeginTransaction - `transaction/begin.rs`
-- [ ] CommitTransaction - `transaction/commit.rs`
-- [ ] RollbackTransaction - `transaction/rollback.rs`
+- [ ] BeginTransaction - Placeholder (returns NotImplemented)
+- [ ] CommitTransaction - Placeholder (returns NotImplemented)
+- [ ] RollbackTransaction - Placeholder (returns NotImplemented)
 
 **Per-Handler Requirements**:
 1. Each handler MUST be in its own file (one handler per file)
@@ -345,6 +356,21 @@ backend/crates/kalamdb-core/src/sql/executor/handlers/
 5. Each handler MUST have unit tests (at least 2: success case + authorization check)
 6. Each handler MUST use `Arc<AppContext>` for data access
 7. Each handler MUST return descriptive error messages using `KalamDbError` variants
+8. **Migration handlers** MUST copy logic from ddl_legacy.rs and adapt to TypedStatementHandler pattern
+9. **New handlers** MUST follow CreateNamespaceHandler reference implementation pattern
+
+**Migration Strategy**:
+1. **Phase 1**: Migrate namespace/storage/table handlers from ddl_legacy.rs (T072-T084)
+   - Copy execute_* methods from ddl_legacy.rs
+   - Adapt to TypedStatementHandler pattern (receive parsed statement, not SQL string)
+   - Update to use AppContext instead of individual parameters
+   - Preserve all business logic (validation, RBAC checks, error handling)
+2. **Phase 2**: Implement new handlers (flush/jobs/subscription/user/transaction) (T100-T129)
+   - Follow CreateNamespaceHandler pattern
+   - Use Phase 9 JobsManager for flush/job operations
+   - Use LiveQueryManager for subscription operations
+   - Use bcrypt for user password hashing
+3. **Phase 3**: Delete ddl_legacy.rs after all migrations complete and verified (T130-T131)
 
 **Registration Pattern** (zero boilerplate):
 ```rust
@@ -359,20 +385,22 @@ registry.register_typed(
 );
 ```
 
-**Reference Implementation**: See `docs/how-to-add-sql-statement.md` for complete guide
+**Reference Implementation**: See CreateNamespaceHandler in handlers/namespace/create.rs for complete example
 
 Acceptance Scenarios:
-1. Given all 28 handlers implemented, when building kalamdb-core, then compilation succeeds with zero errors.
+1. Given all 28 handlers migrated/implemented, when building kalamdb-core, then compilation succeeds with zero errors.
 2. Given all handlers registered, when HandlerRegistry is created, then `has_handler()` returns true for all 28 statement types (SELECT routes directly to DataFusion).
 3. Given any SQL statement type, when executed via SqlExecutor, then it routes to the correct handler (or DataFusion for SELECT) and returns appropriate ExecutionResult.
 4. Given each handler's unit tests, when running `cargo test`, then all tests pass with 100% handler coverage.
 5. Given the handler registry guide, when a developer adds a new statement, then they can follow the 3-step process in under 30 minutes.
+6. **Given ddl_legacy.rs deleted (T130-T131), when searching for ddl_legacy imports, then zero references found.**
 
 Independent Test: 
 - Execute one statement from each category (DDL, DML, Flush, Jobs, Subscription, User, Transaction) via REST API
 - Verify all 7 categories route correctly to their handlers
 - Verify authorization is enforced for admin-only operations
 - Verify non-admin operations succeed for regular users
+- **Verify ddl_legacy.rs file does not exist in codebase**
 
 ## Parameter Binding Implementation Notes
 

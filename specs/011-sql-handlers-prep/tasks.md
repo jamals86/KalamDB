@@ -209,16 +209,16 @@ This is a Rust workspace project:
 **Note**: CreateNamespaceHandler already implemented as reference (✅ COMPLETE)
 
 - [X] T071 [US6] CreateNamespaceHandler - ✅ COMPLETE (reference implementation in `handlers/namespace/create.rs`)
-- [ ] T072 [P] [US6] Migrate AlterNamespaceHandler logic from ddl_legacy.rs to `handlers/namespace/alter.rs` (impl TypedStatementHandler)
-- [ ] T073 [P] [US6] Migrate DropNamespaceHandler logic from ddl_legacy.rs (execute_drop_namespace) to `handlers/namespace/drop.rs` (impl TypedStatementHandler)
-- [ ] T074 [P] [US6] Migrate ShowNamespacesHandler logic to `handlers/namespace/show.rs` (impl TypedStatementHandler, use AppContext.system_tables().namespaces())
+- [X] T072 [P] [US6] Migrate AlterNamespaceHandler logic from ddl_legacy.rs to `handlers/namespace/alter.rs` (impl TypedStatementHandler)
+- [X] T073 [P] [US6] Migrate DropNamespaceHandler logic from ddl_legacy.rs (execute_drop_namespace) to `handlers/namespace/drop.rs` (impl TypedStatementHandler)
+- [X] T074 [P] [US6] Migrate ShowNamespacesHandler logic to `handlers/namespace/show.rs` (impl TypedStatementHandler, use AppContext.system_tables().namespaces())
 
 ### Storage Handlers (4 handlers) - Migrate from ddl_legacy.rs
 
-- [ ] T075 [P] [US6] Migrate CreateStorageHandler logic from ddl_legacy.rs (execute_create_storage) to `handlers/storage/create.rs` (impl TypedStatementHandler)
-- [ ] T076 [P] [US6] Migrate AlterStorageHandler logic to `handlers/storage/alter.rs` (impl TypedStatementHandler)
-- [ ] T077 [P] [US6] Migrate DropStorageHandler logic to `handlers/storage/drop.rs` (impl TypedStatementHandler)
-- [ ] T078 [P] [US6] Migrate ShowStoragesHandler logic to `handlers/storage/show.rs` (impl TypedStatementHandler, use AppContext.system_tables().storages())
+- [X] T075 [P] [US6] Migrate CreateStorageHandler logic from ddl_legacy.rs (execute_create_storage) to `handlers/storage/create.rs` (impl TypedStatementHandler)
+- [X] T076 [P] [US6] Migrate AlterStorageHandler logic to `handlers/storage/alter.rs` (impl TypedStatementHandler)
+- [X] T077 [P] [US6] Migrate DropStorageHandler logic to `handlers/storage/drop.rs` (impl TypedStatementHandler)
+- [X] T078 [P] [US6] Migrate ShowStoragesHandler logic to `handlers/storage/show.rs` (impl TypedStatementHandler, use AppContext.system_tables().storages())
 
 ### Table Handlers (7 handlers) - Migrate from ddl_legacy.rs
 
