@@ -8,7 +8,9 @@
 pub mod handler_adapter;
 pub mod handler_registry;
 pub mod handlers;
+pub mod helpers;
 pub mod models;
+pub mod parameter_binding;
 
 use crate::error::KalamDbError;
 use crate::sql::executor::handler_registry::HandlerRegistry;

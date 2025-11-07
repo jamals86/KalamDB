@@ -1,5 +1,8 @@
 use kalamdb_commons::{NamespaceId, Role, UserId};
+use std::sync::Arc;
 use std::time::SystemTime;
+use datafusion::prelude::SessionContext;
+use datafusion::scalar::ScalarValue;
 
 /// Unified execution context for SQL queries
 #[derive(Debug, Clone)]
@@ -16,6 +19,10 @@ pub struct ExecutionContext {
     ip_address: Option<String>,
     /// Execution timestamp
     timestamp: SystemTime,
+    /// Query parameters ($1, $2, ...) - max 50, 512KB each
+    pub params: Vec<ScalarValue>,
+    /// DataFusion session for query execution
+    pub session: Arc<SessionContext>,
 }
 
 impl ExecutionContext {
@@ -27,6 +34,8 @@ impl ExecutionContext {
             request_id: None,
             ip_address: None,
             timestamp: SystemTime::now(),
+            params: Vec::new(),
+            session: Arc::new(SessionContext::new()),
         }
     }
 
@@ -38,6 +47,8 @@ impl ExecutionContext {
             request_id: None,
             ip_address: None,
             timestamp: SystemTime::now(),
+            params: Vec::new(),
+            session: Arc::new(SessionContext::new()),
         }
     }
 
@@ -55,6 +66,8 @@ impl ExecutionContext {
             request_id,
             ip_address,
             timestamp: SystemTime::now(),
+            params: Vec::new(),
+            session: Arc::new(SessionContext::new()),
         }
     }
 
@@ -66,6 +79,8 @@ impl ExecutionContext {
             request_id: None,
             ip_address: None,
             timestamp: SystemTime::now(),
+            params: Vec::new(),
+            session: Arc::new(SessionContext::new()),
         }
     }
 

@@ -76,8 +76,28 @@ pub enum KalamDbError {
     #[error("Backup error: {0}")]
     Backup(#[from] BackupError),
 
-    #[error("Not implemented: {0}")]
-    NotImplemented(String),
+    // Parameter validation errors
+    #[error("Parameter count exceeded: maximum {max} parameters allowed, got {actual}")]
+    ParamCountExceeded { max: usize, actual: usize },
+
+    #[error("Parameter size exceeded: parameter at index {index} is {actual_bytes} bytes (max {max_bytes} bytes)")]
+    ParamSizeExceeded {
+        index: usize,
+        max_bytes: usize,
+        actual_bytes: usize,
+    },
+
+    #[error("Parameter count mismatch: expected {expected} parameters, got {actual}")]
+    ParamCountMismatch { expected: usize, actual: usize },
+
+    #[error("Parameters not supported for {statement_type} statements")]
+    ParamsNotSupported { statement_type: String },
+
+    #[error("Handler execution timeout: exceeded {timeout_seconds}s")]
+    Timeout { timeout_seconds: u64 },
+
+    #[error("Not implemented: {feature} - {message}")]
+    NotImplemented { feature: String, message: String },
 
     #[error("{0}")]
     Other(String),

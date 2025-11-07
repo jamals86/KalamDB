@@ -36,5 +36,5 @@ Notes:
 - [x] DDL modularization planned in spec: split handlers/ddl.rs into handlers/ddl/ (namespace.rs, create_table.rs, alter_table.rs, helpers.rs)
 - [x] Parameterized scope limited to SELECT/INSERT/UPDATE/DELETE captured
 - [x] DataFusion's native ScalarValue adopted (ParamValue removed, zero conversion overhead)
-- [ ] Modular DML story added (handlers/dml/ structure) – implementation pending
-- [ ] Full DML implementation story added (native INSERT/DELETE/UPDATE with params)
+- [x] Modular DML story added (handlers/dml/ structure) – User Story 4 in tasks.md
+- [x] Full DML implementation story added (native INSERT/DELETE/UPDATE with params) – User Story 5 in tasks.md

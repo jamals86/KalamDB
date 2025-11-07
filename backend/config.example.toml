@@ -265,3 +265,18 @@ max_retries = 3
 # Delay increases exponentially with each retry (100ms, 200ms, 400ms, etc.)
 retry_backoff_ms = 100
 
+# Phase 11, T026: SQL Handler Execution Configuration
+[execution]
+# Handler execution timeout in seconds (default: 30)
+# Maximum time allowed for a single SQL statement to execute
+# Prevents hung requests from blocking resources
+handler_timeout_seconds = 30
+
+# Maximum number of parameters per statement (default: 50)
+# Prevents memory exhaustion from excessive parameter arrays
+max_parameters = 50
+
+# Maximum size per parameter in bytes (default: 524288 = 512KB)
+# Prevents memory exhaustion from individual large parameters
+max_parameter_size_bytes = 524288
+

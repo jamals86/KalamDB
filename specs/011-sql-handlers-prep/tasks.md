@@ -6,11 +6,15 @@
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
-## Format: `[ID] [P?] [Story] Description`
+## Format: `- [ ] [ID] [P?] [Story?] Description`
 
-- **[P]**: Can run in parallel (different files, no dependencies)
-- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
-- Include exact file paths in descriptions
+- **Checkbox**: ALWAYS start with `- [ ]` (markdown checkbox)
+- **[ID]**: Sequential task number (T001, T002, etc.) in execution order
+- **[P]**: OPTIONAL - Include ONLY if task is parallelizable (different files, no dependencies)
+- **[Story]**: REQUIRED for user story phase tasks (e.g., [US1], [US2], [US3])
+  - Setup/Foundational/Polish phases: NO story label
+  - User Story phases: MUST have story label
+- **Description**: Clear action with exact file path
 
 ## Path Conventions
 
@@ -25,15 +29,15 @@ This is a Rust workspace project:
 
 **Purpose**: Project initialization and module restructuring
 
-- [ ] T001 Create `sql/executor/models/` directory structure
-- [ ] T002 [P] Create `sql/executor/helpers/` directory structure
-- [ ] T003 [P] Create `sql/executor/handlers/ddl/` directory structure
-- [ ] T004 [P] Create `sql/executor/handlers/dml/` directory structure
-- [ ] T005 [P] Create `sql/executor/handlers/flush/` directory structure
-- [ ] T006 [P] Create `sql/executor/handlers/jobs/` directory structure
-- [ ] T007 [P] Create `sql/executor/handlers/subscription/` directory structure
-- [ ] T008 [P] Create `sql/executor/handlers/user/` directory structure
-- [ ] T009 [P] Create `sql/executor/handlers/transaction/` directory structure
+- [X] T001 Create `sql/executor/models/` directory structure
+- [X] T002 [P] Create `sql/executor/helpers/` directory structure
+- [X] T003 [P] Create `sql/executor/handlers/ddl/` directory structure
+- [X] T004 [P] Create `sql/executor/handlers/dml/` directory structure
+- [X] T005 [P] Create `sql/executor/handlers/flush/` directory structure
+- [X] T006 [P] Create `sql/executor/handlers/jobs/` directory structure
+- [X] T007 [P] Create `sql/executor/handlers/subscription/` directory structure
+- [X] T008 [P] Create `sql/executor/handlers/user/` directory structure
+- [X] T009 [P] Create `sql/executor/handlers/transaction/` directory structure
 
 ---
 
@@ -45,40 +49,40 @@ This is a Rust workspace project:
 
 ### Execution Models Refactoring
 
-- [ ] T010 [P] Create ExecutionContext in `backend/crates/kalamdb-core/src/sql/executor/models/context.rs`
-- [ ] T011 [P] Create ExecutionResult in `backend/crates/kalamdb-core/src/sql/executor/models/result.rs`
-- [ ] T012 [P] Create ExecutionMetadata in `backend/crates/kalamdb-core/src/sql/executor/models/metadata.rs`
-- [ ] T013 Create models module re-exports in `backend/crates/kalamdb-core/src/sql/executor/models/mod.rs`
+- [X] T010 [P] Create ExecutionContext in `backend/crates/kalamdb-core/src/sql/executor/models/context.rs`
+- [X] T011 [P] Create ExecutionResult in `backend/crates/kalamdb-core/src/sql/executor/models/result.rs`
+- [X] T012 [P] Create ExecutionMetadata in `backend/crates/kalamdb-core/src/sql/executor/models/metadata.rs`
+- [X] T013 Create models module re-exports in `backend/crates/kalamdb-core/src/sql/executor/models/mod.rs`
 
 ### Helper Utilities Migration
 
-- [ ] T014 [P] Move audit.rs to `backend/crates/kalamdb-core/src/sql/executor/helpers/audit.rs`
-- [ ] T015 [P] Move helpers.rs to `backend/crates/kalamdb-core/src/sql/executor/helpers/helpers.rs`
-- [ ] T016 Create helpers module re-exports in `backend/crates/kalamdb-core/src/sql/executor/helpers/mod.rs`
-- [ ] T017 Remove legacy `handlers/table_registry.rs` file
+- [X] T014 [P] Move audit.rs to `backend/crates/kalamdb-core/src/sql/executor/helpers/audit.rs`
+- [X] T015 [P] Move helpers.rs to `backend/crates/kalamdb-core/src/sql/executor/helpers/helpers.rs`
+- [X] T016 Create helpers module re-exports in `backend/crates/kalamdb-core/src/sql/executor/helpers/mod.rs`
+- [X] T017 Remove legacy `handlers/table_registry.rs` file
 
 ### Handler Infrastructure
 
-- [ ] T018 Create TypedStatementHandler trait in `backend/crates/kalamdb-core/src/sql/executor/handlers/typed.rs`
-- [ ] T019 Create TypedHandlerAdapter generic adapter in `backend/crates/kalamdb-core/src/sql/executor/handlers/handler_adapter.rs`
-- [ ] T020 Create HandlerRegistry with DashMap in `backend/crates/kalamdb-core/src/sql/executor/handlers/handler_registry.rs`
+- [X] T018 Create TypedStatementHandler trait in `backend/crates/kalamdb-core/src/sql/executor/handlers/typed.rs`
+- [X] T019 Create TypedHandlerAdapter generic adapter in `backend/crates/kalamdb-core/src/sql/executor/handlers/handler_adapter.rs`
+- [X] T020 Create HandlerRegistry with DashMap in `backend/crates/kalamdb-core/src/sql/executor/handlers/handler_registry.rs`
 - [ ] T021 Update SqlExecutor to use HandlerRegistry in `backend/crates/kalamdb-core/src/sql/executor/mod.rs`
 
 ### Parameter Binding Infrastructure
 
-- [ ] T022 Add ScalarValue parameter support to ExecutionContext (see T010)
-- [ ] T023 Implement DataFusion LogicalPlan placeholder replacement in `backend/crates/kalamdb-core/src/sql/executor/parameter_binding.rs`
-- [ ] T024 Add parameter validation (max 50 params, 512KB per param) in parameter_binding.rs
+- [X] T022 Add ScalarValue parameter support to ExecutionContext (see T010)
+- [X] T023 Implement DataFusion LogicalPlan placeholder replacement in `backend/crates/kalamdb-core/src/sql/executor/parameter_binding.rs`
+- [X] T024 Add parameter validation (max 50 params, 512KB per param) in parameter_binding.rs
 - [ ] T025 Add handler execution timeout (30s default) to ExecutionContext
 
 ### Configuration Updates
 
-- [ ] T026 Add `[execution]` section to config.toml with handler_timeout_seconds, max_parameters, max_parameter_size_bytes
+- [X] T026 Add `[execution]` section to config.toml with handler_timeout_seconds, max_parameters, max_parameter_size_bytes
 
 ### Error Handling
 
-- [ ] T027 [P] Add structured error codes to KalamDbError in `backend/crates/kalamdb-commons/src/error.rs`
-- [ ] T028 [P] Implement ErrorResponse with code/message/details in `backend/crates/kalamdb-core/src/sql/executor/models/error.rs`
+- [X] T027 [P] Add structured error codes to KalamDbError in `backend/crates/kalamdb-commons/src/error.rs`
+- [X] T028 [P] Implement ErrorResponse with code/message/details in `backend/crates/kalamdb-core/src/sql/executor/models/error.rs`
 
 ### Import Path Updates
 
