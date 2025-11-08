@@ -137,6 +137,36 @@ pub fn create_user_table(
         KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
     })?;
 
+    // Create and register UserTableShared instance for INSERT/UPDATE/DELETE operations
+    use crate::tables::base_table_provider::{TableProviderCore, UserTableShared};
+    use crate::tables::user_tables::{UserTableDeleteHandler, UserTableInsertHandler, new_user_table_store};
+    
+    // Create user table store for this table
+    let user_table_store = Arc::new(new_user_table_store(
+        app_context.storage_backend(),
+        &table_id.namespace_id(),
+        &table_id.table_name(),
+    ));
+    
+    let core = TableProviderCore::new(
+        Arc::new(table_id.clone()),
+        TableType::User,
+        Some(storage_id.clone()),
+        app_context.schema_registry(),
+    );
+    
+    let insert_handler = UserTableInsertHandler::new(user_table_store.clone());
+    let delete_handler = UserTableDeleteHandler::new(user_table_store.clone());
+    
+    let shared = Arc::new(UserTableShared::new(
+        core,
+        insert_handler,
+        delete_handler,
+        modified_stmt.column_defaults.clone(),
+    ));
+    
+    schema_registry.insert_user_table_shared(table_id.clone(), shared);
+
     log::info!(
         "User table {}.{} created successfully (storage: {})",
         stmt.namespace_id.as_str(),

@@ -1,7 +1,11 @@
 //! Typed DDL handler for DROP TABLE statements
+//!
+//! This module provides both the DROP TABLE handler and reusable cleanup functions
+//! for table deletion operations (used by both DDL handler and CleanupExecutor).
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
+use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::execution::context::SessionContext;
@@ -9,6 +13,114 @@ use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_sql::ddl::DropTableStatement;
 use std::sync::Arc;
+
+/// Cleanup helper function: Delete table data from RocksDB
+///
+/// **Phase 8.5 (T146a)**: Public helper for CleanupExecutor
+///
+/// # Arguments
+/// * `app_context` - Application context for accessing stores
+/// * `table_id` - Table identifier (namespace:table_name)
+/// * `table_type` - Table type (User/Shared/Stream)
+///
+/// # Returns
+/// Number of rows deleted
+pub async fn cleanup_table_data_internal(
+    app_context: &Arc<AppContext>,
+    table_id: &TableId,
+    table_type: TableType,
+) -> Result<usize, KalamDbError> {
+    log::info!("[CleanupHelper] Cleaning up table data for {:?} (type: {:?})", table_id, table_type);
+
+    let rows_deleted = match table_type {
+        TableType::User => {
+            // TODO: Implement delete_table_data() in UserTableStore
+            // For now, return 0 (will be implemented when store.scan_iter() is added)
+            log::warn!("[CleanupHelper] UserTable data cleanup not yet implemented");
+            0
+        }
+        TableType::Shared => {
+            // TODO: Implement delete_table_data() in SharedTableStore
+            log::warn!("[CleanupHelper] SharedTable data cleanup not yet implemented");
+            0
+        }
+        TableType::Stream => {
+            // TODO: Implement delete_table_data() in StreamTableStore
+            log::warn!("[CleanupHelper] StreamTable data cleanup not yet implemented");
+            0
+        }
+        TableType::System => {
+            // System tables cannot be dropped via DDL
+            return Err(KalamDbError::InvalidOperation(
+                "Cannot cleanup system table data".to_string()
+            ));
+        }
+    };
+
+    log::info!("[CleanupHelper] Deleted {} rows from table data", rows_deleted);
+    Ok(rows_deleted)
+}
+
+/// Cleanup helper function: Delete Parquet files from storage backend
+///
+/// **Phase 8.5 (T146a)**: Public helper for CleanupExecutor
+///
+/// # Arguments
+/// * `app_context` - Application context for accessing storage backend
+/// * `table_id` - Table identifier (namespace:table_name)
+///
+/// # Returns
+/// Number of bytes freed (sum of deleted file sizes)
+pub async fn cleanup_parquet_files_internal(
+    app_context: &Arc<AppContext>,
+    table_id: &TableId,
+) -> Result<u64, KalamDbError> {
+    log::info!("[CleanupHelper] Cleaning up Parquet files for {:?}", table_id);
+
+    // Get storage backend from AppContext
+    let storage_backend = app_context.storage_backend();
+    let namespace_id = table_id.namespace_id();
+    let table_name = table_id.table_name();
+
+    // List all Parquet files for this table
+    // Path pattern: {namespace}/{table_name}/*.parquet
+    let file_pattern = format!("{}/{}", namespace_id.as_str(), table_name.as_str());
+    
+    // Note: Actual implementation would:
+    // 1. List all files matching pattern
+    // 2. Get file sizes before deletion
+    // 3. Delete each file
+    // 4. Sum total bytes freed
+    // For now, return 0 as placeholder
+    let bytes_freed = 0u64;
+
+    log::info!("[CleanupHelper] Freed {} bytes from Parquet files", bytes_freed);
+    Ok(bytes_freed)
+}
+
+/// Cleanup helper function: Remove table metadata from system tables
+///
+/// **Phase 8.5 (T146a)**: Public helper for CleanupExecutor
+///
+/// # Arguments
+/// * `schema_registry` - Schema registry for metadata removal
+/// * `table_id` - Table identifier (namespace:table_name)
+///
+/// # Returns
+/// Ok(()) on success
+pub async fn cleanup_metadata_internal(
+    schema_registry: &Arc<SchemaRegistry>,
+    table_id: &TableId,
+) -> Result<(), KalamDbError> {
+    log::info!("[CleanupHelper] Cleaning up metadata for {:?}", table_id);
+
+    // Delete table definition from SchemaRegistry
+    // This removes from both cache and persistent store (delete-through pattern)
+    schema_registry.delete_table_definition(table_id)?;
+
+    log::info!("[CleanupHelper] Metadata cleanup complete");
+    Ok(())
+}
 
 /// Typed handler for DROP TABLE statements
 pub struct DropTableHandler {
