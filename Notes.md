@@ -135,6 +135,11 @@ Transaction:
 and things like this:
         let name = statement.name.as_str();
         let namespace_id = NamespaceId::new(name);
+117) Make the link client send a X-Request-ID header with a unique id per request for better tracing and debugging
+118) Add to kalamdb-link client the ability to set custom headers for each request
+
+
+
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.

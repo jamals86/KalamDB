@@ -103,12 +103,12 @@ This is a Rust workspace project:
 
 ### Implementation for User Story 1
 
-- [ ] T033 [US1] Update REST API route to construct ExecutionContext in `backend/crates/kalamdb-api/src/routes/sql.rs`
-- [ ] T034 [US1] Implement execute_via_datafusion with parameter binding in `backend/crates/kalamdb-core/src/sql/executor/mod.rs`
-- [ ] T035 [US1] Add authorization check dispatcher in SqlExecutor before handler execution
-- [ ] T036 [US1] Implement row_count/rows_affected computation for all ExecutionResult variants
-- [ ] T037 [US1] Update response serialization with row counts in kalamdb-api routes
-- [ ] T038 [US1] Add request_id and elapsed_ms to all API responses
+- [X] T033 [US1] Update REST API route to construct ExecutionContext in `backend/crates/kalamdb-api/src/handlers/sql_handler.rs`
+- [X] T034 [US1] Implement execute_via_datafusion with parameter binding in `backend/crates/kalamdb-core/src/sql/executor/mod.rs`
+- [X] T035 [US1] Add authorization check dispatcher in SqlExecutor before handler execution
+- [X] T036 [US1] Implement row_count/rows_affected computation for all ExecutionResult variants
+- [X] T037 [US1] Update response serialization with row counts in kalamdb-api routes
+- [X] T038 [US1] Add request_id and elapsed_ms to all API responses
 
 **Checkpoint**: User Story 1 complete - simple SELECT with auth context works end-to-end
 

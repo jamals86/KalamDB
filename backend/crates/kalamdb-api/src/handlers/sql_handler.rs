@@ -134,7 +134,14 @@ pub async fn execute_sql_v1(
         .app_data::<web::Data<Arc<SqlExecutor>>>()
         .map(|data| data.as_ref());
 
-    let _resolved_ip = http_req
+    // Phase 3 (T033): Extract request_id and ip_address for ExecutionContext
+    let request_id = http_req
+        .headers()
+        .get("X-Request-ID")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string());
+    
+    let resolved_ip = http_req
         .extensions()
         .get::<AuthenticatedUser>()
         .and_then(|user| user.connection_info.remote_addr.clone())
@@ -152,12 +159,15 @@ pub async fn execute_sql_v1(
                 .realip_remote_addr()
                 .map(|s| s.to_string())
         });
+    
     for (idx, sql) in statements.iter().enumerate() {
         match execute_single_statement(
             sql,
             session_factory.get_ref(),
             sql_executor,
             &auth_result,
+            request_id.as_deref(),
+            resolved_ip.as_deref(),
             None,
         )
         .await
@@ -187,13 +197,22 @@ async fn execute_single_statement(
     session_factory: &Arc<DataFusionSessionFactory>,
     sql_executor: Option<&Arc<SqlExecutor>>,
     auth: &kalamdb_auth::AuthenticatedRequest,
+    request_id: Option<&str>,
+    ip_address: Option<&str>,
     metadata: Option<&ExecutorMetadataAlias>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
-    // Phase 3 (T033): Construct ExecutionContext with user identity and DataFusion session
+    // Phase 3 (T033): Construct ExecutionContext with user identity, request tracking, and DataFusion session
     let session = Arc::new(session_factory.create_session());
-    let exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role)
+    let mut exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role)
         .with_session(session.clone());
-    // TODO: Add request_id and ip_address extraction from headers/connection_info
+    
+    // Add request_id and ip_address if available
+    if let Some(rid) = request_id {
+        exec_ctx = exec_ctx.with_request_id(rid.to_string());
+    }
+    if let Some(ip) = ip_address {
+        exec_ctx = exec_ctx.with_ip(ip.to_string());
+    }
     
     // If sql_executor is available, use it (production path)
     if let Some(sql_executor) = sql_executor {
@@ -207,7 +226,7 @@ async fn execute_single_statement(
                 // Phase 3 (T036-T038): Use new ExecutionResult struct variants with row counts
                 match result {
                     ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
-                    ExecutionResult::Rows { batches, row_count } => {
+                    ExecutionResult::Rows { batches, row_count: _ } => {
                         record_batch_to_query_result(batches, Some(&auth.user_id))
                     }
                     ExecutionResult::Inserted { rows_affected } => {
