@@ -55,12 +55,30 @@ impl StatementHandler for DeleteHandler {
         let schema_registry = AppContext::get().schema_registry();
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
-        let _def = schema_registry.get_table_definition(&table_id)?.ok_or_else(|| KalamDbError::NotFound(format!("Table {}.{} not found", namespace.as_str(), table_name.as_str())))?;
-        let shared = schema_registry.get_user_table_shared(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
-        use crate::tables::user_tables::UserTableAccess;
-        let access = UserTableAccess::new(shared, context.user_id.clone(), context.user_role.clone());
-        let _deleted = access.delete_row(&row_id)?;
-        Ok(ExecutionResult::Deleted { rows_affected: 1 })
+        let def = schema_registry.get_table_definition(&table_id)?.ok_or_else(|| KalamDbError::NotFound(format!("Table {}.{} not found", namespace.as_str(), table_name.as_str())))?;
+        use kalamdb_commons::schemas::TableType;
+        match def.table_type {
+            TableType::User => {
+                let shared = schema_registry.get_user_table_shared(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
+                use crate::tables::user_tables::UserTableAccess;
+                let access = UserTableAccess::new(shared, context.user_id.clone(), context.user_role.clone());
+                // Use delete_by_id_field to map logical id -> row_id
+                let _deleted = access.delete_by_id_field(&row_id)?;
+                Ok(ExecutionResult::Deleted { rows_affected: 1 })
+            }
+            TableType::Shared => {
+                // DELETE FROM <ns>.<table> WHERE id = <value> for SHARED tables maps logical id -> row_id
+                let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("Shared table provider not found".into()))?;
+                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::tables::shared_tables::SharedTableProvider>() {
+                    provider.delete_by_id_field(&row_id)?;
+                    Ok(ExecutionResult::Deleted { rows_affected: 1 })
+                } else {
+                    Err(KalamDbError::InvalidOperation("Cached provider type mismatch for shared table".into()))
+                }
+            }
+            TableType::Stream => Err(KalamDbError::InvalidOperation("DELETE not supported for STREAM tables".into())),
+            TableType::System => Err(KalamDbError::InvalidOperation("Cannot DELETE from SYSTEM tables".into())),
+        }
     }
 
     async fn check_authorization(&self, statement: &SqlStatement, context: &ExecutionContext) -> Result<(), KalamDbError> {

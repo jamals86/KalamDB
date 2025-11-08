@@ -466,6 +466,11 @@ impl SchemaRegistry {
         self.providers.insert(table_id, provider);
     }
 
+    /// Remove a cached DataFusion provider for a table (if present)
+    pub fn remove_provider(&self, table_id: &TableId) {
+        let _ = self.providers.remove(table_id);
+    }
+
     /// Get a cached DataFusion provider for a table
     pub fn get_provider(
         &self,
@@ -484,6 +489,11 @@ impl SchemaRegistry {
         shared: Arc<crate::tables::base_table_provider::UserTableShared>,
     ) {
         self.user_table_shared.insert(table_id, shared);
+    }
+
+    /// Remove a cached UserTableShared for a table (if present)
+    pub fn remove_user_table_shared(&self, table_id: &TableId) {
+        let _ = self.user_table_shared.remove(table_id);
     }
 
     /// Get a cached UserTableShared instance for a table (Phase 3C)
@@ -559,15 +569,19 @@ impl SchemaRegistry {
             .replace("{tableName}", table_name.as_str());
 
         // Build full path: <base_directory>/<partial_template>/
-        let full_path = if storage_config.base_directory.is_empty() {
-            format!("/{}/", partial_path.trim_matches('/'))
+        // If storage.base_directory is empty, fall back to server-level default_storage_path
+        let base_dir = if storage_config.base_directory.is_empty() {
+            // Use configured default from StorageRegistry (e.g., ./data/storage)
+            registry.default_storage_path().trim_end_matches('/').to_string()
         } else {
-            format!(
-                "{}/{}/",
-                storage_config.base_directory.trim_end_matches('/'),
-                partial_path.trim_matches('/')
-            )
+            storage_config.base_directory.trim_end_matches('/').to_string()
         };
+
+        let full_path = format!(
+            "{}/{}/",
+            base_dir,
+            partial_path.trim_matches('/')
+        );
 
         Ok(full_path)
     }

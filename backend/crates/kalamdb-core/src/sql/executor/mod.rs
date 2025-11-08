@@ -386,8 +386,26 @@ impl SqlExecutor {
             // Ensure CachedTableData exists in unified schema cache (may have been evicted or not yet inserted on legacy tables)
             if schema_registry.get(&table_id).is_none() {
                 use crate::schema_registry::CachedTableData;
-                schema_registry.insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::clone(&table_def))));
-                log::debug!("Primed schema cache for {}.{} (version {})", namespace_id, table_name, table_def.schema_version);
+                use kalamdb_commons::models::StorageId;
+                // Determine storage id (default to local)
+                let storage_id = StorageId::local();
+                // Resolve path template for this table type
+                let template = match table_type {
+                    TableType::User => schema_registry
+                        .resolve_storage_path_template(&table_id.namespace_id(), &table_id.table_name(), TableType::User, &storage_id)
+                        .unwrap_or_default(),
+                    TableType::Shared => schema_registry
+                        .resolve_storage_path_template(&table_id.namespace_id(), &table_id.table_name(), TableType::Shared, &storage_id)
+                        .unwrap_or_default(),
+                    TableType::Stream => String::new(),
+                    TableType::System => String::new(),
+                };
+                let mut data = CachedTableData::new(Arc::clone(&table_def));
+                data.storage_id = Some(storage_id);
+                data.storage_path_template = template;
+                schema_registry.insert(table_id.clone(), Arc::new(data));
+                log::debug!("Primed schema cache for {}.{} (version {}), template set",
+                    namespace_id, table_name, table_def.schema_version);
             }
 
             // Register provider based on type
@@ -401,12 +419,16 @@ impl SqlExecutor {
                     ));
 
                     // Create and register UserTableShared
-                    let shared = UserTableShared::new(
+                    let mut shared = UserTableShared::new(
                         Arc::new(table_id.clone()),
                         app_context.schema_registry(),
                         arrow_schema.clone(),
                         user_table_store,
                     );
+                    // Attach LiveQueryManager so changes are published after restart
+                    if let Some(shared_ref) = Arc::get_mut(&mut shared) {
+                        shared_ref.attach_live_query_manager(app_context.live_query_manager());
+                    }
 
                     schema_registry.insert_user_table_shared(table_id.clone(), shared);
                     user_count += 1;

@@ -96,37 +96,57 @@ impl TablesTableProvider {
 
         let mut table_ids = StringBuilder::new();
         let mut table_names = StringBuilder::new();
-    let mut namespaces = StringBuilder::new();
-        let mut table_types = StringBuilder::new();
-        let mut created_ats = Vec::new();
-        let mut schema_versions = Vec::new();
-        let mut table_comments = StringBuilder::new();
-        let mut updated_ats = Vec::new();
+    let mut namespaces = StringBuilder::new(); // corresponds to column name 'namespace'
+    let mut storage_ids = StringBuilder::new();
+    let mut table_types = StringBuilder::new();
+    let mut created_ats = Vec::new();
+    let mut schema_versions = Vec::new();
+    let mut table_comments = StringBuilder::new();
+    let mut updated_ats = Vec::new();
+    let mut options_json = StringBuilder::new();
 
-    for (_table_id, table_def) in tables {
+        for (_table_id, table_def) in tables {
             // Convert TableId to string format: "namespace:table_name"
             let table_id_str = format!("{}:{}", table_def.namespace_id.as_str(), table_def.table_name.as_str());
             table_ids.append_value(&table_id_str);
             table_names.append_value(table_def.table_name.as_str());
             namespaces.append_value(table_def.namespace_id.as_str());
+            // storage_id (nullable) derived from TableOptions variant if present
+            let storage_id_opt: Option<&kalamdb_commons::models::StorageId> = match &table_def.table_options {
+                kalamdb_commons::schemas::TableOptions::User(opts) => Some(&opts.storage_id),
+                kalamdb_commons::schemas::TableOptions::Shared(opts) => Some(&opts.storage_id),
+                // Stream and System variants do not contain storage_id
+                _ => None,
+            };
+            match storage_id_opt {
+                Some(sid) => storage_ids.append_value(sid.as_str()),
+                None => storage_ids.append_null(),
+            }
             table_types.append_value(table_def.table_type.as_str());
             created_ats.push(Some(table_def.created_at.timestamp_millis()));
             schema_versions.push(Some(table_def.schema_version as i32));
             table_comments.append_option(table_def.table_comment.as_deref());
             updated_ats.push(Some(table_def.updated_at.timestamp_millis()));
+            // Serialize TableOptions enum to JSON
+            match serde_json::to_string(&table_def.table_options) {
+                Ok(json) => options_json.append_value(&json),
+                Err(e) => options_json.append_value(&format!("{{\"error\":\"failed to serialize options: {}\"}}", e)),
+            }
         }
 
         let batch = RecordBatch::try_new(
             self.schema.clone(),
             vec![
-                Arc::new(table_ids.finish()) as ArrayRef,
-                Arc::new(table_names.finish()) as ArrayRef,
-                Arc::new(namespaces.finish()) as ArrayRef,
-                Arc::new(table_types.finish()) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef,
-                Arc::new(Int32Array::from(schema_versions)) as ArrayRef,
-                Arc::new(table_comments.finish()) as ArrayRef,
-                Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef,
+                Arc::new(table_ids.finish()) as ArrayRef,          // 1 table_id
+                Arc::new(table_names.finish()) as ArrayRef,        // 2 table_name
+                Arc::new(namespaces.finish()) as ArrayRef,         // 3 namespace_id
+                Arc::new(storage_ids.finish()) as ArrayRef,        // 4 storage_id
+                Arc::new(table_types.finish()) as ArrayRef,        // 5 table_type
+                Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef, // 6 created_at
+                Arc::new(Int32Array::from(schema_versions)) as ArrayRef, // 7 schema_version
+                Arc::new(table_comments.finish()) as ArrayRef,     // 8 table_comment
+                Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef, // 9 updated_at
+                Arc::new(options_json.finish()) as ArrayRef,       // 10 options
             ],
         )
         .map_err(|e| KalamDbError::Other(format!("Arrow error: {}", e)))?;
@@ -293,8 +313,8 @@ mod tests {
 
         // Scan
         let batch = provider.scan_all_tables().unwrap();
-        assert_eq!(batch.num_rows(), 3);
-        assert_eq!(batch.num_columns(), 8); // TablesTableSchema has 8 fields (core fields only)
+    assert_eq!(batch.num_rows(), 3);
+    assert_eq!(batch.num_columns(), 10); // Updated schema now has 10 fields (namespace_id, storage_id, options)
     }
 
     #[tokio::test]

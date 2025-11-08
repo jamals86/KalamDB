@@ -315,6 +315,89 @@ impl UserTableAccess {
         )
     }
 
+    /// DELETE by logical `id` field (helper for SQL layer)
+    ///
+    /// Finds the row owned by current user whose JSON field `id` equals `id_value` 
+    /// and performs a soft delete. This bridges the mismatch between external primary 
+    /// key semantics (id column) and internal storage key (row_id).
+    pub fn delete_by_id_field(&self, id_value: &str) -> Result<String, KalamDbError> {
+        let rows = self.scan_current_user_rows()?;
+
+        log::debug!("delete_by_id_field: Looking for id={} among {} user rows", id_value, rows.len());
+
+        // Match either numeric or string representations
+        let mut target_row_id: Option<String> = None;
+        for (_row_id_key, row_data) in rows.iter() {
+            if let Some(v) = row_data.fields.get("id") {
+                log::debug!("delete_by_id_field: Found row with id field: {:?}", v);
+                let is_match = match v {
+                    serde_json::Value::Number(n) => {
+                        let n_str = n.to_string();
+                        log::debug!("delete_by_id_field: Comparing number {} with {}", n_str, id_value);
+                        n_str == id_value
+                    }
+                    serde_json::Value::String(s) => {
+                        log::debug!("delete_by_id_field: Comparing string {} with {}", s, id_value);
+                        s == id_value
+                    }
+                    _ => {
+                        log::debug!("delete_by_id_field: id field is neither number nor string: {:?}", v);
+                        false
+                    }
+                };
+                if is_match {
+                    log::debug!("delete_by_id_field: Match found! row_id={}", row_data.row_id);
+                    target_row_id = Some(row_data.row_id.clone());
+                    break;
+                }
+            } else {
+                log::debug!("delete_by_id_field: Row has no id field");
+            }
+        }
+
+        let row_id = target_row_id
+            .ok_or_else(|| {
+                log::error!("delete_by_id_field: No row found with id={} for user {}", id_value, self.current_user_id.as_str());
+                KalamDbError::NotFound(format!("Row with id={} not found for user", id_value))
+            })?;
+        self.delete_row(&row_id)
+    }
+
+    /// UPDATE by logical `id` field (helper for SQL layer)
+    ///
+    /// Finds the row owned by current user whose JSON field `id` equals `id_value`
+    /// and performs an update. This bridges the mismatch between external primary
+    /// key semantics (id column) and internal storage key (row_id).
+    pub fn update_by_id_field(&self, id_value: &str, updates: serde_json::Value) -> Result<(), KalamDbError> {
+        let rows = self.scan_current_user_rows()?;
+
+        log::debug!("update_by_id_field: Looking for id={} among {} user rows", id_value, rows.len());
+
+        // Match either numeric or string representations
+        let mut target_row_id: Option<String> = None;
+        for (_row_id_key, row_data) in rows.iter() {
+            if let Some(v) = row_data.fields.get("id") {
+                let is_match = match v {
+                    serde_json::Value::Number(n) => n.to_string() == id_value,
+                    serde_json::Value::String(s) => s == id_value,
+                    _ => false,
+                };
+                if is_match {
+                    log::debug!("update_by_id_field: Match found! row_id={}", row_data.row_id);
+                    target_row_id = Some(row_data.row_id.clone());
+                    break;
+                }
+            }
+        }
+
+        let row_id = target_row_id
+            .ok_or_else(|| {
+                log::error!("update_by_id_field: No row found with id={} for user {}", id_value, self.current_user_id.as_str());
+                KalamDbError::NotFound(format!("Row with id={} not found for user", id_value))
+            })?;
+        self.update_row(&row_id, updates).map(|_| ())
+    }
+
     /// Get the user-specific key prefix for data isolation
     ///
     /// This implements T128 - data isolation enforcement

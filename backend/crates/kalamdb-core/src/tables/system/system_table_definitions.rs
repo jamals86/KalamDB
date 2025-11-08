@@ -715,6 +715,7 @@ pub fn live_queries_table_definition() -> TableDefinition {
 /// - schema_version INT NOT NULL
 /// - table_comment TEXT (nullable)
 /// - updated_at TIMESTAMP NOT NULL
+/// - options TEXT (nullable, serialized TableOptions JSON)
 pub fn tables_table_definition() -> TableDefinition {
     let columns = vec![
         ColumnDefinition::new(
@@ -796,6 +797,17 @@ pub fn tables_table_definition() -> TableDefinition {
             false,
             ColumnDefault::None,
             Some("Last modification timestamp".to_string()),
+        ),
+        // New in Phase 11: expose serialized TableOptions for visibility via SELECT * FROM system.tables
+        ColumnDefinition::new(
+            "options",
+            9,
+            KalamDataType::Text, // Stored as JSON string (variant-aware)
+            true, // NULLABLE for forward compatibility (older rows may not have it)
+            false,
+            false,
+            ColumnDefault::None,
+            Some("Serialized table options (JSON)".to_string()),
         ),
     ];
 

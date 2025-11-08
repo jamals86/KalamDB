@@ -204,6 +204,25 @@ pub fn create_user_table(
         KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
     })?;
 
+    // Prime cache entry with storage path template + storage id (needed for flush path resolution)
+    {
+        use crate::schema_registry::CachedTableData;
+        use kalamdb_commons::schemas::TableType;
+        let template = schema_registry
+            .resolve_storage_path_template(&table_id.namespace_id(), &table_id.table_name(), TableType::User, &storage_id)?
+            .replace("{user_id}", "{userId}"); // normalize placeholder variant
+        let mut data = CachedTableData::new(Arc::clone(&table_def));
+        data.storage_id = Some(storage_id.clone());
+        data.storage_path_template = template.clone();
+        schema_registry.insert(table_id.clone(), Arc::new(data));
+        log::debug!(
+            "Primed cache for user table {}.{} with template: {}",
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str(),
+            template
+        );
+    }
+
     // Register SharedTableProvider for CRUD access (mirrors user table shared registration)
     use crate::tables::shared_tables::{shared_table_store::new_shared_table_store, SharedTableProvider};
     let shared_store = Arc::new(new_shared_table_store(
@@ -232,13 +251,22 @@ pub fn create_user_table(
     ));
     
     // Create shared state (returns Arc<UserTableShared>)
-    let shared = UserTableShared::new(
+    let mut shared = UserTableShared::new(
         Arc::new(table_id.clone()),
         app_context.schema_registry(),
         schema.clone(),
         user_table_store,
     );
-    
+    // Attach LiveQueryManager so INSERT/UPDATE/DELETE emit notifications
+    if let Some(shared_ref) = Arc::get_mut(&mut shared) {
+        // Note: Arc::get_mut only succeeds if there are no other references; safe at creation time
+        shared_ref.attach_live_query_manager(app_context.live_query_manager());
+    } else {
+        // Fallback: cannot get mutable reference; reconstruct with manager via clone-and-replace pattern
+        // This should not happen at creation time, but keep a defensive log.
+        log::warn!("Could not get mutable reference to UserTableShared to attach LiveQueryManager at creation time");
+    }
+
     schema_registry.insert_user_table_shared(table_id.clone(), shared);
 
     // Log detailed success with table options
@@ -407,6 +435,15 @@ pub fn create_shared_table(
         &table_id.namespace_id(),
         &table_id.table_name(),
     ));
+
+    // Ensure RocksDB partition exists for this shared table before first insert
+    {
+        use crate::tables::system::system_table_store::SharedTableStoreExt;
+        // Note: args are ignored for shared store create_column_family, but pass actual values for clarity
+        let _ = shared_store
+            .create_column_family(table_id.namespace_id().as_str(), table_id.table_name().as_str());
+    }
+
     let provider = SharedTableProvider::new(
         Arc::new(table_id.clone()),
         app_context.schema_registry(),
@@ -414,6 +451,23 @@ pub fn create_shared_table(
         shared_store,
     );
     schema_registry.insert_provider(table_id.clone(), Arc::new(provider));
+
+    // Prime cache entry with storage path template + storage id (needed for flush path resolution)
+    {
+        use crate::schema_registry::CachedTableData;
+        let template = schema_registry
+            .resolve_storage_path_template(&table_id.namespace_id(), &table_id.table_name(), TableType::Shared, &storage_id)?;
+        let mut data = CachedTableData::new(Arc::clone(&table_def));
+        data.storage_id = Some(storage_id.clone());
+        data.storage_path_template = template.clone();
+        schema_registry.insert(table_id.clone(), Arc::new(data));
+        log::debug!(
+            "Primed cache for shared table {}.{} with template: {}",
+            stmt.namespace_id.as_str(),
+            stmt.table_name.as_str(),
+            template
+        );
+    }
 
     // Log detailed success with table options
     log::info!(

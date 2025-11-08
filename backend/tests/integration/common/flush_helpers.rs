@@ -450,13 +450,15 @@ fn resolve_user_table_storage_path(
         .expect("Local storage configuration missing");
 
     let user_id_value = user_id.unwrap_or("");
+    // Support both {user_id} and {userId} placeholder variants (historical inconsistency)
     let mut relative = storage
         .user_tables_template
         .replace("{namespace}", namespace)
         .replace("{tableName}", table_name)
+        .replace("{user_id}", user_id_value)
         .replace("{userId}", user_id_value)
-        .replace("{shard}", "")
-        .replace("${user_id}", user_id_value);
+        .replace("${user_id}", user_id_value)
+        .replace("{shard}", "");
 
     if relative.starts_with('/') {
         relative = relative.trim_start_matches('/').to_string();

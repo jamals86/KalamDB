@@ -318,9 +318,31 @@ impl InsertHandler {
                 })?;
                 if let Some(shared_provider) = provider_arc.as_any().downcast_ref::<crate::tables::shared_tables::SharedTableProvider>() {
                     let mut inserted = 0usize;
-                    for (idx, row) in rows.into_iter().enumerate() {
-                        // Generate simple row_id (timestamp_ms_idx)
-                        let row_id = format!("{}_{}", chrono::Utc::now().timestamp_millis(), idx);
+                    // Use a single Snowflake generator instance to avoid millisecond collision overwrites
+                    use kalamdb_commons::ids::SnowflakeGenerator;
+                    let mut snowflake_gen = SnowflakeGenerator::new(0);
+                    for row in rows.into_iter() {
+                        // Generate globally unique row_id via UUID v7 (monotonic, collision-resistant)
+                        let row_id = {
+                            use uuid::Uuid;
+                            Uuid::now_v7().to_string()
+                        };
+
+                        // Ensure DEFAULT id (SNOWFLAKE_ID) applied if schema declares non-nullable 'id'
+                        let mut row = row; // make mutable
+                        if let Some(obj) = row.as_object_mut() {
+                            if !obj.contains_key("id") {
+                                // Generate snowflake id (worker 0 for now; AppContext.node_id() can be wired later)
+                                use kalamdb_commons::ids::SnowflakeGenerator;
+                                let generator = SnowflakeGenerator::new(0);
+                                match generator.next_id() {
+                                    Ok(id) => { obj.insert("id".to_string(), serde_json::json!(id)); },
+                                    Err(e) => return Err(KalamDbError::InvalidOperation(format!("Failed to generate snowflake ID: {}", e)))
+                                }
+                            }
+                        }
+
+                        // Insert row with defaults/system columns injected by provider
                         shared_provider.insert(&row_id, row)?;
                         inserted += 1;
                     }

@@ -241,6 +241,14 @@ impl StorageRegistry {
 
         Ok(())
     }
+
+    /// Get the default storage path configured for the server
+    ///
+    /// Used when a storage's `base_directory` is empty to construct
+    /// absolute paths for Parquet outputs.
+    pub fn default_storage_path(&self) -> &str {
+        &self._default_storage_path
+    }
 }
 
 #[cfg(test)]

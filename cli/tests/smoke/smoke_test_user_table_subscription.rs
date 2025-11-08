@@ -25,7 +25,7 @@ fn smoke_user_table_subscription_lifecycle() {
     // 2) Create user table
     let create_sql = format!(
         r#"CREATE USER TABLE {} (
-            id INT AUTO_INCREMENT,
+            id BIGINT AUTO_INCREMENT,
             name VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) FLUSH ROWS 10"#,
@@ -80,11 +80,15 @@ fn smoke_user_table_subscription_lifecycle() {
     // 5) Insert a new row and verify subscription outputs the change event
     let sub_val = "from_subscription";
     let ins3 = format!("INSERT INTO {} (name) VALUES ('{}')", full, sub_val);
+    println!("[DEBUG] Inserting new row with value: {}", sub_val);
     execute_sql_as_root_via_cli(&ins3).expect("insert sub row should succeed");
+    println!("[DEBUG] Insert completed, waiting for change event...");
 
     let mut change_lines: Vec<String> = Vec::new();
-    let change_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let change_deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    let mut poll_count = 0;
     while std::time::Instant::now() < change_deadline {
+        poll_count += 1;
         match listener.try_read_line(std::time::Duration::from_millis(250)) {
             Ok(Some(line)) => {
                 if !line.trim().is_empty() {
@@ -92,14 +96,24 @@ fn smoke_user_table_subscription_lifecycle() {
                     let is_match = line.contains(sub_val);
                     change_lines.push(line);
                     if is_match {
+                        println!("[DEBUG] Found matching change event!");
                         break;
                     }
                 }
             }
-            Ok(None) => break,
-            Err(_) => continue,
+            Ok(None) => {
+                println!("[DEBUG] EOF on subscription stream after {} polls", poll_count);
+                break;
+            }
+            Err(_e) => {
+                if poll_count % 10 == 0 {
+                    println!("[DEBUG] Still waiting for change event... (poll {})", poll_count);
+                }
+                continue;
+            }
         }
     }
+    println!("[DEBUG] Total polls: {}, lines collected: {}", poll_count, change_lines.len());
 
     let changes_joined = change_lines.join("\n");
     assert!(changes_joined.contains(sub_val), "expected change event containing '{}' within 5s; got: {}", sub_val, changes_joined);

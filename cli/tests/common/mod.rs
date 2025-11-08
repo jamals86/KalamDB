@@ -6,6 +6,12 @@ use std::process::{Child, Stdio};
 use std::sync::mpsc as std_mpsc;
 use std::thread;
 use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+// Global monotonic counter to ensure uniqueness when multiple tests generate
+// names within the same millisecond (which was causing occasional collisions
+// and "Already exists" errors in parallel smoke tests).
+static UNIQUIFIER: AtomicU64 = AtomicU64::new(1);
 
 // Re-export commonly used types for credential tests
 pub use kalam_cli::FileCredentialStore;
@@ -82,26 +88,22 @@ pub fn execute_sql_as_root_via_cli(sql: &str) -> Result<String, Box<dyn std::err
 
 /// Helper to generate unique namespace name
 pub fn generate_unique_namespace(base_name: &str) -> String {
-    format!(
-        "{}_{}",
-        base_name,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    )
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let ctr = UNIQUIFIER.fetch_add(1, Ordering::Relaxed);
+    format!("{}_{}_{}", base_name, ts, ctr)
 }
 
 /// Helper to generate unique table name
 pub fn generate_unique_table(base_name: &str) -> String {
-    format!(
-        "{}_{}",
-        base_name,
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    )
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let ctr = UNIQUIFIER.fetch_add(1, Ordering::Relaxed);
+    format!("{}_{}_{}", base_name, ts, ctr)
 }
 
 /// Helper to create a CLI command with default test settings

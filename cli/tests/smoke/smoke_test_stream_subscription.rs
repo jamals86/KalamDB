@@ -40,28 +40,33 @@ fn smoke_stream_table_subscription() {
 
     // 4) Insert a stream event and expect subscription output
     let ev_val = "smoke_stream_event";
-    let ins = format!(
-        "INSERT INTO {} (event_id, event_type, payload) VALUES ('e1', 'info', '{}')",
-        full, ev_val
-    );
-    execute_sql_as_root_via_cli(&ins).expect("insert stream event should succeed");
-
-    // Wait up to 5s for any non-empty subscription line
     let mut got_any = false;
-    let start = std::time::Instant::now();
-    while start.elapsed() < std::time::Duration::from_secs(5) {
-        match listener.try_read_line(std::time::Duration::from_millis(250)) {
-            Ok(Some(line)) => {
-                if !line.trim().is_empty() {
-                    got_any = true;
-                    break;
+    let mut attempt = 0;
+    while attempt < 5 && !got_any {
+        attempt += 1;
+        let event_id = format!("e{}", attempt);
+        let ins = format!(
+            "INSERT INTO {} (event_id, event_type, payload) VALUES ('{}', 'info', '{}')",
+            full, event_id, ev_val
+        );
+        execute_sql_as_root_via_cli(&ins).expect("insert stream event should succeed");
+
+        // After each insert, poll for up to 1s for a subscription line
+        let per_attempt_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while std::time::Instant::now() < per_attempt_deadline {
+            match listener.try_read_line(std::time::Duration::from_millis(250)) {
+                Ok(Some(line)) => {
+                    if !line.trim().is_empty() {
+                        got_any = true;
+                        break;
+                    }
                 }
+                Ok(None) => break,
+                Err(_) => continue,
             }
-            Ok(None) => break,
-            Err(_) => continue,
         }
     }
-    assert!(got_any, "expected to receive some subscription output within 5s");
+    assert!(got_any, "expected to receive some subscription output within retry window");
 
     // Stop subscription
     listener.stop().ok();

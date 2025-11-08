@@ -67,19 +67,19 @@ impl StatementHandler for UpdateHandler {
         match def.table_type {
             kalamdb_commons::schemas::TableType::User => {
                 // Require id for user table update
-                let row_id = row_id_opt.ok_or_else(|| KalamDbError::InvalidOperation("UPDATE currently requires WHERE id = <value> for USER tables".into()))?;
+                let id_value = row_id_opt.ok_or_else(|| KalamDbError::InvalidOperation("UPDATE currently requires WHERE id = <value> for USER tables".into()))?;
                 let shared = schema_registry.get_user_table_shared(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
                 use crate::tables::user_tables::UserTableAccess;
                 let access = UserTableAccess::new(shared, context.user_id.clone(), context.user_role.clone());
-                let _updated = access.update_row(&row_id, updates)?;
+                access.update_by_id_field(&id_value, updates)?;
                 Ok(ExecutionResult::Updated { rows_affected: 1 })
             }
             kalamdb_commons::schemas::TableType::Shared => {
                 // MVP: If id present, update that row via SharedTableProvider; otherwise, return invalid operation (no predicate support yet)
                 let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("Shared table provider not found".into()))?;
                 if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::tables::shared_tables::SharedTableProvider>() {
-                    if let Some(row_id) = row_id_opt {
-                        provider.update(&row_id, updates)?;
+                    if let Some(id_value) = row_id_opt {
+                        provider.update_by_id_field(&id_value, updates)?;
                         Ok(ExecutionResult::Updated { rows_affected: 1 })
                     } else {
                         Err(KalamDbError::InvalidOperation("UPDATE on SHARED tables requires WHERE id = <value> (predicate updates not yet supported)".into()))

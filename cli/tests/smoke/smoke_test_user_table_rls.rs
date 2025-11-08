@@ -31,7 +31,7 @@ fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
     // 1) As root: create a user table
     let create_table_sql = format!(
         r#"CREATE USER TABLE {} (
-            id INT AUTO_INCREMENT,
+            id BIGINT AUTO_INCREMENT,
             content TEXT NOT NULL,
             updated INT DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -62,12 +62,40 @@ fn smoke_user_table_rls_isolation() -> Result<(), Box<dyn std::error::Error>> {
         execute_sql_via_cli_as(&user_name, user_pass, &ins)?;
     }
 
-    // Update one of the user's rows (set updated=1)
-    let upd = format!("UPDATE {} SET updated = 1 WHERE content = 'user_row_b'", full_table);
+    // Fetch ids for the specific user rows so we can perform id-based UPDATE/DELETE
+    // (backend currently restricts USER table UPDATE/DELETE to primary key equality predicates)
+    let id_query = format!(
+        "SELECT id, content FROM {} WHERE content IN ('user_row_b','user_row_c') ORDER BY content",
+        full_table
+    );
+    let id_out = execute_sql_via_cli_as(&user_name, user_pass, &id_query)?;
+
+    // Parse ids from table output, handling negative numbers
+    let mut row_b_id: Option<String> = None;
+    let mut row_c_id: Option<String> = None;
+    for line in id_out.lines() {
+        if line.contains("user_row_b") || line.contains("user_row_c") {
+            // Split by table cell delimiter '│' and take first column (id)
+            let parts: Vec<&str> = line.split('│').collect();
+            if parts.len() >= 2 {
+                let id_part = parts[1].trim();
+                // Validate it's a number (allowing negative)
+                if let Ok(_) = id_part.parse::<i64>() {
+                    if line.contains("user_row_b") { row_b_id = Some(id_part.to_string()); }
+                    if line.contains("user_row_c") { row_c_id = Some(id_part.to_string()); }
+                }
+            }
+        }
+    }
+    let row_b_id = row_b_id.ok_or_else(|| format!("Failed to parse id for user_row_b from output: {}", id_out))?;
+    let row_c_id = row_c_id.ok_or_else(|| format!("Failed to parse id for user_row_c from output: {}", id_out))?;
+
+    // Update one of the user's rows (set updated=1) using id predicate
+    let upd = format!("UPDATE {} SET updated = 1 WHERE id = {}", full_table, row_b_id);
     execute_sql_via_cli_as(&user_name, user_pass, &upd)?;
 
-    // Delete one of the user's rows
-    let del = format!("DELETE FROM {} WHERE content = 'user_row_c'", full_table);
+    // Delete one of the user's rows using id predicate
+    let del = format!("DELETE FROM {} WHERE id = {}", full_table, row_c_id);
     execute_sql_via_cli_as(&user_name, user_pass, &del)?;
 
     // 6) SELECT as the regular user and verify visibility

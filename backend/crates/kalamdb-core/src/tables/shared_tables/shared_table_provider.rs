@@ -217,6 +217,95 @@ impl SharedTableProvider {
 
         Ok(())
     }
+
+    /// DELETE by logical `id` field (helper for SQL layer)
+    ///
+    /// Finds the row whose JSON field `id` equals `id_value` and performs a soft delete.
+    /// This bridges the mismatch between external primary key semantics (id column)
+    /// and internal storage key (row_id).
+    pub fn delete_by_id_field(&self, id_value: &str) -> Result<(), KalamDbError> {
+        let rows = self
+            .store
+            .scan_all()
+            .map_err(|e| KalamDbError::Other(e.to_string()))?;
+
+        log::debug!("delete_by_id_field: Looking for id={} among {} rows", id_value, rows.len());
+
+        // Match either numeric or string representations
+        let mut target_row_id: Option<String> = None;
+        for (_k, row) in rows.iter() {
+            if let Some(v) = row.fields.get("id") {
+                log::debug!("delete_by_id_field: Found row with id field: {:?}", v);
+                let is_match = match v {
+                    JsonValue::Number(n) => {
+                        let n_str = n.to_string();
+                        log::debug!("delete_by_id_field: Comparing number {} with {}", n_str, id_value);
+                        n_str == id_value
+                    }
+                    JsonValue::String(s) => {
+                        log::debug!("delete_by_id_field: Comparing string {} with {}", s, id_value);
+                        s == id_value
+                    }
+                    _ => {
+                        log::debug!("delete_by_id_field: id field is neither number nor string: {:?}", v);
+                        false
+                    }
+                };
+                if is_match {
+                    log::debug!("delete_by_id_field: Match found! row_id={}", row.row_id);
+                    target_row_id = Some(row.row_id.clone());
+                    break;
+                }
+            } else {
+                log::debug!("delete_by_id_field: Row has no id field");
+            }
+        }
+
+        let row_id = target_row_id
+            .ok_or_else(|| {
+                log::error!("delete_by_id_field: No row found with id={}", id_value);
+                KalamDbError::NotFound(format!("Row with id={} not found", id_value))
+            })?;
+        self.delete_soft(&row_id)
+    }
+
+    /// UPDATE by logical `id` field (helper for SQL layer)
+    ///
+    /// Finds the row whose JSON field `id` equals `id_value` and performs an update.
+    /// This bridges the mismatch between external primary key semantics (id column)
+    /// and internal storage key (row_id).
+    pub fn update_by_id_field(&self, id_value: &str, updates: serde_json::Value) -> Result<(), KalamDbError> {
+        let rows = self
+            .store
+            .scan_all()
+            .map_err(|e| KalamDbError::Other(e.to_string()))?;
+
+        log::debug!("update_by_id_field: Looking for id={} among {} rows", id_value, rows.len());
+
+        // Match either numeric or string representations
+        let mut target_row_id: Option<String> = None;
+        for (_k, row) in rows.iter() {
+            if let Some(v) = row.fields.get("id") {
+                let is_match = match v {
+                    JsonValue::Number(n) => n.to_string() == id_value,
+                    JsonValue::String(s) => s == id_value,
+                    _ => false,
+                };
+                if is_match {
+                    log::debug!("update_by_id_field: Match found! row_id={}", row.row_id);
+                    target_row_id = Some(row.row_id.clone());
+                    break;
+                }
+            }
+        }
+
+        let row_id = target_row_id
+            .ok_or_else(|| {
+                log::error!("update_by_id_field: No row found with id={}", id_value);
+                KalamDbError::NotFound(format!("Row with id={} not found", id_value))
+            })?;
+        self.update(&row_id, updates)
+    }
 }
 
 impl BaseTableProvider for SharedTableProvider {
@@ -243,8 +332,22 @@ impl TableProvider for SharedTableProvider {
     fn schema(&self) -> SchemaRef {
         // Phase 10, US1, FR-006: Use memoized Arrow schema (50-100× speedup)
         // Add system columns to the schema if they don't already exist
-        let base_schema = self.core.arrow_schema()
-            .expect("Schema must be valid for shared table");
+        let base_schema = match self.core.arrow_schema() {
+            Ok(s) => s,
+            Err(e) => {
+                // If schema is missing (e.g., table was dropped concurrently), avoid panicking
+                // and return a minimal schema with system columns so DataFusion can handle the query
+                log::warn!("SharedTableProvider.schema(): missing schema for table {:?}: {}. Returning minimal system-only schema.", self.core.table_id(), e);
+                let mut sys_fields: Vec<Arc<Field>> = Vec::new();
+                sys_fields.push(Arc::new(Field::new(
+                    "_updated",
+                    DataType::Timestamp(TimeUnit::Millisecond, None),
+                    false,
+                )));
+                sys_fields.push(Arc::new(Field::new("_deleted", DataType::Boolean, false)));
+                return Arc::new(Schema::new(sys_fields));
+            }
+        };
         let mut fields = base_schema.fields().to_vec();
 
         // Check if _updated already exists
