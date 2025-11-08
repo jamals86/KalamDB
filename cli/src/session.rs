@@ -762,7 +762,7 @@ impl CLISession {
             let resp = self
                 .client
                 .execute_query(
-                    "SELECT table_name, column_name FROM system.columns ORDER BY table_name, ordinal_position",
+                    "SELECT table_name, column_name FROM information_schema.columns ORDER BY table_name, ordinal_position",
                 )
                 .await;
             pb.finish_and_clear();
@@ -770,7 +770,7 @@ impl CLISession {
         } else {
             self.client
                 .execute_query(
-                    "SELECT table_name, column_name FROM system.columns ORDER BY table_name, ordinal_position",
+                    "SELECT table_name, column_name FROM information_schema.columns ORDER BY table_name, ordinal_position",
                 )
                 .await
         } {
@@ -860,7 +860,7 @@ impl CLISession {
             }
             Command::Describe(table) => {
                 let query = format!(
-                    "SELECT * FROM system.columns WHERE table_name = '{}' ORDER BY ordinal_position",
+                    "SELECT * FROM information_schema.columns WHERE table_name = '{}' ORDER BY ordinal_position",
                     table
                 );
                 self.execute(&query).await?;

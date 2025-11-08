@@ -178,7 +178,15 @@ impl AppContext {
                         .expect("Failed to register system table");
                 }
 
-                // Register information_schema
+                // SchemaRegistry is just an alias for SchemaCache (Phase 5 complete)
+                // No separate schema_store needed - persistence methods use AppContext to access TablesTableProvider
+                let schema_registry = schema_cache.clone();
+
+                // NOW wire up information_schema providers with schema_registry
+                // This must happen BEFORE registering them with DataFusion
+                system_tables.set_information_schema_dependencies(schema_registry.clone());
+
+                // Register information_schema AFTER set_information_schema_dependencies()
                 let info_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
                 base_session_context
                     .catalog(&catalog_name)
@@ -191,13 +199,6 @@ impl AppContext {
                         .register_table(table_name.to_string(), provider)
                         .expect("Failed to register information_schema table");
                 }
-
-                // SchemaRegistry is just an alias for SchemaCache (Phase 5 complete)
-                // No separate schema_store needed - persistence methods use AppContext to access TablesTableProvider
-                let schema_registry = schema_cache.clone();
-
-                // NOW wire up information_schema providers with schema_registry
-                system_tables.set_information_schema_dependencies(schema_registry.clone());
 
                 // Create job registry and register all 8 executors (Phase 9, T154)
                 let job_registry = Arc::new(JobRegistry::new());
