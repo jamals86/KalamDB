@@ -120,6 +120,7 @@ async fn test_client_builder_missing_url() {
 // =============================================================================
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_execute_simple_query() {
     ensure_server_running().await;
 
@@ -133,6 +134,7 @@ async fn test_execute_simple_query() {
 }
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_execute_query_with_results() {
     ensure_server_running().await;
 
@@ -167,6 +169,7 @@ async fn test_execute_query_with_results() {
 }
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_execute_query_error_handling() {
     ensure_server_running().await;
 
@@ -181,6 +184,7 @@ async fn test_execute_query_error_handling() {
 }
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_health_check() {
     ensure_server_running().await;
 
@@ -221,6 +225,7 @@ async fn test_subscription_config_creation() {
 }
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_subscription_basic() {
     ensure_server_running().await;
     setup_namespace("ws_link_test").await;
@@ -260,6 +265,7 @@ async fn test_subscription_basic() {
 }
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_subscription_with_custom_config() {
     ensure_server_running().await;
     setup_namespace("ws_link_config").await;
@@ -358,6 +364,7 @@ fn test_error_display() {
 // =============================================================================
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_create_namespace() {
     ensure_server_running().await;
 
@@ -380,6 +387,7 @@ async fn test_create_namespace() {
 }
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_create_and_drop_table() {
     ensure_server_running().await;
     setup_namespace("crud_test").await;
@@ -400,6 +408,7 @@ async fn test_create_and_drop_table() {
 }
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_insert_and_select() {
     ensure_server_running().await;
     setup_namespace("insert_test").await;
@@ -434,6 +443,7 @@ async fn test_insert_and_select() {
 }
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_update_operation() {
     ensure_server_running().await;
     setup_namespace("update_test").await;
@@ -460,6 +470,7 @@ async fn test_update_operation() {
 }
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_delete_operation() {
     ensure_server_running().await;
     setup_namespace("delete_test").await;
@@ -490,6 +501,7 @@ async fn test_delete_operation() {
 // =============================================================================
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_query_system_users() {
     ensure_server_running().await;
 
@@ -502,6 +514,7 @@ async fn test_query_system_users() {
 }
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_query_system_namespaces() {
     ensure_server_running().await;
 
@@ -514,6 +527,7 @@ async fn test_query_system_namespaces() {
 }
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_query_system_tables() {
     ensure_server_running().await;
 
@@ -528,6 +542,7 @@ async fn test_query_system_tables() {
 // =============================================================================
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_where_clause_operators() {
     ensure_server_running().await;
     setup_namespace("where_test").await;
@@ -566,6 +581,7 @@ async fn test_where_clause_operators() {
 }
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_limit_clause() {
     ensure_server_running().await;
     setup_namespace("limit_test").await;
@@ -600,6 +616,7 @@ async fn test_limit_clause() {
 }
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_order_by_clause() {
     ensure_server_running().await;
     setup_namespace("order_test").await;
@@ -632,6 +649,7 @@ async fn test_order_by_clause() {
 // =============================================================================
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_concurrent_queries() {
     ensure_server_running().await;
     setup_namespace("concurrent_test").await;
@@ -673,6 +691,7 @@ async fn test_concurrent_queries() {
 // =============================================================================
 
 #[tokio::test]
+#[ignore = "requires running backend server"]
 async fn test_custom_timeout() {
     ensure_server_running().await;
 

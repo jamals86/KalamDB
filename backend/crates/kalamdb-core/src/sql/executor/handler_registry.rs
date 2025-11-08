@@ -186,7 +186,7 @@ impl HandlerRegistry {
 
         registry.register_typed(
             SqlStatementKind::AlterStorage(kalamdb_sql::ddl::AlterStorageStatement {
-                storage_id: String::new(),
+                storage_id: StorageId::new("_placeholder"),
                 storage_name: None,
                 description: None,
                 shared_tables_template: None,
@@ -201,7 +201,7 @@ impl HandlerRegistry {
 
         registry.register_typed(
             SqlStatementKind::DropStorage(kalamdb_sql::ddl::DropStorageStatement {
-                storage_id: String::new(),
+                    storage_id: kalamdb_commons::StorageId::from(""),
             }),
             DropStorageHandler::new(app_context.clone()),
             |stmt| match stmt.kind() {
@@ -223,47 +223,67 @@ impl HandlerRegistry {
         // TABLE HANDLERS
         // ============================================================================
         
-        // TODO: Fix CreateTableStatement placeholder - needs proper schema, column_defaults, etc.
-        // registry.register_typed(
-        //     SqlStatementKind::CreateTable(...),
-        //     CreateTableHandler::new(app_context.clone()),
-        //     |stmt| match stmt.kind() { SqlStatementKind::CreateTable(s) => Some(s.clone()), _ => None },
-        // );
+        // TABLE HANDLERS (Phase 8) - fully implemented
+        // Register table handlers with minimal placeholder instances for discriminant extraction
+        use kalamdb_sql::ddl::{CreateTableStatement, AlterTableStatement, DropTableStatement, ShowTablesStatement, DescribeTableStatement, ShowTableStatsStatement};
+    // TableType already imported above; avoid duplicate imports
+    use datafusion::arrow::datatypes::Schema as ArrowSchema;
+        use std::collections::HashMap;
+        use kalamdb_commons::models::{TableName};
 
-        // TODO: Fix AlterTableStatement placeholder - needs proper fields
-        // registry.register_typed(
-        //     SqlStatementKind::AlterTable(...),
-        //     AlterTableHandler::new(app_context.clone()),
-        //     |stmt| match stmt.kind() { SqlStatementKind::AlterTable(s) => Some(s.clone()), _ => None },
-        // );
-
-        // TODO: Fix DropTableStatement placeholder - needs proper field names
-        // registry.register_typed(
-        //     SqlStatementKind::DropTable(...),
-        //     DropTableHandler::new(app_context.clone()),
-        //     |stmt| match stmt.kind() { SqlStatementKind::DropTable(s) => Some(s.clone()), _ => None },
-        // );
-
-        // TODO: Fix ShowTablesStatement placeholder
-        // registry.register_typed(
-        //     SqlStatementKind::ShowTables(...),
-        //     ShowTablesHandler::new(app_context.clone()),
-        //     |stmt| match stmt.kind() { SqlStatementKind::ShowTables(s) => Some(s.clone()), _ => None },
-        // );
-
-        // TODO: Fix DescribeTableStatement placeholder
-        // registry.register_typed(
-        //     SqlStatementKind::DescribeTable(...),
-        //     DescribeTableHandler::new(app_context.clone()),
-        //     |stmt| match stmt.kind() { SqlStatementKind::DescribeTable(s) => Some(s.clone()), _ => None },
-        // );
-
-        // TODO: Fix ShowTableStatsStatement placeholder
-        // registry.register_typed(
-        //     SqlStatementKind::ShowTableStats(...),
-        //     ShowStatsHandler::new(app_context.clone()),
-        //     |stmt| match stmt.kind() { SqlStatementKind::ShowTableStats(s) => Some(s.clone()), _ => None },
-        // );
+        registry.register_typed(
+            SqlStatementKind::CreateTable(CreateTableStatement {
+                table_name: TableName::new("_placeholder"),
+                namespace_id: NamespaceId::new("_placeholder"),
+                table_type: TableType::Shared,
+                schema: Arc::new(ArrowSchema::empty()),
+                column_defaults: HashMap::new(),
+                primary_key_column: None,
+                storage_id: None,
+                use_user_storage: false,
+                flush_policy: None,
+                deleted_retention_hours: None,
+                ttl_seconds: None,
+                if_not_exists: false,
+                access_level: None,
+            }),
+            CreateTableHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() { SqlStatementKind::CreateTable(s) => Some(s.clone()), _ => None },
+        );
+        registry.register_typed(
+            SqlStatementKind::AlterTable(AlterTableStatement {
+                table_name: TableName::new("_placeholder"),
+                namespace_id: NamespaceId::new("_placeholder"),
+                operation: kalamdb_sql::ddl::ColumnOperation::Drop { column_name: "_placeholder".to_string() },
+            }),
+            AlterTableHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() { SqlStatementKind::AlterTable(s) => Some(s.clone()), _ => None },
+        );
+        registry.register_typed(
+            SqlStatementKind::DropTable(DropTableStatement {
+                table_name: TableName::new("_placeholder"),
+                namespace_id: NamespaceId::new("_placeholder"),
+                table_type: kalamdb_sql::ddl::TableKind::Shared,
+                if_exists: false,
+            }),
+            DropTableHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() { SqlStatementKind::DropTable(s) => Some(s.clone()), _ => None },
+        );
+        registry.register_typed(
+            SqlStatementKind::ShowTables(ShowTablesStatement { namespace_id: None }),
+            ShowTablesHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() { SqlStatementKind::ShowTables(s) => Some(s.clone()), _ => None },
+        );
+        registry.register_typed(
+            SqlStatementKind::DescribeTable(DescribeTableStatement { namespace_id: None, table_name: TableName::new("_placeholder"), show_history: false }),
+            DescribeTableHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() { SqlStatementKind::DescribeTable(s) => Some(s.clone()), _ => None },
+        );
+        registry.register_typed(
+            SqlStatementKind::ShowStats(ShowTableStatsStatement { namespace_id: None, table_name: TableName::new("_placeholder"), }),
+            ShowStatsHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() { SqlStatementKind::ShowStats(s) => Some(s.clone()), _ => None },
+        );
 
         // ============================================================================
         // FLUSH HANDLERS

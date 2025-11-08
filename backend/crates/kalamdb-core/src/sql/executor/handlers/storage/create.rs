@@ -5,7 +5,6 @@ use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::execution::context::SessionContext;
-use kalamdb_sql::Storage;
 use kalamdb_commons::models::StorageId;
 use kalamdb_sql::ddl::CreateStorageStatement;
 use std::sync::Arc;
@@ -78,7 +77,7 @@ impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
         };
 
         // Create storage record
-        let storage = Storage {
+        let storage = kalamdb_commons::system::Storage {
             storage_id: StorageId::from(statement.storage_id.clone()),
             storage_name: statement.storage_name,
             description: statement.description,
@@ -131,10 +130,10 @@ mod tests {
         let app_ctx = AppContext::get();
         let handler = CreateStorageHandler::new(app_ctx);
         let stmt = CreateStorageStatement {
-            storage_id: "test_storage".to_string(),
+            storage_id: StorageId::new("test_storage"),
             storage_name: "Test Storage".to_string(),
             description: None,
-            storage_type: "local".to_string(),
+            storage_type: kalamdb_commons::models::StorageType::from("local"),
             base_directory: "/tmp/storage".to_string(),
             credentials: None,
             shared_tables_template: String::new(),
@@ -158,10 +157,10 @@ mod tests {
         let handler = CreateStorageHandler::new(app_ctx);
         let storage_id = format!("test_storage_{}", chrono::Utc::now().timestamp_millis());
         let stmt = CreateStorageStatement {
-            storage_id: storage_id.clone(),
+            storage_id: StorageId::from(storage_id.as_str()),
             storage_name: "Test Storage".to_string(),
             description: Some("Test description".to_string()),
-            storage_type: "local".to_string(),
+            storage_type: kalamdb_commons::models::StorageType::from("local"),
             base_directory: "/tmp/test".to_string(),
             credentials: None,
             shared_tables_template: String::new(),
@@ -184,10 +183,10 @@ mod tests {
         let handler = CreateStorageHandler::new(app_ctx);
         let storage_id = format!("test_dup_{}", chrono::Utc::now().timestamp_millis());
         let stmt = CreateStorageStatement {
-            storage_id: storage_id.clone(),
+            storage_id: StorageId::from(storage_id.as_str()),
             storage_name: "Test Duplicate".to_string(),
             description: None,
-            storage_type: "local".to_string(),
+            storage_type: kalamdb_commons::models::StorageType::from("local"),
             base_directory: "/tmp/test".to_string(),
             credentials: None,
             shared_tables_template: String::new(),

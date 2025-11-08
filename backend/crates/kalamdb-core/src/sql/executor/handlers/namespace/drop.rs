@@ -5,7 +5,6 @@ use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::execution::context::SessionContext;
-use kalamdb_commons::models::NamespaceId;
 use kalamdb_sql::ddl::DropNamespaceStatement;
 use std::sync::Arc;
 
@@ -38,12 +37,12 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
             Some(ns) => ns,
             None => {
                 if statement.if_exists {
-                    let message = format!("Namespace '{}' does not exist", name);
+                    let message = format!("Namespace '{}' does not exist", namespace_id.as_str());
                     return Ok(ExecutionResult::Success { message });
                 } else {
                     return Err(KalamDbError::NotFound(format!(
                         "Namespace '{}' not found",
-                        name
+                        namespace_id.as_str()
                     )));
                 }
             }
@@ -53,7 +52,7 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
         if !namespace.can_delete() {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Cannot drop namespace '{}': namespace contains {} table(s). Drop all tables first.",
-                name,
+                    namespace.name,
                 namespace.table_count
             )));
         }
@@ -61,7 +60,7 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
         // Delete namespace via provider
         namespaces_provider.delete_namespace(&namespace_id)?;
 
-        let message = format!("Namespace '{}' dropped successfully", name);
+            let message = format!("Namespace '{}' dropped successfully", namespace.name);
         Ok(ExecutionResult::Success { message })
     }
 
@@ -96,7 +95,7 @@ mod tests {
         let app_ctx = AppContext::get();
         let handler = DropNamespaceHandler::new(app_ctx);
         let stmt = DropNamespaceStatement {
-            name: "test_namespace".to_string(),
+            name: kalamdb_commons::models::NamespaceId::new("test_namespace"),
             if_exists: false,
         };
         let ctx = create_test_context();
@@ -115,7 +114,7 @@ mod tests {
         let app_ctx = AppContext::get();
         let handler = DropNamespaceHandler::new(app_ctx);
         let stmt = DropNamespaceStatement {
-            name: "test".to_string(),
+            name: kalamdb_commons::models::NamespaceId::new("test"),
             if_exists: false,
         };
         
@@ -132,7 +131,7 @@ mod tests {
         let app_ctx = AppContext::get();
         let handler = DropNamespaceHandler::new(app_ctx);
         let stmt = DropNamespaceStatement {
-            name: "nonexistent".to_string(),
+            name: kalamdb_commons::models::NamespaceId::new("nonexistent"),
             if_exists: true,
         };
         let ctx = create_test_context();

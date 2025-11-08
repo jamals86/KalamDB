@@ -4,7 +4,11 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use datafusion::arrow::array::{ArrayRef, BooleanArray, RecordBatch, StringArray, UInt32Array};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::execution::context::SessionContext;
+use kalamdb_commons::models::{NamespaceId, TableId};
+use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_sql::ddl::DescribeTableStatement;
 use std::sync::Arc;
 
@@ -24,13 +28,27 @@ impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
     async fn execute(
         &self,
         _session: &SessionContext,
-        _statement: DescribeTableStatement,
+        statement: DescribeTableStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        Err(KalamDbError::InvalidOperation(
-            "DESCRIBE TABLE not yet implemented".to_string(),
-        ))
+        let ns = statement
+            .namespace_id
+            .unwrap_or_else(|| NamespaceId::new("default"));
+        let table_id = TableId::from_strings(ns.as_str(), statement.table_name.as_str());
+        let def = self
+            .app_context
+            .schema_registry()
+            .get_table_definition(&table_id)?
+            .ok_or_else(|| KalamDbError::NotFound(format!(
+                "Table '{}' not found in namespace '{}'",
+                statement.table_name.as_str(),
+                ns.as_str()
+            )))?;
+
+        let batch = build_describe_batch(&def)?;
+        let row_count = batch.num_rows();
+        Ok(ExecutionResult::Rows { batches: vec![batch], row_count })
     }
 
     async fn check_authorization(
@@ -41,4 +59,50 @@ impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
         // DESCRIBE TABLE allowed for all authenticated users who can access the table
         Ok(())
     }
+}
+
+fn build_describe_batch(def: &TableDefinition) -> Result<RecordBatch, KalamDbError> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("column_name", DataType::Utf8, false),
+        Field::new("ordinal_position", DataType::UInt32, false),
+        Field::new("data_type", DataType::Utf8, false),
+        Field::new("is_nullable", DataType::Boolean, false),
+        Field::new("is_primary_key", DataType::Boolean, false),
+        Field::new("column_default", DataType::Utf8, true),
+        Field::new("column_comment", DataType::Utf8, true),
+    ]));
+
+    let mut names: Vec<String> = Vec::new();
+    let mut ordinals: Vec<u32> = Vec::new();
+    let mut types: Vec<String> = Vec::new();
+    let mut nulls: Vec<bool> = Vec::new();
+    let mut pks: Vec<bool> = Vec::new();
+    let mut defaults: Vec<Option<String>> = Vec::new();
+    let mut comments: Vec<Option<String>> = Vec::new();
+
+    for c in &def.columns {
+        names.push(c.column_name.clone());
+        ordinals.push(c.ordinal_position);
+        types.push(c.data_type.sql_name().to_string());
+        nulls.push(c.is_nullable);
+        pks.push(c.is_primary_key);
+        defaults.push(if c.default_value.is_none() { None } else { Some(c.default_value.to_sql()) });
+        comments.push(c.column_comment.clone());
+    }
+
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(StringArray::from(names)) as ArrayRef,
+            Arc::new(UInt32Array::from(ordinals)) as ArrayRef,
+            Arc::new(StringArray::from(types)) as ArrayRef,
+            Arc::new(BooleanArray::from(nulls)) as ArrayRef,
+            Arc::new(BooleanArray::from(pks)) as ArrayRef,
+            Arc::new(StringArray::from(defaults)) as ArrayRef,
+            Arc::new(StringArray::from(comments)) as ArrayRef,
+        ],
+    )
+    .map_err(|e| KalamDbError::Other(format!("Arrow error: {}", e)))?;
+
+    Ok(batch)
 }

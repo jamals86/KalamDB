@@ -7,6 +7,7 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValu
 use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::StorageId;
 use kalamdb_sql::ddl::AlterStorageStatement;
+use kalamdb_sql::Storage;
 use std::sync::Arc;
 
 /// Typed handler for ALTER STORAGE statements
@@ -33,12 +34,15 @@ impl TypedStatementHandler<AlterStorageStatement> for AlterStorageHandler {
         let storage_registry = self.app_context.storage_registry();
 
         // Get existing storage
-        let storage_id = statement.storage_id;
+        let storage_id = statement.storage_id.clone();
         let mut storage = storages_provider
             .get_storage_by_id(&storage_id)
             .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))?
             .ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!("Storage '{}' not found", statement.storage_id))
+                    KalamDbError::InvalidOperation(format!(
+                        "Storage '{}' not found",
+                        statement.storage_id.as_str()
+                    ))
             })?;
 
         // Update fields if provided
@@ -109,7 +113,7 @@ mod tests {
         let app_ctx = AppContext::get();
         let handler = AlterStorageHandler::new(app_ctx);
         let stmt = AlterStorageStatement {
-            storage_id: "test_storage".to_string(),
+                storage_id: StorageId::from("test_storage"),
             storage_name: Some("Updated Storage".to_string()),
             description: None,
             shared_tables_template: None,
@@ -134,7 +138,7 @@ mod tests {
         // First create a storage to alter
         let storages_provider = app_ctx.system_tables().storages();
         let storage_id = format!("test_alter_{}", chrono::Utc::now().timestamp_millis());
-        let storage = kalamdb_commons::system_tables::Storage {
+            let storage = Storage {
             storage_id: StorageId::from(storage_id.as_str()),
             storage_name: "Original Name".to_string(),
             description: None,
@@ -151,7 +155,7 @@ mod tests {
         // Now alter it
         let handler = AlterStorageHandler::new(app_ctx);
         let stmt = AlterStorageStatement {
-            storage_id: storage_id.clone(),
+                storage_id: StorageId::from(storage_id.as_str()),
             storage_name: Some("Updated Name".to_string()),
             description: Some("New description".to_string()),
             shared_tables_template: None,

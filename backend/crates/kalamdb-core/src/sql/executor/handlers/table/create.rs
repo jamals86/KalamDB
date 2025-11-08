@@ -144,12 +144,12 @@ mod tests {
         let namespaces_provider = app_ctx.system_tables().namespaces();
         let namespace_id = NamespaceId::new("default");
         if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
-            let namespace = kalamdb_commons::system_tables::Namespace {
+            let namespace = kalamdb_commons::system::Namespace {
                 namespace_id: namespace_id.clone(),
                 name: "default".to_string(),
-                description: Some("Default namespace".to_string()),
+                created_at: chrono::Utc::now().timestamp_millis(),
                 options: None,
-                created_at: chrono::Utc::now().timestamp(),
+                table_count: 0,
             };
             namespaces_provider.create_namespace(namespace).unwrap();
         }
@@ -175,12 +175,12 @@ mod tests {
         let namespaces_provider = app_ctx.system_tables().namespaces();
         let namespace_id = NamespaceId::new("default");
         if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
-            let namespace = kalamdb_commons::system_tables::Namespace {
+            let namespace = kalamdb_commons::system::Namespace {
                 namespace_id: namespace_id.clone(),
                 name: "default".to_string(),
-                description: Some("Default namespace".to_string()),
+                created_at: chrono::Utc::now().timestamp_millis(),
                 options: None,
-                created_at: chrono::Utc::now().timestamp(),
+                table_count: 0,
             };
             namespaces_provider.create_namespace(namespace).unwrap();
         }

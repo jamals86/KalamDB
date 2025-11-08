@@ -32,7 +32,7 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
         let storages_provider = self.app_context.system_tables().storages();
         let tables_provider = self.app_context.system_tables().tables();
 
-        let storage_id = statement.storage_id;
+            let storage_id = statement.storage_id.clone();
 
         // Check if storage exists
         let storage = storages_provider
@@ -42,7 +42,7 @@ impl TypedStatementHandler<DropStorageStatement> for DropStorageHandler {
         if storage.is_none() {
             return Err(KalamDbError::InvalidOperation(format!(
                 "Storage '{}' not found",
-                statement.storage_id
+                    statement.storage_id.as_str()
             )));
         }
 
@@ -115,7 +115,7 @@ mod tests {
         let app_ctx = AppContext::get();
         let handler = DropStorageHandler::new(app_ctx);
         let stmt = DropStorageStatement {
-            storage_id: "test_storage".to_string(),
+            storage_id: StorageId::new("test_storage"),
         };
         
         // User role should be denied
@@ -136,7 +136,7 @@ mod tests {
         
         // Create a test storage
         let storage_id = format!("test_drop_{}", chrono::Utc::now().timestamp_millis());
-        let storage = kalamdb_commons::system_tables::Storage {
+        let storage = kalamdb_commons::system::Storage {
             storage_id: StorageId::from(storage_id.as_str()),
             storage_name: "Test Drop".to_string(),
             description: None,
@@ -153,7 +153,7 @@ mod tests {
         // Drop it
         let handler = DropStorageHandler::new(app_ctx);
         let stmt = DropStorageStatement {
-            storage_id: storage_id.clone(),
+            storage_id: StorageId::from(storage_id.as_str()),
         };
         let ctx = create_test_context(Role::System);
         let session = SessionContext::new();
@@ -175,7 +175,7 @@ mod tests {
         let app_ctx = AppContext::get();
         let handler = DropStorageHandler::new(app_ctx);
         let stmt = DropStorageStatement {
-            storage_id: "nonexistent_storage".to_string(),
+            storage_id: StorageId::from("nonexistent_storage"),
         };
         let ctx = create_test_context(Role::System);
         let session = SessionContext::new();

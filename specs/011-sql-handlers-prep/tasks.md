@@ -208,33 +208,33 @@ This is a Rust workspace project:
 
 **Note**: CreateNamespaceHandler already implemented as reference (✅ COMPLETE)
 
-- [X] T071 [US6] CreateNamespaceHandler - ✅ COMPLETE (reference implementation in `handlers/namespace/create.rs`)
-- [X] T072 [P] [US6] Migrate AlterNamespaceHandler logic from ddl_legacy.rs to `handlers/namespace/alter.rs` (impl TypedStatementHandler)
-- [X] T073 [P] [US6] Migrate DropNamespaceHandler logic from ddl_legacy.rs (execute_drop_namespace) to `handlers/namespace/drop.rs` (impl TypedStatementHandler)
-- [X] T074 [P] [US6] Migrate ShowNamespacesHandler logic to `handlers/namespace/show.rs` (impl TypedStatementHandler, use AppContext.system_tables().namespaces())
+ - [X] T071 [US6] CreateNamespaceHandler - ✅ COMPLETE (reference implementation in `handlers/namespace/create.rs`)
+ - [X] T072 [P] [US6] Migrate AlterNamespaceHandler logic from ddl_legacy.rs to `handlers/namespace/alter.rs` (impl TypedStatementHandler)
+ - [X] T073 [P] [US6] Migrate DropNamespaceHandler logic from ddl_legacy.rs (execute_drop_namespace) to `handlers/namespace/drop.rs` (impl TypedStatementHandler)
+ - [X] T074 [P] [US6] Migrate ShowNamespacesHandler logic to `handlers/namespace/show.rs` (impl TypedStatementHandler, use AppContext.system_tables().namespaces())
 
 ### Storage Handlers (4 handlers) - Migrate from ddl_legacy.rs
 
-- [X] T075 [P] [US6] Migrate CreateStorageHandler logic from ddl_legacy.rs (execute_create_storage) to `handlers/storage/create.rs` (impl TypedStatementHandler)
-- [X] T076 [P] [US6] Migrate AlterStorageHandler logic to `handlers/storage/alter.rs` (impl TypedStatementHandler)
-- [X] T077 [P] [US6] Migrate DropStorageHandler logic to `handlers/storage/drop.rs` (impl TypedStatementHandler)
-- [X] T078 [P] [US6] Migrate ShowStoragesHandler logic to `handlers/storage/show.rs` (impl TypedStatementHandler, use AppContext.system_tables().storages())
+ - [X] T075 [P] [US6] Migrate CreateStorageHandler logic from ddl_legacy.rs (execute_create_storage) to `handlers/storage/create.rs` (impl TypedStatementHandler)
+ - [X] T076 [P] [US6] Migrate AlterStorageHandler logic to `handlers/storage/alter.rs` (impl TypedStatementHandler)
+ - [X] T077 [P] [US6] Migrate DropStorageHandler logic to `handlers/storage/drop.rs` (impl TypedStatementHandler)
+ - [X] T078 [P] [US6] Migrate ShowStoragesHandler logic to `handlers/storage/show.rs` (impl TypedStatementHandler, use AppContext.system_tables().storages())
 
 ### Table Handlers (7 handlers) - Migrate from ddl_legacy.rs
 
 **Note**: Table handlers are complex (445+ lines in ddl_legacy.rs) - split by table type (USER/SHARED/STREAM)
 
-- [ ] T079 [US6] Migrate CreateTableHandler logic from ddl_legacy.rs (execute_create_table + create_user_table/create_shared_table/create_stream_table) to `handlers/table/create.rs` (~500 lines with helper methods)
-- [ ] T080 [US6] Migrate AlterTableHandler logic from ddl_legacy.rs (execute_alter_table, Phase 10.2 SchemaRegistry pattern) to `handlers/table/alter.rs` (impl TypedStatementHandler)
-- [ ] T081 [US6] Migrate DropTableHandler logic from ddl_legacy.rs (execute_drop_table + 6 helper methods) to `handlers/table/drop.rs` (~400 lines, Phase 9 JobsManager pattern)
-- [ ] T082 [P] [US6] Migrate ShowTablesHandler logic to `handlers/table/show.rs` (impl TypedStatementHandler, use SchemaRegistry.scan_namespace())
-- [ ] T083 [P] [US6] Migrate DescribeTableHandler logic to `handlers/table/describe.rs` (impl TypedStatementHandler, use SchemaRegistry.get_table_definition())
-- [ ] T084 [P] [US6] Migrate ShowStatsHandler logic to `handlers/table/show_stats.rs` (impl TypedStatementHandler)
+ - [X] T079 [US6] Migrate CreateTableHandler logic from ddl_legacy.rs (execute_create_table + create_user_table/create_shared_table/create_stream_table) to `handlers/table/create.rs` (~500 lines with helper methods)
+ - [X] T080 [US6] Migrate AlterTableHandler logic from ddl_legacy.rs (execute_alter_table, Phase 10.2 SchemaRegistry pattern) to `handlers/table/alter.rs` (impl TypedStatementHandler)
+ - [X] T081 [US6] Migrate DropTableHandler logic from ddl_legacy.rs (execute_drop_table + 6 helper methods) to `handlers/table/drop.rs` (~400 lines, Phase 9 JobsManager pattern)
+ - [X] T082 [P] [US6] Migrate ShowTablesHandler logic to `handlers/table/show.rs` (impl TypedStatementHandler, use SchemaRegistry.scan_namespace())
+ - [X] T083 [P] [US6] Migrate DescribeTableHandler logic to `handlers/table/describe.rs` (impl TypedStatementHandler, use SchemaRegistry.get_table_definition())
+ - [X] T084 [P] [US6] Migrate ShowStatsHandler logic to `handlers/table/show_stats.rs` (impl TypedStatementHandler)
 
 ### Handler Registration & Module Exports
 
-- [ ] T085 [US6] Register all namespace/storage/table handlers in HandlerRegistry::new() with extractor closures
-- [ ] T086 [US6] Update mod.rs files in namespace/, storage/, table/ directories to re-export all handlers
+ - [X] T085 [US6] Register all namespace/storage/table handlers in HandlerRegistry::new() with extractor closures
+ - [X] T086 [US6] Update mod.rs files in namespace/, storage/, table/ directories to re-export all handlers
 
 ### Handler Unit Tests (run after migration complete)
 
