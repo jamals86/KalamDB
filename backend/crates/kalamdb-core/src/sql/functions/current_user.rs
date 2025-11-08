@@ -3,8 +3,6 @@
 //! This module provides a user-defined function for DataFusion that returns the current user ID
 //! from the session context.
 
-#[allow(deprecated)]
-use crate::sql::datafusion_session::KalamSessionState;
 use datafusion::arrow::array::{ArrayRef, StringArray};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
@@ -31,12 +29,9 @@ impl CurrentUserFunction {
         }
     }
 
-    /// Create a CURRENT_USER function that uses a specific session state
-    #[allow(deprecated)]
-    pub fn with_session_state(session_state: &KalamSessionState) -> Self {
-        Self {
-            user_id: session_state.user_id.as_str().to_string(),
-        }
+    /// Create a CURRENT_USER function bound to a specific user id
+    pub fn with_user_id(user_id: &str) -> Self {
+        Self { user_id: user_id.to_string() }
     }
 }
 
@@ -79,7 +74,7 @@ impl ScalarUDFImpl for CurrentUserFunction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema_registry::{NamespaceId, UserId};
+    // no extra imports needed
     use datafusion::logical_expr::ScalarUDF;
 
     #[test]
@@ -90,13 +85,8 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn test_current_user_with_session_state() {
-        let user_id = UserId::new("test_user".to_string());
-        let namespace_id = NamespaceId::new("test_namespace".to_string());
-        let session_state = KalamSessionState::new(user_id.clone(), namespace_id);
-
-        let func_impl = CurrentUserFunction::with_session_state(&session_state);
+    fn test_current_user_with_user_id() {
+        let func_impl = CurrentUserFunction::with_user_id("test_user");
         let func = ScalarUDF::new_from_impl(func_impl.clone());
         assert_eq!(func.name(), "CURRENT_USER");
 

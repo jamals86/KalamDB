@@ -164,7 +164,7 @@ impl CreateStorageStatement {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AlterStorageStatement {
     /// Storage identifier to alter
-    pub storage_id: String, //TODO: use StorageId type
+    pub storage_id: StorageId,
 
     /// New storage name (if updating)
     pub storage_name: Option<String>,
@@ -204,7 +204,7 @@ impl AlterStorageStatement {
             Self::extract_set_value(&normalized, "USER_TABLES_TEMPLATE").ok();
 
         Ok(AlterStorageStatement {
-            storage_id,
+                storage_id: StorageId::from(storage_id.as_str()),
             storage_name,
             description,
             shared_tables_template,
@@ -243,7 +243,7 @@ impl AlterStorageStatement {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DropStorageStatement {
     /// Storage identifier to drop
-    pub storage_id: String, //TODO: use StorageId type
+    pub storage_id: StorageId,
 }
 
 impl DropStorageStatement {
@@ -260,7 +260,9 @@ impl DropStorageStatement {
 
         let storage_id = extract_identifier(&normalized, 2)?;
 
-        Ok(DropStorageStatement { storage_id })
+        Ok(DropStorageStatement {
+            storage_id: StorageId::from(storage_id.as_str()),
+        })
     }
 }
 
@@ -369,7 +371,7 @@ mod tests {
         "#;
 
         let stmt = AlterStorageStatement::parse(sql).unwrap();
-        assert_eq!(stmt.storage_id, "local");
+        assert_eq!(stmt.storage_id.as_str(), "local");
         assert_eq!(stmt.storage_name, Some("Updated Local".to_string()));
         assert_eq!(stmt.description, Some("Updated description".to_string()));
         assert_eq!(
@@ -387,7 +389,7 @@ mod tests {
         let sql = "ALTER STORAGE local SET NAME 'New Name'";
 
         let stmt = AlterStorageStatement::parse(sql).unwrap();
-        assert_eq!(stmt.storage_id, "local");
+        assert_eq!(stmt.storage_id.as_str(), "local");
         assert_eq!(stmt.storage_name, Some("New Name".to_string()));
         assert_eq!(stmt.description, None);
     }
@@ -397,7 +399,7 @@ mod tests {
         let sql = "DROP STORAGE old_storage;";
 
         let stmt = DropStorageStatement::parse(sql).unwrap();
-        assert_eq!(stmt.storage_id, "old_storage");
+        assert_eq!(stmt.storage_id.as_str(), "old_storage");
     }
 
     #[test]

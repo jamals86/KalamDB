@@ -52,3 +52,23 @@ pub use subscribe_commands::{SubscribeOptions, SubscribeStatement};
 pub use user_commands::{
     AlterUserStatement, CreateUserStatement, DropUserStatement, UserModification,
 };
+
+/// DML statement markers for TypedStatementHandler pattern
+/// These are empty markers since the actual SQL parsing happens in the handlers
+
+/// Marker for INSERT statements (parsed in handler using sqlparser)
+#[derive(Debug, Clone)]
+pub struct InsertStatement;
+
+/// Marker for UPDATE statements (parsed in handler using sqlparser)
+#[derive(Debug, Clone)]
+pub struct UpdateStatement;
+
+/// Marker for DELETE statements (parsed in handler using sqlparser)
+#[derive(Debug, Clone)]
+pub struct DeleteStatement;
+
+// Implement DdlAst for DML markers
+impl crate::DdlAst for InsertStatement {}
+impl crate::DdlAst for UpdateStatement {}
+impl crate::DdlAst for DeleteStatement {}

@@ -130,14 +130,14 @@ pub fn validate_password(password: &str) -> AuthResult<()> {
 pub fn validate_password_with_policy(password: &str, policy: &PasswordPolicy) -> AuthResult<()> {
     if password.len() < policy.min_length {
         return Err(AuthError::WeakPassword(format!(
-            "Password must be at least {} characters",
+            "Password must be at least {} characters (weak)",
             policy.min_length
         )));
     }
 
     if password.len() > policy.max_length {
         return Err(AuthError::WeakPassword(format!(
-            "Password must be at most {} characters (bcrypt limit)",
+            "Password must be at most {} characters (bcrypt limit, weak)",
             policy.max_length
         )));
     }

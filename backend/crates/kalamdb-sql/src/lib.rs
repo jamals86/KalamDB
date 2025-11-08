@@ -38,6 +38,7 @@
 pub mod batch_execution;
 pub mod compatibility;
 pub mod ddl;
+pub mod ddl_parent;
 pub mod parser;
 pub mod query_cache;
 pub mod statement_classifier;
@@ -64,6 +65,7 @@ pub use ddl::{
     SubscribeOptions, SubscribeStatement,
 };
 pub use parser::SqlParser;
+pub use ddl_parent::DdlAst;
 pub use query_cache::{QueryCache, QueryCacheKey, QueryCacheTtlConfig};
 
 // ============================================================================

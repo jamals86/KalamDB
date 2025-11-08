@@ -8,7 +8,7 @@ use kalamdb_commons::models::UserId;
 use kalamdb_core::sql::ExecutionResult;
 use kalamdb_core::sql::datafusion_session::DataFusionSessionFactory;
 use kalamdb_core::sql::executor::{ExecutorMetadataAlias, SqlExecutor};
-use kalamdb_core::sql::executor::handlers::types::ExecutionContext;
+use kalamdb_core::sql::executor::models::ExecutionContext;
 use log::warn;
 use std::sync::Arc;
 use std::time::Instant;
@@ -134,7 +134,14 @@ pub async fn execute_sql_v1(
         .app_data::<web::Data<Arc<SqlExecutor>>>()
         .map(|data| data.as_ref());
 
-    let _resolved_ip = http_req
+    // Phase 3 (T033): Extract request_id and ip_address for ExecutionContext
+    let request_id = http_req
+        .headers()
+        .get("X-Request-ID")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string());
+    
+    let resolved_ip = http_req
         .extensions()
         .get::<AuthenticatedUser>()
         .and_then(|user| user.connection_info.remote_addr.clone())
@@ -152,12 +159,15 @@ pub async fn execute_sql_v1(
                 .realip_remote_addr()
                 .map(|s| s.to_string())
         });
+    
     for (idx, sql) in statements.iter().enumerate() {
         match execute_single_statement(
             sql,
             session_factory.get_ref(),
             sql_executor,
             &auth_result,
+            request_id.as_deref(),
+            resolved_ip.as_deref(),
             None,
         )
         .await
@@ -187,34 +197,77 @@ async fn execute_single_statement(
     session_factory: &Arc<DataFusionSessionFactory>,
     sql_executor: Option<&Arc<SqlExecutor>>,
     auth: &kalamdb_auth::AuthenticatedRequest,
+    request_id: Option<&str>,
+    ip_address: Option<&str>,
     metadata: Option<&ExecutorMetadataAlias>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
-    // Create execution context from authenticated user
-    let exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role);
+    // Phase 3 (T033): Construct ExecutionContext with user identity, request tracking, and DataFusion session
+    let session = Arc::new(session_factory.create_session());
+    let mut exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role)
+        .with_session(session.clone());
+    
+    // Add request_id and ip_address if available
+    if let Some(rid) = request_id {
+        exec_ctx = exec_ctx.with_request_id(rid.to_string());
+    }
+    if let Some(ip) = ip_address {
+        exec_ctx = exec_ctx.with_ip(ip.to_string());
+    }
     
     // If sql_executor is available, use it (production path)
     if let Some(sql_executor) = sql_executor {
-        // Create a per-request session
-        let session = session_factory.create_session();
-        
         // Execute through SqlExecutor (handles both custom DDL and DataFusion)
         match sql_executor
-            .execute_with_metadata(&session, sql, &exec_ctx, metadata)
+            .execute_with_metadata(&session, sql, &exec_ctx, metadata, Vec::new())
             .await
         {
             Ok(result) => {
                 // Convert ExecutionResult to QueryResult
+                // Phase 3 (T036-T038): Use new ExecutionResult struct variants with row counts
                 match result {
-                    ExecutionResult::Success(message) => Ok(QueryResult::with_message(message)),
-                    ExecutionResult::RecordBatch(batch) => {
-                        record_batch_to_query_result(vec![batch], Some(&auth.user_id))
-                    }
-                    ExecutionResult::RecordBatches(batches) => {
+                    ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
+                    ExecutionResult::Rows { batches, row_count: _ } => {
                         record_batch_to_query_result(batches, Some(&auth.user_id))
                     }
-                    ExecutionResult::Subscription(subscription_data) => {
-                        // Return subscription metadata as a special query result
-                        Ok(QueryResult::subscription(subscription_data))
+                    ExecutionResult::Inserted { rows_affected } => {
+                        Ok(QueryResult::with_affected_rows(
+                            rows_affected,
+                            Some(format!("Inserted {} row(s)", rows_affected)),
+                        ))
+                    }
+                    ExecutionResult::Updated { rows_affected } => {
+                        Ok(QueryResult::with_affected_rows(
+                            rows_affected,
+                            Some(format!("Updated {} row(s)", rows_affected)),
+                        ))
+                    }
+                    ExecutionResult::Deleted { rows_affected } => {
+                        Ok(QueryResult::with_affected_rows(
+                            rows_affected,
+                            Some(format!("Deleted {} row(s)", rows_affected)),
+                        ))
+                    }
+                    ExecutionResult::Flushed { tables, bytes_written } => {
+                        Ok(QueryResult::with_affected_rows(
+                            tables.len(),
+                            Some(format!(
+                                "Flushed {} table(s), {} bytes written",
+                                tables.len(),
+                                bytes_written
+                            )),
+                        ))
+                    }
+                    ExecutionResult::Subscription { subscription_id, channel } => {
+                        // Create subscription result as JSON
+                        let sub_data = serde_json::json!({
+                            "subscription_id": subscription_id,
+                            "channel": channel,
+                            "status": "active"
+                        });
+                        Ok(QueryResult::subscription(sub_data))
+                    }
+                    ExecutionResult::JobKilled { job_id, status } => {
+                        Ok(QueryResult::with_message(format!("Job {} killed: {}", job_id, status)))
                     }
                 }
             }

@@ -170,6 +170,14 @@ specs/010-core-architecture-v2/ # CURRENT: Arrow memoization, views
 - **Logging**: Use `log` macros (`info!`, `debug!`, `warn!`, `error!`)
 - **Serialization**: Use `serde` with `#[derive(Serialize, Deserialize)]`
 
+## Build & Check Cadence (MUST)
+
+- Prefer batching compilation feedback to avoid slow edit-run loops.
+- When iterating on multi-file changes, run a single workspace-wide check and capture output to a file, fix all issues, then re-check:
+  - Example: `cargo check > batch_compile_output.txt 2>&1`
+  - Parse and address all errors/warnings in one pass; avoid running `cargo check` repeatedly after each tiny edit.
+- Re-run `cargo check` only after a meaningful batch of fixes. This keeps feedback fast and focused, and prevents thrashing CI and local builds.
+
 **Authentication Patterns**:
 - **Password Security**: ALWAYS use `bcrypt::hash()` for password storage, NEVER store plaintext
 - **Timing-Safe Comparisons**: Use `bcrypt::verify()` for constant-time password verification

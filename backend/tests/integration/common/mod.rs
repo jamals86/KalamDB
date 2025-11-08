@@ -309,7 +309,7 @@ impl TestServer {
 
         // Try custom DDL/DML execution first (same as REST API)
         // Phase 10: execute() now requires ExecutionContext instead of Option<&UserId>
-        use kalamdb_core::sql::executor::handlers::types::ExecutionContext;
+    use kalamdb_core::sql::executor::models::ExecutionContext;
         use kalamdb_commons::Role;
         
         let exec_ctx = match &user_id_obj {
@@ -317,87 +317,111 @@ impl TestServer {
             None => ExecutionContext::new(UserId::system(), Role::System),
         };
         
-        match self.sql_executor.execute(&*self.session_context, sql, &exec_ctx).await {
-            Ok(result) => {
-                use kalamdb_core::sql::ExecutionResult;
-                match result {
-                    ExecutionResult::Success(msg) => SqlResponse {
-                        status: "success".to_string(),
-                        results: vec![QueryResult {
-                            rows: None,
-                            row_count: 0,
-                            columns: vec![],
-                            message: Some(msg),
-                        }],
-                        took_ms: 0,
-                        error: None,
-                    },
-                    ExecutionResult::RecordBatch(batch) => {
-                        // Convert single batch to JSON
-                        let query_result = record_batch_to_query_result(&batch, mask_credentials);
+    match self.sql_executor.execute(&*self.session_context, sql, &exec_ctx, Vec::new()).await {
+        Ok(result) => {
+            use kalamdb_core::sql::ExecutionResult;
+            match result {
+                ExecutionResult::Success { message } => SqlResponse {
+                    status: "success".to_string(),
+                    results: vec![QueryResult {
+                        rows: None,
+                        row_count: 0,
+                        columns: vec![],
+                        message: Some(message),
+                    }],
+                    took_ms: 0,
+                    error: None,
+                },
+                ExecutionResult::Rows { batches, .. } => {
+                    if batches.is_empty() {
                         SqlResponse {
                             status: "success".to_string(),
-                            results: vec![query_result],
+                            results: vec![QueryResult {
+                                rows: Some(vec![]),
+                                row_count: 0,
+                                columns: vec![],
+                                message: None,
+                            }],
                             took_ms: 0,
                             error: None,
                         }
-                    }
-                    ExecutionResult::RecordBatches(batches) => {
-                        // Convert multiple batches to JSON
-                        if batches.is_empty() {
-                            // Return empty result with 0 rows instead of empty results array
-                            SqlResponse {
-                                status: "success".to_string(),
-                                results: vec![QueryResult {
-                                    rows: Some(vec![]),
-                                    row_count: 0,
-                                    columns: vec![],
-                                    message: None,
-                                }],
-                                took_ms: 0,
-                                error: None,
-                            }
-                        } else {
-                            let results: Vec<_> = batches
-                                .iter()
-                                .map(|batch| record_batch_to_query_result(batch, mask_credentials))
-                                .collect();
-                            SqlResponse {
-                                status: "success".to_string(),
-                                results,
-                                took_ms: 0,
-                                error: None,
-                            }
-                        }
-                    }
-                    ExecutionResult::Subscription(subscription_data) => {
-                        // Convert subscription metadata to SqlResponse
-                        let mut row = std::collections::HashMap::new();
-                        if let serde_json::Value::Object(map) = subscription_data {
-                            for (key, value) in map {
-                                row.insert(key, value);
-                            }
-                        }
-                        let query_result = QueryResult {
-                            rows: Some(vec![row]),
-                            row_count: 1,
-                            columns: vec![
-                                "status".to_string(),
-                                "ws_url".to_string(),
-                                "subscription".to_string(),
-                                "message".to_string(),
-                            ],
-                            message: None,
-                        };
+                    } else {
+                        let results: Vec<_> = batches
+                            .iter()
+                            .map(|batch| record_batch_to_query_result(batch, mask_credentials))
+                            .collect();
                         SqlResponse {
                             status: "success".to_string(),
-                            results: vec![query_result],
+                            results,
                             took_ms: 0,
                             error: None,
                         }
                     }
                 }
+                ExecutionResult::Subscription { subscription_id, channel } => {
+                    let mut row = std::collections::HashMap::new();
+                    row.insert("subscription_id".to_string(), serde_json::Value::String(subscription_id));
+                    row.insert("channel".to_string(), serde_json::Value::String(channel));
+                    let query_result = QueryResult {
+                        rows: Some(vec![row]),
+                        row_count: 1,
+                        columns: vec!["subscription_id".to_string(), "channel".to_string()],
+                        message: None,
+                    };
+                    SqlResponse {
+                        status: "success".to_string(),
+                        results: vec![query_result],
+                        took_ms: 0,
+                        error: None,
+                    }
+                }
+                ExecutionResult::Inserted { rows_affected }
+                | ExecutionResult::Updated { rows_affected }
+                | ExecutionResult::Deleted { rows_affected } => SqlResponse {
+                    status: "success".to_string(),
+                    results: vec![QueryResult {
+                        rows: None,
+                        row_count: rows_affected,
+                        columns: vec![],
+                        message: Some(format!("{} row(s) affected", rows_affected)),
+                    }],
+                    took_ms: 0,
+                    error: None,
+                },
+                ExecutionResult::Flushed { tables, bytes_written } => SqlResponse {
+                    status: "success".to_string(),
+                    results: vec![QueryResult {
+                        rows: Some(vec![{
+                            let mut m = std::collections::HashMap::new();
+                            m.insert("tables".to_string(), serde_json::Value::String(tables.join(",")));
+                            m.insert("bytes_written".to_string(), serde_json::Value::Number(bytes_written.into()));
+                            m
+                        }]),
+                        row_count: tables.len(),
+                        columns: vec!["tables".to_string(), "bytes_written".to_string()],
+                        message: None,
+                    }],
+                    took_ms: 0,
+                    error: None,
+                },
+                ExecutionResult::JobKilled { job_id, status } => SqlResponse {
+                    status: "success".to_string(),
+                    results: vec![QueryResult {
+                        rows: Some(vec![{
+                            let mut m = std::collections::HashMap::new();
+                            m.insert("job_id".to_string(), serde_json::Value::String(job_id));
+                            m.insert("status".to_string(), serde_json::Value::String(status));
+                            m
+                        }]),
+                        row_count: 1,
+                        columns: vec!["job_id".to_string(), "status".to_string()],
+                        message: None,
+                    }],
+                    took_ms: 0,
+                    error: None,
+                },
             }
+        }
             Err(kalamdb_core::error::KalamDbError::InvalidSql(_)) => {
                 // Any error from custom executor: fall back to DataFusion using the shared session_context
                 // where providers are registered by SqlExecutor.

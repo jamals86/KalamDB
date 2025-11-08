@@ -131,6 +131,13 @@ Transaction:
   2️⃣ Insert corresponding key/value into secondary index CF
   3️⃣ Commit atomically
 115) we are having so much AppContext:get() calls in schema_registry add it to the struct as a member and use it in all methods
+116) some places we have something like this: let storage_id = StorageId::from(statement.storage_id.as_str()); its not needed since storage_id is already a StorageId type
+and things like this:
+        let name = statement.name.as_str();
+        let namespace_id = NamespaceId::new(name);
+117) Make the link client send a X-Request-ID header with a unique id per request for better tracing and debugging
+118) Add to kalamdb-link client the ability to set custom headers for each request
+
 
 
 
