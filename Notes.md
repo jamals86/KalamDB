@@ -153,8 +153,8 @@ and things like this:
 125) Add an option in config.toml to log every sql query executed with its duration time for better tracing and debugging slow queries, this should be logged into a separate statements.log file
 
 
-
-
+126) Combine the 2 shared/user tables flushing and querying using a shared hybrid service which is used in both cases to reduce code duplication and maintenance burden
+both of them read from a path and from a store but user table filter the store which is the hot storage based on user id as well
 
 
 

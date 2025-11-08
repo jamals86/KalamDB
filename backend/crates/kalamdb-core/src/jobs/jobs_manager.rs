@@ -129,13 +129,19 @@ impl JobsManager {
         // Generate job ID with type-specific prefix
         let job_id = self.generate_job_id(&job_type);
 
+        // Extract optional table_name from parameters (if provided)
+        let table_name_from_params: Option<kalamdb_commons::models::TableName> = parameters
+            .get("table_name")
+            .and_then(|v| v.as_str())
+            .map(|s| kalamdb_commons::models::TableName::new(s.to_string()));
+
         // Create job with Queued status
         let now_ms = chrono::Utc::now().timestamp_millis();
         let mut job = Job {
             job_id: job_id.clone(),
             job_type,
             namespace_id,
-            table_name: None,
+            table_name: table_name_from_params,
             status: JobStatus::Queued,
             parameters: Some(parameters.to_string()),
             message: None,

@@ -194,6 +194,101 @@ impl SharedTableProvider {
         validate_insert_rows(&self.core.schema_ref(), rows)
     }
 
+    /// Scan Parquet files and return RecordBatches
+    ///
+    /// Reads all Parquet files for this shared table from the storage directory
+    /// and returns them as Arrow RecordBatches for merging with RocksDB data.
+    async fn scan_parquet_files(&self, _schema: &datafusion::arrow::datatypes::SchemaRef) -> DataFusionResult<Vec<datafusion::arrow::record_batch::RecordBatch>> {
+        use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        use std::fs;
+        use std::path::Path;
+
+        // Resolve storage path from SchemaRegistry
+        let storage_path = self
+            .core
+            .cache()
+            .get(self.core.table_id())
+            .map(|cached_data| cached_data.storage_path_template.clone())
+            .unwrap_or_else(|| String::new());
+
+        if storage_path.is_empty() {
+            log::debug!(
+                "Storage path resolution returned empty string for shared table {}.{}, skipping Parquet scan",
+                self.core.table_id().namespace_id().as_str(),
+                self.core.table_id().table_name().as_str()
+            );
+            return Ok(Vec::new());
+        }
+
+        let storage_dir = Path::new(&storage_path);
+        log::debug!(
+            "Scanning Parquet files in: {} (exists: {})",
+            storage_path,
+            storage_dir.exists()
+        );
+
+        if !storage_dir.exists() {
+            log::debug!("Storage directory does not exist, returning empty result");
+            return Ok(Vec::new());
+        }
+
+        let parquet_files: Vec<_> = fs::read_dir(storage_dir)
+            .map_err(|e| {
+                DataFusionError::Execution(format!("Failed to read storage directory: {}", e))
+            })?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().and_then(|s| s.to_str()) == Some("parquet"))
+            .map(|entry| entry.path())
+            .collect();
+
+        log::debug!("Found {} Parquet files for shared table", parquet_files.len());
+
+        if parquet_files.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut all_batches = Vec::new();
+
+        for parquet_file in parquet_files {
+            log::debug!("Reading Parquet file: {:?}", parquet_file);
+
+            let file = fs::File::open(&parquet_file).map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "Failed to open Parquet file {:?}: {}",
+                    parquet_file, e
+                ))
+            })?;
+
+            let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "Failed to create Parquet reader for {:?}: {}",
+                    parquet_file, e
+                ))
+            })?;
+
+            let reader = builder.build().map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "Failed to build Parquet reader for {:?}: {}",
+                    parquet_file, e
+                ))
+            })?;
+
+            for batch_result in reader {
+                let batch = batch_result.map_err(|e| {
+                    DataFusionError::Execution(format!(
+                        "Failed to read batch from {:?}: {}",
+                        parquet_file, e
+                    ))
+                })?;
+
+                all_batches.push(batch);
+            }
+        }
+
+        log::debug!("Total batches from Parquet files: {}", all_batches.len());
+        Ok(all_batches)
+    }
+
     /// DELETE operation (soft delete)
     ///
     /// Sets _deleted=true and updates _updated timestamp.
@@ -406,14 +501,14 @@ impl TableProvider for SharedTableProvider {
         // Get the full schema with system columns
         let full_schema = self.schema();
 
-        // Read all rows from the store
+        // **STEP 1: Scan RocksDB buffered data (hot storage)**
         let rows = self
             .store
             .scan_all()
             .map_err(|e| DataFusionError::Execution(format!("Failed to scan table: {}", e)))?;
 
         log::debug!(
-            "SharedTableProvider::scan - table_id: {}, scanned {} rows from partition: {}",
+            "SharedTableProvider::scan - table_id: {}, scanned {} rows from RocksDB partition: {}",
             self.core.table_id(),
             rows.len(),
             self.store.partition()
@@ -429,71 +524,82 @@ impl TableProvider for SharedTableProvider {
                 )
             })
             .collect();
-        let batch =
-            shared_rows_to_arrow_batch(&rows_with_ids, &full_schema, limit).map_err(|e| {
-                DataFusionError::Execution(format!("Failed to convert rows to Arrow: {}", e))
-            })?;
-
-        // Apply projection if specified
-        let (final_batch, final_schema) = if let Some(proj_indices) = projection {
-            // Handle empty projection (e.g., for COUNT(*))
-            if proj_indices.is_empty() {
-                // For COUNT(*), we need a batch with correct row count but no columns
-                // Use RecordBatch with a dummy null column to preserve row count
-                use datafusion::arrow::array::new_null_array;
-                use datafusion::arrow::datatypes::DataType;
-
-                //TODO: What is thus dummy column for?
-                // RecordBatch with 0 columns but preserving row count
-                // We need at least one column to preserve row count, so add a dummy null column
-                let dummy_field = Arc::new(Field::new("__dummy", DataType::Null, true));
-                let projected_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(vec![
-                    dummy_field.clone(),
-                ]));
-                let null_array = new_null_array(&DataType::Null, batch.num_rows());
-
-                let projected_batch = datafusion::arrow::record_batch::RecordBatch::try_new(
-                    projected_schema.clone(),
-                    vec![null_array],
-                )
-                .map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to create temp batch: {}", e))
-                })?;
-
-                (projected_batch, projected_schema)
-            } else {
-                let projected_columns: Vec<_> = proj_indices
-                    .iter()
-                    .map(|&i| batch.column(i).clone())
-                    .collect();
-
-                let projected_fields: Vec<_> = proj_indices
-                    .iter()
-                    .map(|&i| full_schema.field(i).clone())
-                    .collect();
-
-                let projected_schema =
-                    Arc::new(datafusion::arrow::datatypes::Schema::new(projected_fields));
-
-                let projected_batch = datafusion::arrow::record_batch::RecordBatch::try_new(
-                    projected_schema.clone(),
-                    projected_columns,
-                )
-                .map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to project batch: {}", e))
-                })?;
-
-                (projected_batch, projected_schema)
-            }
+        
+        let rocksdb_batch = if rows_with_ids.is_empty() {
+            // Create empty batch with correct schema
+            use datafusion::arrow::array::new_null_array;
+            use datafusion::arrow::datatypes::DataType;
+            
+            let dummy_field = Arc::new(Field::new("__dummy", DataType::Null, true));
+            let temp_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(vec![dummy_field.clone()]));
+            let null_array = new_null_array(&DataType::Null, 0);
+            
+            datafusion::arrow::record_batch::RecordBatch::try_new(
+                temp_schema,
+                vec![null_array],
+            ).map_err(|e| {
+                DataFusionError::Execution(format!("Failed to create empty batch: {}", e))
+            })?
         } else {
-            // Use full_schema (with system columns) instead of self.schema
-            (batch, full_schema.clone())
+            shared_rows_to_arrow_batch(&rows_with_ids, &full_schema, None).map_err(|e| {
+                DataFusionError::Execution(format!("Failed to convert rows to Arrow: {}", e))
+            })?
         };
 
-        // Create an in-memory table and return its scan plan
+        log::debug!(
+            "SharedTableProvider::scan - RocksDB batch has {} rows",
+            rocksdb_batch.num_rows()
+        );
+
+        // **STEP 2: Scan Parquet files (cold storage)**
+        let parquet_batches = self.scan_parquet_files(&full_schema).await?;
+
+        log::debug!(
+            "SharedTableProvider::scan - found {} Parquet batches",
+            parquet_batches.len()
+        );
+
+        // **STEP 3: Merge RocksDB + Parquet batches**
+        let mut all_batches = parquet_batches;
+        if rocksdb_batch.num_rows() > 0 {
+            all_batches.push(rocksdb_batch);
+        }
+
+        // Concatenate all batches into a single batch
+        let final_batch = if all_batches.is_empty() {
+            // Create empty batch with full schema
+            use datafusion::arrow::array::new_null_array;
+            use datafusion::arrow::datatypes::DataType;
+            
+            let dummy_field = Arc::new(Field::new("__dummy", DataType::Null, true));
+            let temp_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(vec![dummy_field.clone()]));
+            let null_array = new_null_array(&DataType::Null, 0);
+            
+            datafusion::arrow::record_batch::RecordBatch::try_new(
+                temp_schema,
+                vec![null_array],
+            ).map_err(|e| {
+                DataFusionError::Execution(format!("Failed to create empty batch: {}", e))
+            })?
+        } else if all_batches.len() == 1 {
+            all_batches.into_iter().next().unwrap()
+        } else {
+            // Concatenate multiple batches
+            use datafusion::arrow::compute::concat_batches;
+            concat_batches(&full_schema, &all_batches).map_err(|e| {
+                DataFusionError::Execution(format!("Failed to concatenate batches: {}", e))
+            })?
+        };
+
+        log::debug!(
+            "SharedTableProvider::scan - final merged batch has {} rows",
+            final_batch.num_rows()
+        );
+
+        // Create an in-memory table over the full schema and let DataFusion handle projection
         use datafusion::datasource::MemTable;
         let partitions = vec![vec![final_batch]];
-        let table = MemTable::try_new(final_schema, partitions)
+        let table = MemTable::try_new(full_schema, partitions)
             .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
 
         table.scan(_state, projection, &[], limit).await
