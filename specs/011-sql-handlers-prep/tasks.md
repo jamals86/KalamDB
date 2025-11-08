@@ -256,10 +256,10 @@ This is a Rust workspace project:
 
 **Note**: These are NOT in ddl_legacy.rs - implement from scratch following Phase 9 patterns
 
-- [ ] T100 [P] [US6] Implement FlushTableHandler in `handlers/flush/flush_table.rs` (impl TypedStatementHandler, use JobsManager.create_job with JobType::Flush)
-- [ ] T101 [P] [US6] Implement FlushAllTablesHandler in `handlers/flush/flush_all_tables.rs` (impl TypedStatementHandler, use SchemaRegistry.scan_namespace + JobsManager)
-- [ ] T102 [US6] Register flush handlers in HandlerRegistry::new()
-- [ ] T103 [US6] Add flush module re-exports in `handlers/flush/mod.rs`
+- [X] T100 [P] [US6] Implement FlushTableHandler in `handlers/flush/flush_table.rs` (impl TypedStatementHandler, use JobsManager.create_job with JobType::Flush)
+- [X] T101 [P] [US6] Implement FlushAllTablesHandler in `handlers/flush/flush_all.rs` (impl TypedStatementHandler, use system.tables provider + JobsManager)
+- [X] T102 [US6] Register flush handlers in HandlerRegistry::new()
+- [X] T103 [US6] Add flush module re-exports in `handlers/flush/mod.rs`
 - [ ] T104 [P] [US6] Add unit tests for FlushTableHandler (success + authorization + job creation)
 - [ ] T105 [P] [US6] Add unit tests for FlushAllTablesHandler (success + authorization + rows_affected count)
 
@@ -267,10 +267,10 @@ This is a Rust workspace project:
 
 **Note**: These are NOT in ddl_legacy.rs - implement from scratch
 
-- [ ] T106 [P] [US6] Implement KillJobHandler in `handlers/jobs/kill_job.rs` (impl TypedStatementHandler, use JobsManager.cancel_job)
-- [ ] T107 [P] [US6] Implement KillLiveQueryHandler in `handlers/jobs/kill_live_query.rs` (impl TypedStatementHandler, use LiveQueryManager)
-- [ ] T108 [US6] Register job handlers in HandlerRegistry::new()
-- [ ] T109 [US6] Add jobs module re-exports in `handlers/jobs/mod.rs`
+- [X] T106 [P] [US6] Implement KillJobHandler in `handlers/jobs/kill_job.rs` (impl TypedStatementHandler, use JobsManager.cancel_job)
+- [X] T107 [P] [US6] Implement KillLiveQueryHandler in `handlers/jobs/kill_live_query.rs` (impl TypedStatementHandler, use LiveQueryManager.unregister_subscription)
+- [X] T108 [US6] Register job handlers in HandlerRegistry::new()
+- [X] T109 [US6] Add jobs module re-exports in `handlers/jobs/mod.rs`
 - [ ] T110 [P] [US6] Add unit tests for KillJobHandler (success + authorization + self-service check)
 - [ ] T111 [P] [US6] Add unit tests for KillLiveQueryHandler (success + authorization)
 
@@ -278,20 +278,20 @@ This is a Rust workspace project:
 
 **Note**: This is NOT in ddl_legacy.rs - implement from scratch
 
-- [ ] T112 [US6] Implement SubscribeHandler in `handlers/subscription/subscribe.rs` (impl TypedStatementHandler, use LiveQueryManager)
-- [ ] T113 [US6] Register SubscribeHandler in HandlerRegistry::new()
-- [ ] T114 [US6] Add subscription module re-exports in `handlers/subscription/mod.rs`
+- [X] T112 [US6] Implement SubscribeHandler in `handlers/subscription/subscribe.rs` (impl TypedStatementHandler, returns ExecutionResult::Subscription metadata)
+- [X] T113 [US6] Register SubscribeHandler in HandlerRegistry::new()
+- [X] T114 [US6] Add subscription module re-exports in `handlers/subscription/mod.rs`
 - [ ] T115 [US6] Add unit tests for SubscribeHandler (success + authorization + subscription_id generation)
 
 ### User Management Handlers (3 handlers) - Implement from scratch
 
 **Note**: These are NOT in ddl_legacy.rs - implement from scratch with bcrypt/JWT patterns
 
-- [ ] T116 [P] [US6] Implement CreateUserHandler in `handlers/user/create.rs` (impl TypedStatementHandler, use AppContext.system_tables().users(), bcrypt password hashing)
-- [ ] T117 [P] [US6] Implement AlterUserHandler in `handlers/user/alter.rs` (impl TypedStatementHandler, self-service password change + admin-only role change)
-- [ ] T118 [P] [US6] Implement DropUserHandler in `handlers/user/drop.rs` (impl TypedStatementHandler, soft delete with deleted_at timestamp)
-- [ ] T119 [US6] Register user handlers in HandlerRegistry::new()
-- [ ] T120 [US6] Add user module re-exports in `handlers/user/mod.rs`
+- [X] T116 [P] [US6] Implement CreateUserHandler in `handlers/user/create.rs` (impl TypedStatementHandler, use AppContext.system_tables().users(), bcrypt password hashing)
+- [X] T117 [P] [US6] Implement AlterUserHandler in `handlers/user/alter.rs` (impl TypedStatementHandler, self-service password change + admin-only role change)
+- [X] T118 [P] [US6] Implement DropUserHandler in `handlers/user/drop.rs` (impl TypedStatementHandler, soft delete with deleted_at timestamp)
+- [X] T119 [US6] Register user handlers in HandlerRegistry::new()
+- [X] T120 [US6] Add user module re-exports in `handlers/user/mod.rs`
 - [ ] T121 [P] [US6] Add unit tests for CreateUserHandler (success + authorization + password validation)
 - [ ] T122 [P] [US6] Add unit tests for AlterUserHandler (success + self-service password + admin-only role change)
 - [ ] T123 [P] [US6] Add unit tests for DropUserHandler (success + authorization + soft delete)

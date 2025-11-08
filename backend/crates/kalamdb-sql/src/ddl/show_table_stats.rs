@@ -12,7 +12,7 @@ use kalamdb_commons::models::{NamespaceId, TableName};
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShowTableStatsStatement {
     /// Optional namespace (if qualified name used)
-    pub namespace_id: Option<NamespaceId>,
+    pub namespace_id: Option<NamespaceId>, //TODO: consider making this mandatory
 
     /// Table name to show statistics for
     pub table_name: TableName,

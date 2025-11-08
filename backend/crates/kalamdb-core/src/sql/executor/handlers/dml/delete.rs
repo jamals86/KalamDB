@@ -3,11 +3,13 @@
 //! Handles DELETE statements with parameter binding support via DataFusion.
 
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::typed::TypedStatementHandler;
+use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use async_trait::async_trait;
 use datafusion::execution::context::SessionContext;
-use kalamdb_sql::ddl::DeleteStatement;
+use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
+use kalamdb_commons::models::{NamespaceId, TableName};
+use crate::app_context::AppContext;
 
 /// Handler for DELETE statements
 ///
@@ -28,33 +30,67 @@ impl Default for DeleteHandler {
 }
 
 #[async_trait]
-impl TypedStatementHandler<DeleteStatement> for DeleteHandler {
+impl StatementHandler for DeleteHandler {
     async fn execute(
         &self,
         _session: &SessionContext,
-        _statement: DeleteStatement,
+        statement: SqlStatement,
         _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        // TODO: Implement DELETE handler with TypedStatementHandler pattern
-        Err(KalamDbError::InvalidOperation(
-            "DELETE handler not yet implemented for TypedStatementHandler pattern".into(),
-        ))
+        if !matches!(statement.kind(), SqlStatementKind::Delete(_)) {
+            return Err(KalamDbError::InvalidOperation("DeleteHandler received wrong statement kind".into()));
+        }
+    let sql = statement.as_str();
+    let (namespace, table_name, row_id) = self.simple_parse_delete(sql)?;
+        if row_id.is_none() { return Err(KalamDbError::InvalidOperation("DELETE currently requires WHERE id = <value>".into())); }
+        let row_id = row_id.unwrap();
+
+        // Execute native delete
+        let schema_registry = AppContext::get().schema_registry();
+        use kalamdb_commons::models::TableId;
+        let table_id = TableId::new(namespace.clone(), table_name.clone());
+        let _def = schema_registry.get_table_definition(&table_id)?.ok_or_else(|| KalamDbError::NotFound(format!("Table {}.{} not found", namespace.as_str(), table_name.as_str())))?;
+        let shared = schema_registry.get_user_table_shared(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
+        use crate::tables::user_tables::UserTableAccess;
+        let access = UserTableAccess::new(shared, context.user_id.clone(), context.user_role.clone());
+        let _deleted = access.delete_row(&row_id)?;
+        Ok(ExecutionResult::Deleted { rows_affected: 1 })
     }
 
-    async fn check_authorization(
-        &self,
-        _statement: &DeleteStatement,
-        context: &ExecutionContext,
-    ) -> Result<(), KalamDbError> {
-        // DELETE requires at least User role
+    async fn check_authorization(&self, statement: &SqlStatement, context: &ExecutionContext) -> Result<(), KalamDbError> {
+        if !matches!(statement.kind(), SqlStatementKind::Delete(_)) {
+            return Err(KalamDbError::InvalidOperation("DeleteHandler received wrong statement kind".into()));
+        }
         use kalamdb_commons::Role;
         match context.user_role {
             Role::System | Role::Dba | Role::Service | Role::User => Ok(()),
-            _ => Err(KalamDbError::PermissionDenied(
-                "DELETE requires User role or higher".to_string(),
-            )),
+            _ => Err(KalamDbError::PermissionDenied("DELETE requires User role or higher".to_string())),
         }
+    }
+}
+
+impl DeleteHandler {
+    fn simple_parse_delete(&self, sql: &str) -> Result<(NamespaceId, TableName, Option<String>), KalamDbError> {
+        // Expect: DELETE FROM <ns>.<table> WHERE id = <value>
+        let upper = sql.to_uppercase();
+        let from_pos = upper.find("DELETE FROM ").ok_or_else(|| KalamDbError::InvalidOperation("Missing 'DELETE FROM'".into()))?;
+        let where_pos = upper.find(" WHERE ");
+        let head = if let Some(wp) = where_pos { &sql[from_pos + 12..wp] } else { &sql[from_pos + 12..] };
+        let (ns, tbl) = {
+            let parts: Vec<&str> = head.trim().split('.').collect();
+            match parts.len() { 1 => (NamespaceId::new("default"), TableName::new(parts[0].trim().to_string())), 2 => (NamespaceId::new(parts[0].trim().to_string()), TableName::new(parts[1].trim().to_string())), _ => return Err(KalamDbError::InvalidOperation("Invalid table reference".into())) }
+        };
+        let row_id = if let Some(wp) = where_pos {
+            let cond = sql[wp + 7..].trim();
+            // Support only 'id = <literal>'
+            let parts: Vec<&str> = cond.split('=').collect();
+            if parts.len() == 2 && parts[0].trim().eq_ignore_ascii_case("id") {
+                let v = parts[1].trim().trim_matches('\'').trim_matches('"').to_string();
+                Some(v)
+            } else { None }
+        } else { None };
+        Ok((ns, tbl, row_id))
     }
 }
 
@@ -72,8 +108,7 @@ mod tests {
     async fn test_delete_authorization_user() {
         let handler = DeleteHandler::new();
         let ctx = test_context(Role::User);
-        let stmt = kalamdb_sql::ddl::DeleteStatement; // Typed statement marker
-
+        let stmt = SqlStatement::new("DELETE FROM default.test WHERE id = 1".to_string(), SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement));
         let result = handler.check_authorization(&stmt, &ctx).await;
         assert!(result.is_ok());
     }
@@ -82,8 +117,7 @@ mod tests {
     async fn test_delete_authorization_dba() {
         let handler = DeleteHandler::new();
         let ctx = test_context(Role::Dba);
-        let stmt = kalamdb_sql::ddl::DeleteStatement;
-
+        let stmt = SqlStatement::new("DELETE FROM default.test WHERE id = 1".to_string(), SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement));
         let result = handler.check_authorization(&stmt, &ctx).await;
         assert!(result.is_ok());
     }
@@ -92,8 +126,7 @@ mod tests {
     async fn test_delete_authorization_service() {
         let handler = DeleteHandler::new();
         let ctx = test_context(Role::Service);
-        let stmt = kalamdb_sql::ddl::DeleteStatement;
-
+        let stmt = SqlStatement::new("DELETE FROM default.test WHERE id = 1".to_string(), SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement));
         let result = handler.check_authorization(&stmt, &ctx).await;
         assert!(result.is_ok());
     }

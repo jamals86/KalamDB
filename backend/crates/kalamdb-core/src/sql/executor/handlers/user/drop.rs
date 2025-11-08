@@ -7,6 +7,7 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValu
 use datafusion::execution::context::SessionContext;
 use kalamdb_sql::ddl::DropUserStatement;
 use std::sync::Arc;
+// No direct UserId usage, removing unused import
 
 /// Handler for DROP USER
 pub struct DropUserHandler {
@@ -24,13 +25,21 @@ impl TypedStatementHandler<DropUserStatement> for DropUserHandler {
     async fn execute(
         &self,
         _session: &SessionContext,
-        _statement: DropUserStatement,
+        statement: DropUserStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        Err(KalamDbError::InvalidOperation(
-            "DROP USER not yet implemented in typed handler".to_string(),
-        ))
+        let users = self.app_context.system_tables().users();
+        let existing = users.get_user_by_username(&statement.username)?;
+        if existing.is_none() {
+            if statement.if_exists {
+                return Ok(ExecutionResult::Success { message: format!("User '{}' does not exist (skipped)", statement.username) });
+            }
+            return Err(KalamDbError::NotFound(format!("User '{}' not found", statement.username)));
+        }
+        let user = existing.unwrap();
+        users.delete_user(&user.id)?;
+        Ok(ExecutionResult::Success { message: format!("User '{}' dropped (soft delete)", statement.username) })
     }
 
     async fn check_authorization(

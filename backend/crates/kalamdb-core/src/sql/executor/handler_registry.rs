@@ -105,8 +105,8 @@ impl HandlerRegistry {
     /// This is called once during SqlExecutor initialization.
     pub fn new(app_context: Arc<AppContext>) -> Self {
         use kalamdb_sql::statement_classifier::SqlStatementKind;
-        use kalamdb_commons::models::{NamespaceId, StorageId};
-        use kalamdb_commons::{Role, TableType};
+    use kalamdb_commons::models::{NamespaceId, StorageId};
+    use kalamdb_commons::TableType; // Role not needed here
         
         let registry = Self {
             handlers: DashMap::new(),
@@ -288,106 +288,107 @@ impl HandlerRegistry {
         // ============================================================================
         // FLUSH HANDLERS
         // ============================================================================
-        
-        // TODO: Fix FlushTableStatement placeholder
-        // registry.register_typed(
-        //     SqlStatementKind::FlushTable(...),
-        //     FlushTableHandler::new(app_context.clone()),
-        //     |stmt| match stmt.kind() { SqlStatementKind::FlushTable(s) => Some(s.clone()), _ => None },
-        // );
+        registry.register_typed(
+            SqlStatementKind::FlushTable(kalamdb_sql::ddl::FlushTableStatement {
+                namespace: NamespaceId::new("_placeholder"),
+                table_name: TableName::new("_placeholder"),
+            }),
+            FlushTableHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() { SqlStatementKind::FlushTable(s) => Some(s.clone()), _ => None },
+        );
 
-        // TODO: Fix FlushAllTablesStatement placeholder - needs namespace field
-        // registry.register_typed(
-        //     SqlStatementKind::FlushAllTables(kalamdb_sql::ddl::FlushAllTablesStatement {
-        //         namespace: NamespaceId::new("_placeholder"),
-        //     }),
-        //     FlushAllTablesHandler::new(app_context.clone()),
-        //     |stmt| match stmt.kind() { SqlStatementKind::FlushAllTables(s) => Some(s.clone()), _ => None },
-        // );
+        registry.register_typed(
+            SqlStatementKind::FlushAllTables(kalamdb_sql::ddl::FlushAllTablesStatement {
+                namespace: NamespaceId::new("_placeholder"),
+            }),
+            FlushAllTablesHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() { SqlStatementKind::FlushAllTables(s) => Some(s.clone()), _ => None },
+        );
 
         // ============================================================================
         // JOB HANDLERS
         // ============================================================================
-        
-        // TODO: Fix JobCommand placeholder - enum variant is Kill, not KillJob
-        // registry.register_typed(
-        //     SqlStatementKind::KillJob(kalamdb_sql::ddl::JobCommand::Kill { job_id: String::new() }),
-        //     KillJobHandler::new(app_context.clone()),
-        //     |stmt| match stmt.kind() { SqlStatementKind::KillJob(s) => Some(s.clone()), _ => None },
-        // );
+        registry.register_typed(
+            SqlStatementKind::KillJob(kalamdb_sql::ddl::JobCommand::Kill { job_id: String::new() }),
+            KillJobHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() { SqlStatementKind::KillJob(s) => Some(s.clone()), _ => None },
+        );
 
-        // TODO: Fix KillLiveQueryStatement placeholder
-        // registry.register_typed(
-        //     SqlStatementKind::KillLiveQuery(...),
-        //     KillLiveQueryHandler::new(app_context.clone()),
-        //     |stmt| match stmt.kind() { SqlStatementKind::KillLiveQuery(s) => Some(s.clone()), _ => None },
-        // );
+        // For discriminant extraction, we only need a placeholder instance. Use LiveId::from_string.
+        let placeholder_live = kalamdb_commons::models::LiveId::from_string("user123-conn_abc-table_q1-q1").unwrap_or_else(|_| {
+            kalamdb_commons::models::LiveId::new(
+                kalamdb_commons::models::ConnectionId::new("user123".to_string(), "conn_abc".to_string()),
+                "table_q1".to_string(),
+                "q1".to_string(),
+            )
+        });
+        registry.register_typed(
+            SqlStatementKind::KillLiveQuery(kalamdb_sql::ddl::KillLiveQueryStatement { live_id: placeholder_live }),
+            KillLiveQueryHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() { SqlStatementKind::KillLiveQuery(s) => Some(s.clone()), _ => None },
+        );
 
         // ============================================================================
         // USER HANDLERS
         // ============================================================================
-        
-        // TODO: Fix CreateUserStatement placeholder - needs auth_type and email fields
-        // registry.register_typed(
-        //     SqlStatementKind::CreateUser(...),
-        //     CreateUserHandler::new(app_context.clone()),
-        //     |stmt| match stmt.kind() { SqlStatementKind::CreateUser(s) => Some(s.clone()), _ => None },
-        // );
-
-        // TODO: Fix AlterUserStatement placeholder - different field structure
-        // registry.register_typed(
-        //     SqlStatementKind::AlterUser(...),
-        //     AlterUserHandler::new(app_context.clone()),
-        //     |stmt| match stmt.kind() { SqlStatementKind::AlterUser(s) => Some(s.clone()), _ => None },
-        // );
-
-        // TODO: Fix DropUserStatement placeholder
-        // registry.register_typed(
-        //     SqlStatementKind::DropUser(...),
-        //     DropUserHandler::new(app_context.clone()),
-        //     |stmt| match stmt.kind() { SqlStatementKind::DropUser(s) => Some(s.clone()), _ => None },
-        // );
+    use kalamdb_sql::ddl::{CreateUserStatement, AlterUserStatement, DropUserStatement, UserModification};
+    use kalamdb_commons::AuthType; // Role not needed in placeholder (defaults handled by statement parsing)
+        registry.register_typed(
+            SqlStatementKind::CreateUser(CreateUserStatement {
+                username: "_placeholder".to_string(),
+                auth_type: AuthType::Internal,
+                role: kalamdb_commons::Role::User,
+                email: None,
+                password: None,
+            }),
+            CreateUserHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() { SqlStatementKind::CreateUser(s) => Some(s.clone()), _ => None },
+        );
+        registry.register_typed(
+            SqlStatementKind::AlterUser(AlterUserStatement {
+                username: "_placeholder".to_string(),
+                modification: UserModification::SetEmail("_placeholder".to_string()),
+            }),
+            AlterUserHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() { SqlStatementKind::AlterUser(s) => Some(s.clone()), _ => None },
+        );
+        registry.register_typed(
+            SqlStatementKind::DropUser(DropUserStatement { username: "_placeholder".to_string(), if_exists: false }),
+            DropUserHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() { SqlStatementKind::DropUser(s) => Some(s.clone()), _ => None },
+        );
 
         // ============================================================================
         // SUBSCRIPTION HANDLER
         // ============================================================================
-        
-        // TODO: Fix SubscribeStatement placeholder - needs where_clause field
-        // registry.register_typed(
-        //     SqlStatementKind::Subscribe(...),
-        //     SubscribeHandler::new(app_context.clone()),
-        //     |stmt| match stmt.kind() { SqlStatementKind::Subscribe(s) => Some(s.clone()), _ => None },
-        // );
+        use kalamdb_sql::ddl::{SubscribeStatement, SubscribeOptions};
+        registry.register_typed(
+            SqlStatementKind::Subscribe(SubscribeStatement {
+                namespace: NamespaceId::new("_placeholder"),
+                table_name: TableName::new("_placeholder"),
+                where_clause: None,
+                options: SubscribeOptions::default(),
+            }),
+            SubscribeHandler::new(app_context.clone()),
+            |stmt| match stmt.kind() { SqlStatementKind::Subscribe(s) => Some(s.clone()), _ => None },
+        );
 
         // ============================================================================
         // DML HANDLERS (TypedStatementHandler pattern - Phase 7)
         // ============================================================================
         
-        registry.register_typed(
+        // Use dynamic handlers for DML to access original SQL text (required for parsing columns/values)
+        registry.register_dynamic(
             SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement),
             InsertHandler::new(),
-            |stmt| match stmt.kind() {
-                SqlStatementKind::Insert(s) => Some(s.clone()),
-                _ => None,
-            },
         );
-
-        registry.register_typed(
+        registry.register_dynamic(
             SqlStatementKind::Update(kalamdb_sql::ddl::UpdateStatement),
             UpdateHandler::new(),
-            |stmt| match stmt.kind() {
-                SqlStatementKind::Update(s) => Some(s.clone()),
-                _ => None,
-            },
         );
-
-        registry.register_typed(
+        registry.register_dynamic(
             SqlStatementKind::Delete(kalamdb_sql::ddl::DeleteStatement),
             DeleteHandler::new(),
-            |stmt| match stmt.kind() {
-                SqlStatementKind::Delete(s) => Some(s.clone()),
-                _ => None,
-            },
         );
 
         registry
@@ -559,10 +560,6 @@ mod tests {
     #[tokio::test]
     async fn test_registry_unregistered_handler() {
         use kalamdb_sql::statement_classifier::SqlStatementKind;
-        use kalamdb_commons::TableType;
-        use std::sync::Arc;
-        use arrow::datatypes::Schema;
-        use std::collections::HashMap;
               
         init_test_app_context();
         let app_ctx = AppContext::get();
@@ -570,27 +567,14 @@ mod tests {
         let session = SessionContext::new();
         let ctx = test_context();
 
-        // CreateTableHandler is NOT registered (commented out due to complex placeholder)
+        // Use an unclassified statement (not in SqlStatementKind)
+        // For this test, we'll use a deliberately malformed statement kind
         let stmt = SqlStatement::new(
-            "CREATE TABLE test (id INT)".to_string(),
-            SqlStatementKind::CreateTable(kalamdb_sql::ddl::CreateTableStatement {
-                table_name: kalamdb_commons::TableName::new("test"),
-                namespace_id: NamespaceId::new("default"),
-                table_type: TableType::User,
-                schema: Arc::new(Schema::empty()),
-                column_defaults: HashMap::new(),
-                primary_key_column: None,
-                storage_id: None,
-                use_user_storage: false,
-                flush_policy: None,
-                deleted_retention_hours: None,
-                ttl_seconds: None,
-                if_not_exists: false,
-                access_level: None,
-            })
+            "SOME UNKNOWN STATEMENT".to_string(),
+            SqlStatementKind::Unknown // This should not have a handler
         );
 
-        // Handler not registered (commented out in registry due to complex placeholders)
+        // Handler not registered for "Unknown" kind
         assert!(!registry.has_handler(&stmt));
 
         // Should return error
@@ -655,16 +639,16 @@ mod tests {
         // Check handler is registered (T056)
         assert!(registry.has_handler(&stmt));
 
-        // Execute via registry - handler is a stub that returns "not yet implemented"
+        // Execute via registry - should fail with table not found (handler is implemented)
         let result = registry
             .handle(&session, stmt, vec![], &ctx)
             .await;
         
-        // Accept either success or "not yet implemented" error (handlers are stubs)
+        // Handler is now fully implemented, expect table not found error
         match result {
-            Ok(_) => {} // Future implementation may return success
-            Err(KalamDbError::InvalidOperation(msg)) if msg.contains("not yet implemented") => {}
+            Err(KalamDbError::InvalidOperation(msg)) if msg.contains("does not exist") => {}
             Err(e) => panic!("Unexpected error: {:?}", e),
+            Ok(_) => panic!("Expected table not found error"),
         }
     }
 
@@ -686,16 +670,16 @@ mod tests {
         // Check handler is registered (T057)
         assert!(registry.has_handler(&stmt));
 
-        // Execute via registry - handler is a stub that returns "not yet implemented"
+        // Execute via registry - should fail with WHERE required (handler is implemented)
         let result = registry
             .handle(&session, stmt, vec![], &ctx)
             .await;
         
-        // Accept either success or "not yet implemented" error (handlers are stubs)
+        // Handler is now fully implemented, expect WHERE id = error
         match result {
-            Ok(_) => {} // Future implementation may return success
-            Err(KalamDbError::InvalidOperation(msg)) if msg.contains("not yet implemented") => {}
+            Err(KalamDbError::InvalidOperation(msg)) if msg.contains("WHERE id") => {}
             Err(e) => panic!("Unexpected error: {:?}", e),
+            Ok(_) => panic!("Expected WHERE clause required error"),
         }
     }
 
@@ -717,16 +701,16 @@ mod tests {
         // Check handler is registered (T058)
         assert!(registry.has_handler(&stmt));
 
-        // Execute via registry - handler is a stub that returns "not yet implemented"
+        // Execute via registry - should fail with table not found (handler is implemented)
         let result = registry
             .handle(&session, stmt, vec![], &ctx)
             .await;
         
-        // Accept either success or "not yet implemented" error (handlers are stubs)
+        // Handler is now fully implemented, expect table not found error
         match result {
-            Ok(_) => {} // Future implementation may return success
-            Err(KalamDbError::InvalidOperation(msg)) if msg.contains("not yet implemented") => {}
+            Err(KalamDbError::NotFound(msg)) if msg.contains("not found") => {}
             Err(e) => panic!("Unexpected error: {:?}", e),
+            Ok(_) => panic!("Expected table not found error"),
         }
     }
 }

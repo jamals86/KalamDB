@@ -7,6 +7,7 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValu
 use datafusion::execution::context::SessionContext;
 use kalamdb_sql::ddl::SubscribeStatement;
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// Handler for SUBSCRIBE TO (Live Query)
 pub struct SubscribeHandler {
@@ -24,13 +25,20 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
     async fn execute(
         &self,
         _session: &SessionContext,
-        _statement: SubscribeStatement,
+        statement: SubscribeStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        Err(KalamDbError::InvalidOperation(
-            "SUBSCRIBE not yet implemented in typed handler".to_string(),
-        ))
+        // Generate a subscription id (actual registration happens over WebSocket handshake)
+        let subscription_id = format!(
+            "sub-{}-{}-{}",
+            statement.namespace.as_str(),
+            statement.table_name.as_str(),
+            Uuid::new_v4().simple()
+        );
+        // Channel placeholder (could read from config.toml later)
+        let channel = "ws://localhost:8080/ws".to_string();
+        Ok(ExecutionResult::Subscription { subscription_id, channel })
     }
 
     async fn check_authorization(

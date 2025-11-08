@@ -17,7 +17,7 @@ pub enum ColumnOperation {
     /// Add a new column
     Add {
         column_name: String,
-        data_type: String,
+        data_type: String, // TODO: consider using a KalamDataType enum
         nullable: bool,
         default_value: Option<String>,
     },

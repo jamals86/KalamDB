@@ -24,13 +24,13 @@ impl TypedStatementHandler<KillLiveQueryStatement> for KillLiveQueryHandler {
     async fn execute(
         &self,
         _session: &SessionContext,
-        _statement: KillLiveQueryStatement,
+        statement: KillLiveQueryStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        Err(KalamDbError::InvalidOperation(
-            "KILL LIVE QUERY not yet implemented in typed handler".to_string(),
-        ))
+        let manager = self.app_context.live_query_manager();
+        manager.unregister_subscription(&statement.live_id).await?;
+        Ok(ExecutionResult::Success { message: format!("Live query killed: {}", statement.live_id) })
     }
 
     async fn check_authorization(

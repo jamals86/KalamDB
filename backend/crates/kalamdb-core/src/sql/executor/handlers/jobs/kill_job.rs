@@ -5,6 +5,7 @@ use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::execution::context::SessionContext;
+use kalamdb_commons::JobId;
 use kalamdb_sql::ddl::JobCommand;
 use std::sync::Arc;
 
@@ -24,13 +25,18 @@ impl TypedStatementHandler<JobCommand> for KillJobHandler {
     async fn execute(
         &self,
         _session: &SessionContext,
-        _statement: JobCommand,
+        statement: JobCommand,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        Err(KalamDbError::InvalidOperation(
-            "KILL JOB not yet implemented in typed handler".to_string(),
-        ))
+        let job_manager = self.app_context.job_manager();
+        match statement {
+            JobCommand::Kill { job_id } => {
+                let job_id_typed = JobId::new(job_id.clone());
+                job_manager.cancel_job(&job_id_typed).await?;
+                Ok(ExecutionResult::JobKilled { job_id, status: "cancelled".to_string() })
+            }
+        }
     }
 
     async fn check_authorization(

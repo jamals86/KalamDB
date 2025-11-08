@@ -39,7 +39,7 @@ pub enum JobCommand {
     /// Kill (cancel) a running job
     Kill {
         /// Job ID to cancel
-        job_id: String,
+        job_id: String, //TODO: use JobId type?
     },
 }
 

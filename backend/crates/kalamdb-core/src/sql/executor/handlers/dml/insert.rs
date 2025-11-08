@@ -11,17 +11,13 @@
 
 use crate::app_context::AppContext;
 use crate::error::KalamDbError;
-use crate::sql::executor::handlers::typed::TypedStatementHandler;
+use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use async_trait::async_trait;
 use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::{NamespaceId, TableName};
-use kalamdb_sql::ddl::InsertStatement;
-use kalamdb_sql::statement_classifier::SqlStatement;
+use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use serde_json::Value as JsonValue;
-use sqlparser::ast::{Expr, Statement};
-use sqlparser::dialect::GenericDialect;
-use sqlparser::parser::Parser;
 
 /// Handler for INSERT statements
 ///
@@ -46,33 +42,67 @@ impl Default for InsertHandler {
 }
 
 #[async_trait]
-impl TypedStatementHandler<InsertStatement> for InsertHandler {
+impl StatementHandler for InsertHandler {
     async fn execute(
         &self,
         _session: &SessionContext,
-        _statement: InsertStatement,
-        _params: Vec<ScalarValue>,
-        _context: &ExecutionContext,
+        statement: SqlStatement,
+        params: Vec<ScalarValue>,
+        context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        // TODO: Implement INSERT handler with TypedStatementHandler pattern
-        // The marker type doesn't contain SQL text, needs architectural decision
-        Err(KalamDbError::InvalidOperation(
-            "INSERT handler not yet implemented for TypedStatementHandler pattern".into(),
-        ))
+        // Ensure correct variant
+        if !matches!(statement.kind(), SqlStatementKind::Insert(_)) {
+            return Err(KalamDbError::InvalidOperation("InsertHandler received wrong statement kind".into()));
+        }
+
+        let sql = statement.as_str();
+        // Very lightweight INSERT parser (avoids tight coupling to sqlparser internals)
+        let (namespace, table_name, columns, rows_tokens) = self.simple_parse_insert(sql)?;
+        // Validate table exists via SchemaRegistry fast path (using TableId)
+        use kalamdb_commons::models::TableId;
+        let table_id = TableId::new(namespace.clone(), table_name.clone());
+        let schema_registry = AppContext::get().schema_registry();
+        let exists = schema_registry.table_exists(&table_id)?;
+        if !exists {
+            return Err(KalamDbError::InvalidOperation(format!("Table '{}.{}' does not exist", namespace.as_str(), table_name.as_str())));
+        }
+
+        // Bind parameters and construct JSON rows
+        let mut json_rows: Vec<JsonValue> = Vec::new();
+        for row_tokens in rows_tokens {
+            let mut obj = serde_json::Map::new();
+            if columns.is_empty() {
+                // Positional mapping: column order from schema will be used later; here just store as v1,v2...
+                // For simplicity require explicit column list for MVP
+                return Err(KalamDbError::InvalidOperation("INSERT without explicit column list not supported yet".into()));
+            }
+            if row_tokens.len() != columns.len() {
+                return Err(KalamDbError::InvalidOperation(format!("VALUES column count mismatch: expected {} got {}", columns.len(), row_tokens.len())));
+            }
+            for (col, token) in columns.iter().zip(row_tokens.iter()) {
+                let value = self.token_to_json(token, &params)?;
+                obj.insert(col.clone(), value);
+            }
+            json_rows.push(JsonValue::Object(obj));
+        }
+
+        // Execute native insert
+        let rows_affected = self.execute_native_insert(&namespace, &table_name, &context.user_id, json_rows).await?;
+        Ok(ExecutionResult::Inserted { rows_affected })
     }
 
     async fn check_authorization(
         &self,
-        _statement: &InsertStatement,
+        statement: &SqlStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
-        // INSERT requires at least User role
+        if !matches!(statement.kind(), SqlStatementKind::Insert(_)) {
+            return Err(KalamDbError::InvalidOperation("InsertHandler received wrong statement kind".into()));
+        }
         use kalamdb_commons::Role;
         match context.user_role {
             Role::System | Role::Dba | Role::Service | Role::User => Ok(()),
-            _ => Err(KalamDbError::PermissionDenied(
-                "INSERT requires User role or higher".to_string(),
-            )),
+            _ => Err(KalamDbError::PermissionDenied("INSERT requires User role or higher".to_string())),
         }
     }
 }
@@ -136,66 +166,58 @@ impl InsertHandler {
         }
     }
 
-    /// Count total placeholders in VALUES clause for validation (T062)
-    fn count_placeholders(
-        &self,
-        rows: &[Vec<Expr>],
-    ) -> Result<usize, KalamDbError> {
-        let mut count = 0;
-        for row in rows {
-            for expr in row {
-                if matches!(expr, Expr::Value(val) if matches!(val.value, sqlparser::ast::Value::Placeholder(_))) {
-                    count += 1;
-                }
+    /// Convert token string to JSON value, binding parameters as needed
+    fn token_to_json(&self, token: &str, params: &[ScalarValue]) -> Result<JsonValue, KalamDbError> {
+        let t = token.trim();
+        
+        // Check for placeholder ($1, $2, etc.)
+        if t.starts_with('$') {
+            let param_num: usize = t[1..].parse()
+                .map_err(|_| KalamDbError::InvalidOperation(format!("Invalid placeholder: {}", t)))?;
+            
+            if param_num == 0 || param_num > params.len() {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Parameter ${} out of range (have {} parameters)",
+                    param_num, params.len()
+                )));
             }
+            
+            return self.scalar_value_to_json(&params[param_num - 1]);
         }
-        Ok(count)
-    }
-
-    /// Bind a parameter to an expression value
-    fn bind_parameter(
-        &self,
-        expr: &Expr,
-        params: &[ScalarValue],
-        param_index: &mut usize,
-    ) -> Result<JsonValue, KalamDbError> {
-        match expr {
-            // $1, $2, etc.
-            Expr::Value(val_with_span) => {
-                match &val_with_span.value {
-                    sqlparser::ast::Value::Placeholder(placeholder) => {
-                        // Extract placeholder number
-                        let param_num: usize = placeholder
-                            .trim_start_matches('$')
-                            .parse()
-                            .map_err(|_| {
-                                KalamDbError::InvalidOperation(format!(
-                                    "Invalid placeholder: {}",
-                                    placeholder
-                                ))
-                            })?;
-
-                        if param_num == 0 || param_num > params.len() {
-                            return Err(KalamDbError::InvalidOperation(format!(
-                                "Parameter ${} out of range (have {} parameters)",
-                                param_num,
-                                params.len()
-                            )));
-                        }
-
-                        // Convert DataFusion ScalarValue to JSON
-                        self.scalar_value_to_json(&params[param_num - 1])
-                    }
-                    // Literal values (no parameter)
-                    other_value => self.sqlparser_value_to_json(other_value),
-                }
-            }
-
-            _ => Err(KalamDbError::InvalidOperation(format!(
-                "Unsupported expression in INSERT VALUES: {:?}",
-                expr
-            ))),
+        
+        // Check for NULL
+        if t.eq_ignore_ascii_case("NULL") {
+            return Ok(JsonValue::Null);
         }
+        
+        // Check for boolean
+        if t.eq_ignore_ascii_case("TRUE") {
+            return Ok(JsonValue::Bool(true));
+        }
+        if t.eq_ignore_ascii_case("FALSE") {
+            return Ok(JsonValue::Bool(false));
+        }
+        
+        // Check for quoted string
+        if (t.starts_with('\'') && t.ends_with('\'')) || 
+           (t.starts_with('"') && t.ends_with('"')) ||
+           (t.starts_with('`') && t.ends_with('`')) {
+            let unquoted = &t[1..t.len()-1];
+            return Ok(JsonValue::String(unquoted.to_string()));
+        }
+        
+        // Try parsing as number
+        if let Ok(i) = t.parse::<i64>() {
+            return Ok(JsonValue::Number(i.into()));
+        }
+        if let Ok(f) = t.parse::<f64>() {
+            return serde_json::Number::from_f64(f)
+                .map(JsonValue::Number)
+                .ok_or_else(|| KalamDbError::InvalidOperation("Invalid float value".into()));
+        }
+        
+        // Default to string
+        Ok(JsonValue::String(t.to_string()))
     }
 
     /// Convert DataFusion ScalarValue to JSON
@@ -226,43 +248,6 @@ impl InsertHandler {
             }
             _ => Err(KalamDbError::InvalidOperation(format!(
                 "Unsupported parameter type: {:?}",
-                value
-            ))),
-        }
-    }
-
-    /// Convert sqlparser Value to JSON (for literals)
-    fn sqlparser_value_to_json(
-        &self,
-        value: &sqlparser::ast::Value,
-    ) -> Result<JsonValue, KalamDbError> {
-        use sqlparser::ast::Value as SqlValue;
-
-        match value {
-            SqlValue::Null => Ok(JsonValue::Null),
-            SqlValue::Boolean(b) => Ok(JsonValue::Bool(*b)),
-            SqlValue::Number(n, _) => {
-                // Try parsing as i64 first, then f64
-                if let Ok(i) = n.parse::<i64>() {
-                    Ok(JsonValue::Number(i.into()))
-                } else if let Ok(f) = n.parse::<f64>() {
-                    serde_json::Number::from_f64(f)
-                        .map(JsonValue::Number)
-                        .ok_or_else(|| {
-                            KalamDbError::InvalidOperation("Invalid number value".into())
-                        })
-                } else {
-                    Err(KalamDbError::InvalidOperation(format!(
-                        "Invalid number: {}",
-                        n
-                    )))
-                }
-            }
-            SqlValue::SingleQuotedString(s) | SqlValue::DoubleQuotedString(s) => {
-                Ok(JsonValue::String(s.clone()))
-            }
-            _ => Err(KalamDbError::InvalidOperation(format!(
-                "Unsupported literal type: {:?}",
                 value
             ))),
         }
@@ -321,6 +306,47 @@ impl InsertHandler {
     }
 }
 
+impl InsertHandler {
+    fn simple_parse_insert(&self, sql: &str) -> Result<(NamespaceId, TableName, Vec<String>, Vec<Vec<String>>), KalamDbError> {
+        // Expect pattern: INSERT INTO <ns>.<table> (<cols>) VALUES (...),(...)
+        let upper = sql.to_uppercase();
+        let into_pos = upper.find("INSERT INTO").ok_or_else(|| KalamDbError::InvalidOperation("Missing 'INSERT INTO'".into()))?;
+        let values_pos = upper.find(" VALUES ").ok_or_else(|| KalamDbError::InvalidOperation("Missing 'VALUES' clause".into()))?;
+        let head = sql[into_pos + 11..values_pos].trim();
+        // Split head into table and optional column list
+        let (table_part, cols_part) = if let Some(lp) = head.find('(') {
+            let rp = head.rfind(')').ok_or_else(|| KalamDbError::InvalidOperation("Malformed column list".into()))?;
+            (head[..lp].trim(), Some(&head[lp + 1..rp]))
+        } else { (head, None) };
+
+        let (namespace, table_name) = {
+            let parts: Vec<&str> = table_part.split('.').collect();
+            match parts.len() { 
+                1 => (NamespaceId::new("default"), TableName::new(parts[0].trim().to_string())), 
+                2 => (NamespaceId::new(parts[0].trim().to_string()), TableName::new(parts[1].trim().to_string())), 
+                _ => return Err(KalamDbError::InvalidOperation("Invalid table reference".into())) 
+            }
+        };
+
+        let columns: Vec<String> = match cols_part {
+            Some(cols) => cols.split(',').map(|s| s.trim().trim_matches('"').trim_matches('`').to_string()).collect(),
+            None => Vec::new(),
+        };
+
+        // Parse VALUES rows as string tokens (we'll bind params later)
+        let values_str = &sql[values_pos + 8..];
+        let mut rows_tokens: Vec<Vec<String>> = Vec::new();
+        for row_str in values_str.split(')').filter(|s| !s.trim().is_empty()) {
+            let row_str = row_str.trim().trim_start_matches(',').trim().trim_start_matches('(').trim();
+            if row_str.is_empty() { continue; }
+            let row_tokens: Vec<String> = row_str.split(',').map(|s| s.trim().to_string()).collect();
+            rows_tokens.push(row_tokens);
+        }
+
+        Ok((namespace, table_name, columns, rows_tokens))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,8 +361,7 @@ mod tests {
     async fn test_insert_authorization_user() {
         let handler = InsertHandler::new();
         let ctx = test_context(Role::User);
-        let stmt = kalamdb_sql::ddl::InsertStatement; // Typed statement marker
-
+        let stmt = SqlStatement::new("INSERT INTO default.test (id) VALUES (1)".to_string(), SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement));
         let result = handler.check_authorization(&stmt, &ctx).await;
         assert!(result.is_ok());
     }
@@ -345,8 +370,7 @@ mod tests {
     async fn test_insert_authorization_dba() {
         let handler = InsertHandler::new();
         let ctx = test_context(Role::Dba);
-        let stmt = kalamdb_sql::ddl::InsertStatement;
-
+        let stmt = SqlStatement::new("INSERT INTO default.test (id) VALUES (1)".to_string(), SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement));
         let result = handler.check_authorization(&stmt, &ctx).await;
         assert!(result.is_ok());
     }
@@ -355,8 +379,7 @@ mod tests {
     async fn test_insert_authorization_service() {
         let handler = InsertHandler::new();
         let ctx = test_context(Role::Service);
-        let stmt = kalamdb_sql::ddl::InsertStatement;
-
+        let stmt = SqlStatement::new("INSERT INTO default.test (id) VALUES (1)".to_string(), SqlStatementKind::Insert(kalamdb_sql::ddl::InsertStatement));
         let result = handler.check_authorization(&stmt, &ctx).await;
         assert!(result.is_ok());
     }

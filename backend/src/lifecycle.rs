@@ -191,10 +191,12 @@ pub async fn run(
     let live_query_manager = components.live_query_manager.clone();
     let user_repo = components.user_repo.clone();
 
+    let app_context_for_handler = app_context.clone();
     let server = HttpServer::new(move || {
         App::new()
             .wrap(middleware::request_logger())
             .wrap(middleware::build_cors())
+            .app_data(web::Data::new(app_context_for_handler.clone()))
             .app_data(web::Data::new(session_factory.clone()))
             .app_data(web::Data::new(sql_executor.clone()))
             .app_data(web::Data::new(jwt_auth.clone()))

@@ -63,6 +63,7 @@ use crate::rate_limiter::RateLimiter;
 pub async fn execute_sql_v1(
     http_req: HttpRequest,
     req: web::Json<SqlRequest>,
+    app_context: web::Data<Arc<kalamdb_core::app_context::AppContext>>,
     session_factory: web::Data<Arc<DataFusionSessionFactory>>,
     user_repo: web::Data<Arc<dyn UserRepository>>,
     rate_limiter: Option<web::Data<Arc<RateLimiter>>>,
@@ -163,6 +164,7 @@ pub async fn execute_sql_v1(
     for (idx, sql) in statements.iter().enumerate() {
         match execute_single_statement(
             sql,
+            app_context.get_ref(),
             session_factory.get_ref(),
             sql_executor,
             &auth_result,
@@ -194,6 +196,7 @@ pub async fn execute_sql_v1(
 /// Falls back to DataFusionSessionFactory for testing if SqlExecutor is not available
 async fn execute_single_statement(
     sql: &str,
+    app_context: &Arc<kalamdb_core::app_context::AppContext>,
     session_factory: &Arc<DataFusionSessionFactory>,
     sql_executor: Option<&Arc<SqlExecutor>>,
     auth: &kalamdb_auth::AuthenticatedRequest,
@@ -202,7 +205,9 @@ async fn execute_single_statement(
     metadata: Option<&ExecutorMetadataAlias>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     // Phase 3 (T033): Construct ExecutionContext with user identity, request tracking, and DataFusion session
-    let session = Arc::new(session_factory.create_session());
+    // Use base_session_context from AppContext instead of creating a new session
+    // This ensures system tables are registered and available for queries
+    let session = app_context.base_session_context();
     let mut exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role)
         .with_session(session.clone());
     
