@@ -23,7 +23,6 @@ impl CreateTableHandler {
 impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: CreateTableStatement,
         _params: Vec<ScalarValue>,
         context: &ExecutionContext,
@@ -159,7 +158,7 @@ mod tests {
         let ctx = create_test_context(Role::User);
         let session = SessionContext::new();
 
-        let result = handler.execute(&session, stmt, vec![], &ctx).await;
+        let result = handler.execute(stmt, vec![], &ctx).await;
         
         assert!(result.is_ok());
         if let Ok(ExecutionResult::Success { message }) = result {
@@ -194,17 +193,17 @@ mod tests {
         let session = SessionContext::new();
 
         // First creation should succeed
-        let result1 = handler.execute(&session, stmt.clone(), vec![], &ctx).await;
+        let result1 = handler.execute(stmt.clone(), vec![], &ctx).await;
         assert!(result1.is_ok());
 
         // Second creation without IF NOT EXISTS should fail
-        let result2 = handler.execute(&session, stmt.clone(), vec![], &ctx).await;
+        let result2 = handler.execute(stmt.clone(), vec![], &ctx).await;
         assert!(result2.is_err());
 
         // Third creation with IF NOT EXISTS should succeed with message
         let mut stmt_ine = stmt.clone();
         stmt_ine.if_not_exists = true;
-        let result3 = handler.execute(&session, stmt_ine, vec![], &ctx).await;
+        let result3 = handler.execute(stmt_ine, vec![], &ctx).await;
         assert!(result3.is_ok());
         if let Ok(ExecutionResult::Success { message }) = result3 {
             assert!(message.contains("already exists"));

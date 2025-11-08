@@ -24,7 +24,6 @@ impl AlterNamespaceHandler {
 impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: AlterNamespaceStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
@@ -123,7 +122,7 @@ mod tests {
         let session = SessionContext::new();
 
         // Note: This test would need proper setup of test namespace
-        let result = handler.execute(&session, stmt, vec![], &ctx).await;
+        let result = handler.execute(stmt, vec![], &ctx).await;
         
         // Would verify result or error based on test setup
         assert!(result.is_ok() || result.is_err());

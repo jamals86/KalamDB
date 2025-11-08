@@ -7,7 +7,6 @@ use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
-use datafusion::execution::context::SessionContext;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use serde_json::Value as JsonValue;
 use kalamdb_commons::models::{NamespaceId, TableName};
@@ -35,13 +34,14 @@ impl Default for UpdateHandler {
 impl StatementHandler for UpdateHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: SqlStatement,
         params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        // T063: Validate parameters before write (max 50 params, 512KB per param)
-        validate_parameters(&params, &ParameterLimits::default())?;
+        // T063: Validate parameters before write using config from AppContext
+        let app_context = AppContext::get();
+        let limits = ParameterLimits::from_config(&app_context.config().execution);
+        validate_parameters(&params, &limits)?;
 
         if !matches!(statement.kind(), SqlStatementKind::Update(_)) {
             return Err(KalamDbError::InvalidOperation("UpdateHandler received wrong statement kind".into()));

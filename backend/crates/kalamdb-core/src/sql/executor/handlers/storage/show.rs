@@ -23,7 +23,6 @@ impl ShowStoragesHandler {
 impl TypedStatementHandler<ShowStoragesStatement> for ShowStoragesHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         _statement: ShowStoragesStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
@@ -82,7 +81,7 @@ mod tests {
         let ctx = create_test_context();
         let session = SessionContext::new();
 
-        let result = handler.execute(&session, stmt, vec![], &ctx).await;
+        let result = handler.execute(stmt, vec![], &ctx).await;
         
         // Should return batches
         assert!(result.is_ok());

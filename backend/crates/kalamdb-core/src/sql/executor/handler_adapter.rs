@@ -69,7 +69,6 @@ where
 {
     async fn execute(
         &self,
-        session: &SessionContext,
         statement: SqlStatement,
         params: Vec<ScalarValue>,
         context: &ExecutionContext,
@@ -81,7 +80,7 @@ where
             ))
         })?;
 
-        self.handler.execute(session, stmt, params, context).await
+        self.handler.execute(stmt, params, context).await
     }
 
     async fn check_authorization(
@@ -137,12 +136,11 @@ where
 {
     async fn execute(
         &self,
-        session: &SessionContext,
         statement: SqlStatement,
         params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        self.handler.execute(session, statement, params, context).await
+        self.handler.execute(statement, params, context).await
     }
 
     async fn check_authorization(
@@ -203,7 +201,7 @@ mod tests {
         );
 
         let result = adapter
-            .execute(&session, stmt, vec![], &ctx)
+            .execute(stmt, vec![], &ctx)
             .await;
         assert!(result.is_ok());
     }
@@ -228,7 +226,7 @@ mod tests {
             kalamdb_sql::statement_classifier::SqlStatementKind::ShowNamespaces(kalamdb_sql::ddl::ShowNamespacesStatement),
         );
 
-        let result = adapter.execute(&session, stmt, vec![], &ctx).await;
+        let result = adapter.execute(stmt, vec![], &ctx).await;
         assert!(result.is_err());
         match result {
             Err(KalamDbError::InvalidOperation(msg)) => {

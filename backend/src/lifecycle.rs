@@ -52,6 +52,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
         backend.clone(),
         kalamdb_commons::NodeId::new(config.server.node_id.clone()),
         config.storage.default_storage_path.clone(),
+        config.clone(), // Pass ServerConfig to AppContext for centralized access
     );
     info!("AppContext initialized with all stores, managers, registries, and providers");
 

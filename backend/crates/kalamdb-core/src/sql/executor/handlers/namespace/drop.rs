@@ -23,7 +23,6 @@ impl DropNamespaceHandler {
 impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: DropNamespaceStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
@@ -103,7 +102,7 @@ mod tests {
 
         // Note: This test would need proper setup of test namespace
         // For now, it demonstrates the pattern
-        let result = handler.execute(&session, stmt, vec![], &ctx).await;
+        let result = handler.execute(stmt, vec![], &ctx).await;
         
         // Would verify result or error based on test setup
         assert!(result.is_ok() || result.is_err());
@@ -137,7 +136,7 @@ mod tests {
         let ctx = create_test_context();
         let session = SessionContext::new();
 
-        let result = handler.execute(&session, stmt, vec![], &ctx).await;
+        let result = handler.execute(stmt, vec![], &ctx).await;
         
         // With IF EXISTS, should succeed even if namespace doesn't exist
         if let Ok(ExecutionResult::Success { message }) = result {

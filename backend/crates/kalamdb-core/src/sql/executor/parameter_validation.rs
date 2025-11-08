@@ -4,6 +4,7 @@
 
 use crate::error::KalamDbError;
 use crate::sql::executor::models::ScalarValue;
+use kalamdb_commons::config::ExecutionSettings;
 
 /// Parameter validation limits (from config.toml [execution] section)
 pub struct ParameterLimits {
@@ -18,6 +19,16 @@ impl Default for ParameterLimits {
         Self {
             max_count: 50,
             max_size_bytes: 524288, // 512KB
+        }
+    }
+}
+
+impl ParameterLimits {
+    /// Create ParameterLimits from ExecutionSettings config
+    pub fn from_config(exec: &ExecutionSettings) -> Self {
+        Self {
+            max_count: exec.max_parameters,
+            max_size_bytes: exec.max_parameter_size_bytes,
         }
     }
 }

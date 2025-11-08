@@ -147,11 +147,17 @@ impl TestServer {
         // Initialize StorageBackend
         let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
 
-        // Initialize AppContext with Phase 10 pattern (3 parameters)
+        // Create minimal test config
+        let mut test_config = kalamdb_commons::config::ServerConfig::default();
+        test_config.server.node_id = "test-node".to_string();
+        test_config.storage.default_storage_path = storage_base_path.to_str().unwrap().to_string();
+
+        // Initialize AppContext with config (4 parameters)
         let app_context = AppContext::init(
             backend.clone(),
             NodeId::new("test-node".to_string()),
             storage_base_path.to_str().unwrap().to_string(),
+            test_config,
         );
 
         // Get session context from AppContext

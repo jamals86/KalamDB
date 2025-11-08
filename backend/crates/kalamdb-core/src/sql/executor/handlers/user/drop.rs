@@ -24,7 +24,6 @@ impl DropUserHandler {
 impl TypedStatementHandler<DropUserStatement> for DropUserHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: DropUserStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,

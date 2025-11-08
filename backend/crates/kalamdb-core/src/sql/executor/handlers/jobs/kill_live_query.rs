@@ -23,7 +23,6 @@ impl KillLiveQueryHandler {
 impl TypedStatementHandler<KillLiveQueryStatement> for KillLiveQueryHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: KillLiveQueryStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,

@@ -16,7 +16,7 @@ static STORAGE_INIT: Once = Once::new();
 
 /// Initialize AppContext with minimal test dependencies
 ///
-/// Uses AppContext::init() with 3 parameters - simple and clean!
+/// Uses AppContext::init() with 4 parameters including test config.
 /// Thread-safe: uses Once to ensure single initialization.
 ///
 /// # Example
@@ -53,12 +53,20 @@ pub fn init_test_app_context() -> Arc<TestDb> {
 
         let storage_backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(test_db.db.clone()));
 
-        // Phase 5: Simple 3-parameter initialization!
+        // Create minimal test config using Default + overrides
+        let mut test_config = kalamdb_commons::config::ServerConfig::default();
+        test_config.server.node_id = "test-node".to_string();
+        test_config.storage.default_storage_path = "data/storage".to_string();
+        test_config.execution.max_parameters = 50;
+        test_config.execution.max_parameter_size_bytes = 512 * 1024;
+
+        // Phase 5: Simple 4-parameter initialization with config!
         // Uses constants from kalamdb_commons for table prefixes
         AppContext::init(
             storage_backend,
             NodeId::new("test-node".to_string()),
             "data/storage".to_string(),
+            test_config,
         );
     });
 

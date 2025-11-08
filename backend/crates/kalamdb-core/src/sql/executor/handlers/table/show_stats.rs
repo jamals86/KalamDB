@@ -26,7 +26,6 @@ impl ShowStatsHandler {
 impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: ShowTableStatsStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,

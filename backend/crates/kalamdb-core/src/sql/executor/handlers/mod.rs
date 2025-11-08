@@ -86,17 +86,18 @@ pub trait StatementHandler: Send + Sync {
     /// Execute a SQL statement with full context
     ///
     /// # Arguments
-    /// * `session` - DataFusion session context for query execution
     /// * `statement` - Parsed SQL statement (from kalamdb_sql)
     /// * `params` - Parameter values for prepared statements (? placeholders)
-    /// * `context` - Execution context (user, role, namespace, audit info)
+    /// * `context` - Execution context (user, role, namespace, audit info, session)
     ///
     /// # Returns
     /// * `Ok(ExecutionResult)` - Successful execution result
     /// * `Err(KalamDbError)` - Execution error
+    ///
+    /// # Note
+    /// SessionContext is available via `context.session` - no need to pass separately
     async fn execute(
         &self,
-        session: &SessionContext, //TODO: This is not needed since we have it inside the context.session
         statement: SqlStatement,
         params: Vec<ScalarValue>,
         context: &ExecutionContext,

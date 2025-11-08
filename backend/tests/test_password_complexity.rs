@@ -18,11 +18,17 @@ async fn setup_executor(enforce_complexity: bool) -> (SqlExecutor, TempDir, Arc<
 
     let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::new(db.clone()));
     
-    // Initialize AppContext (Phase 10 pattern)
+    // Create minimal test config
+    let mut test_config = kalamdb_commons::config::ServerConfig::default();
+    test_config.server.node_id = "test-node".to_string();
+    test_config.storage.default_storage_path = temp_dir.path().join("storage").to_str().unwrap().to_string();
+    
+    // Initialize AppContext with config
     let app_context = AppContext::init(
         backend.clone(),
         NodeId::new("test-node".to_string()),
         temp_dir.path().join("storage").to_str().unwrap().to_string(),
+        test_config,
     );
     
     let session_context = app_context.base_session_context();

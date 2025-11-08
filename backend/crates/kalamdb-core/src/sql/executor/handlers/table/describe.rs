@@ -27,7 +27,6 @@ impl DescribeTableHandler {
 impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: DescribeTableStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,

@@ -196,6 +196,43 @@ This is a Rust workspace project:
 
 **Checkpoint**: User Story 5 complete - DML write paths fully functional with parameters
 
+### Config Centralization (Post-Phase 7 Refactoring)
+
+**Goal**: Centralize ServerConfig access through AppContext singleton for consistent parameter validation
+
+**Tasks Completed**:
+- [X] T071a Move config.rs to kalamdb-commons (shared access across all crates)
+- [X] T071b Add ServerConfig to AppContext as Arc<ServerConfig> field
+- [X] T071c Update AppContext::init() to accept ServerConfig parameter
+- [X] T071d Add config() getter method to AppContext
+- [X] T071e Update lifecycle.rs to pass config to AppContext::init()
+- [X] T071f Update test_helpers.rs to construct test config
+- [X] T071g Add ParameterLimits::from_config() constructor method
+- [X] T071h Update InsertHandler to use config from AppContext
+- [X] T071i Update UpdateHandler to use config from AppContext
+- [X] T071j Update DeleteHandler to use config from AppContext
+- [X] T071k Create test_config_access.rs integration tests
+
+**Benefits**: 
+- Single source of truth for config (AppContext.config())
+- No hardcoded ParameterLimits::default() in production code
+- All handlers read actual max_parameters and max_parameter_size_bytes from config.toml
+- Test coverage for config accessibility
+
+**Files Modified**: 
+- backend/crates/kalamdb-commons/src/config.rs (moved from backend/src/config.rs)
+- backend/crates/kalamdb-commons/src/lib.rs (added config module)
+- backend/crates/kalamdb-core/src/app_context.rs (added config field + getter)
+- backend/src/lifecycle.rs (pass config to AppContext::init())
+- backend/crates/kalamdb-core/src/test_helpers.rs (construct test config)
+- backend/crates/kalamdb-core/src/sql/executor/parameter_validation.rs (from_config method)
+- backend/crates/kalamdb-core/src/sql/executor/handlers/dml/insert.rs (use config)
+- backend/crates/kalamdb-core/src/sql/executor/handlers/dml/update.rs (use config)
+- backend/crates/kalamdb-core/src/sql/executor/handlers/dml/delete.rs (use config)
+- backend/tests/test_config_access.rs (2 new integration tests)
+
+**Test Results**: ✅ 2/2 tests passing (test_parameter_limits_from_config, test_config_accessible_from_app_context)
+
 ---
 
 ## Phase 8: User Story 6 - Complete Handler Implementation (Priority: P0)

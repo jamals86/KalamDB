@@ -16,7 +16,7 @@ use crate::tables::system::registry::SystemTablesRegistry;
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use datafusion::catalog::SchemaProvider;
 use datafusion::prelude::SessionContext;
-use kalamdb_commons::{NodeId, constants::ColumnFamilyNames};
+use kalamdb_commons::{NodeId, ServerConfig, constants::ColumnFamilyNames};
 use kalamdb_store::StorageBackend;
 use std::sync::{Arc, OnceLock};
 
@@ -34,6 +34,10 @@ pub struct AppContext {
     /// Node identifier loaded once from config.toml (Phase 10, US0, FR-000)
     /// Wrapped in Arc for zero-copy sharing across all components
     node_id: Arc<NodeId>,
+
+    /// Server configuration loaded once at startup (Phase 11, T062-T064)
+    /// Provides access to all config settings (execution, limits, storage, etc.)
+    config: Arc<ServerConfig>,
 
     // ===== Caches =====
     schema_registry: Arc<SchemaRegistry>,
@@ -103,18 +107,22 @@ impl AppContext {
     ///
     /// let backend: Arc<dyn StorageBackend> = todo!();
     /// let node_id = NodeId::new("prod-node-1".to_string()); // From config.toml
+    /// let config = ServerConfig::from_file("config.toml").unwrap();
     /// AppContext::init(
     ///     backend,
     ///     node_id,
     ///     "data/storage".to_string(),
+    ///     config,
     /// );
     /// ```
     pub fn init(
         storage_backend: Arc<dyn StorageBackend>,
         node_id: NodeId,
         storage_base_path: String,
+        config: ServerConfig,
     ) -> Arc<AppContext> {
         let node_id = Arc::new(node_id); // Wrap NodeId in Arc for zero-copy sharing (FR-000)
+        let config = Arc::new(config); // Wrap config in Arc for zero-copy sharing
         APP_CONTEXT
             .get_or_init(|| {
                 // Create stores using constants from kalamdb_commons
@@ -221,6 +229,7 @@ impl AppContext {
 
                 Arc::new(AppContext {
                     node_id,
+                    config,
                     schema_registry,
                     user_table_store,
                     shared_table_store,
@@ -251,6 +260,14 @@ impl AppContext {
     }
 
     // ===== Getters =====
+    
+    /// Get the server configuration
+    ///
+    /// Returns an Arc reference for zero-copy sharing. This config is loaded
+    /// once during AppContext::init() and shared across all components.
+    pub fn config(&self) -> &Arc<ServerConfig> {
+        &self.config
+    }
     
     pub fn schema_cache(&self) -> Arc<SchemaRegistry> {
         self.schema_registry.clone()

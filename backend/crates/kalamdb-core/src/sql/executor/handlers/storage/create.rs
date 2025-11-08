@@ -24,7 +24,6 @@ impl CreateStorageHandler {
 impl TypedStatementHandler<CreateStorageStatement> for CreateStorageHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: CreateStorageStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
@@ -169,7 +168,7 @@ mod tests {
         let ctx = create_test_context(Role::System);
         let session = SessionContext::new();
 
-        let result = handler.execute(&session, stmt, vec![], &ctx).await;
+        let result = handler.execute(stmt, vec![], &ctx).await;
         
         assert!(result.is_ok());
         if let Ok(ExecutionResult::Success { message }) = result {
@@ -196,11 +195,11 @@ mod tests {
         let session = SessionContext::new();
 
         // First creation should succeed
-        let result1 = handler.execute(&session, stmt.clone(), vec![], &ctx).await;
+        let result1 = handler.execute(stmt.clone(), vec![], &ctx).await;
         assert!(result1.is_ok());
 
         // Second creation should fail
-        let result2 = handler.execute(&session, stmt, vec![], &ctx).await;
+        let result2 = handler.execute(stmt, vec![], &ctx).await;
         assert!(result2.is_err());
     }
 }

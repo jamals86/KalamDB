@@ -45,14 +45,15 @@ pub trait SqlStatementHandler: Send + Sync {
     /// Execute the statement with authorization pre-checked
     ///
     /// # Parameters
-    /// - `session`: DataFusion session context
     /// - `statement`: Classified SQL statement
     /// - `sql_text`: Original SQL text (for DML handlers that need to parse SQL)
     /// - `params`: Query parameters ($1, $2, etc.)
-    /// - `context`: Execution context (user, role, etc.)
+    /// - `context`: Execution context (user, role, session, etc.)
+    ///
+    /// # Note
+    /// SessionContext is available via `context.session` - no need to pass separately
     async fn execute(
         &self,
-        session: &SessionContext,
         statement: SqlStatement,
         params: Vec<ScalarValue>,
         context: &ExecutionContext,
@@ -464,11 +465,10 @@ impl HandlerRegistry {
     /// 4. Call handler.execute() if authorized
     ///
     /// # Parameters
-    /// - `session`: DataFusion session context
     /// - `statement`: Classified SQL statement
     /// - `sql_text`: Original SQL text (for DML handlers)
     /// - `params`: Query parameters
-    /// - `context`: Execution context
+    /// - `context`: Execution context (includes session)
     ///
     /// # Returns
     /// - `Ok(ExecutionResult)` if handler found and execution succeeded
@@ -476,7 +476,6 @@ impl HandlerRegistry {
     /// - `Err(KalamDbError::InvalidOperation)` if no handler registered
     pub async fn handle(
         &self,
-        session: &SessionContext,
         statement: SqlStatement,
         params: Vec<ScalarValue>,
         context: &ExecutionContext,
@@ -495,8 +494,8 @@ impl HandlerRegistry {
         // Step 3: Check authorization (fail-fast)
         handler.check_authorization(&statement, context).await?;
 
-        // Step 4: Execute statement
-        handler.execute(session, statement, params, context).await
+        // Step 4: Execute statement (session is in context, no need to pass separately)
+        handler.execute(statement, params, context).await
     }
 
     /// Check if a handler is registered for a statement type
@@ -545,7 +544,7 @@ mod tests {
 
         // Execute via registry
         let result = registry
-            .handle(&session, stmt, vec![], &ctx)
+            .handle(stmt, vec![], &ctx)
             .await;
         assert!(result.is_ok());
 
@@ -579,7 +578,7 @@ mod tests {
 
         // Should return error
         let result = registry
-            .handle(&session, stmt, vec![], &ctx)
+            .handle(stmt, vec![], &ctx)
             .await;
         assert!(result.is_err());
 
@@ -611,7 +610,7 @@ mod tests {
 
         // Should fail authorization
         let result = registry
-            .handle(&session, stmt, vec![], &user_ctx)
+            .handle(stmt, vec![], &user_ctx)
             .await;
         assert!(result.is_err());
 
@@ -641,7 +640,7 @@ mod tests {
 
         // Execute via registry - should fail with table not found (handler is implemented)
         let result = registry
-            .handle(&session, stmt, vec![], &ctx)
+            .handle(stmt, vec![], &ctx)
             .await;
         
         // Handler is now fully implemented, expect table not found error
@@ -672,7 +671,7 @@ mod tests {
 
         // Execute via registry - should fail with WHERE required (handler is implemented)
         let result = registry
-            .handle(&session, stmt, vec![], &ctx)
+            .handle(stmt, vec![], &ctx)
             .await;
         
         // Handler is now fully implemented, expect WHERE id = error
@@ -703,7 +702,7 @@ mod tests {
 
         // Execute via registry - should fail with table not found (handler is implemented)
         let result = registry
-            .handle(&session, stmt, vec![], &ctx)
+            .handle(stmt, vec![], &ctx)
             .await;
         
         // Handler is now fully implemented, expect table not found error

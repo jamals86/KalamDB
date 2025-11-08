@@ -24,7 +24,6 @@ impl SubscribeHandler {
 impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: SubscribeStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,

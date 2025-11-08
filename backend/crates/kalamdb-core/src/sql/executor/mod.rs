@@ -99,10 +99,10 @@ impl SqlExecutor {
             //         .await
             // }
             
-            // All other statements: Delegate to handler registry
+            // All other statements: Delegate to handler registry (session is in exec_ctx)
             _ => {
                 self.handler_registry
-                    .handle(session, classified, params, exec_ctx)
+                    .handle(classified, params, exec_ctx)
                     .await
             }
         }

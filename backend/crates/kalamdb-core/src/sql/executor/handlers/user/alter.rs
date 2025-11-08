@@ -24,7 +24,6 @@ impl AlterUserHandler {
 impl TypedStatementHandler<AlterUserStatement> for AlterUserHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: AlterUserStatement,
         _params: Vec<ScalarValue>,
         context: &ExecutionContext,

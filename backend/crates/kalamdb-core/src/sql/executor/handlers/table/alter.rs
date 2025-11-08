@@ -5,7 +5,6 @@ use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::schema_registry::arrow_schema::ArrowSchemaWithOptions;
-use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::{TableId, NamespaceId};
 use kalamdb_commons::schemas::{ColumnDefault, TableType};
 use kalamdb_commons::models::schemas::{ColumnDefinition, TableDefinition};
@@ -28,7 +27,6 @@ impl AlterTableHandler {
 impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: AlterTableStatement,
         _params: Vec<ScalarValue>,
         context: &ExecutionContext,

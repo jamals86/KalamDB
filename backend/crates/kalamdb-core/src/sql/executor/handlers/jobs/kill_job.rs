@@ -24,7 +24,6 @@ impl KillJobHandler {
 impl TypedStatementHandler<JobCommand> for KillJobHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: JobCommand,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,

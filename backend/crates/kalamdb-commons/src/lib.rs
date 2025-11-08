@@ -43,6 +43,7 @@
 //! ```
 
 pub mod constants;
+pub mod config;
 pub mod errors;
 pub mod ids;
 pub mod models;
@@ -52,6 +53,7 @@ pub mod system_tables;
 pub mod websocket;
 
 // Re-export commonly used types at crate root
+pub use config::ServerConfig;
 pub use constants::{COLUMN_FAMILIES, SYSTEM_TABLES};
 pub use errors::{CommonError, Result};
 pub use models::{

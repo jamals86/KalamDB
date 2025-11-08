@@ -15,7 +15,6 @@ use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
-use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::{NamespaceId, TableName};
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use serde_json::Value as JsonValue;
@@ -46,13 +45,13 @@ impl Default for InsertHandler {
 impl StatementHandler for InsertHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: SqlStatement,
         params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        // T062: Validate parameters before write (max 50 params, 512KB per param)
-        validate_parameters(&params, &ParameterLimits::default())?;
+        // T062: Validate parameters before write using config from AppContext
+        let limits = ParameterLimits::from_config(&self.app_context.config().execution);
+        validate_parameters(&params, &limits)?;
 
         // Ensure correct variant
         if !matches!(statement.kind(), SqlStatementKind::Insert(_)) {

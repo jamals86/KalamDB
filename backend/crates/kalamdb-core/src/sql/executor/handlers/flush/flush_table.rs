@@ -25,7 +25,6 @@ impl FlushTableHandler {
 impl TypedStatementHandler<FlushTableStatement> for FlushTableHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: FlushTableStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,

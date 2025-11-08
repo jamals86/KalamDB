@@ -25,7 +25,6 @@ impl CreateUserHandler {
 impl TypedStatementHandler<CreateUserStatement> for CreateUserHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: CreateUserStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,

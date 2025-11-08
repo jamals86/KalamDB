@@ -25,7 +25,6 @@ impl DropTableHandler {
 impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
     async fn execute(
         &self,
-        _session: &SessionContext,
         statement: DropTableStatement,
         _params: Vec<ScalarValue>,
         context: &ExecutionContext,
