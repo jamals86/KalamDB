@@ -1,0 +1,137 @@
+// Smoke Benchmark: Queries throughput (INSERT and SELECT pagination)
+// - Creates a realistic user table (ERP/POS-like schema)
+// - Inserts X rows and measures rows/sec
+// - Paginates SELECT 10 rows/page and measures pages/sec
+
+use crate::common::*;
+use std::time::Instant;
+
+// Global rows to insert (can be overridden via KBENCH_ROWS env)
+const DEFAULT_ROWS_TO_INSERT: usize = 100_000;
+
+fn rows_to_insert() -> usize {
+    if let Ok(val) = std::env::var("KBENCH_ROWS") {
+        if let Ok(parsed) = val.parse::<usize>() { return parsed; }
+    }
+    DEFAULT_ROWS_TO_INSERT
+}
+
+#[test]
+fn smoke_queries_benchmark() {
+    if !is_server_running() {
+        println!(
+            "Skipping smoke_queries_benchmark: server not running at {}",
+            SERVER_URL
+        );
+        return;
+    }
+
+    let namespace = "bench_ns";
+    let table = generate_unique_table("orders");
+    let full = format!("{}.{}", namespace, table);
+
+    // Create namespace
+    let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
+    execute_sql_as_root_via_cli(&ns_sql).expect("create namespace");
+
+    // Defensive: drop any leftover table from previous runs if it exists
+    // This avoids rare "Already exists" errors when a prior run didn't clean up
+    let drop_if_exists = format!("DROP TABLE IF EXISTS {}", full);
+    let _ = execute_sql_as_root_via_cli(&drop_if_exists);
+
+    // Create ERP/POS-like user table with mixed types
+    // Columns:
+    // order_id BIGINT (PK), customer_id BIGINT, sku TEXT, status TEXT, quantity INT,
+    // price DOUBLE, created_at TIMESTAMP, updated_at TIMESTAMP, paid BOOLEAN, notes TEXT
+    let create_sql = format!(
+        r#"CREATE USER TABLE {} (
+            order_id BIGINT NOT NULL,
+            customer_id BIGINT,
+            sku TEXT,
+            status TEXT,
+            quantity INT,
+            price DOUBLE,
+            created_at TIMESTAMP,
+            updated_at TIMESTAMP,
+            paid BOOLEAN,
+            notes TEXT
+        )"#,
+        full
+    );
+    execute_sql_as_root_via_cli(&create_sql).expect("create user table");
+
+    // Insert rows in batches to minimize CLI overhead
+    let total = rows_to_insert();
+    let batch_size = 500; // tuneable, 200-1000 typical
+
+    let start_insert = Instant::now();
+    let mut inserted = 0usize;
+
+    while inserted < total {
+        let remain = total - inserted;
+        let n = remain.min(batch_size);
+
+        // Build multi-row INSERT
+        let mut values = String::new();
+        for i in 0..n {
+            let id = (inserted + i + 1) as i64;
+            let cust = (1000 + ((inserted + i) % 5000)) as i64;
+            let sku = format!("SKU{:06}", (inserted + i) % 10_000);
+            let status = match (inserted + i) % 4 { 0 => "new", 1 => "paid", 2 => "shipped", _ => "completed" };
+            let qty = ((inserted + i) % 50) as i64;
+            let price = 9.99 + (((inserted + i) % 500) as f64) / 10.0;
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            let paid = ((inserted + i) % 2) == 0;
+            let notes = "benchmark";
+
+            if !values.is_empty() { values.push_str(", "); }
+            values.push_str(&format!(
+                "({}, {}, '{}', '{}', {}, {}, {}, {}, {}, '{}')",
+                id, cust, sku, status, qty, price, now_ms, now_ms, paid, notes
+            ));
+        }
+
+        let insert_sql = format!(
+            "INSERT INTO {} (order_id, customer_id, sku, status, quantity, price, created_at, updated_at, paid, notes) VALUES {}",
+            full, values
+        );
+        execute_sql_as_root_via_cli(&insert_sql).expect("insert batch");
+        inserted += n;
+    }
+
+    let insert_elapsed = start_insert.elapsed().as_secs_f64();
+    let rows_per_sec = (inserted as f64) / insert_elapsed.max(1e-6);
+    println!("Benchmark INSERT: inserted {} rows in {:.3}s → {:.1} rows/sec", inserted, insert_elapsed, rows_per_sec);
+
+    // SELECT pagination (cursor-based): 10 rows per page, using order_id > last_id
+    let page_size = 10usize;
+    let mut pages = 0usize;
+    let mut last_id: i64 = 0;
+
+    let start_select = Instant::now();
+
+    // Iterate expected number of pages; we avoid parsing output for speed
+    let expected_pages = (inserted + page_size - 1) / page_size;
+    for _ in 0..expected_pages {
+        let select_sql = format!(
+            "SELECT order_id, customer_id, sku, status, quantity, price, created_at, updated_at, paid, notes FROM {} WHERE order_id > {} ORDER BY order_id LIMIT {}",
+            full, last_id, page_size
+        );
+        let _ = execute_sql_as_root_via_cli(&select_sql).expect("select page (cursor)");
+
+        println!("Fetched page {} (last_id={})", pages + 1, last_id);
+        // Advance cursor optimistically by page size (order_id is sequential in this test)
+        last_id += page_size as i64;
+        pages += 1;
+    }
+
+    let select_elapsed = start_select.elapsed().as_secs_f64();
+    let pages_per_sec = (pages as f64) / select_elapsed.max(1e-6);
+    println!(
+        "Benchmark SELECT: fetched {} pages ({} rows/page) in {:.3}s → {:.1} pages/sec",
+        pages, page_size, select_elapsed, pages_per_sec
+    );
+
+    // Best-effort cleanup to keep the namespace tidy between runs
+    let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full));
+}

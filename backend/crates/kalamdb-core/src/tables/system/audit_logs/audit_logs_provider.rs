@@ -111,6 +111,49 @@ impl AuditLogsTableProvider {
 
         Ok(batch)
     }
+
+    /// Scan up to `limit` audit log entries and return as RecordBatch
+    pub fn scan_entries_limited(&self, limit: usize) -> Result<RecordBatch, KalamDbError> {
+        use kalamdb_store::EntityStoreV2 as EntityStore;
+        let entries = self.store.scan_limited(limit)?;
+
+        let mut audit_ids = StringBuilder::new();
+        let mut timestamps = Vec::new();
+        let mut actor_user_ids = StringBuilder::new();
+        let mut actor_usernames = StringBuilder::new();
+        let mut actions = StringBuilder::new();
+        let mut targets = StringBuilder::new();
+        let mut details_list = StringBuilder::new();
+        let mut ip_addresses = StringBuilder::new();
+
+        for (_key, entry) in entries {
+            audit_ids.append_value(entry.audit_id.as_str());
+            timestamps.push(Some(entry.timestamp));
+            actor_user_ids.append_value(entry.actor_user_id.as_str());
+            actor_usernames.append_value(entry.actor_username.as_str());
+            actions.append_value(&entry.action);
+            targets.append_value(&entry.target);
+            details_list.append_option(entry.details.as_deref());
+            ip_addresses.append_option(entry.ip_address.as_deref());
+        }
+
+        let batch = RecordBatch::try_new(
+            self.schema.clone(),
+            vec![
+                Arc::new(audit_ids.finish()) as ArrayRef,
+                Arc::new(TimestampMillisecondArray::from(timestamps)) as ArrayRef,
+                Arc::new(actor_user_ids.finish()) as ArrayRef,
+                Arc::new(actor_usernames.finish()) as ArrayRef,
+                Arc::new(actions.finish()) as ArrayRef,
+                Arc::new(targets.finish()) as ArrayRef,
+                Arc::new(details_list.finish()) as ArrayRef,
+                Arc::new(ip_addresses.finish()) as ArrayRef,
+            ],
+        )
+        .map_err(|e| KalamDbError::Other(format!("Failed to create RecordBatch: {}", e)))?;
+
+        Ok(batch)
+    }
 }
 
 impl SystemTableProviderExt for AuditLogsTableProvider {
@@ -146,17 +189,22 @@ impl TableProvider for AuditLogsTableProvider {
         _state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         _filters: &[Expr],
-        _limit: Option<usize>,
+        limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::datasource::MemTable;
         let schema = self.schema.clone();
-        let batch = self.scan_all_entries().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to build audit log batch: {}", e))
-        })?;
+        let batch = match limit {
+            Some(lim) => self
+                .scan_entries_limited(lim)
+                .map_err(|e| DataFusionError::Execution(format!("Failed to build limited audit log batch: {}", e)))?,
+            None => self
+                .scan_all_entries()
+                .map_err(|e| DataFusionError::Execution(format!("Failed to build audit log batch: {}", e)))?,
+        };
         let partitions = vec![vec![batch]];
         let table = MemTable::try_new(schema, partitions)
             .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
-        table.scan(_state, projection, &[], _limit).await
+        table.scan(_state, projection, &[], limit).await
     }
 }
 

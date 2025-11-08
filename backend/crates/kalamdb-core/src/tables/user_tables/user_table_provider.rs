@@ -33,6 +33,8 @@ use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
 use std::any::Any;
 use std::sync::Arc;
+// Bring EntityStoreV2 trait into scope to access default scan helpers
+use kalamdb_store::EntityStoreV2 as EntityStore;
 
 /// Shared Snowflake generator for auto-increment values
 static AUTO_ID_GENERATOR: Lazy<SnowflakeGenerator> = Lazy::new(|| SnowflakeGenerator::new(0));
@@ -656,51 +658,67 @@ impl TableProvider for UserTableAccess {
 
         let full_schema = Arc::new(Schema::new(fields));
 
-        // **STEP 1: Scan RocksDB buffered data**
-        // Determine scan scope based on role (service/dba/system can see all users)
-        let raw_rows = if matches!(self.access_role, Role::Service | Role::Dba | Role::System) {
-            self.shared.store()
-                .scan_all(self.namespace_id().as_str(), self.table_name().as_str())
-                .map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to scan user table: {}", e))
-                })?
+        // **STEP 1: Scan RocksDB buffered data (prefix + seek, early-limit)**
+        // Always enforce per-user isolation by prefix on key (even for admin roles)
+        let mut rocksdb_json: Vec<JsonValue> = Vec::new();
+        let mut rocksdb_scanned: usize = 0;
+
+        if let Some(limit_value) = limit {
+            // Efficient streaming scan with prefix + limit via EntityStore helper
+            let user_prefix = self.user_key_prefix(); // e.g., "<user_id>:"
+            let raw = self
+                .shared
+                .store()
+                .scan_prefix_limited_bytes(&user_prefix, limit_value * 2)
+                .map_err(|e| DataFusionError::Execution(format!("Failed to scan user prefix: {}", e)))?;
+
+            for (_key_bytes, row) in raw.into_iter() {
+                rocksdb_scanned += 1;
+                if !row._deleted {
+                    rocksdb_json.push(self.flatten_row(row));
+                    if rocksdb_json.len() >= limit_value { break; }
+                }
+            }
         } else {
-            self.shared.store()
+            // No limit pushdown → fall back to full user scan (compat mode)
+            let raw_rows = self.shared.store()
                 .scan_user(
                     self.namespace_id().as_str(),
                     self.table_name().as_str(),
                     self.current_user_id.as_str(),
                 )
-                .map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to scan user table: {}", e))
-                })?
-        };
+                .map_err(|e| DataFusionError::Execution(format!("Failed to scan user table: {}", e)))?;
 
-        // Filter out soft-deleted rows (_deleted=true)
-        let filtered_rows: Vec<_> = raw_rows
-            .into_iter()
-            .filter(|(_row_id, row_data)| !row_data._deleted)
-            .collect();
+            let filtered_rows = raw_rows.into_iter().filter(|(_row_id, row_data)| !row_data._deleted);
+            rocksdb_json = filtered_rows.map(|(_id, data)| self.flatten_row(data)).collect();
+            rocksdb_scanned = rocksdb_json.len();
+        }
 
-        // Convert RocksDB rows to JSON for merging
-        let rocksdb_json: Vec<JsonValue> = filtered_rows
-            .into_iter()
-            .map(|(_id, data)| self.flatten_row(data))
-            .collect();
-
-        log::debug!("RocksDB rows: {}", rocksdb_json.len());
+        log::debug!(
+            "RocksDB scan: scanned={} returned={}",
+            rocksdb_scanned,
+            rocksdb_json.len()
+        );
 
         // **STEP 2: Scan Parquet files**
         let parquet_json = self.scan_parquet_files(&full_schema).await?;
 
         log::debug!("Parquet rows: {}", parquet_json.len());
 
-        // **STEP 3: Merge RocksDB + Parquet data**
-        let mut all_rows = parquet_json;
+        // **STEP 3: Merge RocksDB + Parquet data** (respect remaining limit)
+        let mut all_rows: Vec<JsonValue> = Vec::with_capacity(rocksdb_json.len() + parquet_json.len());
         all_rows.extend(rocksdb_json);
+        if let Some(limit_value) = limit {
+            if all_rows.len() < limit_value {
+                let needed = limit_value - all_rows.len();
+                all_rows.extend(parquet_json.into_iter().take(needed));
+            }
+        } else {
+            all_rows.extend(parquet_json);
+        }
 
-        // Apply limit if specified
-        let limited_rows = if let Some(limit_value) = limit {
+        // Apply final limit if specified (safety)
+        let limited_rows: Vec<JsonValue> = if let Some(limit_value) = limit {
             all_rows.into_iter().take(limit_value).collect()
         } else {
             all_rows

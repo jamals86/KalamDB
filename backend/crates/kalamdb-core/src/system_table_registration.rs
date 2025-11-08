@@ -69,8 +69,8 @@ pub fn register_system_tables(
     let schema_store = Arc::new(TablesStore::new(storage_backend.clone(), "system_tables"));
 
     // Register all system table schema definitions in TablesStore
-    use kalamdb_store::EntityStoreV2;
     for (table_id, table_def) in all_system_table_definitions() {
+        // Use the overridden put() method which uses composite key internally
         schema_store
             .put(&table_id, &table_def)
             .map_err(|e| format!("Failed to register schema for {}: {}", table_id, e))?;

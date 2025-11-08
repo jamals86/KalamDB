@@ -276,6 +276,46 @@ where
 
         Ok(results)
     }
+
+    /// Scans entities with an overall limit and optional prefix, returning at most `limit` entities.
+    ///
+    /// This method streams from the underlying backend and stops early once the requested
+    /// number of results is reached. Prefer this over `scan_all()` for large datasets.
+    ///
+    /// - When `prefix` is `None`, scans from the beginning of the partition.
+    /// - When `prefix` is provided, scans keys beginning with the given byte prefix.
+    ///
+    /// Note: Keys are returned as raw bytes. Higher-level stores may provide typed wrappers.
+    fn scan_limited_with_prefix_bytes(
+        &self,
+        prefix: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<Vec<(Vec<u8>, V)>> {
+        let partition = Partition::new(self.partition());
+        let iter = self
+            .backend()
+            .scan(&partition, prefix, Some(limit))?;
+
+        let mut results = Vec::with_capacity(limit);
+        for (key_bytes, value_bytes) in iter {
+            let entity = self.deserialize(&value_bytes)?;
+            results.push((key_bytes, entity));
+            if results.len() >= limit {
+                break;
+            }
+        }
+        Ok(results)
+    }
+
+    /// Scans entities limited to `limit` results (no prefix).
+    fn scan_limited(&self, limit: usize) -> Result<Vec<(Vec<u8>, V)>> {
+        self.scan_limited_with_prefix_bytes(None, limit)
+    }
+
+    /// Scans entities with a byte prefix limited to `limit` results.
+    fn scan_prefix_limited_bytes(&self, prefix: &[u8], limit: usize) -> Result<Vec<(Vec<u8>, V)>> {
+        self.scan_limited_with_prefix_bytes(Some(prefix), limit)
+    }
 }
 
 /// Trait for cross-user table stores with access control.

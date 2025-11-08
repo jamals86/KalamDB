@@ -14,3 +14,5 @@ mod smoke_test_stream_subscription;
 mod smoke_test_core_operations;
 #[path = "smoke/smoke_test_flush_operations.rs"]
 mod smoke_test_flush_operations;
+#[path = "smoke/smoke_test_queries_benchmark.rs"]
+mod smoke_test_queries_benchmark;

@@ -461,11 +461,19 @@ impl SqlExecutor {
                         &table_id.namespace_id(),
                         &table_id.table_name(),
                     ));
+                    
+                    // Extract TTL from table options
+                    let retention_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(stream_opts) = &table_def.table_options {
+                        Some(stream_opts.ttl_seconds as u32)
+                    } else {
+                        None
+                    };
+                    
                     let provider = StreamTableProvider::new(
                         Arc::new(table_id.clone()),
                         app_context.schema_registry(),
                         stream_store,
-                        None, // retention_seconds unknown at bootstrap (could derive from table options later)
+                        retention_seconds,
                         false, // ephemeral default
                         None,  // max_buffer default
                     );

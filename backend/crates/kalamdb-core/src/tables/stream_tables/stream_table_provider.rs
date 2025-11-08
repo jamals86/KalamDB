@@ -96,6 +96,12 @@ impl StreamTableProvider {
         ephemeral: bool,
         max_buffer: Option<usize>,
     ) -> Self {
+        log::debug!(
+            "🏗️  Creating StreamTableProvider: table={}, retention_seconds={:?}",
+            table_id,
+            retention_seconds
+        );
+        
         let core = TableProviderCore::new(
             table_id,
             TableType::Stream,
@@ -331,7 +337,7 @@ impl StreamTableProvider {
     /// Number of events deleted
     pub fn evict_expired(&self) -> Result<usize, KalamDbError> {
         self.store
-            .cleanup_expired_rows(self.namespace_id().as_str(), self.table_name().as_str())
+            .cleanup_expired_rows(self.core.namespace().as_str(), self.core.table_name().as_str())
             .map_err(|e| KalamDbError::Other(e.to_string()))
     }
 }
@@ -396,11 +402,61 @@ impl TableProvider for StreamTableProvider {
                 DataFusionError::Execution(format!("Failed to scan stream table: {}", e))
             })?;
 
+        // Apply TTL filtering (lazy eviction during read)
+        let now = chrono::Utc::now();
+        let total_events = events.len();
+        
+        let filtered_events: Vec<_> = if let Some(ttl_secs) = self.retention_seconds {
+            log::debug!(
+                "🔍 TTL Filter: retention_seconds={}, now={}, total_events={}",
+                ttl_secs,
+                now.to_rfc3339(),
+                total_events
+            );
+            
+            events
+                .into_iter()
+                .filter(|(_id, row)| {
+                    // Parse inserted_at timestamp
+                    if let Ok(inserted) = chrono::DateTime::parse_from_rfc3339(&row.inserted_at) {
+                        // Convert to UTC for comparison
+                        let inserted_utc = inserted.with_timezone(&chrono::Utc);
+                        let expiry = inserted_utc + chrono::Duration::seconds(ttl_secs as i64);
+                        let is_valid = now < expiry;
+                        
+                        if !is_valid {
+                            log::debug!(
+                                "🗑️  Filtering expired event: inserted={}, expiry={}, now={}, diff={}s",
+                                inserted_utc.to_rfc3339(),
+                                expiry.to_rfc3339(),
+                                now.to_rfc3339(),
+                                (now - inserted_utc).num_seconds()
+                            );
+                        }
+                        
+                        is_valid // Keep only non-expired rows
+                    } else {
+                        log::warn!("⚠️  Invalid timestamp in row.inserted_at: {}", row.inserted_at);
+                        true // Keep rows with invalid timestamps (shouldn't happen)
+                    }
+                })
+                .collect()
+        } else {
+            log::debug!("🔍 No TTL configured, returning all {} events", total_events);
+            events // No TTL, keep all events
+        };
+        
+        log::debug!(
+            "🔍 TTL Filter complete: {} events → {} events",
+            total_events,
+            filtered_events.len()
+        );
+
         // Apply limit if specified
         let events_to_process = if let Some(limit_val) = limit {
-            events.into_iter().take(limit_val).collect()
+            filtered_events.into_iter().take(limit_val).collect()
         } else {
-            events
+            filtered_events
         };
 
         // Convert events to Arrow RecordBatch (extract .fields from StreamTableRow)

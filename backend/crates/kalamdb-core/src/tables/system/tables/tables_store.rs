@@ -24,6 +24,46 @@ pub fn new_tables_store(backend: Arc<dyn StorageBackend>) -> TablesStore {
 
 /// Helper methods for TablesStore specific operations
 impl TablesStore {
+    /// Store a table definition using composite key to avoid namespace collisions
+    ///
+    /// Override EntityStore::put to use TableId::as_storage_key() instead of AsRef<[u8]>
+    pub fn put(&self, table_id: &TableId, table_def: &TableDefinition) -> Result<(), kalamdb_store::StorageError> {
+        use kalamdb_store::storage_trait::Partition;
+        use kalamdb_store::EntityStoreV2;
+        
+        let partition = Partition::new(EntityStoreV2::partition(self));
+        let key = table_id.as_storage_key(); // Use composite key: "{namespace}:{table}"
+        let value = EntityStoreV2::serialize(self, table_def)?;
+        EntityStoreV2::backend(self).put(&partition, &key, &value)
+    }
+
+    /// Get a table definition using composite key
+    ///
+    /// Override EntityStore::get to use TableId::as_storage_key() instead of AsRef<[u8]>
+    pub fn get(&self, table_id: &TableId) -> Result<Option<TableDefinition>, kalamdb_store::StorageError> {
+        use kalamdb_store::storage_trait::Partition;
+        use kalamdb_store::EntityStoreV2;
+        
+        let partition = Partition::new(EntityStoreV2::partition(self));
+        let key = table_id.as_storage_key(); // Use composite key: "{namespace}:{table}"
+        match EntityStoreV2::backend(self).get(&partition, &key)? {
+            Some(bytes) => Ok(Some(EntityStoreV2::deserialize(self, &bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Delete a table definition using composite key
+    ///
+    /// Override EntityStore::delete to use TableId::as_storage_key() instead of AsRef<[u8]>
+    pub fn delete(&self, table_id: &TableId) -> Result<(), kalamdb_store::StorageError> {
+        use kalamdb_store::storage_trait::Partition;
+        use kalamdb_store::EntityStoreV2;
+        
+        let partition = Partition::new(EntityStoreV2::partition(self));
+        let key = table_id.as_storage_key(); // Use composite key: "{namespace}:{table}"
+        EntityStoreV2::backend(self).delete(&partition, &key)
+    }
+
     /// Scan all tables in a specific namespace
     pub fn scan_namespace(&self, namespace_id: &NamespaceId) -> Result<Vec<(TableId, TableDefinition)>, kalamdb_store::StorageError> {
         use kalamdb_store::storage_trait::Partition;
@@ -34,14 +74,14 @@ impl TablesStore {
         let prefix_bytes = prefix.as_bytes();
 
         // Use backend's scan method with prefix
-        let partition = Partition::new(self.partition());
-        let iter = self.backend().scan(&partition, Some(prefix_bytes), None)?;
+        let partition = Partition::new(EntityStoreV2::partition(self));
+        let iter = EntityStoreV2::backend(self).scan(&partition, Some(prefix_bytes), None)?;
 
         // Parse TableId from key bytes and deserialize TableDefinition
         let mut result = Vec::new();
         for (key_bytes, value_bytes) in iter {
             if let Some(table_id) = TableId::from_storage_key(&key_bytes) {
-                if let Ok(table_def) = self.deserialize(&value_bytes) {
+                if let Ok(table_def) = EntityStoreV2::deserialize(self, &value_bytes) {
                     result.push((table_id, table_def));
                 }
             }
