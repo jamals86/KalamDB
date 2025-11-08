@@ -10,3 +10,5 @@ mod smoke_test_shared_table_crud;
 mod smoke_test_system_and_users;
 #[path = "smoke/smoke_test_stream_subscription.rs"]
 mod smoke_test_stream_subscription;
+#[path = "smoke/smoke_test_core_operations.rs"]
+mod smoke_test_core_operations;
