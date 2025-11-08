@@ -17,6 +17,7 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValu
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
 use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::schemas::TableType;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
 use serde_json::Value as JsonValue;
 
@@ -272,8 +273,8 @@ impl InsertHandler {
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
 
-        // Get table definition (validates table exists)
-        let _table_def = schema_registry
+        // Get table definition (validates table exists) and determine table type
+        let table_def = schema_registry
             .get_table_definition(&table_id)?
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!(
@@ -282,31 +283,82 @@ impl InsertHandler {
                     table_name.as_str()
                 ))
             })?;
+        let table_type = table_def.table_type;
 
-        // Get UserTableShared from cache
-        let user_table_shared = schema_registry
-            .get_user_table_shared(&table_id)
-            .ok_or_else(|| {
-                KalamDbError::InvalidOperation(format!(
-                    "User table provider not found for: {}.{}",
-                    namespace.as_str(),
-                    table_name.as_str()
-                ))
-            })?;
-
-        // Create UserTableAccess with current user context
-        use crate::tables::user_tables::UserTableAccess;
-        let user_access = UserTableAccess::new(
-            user_table_shared,
-            user_id.clone(),
-            kalamdb_commons::Role::User,
-        );
-
-        // Execute insert batch
-        let row_ids = user_access.insert_batch(rows)?;
-
-        // Return rows_affected (T065)
-        Ok(row_ids.len())
+        match table_type {
+            TableType::User => {
+                // Get UserTableShared from cache
+                let user_table_shared = schema_registry
+                    .get_user_table_shared(&table_id)
+                    .ok_or_else(|| {
+                        KalamDbError::InvalidOperation(format!(
+                            "User table provider not found for: {}.{}",
+                            namespace.as_str(),
+                            table_name.as_str()
+                        ))
+                    })?;
+                // Create UserTableAccess with current user context
+                use crate::tables::user_tables::UserTableAccess;
+                let user_access = UserTableAccess::new(
+                    user_table_shared,
+                    user_id.clone(),
+                    kalamdb_commons::Role::User,
+                );
+                let row_ids = user_access.insert_batch(rows)?;
+                Ok(row_ids.len())
+            }
+            TableType::Shared => {
+                // Downcast cached provider
+                let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Shared table provider not found for: {}.{}",
+                        namespace.as_str(),
+                        table_name.as_str()
+                    ))
+                })?;
+                if let Some(shared_provider) = provider_arc.as_any().downcast_ref::<crate::tables::shared_tables::SharedTableProvider>() {
+                    let mut inserted = 0usize;
+                    for (idx, row) in rows.into_iter().enumerate() {
+                        // Generate simple row_id (timestamp_ms_idx)
+                        let row_id = format!("{}_{}", chrono::Utc::now().timestamp_millis(), idx);
+                        shared_provider.insert(&row_id, row)?;
+                        inserted += 1;
+                    }
+                    Ok(inserted)
+                } else {
+                    Err(KalamDbError::InvalidOperation(format!(
+                        "Cached provider type mismatch for shared table {}.{}",
+                        namespace.as_str(),
+                        table_name.as_str()
+                    )))
+                }
+            }
+            TableType::Stream => {
+                let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Stream table provider not found for: {}.{}",
+                        namespace.as_str(),
+                        table_name.as_str()
+                    ))
+                })?;
+                if let Some(stream_provider) = provider_arc.as_any().downcast_ref::<crate::tables::stream_tables::StreamTableProvider>() {
+                    let mut inserted = 0usize;
+                    for (idx, row) in rows.into_iter().enumerate() {
+                        let row_id = format!("{}_{}", chrono::Utc::now().timestamp_millis(), idx);
+                        stream_provider.insert_event(&row_id, row)?;
+                        inserted += 1;
+                    }
+                    Ok(inserted)
+                } else {
+                    Err(KalamDbError::InvalidOperation(format!(
+                        "Cached provider type mismatch for stream table {}.{}",
+                        namespace.as_str(),
+                        table_name.as_str()
+                    )))
+                }
+            }
+            TableType::System => Err(KalamDbError::InvalidOperation("Cannot INSERT into SYSTEM tables".to_string())),
+        }
     }
 }
 

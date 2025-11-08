@@ -69,7 +69,7 @@ pub async fn bootstrap(config: &ServerConfig) -> Result<(ApplicationComponents, 
             log::error!("JobsManager run loop failed: {}", e);
         }
     });
-    info!("UnifiedJoJobsManagerbsManager background task spawned");
+    info!("JobsManager background task spawned");
 
     // Seed default storage if necessary (using SystemTablesRegistry)
     let storages_provider = app_context.system_tables().storages();

@@ -200,6 +200,7 @@ pub trait JobExecutor: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::init_test_app_context;
 
     #[test]
     fn test_job_decision_completed() {
@@ -248,6 +249,7 @@ mod tests {
 
     #[test]
     fn test_job_context_logging() {     
+        init_test_app_context();
         let app_ctx = AppContext::get();
         let ctx = JobContext::new(app_ctx, "FL-abc123".to_string());
         

@@ -144,6 +144,7 @@ and things like this:
 
 121) IMPORTANT - Make sure the registry or user/shared/stream tables are done from one place we just insert table definition and all logic is done one place currently there is many places this is done, i want the registry to have all the logic for this, so that whenever we alter/create start the system will use the same register from schema registry and not have different places doing the same logic
 
+122) in impl JobExecutor for FlushExecutor add generic to the model instead of having json parameters we can have T: DeserializeOwned + Send + Sync + 'static and then we can deserialize into the right struct directly instead of having to parse json each time
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.

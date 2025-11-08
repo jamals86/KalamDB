@@ -730,18 +730,42 @@ mod tests {
 
     fn create_test_metadata() -> Arc<crate::schema_registry::SchemaRegistry> {
     use crate::schema_registry::{CachedTableData, SchemaRegistry};
-    use kalamdb_commons::models::schemas::TableDefinition;
+    use kalamdb_commons::models::schemas::{TableDefinition, ColumnDefinition};
+    use kalamdb_commons::datatypes::KalamDataType;
 
         let cache = Arc::new(SchemaRegistry::new(0, None));
 
         let table_id = TableId::new(NamespaceId::new("chat"), TableName::new("messages"));
+
+        let columns = vec![
+            ColumnDefinition::new(
+                "id",
+                1,
+                KalamDataType::Int,
+                false, // not nullable
+                true,  // primary key
+                false, // not unique
+                kalamdb_commons::schemas::ColumnDefault::None,
+                None,
+            ),
+            ColumnDefinition::new(
+                "content",
+                2,
+                KalamDataType::Text,
+                true,  // nullable
+                false, // not primary key
+                false, // not unique
+                kalamdb_commons::schemas::ColumnDefault::None,
+                None,
+            ),
+        ];
 
         let td: Arc<TableDefinition> = Arc::new(
             TableDefinition::new_with_defaults(
                 NamespaceId::new("chat"),
                 TableName::new("messages"),
                 TableType::User,
-                vec![], // Empty columns for test
+                columns,
                 None,
             ).unwrap()
         );

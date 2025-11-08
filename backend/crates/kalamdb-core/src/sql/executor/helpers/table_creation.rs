@@ -53,14 +53,9 @@ pub fn create_table(
         }
     };
 
-    // Log result
-    match &result {
-        Ok(msg) => log::info!("✅ CREATE TABLE succeeded: {}", msg),
-        Err(e) => log::error!(
-            "❌ CREATE TABLE failed for {}: {}",
-            table_id_str,
-            e
-        ),
+    // Log success here; detailed error logging is handled in type-specific helpers
+    if let Ok(msg) = &result {
+        log::info!("✅ CREATE TABLE succeeded: {}", msg);
     }
 
     result
@@ -122,7 +117,7 @@ pub fn create_user_table(
                 stmt.table_name.as_str()
             ));
         } else {
-            log::error!(
+            log::warn!(
                 "❌ CREATE USER TABLE failed: {}.{} already exists",
                 stmt.namespace_id.as_str(),
                 stmt.table_name.as_str()
@@ -318,7 +313,7 @@ pub fn create_shared_table(
                 stmt.table_name.as_str()
             ));
         } else {
-            log::error!(
+            log::warn!(
                 "❌ CREATE SHARED TABLE failed: {}.{} already exists",
                 stmt.namespace_id.as_str(),
                 stmt.table_name.as_str()
@@ -405,19 +400,18 @@ pub fn create_shared_table(
         KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
     })?;
 
-    // Register StreamTableProvider for event operations
-    use crate::tables::stream_tables::{stream_table_store::new_stream_table_store, StreamTableProvider};
-    let stream_store = Arc::new(new_stream_table_store(
+    // Register SharedTableProvider for CRUD/query access
+    use crate::tables::shared_tables::{shared_table_store::new_shared_table_store, SharedTableProvider};
+    let shared_store = Arc::new(new_shared_table_store(
+        app_context.storage_backend(),
         &table_id.namespace_id(),
         &table_id.table_name(),
     ));
-    let provider = StreamTableProvider::new(
+    let provider = SharedTableProvider::new(
         Arc::new(table_id.clone()),
         app_context.schema_registry(),
-        stream_store,
-        stmt.ttl_seconds.map(|v| v as u32),
-        false, // ephemeral default
-        None,  // max_buffer default
+        schema.clone(),
+        shared_store,
     );
     schema_registry.insert_provider(table_id.clone(), Arc::new(provider));
 
@@ -492,7 +486,7 @@ pub fn create_stream_table(
                 stmt.table_name.as_str()
             ));
         } else {
-            log::error!(
+            log::warn!(
                 "❌ CREATE STREAM TABLE failed: {}.{} already exists",
                 stmt.namespace_id.as_str(),
                 stmt.table_name.as_str()
@@ -560,6 +554,22 @@ pub fn create_stream_table(
     tables_provider.create_table(&table_id, &table_def).map_err(|e| {
         KalamDbError::Other(format!("Failed to insert table into system catalog: {}", e))
     })?;
+
+    // Register StreamTableProvider for event operations (distinct from SHARED)
+    use crate::tables::stream_tables::{stream_table_store::new_stream_table_store, StreamTableProvider};
+    let stream_store = Arc::new(new_stream_table_store(
+        &table_id.namespace_id(),
+        &table_id.table_name(),
+    ));
+    let stream_provider = StreamTableProvider::new(
+        Arc::new(table_id.clone()),
+        app_context.schema_registry(),
+        stream_store,
+        Some(ttl_seconds as u32),
+        false, // ephemeral default
+        None,  // max_buffer default
+    );
+    schema_registry.insert_provider(table_id.clone(), Arc::new(stream_provider));
 
     // Log detailed success with table options
     log::info!(

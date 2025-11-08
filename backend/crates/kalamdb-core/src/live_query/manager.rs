@@ -828,6 +828,7 @@ mod tests {
     use crate::schema_registry::SchemaRegistry;
     use crate::tables::system::LiveQueriesTableProvider;
     use crate::tables::{new_shared_table_store, new_stream_table_store, new_user_table_store};
+    use crate::test_helpers::init_test_app_context;
     use kalamdb_commons::datatypes::KalamDataType;
     use kalamdb_commons::models::TableId;
     use kalamdb_commons::schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType};
@@ -836,6 +837,7 @@ mod tests {
     use tempfile::TempDir;
 
     async fn create_test_manager() -> (LiveQueryManager, TempDir) {
+        init_test_app_context();
         let temp_dir = TempDir::new().unwrap();
         let init = RocksDbInit::new(temp_dir.path().to_str().unwrap());
         let db = Arc::new(init.open().unwrap());

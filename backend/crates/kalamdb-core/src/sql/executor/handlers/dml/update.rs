@@ -50,12 +50,8 @@ impl StatementHandler for UpdateHandler {
         let sql = statement.as_str();
         let (namespace, table_name, assignments, where_clause) = self.simple_parse_update(sql)?;
 
-        // For MVP: require WHERE id = <literal or $n> and update limited fields
+        // Relax WHERE restriction: attempt id extraction, else fall back to provider-side update_all (shared tables)
         let row_id_opt = self.extract_row_id(&where_clause, &params)?;
-        if row_id_opt.is_none() {
-            return Err(KalamDbError::InvalidOperation("UPDATE currently requires WHERE id = <value>".into()));
-        }
-        let row_id = row_id_opt.unwrap();
         let mut obj = serde_json::Map::new();
         for (col, token) in assignments {
             let val = self.token_to_json(&token, &params)?;
@@ -63,16 +59,42 @@ impl StatementHandler for UpdateHandler {
         }
         let updates = JsonValue::Object(obj);
 
-        // Execute native update
+        // Execute native update for USER tables; for SHARED tables, perform provider-level updates across matching rows (MVP: id only)
         let schema_registry = AppContext::get().schema_registry();
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
-        let _def = schema_registry.get_table_definition(&table_id)?.ok_or_else(|| KalamDbError::NotFound(format!("Table {}.{} not found", namespace.as_str(), table_name.as_str())))?;
-        let shared = schema_registry.get_user_table_shared(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
-        use crate::tables::user_tables::UserTableAccess;
-        let access = UserTableAccess::new(shared, context.user_id.clone(), context.user_role.clone());
-        let _updated = access.update_row(&row_id, updates)?;
-        Ok(ExecutionResult::Updated { rows_affected: 1 })
+        let def = schema_registry.get_table_definition(&table_id)?.ok_or_else(|| KalamDbError::NotFound(format!("Table {}.{} not found", namespace.as_str(), table_name.as_str())))?;
+        match def.table_type {
+            kalamdb_commons::schemas::TableType::User => {
+                // Require id for user table update
+                let row_id = row_id_opt.ok_or_else(|| KalamDbError::InvalidOperation("UPDATE currently requires WHERE id = <value> for USER tables".into()))?;
+                let shared = schema_registry.get_user_table_shared(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
+                use crate::tables::user_tables::UserTableAccess;
+                let access = UserTableAccess::new(shared, context.user_id.clone(), context.user_role.clone());
+                let _updated = access.update_row(&row_id, updates)?;
+                Ok(ExecutionResult::Updated { rows_affected: 1 })
+            }
+            kalamdb_commons::schemas::TableType::Shared => {
+                // MVP: If id present, update that row via SharedTableProvider; otherwise, return invalid operation (no predicate support yet)
+                let provider_arc = schema_registry.get_provider(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("Shared table provider not found".into()))?;
+                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::tables::shared_tables::SharedTableProvider>() {
+                    if let Some(row_id) = row_id_opt {
+                        provider.update(&row_id, updates)?;
+                        Ok(ExecutionResult::Updated { rows_affected: 1 })
+                    } else {
+                        Err(KalamDbError::InvalidOperation("UPDATE on SHARED tables requires WHERE id = <value> (predicate updates not yet supported)".into()))
+                    }
+                } else {
+                    Err(KalamDbError::InvalidOperation("Cached provider type mismatch for shared table".into()))
+                }
+            }
+            kalamdb_commons::schemas::TableType::Stream => {
+                Err(KalamDbError::InvalidOperation("UPDATE not supported for STREAM tables".into()))
+            }
+            kalamdb_commons::schemas::TableType::System => {
+                Err(KalamDbError::InvalidOperation("Cannot UPDATE SYSTEM tables".into()))
+            }
+        }
     }
 
     async fn check_authorization(&self, statement: &SqlStatement, context: &ExecutionContext) -> Result<(), KalamDbError> {

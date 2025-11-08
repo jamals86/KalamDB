@@ -29,22 +29,26 @@ impl TypedStatementHandler<FlushTableStatement> for FlushTableHandler {
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        // Validate table exists via SchemaRegistry
+        // Validate table exists via SchemaRegistry and fetch definition for table_type
         let registry = self.app_context.schema_registry();
         let table_id = TableId::new(statement.namespace.clone(), statement.table_name.clone());
-        if registry.get_table_definition(&table_id)?.is_none() {
+        let table_def = registry.get_table_definition(&table_id)?;        
+        if table_def.is_none() {
             return Err(KalamDbError::NotFound(format!(
                 "Table {}.{} not found",
                 statement.namespace.as_str(),
                 statement.table_name.as_str()
             )));
         }
+        let table_def = table_def.unwrap();
+        let table_type_str = format!("{}", table_def.table_type); // relies on Display impl
 
         // Create a flush job via JobsManager (async execution handled in background loop)
         let job_manager = self.app_context.job_manager();
         let params_json = serde_json::json!({
+            "namespace_id": statement.namespace.as_str(),
             "table_name": statement.table_name.as_str(),
-            "namespace": statement.namespace.as_str()
+            "table_type": table_type_str
         });
         let idempotency_key = format!("flush-{}-{}", statement.namespace.as_str(), statement.table_name.as_str());
         let job_id: JobId = job_manager
@@ -59,7 +63,9 @@ impl TypedStatementHandler<FlushTableStatement> for FlushTableHandler {
 
         Ok(ExecutionResult::Success {
             message: format!(
-                "Flush job created. Job ID: {}",
+                "Flush started for table '{}.{}'. Job ID: {}",
+                statement.namespace.as_str(),
+                statement.table_name.as_str(),
                 job_id.as_str()
             ),
         })

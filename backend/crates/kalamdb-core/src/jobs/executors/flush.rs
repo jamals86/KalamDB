@@ -93,11 +93,21 @@ impl JobExecutor for FlushExecutor {
 
         let namespace_id_str = params_obj["namespace_id"].as_str().unwrap();
         let table_name_str = params_obj["table_name"].as_str().unwrap();
-        let table_type = params_obj["table_type"].as_str().unwrap();
+        // Normalize table_type (handle lowercase stored values like "user")
+        let table_type_raw = params_obj["table_type"].as_str().unwrap();
+        let table_type = match kalamdb_commons::schemas::TableType::from_str(table_type_raw) {
+            Some(tt) => tt, // use enum for matching
+            None => {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Unknown table type: {}",
+                    table_type_raw
+                )));
+            }
+        };
 
         ctx.log_info(&format!(
             "Flushing {}.{} (type: {})",
-            namespace_id_str, table_name_str, table_type
+            namespace_id_str, table_name_str, table_type.as_str()
         ));
 
         // Get dependencies from AppContext
@@ -122,7 +132,7 @@ impl JobExecutor for FlushExecutor {
 
         // Execute flush based on table type
         let result = match table_type {
-            "User" => {
+            kalamdb_commons::schemas::TableType::User => {
                 ctx.log_info("Executing UserTableFlushJob");
                 let store = app_ctx.user_table_store();
                 let flush_job = UserTableFlushJob::new(
@@ -138,7 +148,7 @@ impl JobExecutor for FlushExecutor {
                 flush_job.execute()
                     .map_err(|e| KalamDbError::Other(format!("User table flush failed: {}", e)))?
             }
-            "Shared" => {
+            kalamdb_commons::schemas::TableType::Shared => {
                 ctx.log_info("Executing SharedTableFlushJob");
                 let store = app_ctx.shared_table_store();
                 let flush_job = SharedTableFlushJob::new(
@@ -154,7 +164,7 @@ impl JobExecutor for FlushExecutor {
                 flush_job.execute()
                     .map_err(|e| KalamDbError::Other(format!("Shared table flush failed: {}", e)))?
             }
-            "Stream" => {
+            kalamdb_commons::schemas::TableType::Stream => {
                 ctx.log_info("Stream table flush not yet implemented");
                 // TODO: Implement StreamTableFlushJob when stream tables support flush
                 return Ok(JobDecision::Completed {
@@ -164,11 +174,8 @@ impl JobExecutor for FlushExecutor {
                     )),
                 });
             }
-            _ => {
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "Unknown table type: {}",
-                    table_type
-                )));
+            kalamdb_commons::schemas::TableType::System => {
+                return Err(KalamDbError::InvalidOperation("Cannot flush SYSTEM tables".to_string()));
             }
         };
 
