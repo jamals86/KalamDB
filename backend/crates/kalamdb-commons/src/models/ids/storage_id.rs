@@ -5,6 +5,8 @@ use std::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use crate::StorageKey;
+
 /// Type-safe wrapper for storage identifiers.
 ///
 /// Ensures storage IDs cannot be accidentally used where user IDs, namespace IDs,
@@ -74,5 +76,11 @@ impl AsRef<[u8]> for StorageId {
 impl Default for StorageId {
     fn default() -> Self {
         Self::local()
+    }
+}
+
+impl StorageKey for StorageId {
+    fn storage_key(&self) -> Vec<u8> {
+        self.0.as_bytes().to_vec()
     }
 }

@@ -6,9 +6,8 @@
 use crate::tables::system::jobs::JobsTableProvider;
 use crate::tables::system::live_queries::LiveQueriesTableProvider;
 use crate::tables::system::namespaces::NamespacesTableProvider;
-use crate::tables::system::tables::{TablesTableProvider, TablesStore};
+use crate::tables::system::tables::TablesTableProvider;
 use crate::tables::system::storages::StoragesTableProvider;
-use crate::tables::system::system_table_definitions::all_system_table_definitions;
 use crate::tables::system::users::UsersTableProvider;
 use crate::tables::system::StatsTableProvider;
 use datafusion::catalog::memory::MemorySchemaProvider;
@@ -24,7 +23,7 @@ pub struct SystemTableProviders {
     pub storages_provider: Arc<StoragesTableProvider>,
     pub live_queries_provider: Arc<LiveQueriesTableProvider>,
     pub tables_provider: Arc<TablesTableProvider>,
-    pub schema_store: Arc<TablesStore>,
+    // pub schema_store: Arc<TablesStore>,
 }
 
 /// Register all system tables with the provided schema
@@ -59,22 +58,23 @@ pub fn register_system_tables(
     system_schema: &Arc<MemorySchemaProvider>,
     storage_backend: Arc<dyn kalamdb_store::StorageBackend>,
 ) -> Result<SystemTableProviders, String> {
-    use kalamdb_store::storage_trait::Partition;
+    
 
-    // Create the system_tables partition if it doesn't exist
-    let schemas_partition = Partition::new("system_tables");
-    let _ = storage_backend.create_partition(&schemas_partition); // Ignore error if already exists
+    // // Create the system_tables partition if it doesn't exist
+    // let schemas_partition = Partition::new("system_tables");
+    // let _ = storage_backend.create_partition(&schemas_partition); // Ignore error if already exists
 
-    // Initialize TablesStore (stores TableDefinition for all tables)
-    let schema_store = Arc::new(TablesStore::new(storage_backend.clone(), "system_tables"));
+    // // Initialize TablesStore (stores TableDefinition for all tables)
+    // let schema_store = Arc::new(TablesStore::new(storage_backend.clone(), "system_tables"));
 
-    // Register all system table schema definitions in TablesStore
-    for (table_id, table_def) in all_system_table_definitions() {
-        // Use the overridden put() method which uses composite key internally
-        schema_store
-            .put(&table_id, &table_def)
-            .map_err(|e| format!("Failed to register schema for {}: {}", table_id, e))?;
-    }
+    // TODO: This is not needed since we already have the tables in the store
+    // // Register all system table schema definitions in TablesStore
+    // for (table_id, table_def) in all_system_table_definitions() {
+    //     // Use the overridden put() method which uses composite key internally
+    //     schema_store
+    //         .put(&table_id, &table_def)
+    //         .map_err(|e| format!("Failed to register schema for {}: {}", table_id, e))?;
+    // }
 
     // Create all system table providers using EntityStore-based v2 implementations
     let users_provider = Arc::new(UsersTableProvider::new(storage_backend.clone()));
@@ -139,7 +139,7 @@ pub fn register_system_tables(
         storages_provider,
         live_queries_provider,
         tables_provider,
-        schema_store,
+        // schema_store,
     })
 }
 

@@ -4,7 +4,6 @@
 //! **Phase 2 Task T018**: Centralized audit logging for SQL operations.
 
 use crate::error::KalamDbError;
-use crate::test_helpers::create_test_session;
 use crate::sql::executor::models::ExecutionContext;
 use kalamdb_commons::models::system::AuditLogEntry;
 use kalamdb_commons::models::AuditLogId;

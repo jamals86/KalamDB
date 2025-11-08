@@ -8,7 +8,6 @@ use crate::error::KalamDbError;
 use crate::schema_registry::SchemaRegistry;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::TableType;
 use kalamdb_sql::ddl::DropTableStatement;

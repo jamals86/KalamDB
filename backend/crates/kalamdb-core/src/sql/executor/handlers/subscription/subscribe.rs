@@ -4,7 +4,6 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use datafusion::execution::context::SessionContext;
 use kalamdb_sql::ddl::SubscribeStatement;
 use std::sync::Arc;
 use uuid::Uuid;

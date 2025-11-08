@@ -3,7 +3,6 @@
 //! Handlers for CREATE NAMESPACE and DROP NAMESPACE statements.
 
 use crate::app_context::AppContext;
-use crate::test_helpers::create_test_session;
 use crate::error::KalamDbError;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult};
 use datafusion::execution::context::SessionContext;

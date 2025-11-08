@@ -4,9 +4,8 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use datafusion::execution::context::SessionContext;
 use kalamdb_commons::{JobType, JobId};
-use kalamdb_commons::models::{NamespaceId, TableId, TableName};
+use kalamdb_commons::models::TableName;
 use kalamdb_sql::ddl::FlushAllTablesStatement;
 use std::sync::Arc;
 

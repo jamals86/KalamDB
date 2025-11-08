@@ -4,7 +4,6 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use datafusion::execution::context::SessionContext;
 use kalamdb_sql::ddl::{AlterUserStatement, UserModification};
 use std::sync::Arc;
 // No direct Role/UserId usage here (Role changing handled via statement), remove unused imports

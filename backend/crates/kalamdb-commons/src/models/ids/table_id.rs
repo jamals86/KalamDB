@@ -7,6 +7,7 @@ use std::fmt;
 
 use super::namespace_id::NamespaceId;
 use crate::models::table_name::TableName;
+use crate::StorageKey;
 
 /// Composite key for system.tables entries: {namespace_id}:{table_name}
 ///
@@ -106,6 +107,12 @@ impl fmt::Display for TableId {
 // Ensure Send and Sync are implemented
 unsafe impl Send for TableId {}
 unsafe impl Sync for TableId {}
+
+impl StorageKey for TableId {
+    fn storage_key(&self) -> Vec<u8> {
+        self.as_storage_key()
+    }
+}
 
 #[cfg(test)]
 mod tests {

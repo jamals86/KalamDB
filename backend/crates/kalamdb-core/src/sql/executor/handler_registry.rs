@@ -15,7 +15,6 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handler_adapter::{DynamicHandlerAdapter, TypedHandlerAdapter};
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use datafusion::execution::context::SessionContext;
 use dashmap::DashMap;
 use kalamdb_sql::statement_classifier::SqlStatement;
 use std::sync::Arc;

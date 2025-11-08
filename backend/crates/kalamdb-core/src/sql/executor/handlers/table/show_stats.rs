@@ -6,7 +6,6 @@ use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use datafusion::arrow::array::{ArrayRef, RecordBatch, StringArray, UInt64Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::{NamespaceId, TableId};
 use kalamdb_sql::ddl::ShowTableStatsStatement;
 use std::sync::Arc;

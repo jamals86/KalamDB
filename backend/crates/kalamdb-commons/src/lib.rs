@@ -48,6 +48,7 @@ pub mod errors;
 pub mod ids;
 pub mod models;
 pub mod storage;
+pub mod storage_key; // StorageKey trait for type-safe key serialization
 pub mod string_interner;
 pub mod system_tables;
 pub mod websocket;
@@ -81,6 +82,7 @@ pub use models::{
 };
 pub use schemas::TableType;
 pub use storage::{Operation, Partition, StorageBackend, StorageError};
+pub use storage_key::StorageKey;
 pub use string_interner::{intern, stats as interner_stats, SystemColumns, SYSTEM_COLUMNS};
 pub use system_tables::{StoragePartition, SystemTable};
 pub use websocket::{ChangeType as WsChangeType, Notification, WebSocketMessage};

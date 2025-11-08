@@ -16,7 +16,6 @@
 //! - **audit**: Audit logging (future)
 
 use crate::error::KalamDbError;
-use datafusion::execution::context::SessionContext;
 use kalamdb_sql::statement_classifier::SqlStatement;
 
 // Typed handlers organized by category

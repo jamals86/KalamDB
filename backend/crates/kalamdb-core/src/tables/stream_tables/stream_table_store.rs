@@ -4,6 +4,7 @@
 
 use crate::tables::system::system_table_store::SystemTableStore;
 use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::StorageKey;
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -29,6 +30,12 @@ impl StreamTableRowId {
 impl AsRef<[u8]> for StreamTableRowId {
     fn as_ref(&self) -> &[u8] {
         self.0.as_bytes()
+    }
+}
+
+impl StorageKey for StreamTableRowId {
+    fn storage_key(&self) -> Vec<u8> {
+        self.0.as_bytes().to_vec()
     }
 }
 

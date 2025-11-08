@@ -10,7 +10,6 @@
 //! 5. Return ExecutionResult::Inserted { rows_affected }
 
 use crate::app_context::AppContext;
-use crate::test_helpers::create_test_session;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
@@ -328,7 +327,7 @@ impl InsertHandler {
                     let mut inserted = 0usize;
                     // Use a single Snowflake generator instance to avoid millisecond collision overwrites
                     use kalamdb_commons::ids::SnowflakeGenerator;
-                    let mut snowflake_gen = SnowflakeGenerator::new(0);
+                    let snowflake_gen = SnowflakeGenerator::new(0);
                     
                     log::debug!(
                         "INSERT INTO SHARED TABLE {}.{} - inserting {} rows",

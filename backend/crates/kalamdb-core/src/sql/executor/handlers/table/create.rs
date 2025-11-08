@@ -1,11 +1,9 @@
 //! Typed DDL handler for CREATE TABLE statements
 
 use crate::app_context::AppContext;
-use crate::test_helpers::create_test_session;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
-use datafusion::execution::context::SessionContext;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
 

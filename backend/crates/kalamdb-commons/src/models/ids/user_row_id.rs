@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use super::user_id::UserId;
+use crate::StorageKey;
 
 /// Composite key for user-scoped table rows: {user_id}:{row_id}
 ///
@@ -92,6 +93,12 @@ impl fmt::Display for UserRowId {
 // Ensure Send and Sync are implemented
 unsafe impl Send for UserRowId {}
 unsafe impl Sync for UserRowId {}
+
+impl StorageKey for UserRowId {
+    fn storage_key(&self) -> Vec<u8> {
+        self.as_storage_key()
+    }
+}
 
 #[cfg(test)]
 mod tests {
