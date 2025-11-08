@@ -192,6 +192,13 @@ pub fn save_table_definition(
             ))
         })?;
 
+    // Prime unified schema cache with freshly saved definition so providers can resolve Arrow schema immediately
+    {
+        use crate::schema_registry::CachedTableData;
+        let cached = Arc::new(CachedTableData::new(Arc::new(table_def.clone())));
+        schema_registry.insert(table_id.clone(), cached);
+    }
+
     log::info!(
         "Table definition for {}.{} saved to information_schema.tables (version 1)",
         stmt.namespace_id.as_str(),

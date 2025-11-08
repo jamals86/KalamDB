@@ -146,6 +146,15 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             statement.table_name.as_str(),
         );
 
+        log::info!(
+            "🗑️  DROP TABLE request: {}.{} (if_exists: {}, user: {}, role: {:?})",
+            statement.namespace_id.as_str(),
+            statement.table_name.as_str(),
+            statement.if_exists,
+            context.user_id.as_str(),
+            context.user_role
+        );
+
         // RBAC: authorize based on actual table type if exists
         let registry = self.app_context.schema_registry();
         let actual_type = match registry.get_table_definition(&table_id)? {
@@ -154,6 +163,14 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         };
         let is_owner = false;
         if !crate::auth::rbac::can_delete_table(context.user_role, actual_type, is_owner) {
+            log::error!(
+                "❌ DROP TABLE {}.{}: Insufficient privileges (user: {}, role: {:?}, table_type: {:?})",
+                statement.namespace_id.as_str(),
+                statement.table_name.as_str(),
+                context.user_id.as_str(),
+                context.user_role,
+                actual_type
+            );
             return Err(KalamDbError::Unauthorized(
                 "Insufficient privileges to drop this table".to_string(),
             ));
@@ -161,15 +178,27 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
 
         // Check existence via system.tables provider (for IF EXISTS behavior)
         let tables = self.app_context.system_tables().tables();
-        let exists = tables.get_table_by_id(&table_id)?.is_some();
+        let table_metadata = tables.get_table_by_id(&table_id)?;
+        let exists = table_metadata.is_some();
+        
         if !exists {
             if statement.if_exists {
+                log::info!(
+                    "ℹ️  DROP TABLE {}.{}: Table does not exist (IF EXISTS - skipping)",
+                    statement.namespace_id.as_str(),
+                    statement.table_name.as_str()
+                );
                 return Ok(ExecutionResult::Success { message: format!(
                     "Table {}.{} does not exist (skipped)",
                     statement.namespace_id.as_str(),
                     statement.table_name.as_str()
                 )});
             } else {
+                log::error!(
+                    "❌ DROP TABLE failed: Table '{}' not found in namespace '{}'",
+                    statement.table_name.as_str(),
+                    statement.namespace_id.as_str()
+                );
                 return Err(KalamDbError::NotFound(format!(
                     "Table '{}' not found in namespace '{}'",
                     statement.table_name.as_str(),
@@ -178,10 +207,27 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             }
         }
 
+        // Log table details before dropping
+        if let Some(metadata) = table_metadata {
+            log::debug!(
+                "📋 Dropping table: type={:?}, columns={}, created_at={:?}",
+                actual_type,
+                metadata.columns.len(),
+                metadata.created_at
+            );
+        }
+
         // TODO: Check active live queries/subscriptions before dropping (Phase 9 integration)
 
         // Remove definition via SchemaRegistry (delete-through) → invalidates cache
         registry.delete_table_definition(&table_id)?;
+
+        log::info!(
+            "✅ DROP TABLE succeeded: {}.{} (type: {:?})",
+            statement.namespace_id.as_str(),
+            statement.table_name.as_str(),
+            actual_type
+        );
 
         Ok(ExecutionResult::Success {
             message: format!(

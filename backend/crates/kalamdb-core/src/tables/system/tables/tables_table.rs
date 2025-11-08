@@ -25,7 +25,7 @@ impl TablesTableSchema {
     /// Schema fields (in ordinal_position order):
     /// - table_id: Utf8 (primary key)
     /// - table_name: Utf8
-    /// - namespace: Utf8
+    /// - namespace_id: Utf8
     /// - table_type: Utf8
     /// - created_at: Timestamp(Millisecond, None)
     /// - storage_id: Utf8 (nullable)
@@ -75,7 +75,7 @@ mod tests {
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
         assert!(field_names.contains(&"table_id"));
         assert!(field_names.contains(&"table_name"));
-        assert!(field_names.contains(&"namespace"));
+    assert!(field_names.contains(&"namespace_id"));
         assert!(field_names.contains(&"table_type"));
         assert!(field_names.contains(&"created_at"));
         assert!(field_names.contains(&"storage_id"));

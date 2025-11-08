@@ -34,7 +34,7 @@ async fn test_user_table_manual_flush_creates_parquet() {
 
     server
         .sql_executor
-        .load_existing_tables(ExecutorUserId::from("system"))
+        .load_existing_tables()
         .await
         .expect("failed to register tables");
 
@@ -157,7 +157,7 @@ async fn test_shared_table_manual_flush_creates_parquet() {
 
     server
         .sql_executor
-        .load_existing_tables(ExecutorUserId::from("system"))
+        .load_existing_tables()
         .await
         .expect("failed to register tables");
     assert_eq!(

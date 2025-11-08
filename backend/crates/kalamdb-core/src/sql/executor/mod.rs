@@ -19,7 +19,6 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionMetadata, Executio
 use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::NamespaceId;
-use kalamdb_commons::models::UserId;
 use kalamdb_sql::statement_classifier::SqlStatement;
 use std::sync::Arc;
 
@@ -142,11 +141,184 @@ impl SqlExecutor {
         Ok(ExecutionResult::Rows { batches, row_count })
     }
 
-    /// Legacy bootstrap hook (currently a no-op until handler wiring lands).
+    /// Load existing tables from system.tables and register providers
+    ///
+    /// Called during server startup to restore table access after restart.
+    /// Scans system.tables and creates/registers:
+    /// - UserTableShared instances for USER tables
+    /// - SharedTableProvider instances for SHARED tables  
+    /// - StreamTableProvider instances for STREAM tables
+    ///
+    /// # Returns
+    /// Ok on success, error if table loading fails
     pub async fn load_existing_tables(
-        &self,
-        _default_user_id: UserId,
+        &self
     ) -> Result<(), KalamDbError> {
+        use crate::tables::base_table_provider::UserTableShared;
+        use crate::tables::user_tables::new_user_table_store;
+        use kalamdb_commons::schemas::TableType;
+
+        let app_context = &self.app_context;
+        let tables_provider = app_context.system_tables().tables();
+        let schema_registry = app_context.schema_registry();
+
+        // Scan all tables from system.tables
+        let all_tables_batch = tables_provider.scan_all_tables()?;
+        
+        if all_tables_batch.num_rows() == 0 {
+            log::info!("No existing tables to load");
+            return Ok(());
+        }
+
+        // Extract table IDs and types from batch
+        use datafusion::arrow::array::{Array, StringArray};
+
+        // system.tables schema now uses 'namespace_id' consistently
+        let namespace_array = all_tables_batch
+            .column_by_name("namespace_id")
+            .ok_or_else(|| KalamDbError::Other("Missing namespace_id column".to_string()))?
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| KalamDbError::Other("namespace_id is not StringArray".to_string()))?;
+
+        let table_name_array = all_tables_batch
+            .column_by_name("table_name")
+            .ok_or_else(|| KalamDbError::Other("Missing table_name column".to_string()))?
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| KalamDbError::Other("table_name is not StringArray".to_string()))?;
+
+        let table_type_array = all_tables_batch
+            .column_by_name("table_type")
+            .ok_or_else(|| KalamDbError::Other("Missing table_type column".to_string()))?
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| KalamDbError::Other("table_type is not StringArray".to_string()))?;
+
+        let mut user_count = 0;
+        let mut shared_count = 0;
+        let mut stream_count = 0;
+        let mut system_count = 0;
+
+        // Iterate through all tables and register providers
+        for i in 0..all_tables_batch.num_rows() {
+            let namespace_id = namespace_array.value(i);
+            let table_name = table_name_array.value(i);
+            let table_type_str = table_type_array.value(i);
+
+            let table_id = kalamdb_commons::models::TableId::from_strings(namespace_id, table_name);
+            
+            // Parse table type
+            let table_type = match table_type_str.to_uppercase().as_str() {
+                "USER" => TableType::User,
+                "SHARED" => TableType::Shared,
+                "STREAM" => TableType::Stream,
+                "SYSTEM" => {
+                    system_count += 1;
+                    continue; // System tables already registered in AppContext
+                }
+                _ => {
+                    log::warn!("Unknown table type '{}' for {}.{}", table_type_str, namespace_id, table_name);
+                    continue;
+                }
+            };
+
+            // Get table definition with schema
+            let table_def = match schema_registry.get_table_definition(&table_id)? {
+                Some(def) => def,
+                None => {
+                    log::warn!("Table definition not found for {}.{}", namespace_id, table_name);
+                    continue;
+                }
+            };
+
+            // Convert to Arrow schema
+            let arrow_schema = match table_def.to_arrow_schema() {
+                Ok(schema) => schema,
+                Err(e) => {
+                    log::error!("Failed to convert table definition to Arrow schema for {}.{}: {}", 
+                               namespace_id, table_name, e);
+                    continue;
+                }
+            };
+
+            // Ensure CachedTableData exists in unified schema cache (may have been evicted or not yet inserted on legacy tables)
+            if schema_registry.get(&table_id).is_none() {
+                use crate::schema_registry::CachedTableData;
+                schema_registry.insert(table_id.clone(), Arc::new(CachedTableData::new(Arc::clone(&table_def))));
+                log::debug!("Primed schema cache for {}.{} (version {})", namespace_id, table_name, table_def.schema_version);
+            }
+
+            // Register provider based on type
+            match table_type {
+                TableType::User => {
+                    // Create user table store
+                    let user_table_store = Arc::new(new_user_table_store(
+                        app_context.storage_backend(),
+                        &table_id.namespace_id(),
+                        &table_id.table_name(),
+                    ));
+
+                    // Create and register UserTableShared
+                    let shared = UserTableShared::new(
+                        Arc::new(table_id.clone()),
+                        app_context.schema_registry(),
+                        arrow_schema.clone(),
+                        user_table_store,
+                    );
+
+                    schema_registry.insert_user_table_shared(table_id.clone(), shared);
+                    user_count += 1;
+                }
+                TableType::Shared => {
+                    use crate::tables::shared_tables::{shared_table_store::new_shared_table_store, SharedTableProvider};
+                    let shared_store = Arc::new(new_shared_table_store(
+                        app_context.storage_backend(),
+                        &table_id.namespace_id(),
+                        &table_id.table_name(),
+                    ));
+                    let provider = SharedTableProvider::new(
+                        Arc::new(table_id.clone()),
+                        app_context.schema_registry(),
+                        arrow_schema.clone(),
+                        shared_store,
+                    );
+                    schema_registry.insert_provider(table_id.clone(), Arc::new(provider));
+                    shared_count += 1;
+                }
+                TableType::Stream => {
+                    use crate::tables::stream_tables::{stream_table_store::new_stream_table_store, StreamTableProvider};
+                    let stream_store = Arc::new(new_stream_table_store(
+                        &table_id.namespace_id(),
+                        &table_id.table_name(),
+                    ));
+                    let provider = StreamTableProvider::new(
+                        Arc::new(table_id.clone()),
+                        app_context.schema_registry(),
+                        stream_store,
+                        None, // retention_seconds unknown at bootstrap (could derive from table options later)
+                        false, // ephemeral default
+                        None,  // max_buffer default
+                    );
+                    schema_registry.insert_provider(table_id.clone(), Arc::new(provider));
+                    stream_count += 1;
+                }
+                TableType::System => {
+                    // Already handled above
+                    unreachable!()
+                }
+            }
+        }
+
+        log::info!(
+            "Loaded {} tables: {} user, {} shared, {} stream ({} system already registered)",
+            user_count + shared_count + stream_count,
+            user_count,
+            shared_count,
+            stream_count,
+            system_count
+        );
+
         Ok(())
     }
 

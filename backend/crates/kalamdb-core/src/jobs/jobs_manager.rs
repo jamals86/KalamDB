@@ -425,8 +425,31 @@ impl JobsManager {
         let app_ctx = AppContext::get();
     let ctx = JobContext::new(app_ctx, job_id.as_str().to_string());
 
-        // Execute job
-        let decision = executor.execute(&ctx, &job).await?;
+        // Execute job with robust error handling (do not tear down run loop on executor error)
+        let decision = match executor.execute(&ctx, &job).await {
+            Ok(d) => d,
+            Err(e) => {
+                // Mark job as failed and continue processing other jobs
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                job.status = JobStatus::Failed;
+                job.message = Some(format!("Executor error: {}", e));
+                job.exception_trace = None;
+                job.updated_at = now_ms;
+                job.finished_at = Some(now_ms);
+
+                self.jobs_provider
+                    .update_job(job.clone())
+                    .map_err(|err| crate::error::KalamDbError::IoError(format!(
+                        "Failed to fail job after executor error: {}",
+                        err
+                    )))?;
+
+                self.log_job_event(&job_id, "error", &format!("Job failed with executor error: {}", e));
+
+                // Return Ok to keep the run loop alive
+                return Ok(());
+            }
+        };
 
         // Handle execution result
         match decision {

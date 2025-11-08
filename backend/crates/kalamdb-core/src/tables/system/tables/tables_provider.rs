@@ -96,7 +96,7 @@ impl TablesTableProvider {
 
         let mut table_ids = StringBuilder::new();
         let mut table_names = StringBuilder::new();
-        let mut namespaces = StringBuilder::new();
+    let mut namespaces = StringBuilder::new();
         let mut table_types = StringBuilder::new();
         let mut created_ats = Vec::new();
         let mut schema_versions = Vec::new();

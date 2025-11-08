@@ -142,7 +142,7 @@ and things like this:
   - All places where we read config from file directly and change them to read from AppContext
   - Remove any duplicate config models which is a dto and use only the configs instead of mirroring it to different structs
 
-
+121) IMPORTANT - Make sure the registry or user/shared/stream tables are done from one place we just insert table definition and all logic is done one place currently there is many places this is done, i want the registry to have all the logic for this, so that whenever we alter/create start the system will use the same register from schema registry and not have different places doing the same logic
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
