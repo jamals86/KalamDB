@@ -67,7 +67,7 @@ mod tests {
     fn test_tables_table_schema() {
         let schema = TablesTableSchema::schema();
         // Schema built from TableDefinition, verify field count matches definition
-    // Expecting 9 fields after adding 'options': table_id, table_name, namespace_id, table_type, created_at, schema_version, table_comment, updated_at, options
+    // Expecting 9 fields: table_id, table_name, namespace_id, table_type, created_at, schema_version, table_comment, updated_at, options
     assert_eq!(schema.fields().len(), 9);
 
         // Verify fields exist (order guaranteed by TableDefinition's ordinal_position)

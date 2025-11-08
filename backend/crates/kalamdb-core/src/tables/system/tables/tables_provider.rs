@@ -96,14 +96,13 @@ impl TablesTableProvider {
 
         let mut table_ids = StringBuilder::new();
         let mut table_names = StringBuilder::new();
-    let mut namespaces = StringBuilder::new(); // corresponds to column name 'namespace'
-    let mut storage_ids = StringBuilder::new();
-    let mut table_types = StringBuilder::new();
-    let mut created_ats = Vec::new();
-    let mut schema_versions = Vec::new();
-    let mut table_comments = StringBuilder::new();
-    let mut updated_ats = Vec::new();
-    let mut options_json = StringBuilder::new();
+        let mut namespaces = StringBuilder::new(); // corresponds to column name 'namespace_id'
+        let mut table_types = StringBuilder::new();
+        let mut created_ats = Vec::new();
+        let mut schema_versions = Vec::new();
+        let mut table_comments = StringBuilder::new();
+        let mut updated_ats = Vec::new();
+        let mut options_json = StringBuilder::new();
 
         for (_table_id, table_def) in tables {
             // Convert TableId to string format: "namespace:table_name"
@@ -111,17 +110,6 @@ impl TablesTableProvider {
             table_ids.append_value(&table_id_str);
             table_names.append_value(table_def.table_name.as_str());
             namespaces.append_value(table_def.namespace_id.as_str());
-            // storage_id (nullable) derived from TableOptions variant if present
-            let storage_id_opt: Option<&kalamdb_commons::models::StorageId> = match &table_def.table_options {
-                kalamdb_commons::schemas::TableOptions::User(opts) => Some(&opts.storage_id),
-                kalamdb_commons::schemas::TableOptions::Shared(opts) => Some(&opts.storage_id),
-                // Stream and System variants do not contain storage_id
-                _ => None,
-            };
-            match storage_id_opt {
-                Some(sid) => storage_ids.append_value(sid.as_str()),
-                None => storage_ids.append_null(),
-            }
             table_types.append_value(table_def.table_type.as_str());
             created_ats.push(Some(table_def.created_at.timestamp_millis()));
             schema_versions.push(Some(table_def.schema_version as i32));
@@ -140,13 +128,12 @@ impl TablesTableProvider {
                 Arc::new(table_ids.finish()) as ArrayRef,          // 1 table_id
                 Arc::new(table_names.finish()) as ArrayRef,        // 2 table_name
                 Arc::new(namespaces.finish()) as ArrayRef,         // 3 namespace_id
-                Arc::new(storage_ids.finish()) as ArrayRef,        // 4 storage_id
-                Arc::new(table_types.finish()) as ArrayRef,        // 5 table_type
-                Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef, // 6 created_at
-                Arc::new(Int32Array::from(schema_versions)) as ArrayRef, // 7 schema_version
-                Arc::new(table_comments.finish()) as ArrayRef,     // 8 table_comment
-                Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef, // 9 updated_at
-                Arc::new(options_json.finish()) as ArrayRef,       // 10 options
+                Arc::new(table_types.finish()) as ArrayRef,        // 4 table_type
+                Arc::new(TimestampMillisecondArray::from(created_ats)) as ArrayRef, // 5 created_at
+                Arc::new(Int32Array::from(schema_versions)) as ArrayRef, // 6 schema_version
+                Arc::new(table_comments.finish()) as ArrayRef,     // 7 table_comment
+                Arc::new(TimestampMillisecondArray::from(updated_ats)) as ArrayRef, // 8 updated_at
+                Arc::new(options_json.finish()) as ArrayRef,       // 9 options
             ],
         )
         .map_err(|e| KalamDbError::Other(format!("Arrow error: {}", e)))?;
@@ -314,7 +301,7 @@ mod tests {
         // Scan
         let batch = provider.scan_all_tables().unwrap();
     assert_eq!(batch.num_rows(), 3);
-    assert_eq!(batch.num_columns(), 10); // Updated schema now has 10 fields (namespace_id, storage_id, options)
+    assert_eq!(batch.num_columns(), 9); // Schema has 9 fields (no storage_id; storage_id is inside options JSON)
     }
 
     #[tokio::test]
