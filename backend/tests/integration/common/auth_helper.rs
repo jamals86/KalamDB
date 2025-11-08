@@ -59,7 +59,8 @@ pub async fn create_test_user(
     // Use system user to create the user
     use kalamdb_core::sql::executor::models::ExecutionContext;
     let system_user_id = UserId::new("system");
-    let exec_ctx = ExecutionContext::new(system_user_id, Role::System);
+    let session = server.app_context.base_session_context();
+    let exec_ctx = ExecutionContext::new(system_user_id, Role::System, session);
     let result = server
         .sql_executor
     .execute(&*server.session_context, &create_user_sql.as_str(), &exec_ctx, Vec::new())

@@ -69,3 +69,4 @@ examples/simple-typescript/package-lock.json
 /backend/multi_flush
 *.parquet
 backend/logs/test-backend.out
+*.bak

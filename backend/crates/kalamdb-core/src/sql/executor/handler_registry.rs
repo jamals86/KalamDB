@@ -515,10 +515,10 @@ mod tests {
     use super::*;
     use kalamdb_commons::models::{NamespaceId, UserId};
     use kalamdb_commons::Role;
-    use crate::test_helpers::init_test_app_context;
+    use crate::test_helpers::{create_test_session, init_test_app_context};
 
     fn test_context() -> ExecutionContext {
-        ExecutionContext::new(UserId::from("test_user"), Role::Dba)
+        ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session())
     }
 
     #[tokio::test]
@@ -597,8 +597,8 @@ mod tests {
         init_test_app_context();
         let app_ctx = AppContext::get();
         let registry = HandlerRegistry::new(app_ctx);
-        let session = SessionContext::new();
-        let user_ctx = ExecutionContext::new(UserId::from("regular_user"), Role::User);
+        let session: SessionContext = SessionContext::new();
+        let user_ctx = ExecutionContext::new(UserId::from("regular_user"), Role::User, create_test_session());
 
         let stmt = SqlStatement::new(
             "CREATE NAMESPACE unauthorized_ns".to_string(),
@@ -628,7 +628,7 @@ mod tests {
         let app_ctx = AppContext::get();
         let registry = HandlerRegistry::new(app_ctx);
         let session = SessionContext::new();
-        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::User);
+        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session());
 
         let stmt = SqlStatement::new(
             "INSERT INTO test VALUES (1)".to_string(),
@@ -659,7 +659,7 @@ mod tests {
         let app_ctx = AppContext::get();
         let registry = HandlerRegistry::new(app_ctx);
         let session = SessionContext::new();
-        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::User);
+        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session());
 
         let stmt = SqlStatement::new(
             "UPDATE test SET x = 1".to_string(),
@@ -690,7 +690,7 @@ mod tests {
         let app_ctx = AppContext::get();
         let registry = HandlerRegistry::new(app_ctx);
         let session = SessionContext::new();
-        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::User);
+        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::User, create_test_session());
 
         let stmt = SqlStatement::new(
             "DELETE FROM test WHERE id = 1".to_string(),

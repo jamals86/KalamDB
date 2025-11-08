@@ -26,7 +26,17 @@ pub struct ExecutionContext {
 }
 
 impl ExecutionContext {
-    pub fn new(user_id: UserId, user_role: Role) -> Self {
+    /// Create a new ExecutionContext with required session
+    ///
+    /// # Arguments
+    /// * `user_id` - User ID executing the query
+    /// * `user_role` - User's role for authorization
+    /// * `session` - Shared DataFusion session (from AppContext.base_session_context())
+    ///
+    /// # Note
+    /// Session should be the shared AppContext session, not a new one per request.
+    /// This keeps memory usage low (~8 bytes per request vs 500KB-1MB).
+    pub fn new(user_id: UserId, user_role: Role, session: Arc<SessionContext>) -> Self {
         Self {
             user_id,
             user_role,
@@ -35,11 +45,16 @@ impl ExecutionContext {
             ip_address: None,
             timestamp: SystemTime::now(),
             params: Vec::new(),
-            session: Arc::new(SessionContext::new())
+            session,
         }
     }
 
-    pub fn with_namespace(user_id: UserId, user_role: Role, namespace_id: NamespaceId) -> Self {
+    pub fn with_namespace(
+        user_id: UserId,
+        user_role: Role,
+        namespace_id: NamespaceId,
+        session: Arc<SessionContext>,
+    ) -> Self {
         Self {
             user_id,
             user_role,
@@ -48,7 +63,7 @@ impl ExecutionContext {
             ip_address: None,
             timestamp: SystemTime::now(),
             params: Vec::new(),
-            session: Arc::new(SessionContext::new())
+            session,
         }
     }
 
@@ -58,6 +73,7 @@ impl ExecutionContext {
         namespace_id: Option<NamespaceId>,
         request_id: Option<String>,
         ip_address: Option<String>,
+        session: Arc<SessionContext>,
     ) -> Self {
         Self {
             user_id,
@@ -67,11 +83,11 @@ impl ExecutionContext {
             ip_address,
             timestamp: SystemTime::now(),
             params: Vec::new(),
-            session: Arc::new(SessionContext::new())
+            session,
         }
     }
 
-    pub fn anonymous() -> Self {
+    pub fn anonymous(session: Arc<SessionContext>) -> Self {
         Self {
             user_id: UserId::from("anonymous"),
             user_role: Role::User,
@@ -80,7 +96,7 @@ impl ExecutionContext {
             ip_address: None,
             timestamp: SystemTime::now(),
             params: Vec::new(),
-            session: Arc::new(SessionContext::new())
+            session,
         }
     }
 

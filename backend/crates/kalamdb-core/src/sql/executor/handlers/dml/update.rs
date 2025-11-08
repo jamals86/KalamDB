@@ -3,6 +3,7 @@
 //! Handles UPDATE statements with parameter binding support via DataFusion.
 
 use crate::error::KalamDbError;
+use crate::test_helpers::create_test_session;
 use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
 use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
@@ -217,7 +218,7 @@ mod tests {
     use kalamdb_commons::Role;
 
     fn test_context(role: Role) -> ExecutionContext {
-        ExecutionContext::new(UserId::from("test_user"), role)
+        ExecutionContext::new(UserId::from("test_user"), role, create_test_session())
     }
 
     #[tokio::test]

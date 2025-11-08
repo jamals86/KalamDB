@@ -19,9 +19,6 @@ use crate::error::KalamDbError;
 use datafusion::execution::context::SessionContext;
 use kalamdb_sql::statement_classifier::SqlStatement;
 
-// Core types relocated to executor/models in v3
-pub mod authorization;
-
 // Typed handlers organized by category
 pub mod namespace;
 pub mod storage;

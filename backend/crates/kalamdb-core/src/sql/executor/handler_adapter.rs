@@ -173,7 +173,7 @@ mod tests {
     use super::*;
     use crate::app_context::AppContext;
     use crate::sql::executor::handlers::namespace::CreateNamespaceHandler;
-    use crate::test_helpers::init_test_app_context;
+    use crate::test_helpers::{create_test_session, init_test_app_context};
     use kalamdb_commons::models::{NamespaceId, UserId};
     use kalamdb_commons::Role;
     use kalamdb_sql::ddl::CreateNamespaceStatement;
@@ -190,7 +190,7 @@ mod tests {
         });
 
         let session = SessionContext::new();
-        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::Dba);
+        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session());
 
         let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(
             "CREATE NAMESPACE test_adapter_ns".to_string(),
@@ -218,7 +218,7 @@ mod tests {
         });
 
         let session = SessionContext::new();
-        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::Dba);
+        let ctx = ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session());
 
         // Pass wrong statement type (ShowNamespaces instead of CreateNamespace)
         let stmt = kalamdb_sql::statement_classifier::SqlStatement::new(

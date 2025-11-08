@@ -1,6 +1,7 @@
 //! Typed DDL handler for ALTER NAMESPACE statements
 
 use crate::app_context::AppContext;
+use crate::test_helpers::create_test_session;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
@@ -87,7 +88,7 @@ mod tests {
     use kalamdb_commons::models::UserId;
 
     fn create_test_context() -> ExecutionContext {
-        ExecutionContext::new(UserId::new("test_user"), Role::Dba)
+        ExecutionContext::new(UserId::new("test_user"), Role::Dba, create_test_session())
     }
 
     #[tokio::test]
@@ -100,7 +101,7 @@ mod tests {
         };
         
         // Test with non-admin user
-        let ctx = ExecutionContext::new(UserId::new("user"), Role::User);
+        let ctx = ExecutionContext::new(UserId::new("user"), Role::User, create_test_session());
         let result = handler.check_authorization(&stmt, &ctx).await;
         
         assert!(result.is_err());

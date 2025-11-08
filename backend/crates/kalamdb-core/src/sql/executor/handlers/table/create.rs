@@ -1,6 +1,7 @@
 //! Typed DDL handler for CREATE TABLE statements
 
 use crate::app_context::AppContext;
+use crate::test_helpers::create_test_session;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
@@ -69,7 +70,7 @@ mod tests {
     use arrow::datatypes::{DataType, Field, Schema};
 
     fn create_test_context(role: Role) -> ExecutionContext {
-        ExecutionContext::new(UserId::new("test_user"), role)
+        ExecutionContext::new(UserId::new("test_user"), role, create_test_session())
     }
 
     fn create_test_statement(table_type: TableType) -> CreateTableStatement {

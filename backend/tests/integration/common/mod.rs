@@ -318,9 +318,10 @@ impl TestServer {
     use kalamdb_core::sql::executor::models::ExecutionContext;
         use kalamdb_commons::Role;
         
+        let session = self.app_context.base_session_context();
         let exec_ctx = match &user_id_obj {
-            Some(user_id) => ExecutionContext::new(user_id.clone(), Role::System),
-            None => ExecutionContext::new(UserId::system(), Role::System),
+            Some(user_id) => ExecutionContext::new(user_id.clone(), Role::System, session.clone()),
+            None => ExecutionContext::new(UserId::system(), Role::System, session),
         };
         
     match self.sql_executor.execute(&*self.session_context, sql, &exec_ctx, Vec::new()).await {

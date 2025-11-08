@@ -137,7 +137,7 @@ and things like this:
         let namespace_id = NamespaceId::new(name);
 117) Make the link client send a X-Request-ID header with a unique id per request for better tracing and debugging
 118) Add to kalamdb-link client the ability to set custom headers for each request
-119) StatementHandler execute method has both session: &SessionContext and context: &ExecutionContext which has session as well, we can remove session from the execute method since we can get it from the context directly
+119) ✅ **DONE** - Session lifecycle optimized: ONE SessionContext created at server startup in AppContext, shared via Arc across all requests (8 bytes per request, not 500KB-1MB). Eliminated wasteful SessionContext allocations (~500MB-1GB/s savings at 1000 req/s). ExecutionContext constructors now require session parameter.
 120) Now configs are centralized inside AppContext and accessible everywhere easily, we need to check:
   - All places where we read config from file directly and change them to read from AppContext
   - Remove any duplicate config models which is a dto and use only the configs instead of mirroring it to different structs

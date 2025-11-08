@@ -1,6 +1,7 @@
 //! Typed DDL handler for SHOW NAMESPACES statements
 
 use crate::app_context::AppContext;
+use crate::test_helpers::create_test_session;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::typed::TypedStatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
@@ -57,7 +58,7 @@ mod tests {
     use kalamdb_commons::models::UserId;
 
     fn create_test_context() -> ExecutionContext {
-        ExecutionContext::new(UserId::new("test_user"), Role::User)
+        ExecutionContext::new(UserId::new("test_user"), Role::User, create_test_session())
     }
 
     #[tokio::test]

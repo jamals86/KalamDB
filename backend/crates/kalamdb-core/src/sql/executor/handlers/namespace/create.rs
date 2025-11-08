@@ -85,10 +85,10 @@ mod tests {
     use super::*;
     use kalamdb_commons::Role;
     use kalamdb_commons::models::UserId;
-    use crate::test_helpers::init_test_app_context;
+    use crate::test_helpers::{create_test_session, init_test_app_context};
 
     fn test_context() -> ExecutionContext {
-        ExecutionContext::new(UserId::from("test_user"), Role::Dba)
+        ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session())
     }
 
     #[tokio::test]
@@ -154,7 +154,7 @@ mod tests {
         init_test_app_context();
         let app_ctx = AppContext::get();
         let handler = CreateNamespaceHandler::new(app_ctx);
-        let user_ctx = ExecutionContext::new(UserId::from("regular_user"), Role::User);
+        let user_ctx = ExecutionContext::new(UserId::from("regular_user"), Role::User, create_test_session());
 
         let stmt = CreateNamespaceStatement {
             name: NamespaceId::new("unauthorized_ns"),

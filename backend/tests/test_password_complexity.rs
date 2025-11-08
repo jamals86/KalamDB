@@ -92,7 +92,7 @@ fn assert_complexity_error(
 async fn test_complexity_uppercase_required() {
     let (executor, _temp_dir, app_context, session_ctx) = setup_executor(true).await;
     let admin_id = create_admin_user(&app_context).await;
-    let exec_ctx = kalamdb_core::sql::executor::ExecutorContextAlias::new(admin_id.clone(), Role::System);
+    let exec_ctx = kalamdb_core::sql::executor::ExecutorContextAlias::new(admin_id.clone(), Role::System, session_ctx.clone());
 
     let result = executor
         .execute(&*session_ctx, 
@@ -109,7 +109,7 @@ async fn test_complexity_uppercase_required() {
 async fn test_complexity_lowercase_required() {
     let (executor, _temp_dir, app_context, session_ctx) = setup_executor(true).await;
     let admin_id = create_admin_user(&app_context).await;
-    let exec_ctx = kalamdb_core::sql::executor::ExecutorContextAlias::new(admin_id.clone(), Role::System);
+    let exec_ctx = kalamdb_core::sql::executor::ExecutorContextAlias::new(admin_id.clone(), Role::System, session_ctx.clone());
 
     let result = executor
         .execute(&*session_ctx, 
@@ -126,7 +126,7 @@ async fn test_complexity_lowercase_required() {
 async fn test_complexity_digit_required() {
     let (executor, _temp_dir, app_context, session_ctx) = setup_executor(true).await;
     let admin_id = create_admin_user(&app_context).await;
-    let exec_ctx = kalamdb_core::sql::executor::ExecutorContextAlias::new(admin_id.clone(), Role::System);
+    let exec_ctx = kalamdb_core::sql::executor::ExecutorContextAlias::new(admin_id.clone(), Role::System, session_ctx.clone());
 
     let result = executor
         .execute(&*session_ctx, 
@@ -143,7 +143,7 @@ async fn test_complexity_digit_required() {
 async fn test_complexity_special_required() {
     let (executor, _temp_dir, app_context, session_ctx) = setup_executor(true).await;
     let admin_id = create_admin_user(&app_context).await;
-    let exec_ctx = kalamdb_core::sql::executor::ExecutorContextAlias::new(admin_id.clone(), Role::System);
+    let exec_ctx = kalamdb_core::sql::executor::ExecutorContextAlias::new(admin_id.clone(), Role::System, session_ctx.clone());
 
     let result = executor
         .execute(&*session_ctx, 
@@ -160,7 +160,7 @@ async fn test_complexity_special_required() {
 async fn test_complexity_valid_password_succeeds() {
     let (executor, _temp_dir, app_context, session_ctx) = setup_executor(true).await;
     let admin_id = create_admin_user(&app_context).await;
-    let exec_ctx = kalamdb_core::sql::executor::ExecutorContextAlias::new(admin_id.clone(), Role::System);
+    let exec_ctx = kalamdb_core::sql::executor::ExecutorContextAlias::new(admin_id.clone(), Role::System, session_ctx.clone());
 
     let result = executor
         .execute(&*session_ctx, 
@@ -177,7 +177,7 @@ async fn test_complexity_valid_password_succeeds() {
 async fn test_complexity_disabled_allows_simple_password() {
     let (executor, _temp_dir, app_context, session_ctx) = setup_executor(false).await;
     let admin_id = create_admin_user(&app_context).await;
-    let exec_ctx = kalamdb_core::sql::executor::ExecutorContextAlias::new(admin_id.clone(), Role::System);
+    let exec_ctx = kalamdb_core::sql::executor::ExecutorContextAlias::new(admin_id.clone(), Role::System, session_ctx.clone());
 
     let result = executor
         .execute(&*session_ctx, 
@@ -198,7 +198,7 @@ async fn test_complexity_disabled_allows_simple_password() {
 async fn test_complexity_alter_user_requires_special_character() {
     let (executor, _temp_dir, app_context, session_ctx) = setup_executor(true).await;
     let admin_id = create_admin_user(&app_context).await;
-    let exec_ctx = kalamdb_core::sql::executor::ExecutorContextAlias::new(admin_id.clone(), Role::System);
+    let exec_ctx = kalamdb_core::sql::executor::ExecutorContextAlias::new(admin_id.clone(), Role::System, session_ctx.clone());
 
     executor
         .execute(&*session_ctx, 
@@ -224,7 +224,7 @@ async fn test_complexity_alter_user_requires_special_character() {
 async fn test_complexity_alter_user_valid_password_succeeds() {
     let (executor, _temp_dir, app_context, session_ctx) = setup_executor(true).await;
     let admin_id = create_admin_user(&app_context).await;
-    let exec_ctx = kalamdb_core::sql::executor::ExecutorContextAlias::new(admin_id.clone(), Role::System);
+    let exec_ctx = kalamdb_core::sql::executor::ExecutorContextAlias::new(admin_id.clone(), Role::System, session_ctx.clone());
 
     executor
         .execute(&*session_ctx, 

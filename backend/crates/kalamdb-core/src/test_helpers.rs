@@ -3,6 +3,7 @@
 //! This module provides utilities for setting up AppContext in unit tests.
 
 use crate::app_context::AppContext;
+use datafusion::prelude::SessionContext;
 use kalamdb_commons::models::{NodeId, StorageId};
 use kalamdb_store::test_utils::TestDb;
 use kalamdb_store::{RocksDBBackend, StorageBackend};
@@ -120,3 +121,23 @@ pub fn create_test_job_registry() -> crate::jobs::JobRegistry {
     
     registry
 }
+
+/// Create a test SessionContext
+///
+/// Returns an Arc<SessionContext> for use in tests.
+/// Each call creates a new session, but they share the same DataFusion config.
+///
+/// # Example
+/// ```no_run
+/// use kalamdb_core::test_helpers::create_test_session;
+///
+/// #[test]
+/// fn my_test() {
+///     let session = create_test_session();
+///     // Use session in ExecutionContext::new(user_id, role, session)
+/// }
+/// ```
+pub fn create_test_session() -> Arc<SessionContext> {
+    Arc::new(SessionContext::new())
+}
+

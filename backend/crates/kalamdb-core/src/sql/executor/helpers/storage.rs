@@ -3,6 +3,7 @@
 //! Handlers for CREATE STORAGE statements.
 
 use crate::app_context::AppContext;
+use crate::test_helpers::create_test_session;
 use crate::error::KalamDbError;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult};
 use datafusion::execution::context::SessionContext;
@@ -129,7 +130,7 @@ mod tests {
     use kalamdb_commons::Role;
 
     fn test_context() -> ExecutionContext {
-        ExecutionContext::new(UserId::from("test_user"), Role::Dba)
+        ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session())
     }
 
     #[tokio::test]

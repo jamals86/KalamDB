@@ -205,11 +205,10 @@ async fn execute_single_statement(
     metadata: Option<&ExecutorMetadataAlias>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     // Phase 3 (T033): Construct ExecutionContext with user identity, request tracking, and DataFusion session
-    // Use base_session_context from AppContext instead of creating a new session
+    // Use base_session_context from AppContext - shared across all requests for lightweight memory usage
     // This ensures system tables are registered and available for queries
     let session = app_context.base_session_context();
-    let mut exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role)
-        .with_session(session.clone());
+    let mut exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role, session.clone());
     
     // Add request_id and ip_address if available
     if let Some(rid) = request_id {
