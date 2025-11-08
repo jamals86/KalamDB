@@ -110,6 +110,13 @@ impl SharedTableProvider {
     /// - _updated: Current timestamp (milliseconds)
     /// - _deleted: false
     pub fn insert(&self, row_id: &str, mut row_data: JsonValue) -> Result<(), KalamDbError> {
+        log::debug!(
+            "SharedTableProvider::insert called - table_id: {}, row_id: {}, store partition: {}",
+            self.core.table_id(),
+            row_id,
+            self.store.partition()
+        );
+        
         // Inject system columns (as RFC3339 string for _updated to match SharedTableRow format)
         let now_rfc3339 = chrono::Utc::now().to_rfc3339();
         if let Some(obj) = row_data.as_object_mut() {
@@ -131,6 +138,12 @@ impl SharedTableProvider {
         self.store
             .put(&key, &entity)
             .map_err(|e| KalamDbError::Other(e.to_string()))?;
+
+        log::debug!(
+            "SharedTableProvider::insert completed - row_id: {}, partition: {}",
+            row_id,
+            self.store.partition()
+        );
 
         Ok(())
     }
@@ -384,6 +397,12 @@ impl TableProvider for SharedTableProvider {
         _filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        log::debug!(
+            "SharedTableProvider::scan called - table_id: {}, store partition: {}",
+            self.core.table_id(),
+            self.store.partition()
+        );
+        
         // Get the full schema with system columns
         let full_schema = self.schema();
 
@@ -392,6 +411,13 @@ impl TableProvider for SharedTableProvider {
             .store
             .scan_all()
             .map_err(|e| DataFusionError::Execution(format!("Failed to scan table: {}", e)))?;
+
+        log::debug!(
+            "SharedTableProvider::scan - table_id: {}, scanned {} rows from partition: {}",
+            self.core.table_id(),
+            rows.len(),
+            self.store.partition()
+        );
 
         // Convert SharedTableRow to Arrow RecordBatch (includes system columns now)
         let rows_with_ids: Vec<(SharedTableRowId, SharedTableRow)> = rows

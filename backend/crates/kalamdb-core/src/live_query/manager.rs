@@ -575,7 +575,19 @@ impl LiveQueryManager {
                                 "📢 ✓ Table name MATCHED for live_id={}",
                                 live_id
                             );
-                            // Check filter if one exists
+                            
+                            // FLUSH notifications are metadata events (not row-level changes)
+                            // Skip filter evaluation for FLUSH - notify all subscribers
+                            if matches!(change_notification.change_type, ChangeType::Flush) {
+                                log::info!(
+                                    "📢 FLUSH notification - skipping filter evaluation for live_id={}",
+                                    live_id
+                                );
+                                ids.push(live_id.clone());
+                                continue;
+                            }
+                            
+                            // Check filter if one exists (for INSERT/UPDATE/DELETE only)
                             if let Some(filter) = filter_cache.get(&live_id.to_string()) {
                                 // Apply filter to row data
                                 match filter.matches(&change_notification.row_data) {

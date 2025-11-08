@@ -265,11 +265,17 @@ impl SqlExecutor {
                 TableType::Shared | TableType::Stream => {
                     // Reuse cached provider
                     if let Some(provider) = schema_registry.get_provider(&table_id) {
+                        log::debug!(
+                            "SELECT query registering SHARED/STREAM table {}.{} - provider found: {:p}",
+                            ns, tbl, &*provider
+                        );
                         schema_provider
                             .register_table(tbl.to_string(), provider)
                             .map_err(|e| KalamDbError::Other(format!("Failed to register table {}.{}: {}", ns, tbl, e)))?;
                     } else {
-                        log::warn!("Provider not cached for {}.{} (type {:?})", ns, tbl, table_type);
+                        let err_msg = format!("Provider not cached for {}.{} (type {:?})", ns, tbl, table_type);
+                        log::error!("{}", err_msg);
+                        return Err(KalamDbError::NotFound(err_msg));
                     }
                 }
                 TableType::System => {

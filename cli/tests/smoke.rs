@@ -12,3 +12,5 @@ mod smoke_test_system_and_users;
 mod smoke_test_stream_subscription;
 #[path = "smoke/smoke_test_core_operations.rs"]
 mod smoke_test_core_operations;
+#[path = "smoke/smoke_test_flush_operations.rs"]
+mod smoke_test_flush_operations;

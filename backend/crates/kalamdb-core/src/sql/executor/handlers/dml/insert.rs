@@ -316,11 +316,27 @@ impl InsertHandler {
                         table_name.as_str()
                     ))
                 })?;
+                
+                log::debug!(
+                    "INSERT INTO SHARED TABLE {}.{} - provider found: {:p}",
+                    namespace.as_str(),
+                    table_name.as_str(),
+                    &*provider_arc
+                );
+                
                 if let Some(shared_provider) = provider_arc.as_any().downcast_ref::<crate::tables::shared_tables::SharedTableProvider>() {
                     let mut inserted = 0usize;
                     // Use a single Snowflake generator instance to avoid millisecond collision overwrites
                     use kalamdb_commons::ids::SnowflakeGenerator;
                     let mut snowflake_gen = SnowflakeGenerator::new(0);
+                    
+                    log::debug!(
+                        "INSERT INTO SHARED TABLE {}.{} - inserting {} rows",
+                        namespace.as_str(),
+                        table_name.as_str(),
+                        rows.len()
+                    );
+                    
                     for row in rows.into_iter() {
                         // Generate globally unique row_id via UUID v7 (monotonic, collision-resistant)
                         let row_id = {
@@ -346,6 +362,14 @@ impl InsertHandler {
                         shared_provider.insert(&row_id, row)?;
                         inserted += 1;
                     }
+                    
+                    log::debug!(
+                        "INSERT INTO SHARED TABLE {}.{} - successfully inserted {} rows",
+                        namespace.as_str(),
+                        table_name.as_str(),
+                        inserted
+                    );
+                    
                     Ok(inserted)
                 } else {
                     Err(KalamDbError::InvalidOperation(format!(
