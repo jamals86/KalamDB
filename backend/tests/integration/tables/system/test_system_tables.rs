@@ -962,10 +962,10 @@ async fn test_20_complex_system_queries() {
     // Complex query: Join tables with namespaces
     let response = server
         .execute_sql(
-            r#"SELECT t.namespace, t.table_name, t.table_type 
+            r#"SELECT t.namespace_id, t.table_name, t.table_type 
                FROM system.tables t 
-               WHERE t.namespace IN ('prod', 'dev') 
-               ORDER BY t.namespace, t.table_name"#,
+               WHERE t.namespace_id IN ('prod', 'dev') 
+               ORDER BY t.namespace_id, t.table_name"#,
         )
         .await;
 

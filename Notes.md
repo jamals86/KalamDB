@@ -146,6 +146,14 @@ and things like this:
 
 122) in impl JobExecutor for FlushExecutor add generic to the model instead of having json parameters we can have T: DeserializeOwned + Send + Sync + 'static and then we can deserialize into the right struct directly instead of having to parse json each time
 
+123) Query users table doesnt return _deleted columns only the deleted_at date
+
+124) [2025-11-08 17:46:01.150] [ERROR] - actix-rt|system:0|arbiter:5 - sql::plan:140 - ❌ SQL planning failed | sql='SELECT table_name, column_name FROM system.columns ORDER BY table_name, ordinal_position' | user='sys_root' | role='System' | tables=[("system", "columns")] | error='Error during planning: table 'kalam.system.columns' not found'
+
+125) Add an option in config.toml to log every sql query executed with its duration time for better tracing and debugging slow queries, this should be logged into a separate statements.log file
+
+
+
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):
 	1.	Parquet Storage: All embeddings are stored as regular columns in the Parquet file alongside other table columns to keep data unified and versioned per batch.
 	2.	Temp Indexing: On each row insert/update, serialize embeddings into a temporary .hnsw file under /tmp/kalamdb/{namespace}/{table}/{column}-hot_index.hnsw for fast incremental indexing.

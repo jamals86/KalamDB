@@ -836,9 +836,15 @@ mod tests {
     fn test_storage_path_resolution() {
         let cache = SchemaRegistry::new(1000, None);
         let table_id = TableId::new(NamespaceId::new("my_ns"), TableName::new("messages"));
-        let data = create_test_data(table_id.clone());
+        
+        // Create test data with properly set storage_path_template
+        let schema = create_test_schema();
+        let mut data = CachedTableData::new(schema);
+        data.storage_path_template = "/data/{namespace}/{tableName}/{userId}/{shard}/".to_string()
+            .replace("{namespace}", "my_ns")
+            .replace("{tableName}", "messages");
 
-        cache.insert(table_id.clone(), data);
+        cache.insert(table_id.clone(), Arc::new(data));
 
         let path = cache
             .get_storage_path(&table_id, Some(&UserId::new("alice")), Some(0))

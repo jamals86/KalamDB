@@ -115,8 +115,15 @@ impl UpdateHandler {
         let upper = sql.to_uppercase();
         let set_pos = upper.find(" SET ").ok_or_else(|| KalamDbError::InvalidOperation("Missing SET clause".into()))?;
         let where_pos = upper.find(" WHERE ");
-        let head = sql[0..set_pos].trim(); // includes UPDATE prefix
-        let table_part = head.trim_start_matches(|c: char| c.is_ascii_alphabetic() || c.is_whitespace()).trim();
+        let head = sql[0..set_pos].trim(); // "UPDATE <table_ref>"
+        
+        // Extract table reference by removing "UPDATE" keyword
+        let table_part = if head.to_uppercase().starts_with("UPDATE ") {
+            head["UPDATE ".len()..].trim()
+        } else {
+            return Err(KalamDbError::InvalidOperation("Invalid UPDATE syntax".into()));
+        };
+        
         let (ns, tbl) = {
             let parts: Vec<&str> = table_part.split('.').collect();
             match parts.len() { 

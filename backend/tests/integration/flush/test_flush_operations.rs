@@ -120,13 +120,15 @@ async fn test_user_table_manual_flush_creates_parquet() {
     )
     .await
     .expect("flush job should complete");
+    // Accept both legacy and new result formats. Examples:
+    // - "Parquet files written: 1 (5 rows)"
+    // - "Flushed <ns>.<table> successfully (5 rows, 1 files)"
+    let jr_lower = job_result.to_lowercase();
+    let has_files_phrase = jr_lower.contains("parquet files");
+    let looks_successful = jr_lower.contains("successfully") && jr_lower.contains("rows") && (jr_lower.contains("file") || jr_lower.contains("files"));
+    assert!(has_files_phrase || looks_successful, "Unexpected flush job result: {}", job_result);
     assert!(
-        job_result.to_lowercase().contains("parquet files"),
-        "Unexpected flush job result: {}",
-        job_result
-    );
-    assert!(
-        !job_result.contains("Parquet files: 0"),
+        !jr_lower.contains("parquet files: 0") && !jr_lower.contains("0 files"),
         "Flush did not produce Parquet files: {}",
         job_result
     );

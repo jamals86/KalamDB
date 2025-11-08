@@ -741,7 +741,7 @@ mod tests {
             ColumnDefinition::new(
                 "id",
                 1,
-                KalamDataType::Int,
+                KalamDataType::BigInt,  // Use BigInt for Int64
                 false, // not nullable
                 true,  // primary key
                 false, // not unique

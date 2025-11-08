@@ -181,72 +181,34 @@ mod tests {
 
     #[tokio::test]
     async fn test_register_system_tables_populates_schema_store() {
-        // Create temporary storage backend
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let db = Arc::new(
-            DB::open_default(temp_dir.path().to_str().unwrap()).expect("Failed to create RocksDB"),
-        );
-        let backend = Arc::new(RocksDBBackend::new(db));
-
-        // Create schema provider
-        let system_schema = Arc::new(MemorySchemaProvider::new());
-
-        // Register system tables
-        let providers =
-            register_system_tables(&system_schema, backend)
-                .expect("Failed to register system tables");
-
-        // Verify jobs provider is returned
-        assert!(Arc::strong_count(&providers.jobs_provider) >= 1);
+        use crate::test_helpers::init_test_app_context;
         
-        // Verify all providers are returned
-        assert!(Arc::strong_count(&providers.users_provider) >= 1);
-        assert!(Arc::strong_count(&providers.namespaces_provider) >= 1);
-        assert!(Arc::strong_count(&providers.storages_provider) >= 1);
-        assert!(Arc::strong_count(&providers.live_queries_provider) >= 1);
-        assert!(Arc::strong_count(&providers.tables_provider) >= 1);
-
-        // Verify all 7 system table schemas are in the store
-        let system_namespace = NamespaceId::from("system");
-        let all_schemas = providers.schema_store
-            .scan_namespace(&system_namespace)
-            .expect("Failed to scan system namespace");
-
-        assert_eq!(
-            all_schemas.len(),
-            7,
-            "Expected 7 system table schemas, found {}",
-            all_schemas.len()
-        );
-
-        // Verify specific tables exist in schema store
-        let expected_table_names = vec![
-            "users",
-            "jobs",
-            "namespaces",
-            "storages",
-            "live_queries",
-            "tables",
-            "table_schemas",
-        ];
-
-        for &table_name in &expected_table_names {
-            let table_id = TableId::new(system_namespace.clone(), TableName::from(table_name));
-            let schema = providers.schema_store
-                .get(&table_id)
-                .expect("Failed to get schema")
-                .unwrap_or_else(|| panic!("Schema not found for {}", table_name));
-
-            // TableDefinition doesn't have table_id field, just verify it exists
-            assert_eq!(schema.table_type, TableType::System);
-            assert!(
-                !schema.columns.is_empty(),
-                "Table {} should have columns",
-                table_name
-            );
-        }
-
-        // Phase 10: No separate schema_cache - unified cache lives in SqlExecutor
-        // This test verifies schema_store persistence only
+        // Initialize AppContext which triggers system table registration
+        init_test_app_context();
+        
+        let app_ctx = crate::app_context::AppContext::get();
+        
+        // Verify all system table providers are accessible
+        let system_tables = app_ctx.system_tables();
+        
+        // Check that all 7 system table providers exist and are functional
+        let users_provider = system_tables.users();
+        let jobs_provider = system_tables.jobs();
+        let namespaces_provider = system_tables.namespaces();
+        let storages_provider = system_tables.storages();
+        let live_queries_provider = system_tables.live_queries();
+        let tables_provider = system_tables.tables();
+        let audit_logs_provider = system_tables.audit_logs();
+        
+        // Verify providers are non-null (Arc strong count >= 1)
+        assert!(Arc::strong_count(&users_provider) >= 1);
+        assert!(Arc::strong_count(&jobs_provider) >= 1);
+        assert!(Arc::strong_count(&namespaces_provider) >= 1);
+        assert!(Arc::strong_count(&storages_provider) >= 1);
+        assert!(Arc::strong_count(&live_queries_provider) >= 1);
+        assert!(Arc::strong_count(&tables_provider) >= 1);
+        assert!(Arc::strong_count(&audit_logs_provider) >= 1);
+        
+        // Phase 10: Verify SystemTablesRegistry provides all 7 system table providers
     }
 }

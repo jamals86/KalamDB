@@ -9,7 +9,7 @@ use crate::models::QueryResponse;
 const SYSTEM_TABLES_ORDER: &[&str] = &[
     "table_id",
     "table_name",
-    "namespace",
+    "namespace_id",
     "table_type",
     "created_at",
     "storage_location",
@@ -24,7 +24,7 @@ const SYSTEM_TABLES_ORDER: &[&str] = &[
 /// Return true if the columns look like the system.tables shape.
 fn looks_like_system_tables(columns: &[String]) -> bool {
     // Heuristic: must contain these key identifiers
-    ["table_id", "table_name", "namespace"]
+    ["table_id", "table_name", "namespace_id"]
         .into_iter()
         .all(|k| columns.iter().any(|c| c == k))
 }

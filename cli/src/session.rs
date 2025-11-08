@@ -712,13 +712,13 @@ impl CLISession {
             pb.enable_steady_tick(Duration::from_millis(80));
             let resp = self
                 .client
-                .execute_query("SELECT table_name, namespace FROM system.tables")
+                .execute_query("SELECT table_name, namespace_id FROM system.tables")
                 .await?;
             pb.finish_and_clear();
             resp
         } else {
             self.client
-                .execute_query("SELECT table_name, namespace FROM system.tables")
+                .execute_query("SELECT table_name, namespace_id FROM system.tables")
                 .await?
         };
 
@@ -730,7 +730,7 @@ impl CLISession {
             if let Some(rows) = &result.rows {
                 for row in rows {
                     let name_opt = row.get("table_name").and_then(|v| v.as_str());
-                    let ns_opt = row.get("namespace").and_then(|v| v.as_str());
+                    let ns_opt = row.get("namespace_id").and_then(|v| v.as_str());
                     if let Some(name) = name_opt {
                         table_names.push(name.to_string());
                         if let Some(ns) = ns_opt {

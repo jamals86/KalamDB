@@ -64,6 +64,7 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::init_test_app_context;
     use kalamdb_commons::models::{NamespaceId, UserId};
     use kalamdb_commons::Role;
     use kalamdb_commons::schemas::TableType;
@@ -102,6 +103,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_table_authorization_user() {
+        init_test_app_context();
         let app_ctx = AppContext::get();
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::User);
@@ -114,6 +116,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_table_authorization_shared_denied() {
+        init_test_app_context();
         let app_ctx = AppContext::get();
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::Shared);
@@ -126,6 +129,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_table_authorization_stream_dba() {
+        init_test_app_context();
         let app_ctx = AppContext::get();
         let handler = CreateTableHandler::new(app_ctx);
         let stmt = create_test_statement(TableType::Stream);
@@ -138,6 +142,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_user_table_success() {
+        init_test_app_context();
         let app_ctx = AppContext::get();
         
         // Ensure default namespace exists

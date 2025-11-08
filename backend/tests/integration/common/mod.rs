@@ -218,6 +218,15 @@ impl TestServer {
             false, // disable password complexity enforcement in tests
         ));
 
+        // Start background job processing loop so queued jobs (e.g., FLUSH TABLE) run in tests
+        {
+            let jm = app_context.job_manager();
+            tokio::spawn(async move {
+                // Best-effort: run until test process exits
+                let _ = jm.run_loop(2).await; // small concurrency is fine for tests
+            });
+        }
+
         Self {
             temp_dir: Arc::new(temp_dir),
             storage_base_path: Arc::new(storage_base_path),

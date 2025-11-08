@@ -294,7 +294,7 @@ mod tests {
         // Scan
         let batch = provider.scan_all_tables().unwrap();
         assert_eq!(batch.num_rows(), 3);
-        assert_eq!(batch.num_columns(), 8); // TableDefinition has 8 fields: table_id, table_name, namespace, table_type, created_at, schema_version, table_comment, updated_at
+        assert_eq!(batch.num_columns(), 8); // TablesTableSchema has 8 fields (core fields only)
     }
 
     #[tokio::test]
