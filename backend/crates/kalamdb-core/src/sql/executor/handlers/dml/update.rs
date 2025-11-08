@@ -5,6 +5,7 @@
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
 use datafusion::execution::context::SessionContext;
 use kalamdb_sql::statement_classifier::{SqlStatement, SqlStatementKind};
@@ -39,6 +40,9 @@ impl StatementHandler for UpdateHandler {
         params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
+        // T063: Validate parameters before write (max 50 params, 512KB per param)
+        validate_parameters(&params, &ParameterLimits::default())?;
+
         if !matches!(statement.kind(), SqlStatementKind::Update(_)) {
             return Err(KalamDbError::InvalidOperation("UpdateHandler received wrong statement kind".into()));
         }

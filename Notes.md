@@ -137,7 +137,7 @@ and things like this:
         let namespace_id = NamespaceId::new(name);
 117) Make the link client send a X-Request-ID header with a unique id per request for better tracing and debugging
 118) Add to kalamdb-link client the ability to set custom headers for each request
-
+119) StatementHandler execute method has both session: &SessionContext and context: &ExecutionContext which has session as well, we can remove session from the execute method since we can get it from the context directly
 
 
 

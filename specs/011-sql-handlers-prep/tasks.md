@@ -184,15 +184,15 @@ This is a Rust workspace project:
 
 ### Implementation for User Story 5
 
-- [ ] T062 [US5] Implement parameter validation in InsertHandler before write
-- [ ] T063 [US5] Implement parameter validation in UpdateHandler before write
-- [ ] T064 [US5] Implement parameter validation in DeleteHandler before write
-- [ ] T065 [US5] Add rows_affected computation to InsertHandler (sum of RecordBatch.num_rows())
-- [ ] T066 [US5] Add rows_affected computation to UpdateHandler (only rows with actual changes)
-- [ ] T067 [US5] Add rows_affected computation to DeleteHandler
-- [ ] T068 [US5] Add integration tests for INSERT with parameters in `backend/tests/integration/test_dml_parameters.rs`
-- [ ] T069 [US5] Add integration tests for UPDATE with parameters in test_dml_parameters.rs
-- [ ] T070 [US5] Add integration tests for DELETE with parameters in test_dml_parameters.rs
+- [X] T062 [US5] Implement parameter validation in InsertHandler before write
+- [X] T063 [US5] Implement parameter validation in UpdateHandler before write
+- [X] T064 [US5] Implement parameter validation in DeleteHandler before write
+- [X] T065 [US5] Add rows_affected computation to InsertHandler (sum of RecordBatch.num_rows())
+- [X] T066 [US5] Add rows_affected computation to UpdateHandler (only rows with actual changes)
+- [X] T067 [US5] Add rows_affected computation to DeleteHandler
+- [X] T068 [US5] Add integration tests for INSERT with parameters in `backend/tests/integration/test_dml_parameters.rs`
+- [X] T069 [US5] Add integration tests for UPDATE with parameters in test_dml_parameters.rs
+- [X] T070 [US5] Add integration tests for DELETE with parameters in test_dml_parameters.rs
 
 **Checkpoint**: User Story 5 complete - DML write paths fully functional with parameters
 

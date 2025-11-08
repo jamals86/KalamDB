@@ -13,6 +13,7 @@ use crate::app_context::AppContext;
 use crate::error::KalamDbError;
 use crate::sql::executor::handlers::StatementHandler;
 use crate::sql::executor::models::{ExecutionContext, ExecutionResult, ScalarValue};
+use crate::sql::executor::parameter_validation::{validate_parameters, ParameterLimits};
 use async_trait::async_trait;
 use datafusion::execution::context::SessionContext;
 use kalamdb_commons::models::{NamespaceId, TableName};
@@ -50,6 +51,9 @@ impl StatementHandler for InsertHandler {
         params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
+        // T062: Validate parameters before write (max 50 params, 512KB per param)
+        validate_parameters(&params, &ParameterLimits::default())?;
+
         // Ensure correct variant
         if !matches!(statement.kind(), SqlStatementKind::Insert(_)) {
             return Err(KalamDbError::InvalidOperation("InsertHandler received wrong statement kind".into()));

@@ -32,6 +32,8 @@ pub struct ServerConfig {
     pub shutdown: ShutdownSettings,
     #[serde(default)]
     pub jobs: JobsSettings,
+    #[serde(default)]
+    pub execution: ExecutionSettings,
 }
 
 /// Server settings
@@ -227,6 +229,23 @@ pub struct JobsSettings {
     #[serde(default = "default_jobs_retry_backoff_ms")]
     pub retry_backoff_ms: u64,
 }
+
+/// SQL execution settings (Phase 11, T026)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionSettings {
+    /// Handler execution timeout in seconds (default: 30)
+    #[serde(default = "default_handler_timeout_seconds")]
+    pub handler_timeout_seconds: u64,
+
+    /// Maximum number of query parameters (default: 50)
+    #[serde(default = "default_max_parameters")]
+    pub max_parameters: usize,
+
+    /// Maximum size of a single parameter in bytes (default: 524288 = 512KB)
+    #[serde(default = "default_max_parameter_size_bytes")]
+    pub max_parameter_size_bytes: usize,
+}
+
 
 /// Shutdown settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -460,6 +479,16 @@ impl Default for JobsSettings {
     }
 }
 
+impl Default for ExecutionSettings {
+    fn default() -> Self {
+        Self {
+            handler_timeout_seconds: default_handler_timeout_seconds(),
+            max_parameters: default_max_parameters(),
+            max_parameter_size_bytes: default_max_parameter_size_bytes(),
+        }
+    }
+}
+
 
 impl Default for ShutdownFlushSettings {
     fn default() -> Self {
@@ -602,6 +631,20 @@ fn default_jobs_max_retries() -> u32 {
 fn default_jobs_retry_backoff_ms() -> u64 {
     100 // 100ms initial backoff
 }
+
+// Execution defaults (Phase 11, T026)
+fn default_handler_timeout_seconds() -> u64 {
+    30 // 30 seconds
+}
+
+fn default_max_parameters() -> usize {
+    50 // Maximum 50 query parameters
+}
+
+fn default_max_parameter_size_bytes() -> usize {
+    524288 // 512KB maximum parameter size
+}
+
 
 // Rate limiter defaults
 fn default_rate_limit_queries_per_sec() -> u32 {
@@ -891,6 +934,7 @@ impl ServerConfig {
             user_management: UserManagementSettings::default(),
             shutdown: ShutdownSettings::default(),
             jobs: JobsSettings::default(),
+            execution: ExecutionSettings::default(),
         }
     }
 }

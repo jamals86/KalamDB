@@ -6,6 +6,7 @@ use crate::models::{ids::{JobId, NamespaceId, NodeId}, JobStatus, JobType, Table
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
+
 /// Job entity for system.jobs table.
 ///
 /// Represents a background job (flush, retention, cleanup, etc.).
@@ -86,7 +87,6 @@ pub struct Job {
     pub node_id: NodeId,
     pub queue: Option<String>,      // Queue name (future use)
     pub priority: Option<i32>,      // Priority value (future use)
-
 }
 
 impl Job {
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn test_job_cancel() {
-    let job = Job {
+        let job = Job {
             job_id: JobId::new("job_123"),
             job_type: JobType::Flush,
             namespace_id: NamespaceId::new("default"),

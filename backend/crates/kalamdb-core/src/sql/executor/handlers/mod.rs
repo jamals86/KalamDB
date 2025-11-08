@@ -96,7 +96,7 @@ pub trait StatementHandler: Send + Sync {
     /// * `Err(KalamDbError)` - Execution error
     async fn execute(
         &self,
-        session: &SessionContext,
+        session: &SessionContext, //TODO: This is not needed since we have it inside the context.session
         statement: SqlStatement,
         params: Vec<ScalarValue>,
         context: &ExecutionContext,

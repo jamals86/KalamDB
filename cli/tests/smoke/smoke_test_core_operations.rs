@@ -44,8 +44,8 @@ fn test_system_tables_queryable() {
         "system.live_queries",
         "system.tables",
         "system.storages",
-        // Note: system.jobs may have serialization issues with old data
-        // "system.jobs",
+        // First release: no legacy data, direct query supported
+        "system.jobs",
     ];
 
     for table in system_tables {
@@ -217,6 +217,7 @@ fn test_storage_operations() {
 
     // CREATE STORAGE
     println!("  Creating storage: {}", storage_name);
+    // Omit NAME intentionally to validate defaulting to storage_id
     let create_sql = format!(
         "CREATE STORAGE {} TYPE 'filesystem' BASE_DIRECTORY '/tmp/smoke_test'",
         storage_name

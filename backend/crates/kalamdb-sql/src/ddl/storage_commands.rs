@@ -40,7 +40,7 @@ pub struct CreateStorageStatement {
     /// Storage type: 'filesystem' or 's3'
     pub storage_type: StorageType,
 
-    /// Human-readable storage name
+    /// Human-readable storage name (optional in SQL; defaults to storage_id)
     pub storage_name: String,
 
     /// Optional description
@@ -88,8 +88,9 @@ impl CreateStorageStatement {
             ));
         }
 
-        // Extract NAME
-        let storage_name = extract_quoted_keyword_value(&normalized, "NAME")?;
+        // Extract NAME (optional); default to storage_id when omitted
+        let storage_name = extract_quoted_keyword_value(&normalized, "NAME")
+            .unwrap_or_else(|_| storage_id.clone());
 
         // Extract DESCRIPTION (optional)
         let description = extract_quoted_keyword_value(&normalized, "DESCRIPTION").ok();
@@ -319,6 +320,21 @@ mod tests {
             "{namespace}/{tableName}/{userId}/"
         );
         assert_eq!(stmt.credentials, None);
+    }
+
+    #[test]
+    fn test_create_storage_without_name_defaults_to_id() {
+        let sql = r#"
+            CREATE STORAGE minimal
+                TYPE 'filesystem'
+                BASE_DIRECTORY '/data/minimal'
+        "#;
+
+        let stmt = CreateStorageStatement::parse(sql).unwrap();
+        assert_eq!(stmt.storage_id, StorageId::new("minimal"));
+        // When NAME omitted, storage_name should default to storage_id
+        assert_eq!(stmt.storage_name, "minimal");
+        assert_eq!(stmt.base_directory, "/data/minimal");
     }
 
     #[test]
