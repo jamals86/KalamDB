@@ -7,8 +7,8 @@ use common::*;
 
 use std::{thread, time::{Duration, Instant}};
 
-const NUM_USERS: usize = 5;
-const ROWS_PER_USER: usize = 200;
+const NUM_USERS: usize = 25;
+const ROWS_PER_USER: usize = 2000;
 
 #[test]
 fn test_concurrent_users_isolation() {

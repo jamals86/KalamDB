@@ -230,10 +230,7 @@ pub fn create_user_table(
         );
     }
 
-    // Register SharedTableProvider for CRUD access (mirrors user table shared registration)
-    register_shared_table_provider(&app_context, &table_id, schema.clone())?;
-
-    // Register UserTableProvider for INSERT/UPDATE/DELETE operations
+    // Register UserTableProvider for INSERT/UPDATE/DELETE/SELECT operations
     register_user_table_provider(&app_context, &table_id, schema.clone())?;
 
     // Log detailed success with table options
