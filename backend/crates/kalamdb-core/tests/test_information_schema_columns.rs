@@ -3,9 +3,8 @@
 //! This test verifies that the information_schema.columns table is properly
 //! registered and can be queried via SQL.
 
-use datafusion::prelude::*;
-use kalamdb_core::test_helpers::init_test_app_context;
 use kalamdb_core::app_context::AppContext;
+use kalamdb_core::test_helpers::init_test_app_context;
 
 #[tokio::test]
 async fn test_information_schema_columns_query() {

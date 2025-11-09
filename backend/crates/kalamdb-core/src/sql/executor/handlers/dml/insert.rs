@@ -71,6 +71,17 @@ impl StatementHandler for InsertHandler {
             return Err(KalamDbError::InvalidOperation(format!("Table '{}.{}' does not exist", namespace.as_str(), table_name.as_str())));
         }
 
+        // Get table definition to access column_defaults
+        let table_def = schema_registry
+            .get_table_definition(&table_id)?
+            .ok_or_else(|| {
+                KalamDbError::InvalidOperation(format!(
+                    "Table definition not found: {}.{}",
+                    namespace.as_str(),
+                    table_name.as_str()
+                ))
+            })?;
+
         // Bind parameters and construct JSON rows
         let mut json_rows: Vec<JsonValue> = Vec::new();
         for row_tokens in rows_tokens {
@@ -87,6 +98,29 @@ impl StatementHandler for InsertHandler {
                 let value = self.token_to_json(token, &params)?;
                 obj.insert(col.clone(), value);
             }
+
+            // Apply DEFAULT values for missing columns
+            use crate::sql::executor::default_evaluator::evaluate_default;
+            let node_id = 0u16; // Single-node deployment (can be wired from AppContext later)
+            
+            for col_def in &table_def.columns {
+                let col_name = &col_def.column_name;
+                
+                // Skip if column was explicitly provided in INSERT
+                if obj.contains_key(col_name) {
+                    continue;
+                }
+                
+                // Skip if this is a None default (column is optional)
+                if col_def.default_value.is_none() {
+                    continue;
+                }
+                
+                // Evaluate the default value
+                let default_value = evaluate_default(&col_def.default_value, &context.user_id, node_id)?;
+                obj.insert(col_name.clone(), default_value);
+            }
+
             json_rows.push(JsonValue::Object(obj));
         }
 
@@ -451,6 +485,7 @@ impl InsertHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::create_test_session;
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
 

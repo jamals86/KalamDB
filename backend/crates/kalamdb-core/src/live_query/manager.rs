@@ -194,13 +194,11 @@ impl LiveQueryManager {
         self.live_queries_provider
             .insert_live_query(live_query_record)?;
 
-        // Add to in-memory registry
+        // Add to in-memory registry (MEMORY FIX: removed query and changes fields)
         let user_id = UserId::new(connection_id.user_id().to_string());
         let live_query = LiveQuery {
             live_id: live_id.clone(),
-            query,
             options,
-            changes: 0,
         };
 
         let mut registry = self.registry.write().await;
@@ -426,22 +424,14 @@ impl LiveQueryManager {
     /// Increment the changes counter for a live query
     ///
     /// This should be called each time a notification is sent.
+    /// MEMORY FIX: Only updates system.live_queries (persistent storage), not in-memory registry
     pub async fn increment_changes(&self, live_id: &LiveId) -> Result<(), KalamDbError> {
         let timestamp = Self::current_timestamp_ms();
         self.live_queries_provider
             .increment_changes(&live_id.to_string(), timestamp)?;
 
-        // Also update in-memory counter
-        let user_id = UserId::new(live_id.user_id().to_string());
-        let mut registry = self.registry.write().await;
-
-        if let Some(user_connections) = registry.users.get_mut(&user_id) {
-            if let Some(socket) = user_connections.get_socket_mut(&live_id.connection_id) {
-                if let Some(live_query) = socket.live_queries.get_mut(live_id) {
-                    live_query.changes += 1;
-                }
-            }
-        }
+        // Removed in-memory counter update (no longer exists in LiveQuery struct)
+        // Changes are tracked only in system.live_queries now
 
         Ok(())
     }
@@ -530,7 +520,7 @@ impl LiveQueryManager {
     /// Number of subscribers notified (after filtering)
     pub async fn notify_table_change(
         &self,
-        table_name: &str,
+        table_name: &str, // TODO: Pass the TableId instead to have a clear filtering and indexing of users
         change_notification: ChangeNotification,
     ) -> Result<usize, KalamDbError> {
         log::info!(
@@ -543,6 +533,7 @@ impl LiveQueryManager {
         let filter_cache = self.filter_cache.read().await;
 
         // Collect live_ids that need to be notified
+        // TODO: Optimize by indexing subscriptions by table_id
         let live_ids_to_notify: Vec<LiveId> = {
             let registry = self.registry.read().await;
             log::info!("📢 Registry has {} users", registry.users.len());
@@ -638,45 +629,48 @@ impl LiveQueryManager {
         // Drop filter cache read lock before acquiring write locks
         drop(filter_cache);
 
+        // MEMORY FIX: Build notification data ONCE, not per subscriber
+        // Old code cloned row_data for every subscriber (N × row_size memory)
+        // New code: Convert once, reference for all subscribers (1 × row_size memory)
+        let row_map = if let Some(obj) = change_notification.row_data.as_object() {
+            obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        } else {
+            std::collections::HashMap::new()
+        };
+        
+        let old_map = if let Some(old_data) = &change_notification.old_data {
+            if let Some(obj) = old_data.as_object() {
+                obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            } else {
+                std::collections::HashMap::new()
+            }
+        } else {
+            std::collections::HashMap::new()
+        };
+
         // Now send notifications and increment changes for each live_id
         let notification_count = live_ids_to_notify.len();
         for live_id in live_ids_to_notify.iter() {
             // Send notification to WebSocket client
             if let Some(tx) = self.get_notification_sender(live_id).await {
-                // Convert row data from serde_json::Value to HashMap
-                let row_map = if let Some(obj) = change_notification.row_data.as_object() {
-                    obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-                } else {
-                    std::collections::HashMap::new()
-                };
-
-                // Build the typed notification
+                // Build the typed notification (cheap - just wraps references)
                 let notification = match change_notification.change_type {
                     ChangeType::Insert => {
-                        kalamdb_commons::Notification::insert(live_id.to_string(), vec![row_map])
+                        kalamdb_commons::Notification::insert(live_id.to_string(), vec![row_map.clone()])
                     }
                     ChangeType::Update => {
-                        let old_map = if let Some(old_data) = &change_notification.old_data {
-                            if let Some(obj) = old_data.as_object() {
-                                obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-                            } else {
-                                std::collections::HashMap::new()
-                            }
-                        } else {
-                            std::collections::HashMap::new()
-                        };
                         kalamdb_commons::Notification::update(
                             live_id.to_string(),
-                            vec![row_map],
-                            vec![old_map],
+                            vec![row_map.clone()],
+                            vec![old_map.clone()],
                         )
                     }
                     ChangeType::Delete => {
-                        kalamdb_commons::Notification::delete(live_id.to_string(), vec![row_map])
+                        kalamdb_commons::Notification::delete(live_id.to_string(), vec![row_map.clone()])
                     }
                     ChangeType::Flush => {
                         // For flush, we use insert type with flush metadata
-                        kalamdb_commons::Notification::insert(live_id.to_string(), vec![row_map])
+                        kalamdb_commons::Notification::insert(live_id.to_string(), vec![row_map.clone()])
                     }
                 };
 

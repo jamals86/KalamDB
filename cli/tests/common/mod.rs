@@ -7,6 +7,7 @@ use std::sync::mpsc as std_mpsc;
 use std::thread;
 use std::time::Duration;
 use std::sync::atomic::{AtomicU64, Ordering};
+use rand::{distr::Alphanumeric, Rng};
 
 // Global monotonic counter to ensure uniqueness when multiple tests generate
 // names within the same millisecond (which was causing occasional collisions
@@ -44,6 +45,68 @@ pub fn execute_sql_via_cli(sql: &str) -> Result<String, Box<dyn std::error::Erro
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        Err(format!(
+            "CLI command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into())
+    }
+}
+
+/// Timing information for CLI execution
+pub struct CliTiming {
+    pub output: String,
+    pub total_time_ms: u128,
+    pub server_time_ms: Option<f64>,
+}
+
+impl CliTiming {
+    pub fn overhead_ms(&self) -> Option<f64> {
+        self.server_time_ms.map(|server| self.total_time_ms as f64 - server)
+    }
+}
+
+/// Helper to execute SQL via CLI with authentication and capture timing
+pub fn execute_sql_via_cli_as_with_timing(
+    username: &str,
+    password: &str,
+    sql: &str,
+) -> Result<CliTiming, Box<dyn std::error::Error>> {
+    use std::time::Instant;
+    
+    let start = Instant::now();
+    let output = Command::new(env!("CARGO_BIN_EXE_kalam"))
+        .arg("-u")
+        .arg(SERVER_URL)
+        .arg("--username")
+        .arg(username)
+        .arg("--password")
+        .arg(password)
+        .arg("--command")
+        .arg(sql)
+        .output()?;
+    let total_time_ms = start.elapsed().as_millis();
+
+    if output.status.success() {
+        let output_str = String::from_utf8_lossy(&output.stdout).to_string();
+        
+        // Extract server time from output (looks for "Took: XXX.XXX ms")
+        let server_time_ms = output_str
+            .lines()
+            .find(|l| l.starts_with("Took:"))
+            .and_then(|line| {
+                // Parse "Took: 123.456 ms"
+                line.split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse::<f64>().ok())
+            });
+        
+        Ok(CliTiming {
+            output: output_str,
+            total_time_ms,
+            server_time_ms,
+        })
     } else {
         Err(format!(
             "CLI command failed: {}",
@@ -164,6 +227,22 @@ pub fn cleanup_test_table(table_full_name: &str) -> Result<(), Box<dyn std::erro
     let _ = execute_sql_as_root_via_cli(&drop_sql);
     std::thread::sleep(Duration::from_millis(50));
     Ok(())
+}
+
+
+/// Generate a random alphanumeric string of the given length.
+///
+/// Example:
+/// ```
+/// let token = random_string(12);
+/// println!("Generated: {}", token);
+/// ```
+pub fn random_string(len: usize) -> String {
+    rand::thread_rng()
+        .sample_iter(Alphanumeric)
+        .take(len)
+        .map(char::from)
+        .collect()
 }
 
 /// Parse job ID from FLUSH TABLE output

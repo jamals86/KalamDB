@@ -12,6 +12,7 @@ pub mod helpers;
 pub mod models;
 pub mod parameter_binding;
 pub mod parameter_validation;
+pub mod default_evaluator;
 
 use crate::error::KalamDbError;
 use crate::sql::executor::handler_registry::HandlerRegistry;

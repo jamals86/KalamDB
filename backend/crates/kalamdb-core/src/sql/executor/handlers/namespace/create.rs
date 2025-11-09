@@ -82,9 +82,10 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::Role;
-    use kalamdb_commons::models::UserId;
     use crate::test_helpers::{create_test_session, init_test_app_context};
+    use datafusion::prelude::SessionContext;
+    use kalamdb_commons::models::UserId;
+    use kalamdb_commons::Role;
 
     fn test_context() -> ExecutionContext {
         ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session())

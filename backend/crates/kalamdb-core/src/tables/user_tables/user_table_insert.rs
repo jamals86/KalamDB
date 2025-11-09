@@ -216,6 +216,13 @@ impl UserTableInsertHandler {
                 _updated: chrono::Utc::now().to_rfc3339(),
                 _deleted: false,
             };
+            
+            // DEBUG: Log first insert for each user
+            if let Some(message) = row_data.get("message") {
+                if row_data.get("id").and_then(|v| v.as_i64()) == Some(0) {
+                    eprintln!("DEBUG INSERT: user={}, row_id={}, message={}", user_id.as_str(), row_id, message);
+                }
+            }
 
             // Delegate to UserTableStore
             UserTableStoreExt::put(

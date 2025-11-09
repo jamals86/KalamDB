@@ -146,12 +146,6 @@ pub fn register_system_tables(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::catalog::MemorySchemaProvider;
-    use kalamdb_commons::schemas::TableType;
-    use kalamdb_commons::{NamespaceId, TableId, TableName};
-    use kalamdb_store::{EntityStoreV2, RocksDBBackend};
-    use rocksdb::DB;
-    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_register_system_tables_validates_all_tables() {

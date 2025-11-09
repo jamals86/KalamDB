@@ -157,6 +157,15 @@ and things like this:
 both of them read from a path and from a store but user table filter the store which is the hot storage based on user id as well
 
 
+127) IMPORTANT - Optimize by indexing subscriptions by table_id for faster lookup during notify_table_change
+
+
+128) IMPORTANT - Insert a row as a system/service user to a different user_id this will be used for users to send messages to others as well or an ai send to different user or publish to different user's stream table
+INSERT INTO <namespace>.<table>
+   [AS USER '<user_id>']
+   VALUES (...);
+
+
 
 
 Here’s the updated 5-line spec with embedding storage inside Parquet and managed HNSW indexing (with delete handling):

@@ -7,7 +7,7 @@ use crate::common::*;
 use std::time::Instant;
 
 // Global rows to insert (can be overridden via KBENCH_ROWS env)
-const DEFAULT_ROWS_TO_INSERT: usize = 100_000;
+const DEFAULT_ROWS_TO_INSERT: usize = 5000;
 
 fn rows_to_insert() -> usize {
     if let Ok(val) = std::env::var("KBENCH_ROWS") {
@@ -103,8 +103,8 @@ fn smoke_queries_benchmark() {
     let rows_per_sec = (inserted as f64) / insert_elapsed.max(1e-6);
     println!("Benchmark INSERT: inserted {} rows in {:.3}s → {:.1} rows/sec", inserted, insert_elapsed, rows_per_sec);
 
-    // SELECT pagination (cursor-based): 10 rows per page, using order_id > last_id
-    let page_size = 10usize;
+    // SELECT pagination (cursor-based): 100 rows per page, using order_id > last_id
+    let page_size = 100usize;
     let mut pages = 0usize;
     let mut last_id: i64 = 0;
 

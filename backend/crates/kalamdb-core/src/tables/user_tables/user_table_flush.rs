@@ -288,6 +288,26 @@ impl UserTableFlushJob {
         let user_id_typed = UserId::new(user_id.to_string());
         let (storage_path, _credentials) = self.resolve_storage_path_for_user(&user_id_typed)?;
 
+        // 🔒 CRITICAL RLS ASSERTION: Verify storage path contains user_id
+        // This ensures directory-level isolation is enforced during flush
+        if !storage_path.contains(user_id) {
+            log::error!(
+                "🚨 RLS VIOLATION: Flush storage path does NOT contain user_id! user={}, path={}",
+                user_id,
+                storage_path
+            );
+            return Err(KalamDbError::Other(format!(
+                "RLS violation: flush path missing user_id isolation for user {}",
+                user_id
+            )));
+        }
+
+        log::debug!(
+            "🔍 RLS: Flushing to user-specific path: user={}, path={}",
+            user_id,
+            storage_path
+        );
+
         // Generate filename and full path
         let batch_filename = self.generate_batch_filename();
         let output_path = PathBuf::from(&storage_path).join(&batch_filename);

@@ -119,6 +119,7 @@ impl DeleteHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::create_test_session;
     use kalamdb_commons::models::UserId;
     use kalamdb_commons::Role;
 

@@ -268,9 +268,19 @@ impl SqlStatement {
             | ["CREATE", "SHARED", "TABLE", ..]
             | ["CREATE", "STREAM", "TABLE", ..]
             | ["CREATE", "TABLE", ..] => {
-                Ok(Self::wrap(sql, || {
-                    CreateTableStatement::parse(sql, default_namespace).ok().map(SqlStatementKind::CreateTable)
-                }))
+                // Parse CREATE TABLE statement with detailed error logging
+                match CreateTableStatement::parse(sql, default_namespace) {
+                    Ok(stmt) => Ok(Self::new(sql.to_string(), SqlStatementKind::CreateTable(stmt))),
+                    Err(e) => {
+                        log::error!(
+                            target: "sql::parse",
+                            "❌ CREATE TABLE parsing failed | sql='{}' | error='{}'",
+                            sql,
+                            e
+                        );
+                        Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown))
+                    }
+                }
             }
             ["ALTER", "TABLE", ..]
             | ["ALTER", "USER", "TABLE", ..]

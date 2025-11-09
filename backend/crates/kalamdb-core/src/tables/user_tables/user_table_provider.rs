@@ -504,10 +504,24 @@ impl UserTableAccess {
 
         let storage_dir = Path::new(&storage_path);
         log::debug!(
-            "Scanning Parquet files in: {} (exists: {})",
+            "🔍 RLS: Scanning Parquet files for user={} in path={} (exists={})",
+            self.current_user_id.as_str(),
             storage_path,
             storage_dir.exists()
         );
+
+        // 🔒 CRITICAL RLS ASSERTION: Verify storage path contains user_id
+        // This ensures directory-level isolation is enforced (Parquet files are stored per-user)
+        if !storage_path.contains(self.current_user_id.as_str()) {
+            log::error!(
+                "🚨 RLS VIOLATION: Storage path does NOT contain user_id! user={}, path={}",
+                self.current_user_id.as_str(),
+                storage_path
+            );
+            return Err(DataFusionError::Execution(format!(
+                "RLS violation: storage path missing user_id isolation"
+            )));
+        }
 
         if !storage_dir.exists() {
             log::debug!("Storage directory does not exist, returning empty result");
@@ -568,6 +582,7 @@ impl UserTableAccess {
                 })?;
 
                 for mut row in json_rows {
+                    // Add default system columns if missing
                     if let Some(obj) = row.as_object_mut() {
                         if !obj.contains_key("_deleted") {
                             obj.insert("_deleted".to_string(), JsonValue::Bool(false));
@@ -579,6 +594,7 @@ impl UserTableAccess {
                         }
                     }
 
+                    // Filter soft-deleted rows
                     if let Some(deleted) = row.get("_deleted").and_then(|v| v.as_bool()) {
                         if !deleted {
                             all_json_rows.push(row);
@@ -666,6 +682,14 @@ impl TableProvider for UserTableAccess {
         if let Some(limit_value) = limit {
             // Efficient streaming scan with prefix + limit via EntityStore helper
             let user_prefix = self.user_key_prefix(); // e.g., "<user_id>:"
+            log::info!(
+                "🔍 RLS SCAN: table={}.{}, user_id={}, role={:?}, prefix={:?}",
+                self.namespace_id().as_str(),
+                self.table_name().as_str(),
+                self.current_user_id.as_str(),
+                self.access_role,
+                String::from_utf8_lossy(&user_prefix)
+            );
             let raw = self
                 .shared
                 .store()
@@ -681,6 +705,13 @@ impl TableProvider for UserTableAccess {
             }
         } else {
             // No limit pushdown → fall back to full user scan (compat mode)
+            log::info!(
+                "🔍 RLS SCAN (no limit): table={}.{}, user_id={}, role={:?}",
+                self.namespace_id().as_str(),
+                self.table_name().as_str(),
+                self.current_user_id.as_str(),
+                self.access_role
+            );
             let raw_rows = self.shared.store()
                 .scan_user(
                     self.namespace_id().as_str(),

@@ -62,11 +62,12 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::init_test_app_context;
-    use kalamdb_commons::models::{NamespaceId, UserId};
-    use kalamdb_commons::Role;
-    use kalamdb_commons::schemas::TableType;
+    use crate::test_helpers::{create_test_session, init_test_app_context};
     use arrow::datatypes::{DataType, Field, Schema};
+    use datafusion::prelude::SessionContext;
+    use kalamdb_commons::models::{NamespaceId, UserId};
+    use kalamdb_commons::schemas::TableType;
+    use kalamdb_commons::Role;
 
     fn create_test_context(role: Role) -> ExecutionContext {
         ExecutionContext::new(UserId::new("test_user"), role, create_test_session())

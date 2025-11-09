@@ -4,7 +4,6 @@
 mod common;
 
 use common::{fixtures, flush_helpers, TestServer};
-use kalamdb_commons::UserId as ExecutorUserId;
 use std::sync::Arc;
 
 /// Manual flush on a user table should create Parquet files under the configured storage path.

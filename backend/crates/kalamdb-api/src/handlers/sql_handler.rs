@@ -205,10 +205,11 @@ async fn execute_single_statement(
     metadata: Option<&ExecutorMetadataAlias>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
     // Phase 3 (T033): Construct ExecutionContext with user identity, request tracking, and DataFusion session
-    // Use base_session_context from AppContext - shared across all requests for lightweight memory usage
+    // MEMORY FIX: Use session() method which returns reference to shared base_session_context
     // This ensures system tables are registered and available for queries
-    let session = app_context.base_session_context();
-    let mut exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role, session.clone());
+    // User isolation happens at TableProvider level via UserTableAccess (contains user_id)
+    let session = app_context.session();
+    let mut exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role, Arc::clone(session));
     
     // Add request_id and ip_address if available
     if let Some(rid) = request_id {
@@ -278,8 +279,8 @@ async fn execute_single_statement(
             Err(e) => Err(Box::new(e)),
         }
     } else {
-        // Fallback for testing: use DataFusion directly for simple queries
-        let session = session_factory.create_session();
+        // Fallback for testing: use shared session from AppContext (avoid memory leak)
+        let session = app_context.session();
         let df = session.sql(sql).await?;
         let batches = df.collect().await?;
         record_batch_to_query_result(batches, None)

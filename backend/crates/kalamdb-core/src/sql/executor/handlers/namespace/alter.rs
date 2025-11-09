@@ -82,8 +82,10 @@ impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kalamdb_commons::Role;
+    use crate::test_helpers::create_test_session;
+    use datafusion::prelude::SessionContext;
     use kalamdb_commons::models::UserId;
+    use kalamdb_commons::Role;
 
     fn create_test_context() -> ExecutionContext {
         ExecutionContext::new(UserId::new("test_user"), Role::Dba, create_test_session())
