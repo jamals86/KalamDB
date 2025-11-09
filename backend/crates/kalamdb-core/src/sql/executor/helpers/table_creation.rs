@@ -10,6 +10,13 @@ use kalamdb_commons::schemas::TableType;
 use kalamdb_sql::ddl::CreateTableStatement;
 use std::sync::Arc;
 
+// Import shared registration helpers
+use super::table_registration::{
+    register_user_table_provider,
+    register_shared_table_provider,
+    register_stream_table_provider,
+};
+
 /// Route CREATE TABLE to type-specific handler
 ///
 /// # Arguments
@@ -224,54 +231,10 @@ pub fn create_user_table(
     }
 
     // Register SharedTableProvider for CRUD access (mirrors user table shared registration)
-    use crate::tables::shared_tables::{shared_table_store::new_shared_table_store, SharedTableProvider};
-    let shared_store = Arc::new(new_shared_table_store(
-        app_context.storage_backend(),
-        &table_id.namespace_id(),
-        &table_id.table_name(),
-    ));
-    let provider = SharedTableProvider::new(
-        Arc::new(table_id.clone()),
-        app_context.schema_registry(),
-        schema.clone(),
-        shared_store,
-    );
-    // Cache provider for DataFusion / execution path (auto-registers with DataFusion)
-    schema_registry.insert_provider(table_id.clone(), Arc::new(provider))?;
+    register_shared_table_provider(&app_context, &table_id, schema.clone())?;
 
-    // Create and register UserTableShared instance for INSERT/UPDATE/DELETE operations
-    use crate::tables::base_table_provider::UserTableShared;
-    use crate::tables::user_tables::new_user_table_store;
-    
-    // Create user table store for this table
-    let user_table_store = Arc::new(new_user_table_store(
-        app_context.storage_backend(),
-        &table_id.namespace_id(),
-        &table_id.table_name(),
-    ));
-    
-    // Create shared state (returns Arc<UserTableShared>)
-    let mut shared = UserTableShared::new(
-        Arc::new(table_id.clone()),
-        app_context.schema_registry(),
-        schema.clone(),
-        user_table_store,
-    );
-    // Attach LiveQueryManager so INSERT/UPDATE/DELETE emit notifications
-    if let Some(shared_ref) = Arc::get_mut(&mut shared) {
-        // Note: Arc::get_mut only succeeds if there are no other references; safe at creation time
-        shared_ref.attach_live_query_manager(app_context.live_query_manager());
-    } else {
-        // Fallback: cannot get mutable reference; reconstruct with manager via clone-and-replace pattern
-        // This should not happen at creation time, but keep a defensive log.
-        log::warn!("Could not get mutable reference to UserTableShared to attach LiveQueryManager at creation time");
-    }
-
-    // Create UserTableProvider and register in unified provider cache
-    // SchemaRegistry automatically registers with DataFusion's catalog
-    let provider = crate::tables::user_tables::UserTableProvider::new(shared);
-    let provider_arc: Arc<dyn datafusion::datasource::TableProvider> = Arc::new(provider);
-    schema_registry.insert_provider(table_id.clone(), provider_arc)?;
+    // Register UserTableProvider for INSERT/UPDATE/DELETE operations
+    register_user_table_provider(&app_context, &table_id, schema.clone())?;
 
     // Log detailed success with table options
     log::info!(
@@ -433,28 +396,7 @@ pub fn create_shared_table(
     })?;
 
     // Register SharedTableProvider for CRUD/query access
-    use crate::tables::shared_tables::{shared_table_store::new_shared_table_store, SharedTableProvider};
-    let shared_store = Arc::new(new_shared_table_store(
-        app_context.storage_backend(),
-        &table_id.namespace_id(),
-        &table_id.table_name(),
-    ));
-
-    // Ensure RocksDB partition exists for this shared table before first insert
-    {
-        use crate::tables::system::system_table_store::SharedTableStoreExt;
-        // Note: args are ignored for shared store create_column_family, but pass actual values for clarity
-        let _ = shared_store
-            .create_column_family(table_id.namespace_id().as_str(), table_id.table_name().as_str());
-    }
-
-    let provider = SharedTableProvider::new(
-        Arc::new(table_id.clone()),
-        app_context.schema_registry(),
-        schema.clone(),
-        shared_store,
-    );
-    schema_registry.insert_provider(table_id.clone(), Arc::new(provider))?;
+    register_shared_table_provider(&app_context, &table_id, schema.clone())?;
 
     // Prime cache entry with storage path template + storage id (needed for flush path resolution)
     {
@@ -614,20 +556,7 @@ pub fn create_stream_table(
     })?;
 
     // Register StreamTableProvider for event operations (distinct from SHARED)
-    use crate::tables::stream_tables::{stream_table_store::new_stream_table_store, StreamTableProvider};
-    let stream_store = Arc::new(new_stream_table_store(
-        &table_id.namespace_id(),
-        &table_id.table_name(),
-    ));
-    let stream_provider = StreamTableProvider::new(
-        Arc::new(table_id.clone()),
-        app_context.schema_registry(),
-        stream_store,
-        Some(ttl_seconds as u32),
-        false, // ephemeral default
-        None,  // max_buffer default
-    );
-    schema_registry.insert_provider(table_id.clone(), Arc::new(stream_provider))?;
+    register_stream_table_provider(&app_context, &table_id, schema.clone(), Some(ttl_seconds))?;
 
     // Log detailed success with table options
     log::info!(

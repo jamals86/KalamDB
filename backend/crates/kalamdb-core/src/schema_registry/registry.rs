@@ -513,9 +513,50 @@ impl SchemaRegistry {
         Ok(())
     }
 
-    /// Remove a cached DataFusion provider for a table (if present)
-    pub fn remove_provider(&self, table_id: &TableId) {
+    /// Remove a cached DataFusion provider for a table and unregister from DataFusion
+    ///
+    /// Removes from internal cache and DataFusion's catalog.
+    /// Used during DROP TABLE operations.
+    ///
+    /// # Arguments
+    /// * `table_id` - Table identifier
+    ///
+    /// # Returns
+    /// Ok on success, error if unregistration fails
+    pub fn remove_provider(&self, table_id: &TableId) -> Result<(), KalamDbError> {
+        // Remove from internal cache
         let _ = self.providers.remove(table_id);
+
+        // Unregister from DataFusion if base_session_context is set
+        if let Some(base_session) = self.base_session_context.get() {
+            let catalog_name = base_session
+                .state()
+                .config()
+                .options()
+                .catalog
+                .default_catalog
+                .clone();
+            
+            let catalog = base_session
+                .catalog(&catalog_name)
+                .ok_or_else(|| KalamDbError::InvalidOperation(format!("Catalog '{}' not found", catalog_name)))?;
+            
+            // Get namespace schema
+            if let Some(schema) = catalog.schema(table_id.namespace_id().as_str()) {
+                // Deregister table from DataFusion
+                schema
+                    .deregister_table(table_id.table_name().as_str())
+                    .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to deregister table from DataFusion: {}", e)))?;
+                
+                log::debug!(
+                    "Unregistered table {}.{} from DataFusion catalog",
+                    table_id.namespace_id().as_str(),
+                    table_id.table_name().as_str()
+                );
+            }
+        }
+
+        Ok(())
     }
 
     /// Get a cached DataFusion provider for a table

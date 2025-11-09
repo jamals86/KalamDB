@@ -173,9 +173,12 @@ impl SqlExecutor {
     pub async fn load_existing_tables(
         &self
     ) -> Result<(), KalamDbError> {
-        use crate::tables::base_table_provider::UserTableShared;
-        use crate::tables::user_tables::new_user_table_store;
         use kalamdb_commons::schemas::TableType;
+        use crate::sql::executor::helpers::table_registration::{
+            register_user_table_provider,
+            register_shared_table_provider,
+            register_stream_table_provider,
+        };
 
         let app_context = &self.app_context;
         let schema_registry = app_context.schema_registry();
@@ -219,77 +222,21 @@ impl SqlExecutor {
             // Register provider based on type
             match table_def.table_type {
                 TableType::User => {
-                    // Create user table store
-                    let user_table_store = Arc::new(new_user_table_store(
-                        app_context.storage_backend(),
-                        &table_id.namespace_id(),
-                        &table_id.table_name(),
-                    ));
-
-                    // Create and register UserTableShared
-                    let mut shared = UserTableShared::new(
-                        Arc::new(table_id.clone()),
-                        app_context.schema_registry(),
-                        arrow_schema.clone(),
-                        user_table_store,
-                    );
-                    // Attach LiveQueryManager so changes are published after restart
-                    if let Some(shared_ref) = Arc::get_mut(&mut shared) {
-                        shared_ref.attach_live_query_manager(app_context.live_query_manager());
-                    }
-
-                    // Create UserTableProvider and register (auto-registers with DataFusion)
-                    let provider = crate::tables::user_tables::UserTableProvider::new(shared);
-                    let provider_arc: Arc<dyn datafusion::datasource::TableProvider> = Arc::new(provider);
-                    schema_registry.insert_provider(table_id.clone(), provider_arc)?;
-                    
+                    register_user_table_provider(&app_context, &table_id, arrow_schema)?;
                     user_count += 1;
                 }
                 TableType::Shared => {
-                    use crate::tables::shared_tables::{shared_table_store::new_shared_table_store, SharedTableProvider};
-                    let shared_store = Arc::new(new_shared_table_store(
-                        app_context.storage_backend(),
-                        &table_id.namespace_id(),
-                        &table_id.table_name(),
-                    ));
-                    let provider = SharedTableProvider::new(
-                        Arc::new(table_id.clone()),
-                        app_context.schema_registry(),
-                        arrow_schema.clone(),
-                        shared_store,
-                    );
-                    let provider_arc: Arc<dyn datafusion::datasource::TableProvider> = Arc::new(provider);
-                    schema_registry.insert_provider(table_id.clone(), provider_arc)?;
-                    
+                    register_shared_table_provider(&app_context, &table_id, arrow_schema)?;
                     shared_count += 1;
                 }
                 TableType::Stream => {
-                    use crate::tables::stream_tables::{stream_table_store::new_stream_table_store, StreamTableProvider};
-                    let stream_store = Arc::new(new_stream_table_store(
-                        &table_id.namespace_id(),
-                        &table_id.table_name(),
-                    ));
-                    
-                    // Extract TTL from table options
-                    let retention_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(stream_opts) = &table_def.table_options {
-                        Some(stream_opts.ttl_seconds as u32)
+                    // Extract TTL from table_options
+                    let ttl_seconds = if let kalamdb_commons::schemas::TableOptions::Stream(stream_opts) = &table_def.table_options {
+                        Some(stream_opts.ttl_seconds)
                     } else {
                         None
                     };
-                    
-                    let provider = StreamTableProvider::new(
-                        Arc::new(table_id.clone()),
-                        app_context.schema_registry(),
-                        stream_store,
-                        retention_seconds,
-                        false, // ephemeral default
-                        None,  // max_buffer default
-                    );
-                    let provider_arc: Arc<dyn datafusion::datasource::TableProvider> = Arc::new(provider);
-                    schema_registry.insert_provider(table_id.clone(), provider_arc)?;
-                    
-                    stream_count += 1;
-                    
+                    register_stream_table_provider(&app_context, &table_id, arrow_schema, ttl_seconds)?;
                     stream_count += 1;
                 }
                 TableType::System => {

@@ -218,22 +218,9 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
 
         // TODO: Check active live queries/subscriptions before dropping (Phase 9 integration)
 
-    // Evict providers from unified cache to avoid races where a lingering provider panics
-    // trying to resolve a now-missing schema during concurrent SELECTs.
-    registry.remove_provider(&table_id);
-
-        // Also deregister from the shared base session (DataFusion) so subsequent
-        // requests using the shared session won't see the table anymore.
-        if let Some(base_session) = self.app_context.base_session_context().clone().catalog_names().first().cloned() {
-            // Attempt best-effort deregistration
-            let session = self.app_context.base_session_context();
-            if let Some(catalog) = session.catalog(&base_session) {
-                if let Some(schema_provider) = catalog.schema(statement.namespace_id.as_str()) {
-                    // MemorySchemaProvider exposes deregister_table (best-effort). Ignore errors.
-                    let _ = schema_provider.deregister_table(statement.table_name.as_str());
-                }
-            }
-        }
+        // Unregister provider from SchemaRegistry (auto-unregisters from DataFusion)
+        use crate::sql::executor::helpers::table_registration::unregister_table_provider;
+        unregister_table_provider(&self.app_context, &table_id)?;
 
         // Remove definition via SchemaRegistry (delete-through) → invalidates cache
         registry.delete_table_definition(&table_id)?;
