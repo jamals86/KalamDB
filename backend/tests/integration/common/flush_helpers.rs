@@ -70,20 +70,29 @@ pub async fn execute_flush_synchronously(
     let unified_cache = server.app_context.schema_registry();
     let table_id_arc = Arc::new(table_id.clone());
 
-    // Prefer the registered UserTableShared store; fallback to constructing a new per-table store
-    let user_table_store = if let Some(shared) = server
+    // Get the registered UserTableProvider and access its store; fallback to constructing a new per-table store
+    let user_table_store = if let Some(provider_arc) = server
         .app_context
         .schema_registry()
-        .get_user_table_shared(&table_id)
+        .get_provider(&table_id)
     {
-        shared.store().clone()
+        if let Some(provider) = provider_arc.as_any().downcast_ref::<kalamdb_core::tables::user_tables::UserTableProvider>() {
+            provider.shared().store().clone()
+        } else {
+            // Fallback if wrong provider type
+            Arc::new(kalamdb_core::tables::new_user_table_store(
+                server.app_context.storage_backend(),
+                &namespace_id,
+                &table_name_id,
+            ))
+        }
     } else {
         Arc::new(kalamdb_core::tables::new_user_table_store(
             server.app_context.storage_backend(),
             &namespace_id,
             &table_name_id,
         ))
-    };
+    };;
 
     let flush_job = UserTableFlushJob::new(
         table_id_arc,

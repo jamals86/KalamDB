@@ -63,7 +63,7 @@ pub async fn create_test_user(
     let exec_ctx = ExecutionContext::new(system_user_id, Role::System, session);
     let result = server
         .sql_executor
-    .execute(&*server.session_context, &create_user_sql.as_str(), &exec_ctx, Vec::new())
+    .execute( &create_user_sql.as_str(), &exec_ctx, Vec::new())
         .await;
 
     if let Err(e) = &result {

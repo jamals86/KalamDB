@@ -333,7 +333,7 @@ impl TestServer {
             None => ExecutionContext::new(UserId::system(), Role::System, session),
         };
         
-    match self.sql_executor.execute(&*self.session_context, sql, &exec_ctx, Vec::new()).await {
+    match self.sql_executor.execute(sql, &exec_ctx, Vec::new()).await {
         Ok(result) => {
             use kalamdb_core::sql::ExecutionResult;
             match result {

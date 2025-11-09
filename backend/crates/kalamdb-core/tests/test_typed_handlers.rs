@@ -27,7 +27,7 @@ async fn test_typed_handler_create_namespace() {
 
     // Test CREATE NAMESPACE with typed handler
     let sql = "CREATE NAMESPACE integration_test_ns";
-    let result = executor.execute(&session, sql, &exec_ctx, vec![]).await;
+    let result = executor.execute(sql, &exec_ctx, vec![]).await;
     
     assert!(result.is_ok(), "CREATE NAMESPACE should succeed");
     
@@ -49,7 +49,7 @@ async fn test_typed_handler_authorization() {
 
     // Regular users cannot create namespaces
     let sql = "CREATE NAMESPACE unauthorized_ns";
-    let result = executor.execute(&session, sql, &user_ctx, vec![]).await;
+    let result = executor.execute(sql, &user_ctx, vec![]).await;
     
     assert!(result.is_err(), "Regular users should not create namespaces");
 }
@@ -65,7 +65,7 @@ async fn test_classifier_prioritizes_select() {
 
     // SELECT should hit the DataFusion path immediately
     let sql = "SELECT 1 as test";
-    let result = executor.execute(&session, sql, &exec_ctx, vec![]).await;
+    let result = executor.execute(sql, &exec_ctx, vec![]).await;
     
     // Should succeed (DataFusion can execute this)
     assert!(result.is_ok(), "SELECT should execute via DataFusion");

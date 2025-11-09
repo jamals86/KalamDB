@@ -17,6 +17,7 @@ kalamdb-auth = { path = "../kalamdb-auth" }
 # Apache Arrow ecosystem
 arrow = { workspace = true }
 datafusion = { workspace = true }
+datafusion-common = { workspace = true }
 
 # SQL parsing (for native DML handlers)
 sqlparser = { workspace = true }

@@ -141,14 +141,18 @@ impl JobExecutor for FlushExecutor {
                 // cannot see actual row data stored under per-table partitions like
                 // "user_<namespace>:<table>". Using it caused runtime errors:
                 //   Not found: user_
-                // Retrieve the UserTableShared instance to access the correct store.
-                let user_shared = schema_registry
-                    .get_user_table_shared(&table_id)
+                // Retrieve the UserTableProvider instance to access the correct store.
+                let provider_arc = schema_registry.get_provider(&table_id)
                     .ok_or_else(|| KalamDbError::NotFound(format!(
                         "User table provider not registered for {}.{} (id={})",
                         namespace_id_str, table_name_str, table_id
                     )))?;
-                let store = user_shared.store().clone();
+                
+                // Downcast to UserTableProvider to access shared state
+                let provider = provider_arc.as_any().downcast_ref::<crate::tables::user_tables::UserTableProvider>()
+                    .ok_or_else(|| KalamDbError::InvalidOperation("Cached provider type mismatch for user table".into()))?;
+                
+                let store = provider.shared().store().clone();
 
                 let flush_job = UserTableFlushJob::new(
                     table_id.clone(),

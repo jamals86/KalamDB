@@ -7,7 +7,7 @@
 //!
 //! **Phase 3C**: Refactored to eliminate redundant handler allocations
 //! - Before: Every UserTableProvider instance allocated 3 Arc<Handler> + HashMap
-//! - After: UserTableAccess wraps Arc<UserTableShared> (created once per table, cached)
+//! - After: UserTableProvider wraps Arc<UserTableShared> (created once per table, cached)
 //! - Memory savings: 6 fields → 3 fields (50% reduction per instance)
 
 use super::UserTableInsertHandler;
@@ -39,62 +39,84 @@ use kalamdb_store::EntityStoreV2 as EntityStore;
 /// Shared Snowflake generator for auto-increment values
 static AUTO_ID_GENERATOR: Lazy<SnowflakeGenerator> = Lazy::new(|| SnowflakeGenerator::new(0));
 
-/// Per-request lightweight wrapper providing user-scoped access to a user table
+/// Stateless provider for USER tables with Row-Level Security
 ///
-/// **Architecture** (Phase 3C):
-/// - `UserTableShared`: Created once per table, cached in SchemaCache, contains handlers/defaults
-/// - `UserTableAccess`: Created per-request, wraps Arc<UserTableShared> + user_id + role
-/// - Memory: 3 fields (vs 9 fields before) = 66% reduction
+/// **Architecture** (Phase 10 Optimization):
+/// - No per-request fields (current_user_id, access_role removed)
+/// - Reads SessionUserContext from SessionState.extensions during scan()
+/// - Registered ONCE in base_session_context (no clone overhead)
+///
+/// **RLS Enforcement**:
+/// - scan() extracts user_id from SessionState → filters by key prefix
+/// - insert_into() extracts user_id from SessionState → scopes data
+/// - All DML operations enforce per-user isolation at storage layer
+///
+/// **Performance**: Zero SessionState clone overhead (vs 1-2μs per request)
 ///
 /// **Usage**:
 /// ```ignore
 /// // Once at table registration:
 /// let shared = UserTableShared::new(table_id, cache, schema, store);
-/// cache.insert_user_table_shared(table_id, shared.clone());
+/// let provider = UserTableProvider::new(shared);
+/// base_session.register_table("my_table", Arc::new(provider))?;
 ///
-/// // Per-request:
-/// let user_access = UserTableAccess::new(shared, user_id, role);
-/// ctx.register_table("my_table", Arc::new(user_access));
+/// // Per-request: SessionContext clones SessionState + injects user_id
+/// let session = exec_ctx.create_session_with_user();
+/// session.sql("SELECT * FROM my_table").await?;
 /// ```
-pub struct UserTableAccess {
+pub struct UserTableProvider {
     /// Shared table-level state (handlers, defaults, core fields)
     shared: Arc<UserTableShared>,
-
-    /// Current user ID for data isolation (per-request)
-    current_user_id: UserId,
-
-    /// Role associated with the current request (determines access scope)
-    access_role: Role,
 }
 
-impl std::fmt::Debug for UserTableAccess {
+impl std::fmt::Debug for UserTableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("UserTableAccess")
+        f.debug_struct("UserTableProvider")
             .field("table_id", self.shared.core().table_id())
             .field("schema", &self.shared.core().schema_ref())
-            .field("current_user_id", &self.current_user_id)
-            .field("access_role", &self.access_role)
             .finish()
     }
 }
 
-impl UserTableAccess {
-    /// Create a new per-request user table access wrapper
+impl UserTableProvider {
+    /// Create a new stateless user table provider
     ///
     /// # Arguments
     /// * `shared` - Arc<UserTableShared> containing table-level singletons (cached in SchemaCache)
-    /// * `current_user_id` - Current user ID for data isolation
-    /// * `access_role` - Role of the caller (determines access scope)
-    pub fn new(
-        shared: Arc<UserTableShared>,
-        current_user_id: UserId,
-        access_role: Role,
-    ) -> Self {
-        Self {
-            shared,
-            current_user_id,
-            access_role,
-        }
+    ///
+    /// User context (user_id, role) is read from SessionState.extensions during query execution.
+    pub fn new(shared: Arc<UserTableShared>) -> Self {
+        Self { shared }
+    }
+
+    /// Get access to the shared table state
+    ///
+    /// Useful for accessing handlers, store, or core fields
+    pub fn shared(&self) -> &Arc<UserTableShared> {
+        &self.shared
+    }
+
+    /// Extract user context from DataFusion SessionState
+    ///
+    /// **Purpose**: Read (user_id, role) from SessionState.config.options.extensions
+    /// injected by ExecutionContext.create_session_with_user()
+    ///
+    /// **Returns**: (UserId, Role) tuple for RLS enforcement
+    fn extract_user_context(state: &dyn datafusion::catalog::Session) -> Result<(UserId, Role), KalamDbError> {
+        use crate::sql::executor::models::SessionUserContext;
+        
+        let session_state = state.as_any()
+            .downcast_ref::<datafusion::execution::context::SessionState>()
+            .ok_or_else(|| KalamDbError::InvalidOperation("Expected SessionState".to_string()))?;
+        
+        let user_ctx = session_state
+            .config()
+            .options()
+            .extensions
+            .get::<SessionUserContext>()
+            .ok_or_else(|| KalamDbError::InvalidOperation("SessionUserContext not found in extensions".to_string()))?;
+        
+        Ok((user_ctx.user_id.clone(), user_ctx.role.clone()))
     }
 
     /// Get the column family name for this user table
@@ -131,11 +153,12 @@ impl UserTableAccess {
     /// Insert a single row into this user table
     ///
     /// # Arguments
+    /// * `user_id` - User ID for data isolation
     /// * `row_data` - Row data as JSON object
     ///
     /// # Returns
     /// The generated row ID
-    pub fn insert_row(&self, row_data: JsonValue) -> Result<String, KalamDbError> {
+    pub fn insert_row(&self, user_id: &UserId, row_data: JsonValue) -> Result<String, KalamDbError> {
         // Apply generated columns FIRST (id, created_at), then defaults and validation.
         // This ensures NOT NULL id/created_at are present even if not specified by caller.
         let mut rows = vec![row_data];
@@ -147,7 +170,7 @@ impl UserTableAccess {
                 row,
                 self.shared.core().schema_ref().as_ref(),
                 self.shared.column_defaults().as_ref(),
-                &self.current_user_id,
+                user_id,
             )?;
         }
 
@@ -157,7 +180,7 @@ impl UserTableAccess {
         self.shared.insert_handler().insert_row(
             self.namespace_id(),
             self.table_name(),
-            &self.current_user_id,
+            user_id,
             finalized,
         )
     }
@@ -165,11 +188,12 @@ impl UserTableAccess {
     /// Insert multiple rows into this user table
     ///
     /// # Arguments
+    /// * `user_id` - User ID for data isolation
     /// * `rows` - Vector of row data as JSON objects
     ///
     /// # Returns
     /// Vector of generated row IDs
-    pub fn insert_batch(&self, rows: Vec<JsonValue>) -> Result<Vec<String>, KalamDbError> {
+    pub fn insert_batch(&self, user_id: &UserId, rows: Vec<JsonValue>) -> Result<Vec<String>, KalamDbError> {
         let mut rows = rows;
         // Populate generated columns FIRST
         self.prepare_insert_rows(&mut rows)
@@ -181,14 +205,14 @@ impl UserTableAccess {
                 row,
                 self.shared.core().schema_ref().as_ref(),
                 self.shared.column_defaults().as_ref(),
-                &self.current_user_id,
+                user_id,
             )?;
         }
 
         self.shared.insert_handler().insert_batch(
             self.namespace_id(),
             self.table_name(),
-            &self.current_user_id,
+            user_id,
             rows,
         )
     }
@@ -251,16 +275,17 @@ impl UserTableAccess {
     /// Update a single row in this user table
     ///
     /// # Arguments
+    /// * `user_id` - User ID for data isolation
     /// * `row_id` - Row ID to update
     /// * `updates` - Updated fields as JSON object
     ///
     /// # Returns
     /// The row ID of the updated row
-    pub fn update_row(&self, row_id: &str, updates: JsonValue) -> Result<String, KalamDbError> {
+    pub fn update_row(&self, user_id: &UserId, row_id: &str, updates: JsonValue) -> Result<String, KalamDbError> {
         self.shared.update_handler().update_row(
             self.namespace_id(),
             self.table_name(),
-            &self.current_user_id,
+            user_id,
             row_id,
             updates,
         )
@@ -269,18 +294,20 @@ impl UserTableAccess {
     /// Update multiple rows in this user table
     ///
     /// # Arguments
+    /// * `user_id` - User ID for data isolation
     /// * `updates` - Vector of (row_id, updates) tuples
     ///
     /// # Returns
     /// Vector of updated row IDs
     pub fn update_batch(
         &self,
+        user_id: &UserId,
         updates: Vec<(String, JsonValue)>,
     ) -> Result<Vec<String>, KalamDbError> {
         self.shared.update_handler().update_batch(
             self.namespace_id(),
             self.table_name(),
-            &self.current_user_id,
+            user_id,
             updates,
         )
     }
@@ -288,15 +315,16 @@ impl UserTableAccess {
     /// Soft delete a single row in this user table
     ///
     /// # Arguments
+    /// * `user_id` - User ID for data isolation
     /// * `row_id` - Row ID to delete
     ///
     /// # Returns
     /// The row ID of the deleted row
-    pub fn delete_row(&self, row_id: &str) -> Result<String, KalamDbError> {
+    pub fn delete_row(&self, user_id: &UserId, row_id: &str) -> Result<String, KalamDbError> {
         self.shared.delete_handler().delete_row(
             self.namespace_id(),
             self.table_name(),
-            &self.current_user_id,
+            user_id,
             row_id,
         )
     }
@@ -304,15 +332,16 @@ impl UserTableAccess {
     /// Soft delete multiple rows in this user table
     ///
     /// # Arguments
+    /// * `user_id` - User ID for data isolation
     /// * `row_ids` - Vector of row IDs to delete
     ///
     /// # Returns
     /// Vector of deleted row IDs
-    pub fn delete_batch(&self, row_ids: Vec<String>) -> Result<Vec<String>, KalamDbError> {
+    pub fn delete_batch(&self, user_id: &UserId, row_ids: Vec<String>) -> Result<Vec<String>, KalamDbError> {
         self.shared.delete_handler().delete_batch(
             self.namespace_id(),
             self.table_name(),
-            &self.current_user_id,
+            user_id,
             row_ids,
         )
     }
@@ -322,8 +351,12 @@ impl UserTableAccess {
     /// Finds the row owned by current user whose JSON field `id` equals `id_value` 
     /// and performs a soft delete. This bridges the mismatch between external primary 
     /// key semantics (id column) and internal storage key (row_id).
-    pub fn delete_by_id_field(&self, id_value: &str) -> Result<String, KalamDbError> {
-        let rows = self.scan_current_user_rows()?;
+    ///
+    /// # Arguments
+    /// * `user_id` - User ID for data isolation
+    /// * `id_value` - Value of the logical id field to match
+    pub fn delete_by_id_field(&self, user_id: &UserId, id_value: &str) -> Result<String, KalamDbError> {
+        let rows = self.scan_current_user_rows(user_id)?;
 
         log::debug!("delete_by_id_field: Looking for id={} among {} user rows", id_value, rows.len());
 
@@ -359,10 +392,10 @@ impl UserTableAccess {
 
         let row_id = target_row_id
             .ok_or_else(|| {
-                log::error!("delete_by_id_field: No row found with id={} for user {}", id_value, self.current_user_id.as_str());
+                log::error!("delete_by_id_field: No row found with id={} for user {}", id_value, user_id.as_str());
                 KalamDbError::NotFound(format!("Row with id={} not found for user", id_value))
             })?;
-        self.delete_row(&row_id)
+        self.delete_row(user_id, &row_id)
     }
 
     /// UPDATE by logical `id` field (helper for SQL layer)
@@ -370,8 +403,13 @@ impl UserTableAccess {
     /// Finds the row owned by current user whose JSON field `id` equals `id_value`
     /// and performs an update. This bridges the mismatch between external primary
     /// key semantics (id column) and internal storage key (row_id).
-    pub fn update_by_id_field(&self, id_value: &str, updates: serde_json::Value) -> Result<(), KalamDbError> {
-        let rows = self.scan_current_user_rows()?;
+    ///
+    /// # Arguments
+    /// * `user_id` - User ID for data isolation
+    /// * `id_value` - Value of the logical id field to match
+    /// * `updates` - JSON object with field updates
+    pub fn update_by_id_field(&self, user_id: &UserId, id_value: &str, updates: serde_json::Value) -> Result<(), KalamDbError> {
+        let rows = self.scan_current_user_rows(user_id)?;
 
         log::debug!("update_by_id_field: Looking for id={} among {} user rows", id_value, rows.len());
 
@@ -394,10 +432,10 @@ impl UserTableAccess {
 
         let row_id = target_row_id
             .ok_or_else(|| {
-                log::error!("update_by_id_field: No row found with id={} for user {}", id_value, self.current_user_id.as_str());
+                log::error!("update_by_id_field: No row found with id={} for user {}", id_value, user_id.as_str());
                 KalamDbError::NotFound(format!("Row with id={} not found for user", id_value))
             })?;
-        self.update_row(&row_id, updates).map(|_| ())
+        self.update_row(user_id, &row_id, updates).map(|_| ())
     }
 
     /// Get the user-specific key prefix for data isolation
@@ -407,20 +445,26 @@ impl UserTableAccess {
     /// All queries will be filtered to only access rows with this prefix,
     /// ensuring users can only see their own data.
     ///
+    /// # Arguments
+    /// * `user_id` - User ID for isolation
+    ///
     /// # Returns
     /// Key prefix in format "{UserId}:"
-    pub fn user_key_prefix(&self) -> Vec<u8> {
-        format!("{}:", self.current_user_id.as_str())
+    pub fn user_key_prefix(user_id: &UserId) -> Vec<u8> {
+        format!("{}:", user_id.as_str())
             .as_bytes()
             .to_vec()
     }
 
-    /// Scan all rows for the current user.
-    pub fn scan_current_user_rows(&self) -> Result<Vec<(String, UserTableRow)>, KalamDbError> {
+    /// Scan all rows for the specified user.
+    ///
+    /// # Arguments
+    /// * `user_id` - User ID for data isolation
+    pub fn scan_current_user_rows(&self, user_id: &UserId) -> Result<Vec<(String, UserTableRow)>, KalamDbError> {
         self.shared.store().scan_user(
             self.namespace_id().as_str(),
             self.table_name().as_str(),
-            self.current_user_id.as_str(),
+            user_id.as_str(),
         )
     }
 
@@ -455,7 +499,11 @@ impl UserTableAccess {
     ///
     /// Reads all Parquet files for the current user from the storage directory
     /// and converts them to JSON for merging with RocksDB data.
-    async fn scan_parquet_files(&self, _schema: &SchemaRef) -> DataFusionResult<Vec<JsonValue>> {
+    ///
+    /// # Arguments
+    /// * `user_id` - User ID for directory-level RLS isolation
+    /// * `_schema` - Schema reference (unused, kept for compatibility)
+    async fn scan_parquet_files(&self, user_id: &UserId, _schema: &SchemaRef) -> DataFusionResult<Vec<JsonValue>> {
         use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use std::fs;
         use std::path::Path;
@@ -468,7 +516,7 @@ impl UserTableAccess {
                 .map(|cached_data| {
                     cached_data
                         .storage_path_template
-                        .replace("{userId}", self.current_user_id.as_str())
+                        .replace("{userId}", user_id.as_str())
                         .replace("{shard}", "")
                 })
                 .unwrap_or_else(|| String::new())
@@ -480,7 +528,7 @@ impl UserTableAccess {
             .cache()
             .get_storage_path(
                 self.shared.core().table_id(),
-                Some(&self.current_user_id),
+                Some(user_id),
                 None,
             )
             .unwrap_or_else(|err| {
@@ -505,17 +553,17 @@ impl UserTableAccess {
         let storage_dir = Path::new(&storage_path);
         log::debug!(
             "🔍 RLS: Scanning Parquet files for user={} in path={} (exists={})",
-            self.current_user_id.as_str(),
+            user_id.as_str(),
             storage_path,
             storage_dir.exists()
         );
 
         // 🔒 CRITICAL RLS ASSERTION: Verify storage path contains user_id
         // This ensures directory-level isolation is enforced (Parquet files are stored per-user)
-        if !storage_path.contains(self.current_user_id.as_str()) {
+        if !storage_path.contains(user_id.as_str()) {
             log::error!(
                 "🚨 RLS VIOLATION: Storage path does NOT contain user_id! user={}, path={}",
-                self.current_user_id.as_str(),
+                user_id.as_str(),
                 storage_path
             );
             return Err(DataFusionError::Execution(format!(
@@ -611,7 +659,7 @@ impl UserTableAccess {
     }
 }
 
-impl BaseTableProvider for UserTableAccess {
+impl BaseTableProvider for UserTableProvider {
     fn table_id(&self) -> &kalamdb_commons::models::TableId {
         self.shared.core().table_id()
     }
@@ -626,7 +674,7 @@ impl BaseTableProvider for UserTableAccess {
 }
 
 #[async_trait]
-impl TableProvider for UserTableAccess {
+impl TableProvider for UserTableProvider {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -645,16 +693,21 @@ impl TableProvider for UserTableAccess {
 
     async fn scan(
         &self,
-        _state: &dyn datafusion::catalog::Session,
+        state: &dyn datafusion::catalog::Session,
         projection: Option<&Vec<usize>>,
         _filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        // Extract user_id and role from SessionState.extensions
+        let (current_user_id, access_role) = Self::extract_user_context(state)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to extract user context: {}", e)))?;
+
         log::debug!(
-            "UserTableProvider::scan() called for table {}.{}, user {}",
+            "UserTableProvider::scan() called for table {}.{}, user {}, role {:?}",
             self.namespace_id().as_str(),
             self.table_name().as_str(),
-            self.current_user_id.as_str()
+            current_user_id.as_str(),
+            access_role
         );
 
         // Get the base schema and add system columns for the scan result
@@ -679,15 +732,17 @@ impl TableProvider for UserTableAccess {
         let mut rocksdb_json: Vec<JsonValue> = Vec::new();
         let mut rocksdb_scanned: usize = 0;
 
+        // User-specific key prefix for RLS
+        let user_prefix = Self::user_key_prefix(&current_user_id);
+
         if let Some(limit_value) = limit {
             // Efficient streaming scan with prefix + limit via EntityStore helper
-            let user_prefix = self.user_key_prefix(); // e.g., "<user_id>:"
             log::info!(
                 "🔍 RLS SCAN: table={}.{}, user_id={}, role={:?}, prefix={:?}",
                 self.namespace_id().as_str(),
                 self.table_name().as_str(),
-                self.current_user_id.as_str(),
-                self.access_role,
+                current_user_id.as_str(),
+                access_role,
                 String::from_utf8_lossy(&user_prefix)
             );
             let raw = self
@@ -709,14 +764,14 @@ impl TableProvider for UserTableAccess {
                 "🔍 RLS SCAN (no limit): table={}.{}, user_id={}, role={:?}",
                 self.namespace_id().as_str(),
                 self.table_name().as_str(),
-                self.current_user_id.as_str(),
-                self.access_role
+                current_user_id.as_str(),
+                access_role
             );
             let raw_rows = self.shared.store()
                 .scan_user(
                     self.namespace_id().as_str(),
                     self.table_name().as_str(),
-                    self.current_user_id.as_str(),
+                    current_user_id.as_str(),
                 )
                 .map_err(|e| DataFusionError::Execution(format!("Failed to scan user table: {}", e)))?;
 
@@ -732,7 +787,7 @@ impl TableProvider for UserTableAccess {
         );
 
         // **STEP 2: Scan Parquet files**
-        let parquet_json = self.scan_parquet_files(&full_schema).await?;
+        let parquet_json = self.scan_parquet_files(&current_user_id, &full_schema).await?;
 
         log::debug!("Parquet rows: {}", parquet_json.len());
 
@@ -766,17 +821,21 @@ impl TableProvider for UserTableAccess {
         let table = MemTable::try_new(full_schema, partitions)
             .map_err(|e| DataFusionError::Execution(format!("Failed to create MemTable: {}", e)))?;
 
-        table.scan(_state, projection, &[], limit).await
+        table.scan(state, projection, &[], limit).await
     }
 
     async fn insert_into(
         &self,
-        _state: &dyn datafusion::catalog::Session,
+        state: &dyn datafusion::catalog::Session,
         input: Arc<dyn ExecutionPlan>,
         _op: InsertOp,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         use datafusion::execution::TaskContext;
         use datafusion::physical_plan::collect;
+
+        // Extract user_id from SessionState for RLS enforcement
+        let (current_user_id, _role) = Self::extract_user_context(state)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to extract user context: {}", e)))?;
 
         // Execute the input plan to get RecordBatches
         let task_ctx = Arc::new(TaskContext::default());
@@ -802,7 +861,7 @@ impl TableProvider for UserTableAccess {
                     row,
                     self.shared.core().schema_ref().as_ref(),
                     self.shared.column_defaults().as_ref(),
-                    &self.current_user_id,
+                    &current_user_id,
                 )
                 .map_err(|e| {
                     DataFusionError::Execution(format!("DEFAULT evaluation failed: {}", e))
@@ -815,7 +874,7 @@ impl TableProvider for UserTableAccess {
 
             // Insert each row using the insert_batch method
             // This automatically handles user_id scoping
-            self.insert_batch(json_rows)
+            self.insert_batch(&current_user_id, json_rows)
                 .map_err(|e| DataFusionError::Execution(format!("Insert failed: {}", e)))?;
         }
 
@@ -922,13 +981,8 @@ mod tests {
     fn test_user_table_provider_creation() {
         let shared = create_test_user_table_shared();
         let schema = shared.core().schema_ref().clone();
-        let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableAccess::new(
-            shared,
-            user_id.clone(),
-            Role::User,
-        );
+        let provider = UserTableProvider::new(shared);
 
         assert_eq!(provider.schema(), schema);
         assert_eq!(provider.namespace_id(), &NamespaceId::new("chat"));
@@ -938,20 +992,14 @@ mod tests {
             crate::tables::base_table_provider::BaseTableProvider::table_type(&provider),
             TableType::User
         );
-        assert_eq!(&provider.current_user_id, &user_id);
         assert_eq!(provider.column_family_name(), "user_table:chat:messages");
     }
 
     #[test]
     fn test_user_key_prefix() {
-    let _store = create_test_db();
-    let _schema = create_test_schema();
-    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableAccess::new(create_test_user_table_shared(), user_id, Role::User);
-
-        let prefix = provider.user_key_prefix();
+        let prefix = UserTableProvider::user_key_prefix(&user_id);
         let expected = b"user123:".to_vec();
 
         assert_eq!(prefix, expected);
@@ -960,14 +1008,9 @@ mod tests {
     #[tokio::test]
     async fn test_scan_flattens_user_rows() {
         let shared = create_test_user_table_shared();
-    let _schema = shared.core().schema_ref().clone();
         let user_id = UserId::new("user123".to_string());
 
-        let provider = UserTableAccess::new(
-            shared.clone(),
-            user_id.clone(),
-            Role::User,
-        );
+        let provider = UserTableProvider::new(shared.clone());
 
         let row = UserTableRow {
             row_id: "row1".to_string(),
@@ -984,19 +1027,29 @@ mod tests {
             provider.shared.store().as_ref(),
             provider.namespace_id().as_str(),
             provider.table_name().as_str(),
-            provider.current_user_id.as_str(),
+            user_id.as_str(),
             &row.row_id,
             &row,
         )
         .expect("should persist user row");
 
+        // Create a session with user context for the scan
         let ctx = SessionContext::new();
+        let mut session_state = ctx.state();
+        session_state.config_mut().options_mut().extensions.insert(
+            crate::sql::executor::models::SessionUserContext {
+                user_id: user_id.clone(),
+                role: Role::User,
+            }
+        );
+        let session_with_user = SessionContext::new_with_state(session_state);
+        
         let exec_plan = provider
-            .scan(&ctx.state(), None, &[], None)
+            .scan(&session_with_user.state(), None, &[], None)
             .await
             .expect("scan should succeed");
 
-        let batches = datafusion::physical_plan::collect(exec_plan, ctx.task_ctx())
+        let batches = datafusion::physical_plan::collect(exec_plan, session_with_user.task_ctx())
             .await
             .expect("collect should succeed");
 
@@ -1045,18 +1098,14 @@ mod tests {
 
     #[test]
     fn test_insert_row() {
-    let _store = create_test_db();
-    let _schema = create_test_schema();
-    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
-
-        let provider = UserTableAccess::new(create_test_user_table_shared(), user_id, Role::User);
+        let provider = UserTableProvider::new(create_test_user_table_shared());
 
         let row_data = json!({
             "content": "Hello, World!"
         });
 
-        let result = provider.insert_row(row_data);
+        let result = provider.insert_row(&user_id, row_data);
         assert!(result.is_ok(), "Insert should succeed");
 
         let row_id = result.unwrap();
@@ -1065,12 +1114,8 @@ mod tests {
 
     #[test]
     fn test_insert_batch() {
-    let _store = create_test_db();
-    let _schema = create_test_schema();
-    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
-
-        let provider = UserTableAccess::new(create_test_user_table_shared(), user_id, Role::User);
+        let provider = UserTableProvider::new(create_test_user_table_shared());
 
         let rows = vec![
             json!({"content": "Message 1"}),
@@ -1078,7 +1123,7 @@ mod tests {
             json!({"content": "Message 3"}),
         ];
 
-        let result = provider.insert_batch(rows);
+        let result = provider.insert_batch(&user_id, rows);
         assert!(result.is_ok(), "Batch insert should succeed");
 
         let row_ids = result.unwrap();
@@ -1087,29 +1132,34 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_row_excludes_soft_deleted_from_scan() {
-    let _store = create_test_db();
-    let _schema = create_test_schema();
-    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
-
-        let provider =
-            UserTableAccess::new(create_test_user_table_shared(), user_id.clone(), Role::User);
+        let provider = UserTableProvider::new(create_test_user_table_shared());
 
         let row_a = json!({"content": "Keep me"});
         let row_b = json!({"content": "Delete me"});
 
-        provider.insert_row(row_a).expect("insert row_a");
-        let id_b = provider.insert_row(row_b).expect("insert row_b");
+        provider.insert_row(&user_id, row_a).expect("insert row_a");
+        let id_b = provider.insert_row(&user_id, row_b).expect("insert row_b");
 
-        provider.delete_row(&id_b).expect("soft delete row_b");
+        provider.delete_row(&user_id, &id_b).expect("soft delete row_b");
 
+        // Create a session with user context for the scan
         let ctx = SessionContext::new();
+        let mut session_state = ctx.state();
+        session_state.config_mut().options_mut().extensions.insert(
+            crate::sql::executor::models::SessionUserContext {
+                user_id: user_id.clone(),
+                role: Role::User,
+            }
+        );
+        let session_with_user = SessionContext::new_with_state(session_state);
+        
         let exec_plan = provider
-            .scan(&ctx.state(), None, &[], None)
+            .scan(&session_with_user.state(), None, &[], None)
             .await
             .expect("scan should succeed");
 
-        let batches = datafusion::physical_plan::collect(exec_plan, ctx.task_ctx())
+        let batches = datafusion::physical_plan::collect(exec_plan, session_with_user.task_ctx())
             .await
             .expect("collect should succeed");
 
@@ -1145,39 +1195,31 @@ mod tests {
 
     #[test]
     fn test_update_row() {
-    let _store = create_test_db();
-    let _schema = create_test_schema();
-    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
-
-        let provider = UserTableAccess::new(create_test_user_table_shared(), user_id, Role::User);
+        let provider = UserTableProvider::new(create_test_user_table_shared());
 
         // Insert a row first
         let row_data = json!({"content": "Original"});
-        let row_id = provider.insert_row(row_data).unwrap();
+        let row_id = provider.insert_row(&user_id, row_data).unwrap();
 
         // Update the row
         let updates = json!({"content": "Updated"});
-        let result = provider.update_row(&row_id, updates);
+        let result = provider.update_row(&user_id, &row_id, updates);
         assert!(result.is_ok(), "Update should succeed");
         assert_eq!(result.unwrap(), row_id, "Should return the updated row ID");
     }
 
     #[test]
     fn test_delete_row() {
-    let _store = create_test_db();
-    let _schema = create_test_schema();
-    let _metadata = create_test_metadata();
         let user_id = UserId::new("user123".to_string());
-
-        let provider = UserTableAccess::new(create_test_user_table_shared(), user_id, Role::User);
+        let provider = UserTableProvider::new(create_test_user_table_shared());
 
         // Insert a row first
         let row_data = json!({"content": "To be deleted"});
-        let row_id = provider.insert_row(row_data).unwrap();
+        let row_id = provider.insert_row(&user_id, row_data).unwrap();
 
         // Delete the row (soft delete)
-        let result = provider.delete_row(&row_id);
+        let result = provider.delete_row(&user_id, &row_id);
         assert!(result.is_ok(), "Delete should succeed");
         assert_eq!(result.unwrap(), row_id, "Should return the deleted row ID");
     }
@@ -1189,29 +1231,20 @@ mod tests {
         let user1_id = UserId::new("user1".to_string());
         let user2_id = UserId::new("user2".to_string());
 
-        let provider1 = UserTableAccess::new(
-            shared.clone(),
-            user1_id.clone(),
-            Role::User,
-        );
-
-        let provider2 = UserTableAccess::new(
-            shared,
-            user2_id.clone(),
-            Role::User,
-        );
+        let provider1 = UserTableProvider::new(shared.clone());
+        let provider2 = UserTableProvider::new(shared);
 
         // Insert data for user1
         let row_data_1 = json!({"content": "User1 message"});
-        let row_id_1 = provider1.insert_row(row_data_1).unwrap();
+        let row_id_1 = provider1.insert_row(&user1_id, row_data_1).unwrap();
 
         // Insert data for user2
         let row_data_2 = json!({"content": "User2 message"});
-        let row_id_2 = provider2.insert_row(row_data_2).unwrap();
+        let row_id_2 = provider2.insert_row(&user2_id, row_data_2).unwrap();
 
         // Verify different key prefixes
-        let prefix1 = provider1.user_key_prefix();
-        let prefix2 = provider2.user_key_prefix();
+        let prefix1 = UserTableProvider::user_key_prefix(&user1_id);
+        let prefix2 = UserTableProvider::user_key_prefix(&user2_id);
         assert_ne!(
             prefix1, prefix2,
             "Different users should have different key prefixes"

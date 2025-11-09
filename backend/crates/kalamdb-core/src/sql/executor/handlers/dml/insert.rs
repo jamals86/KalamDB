@@ -320,9 +320,8 @@ impl InsertHandler {
 
         match table_type {
             TableType::User => {
-                // Get UserTableShared from cache
-                let user_table_shared = schema_registry
-                    .get_user_table_shared(&table_id)
+                // Get UserTableProvider from unified cache and downcast
+                let provider_arc = schema_registry.get_provider(&table_id)
                     .ok_or_else(|| {
                         KalamDbError::InvalidOperation(format!(
                             "User table provider not found for: {}.{}",
@@ -330,15 +329,13 @@ impl InsertHandler {
                             table_name.as_str()
                         ))
                     })?;
-                // Create UserTableAccess with current user context
-                use crate::tables::user_tables::UserTableAccess;
-                let user_access = UserTableAccess::new(
-                    user_table_shared,
-                    user_id.clone(),
-                    kalamdb_commons::Role::User,
-                );
-                let row_ids = user_access.insert_batch(rows)?;
-                Ok(row_ids.len())
+                
+                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::tables::user_tables::UserTableProvider>() {
+                    let row_ids = provider.insert_batch(&user_id, rows)?;
+                    Ok(row_ids.len())
+                } else {
+                    Err(KalamDbError::InvalidOperation("Cached provider type mismatch for user table".into()))
+                }
             }
             TableType::Shared => {
                 // Downcast cached provider

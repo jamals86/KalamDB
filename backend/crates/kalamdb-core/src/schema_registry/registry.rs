@@ -139,9 +139,6 @@ pub struct SchemaRegistry {
     /// Cached DataFusion providers per table (shared/stream safe to reuse)
     providers: DashMap<TableId, Arc<dyn TableProvider + Send + Sync>>,
 
-    /// Cached UserTableShared instances per table (Phase 3C: handler consolidation)
-    user_table_shared: DashMap<TableId, Arc<crate::tables::base_table_provider::UserTableShared>>,
-
     /// Maximum number of entries before LRU eviction
     max_size: usize,
 
@@ -160,7 +157,6 @@ impl std::fmt::Debug for SchemaRegistry {
         f.debug_struct("SchemaRegistry")
             .field("cache_entries", &self.cache.len())
             .field("provider_entries", &self.providers.len())
-            .field("user_table_shared_entries", &self.user_table_shared.len())
             .field("max_size", &self.max_size)
             .field("hits", &self.hits.load(Ordering::Relaxed))
             .field("misses", &self.misses.load(Ordering::Relaxed))
@@ -189,7 +185,6 @@ impl SchemaRegistry {
             cache: DashMap::new(),
             lru_timestamps: DashMap::new(),
             providers: DashMap::new(),
-            user_table_shared: DashMap::new(),
             max_size,
             storage_registry,
             hits: AtomicU64::new(0),
@@ -324,7 +319,6 @@ impl SchemaRegistry {
         self.cache.remove(table_id);
         self.lru_timestamps.remove(table_id);
         self.providers.remove(table_id);
-        self.user_table_shared.remove(table_id);
     }
 
     /// Evict least-recently-used entry from cache
@@ -442,7 +436,6 @@ impl SchemaRegistry {
         self.cache.clear();
         self.lru_timestamps.clear();
         self.providers.clear();
-        self.user_table_shared.clear();
         self.hits.store(0, Ordering::Relaxed);
         self.misses.store(0, Ordering::Relaxed);
     }
@@ -477,33 +470,6 @@ impl SchemaRegistry {
         table_id: &TableId,
     ) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         self.providers.get(table_id).map(|e| Arc::clone(e.value()))
-    }
-
-    /// Insert a UserTableShared instance into the cache for a table (Phase 3C)
-    ///
-    /// UserTableShared contains all table-level shared state (handlers, defaults, core)
-    /// and is created once per table at registration time.
-    pub fn insert_user_table_shared(
-        &self,
-        table_id: TableId,
-        shared: Arc<crate::tables::base_table_provider::UserTableShared>,
-    ) {
-        self.user_table_shared.insert(table_id, shared);
-    }
-
-    /// Remove a cached UserTableShared for a table (if present)
-    pub fn remove_user_table_shared(&self, table_id: &TableId) {
-        let _ = self.user_table_shared.remove(table_id);
-    }
-
-    /// Get a cached UserTableShared instance for a table (Phase 3C)
-    ///
-    /// Returns the shared table-level state that can be wrapped in per-request UserTableAccess.
-    pub fn get_user_table_shared(
-        &self,
-        table_id: &TableId,
-    ) -> Option<Arc<crate::tables::base_table_provider::UserTableShared>> {
-        self.user_table_shared.get(table_id).map(|e| Arc::clone(e.value()))
     }
 
     /// Resolve partial storage path template for a table

@@ -59,7 +59,7 @@ impl StatementHandler for UpdateHandler {
         let updates = JsonValue::Object(obj);
 
         // Execute native update for USER tables; for SHARED tables, perform provider-level updates across matching rows (MVP: id only)
-        let schema_registry = AppContext::get().schema_registry();
+        let schema_registry = app_context.schema_registry();
         use kalamdb_commons::models::TableId;
         let table_id = TableId::new(namespace.clone(), table_name.clone());
         let def = schema_registry.get_table_definition(&table_id)?.ok_or_else(|| KalamDbError::NotFound(format!("Table {}.{} not found", namespace.as_str(), table_name.as_str())))?;
@@ -67,11 +67,17 @@ impl StatementHandler for UpdateHandler {
             kalamdb_commons::schemas::TableType::User => {
                 // Require id for user table update
                 let id_value = row_id_opt.ok_or_else(|| KalamDbError::InvalidOperation("UPDATE currently requires WHERE id = <value> for USER tables".into()))?;
-                let shared = schema_registry.get_user_table_shared(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
-                use crate::tables::user_tables::UserTableAccess;
-                let access = UserTableAccess::new(shared, context.user_id.clone(), context.user_role.clone());
-                access.update_by_id_field(&id_value, updates)?;
-                Ok(ExecutionResult::Updated { rows_affected: 1 })
+                
+                // Get provider from unified cache and downcast to UserTableProvider
+                let provider_arc = schema_registry.get_provider(&table_id)
+                    .ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
+                
+                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::tables::user_tables::UserTableProvider>() {
+                    provider.update_by_id_field(&context.user_id, &id_value, updates)?;
+                    Ok(ExecutionResult::Updated { rows_affected: 1 })
+                } else {
+                    Err(KalamDbError::InvalidOperation("Cached provider type mismatch for user table".into()))
+                }
             }
             kalamdb_commons::schemas::TableType::Shared => {
                 // MVP: If id present, update that row via SharedTableProvider; otherwise, return invalid operation (no predicate support yet)

@@ -58,12 +58,16 @@ impl StatementHandler for DeleteHandler {
         use kalamdb_commons::schemas::TableType;
         match def.table_type {
             TableType::User => {
-                let shared = schema_registry.get_user_table_shared(&table_id).ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
-                use crate::tables::user_tables::UserTableAccess;
-                let access = UserTableAccess::new(shared, context.user_id.clone(), context.user_role.clone());
-                // Use delete_by_id_field to map logical id -> row_id
-                let _deleted = access.delete_by_id_field(&row_id)?;
-                Ok(ExecutionResult::Deleted { rows_affected: 1 })
+                // Get provider from unified cache and downcast to UserTableProvider
+                let provider_arc = schema_registry.get_provider(&table_id)
+                    .ok_or_else(|| KalamDbError::InvalidOperation("User table provider not found".into()))?;
+                
+                if let Some(provider) = provider_arc.as_any().downcast_ref::<crate::tables::user_tables::UserTableProvider>() {
+                    let _deleted = provider.delete_by_id_field(&context.user_id, &row_id)?;
+                    Ok(ExecutionResult::Deleted { rows_affected: 1 })
+                } else {
+                    Err(KalamDbError::InvalidOperation("Cached provider type mismatch for user table".into()))
+                }
             }
             TableType::Shared => {
                 // DELETE FROM <ns>.<table> WHERE id = <value> for SHARED tables maps logical id -> row_id

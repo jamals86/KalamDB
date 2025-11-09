@@ -267,7 +267,9 @@ pub fn create_user_table(
         log::warn!("Could not get mutable reference to UserTableShared to attach LiveQueryManager at creation time");
     }
 
-    schema_registry.insert_user_table_shared(table_id.clone(), shared);
+    // Create UserTableProvider and register in unified provider cache
+    let provider = crate::tables::user_tables::UserTableProvider::new(shared);
+    schema_registry.insert_provider(table_id.clone(), Arc::new(provider));
 
     // Log detailed success with table options
     log::info!(

@@ -64,7 +64,6 @@ pub async fn execute_sql_v1(
     http_req: HttpRequest,
     req: web::Json<SqlRequest>,
     app_context: web::Data<Arc<kalamdb_core::app_context::AppContext>>,
-    session_factory: web::Data<Arc<DataFusionSessionFactory>>,
     user_repo: web::Data<Arc<dyn UserRepository>>,
     rate_limiter: Option<web::Data<Arc<RateLimiter>>>,
 ) -> impl Responder {
@@ -165,7 +164,6 @@ pub async fn execute_sql_v1(
         match execute_single_statement(
             sql,
             app_context.get_ref(),
-            session_factory.get_ref(),
             sql_executor,
             &auth_result,
             request_id.as_deref(),
@@ -193,23 +191,20 @@ pub async fn execute_sql_v1(
 
 /// Execute a single SQL statement
 /// Uses SqlExecutor for all SQL (custom DDL and standard DataFusion SQL)
-/// Falls back to DataFusionSessionFactory for testing if SqlExecutor is not available
 async fn execute_single_statement(
     sql: &str,
     app_context: &Arc<kalamdb_core::app_context::AppContext>,
-    session_factory: &Arc<DataFusionSessionFactory>,
     sql_executor: Option<&Arc<SqlExecutor>>,
     auth: &kalamdb_auth::AuthenticatedRequest,
     request_id: Option<&str>,
     ip_address: Option<&str>,
     metadata: Option<&ExecutorMetadataAlias>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
-    // Phase 3 (T033): Construct ExecutionContext with user identity, request tracking, and DataFusion session
-    // MEMORY FIX: Use session() method which returns reference to shared base_session_context
-    // This ensures system tables are registered and available for queries
-    // User isolation happens at TableProvider level via UserTableAccess (contains user_id)
-    let session = app_context.session();
-    let mut exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role, Arc::clone(session));
+    // Phase 3 (T033): Construct ExecutionContext with user identity, request tracking, and base SessionContext
+    // Get base SessionContext from AppContext (tables already registered)
+    // ExecutionContext will extract SessionState and inject user_id for per-user filtering
+    let base_session = app_context.base_session_context();
+    let mut exec_ctx = ExecutionContext::new(auth.user_id.clone(), auth.role, Arc::clone(&base_session));
     
     // Add request_id and ip_address if available
     if let Some(rid) = request_id {
@@ -222,8 +217,9 @@ async fn execute_single_statement(
     // If sql_executor is available, use it (production path)
     if let Some(sql_executor) = sql_executor {
         // Execute through SqlExecutor (handles both custom DDL and DataFusion)
+        // Note: session parameter is not used anymore - exec_ctx creates per-request session
         match sql_executor
-            .execute_with_metadata(&session, sql, &exec_ctx, metadata, Vec::new())
+            .execute_with_metadata(sql, &exec_ctx, metadata, Vec::new())
             .await
         {
             Ok(result) => {
@@ -278,12 +274,16 @@ async fn execute_single_statement(
             }
             Err(e) => Err(Box::new(e)),
         }
-    } else {
-        // Fallback for testing: use shared session from AppContext (avoid memory leak)
-        let session = app_context.session();
-        let df = session.sql(sql).await?;
-        let batches = df.collect().await?;
-        record_batch_to_query_result(batches, None)
+    }
+    else {
+        // // Fallback for testing: use shared session from AppContext (avoid memory leak)
+        // let session = app_context.session();
+        // let df = session.sql(sql).await?;
+        // let batches = df.collect().await?;
+        // record_batch_to_query_result(batches, None)
+
+        //Throw error if SqlExecutor is not available
+        Err("SqlExecutor not available".into())
     }
 }
 

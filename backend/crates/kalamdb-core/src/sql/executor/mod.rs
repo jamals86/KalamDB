@@ -20,7 +20,6 @@ use crate::sql::executor::models::{ExecutionContext, ExecutionMetadata, Executio
 use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::NamespaceId;
-use regex::Regex; // lightweight table reference extraction for SELECT routing
 use kalamdb_sql::statement_classifier::SqlStatement;
 use std::sync::Arc;
 
@@ -57,18 +56,16 @@ impl SqlExecutor {
     /// Execute a statement without request metadata.
     pub async fn execute(
         &self,
-        session: &SessionContext,
         sql: &str,
         exec_ctx: &ExecutionContext,
         params: Vec<ScalarValue>,
     ) -> Result<ExecutionResult, KalamDbError> {
-        self.execute_with_metadata(session, sql, exec_ctx, None, params).await
+        self.execute_with_metadata(sql, exec_ctx, None, params).await
     }
 
     /// Execute a statement with optional metadata.
     pub async fn execute_with_metadata(
         &self,
-        session: &SessionContext,
         sql: &str,
         exec_ctx: &ExecutionContext,
         _metadata: Option<&ExecutionMetadata>,
@@ -88,19 +85,13 @@ impl SqlExecutor {
         // Step 2: Route based on statement type
         use kalamdb_sql::statement_classifier::SqlStatementKind;
         match classified.kind() {
-            // Hot path: SELECT queries use DataFusion (with dynamic table registration)
+            // Hot path: SELECT queries use DataFusion
+            // Tables are already registered in base session, we just inject user_id
             SqlStatementKind::Select => {
-                self.execute_via_datafusion(session, sql, params, exec_ctx).await
+                self.execute_via_datafusion(sql, params, exec_ctx).await
             }
             
-            // // Phase 7: INSERT/DELETE/UPDATE use native handlers with TypedStatementHandler
-            // SqlStatementKind::Insert(_) | SqlStatementKind::Delete(_) | SqlStatementKind::Update(_) => {
-            //     self.handler_registry
-            //         .handle(session, classified, sql.to_string(), params, exec_ctx)
-            //         .await
-            // }
-            
-            // All other statements: Delegate to handler registry (session is in exec_ctx)
+            // All other statements: Delegate to handler registry
             _ => {
                 self.handler_registry
                     .handle(classified, params, exec_ctx)
@@ -109,10 +100,9 @@ impl SqlExecutor {
         }
     }
 
-    /// Execute SELECT/INSERT/DELETE via DataFusion with parameter binding
+    /// Execute SELECT/INSERT/DELETE via DataFusion with per-user session
     async fn execute_via_datafusion(
         &self,
-        session: &SessionContext,
         sql: &str,
         params: Vec<ScalarValue>,
         exec_ctx: &ExecutionContext,
@@ -125,13 +115,10 @@ impl SqlExecutor {
             ));
         }
 
-        // Step 1: Extract table references from SQL (namespace.table)
-        // We support simple patterns: FROM <ns>.<table>, JOIN <ns>.<table>
-        // More complex queries (subqueries/CTEs) will be expanded later.
-        let table_refs = self.extract_table_references(sql);
-        if !table_refs.is_empty() {
-            self.register_query_tables(session, &table_refs, exec_ctx).await?;
-        }
+        // Create per-request SessionContext with user_id injected
+        // Tables are already registered in base session (done once on CREATE TABLE or server startup)
+        // The user_id injection allows UserTableProvider::scan() to filter by current user
+        let session = exec_ctx.create_session_with_user();
 
         // Parse SQL and get DataFrame (with detailed logging on failure)
         let df = match session.sql(sql).await {
@@ -140,11 +127,10 @@ impl SqlExecutor {
                 // Log planning failure with rich context
                 log::error!(
                     target: "sql::plan",
-                    "❌ SQL planning failed | sql='{}' | user='{}' | role='{:?}' | tables={:?} | error='{}'",
+                    "❌ SQL planning failed | sql='{}' | user='{}' | role='{:?}' | error='{}'",
                     sql,
                     exec_ctx.user_id.as_str(),
                     exec_ctx.user_role,
-                    table_refs,
                     e
                 );
                 return Err(KalamDbError::Other(format!("Error planning query: {}", e)));
@@ -157,11 +143,10 @@ impl SqlExecutor {
             Err(e) => {
                 log::error!(
                     target: "sql::exec",
-                    "❌ SQL execution failed | sql='{}' | user='{}' | role='{:?}' | tables={:?} | error='{}'",
+                    "❌ SQL execution failed | sql='{}' | user='{}' | role='{:?}' | error='{}'",
                     sql,
                     exec_ctx.user_id.as_str(),
                     exec_ctx.user_role,
-                    table_refs,
                     e
                 );
                 return Err(KalamDbError::Other(format!("Error executing query: {}", e)));
@@ -173,120 +158,6 @@ impl SqlExecutor {
 
         // Return batches with row count
         Ok(ExecutionResult::Rows { batches, row_count })
-    }
-
-    /// Extract (namespace, table) pairs from a SELECT SQL string.
-    /// Uses a case-insensitive regex for FROM / JOIN clauses.
-    fn extract_table_references(&self, sql: &str) -> Vec<(String, String)> {
-        // Regex: (FROM|JOIN) whitespace namespace.table (alphanumeric/underscore)
-        static TABLE_REF_RE: once_cell::sync::Lazy<Regex> = once_cell::sync::Lazy::new(|| {
-            Regex::new(r"(?i)(?:FROM|JOIN)\s+([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)").unwrap()
-        });
-        let mut refs = Vec::new();
-        for cap in TABLE_REF_RE.captures_iter(sql) {
-            let ns = cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
-            let tbl = cap.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
-            if !ns.is_empty() && !tbl.is_empty() {
-                refs.push((ns, tbl));
-            }
-        }
-        refs
-    }
-
-    /// Register required table providers into the provided DataFusion session context
-    /// before planning a SELECT. User tables require per-request UserTableAccess wrapping
-    /// to enforce row-level isolation; shared and stream tables reuse cached providers.
-    async fn register_query_tables(
-        &self,
-        session: &SessionContext,
-        table_refs: &[(String, String)],
-        exec_ctx: &ExecutionContext,
-    ) -> Result<(), KalamDbError> {
-        use datafusion::catalog::memory::MemorySchemaProvider;
-        use kalamdb_commons::models::TableId;
-        use kalamdb_commons::schemas::TableType;
-        use crate::tables::user_tables::UserTableAccess;
-
-        let schema_registry = self.app_context.schema_registry();
-        let catalog_name = session
-            .catalog_names()
-            .first()
-            .ok_or_else(|| KalamDbError::Other("No DataFusion catalogs available".to_string()))?
-            .clone();
-        let catalog = session
-            .catalog(&catalog_name)
-            .ok_or_else(|| KalamDbError::Other("Failed to access DataFusion catalog".to_string()))?;
-
-        for (ns, tbl) in table_refs.iter() {
-            let table_id = TableId::from_strings(ns, tbl);
-            // Fetch TableDefinition (fast path cache+store)
-            let def = match schema_registry.get_table_definition(&table_id)? {
-                Some(d) => d,
-                None => {
-                    log::debug!("Skipping registration for {}.{} (definition not found)", ns, tbl);
-                    continue;
-                }
-            };
-            let table_type = def.table_type;
-
-            // Ensure namespace schema exists
-            let schema_provider = if let Some(existing) = catalog.schema(ns) {
-                existing.clone()
-            } else {
-                let new_schema = Arc::new(MemorySchemaProvider::new());
-                catalog
-                    .register_schema(ns, new_schema.clone())
-                    .map_err(|e| KalamDbError::Other(format!("Failed to register schema '{}': {}", ns, e)))?;
-                new_schema
-            };
-
-            // Skip if table already registered in this session
-            if schema_provider.table_exist(tbl) {
-                continue;
-            }
-
-            match table_type {
-                TableType::User => {
-                    // Create per-request UserTableAccess wrapper
-                    let shared = schema_registry.get_user_table_shared(&table_id).ok_or_else(|| {
-                        KalamDbError::InvalidOperation(format!(
-                            "User table provider not found for: {}.{}",
-                            ns, tbl
-                        ))
-                    })?;
-                    let access = UserTableAccess::new(
-                        shared,
-                        exec_ctx.user_id.clone(),
-                        exec_ctx.user_role.clone(),
-                    );
-                    schema_provider
-                        .register_table(tbl.to_string(), Arc::new(access))
-                        .map_err(|e| KalamDbError::Other(format!("Failed to register user table {}.{}: {}", ns, tbl, e)))?;
-                }
-                TableType::Shared | TableType::Stream => {
-                    // Reuse cached provider
-                    if let Some(provider) = schema_registry.get_provider(&table_id) {
-                        log::debug!(
-                            "SELECT query registering SHARED/STREAM table {}.{} - provider found: {:p}",
-                            ns, tbl, &*provider
-                        );
-                        schema_provider
-                            .register_table(tbl.to_string(), provider)
-                            .map_err(|e| KalamDbError::Other(format!("Failed to register table {}.{}: {}", ns, tbl, e)))?;
-                    } else {
-                        let err_msg = format!("Provider not cached for {}.{} (type {:?})", ns, tbl, table_type);
-                        log::error!("{}", err_msg);
-                        return Err(KalamDbError::NotFound(err_msg));
-                    }
-                }
-                TableType::System => {
-                    // System tables already registered globally under 'system' schema
-                    continue;
-                }
-            }
-            log::debug!("Registered table {}.{} (type {:?}) in session", ns, tbl, table_type);
-        }
-        Ok(())
     }
 
     /// Load existing tables from system.tables and register providers
@@ -437,7 +308,9 @@ impl SqlExecutor {
                         shared_ref.attach_live_query_manager(app_context.live_query_manager());
                     }
 
-                    schema_registry.insert_user_table_shared(table_id.clone(), shared);
+                    // Create UserTableProvider and register in unified provider cache
+                    let provider = crate::tables::user_tables::UserTableProvider::new(shared);
+                    schema_registry.insert_provider(table_id.clone(), Arc::new(provider));
                     user_count += 1;
                 }
                 TableType::Shared => {

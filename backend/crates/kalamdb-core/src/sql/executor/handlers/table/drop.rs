@@ -218,10 +218,9 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
 
         // TODO: Check active live queries/subscriptions before dropping (Phase 9 integration)
 
-    // Evict providers first to avoid races where a lingering provider panics
+    // Evict providers from unified cache to avoid races where a lingering provider panics
     // trying to resolve a now-missing schema during concurrent SELECTs.
     registry.remove_provider(&table_id);
-    registry.remove_user_table_shared(&table_id);
 
         // Also deregister from the shared base session (DataFusion) so subsequent
         // requests using the shared session won't see the table anymore.

@@ -32,6 +32,6 @@ pub use stream_tables::{
     new_stream_table_store, StreamTableProvider, StreamTableRow, StreamTableRowId, StreamTableStore,
 };
 pub use user_tables::{
-    new_user_table_store, UserTableAccess, UserTableDeleteHandler, UserTableInsertHandler,
+    new_user_table_store, UserTableDeleteHandler, UserTableInsertHandler,
     UserTableProvider, UserTableRow, UserTableRowId, UserTableStore, UserTableUpdateHandler,
 };
