@@ -163,7 +163,7 @@ impl SqlExecutor {
     /// Load existing tables from system.tables and register providers
     ///
     /// Called during server startup to restore table access after restart.
-    /// Scans system.tables and creates/registers:
+    /// Loads table definitions from the store and creates/registers:
     /// - UserTableShared instances for USER tables
     /// - SharedTableProvider instances for SHARED tables  
     /// - StreamTableProvider instances for STREAM tables
@@ -178,116 +178,46 @@ impl SqlExecutor {
         use kalamdb_commons::schemas::TableType;
 
         let app_context = &self.app_context;
-        let tables_provider = app_context.system_tables().tables();
         let schema_registry = app_context.schema_registry();
 
-        // Scan all tables from system.tables
-        let all_tables_batch = tables_provider.scan_all_tables()?;
+        // Load all table definitions from the store (much cleaner than scanning Arrow batches!)
+        let all_table_defs = schema_registry.scan_all_table_definitions()?;
         
-        if all_tables_batch.num_rows() == 0 {
+        if all_table_defs.is_empty() {
             log::info!("No existing tables to load");
             return Ok(());
         }
-
-        // Extract table IDs and types from batch
-        use datafusion::arrow::array::{Array, StringArray};
-
-        // system.tables schema now uses 'namespace_id' consistently
-        let namespace_array = all_tables_batch
-            .column_by_name("namespace_id")
-            .ok_or_else(|| KalamDbError::Other("Missing namespace_id column".to_string()))?
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| KalamDbError::Other("namespace_id is not StringArray".to_string()))?;
-
-        let table_name_array = all_tables_batch
-            .column_by_name("table_name")
-            .ok_or_else(|| KalamDbError::Other("Missing table_name column".to_string()))?
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| KalamDbError::Other("table_name is not StringArray".to_string()))?;
-
-        let table_type_array = all_tables_batch
-            .column_by_name("table_type")
-            .ok_or_else(|| KalamDbError::Other("Missing table_type column".to_string()))?
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| KalamDbError::Other("table_type is not StringArray".to_string()))?;
 
         let mut user_count = 0;
         let mut shared_count = 0;
         let mut stream_count = 0;
         let mut system_count = 0;
 
-        // Iterate through all tables and register providers
-        for i in 0..all_tables_batch.num_rows() {
-            let namespace_id = namespace_array.value(i);
-            let table_name = table_name_array.value(i);
-            let table_type_str = table_type_array.value(i);
-
-            let table_id = kalamdb_commons::models::TableId::from_strings(namespace_id, table_name);
+        // Iterate through all table definitions and register providers
+        for table_def in all_table_defs {
+            let table_id = kalamdb_commons::models::TableId::new(
+                table_def.namespace_id.clone(),
+                table_def.table_name.clone(),
+            );
             
-            // Parse table type
-            let table_type = match table_type_str.to_uppercase().as_str() {
-                "USER" => TableType::User,
-                "SHARED" => TableType::Shared,
-                "STREAM" => TableType::Stream,
-                "SYSTEM" => {
-                    system_count += 1;
-                    continue; // System tables already registered in AppContext
-                }
-                _ => {
-                    log::warn!("Unknown table type '{}' for {}.{}", table_type_str, namespace_id, table_name);
-                    continue;
-                }
-            };
-
-            // Get table definition with schema
-            let table_def = match schema_registry.get_table_definition(&table_id)? {
-                Some(def) => def,
-                None => {
-                    log::warn!("Table definition not found for {}.{}", namespace_id, table_name);
-                    continue;
-                }
-            };
+            // Skip system tables (already registered in AppContext)
+            if matches!(table_def.table_type, TableType::System) {
+                system_count += 1;
+                continue;
+            }
 
             // Convert to Arrow schema
             let arrow_schema = match table_def.to_arrow_schema() {
                 Ok(schema) => schema,
                 Err(e) => {
                     log::error!("Failed to convert table definition to Arrow schema for {}.{}: {}", 
-                               namespace_id, table_name, e);
+                               table_def.namespace_id.as_str(), table_def.table_name.as_str(), e);
                     continue;
                 }
             };
 
-            // Ensure CachedTableData exists in unified schema cache (may have been evicted or not yet inserted on legacy tables)
-            if schema_registry.get(&table_id).is_none() {
-                use crate::schema_registry::CachedTableData;
-                use kalamdb_commons::models::StorageId;
-                // Determine storage id (default to local)
-                let storage_id = StorageId::local();
-                // Resolve path template for this table type
-                let template = match table_type {
-                    TableType::User => schema_registry
-                        .resolve_storage_path_template(&table_id.namespace_id(), &table_id.table_name(), TableType::User, &storage_id)
-                        .unwrap_or_default(),
-                    TableType::Shared => schema_registry
-                        .resolve_storage_path_template(&table_id.namespace_id(), &table_id.table_name(), TableType::Shared, &storage_id)
-                        .unwrap_or_default(),
-                    TableType::Stream => String::new(),
-                    TableType::System => String::new(),
-                };
-                let mut data = CachedTableData::new(Arc::clone(&table_def));
-                data.storage_id = Some(storage_id);
-                data.storage_path_template = template;
-                schema_registry.insert(table_id.clone(), Arc::new(data));
-                log::debug!("Primed schema cache for {}.{} (version {}), template set",
-                    namespace_id, table_name, table_def.schema_version);
-            }
-
             // Register provider based on type
-            match table_type {
+            match table_def.table_type {
                 TableType::User => {
                     // Create user table store
                     let user_table_store = Arc::new(new_user_table_store(
@@ -308,9 +238,11 @@ impl SqlExecutor {
                         shared_ref.attach_live_query_manager(app_context.live_query_manager());
                     }
 
-                    // Create UserTableProvider and register in unified provider cache
+                    // Create UserTableProvider and register (auto-registers with DataFusion)
                     let provider = crate::tables::user_tables::UserTableProvider::new(shared);
-                    schema_registry.insert_provider(table_id.clone(), Arc::new(provider));
+                    let provider_arc: Arc<dyn datafusion::datasource::TableProvider> = Arc::new(provider);
+                    schema_registry.insert_provider(table_id.clone(), provider_arc)?;
+                    
                     user_count += 1;
                 }
                 TableType::Shared => {
@@ -326,7 +258,9 @@ impl SqlExecutor {
                         arrow_schema.clone(),
                         shared_store,
                     );
-                    schema_registry.insert_provider(table_id.clone(), Arc::new(provider));
+                    let provider_arc: Arc<dyn datafusion::datasource::TableProvider> = Arc::new(provider);
+                    schema_registry.insert_provider(table_id.clone(), provider_arc)?;
+                    
                     shared_count += 1;
                 }
                 TableType::Stream => {
@@ -351,7 +285,11 @@ impl SqlExecutor {
                         false, // ephemeral default
                         None,  // max_buffer default
                     );
-                    schema_registry.insert_provider(table_id.clone(), Arc::new(provider));
+                    let provider_arc: Arc<dyn datafusion::datasource::TableProvider> = Arc::new(provider);
+                    schema_registry.insert_provider(table_id.clone(), provider_arc)?;
+                    
+                    stream_count += 1;
+                    
                     stream_count += 1;
                 }
                 TableType::System => {
@@ -370,6 +308,44 @@ impl SqlExecutor {
             system_count
         );
 
+        Ok(())
+    }
+
+    /// Register a table with DataFusion's catalog system
+    ///
+    /// Creates the namespace schema if it doesn't exist, then registers the provider.
+    pub(crate) fn register_table_with_datafusion(
+        base_session: &Arc<SessionContext>,
+        namespace_id: &NamespaceId,
+        table_name: &kalamdb_commons::models::TableName,
+        provider: Arc<dyn datafusion::datasource::TableProvider>,
+    ) -> Result<(), KalamDbError> {
+        let catalog_name = base_session
+            .catalog_names()
+            .first()
+            .ok_or_else(|| KalamDbError::InvalidOperation("No catalogs available".to_string()))?
+            .clone();
+        
+        let catalog = base_session
+            .catalog(&catalog_name)
+            .ok_or_else(|| KalamDbError::InvalidOperation(format!("Catalog '{}' not found", catalog_name)))?;
+        
+        // Get or create namespace schema
+        let schema = catalog
+            .schema(namespace_id.as_str())
+            .unwrap_or_else(|| {
+                // Create namespace schema if it doesn't exist
+                let new_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
+                catalog.register_schema(namespace_id.as_str(), new_schema.clone())
+                    .expect("Failed to register namespace schema");
+                new_schema
+            });
+        
+        // Register table
+        schema
+            .register_table(table_name.as_str().to_string(), provider)
+            .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to register table with DataFusion: {}", e)))?;
+        
         Ok(())
     }
 

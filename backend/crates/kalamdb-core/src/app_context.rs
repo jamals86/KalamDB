@@ -158,6 +158,9 @@ impl AppContext {
                     .expect("Failed to create DataFusion session factory"));
                 let base_session_context = Arc::new(session_factory.create_session());
 
+                // Wire up SchemaRegistry with base_session_context for automatic table registration
+                schema_cache.set_base_session_context(Arc::clone(&base_session_context));
+
                 // Register system schema
                 let system_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
                 let catalog_name = base_session_context

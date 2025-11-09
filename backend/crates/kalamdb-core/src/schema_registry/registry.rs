@@ -23,7 +23,7 @@ use kalamdb_commons::models::schemas::TableDefinition;
 use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName, UserId};
 use kalamdb_commons::schemas::TableType;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 /// Cached table data containing all metadata and schema information
 ///
@@ -139,6 +139,9 @@ pub struct SchemaRegistry {
     /// Cached DataFusion providers per table (shared/stream safe to reuse)
     providers: DashMap<TableId, Arc<dyn TableProvider + Send + Sync>>,
 
+    /// DataFusion base session context for table registration (set once during init)
+    base_session_context: OnceLock<Arc<datafusion::prelude::SessionContext>>,
+
     /// Maximum number of entries before LRU eviction
     max_size: usize,
 
@@ -185,11 +188,20 @@ impl SchemaRegistry {
             cache: DashMap::new(),
             lru_timestamps: DashMap::new(),
             providers: DashMap::new(),
+            base_session_context: OnceLock::new(),
             max_size,
             storage_registry,
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
         }
+    }
+
+    /// Set the DataFusion base session context for table registration
+    ///
+    /// This must be called during AppContext initialization, after the base session is created.
+    /// Can only be called once - subsequent calls are ignored.
+    pub fn set_base_session_context(&self, session: Arc<datafusion::prelude::SessionContext>) {
+        let _ = self.base_session_context.set(session);
     }
 
     /// Get current Unix timestamp in milliseconds
@@ -451,12 +463,54 @@ impl SchemaRegistry {
     }
 
     /// Insert a DataFusion provider into the cache for a table
+    ///
+    /// Automatically registers the table with DataFusion's catalog if base_session_context is set.
+    /// Creates the namespace schema if it doesn't exist.
+    ///
+    /// # Arguments
+    /// * `table_id` - Table identifier (contains namespace and table name)
+    /// * `provider` - TableProvider implementation to register
+    ///
+    /// # Errors
+    /// Returns error if DataFusion registration fails (e.g., duplicate table name)
     pub fn insert_provider(
         &self,
         table_id: TableId,
         provider: Arc<dyn TableProvider + Send + Sync>,
-    ) {
-        self.providers.insert(table_id, provider);
+    ) -> Result<(), KalamDbError> {
+        // Store in our cache
+        self.providers.insert(table_id.clone(), provider.clone());
+
+        // Also register with DataFusion's catalog if available
+        if let Some(base_session) = self.base_session_context.get() {
+            let catalog_name = base_session
+                .catalog_names()
+                .first()
+                .ok_or_else(|| KalamDbError::InvalidOperation("No catalogs available".to_string()))?
+                .clone();
+            
+            let catalog = base_session
+                .catalog(&catalog_name)
+                .ok_or_else(|| KalamDbError::InvalidOperation(format!("Catalog '{}' not found", catalog_name)))?;
+            
+            // Get or create namespace schema
+            let schema = catalog
+                .schema(table_id.namespace_id().as_str())
+                .unwrap_or_else(|| {
+                    // Create namespace schema if it doesn't exist
+                    let new_schema = Arc::new(datafusion::catalog::memory::MemorySchemaProvider::new());
+                    catalog.register_schema(table_id.namespace_id().as_str(), new_schema.clone())
+                        .expect("Failed to register namespace schema");
+                    new_schema
+                });
+            
+            // Register table with DataFusion
+            schema
+                .register_table(table_id.table_name().as_str().to_string(), provider)
+                .map_err(|e| KalamDbError::InvalidOperation(format!("Failed to register table with DataFusion: {}", e)))?;
+        }
+
+        Ok(())
     }
 
     /// Remove a cached DataFusion provider for a table (if present)
@@ -632,6 +686,23 @@ impl SchemaRegistry {
 
         Ok(())
     }
+
+    /// Scan all table definitions from persistence layer
+    ///
+    /// Returns all table definitions from TablesTableProvider.
+    /// Used during server startup to load existing tables.
+    ///
+    /// # Returns
+    /// Vec of all table definitions
+    pub fn scan_all_table_definitions(&self) -> Result<Vec<TableDefinition>, KalamDbError> {
+        // Get tables provider via AppContext
+        let app_ctx = crate::app_context::AppContext::get();
+        let tables_provider = app_ctx.system_tables().tables();
+        
+        // Scan all tables from storage
+        tables_provider.scan_all()
+    }
+
 
     /// Check if table exists in persistence layer
     ///

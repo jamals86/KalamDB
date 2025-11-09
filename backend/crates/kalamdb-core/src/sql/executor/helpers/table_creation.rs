@@ -236,8 +236,8 @@ pub fn create_user_table(
         schema.clone(),
         shared_store,
     );
-    // Cache provider for DataFusion / execution path
-    schema_registry.insert_provider(table_id.clone(), Arc::new(provider));
+    // Cache provider for DataFusion / execution path (auto-registers with DataFusion)
+    schema_registry.insert_provider(table_id.clone(), Arc::new(provider))?;
 
     // Create and register UserTableShared instance for INSERT/UPDATE/DELETE operations
     use crate::tables::base_table_provider::UserTableShared;
@@ -268,8 +268,10 @@ pub fn create_user_table(
     }
 
     // Create UserTableProvider and register in unified provider cache
+    // SchemaRegistry automatically registers with DataFusion's catalog
     let provider = crate::tables::user_tables::UserTableProvider::new(shared);
-    schema_registry.insert_provider(table_id.clone(), Arc::new(provider));
+    let provider_arc: Arc<dyn datafusion::datasource::TableProvider> = Arc::new(provider);
+    schema_registry.insert_provider(table_id.clone(), provider_arc)?;
 
     // Log detailed success with table options
     log::info!(
@@ -452,7 +454,7 @@ pub fn create_shared_table(
         schema.clone(),
         shared_store,
     );
-    schema_registry.insert_provider(table_id.clone(), Arc::new(provider));
+    schema_registry.insert_provider(table_id.clone(), Arc::new(provider))?;
 
     // Prime cache entry with storage path template + storage id (needed for flush path resolution)
     {
@@ -625,7 +627,7 @@ pub fn create_stream_table(
         false, // ephemeral default
         None,  // max_buffer default
     );
-    schema_registry.insert_provider(table_id.clone(), Arc::new(stream_provider));
+    schema_registry.insert_provider(table_id.clone(), Arc::new(stream_provider))?;
 
     // Log detailed success with table options
     log::info!(
