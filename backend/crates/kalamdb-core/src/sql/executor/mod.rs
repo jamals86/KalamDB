@@ -128,15 +128,33 @@ impl SqlExecutor {
         let df = match session.sql(sql).await {
             Ok(df) => df,
             Err(e) => {
-                // Log planning failure with rich context
-                log::error!(
-                    target: "sql::plan",
-                    "❌ SQL planning failed | sql='{}' | user='{}' | role='{:?}' | error='{}'",
-                    sql,
-                    exec_ctx.user_id.as_str(),
-                    exec_ctx.user_role,
-                    e
-                );
+                // Check if this is a table not found error (likely user typo)
+                let error_msg = e.to_string().to_lowercase();
+                let is_table_not_found = error_msg.contains("table") && error_msg.contains("not found")
+                    || error_msg.contains("relation") && error_msg.contains("does not exist")
+                    || error_msg.contains("unknown table");
+                
+                if is_table_not_found {
+                    // Log as warning for table not found (likely user typo)
+                    log::warn!(
+                        target: "sql::plan",
+                        "⚠️  Table not found | sql='{}' | user='{}' | role='{:?}' | error='{}'",
+                        sql,
+                        exec_ctx.user_id.as_str(),
+                        exec_ctx.user_role,
+                        e
+                    );
+                } else {
+                    // Log planning failure with rich context
+                    log::error!(
+                        target: "sql::plan",
+                        "❌ SQL planning failed | sql='{}' | user='{}' | role='{:?}' | error='{}'",
+                        sql,
+                        exec_ctx.user_id.as_str(),
+                        exec_ctx.user_role,
+                        e
+                    );
+                }
                 return Err(KalamDbError::Other(format!("Error planning query: {}", e)));
             }
         };

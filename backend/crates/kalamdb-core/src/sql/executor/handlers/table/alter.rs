@@ -48,8 +48,8 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         let table_def_arc = registry
             .get_table_definition(&table_id)?
             .ok_or_else(|| {
-                log::error!(
-                    "❌ ALTER TABLE failed: Table '{}' not found in namespace '{}'",
+                log::warn!(
+                    "⚠️  ALTER TABLE failed: Table '{}' not found in namespace '{}'",
                     statement.table_name.as_str(),
                     namespace_id.as_str()
                 );

@@ -495,9 +495,11 @@ impl LiveQueryManager {
     /// - **Fire-and-forget**: Spawns async task, doesn't block caller
     /// - **Error isolation**: Logs errors, never propagates to caller
     /// - **Future-proof**: Single place to add batching/buffering later
+    /// - **Optimization**: Checks for subscriptions before spawning thread (avoids unnecessary spawns)
     ///
     /// # Performance
-    /// Uses composite key `(UserId, TableId)` for O(1) lookup instead of O(n) iteration
+    /// Uses composite key `(UserId, TableId)` for O(1) lookup instead of O(n) iteration.
+    /// Pre-check prevents spawning threads when no subscribers exist (zero-cost in no-subscriber case).
     ///
     /// # Example
     /// ```rust,ignore
@@ -520,17 +522,29 @@ impl LiveQueryManager {
         table_id: TableId,
         notification: ChangeNotification,
     ) {
-        let manager = Arc::clone(self);
-        tokio::spawn(async move {
-            if let Err(e) = manager.notify_table_change(&user_id, &table_id, notification).await {
-                log::warn!(
-                    "Failed to notify subscribers for table {}.{}: {}",
-                    table_id.namespace_id().as_str(),
-                    table_id.table_name().as_str(),
-                    e
-                );
-            }
-        });
+        // Check if there are any subscriptions for this user_id and table_id
+        // This avoids spawning unnecessary threads when no subscribers exist
+        let has_subscriptions = {
+            // This is a fast read-only check (no allocation, just lock + lookup)
+            let registry = self.registry.blocking_read();
+            let subscriptions = registry.get_subscriptions_for_table(&user_id, &table_id);
+            !subscriptions.is_empty()
+        };
+
+        // Only spawn thread if there are subscribers
+        if has_subscriptions {
+            let manager = Arc::clone(self);
+            tokio::spawn(async move {
+                if let Err(e) = manager.notify_table_change(&user_id, &table_id, notification).await {
+                    log::warn!(
+                        "Failed to notify subscribers for table {}.{}: {}",
+                        table_id.namespace_id().as_str(),
+                        table_id.table_name().as_str(),
+                        e
+                    );
+                }
+            });
+        }
     }
     
     /// Notify live query subscribers of a table change
@@ -631,11 +645,6 @@ impl LiveQueryManager {
 
             ids
         }; // registry read lock is dropped here
-
-        log::debug!(
-            "📢 Found {} subscribers to notify",
-            live_ids_to_notify.len()
-        );
 
         // Drop filter cache read lock before acquiring write locks
         drop(filter_cache);

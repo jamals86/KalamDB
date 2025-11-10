@@ -185,8 +185,8 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
                     statement.table_name.as_str()
                 )});
             } else {
-                log::error!(
-                    "❌ DROP TABLE failed: Table '{}' not found in namespace '{}'",
+                log::warn!(
+                    "⚠️  DROP TABLE failed: Table '{}' not found in namespace '{}'",
                     statement.table_name.as_str(),
                     statement.namespace_id.as_str()
                 );
