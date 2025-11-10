@@ -222,16 +222,7 @@ impl UserTableInsertHandler {
                 &entity,
             )
             .map_err(|e| KalamDbError::Other(format!("Failed to insert row in batch: {}", e)))?;
-
-            // ✅ REQUIREMENT 6: Notify for EACH row in batch (no message loss)
-            // ✅ REQUIREMENT 1 & 3: Async fire-and-forget pattern
-            log::info!(
-                "🔔 About to send batch INSERT notification for table {}.{}",
-                namespace_id.as_str(),
-                table_name.as_str()
-            );
             if let Some(manager) = &self.live_query_manager {
-                log::info!("🔔 Manager found, creating notification...");
                 // CRITICAL: Use fully qualified table name (namespace.table_name) for notification matching
                 let qualified_table_name =
                     format!("{}.{}", namespace_id.as_str(), table_name.as_str());

@@ -192,7 +192,7 @@ impl StreamTableProvider {
             if let Some(live_queries) = &self.live_queries {
                 // Query for active subscribers on this table
                 let subscribers = live_queries
-                    .get_by_table_name(self.table_name().as_str())
+                    .get_by_table_id(self.core.table_id())
                     .map_err(|e| {
                         KalamDbError::Other(format!("Failed to check subscribers: {}", e))
                     })?;

@@ -16,7 +16,7 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use kalamdb_commons::system::LiveQuery;
-use kalamdb_commons::{LiveQueryId, UserId};
+use kalamdb_commons::{LiveQueryId, TableId, UserId};
 use kalamdb_store::EntityStoreV2;
 use kalamdb_store::StorageBackend;
 use std::any::Any;
@@ -120,7 +120,7 @@ impl LiveQueriesTableProvider {
         let all_queries = self.list_live_queries()?;
         Ok(all_queries
             .into_iter()
-            .filter(|lq| lq.table_name == table_id.table_name() && lq.namespace_id == table_id.namespace_id())
+            .filter(|lq| lq.table_name == *table_id.table_name() && lq.namespace_id == *table_id.namespace_id())
             .collect())
     }
 

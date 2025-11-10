@@ -9,7 +9,6 @@ use crate::live_query::connection_registry::{
 };
 use crate::live_query::filter::FilterCache;
 use crate::live_query::initial_data::{InitialDataFetcher, InitialDataOptions, InitialDataResult};
-use crate::sql::executor::handlers::user;
 use crate::tables::system::LiveQueriesTableProvider;
 use crate::tables::{SharedTableStore, StreamTableStore, UserTableStore};
 use kalamdb_commons::models::{NamespaceId, TableId, TableName, UserId};
@@ -440,7 +439,7 @@ impl LiveQueryManager {
         &self,
         user_id: &UserId,
     ) -> Result<Vec<SystemLiveQuery>, KalamDbError> {
-        self.live_queries_provider.get_by_user_id(user_id.as_str())
+        self.live_queries_provider.get_by_user_id(user_id)
     }
 
     /// Get a specific live query
