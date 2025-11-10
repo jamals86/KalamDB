@@ -80,19 +80,19 @@ A service account or admin needs to insert, update, or delete records on behalf 
 
 ### User Story 5 - Service-Level Subscriptions Across All Users (Priority: P2)
 
-Backend services need to monitor all changes to user tables and stream tables across all users without subscribing individually to each user. Service-level subscriptions receive change events from all users with user_id metadata included in each event.
+Backend services need to monitor all changes to user tables and stream tables across all users without subscribing individually to each user. Service-level subscriptions use `SUBSCRIBE TO ALL` syntax and receive change events from all users with user_id metadata included in each event.
 
 **Why this priority**: Essential for system-level services like analytics engines, audit logging, data pipelines, and real-time dashboards that need visibility into all user activity. Without this, services would need to maintain thousands of individual subscriptions (one per user), creating massive overhead. Critical for multi-tenant monitoring.
 
-**Independent Test**: Can be fully tested by authenticating as service role, subscribing to a user table (e.g., `SUBSCRIBE TO app.messages`), then having multiple users insert records into their tables. Success is verified by the service receiving all change events with user_id included in each notification.
+**Independent Test**: Can be fully tested by authenticating as service/admin role, subscribing with `SUBSCRIBE TO ALL app.messages`, then having multiple users insert records into their tables. Success is verified by the service receiving all change events with user_id included in each notification. Regular users using `SUBSCRIBE TO app.messages` (without ALL keyword) only receive their own changes.
 
 **Acceptance Scenarios**:
 
-1. **Given** authenticated as service role, **When** subscribing to a user table `SUBSCRIBE TO app.messages`, **Then** the system creates a service-level subscription receiving changes from all users' app.messages tables
-2. **Given** a service-level subscription active, **When** user123 inserts a record into their app.messages table, **Then** the service receives a change event containing the record data plus metadata: `{user_id: "user123", table: "app.messages", operation: "INSERT", data: {...}}`
-3. **Given** a service-level subscription to a stream table, **When** multiple users publish to the stream, **Then** the service receives all events from all users with user_id distinguishing the source
-4. **Given** authenticated as regular user role, **When** attempting to create a service-level subscription, **Then** the system rejects the operation with "Service-level subscriptions require service/admin role"
-5. **Given** a service-level subscription active, **When** filtering by user_id in the subscription query, **Then** the service receives only events matching the user_id filter (optional user scoping)
+1. **Given** authenticated as service role, **When** executing `SUBSCRIBE TO ALL app.messages`, **Then** the system creates a service-level subscription receiving changes from all users' app.messages tables
+2. **Given** a service-level subscription active (`SUBSCRIBE TO ALL app.messages`), **When** user123 inserts a record into their app.messages table, **Then** the service receives a change event containing the record data plus metadata: `{user_id: "user123", table: "app.messages", operation: "INSERT", data: {...}}`
+3. **Given** authenticated as regular user, **When** executing `SUBSCRIBE TO app.messages` (without ALL keyword), **Then** the system creates a user-scoped subscription receiving only the authenticated user's changes
+4. **Given** authenticated as regular user role, **When** attempting `SUBSCRIBE TO ALL app.messages`, **Then** the system rejects the operation with "SUBSCRIBE TO ALL requires service/admin role"
+5. **Given** a service-level subscription to a stream table (`SUBSCRIBE TO ALL admin.events`), **When** multiple users publish to the stream, **Then** the service receives all events from all users with user_id distinguishing the source
 
 ---
 
@@ -171,9 +171,9 @@ Developers implementing job executors need type-safe parameter handling instead 
 - How does the system handle configuration updates - is hot-reload supported or restart required?
 - What happens when a job receives parameters that fail validation against the expected structure?
 - How does the system handle backward compatibility when changing job parameter schemas?
-- What happens when a service-level subscription is created while thousands of users are actively writing?
-- How does the system handle service-level subscription event delivery if the service disconnects temporarily?
-- What happens when a service-level subscription with user_id filter matches zero users?
+- What happens when a regular user attempts `SUBSCRIBE TO ALL` (should be rejected with permission error)?
+- How does the system handle service-level subscription (SUBSCRIBE TO ALL) event delivery if the service disconnects temporarily?
+- What happens when both `SUBSCRIBE TO ALL app.messages` and `SUBSCRIBE TO app.messages` are active from the same service connection?
 - How does the system prevent service-level subscriptions from overwhelming the service with event volume?
 - What happens when AS USER is attempted on a Shared table (should be rejected)?
 
@@ -241,13 +241,13 @@ Developers implementing job executors need type-safe parameter handling instead 
 
 #### Service-Level Subscriptions (FR-047 to FR-055)
 
-- **FR-047**: System MUST support service-level subscriptions to user tables that receive changes from all users
-- **FR-048**: System MUST support service-level subscriptions to stream tables that receive changes from all users
-- **FR-049**: System MUST restrict service-level subscriptions to service and admin roles only
-- **FR-050**: System MUST include user_id in change events sent to service-level subscriptions
-- **FR-051**: System MUST include operation type (INSERT, UPDATE, DELETE) in service-level subscription events
-- **FR-052**: System MUST include full record data in service-level subscription change events
-- **FR-053**: System MUST support optional user_id filtering in service-level subscriptions (e.g., SUBSCRIBE TO app.messages WHERE user_id = 'user123')
+- **FR-047**: System MUST support `SUBSCRIBE TO ALL` syntax for service-level subscriptions to user tables that receive changes from all users
+- **FR-048**: System MUST support `SUBSCRIBE TO ALL` syntax for service-level subscriptions to stream tables that receive changes from all users
+- **FR-049**: System MUST restrict `SUBSCRIBE TO ALL` syntax to service and admin roles only
+- **FR-050**: System MUST support standard `SUBSCRIBE TO` syntax (without ALL keyword) for regular users to receive only their own changes
+- **FR-051**: System MUST include user_id in change events sent to service-level subscriptions (SUBSCRIBE TO ALL)
+- **FR-052**: System MUST include operation type (INSERT, UPDATE, DELETE) in service-level subscription events
+- **FR-053**: System MUST include full record data in service-level subscription change events
 - **FR-054**: System MUST handle service-level subscription load efficiently (single subscription instead of N per-user subscriptions)
 - **FR-055**: System MUST deliver change events to service-level subscriptions in near real-time (<100ms latency)
 
@@ -286,7 +286,8 @@ Developers implementing job executors need type-safe parameter handling instead 
 - **BatchFileEntry**: Manifest entry for a single batch file containing: file path (batch-{number}.parquet), min_updated/max_updated timestamps, min/max values for all columns, row_count, size_bytes, schema_version, status
 - **BloomFilter**: Probabilistic data structure embedded in Parquet file metadata for `id`, `_updated`, and indexed columns enabling efficient point lookup elimination
 - **ImpersonationContext**: Execution context holding both authenticated user (actor) and target user (subject) for audit trail and authorization enforcement in AS USER operations (User/Stream tables only)
-- **ServiceLevelSubscription**: Subscription type for service/admin roles that receives change events from all users' tables with user_id metadata in each event
+- **ServiceLevelSubscription**: Subscription created with `SUBSCRIBE TO ALL` syntax (service/admin roles) that receives change events from all users' tables with user_id metadata in each event
+- **UserScopedSubscription**: Standard subscription created with `SUBSCRIBE TO` syntax (regular users) that receives only the authenticated user's changes
 - **ChangeEvent**: Event notification containing operation type (INSERT/UPDATE/DELETE), user_id, table name, and full record data for service-level subscriptions
 - **TypedJobParameters**: Structured parameter container enabling validation and type checking for job-specific configurations
 
