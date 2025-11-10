@@ -10,6 +10,7 @@ pub mod flush;
 pub mod jobs;
 pub mod live_query;
 pub mod schema_registry;
+pub mod slow_query_logger;
 pub mod app_context;
 pub mod sql;
 pub mod storage;

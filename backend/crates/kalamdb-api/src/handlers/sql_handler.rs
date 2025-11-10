@@ -216,6 +216,7 @@ pub async fn execute_sql_v1(
         });
     
     for (idx, sql) in statements.iter().enumerate() {
+        let stmt_start = std::time::Instant::now();
         match execute_single_statement(
             sql,
             app_context.get_ref(),
@@ -228,7 +229,22 @@ pub async fn execute_sql_v1(
         )
         .await
         {
-            Ok(result) => results.push(result),
+            Ok(result) => {
+                // Log slow query if threshold exceeded
+                let stmt_duration_secs = stmt_start.elapsed().as_secs_f64();
+                let row_count = result.rows.as_ref().map(|r| r.len()).unwrap_or(0);
+                
+                app_context.slow_query_logger().log_if_slow(
+                    sql.to_string(),
+                    stmt_duration_secs,
+                    row_count,
+                    auth_result.user_id.clone(),
+                    kalamdb_core::slow_query_logger::TableType::User, // Default to User
+                    None, // Table name could be extracted from SQL parsing
+                );
+                
+                results.push(result);
+            }
             Err(err) => {
                 let took_ms = start_time.elapsed().as_millis() as u64;
                 return HttpResponse::BadRequest().json(SqlResponse::error_with_details(
@@ -279,10 +295,10 @@ async fn execute_single_statement(
             .execute_with_metadata(sql, &exec_ctx, metadata, params) // Pass parameters
             .await
         {
-            Ok(result) => {
+            Ok(exec_result) => {
                 // Convert ExecutionResult to QueryResult
                 // Phase 3 (T036-T038): Use new ExecutionResult struct variants with row counts
-                match result {
+                match exec_result {
                     ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
                     ExecutionResult::Rows { batches, row_count: _ } => {
                         record_batch_to_query_result(batches, Some(&auth.user_id))

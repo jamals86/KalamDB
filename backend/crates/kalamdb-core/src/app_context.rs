@@ -63,6 +63,9 @@ pub struct AppContext {
     
     // ===== System Tables Registry =====
     system_tables: Arc<SystemTablesRegistry>,
+    
+    // ===== Slow Query Logger =====
+    slow_query_logger: Arc<crate::slow_query_logger::SlowQueryLogger>,
 }
 
 impl std::fmt::Debug for AppContext {
@@ -80,6 +83,7 @@ impl std::fmt::Debug for AppContext {
             .field("session_factory", &"Arc<DataFusionSessionFactory>")
             .field("base_session_context", &"Arc<SessionContext>")
             .field("system_tables", &"Arc<SystemTablesRegistry>")
+            .field("slow_query_logger", &"Arc<SlowQueryLogger>")
             .finish()
     }
 }
@@ -231,6 +235,13 @@ impl AppContext {
                     Some(stream_table_store.clone()),
                 ));
 
+                // Create slow query logger (Phase 11)
+                let slow_log_path = format!("{}/slow.log", config.logging.logs_path);
+                let slow_query_logger = crate::slow_query_logger::SlowQueryLogger::new(
+                    slow_log_path,
+                    config.logging.slow_query_threshold_secs,
+                );
+
                 Arc::new(AppContext {
                     node_id,
                     config,
@@ -245,6 +256,7 @@ impl AppContext {
                     system_tables,
                     session_factory,
                     base_session_context,
+                    slow_query_logger,
                 })
             })
             .clone()
@@ -327,6 +339,14 @@ impl AppContext {
     
     pub fn system_tables(&self) -> Arc<SystemTablesRegistry> {
         self.system_tables.clone()
+    }
+    
+    /// Get the slow query logger
+    ///
+    /// Returns an Arc reference to the lightweight slow query logger that writes
+    /// to a separate slow.log file for queries exceeding the configured threshold.
+    pub fn slow_query_logger(&self) -> Arc<crate::slow_query_logger::SlowQueryLogger> {
+        self.slow_query_logger.clone()
     }
     
     // ===== Convenience methods for backward compatibility =====

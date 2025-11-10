@@ -119,7 +119,10 @@ pub struct LimitsSettings {
 pub struct LoggingSettings {
     #[serde(default = "default_log_level")]
     pub level: String,
-    pub file_path: String,
+    /// Directory for all log files (default: "./logs")
+    /// Used for app.log, slow.log, and other log files
+    #[serde(default = "default_logs_path")]
+    pub logs_path: String,
     #[serde(default = "default_true")]
     pub log_to_console: bool,
     #[serde(default = "default_log_format")]
@@ -132,6 +135,10 @@ pub struct LoggingSettings {
     /// parquet = "warn"
     #[serde(default)]
     pub targets: HashMap<String, String>,
+    /// Slow query logging threshold in seconds (default: 1.0)
+    /// Queries taking longer than this threshold will be logged to slow.log
+    #[serde(default = "default_slow_query_threshold")]
+    pub slow_query_threshold_secs: f64,
 }
 
 /// Performance settings
@@ -555,6 +562,14 @@ fn default_log_format() -> String {
     "compact".to_string()
 }
 
+fn default_slow_query_threshold() -> f64 {
+    1.0 // 1 second
+}
+
+fn default_logs_path() -> String {
+    "./logs".to_string()
+}
+
 fn default_request_timeout() -> u64 {
     30
 }
@@ -782,12 +797,19 @@ impl ServerConfig {
             self.logging.level = level;
         }
 
-        // Log file path (new naming convention)
-        if let Ok(path) = env::var("KALAMDB_LOG_FILE") {
-            self.logging.file_path = path;
+        // Logs directory path (new naming convention)
+        if let Ok(path) = env::var("KALAMDB_LOGS_DIR") {
+            self.logging.logs_path = path;
+        } else if let Ok(path) = env::var("KALAMDB_LOG_FILE") {
+            // Legacy fallback - extract directory from file path
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                self.logging.logs_path = parent.to_string_lossy().to_string();
+            }
         } else if let Ok(path) = env::var("KALAMDB_LOG_FILE_PATH") {
-            // Legacy fallback
-            self.logging.file_path = path;
+            // Legacy fallback - extract directory from file path
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                self.logging.logs_path = parent.to_string_lossy().to_string();
+            }
         }
 
         // Log to console
@@ -914,10 +936,11 @@ impl ServerConfig {
             },
             logging: LoggingSettings {
                 level: "info".to_string(),
-                file_path: "./logs/app.log".to_string(),
+                logs_path: default_logs_path(),
                 log_to_console: true,
                 format: "compact".to_string(),
                 targets: HashMap::new(),
+                slow_query_threshold_secs: default_slow_query_threshold(),
             },
             performance: PerformanceSettings {
                 request_timeout: 30,

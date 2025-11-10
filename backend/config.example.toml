@@ -148,14 +148,21 @@ default_query_limit = 50
 # Log level: error, warn, info, debug, trace (default: info)
 level = "info"
 
-# Log file path (relative or absolute)
-file_path = "./logs/app.log"
+# Directory for all log files (default: "./logs")
+# Server will create app.log, slow.log, and other log files in this directory
+logs_path = "./logs"
 
 # Also log to console/stdout (default: true)
 log_to_console = true
 
 # Log format: compact, pretty, json (default: compact)
 format = "compact"
+
+# Slow query logging threshold in seconds (default: 1.0)
+# Queries taking longer than this threshold will be logged to slow.log
+# AND displayed as WARN in the console
+# Set to a high value (e.g., 999999) to disable slow query logging
+slow_query_threshold_secs = 1.0
 
 [performance]
 # Request timeout in seconds (default: 30s)
