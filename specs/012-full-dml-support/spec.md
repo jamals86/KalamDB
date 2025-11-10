@@ -71,10 +71,33 @@ A service account or admin needs to insert, update, or delete records on behalf 
 
 **Acceptance Scenarios**:
 
-1. **Given** authenticated as service role, **When** executing `INSERT INTO namespace.table AS USER 'user123' VALUES (...)`, **Then** the record is inserted with user123 as the owner, visible only to user123 (respecting RLS)
+1. **Given** authenticated as service role, **When** executing `INSERT INTO namespace.user_table AS USER 'user123' VALUES (...)`, **Then** the record is inserted with user123 as the owner, visible only to user123 (respecting RLS)
 2. **Given** authenticated as admin role, **When** executing `UPDATE namespace.stream_table AS USER 'user456' SET column = value WHERE id = X`, **Then** the record is updated as if user456 performed the action
-3. **Given** authenticated as regular user role, **When** attempting `DELETE FROM table AS USER 'other_user' WHERE condition`, **Then** the system rejects the operation with "Permission denied: AS USER requires service/admin role"
-4. **Given** authenticated as service role, **When** executing DML without AS USER clause on a user-scoped table, **Then** the operation fails with "User table requires explicit AS USER clause for service/admin roles"
+3. **Given** authenticated as regular user role, **When** attempting `DELETE FROM user_table AS USER 'other_user' WHERE condition`, **Then** the system rejects the operation with "Permission denied: AS USER requires service/admin role"
+5. **Given** authenticated as service role, **When** attempting `INSERT INTO shared_table AS USER 'user123' VALUES (...)`, **Then** the system rejects the operation with "AS USER clause not supported for Shared tables"
+
+---
+
+### User Story 5 - Service-Level Subscriptions Across All Users (Priority: P2)
+
+Backend services need to monitor all changes to user tables and stream tables across all users without subscribing individually to each user. Service-level subscriptions receive change events from all users with user_id metadata included in each event.
+
+**Why this priority**: Essential for system-level services like analytics engines, audit logging, data pipelines, and real-time dashboards that need visibility into all user activity. Without this, services would need to maintain thousands of individual subscriptions (one per user), creating massive overhead. Critical for multi-tenant monitoring.
+
+**Independent Test**: Can be fully tested by authenticating as service role, subscribing to a user table (e.g., `SUBSCRIBE TO app.messages`), then having multiple users insert records into their tables. Success is verified by the service receiving all change events with user_id included in each notification.
+
+**Acceptance Scenarios**:
+
+1. **Given** authenticated as service role, **When** subscribing to a user table `SUBSCRIBE TO app.messages`, **Then** the system creates a service-level subscription receiving changes from all users' app.messages tables
+2. **Given** a service-level subscription active, **When** user123 inserts a record into their app.messages table, **Then** the service receives a change event containing the record data plus metadata: `{user_id: "user123", table: "app.messages", operation: "INSERT", data: {...}}`
+3. **Given** a service-level subscription to a stream table, **When** multiple users publish to the stream, **Then** the service receives all events from all users with user_id distinguishing the source
+4. **Given** authenticated as regular user role, **When** attempting to create a service-level subscription, **Then** the system rejects the operation with "Service-level subscriptions require service/admin role"
+5. **Given** a service-level subscription active, **When** filtering by user_id in the subscription query, **Then** the service receives only events matching the user_id filter (optional user scoping)
+
+---
+
+### User Story 6 - Centralized Configuration Access (Priority: P3)
+5. **Given** authenticated as service role, **When** attempting `INSERT INTO shared_table AS USER 'user123' VALUES (...)`, **Then** the system rejects the operation with "AS USER clause not supported for Shared tables"
 
 ---
 
@@ -112,7 +135,7 @@ Developers need a single consistent way to access all application configuration 
 
 ---
 
-### User Story 6 - Type-Safe Job Executor Parameters (Priority: P3)
+### User Story 7 - Type-Safe Job Executor Parameters (Priority: P3)
 
 Developers implementing job executors need type-safe parameter handling instead of manual JSON parsing, reducing boilerplate and preventing runtime errors from malformed parameters.
 
@@ -148,6 +171,11 @@ Developers implementing job executors need type-safe parameter handling instead 
 - How does the system handle configuration updates - is hot-reload supported or restart required?
 - What happens when a job receives parameters that fail validation against the expected structure?
 - How does the system handle backward compatibility when changing job parameter schemas?
+- What happens when a service-level subscription is created while thousands of users are actively writing?
+- How does the system handle service-level subscription event delivery if the service disconnects temporarily?
+- What happens when a service-level subscription with user_id filter matches zero users?
+- How does the system prevent service-level subscriptions from overwhelming the service with event volume?
+- What happens when AS USER is attempted on a Shared table (should be rejected)?
 
 ## Requirements *(mandatory)*
 
@@ -211,31 +239,43 @@ Developers implementing job executors need type-safe parameter handling instead 
 - **FR-045**: System MUST audit AS USER operations with both the authenticated user (actor) and target user (subject)
 - **FR-046**: System MUST reject AS USER operations on Shared tables with clear error message
 
-#### Centralized Configuration (FR-047 to FR-052)
+#### Service-Level Subscriptions (FR-047 to FR-055)
 
-- **FR-047**: System MUST provide all configuration through AppContext.config() instead of direct file reads
-- **FR-048**: System MUST eliminate duplicate config DTOs and use single source of truth from AppContext
-- **FR-049**: System MUST load configuration once during AppContext initialization and share via Arc reference
-- **FR-050**: System MUST provide type-safe access to configuration sections (database, server, jobs, auth, etc.)
-- **FR-051**: System MUST validate configuration completeness at startup and fail fast with clear errors
-- **FR-052**: System MUST document all configuration migration points in code comments for future reference
+- **FR-047**: System MUST support service-level subscriptions to user tables that receive changes from all users
+- **FR-048**: System MUST support service-level subscriptions to stream tables that receive changes from all users
+- **FR-049**: System MUST restrict service-level subscriptions to service and admin roles only
+- **FR-050**: System MUST include user_id in change events sent to service-level subscriptions
+- **FR-051**: System MUST include operation type (INSERT, UPDATE, DELETE) in service-level subscription events
+- **FR-052**: System MUST include full record data in service-level subscription change events
+- **FR-053**: System MUST support optional user_id filtering in service-level subscriptions (e.g., SUBSCRIBE TO app.messages WHERE user_id = 'user123')
+- **FR-054**: System MUST handle service-level subscription load efficiently (single subscription instead of N per-user subscriptions)
+- **FR-055**: System MUST deliver change events to service-level subscriptions in near real-time (<100ms latency)
 
-#### Generic Job Executor (FR-053 to FR-057)
+#### Centralized Configuration (FR-056 to FR-061)
 
-- **FR-053**: Job execution framework MUST support type-specific parameter definitions for each job type
-- **FR-054**: System MUST automatically validate and convert job parameters to job-specific structures at execution time
-- **FR-055**: System MUST provide early validation of job parameter correctness before job execution
-- **FR-056**: System MUST maintain compatibility with existing job storage format
-- **FR-057**: System MUST handle parameter validation errors with clear messages identifying expected parameter structure
+- **FR-056**: System MUST provide all configuration through AppContext.config() instead of direct file reads
+- **FR-057**: System MUST eliminate duplicate config DTOs and use single source of truth from AppContext
+- **FR-058**: System MUST load configuration once during AppContext initialization and share via Arc reference
+- **FR-059**: System MUST provide type-safe access to configuration sections (database, server, jobs, auth, etc.)
+- **FR-060**: System MUST validate configuration completeness at startup and fail fast with clear errors
+- **FR-061**: System MUST document all configuration migration points in code comments for future reference
 
-#### Test Coverage Requirements (FR-058 to FR-063)
+#### Generic Job Executor (FR-062 to FR-066)
 
-- **FR-058**: System MUST include tests for updating records after they have been flushed to long-term storage
-- **FR-059**: System MUST include tests for records updated 3 times (original + 2 updates, all flushed)
-- **FR-060**: System MUST include tests verifying deleted records (_deleted = true) are not returned in query results
-- **FR-061**: System MUST include tests verifying MAX(_updated) correctly resolves latest version across storage tiers
-- **FR-062**: System MUST include tests for concurrent updates to the same record
-- **FR-063**: System MUST include tests for querying records with _deleted flag at different storage layers
+- **FR-062**: Job execution framework MUST support type-specific parameter definitions for each job type
+- **FR-063**: System MUST automatically validate and convert job parameters to job-specific structures at execution time
+- **FR-064**: System MUST provide early validation of job parameter correctness before job execution
+- **FR-065**: System MUST maintain compatibility with existing job storage format
+- **FR-066**: System MUST handle parameter validation errors with clear messages identifying expected parameter structure
+
+#### Test Coverage Requirements (FR-067 to FR-072)
+
+- **FR-067**: System MUST include tests for updating records after they have been flushed to long-term storage
+- **FR-068**: System MUST include tests for records updated 3 times (original + 2 updates, all flushed)
+- **FR-069**: System MUST include tests verifying deleted records (_deleted = true) are not returned in query results
+- **FR-070**: System MUST include tests verifying MAX(_updated) correctly resolves latest version across storage tiers
+- **FR-071**: System MUST include tests for concurrent updates to the same record
+- **FR-072**: System MUST include tests for querying records with _deleted flag at different storage layers
 
 ### Key Entities
 
@@ -245,7 +285,9 @@ Developers implementing job executors need type-safe parameter handling instead 
 - **ManifestFile**: JSON file (manifest.json) per table tracking batch file metadata including max_batch counter, file paths, min/max column values, row counts, sizes, and schema versions
 - **BatchFileEntry**: Manifest entry for a single batch file containing: file path (batch-{number}.parquet), min_updated/max_updated timestamps, min/max values for all columns, row_count, size_bytes, schema_version, status
 - **BloomFilter**: Probabilistic data structure embedded in Parquet file metadata for `id`, `_updated`, and indexed columns enabling efficient point lookup elimination
-- **ImpersonationContext**: Execution context holding both authenticated user (actor) and target user (subject) for audit trail and authorization enforcement
+- **ImpersonationContext**: Execution context holding both authenticated user (actor) and target user (subject) for audit trail and authorization enforcement in AS USER operations (User/Stream tables only)
+- **ServiceLevelSubscription**: Subscription type for service/admin roles that receives change events from all users' tables with user_id metadata in each event
+- **ChangeEvent**: Event notification containing operation type (INSERT/UPDATE/DELETE), user_id, table name, and full record data for service-level subscriptions
 - **TypedJobParameters**: Structured parameter container enabling validation and type checking for job-specific configurations
 
 ## Assumptions *(optional)*
@@ -280,4 +322,6 @@ Developers implementing job executors need type-safe parameter handling instead 
 - **SC-011**: Centralized configuration access eliminates all direct configuration file reads outside initialization code
 - **SC-012**: Job parameter validation failures provide actionable error messages identifying expected structure within 100ms
 - **SC-013**: Type-safe job parameter implementation reduces parameter handling code by 50%+ lines per job type
-- **SC-014**: Test suite achieves 100% coverage for post-flush updates, multi-version records, and _deleted flag handling
+- **SC-014**: Service-level subscriptions deliver change events from 1000+ concurrent users with <100ms latency per event
+- **SC-015**: Service-level subscriptions use single subscription resource instead of N per-user subscriptions (99%+ resource reduction for 1000 users)
+- **SC-016**: Test suite achieves 100% coverage for post-flush updates, multi-version records, and _deleted flag handling
