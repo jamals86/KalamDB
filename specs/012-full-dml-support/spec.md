@@ -78,24 +78,6 @@ A service account or admin needs to insert, update, or delete records on behalf 
 
 ---
 
-### User Story 5 - Service-Level Subscriptions Across All Users (Priority: P2)
-
-Backend services need to monitor all changes to user tables and stream tables across all users without subscribing individually to each user. Service-level subscriptions use `SUBSCRIBE TO ALL` syntax and receive change events from all users with user_id metadata included in each event.
-
-**Why this priority**: Essential for system-level services like analytics engines, audit logging, data pipelines, and real-time dashboards that need visibility into all user activity. Without this, services would need to maintain thousands of individual subscriptions (one per user), creating massive overhead. Critical for multi-tenant monitoring.
-
-**Independent Test**: Can be fully tested by authenticating as service/admin role, subscribing with `SUBSCRIBE TO ALL app.messages`, then having multiple users insert records into their tables. Success is verified by the service receiving all change events with user_id included in each notification. Regular users using `SUBSCRIBE TO app.messages` (without ALL keyword) only receive their own changes.
-
-**Acceptance Scenarios**:
-
-1. **Given** authenticated as service role, **When** executing `SUBSCRIBE TO ALL app.messages`, **Then** the system creates a service-level subscription receiving changes from all users' app.messages tables
-2. **Given** a service-level subscription active (`SUBSCRIBE TO ALL app.messages`), **When** user123 inserts a record into their app.messages table, **Then** the service receives a change event containing the record data plus metadata: `{user_id: "user123", table: "app.messages", operation: "INSERT", data: {...}}`
-3. **Given** authenticated as regular user, **When** executing `SUBSCRIBE TO app.messages` (without ALL keyword), **Then** the system creates a user-scoped subscription receiving only the authenticated user's changes
-4. **Given** authenticated as regular user role, **When** attempting `SUBSCRIBE TO ALL app.messages`, **Then** the system rejects the operation with "SUBSCRIBE TO ALL requires service/admin role"
-5. **Given** a service-level subscription to a stream table (`SUBSCRIBE TO ALL admin.events`), **When** multiple users publish to the stream, **Then** the service receives all events from all users with user_id distinguishing the source
-
----
-
 ### User Story 6 - Centralized Configuration Access (Priority: P3)
 5. **Given** authenticated as service role, **When** attempting `INSERT INTO shared_table AS USER 'user123' VALUES (...)`, **Then** the system rejects the operation with "AS USER clause not supported for Shared tables"
 
@@ -106,23 +88,6 @@ Backend services need to monitor all changes to user tables and stream tables ac
 Developers need a single consistent way to access all application configuration across the codebase, eliminating duplicate config models and file I/O scattered throughout modules.
 
 **Why this priority**: Reduces code duplication, prevents configuration drift between components, and improves performance by eliminating redundant file reads. Essential for maintainability as configuration grows.
-
-**Independent Test**: Can be fully tested by searching the codebase for direct config file reads (e.g., `fs::read_to_string("config.toml")`), migrating them to `AppContext.config()`, removing duplicate DTOs, and verifying all components still function correctly.
-
-**Acceptance Scenarios**:
-
-1. **Given** a module previously reading config from file directly, **When** refactored to use `AppContext.config().section_name`, **Then** the module accesses the same configuration values without file I/O
-2. **Given** multiple modules using different config DTOs for the same settings, **When** consolidated to use AppContext config structs, **Then** all modules reference a single source of truth
-3. **Given** server startup, **When** AppContext is initialized, **Then** configuration is loaded once and available to all components via shared reference
-4. **Given** a configuration change requiring restart, **When** server restarts, **Then** all components automatically use updated config without code changes
-
----
-
-### User Story 4 - Centralized Configuration Access (Priority: P3)
-
-Developers need a single consistent way to access all application configuration across the codebase, eliminating duplicate config models and file I/O scattered throughout modules.
-
-**Why this priority**: Reduces code duplication, prevents configuration drift between components, and improves performance by eliminating redundant file reads. Essential for maintainability as configuration grows. Lower priority as it's internal refactoring.
 
 **Independent Test**: Can be fully tested by searching the codebase for direct config file reads (e.g., `fs::read_to_string("config.toml")`), migrating them to `AppContext.config()`, removing duplicate DTOs, and verifying all components still function correctly.
 
@@ -171,10 +136,6 @@ Developers implementing job executors need type-safe parameter handling instead 
 - How does the system handle configuration updates - is hot-reload supported or restart required?
 - What happens when a job receives parameters that fail validation against the expected structure?
 - How does the system handle backward compatibility when changing job parameter schemas?
-- What happens when a regular user attempts `SUBSCRIBE TO ALL` (should be rejected with permission error)?
-- How does the system handle service-level subscription (SUBSCRIBE TO ALL) event delivery if the service disconnects temporarily?
-- What happens when both `SUBSCRIBE TO ALL app.messages` and `SUBSCRIBE TO app.messages` are active from the same service connection?
-- How does the system prevent service-level subscriptions from overwhelming the service with event volume?
 - What happens when AS USER is attempted on a Shared table (should be rejected)?
 
 ## Requirements *(mandatory)*
@@ -239,43 +200,31 @@ Developers implementing job executors need type-safe parameter handling instead 
 - **FR-045**: System MUST audit AS USER operations with both the authenticated user (actor) and target user (subject)
 - **FR-046**: System MUST reject AS USER operations on Shared tables with clear error message
 
-#### Service-Level Subscriptions (FR-047 to FR-055)
+#### Centralized Configuration (FR-047 to FR-052)
 
-- **FR-047**: System MUST support `SUBSCRIBE TO ALL` syntax for service-level subscriptions to user tables that receive changes from all users
-- **FR-048**: System MUST support `SUBSCRIBE TO ALL` syntax for service-level subscriptions to stream tables that receive changes from all users
-- **FR-049**: System MUST restrict `SUBSCRIBE TO ALL` syntax to service and admin roles only
-- **FR-050**: System MUST support standard `SUBSCRIBE TO` syntax (without ALL keyword) for regular users to receive only their own changes
-- **FR-051**: System MUST include user_id in change events sent to service-level subscriptions (SUBSCRIBE TO ALL)
-- **FR-052**: System MUST include operation type (INSERT, UPDATE, DELETE) in service-level subscription events
-- **FR-053**: System MUST include full record data in service-level subscription change events
-- **FR-054**: System MUST handle service-level subscription load efficiently (single subscription instead of N per-user subscriptions)
-- **FR-055**: System MUST deliver change events to service-level subscriptions in near real-time (<100ms latency)
+- **FR-047**: System MUST provide all configuration through AppContext.config() instead of direct file reads
+- **FR-048**: System MUST eliminate duplicate config DTOs and use single source of truth from AppContext
+- **FR-049**: System MUST load configuration once during AppContext initialization and share via Arc reference
+- **FR-050**: System MUST provide type-safe access to configuration sections (database, server, jobs, auth, etc.)
+- **FR-051**: System MUST validate configuration completeness at startup and fail fast with clear errors
+- **FR-052**: System MUST document all configuration migration points in code comments for future reference
 
-#### Centralized Configuration (FR-056 to FR-061)
+#### Generic Job Executor (FR-053 to FR-057)
 
-- **FR-056**: System MUST provide all configuration through AppContext.config() instead of direct file reads
-- **FR-057**: System MUST eliminate duplicate config DTOs and use single source of truth from AppContext
-- **FR-058**: System MUST load configuration once during AppContext initialization and share via Arc reference
-- **FR-059**: System MUST provide type-safe access to configuration sections (database, server, jobs, auth, etc.)
-- **FR-060**: System MUST validate configuration completeness at startup and fail fast with clear errors
-- **FR-061**: System MUST document all configuration migration points in code comments for future reference
+- **FR-053**: Job execution framework MUST support type-specific parameter definitions for each job type
+- **FR-054**: System MUST automatically validate and convert job parameters to job-specific structures at execution time
+- **FR-055**: System MUST provide early validation of job parameter correctness before job execution
+- **FR-056**: System MUST maintain compatibility with existing job storage format
+- **FR-057**: System MUST handle parameter validation errors with clear messages identifying expected parameter structure
 
-#### Generic Job Executor (FR-062 to FR-066)
+#### Test Coverage Requirements (FR-058 to FR-063)
 
-- **FR-062**: Job execution framework MUST support type-specific parameter definitions for each job type
-- **FR-063**: System MUST automatically validate and convert job parameters to job-specific structures at execution time
-- **FR-064**: System MUST provide early validation of job parameter correctness before job execution
-- **FR-065**: System MUST maintain compatibility with existing job storage format
-- **FR-066**: System MUST handle parameter validation errors with clear messages identifying expected parameter structure
-
-#### Test Coverage Requirements (FR-067 to FR-072)
-
-- **FR-067**: System MUST include tests for updating records after they have been flushed to long-term storage
-- **FR-068**: System MUST include tests for records updated 3 times (original + 2 updates, all flushed)
-- **FR-069**: System MUST include tests verifying deleted records (_deleted = true) are not returned in query results
-- **FR-070**: System MUST include tests verifying MAX(_updated) correctly resolves latest version across storage tiers
-- **FR-071**: System MUST include tests for concurrent updates to the same record
-- **FR-072**: System MUST include tests for querying records with _deleted flag at different storage layers
+- **FR-058**: System MUST include tests for updating records after they have been flushed to long-term storage
+- **FR-059**: System MUST include tests for records updated 3 times (original + 2 updates, all flushed)
+- **FR-060**: System MUST include tests verifying deleted records (_deleted = true) are not returned in query results
+- **FR-061**: System MUST include tests verifying MAX(_updated) correctly resolves latest version across storage tiers
+- **FR-062**: System MUST include tests for concurrent updates to the same record
+- **FR-063**: System MUST include tests for querying records with _deleted flag at different storage layers
 
 ### Key Entities
 
@@ -286,10 +235,110 @@ Developers implementing job executors need type-safe parameter handling instead 
 - **BatchFileEntry**: Manifest entry for a single batch file containing: file path (batch-{number}.parquet), min_updated/max_updated timestamps, min/max values for all columns, row_count, size_bytes, schema_version, status
 - **BloomFilter**: Probabilistic data structure embedded in Parquet file metadata for `id`, `_updated`, and indexed columns enabling efficient point lookup elimination
 - **ImpersonationContext**: Execution context holding both authenticated user (actor) and target user (subject) for audit trail and authorization enforcement in AS USER operations (User/Stream tables only)
-- **ServiceLevelSubscription**: Subscription created with `SUBSCRIBE TO ALL` syntax (service/admin roles) that receives change events from all users' tables with user_id metadata in each event
-- **UserScopedSubscription**: Standard subscription created with `SUBSCRIBE TO` syntax (regular users) that receives only the authenticated user's changes
-- **ChangeEvent**: Event notification containing operation type (INSERT/UPDATE/DELETE), user_id, table name, and full record data for service-level subscriptions
+- **ManifestService**: Centralized service component responsible for all manifest file operations (create, update, rebuild, validate) ensuring single source of truth for batch file metadata management
 - **TypedJobParameters**: Structured parameter container enabling validation and type checking for job-specific configurations
+
+## Clarifications
+
+### Concurrent Update Conflict Resolution (added 2025-11-10)
+
+**Question**: How are concurrent updates handled when a record is being flushed to long-term storage?
+
+**Answer**: Concurrent updates during flush are safe because flush operations work on a snapshot of fast storage while the live fast storage continues accepting writes. Conflict resolution:
+
+1. **Flush Process**: Creates snapshot of fast storage at T0, writes snapshot to batch file, continues normal operation
+2. **Concurrent Updates**: Any updates after T0 write to live fast storage (not the snapshot), creating new versions with current `_updated` timestamp
+3. **Version Ordering**: Query-time resolution uses MAX(_updated) across all layers - newer updates (after snapshot) automatically supersede flushed versions
+4. **No Locking Required**: Fast storage remains fully available during flush - updates are never blocked or delayed
+
+Example timeline:
+- T0: Flush begins, snapshots record {id:123, status:'pending', _updated:T0}
+- T1: User updates to status='active', creates version with _updated:T1 in live fast storage
+- T2: Flush completes, writes snapshot to batch-0005.parquet
+- Query at T3: Returns status='active' (MAX(_updated) = T1 > T0)
+
+### Nanosecond Timestamp Collision Handling (added 2025-11-10)
+
+**Question**: What happens if two versions of the same record have identical `_updated` timestamps (nanosecond precision collision)?
+
+**Answer**: Timestamp collisions are handled with a secondary tie-breaker:
+
+1. **Primary Ordering**: MAX(_updated) timestamp (nanosecond precision)
+2. **Collision Tie-Breaker**: If multiple versions have identical _updated timestamps, use storage layer priority:
+   - Fast storage version > Long-term storage version (newer always wins)
+   - Within same layer: undefined behavior (system assumes nanosecond precision prevents this)
+3. **Prevention**: Fast storage UPDATE operations add 1 nanosecond to previous MAX(_updated) if current_time() returns same value
+4. **Guarantee**: Each UPDATE increments _updated by at least 1ns, ensuring strict ordering even at microsecond update rates
+
+Example:
+- Version A: _updated = 1699564800.123456789 (in batch file)
+- Version B: _updated = 1699564800.123456789 (in fast storage, collision detected)
+- Version B adjusted to: 1699564800.123456790 (guaranteed unique)
+
+### Manifest Corruption Recovery Strategy (added 2025-11-10)
+
+**Question**: How does the system recover from manifest.json corruption or inconsistencies with batch files?
+
+**Answer**: Manifest corruption recovery follows a scan-and-rebuild approach with centralized management:
+
+1. **Centralized Manifest Service**: Single ManifestService component within flush operations handles ALL manifest operations (create, update, rebuild, validate) - no scattered manifest logic across codebase
+2. **Detection**: On table access, validate manifest exists, has valid JSON, and max_batch matches highest batch-{N}.parquet file number
+3. **Rebuild Trigger**: If validation fails, initiate background rebuild while serving queries in degraded mode
+4. **Degraded Mode**: Queries fallback to scanning all batch files directly (no manifest optimization) while rebuild runs
+5. **Rebuild Process** (executed by ManifestService):
+   - Scan directory for all batch-*.parquet files, extract max N → new max_batch
+   - For each batch file: read Parquet metadata (footer only, not full data) to extract min/max values, row counts, schema
+   - Generate new manifest.json with reconstructed metadata
+   - Atomic rename: manifest.json.tmp → manifest.json
+6. **Flush Job Integration**: Each flush operation completion triggers ManifestService to:
+   - Validate current manifest exists (rebuild if missing/corrupt)
+   - Update manifest with new batch entry
+   - Ensure manifest is consistent before flush job completes
+7. **Availability**: Table remains readable during entire rebuild (degraded performance, not downtime)
+8. **Duration**: Manifest rebuild completes in O(number_of_batch_files × parquet_footer_read_time), typically <1 second per 100 files
+
+**Architecture Constraint**: ManifestService is the ONLY component allowed to read/write manifest files - enforces single source of truth for manifest management.
+
+### AS USER Validation with Soft-Deleted Users (added 2025-11-10)
+
+**Question**: Should AS USER operations work with soft-deleted user accounts?
+
+**Answer**: AS USER validation treats soft-deleted users as non-existent:
+
+1. **Validation Logic**: Check both user_id existence AND active status (deleted_at IS NULL)
+2. **Soft-Deleted Users**: Rejected with same error as non-existent users: 'Invalid user_id for AS USER operation'
+3. **Rationale**: Soft-deleted users should be treated as if they don't exist - prevents services from creating data in deleted user contexts
+4. **Security**: Generic error message prevents information leakage about which user_ids exist in the system
+5. **Exception**: System-level jobs (user cleanup, data migration) bypass AS USER and operate directly on user stores
+
+Example rejections:
+- `INSERT INTO app.messages AS USER 'deleted_user123'` → Error: 'Invalid user_id for AS USER operation'
+- `INSERT INTO app.messages AS USER 'never_existed'` → Error: 'Invalid user_id for AS USER operation' (same message)
+
+### Service-Level Subscription Design (added 2025-11-10)
+
+**Question**: How should service-level subscriptions handle backpressure and event volume at scale?
+
+**Status**: DEFERRED - Requires deeper design exploration
+
+**Context**: Initial design proposed `SUBSCRIBE TO ALL` syntax for service-level monitoring of all user changes. However, this approach has significant backpressure challenges when subscribers can't keep up with event rates (10K events/sec generated, 1K/sec consumed).
+
+**Alternative Approach Under Consideration**: 
+Instead of real-time subscription connections, use materialized stream tables:
+- `CREATE STREAM TABLE admin.all_messages AS SELECT * FROM user_tables.messages` 
+- Stream table acts as durable event log with built-in backpressure via storage
+- Services read from stream table at their own pace (pull model vs push)
+- Enables batch processing, replay, and better resource isolation
+
+**Next Steps**: 
+1. Design stream table federation/aggregation semantics
+2. Define materialization triggers and update propagation
+3. Specify query syntax for cross-user table aggregation
+4. Determine resource limits and quotas
+
+**Impact**: User Story 5 (Service-Level Subscriptions) removed from this spec pending design completion. Will be addressed in separate feature specification.
+
+---
 
 ## Assumptions *(optional)*
 
@@ -323,6 +372,4 @@ Developers implementing job executors need type-safe parameter handling instead 
 - **SC-011**: Centralized configuration access eliminates all direct configuration file reads outside initialization code
 - **SC-012**: Job parameter validation failures provide actionable error messages identifying expected structure within 100ms
 - **SC-013**: Type-safe job parameter implementation reduces parameter handling code by 50%+ lines per job type
-- **SC-014**: Service-level subscriptions deliver change events from 1000+ concurrent users with <100ms latency per event
-- **SC-015**: Service-level subscriptions use single subscription resource instead of N per-user subscriptions (99%+ resource reduction for 1000 users)
-- **SC-016**: Test suite achieves 100% coverage for post-flush updates, multi-version records, and _deleted flag handling
+- **SC-014**: Test suite achieves 100% coverage for post-flush updates, multi-version records, and _deleted flag handling
