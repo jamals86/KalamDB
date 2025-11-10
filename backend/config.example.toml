@@ -90,11 +90,6 @@ max_partitions = 16
 batch_size = 8192
 
 [flush]
-# Node ID for SNOWFLAKE_ID() function (default: 0, range: 0-1023)
-# Each server instance in a distributed setup should have a unique node_id
-# to ensure globally unique Snowflake IDs across nodes
-node_id = 0
-
 # Default row limit for flush policies (default: 10000 rows)
 # Tables without explicit flush policy will use this value
 default_row_limit = 10000
@@ -158,11 +153,11 @@ log_to_console = true
 # Log format: compact, pretty, json (default: compact)
 format = "compact"
 
-# Slow query logging threshold in seconds (default: 1.0)
+# Slow query logging threshold in milliseconds (default: 1000ms = 1 second)
 # Queries taking longer than this threshold will be logged to slow.log
 # AND displayed as WARN in the console
 # Set to a high value (e.g., 999999) to disable slow query logging
-slow_query_threshold_secs = 1.0
+slow_query_threshold_ms = 1000
 
 [performance]
 # Request timeout in seconds (default: 30s)

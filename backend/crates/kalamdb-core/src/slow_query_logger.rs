@@ -45,7 +45,7 @@ pub struct SlowQueryEntry {
 /// Lightweight slow query logger using async channel
 pub struct SlowQueryLogger {
     sender: mpsc::UnboundedSender<SlowQueryEntry>,
-    threshold_secs: f64,
+    threshold_ms: u64,
 }
 
 impl SlowQueryLogger {
@@ -53,11 +53,11 @@ impl SlowQueryLogger {
     ///
     /// # Arguments
     /// * `log_path` - Path to slow.log file
-    /// * `threshold_secs` - Minimum duration to log (queries faster than this are ignored)
+    /// * `threshold_ms` - Minimum duration to log in milliseconds (queries faster than this are ignored)
     ///
     /// # Returns
     /// Arc-wrapped logger instance
-    pub fn new(log_path: String, threshold_secs: f64) -> Arc<Self> {
+    pub fn new(log_path: String, threshold_ms: u64) -> Arc<Self> {
         let (sender, mut receiver) = mpsc::unbounded_channel::<SlowQueryEntry>();
 
         // Spawn background task to write logs asynchronously (non-blocking)
@@ -102,7 +102,7 @@ impl SlowQueryLogger {
 
         Arc::new(Self {
             sender,
-            threshold_secs,
+            threshold_ms,
         })
     }
 
@@ -129,8 +129,11 @@ impl SlowQueryLogger {
         table_type: TableType,
         table_name: Option<TableName>,
     ) {
+        // Convert duration to milliseconds for comparison
+        let duration_ms = (duration_secs * 1000.0) as u64;
+        
         // Fast path: skip if query is faster than threshold (no allocations)
-        if duration_secs < self.threshold_secs {
+        if duration_ms < self.threshold_ms {
             return;
         }
 
@@ -159,9 +162,14 @@ impl SlowQueryLogger {
         let _ = self.sender.send(entry);
     }
 
-    /// Get the configured threshold
+    /// Get the configured threshold in milliseconds
+    pub fn threshold_ms(&self) -> u64 {
+        self.threshold_ms
+    }
+    
+    /// Get the configured threshold in seconds (for backwards compatibility)
     pub fn threshold_secs(&self) -> f64 {
-        self.threshold_secs
+        self.threshold_ms as f64 / 1000.0
     }
 }
 
@@ -172,7 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_slow_query_logger_threshold() {
-        let logger = SlowQueryLogger::new("/tmp/test_slow.log".to_string(), 1.0);
+        let logger = SlowQueryLogger::new("/tmp/test_slow.log".to_string(), 1200); // 1.2 seconds
 
         // Fast query - should not log
         logger.log_if_slow(

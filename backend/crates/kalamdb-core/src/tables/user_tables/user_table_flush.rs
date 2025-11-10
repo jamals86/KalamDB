@@ -19,9 +19,9 @@ use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::base_flush::{FlushExecutor, FlushJobResult, TableFlush};
 use crate::tables::UserTableStore;
 use chrono::Utc;
+use kalamdb_commons::models::TableId; // Phase 10: Arc<TableId> optimization
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use kalamdb_commons::models::TableId; // Phase 10: Arc<TableId> optimization
 use serde_json::Value as JsonValue;
 
 use std::collections::HashMap;
@@ -575,16 +575,11 @@ impl TableFlush for UserTableFlushJob {
                 parquet_files.clone(),
             );
 
-            let manager = Arc::clone(manager);
-            tokio::spawn(async move {
-                if let Err(e) = manager.notify_table_change(&table_name, notification).await {
-                    log::warn!(
-                        "Failed to send flush notification for {}: {}",
-                        table_name,
-                        e
-                    );
-                }
-            });
+            let table_id = TableId::new(self.namespace_id.clone(), self.table_name.clone());
+            // For user table flush notifications, notify ALL users with subscriptions
+            // Use system user as placeholder - LiveQueryManager will broadcast to all subscribed users
+            let system_user = UserId::new("__system__".to_string());
+            manager.notify_table_change_async(system_user, table_id, notification);
         }
 
         Ok(FlushJobResult {

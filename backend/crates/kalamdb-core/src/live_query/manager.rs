@@ -83,8 +83,10 @@ impl LiveQueryManager {
     ) -> Result<ConnectionId, KalamDbError> {
         let connection_id = ConnectionId::new(user_id.as_str().to_string(), unique_conn_id);
 
-        let mut registry = self.registry.write().await;
-        registry.register_connection(user_id, connection_id.clone(), notification_tx);
+        #[allow(deprecated)]
+        let registry = self.registry.read().await;
+        #[allow(deprecated)]
+        registry.register_connection_compat(user_id, connection_id.clone(), notification_tx);
 
         Ok(connection_id)
     }
@@ -194,15 +196,31 @@ impl LiveQueryManager {
         self.live_queries_provider
             .insert_live_query(live_query_record)?;
 
-        // Add to in-memory registry (MEMORY FIX: removed query and changes fields)
+        // Add to in-memory registry
         let user_id = UserId::new(connection_id.user_id().to_string());
+        
+        // Get notification channel from connection registry
+        let registry = self.registry.read().await;
+        let notification_tx = registry
+            .get_notification_sender(&connection_id)
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!("Connection not found: {}", connection_id))
+            })?;
+        drop(registry);
+
+        #[allow(deprecated)]
         let live_query = LiveQuery {
             live_id: live_id.clone(),
+            user_id: user_id.clone(),
+            table_id: table_id.clone(),
+            connection_id: connection_id.clone(),
             options,
+            notification_tx,
         };
 
-        let mut registry = self.registry.write().await;
-        registry.register_subscription(&user_id, live_query)?;
+        let registry = self.registry.read().await;
+        #[allow(deprecated)]
+        registry.register_subscription_compat(&user_id, live_query)?;
 
         Ok(live_id)
     }
@@ -298,14 +316,7 @@ impl LiveQueryManager {
     /// Determine whether any active subscriptions reference the specified table.
     pub async fn has_active_subscriptions_for(&self, table_ref: &str) -> bool {
         let registry = self.registry.read().await;
-        registry.users.values().any(|connections| {
-            connections.sockets.values().any(|socket| {
-                socket
-                    .live_queries
-                    .values()
-                    .any(|live_query| live_query.live_id.table_name() == table_ref)
-            })
-        })
+        registry.has_subscriptions_for_table(table_ref)
     }
 
     /// Extract table name from SQL query
@@ -369,8 +380,9 @@ impl LiveQueryManager {
     ) -> Result<Vec<LiveId>, KalamDbError> {
         // Remove from in-memory registry and get all live_ids
         let live_ids = {
-            let mut registry = self.registry.write().await;
-            registry.unregister_connection(user_id, connection_id)
+            let registry = self.registry.read().await;
+            #[allow(deprecated)]
+            registry.unregister_connection_compat(user_id, connection_id)
         };
 
         // Remove cached filters for all live queries
@@ -446,8 +458,9 @@ impl LiveQueryManager {
         table_name: &kalamdb_commons::TableName,
     ) -> Vec<LiveId> {
         let registry = self.registry.read().await;
+        #[allow(deprecated)]
         registry
-            .get_subscriptions_for_table(user_id, table_name)
+            .get_subscriptions_for_table_compat(user_id, table_name)
             .into_iter()
             .map(|lq| lq.live_id.clone())
             .collect()
@@ -507,114 +520,152 @@ impl LiveQueryManager {
     /// # Note
     /// This is a simplified implementation for Phase 12 T154.
     /// Full filtering and WebSocket delivery will be implemented in Phase 14.
+    
+    /// Notify subscribers about a table change (fire-and-forget async)
+    ///
+    /// **PRIMARY ENTRY POINT**: Use this method from all DML/flush operations.
+    /// Handles tokio::spawn internally to eliminate code duplication.
+    ///
+    /// # Arguments
+    /// * `user_id` - User ID whose subscriptions should be notified (for O(1) lookup)
+    /// * `table_id` - Composite key (NamespaceId, TableName) for O(1) subscription lookup
+    /// * `notification` - Change notification to send to subscribers
+    ///
+    /// # Design Pattern
+    /// - **Fire-and-forget**: Spawns async task, doesn't block caller
+    /// - **Error isolation**: Logs errors, never propagates to caller
+    /// - **Future-proof**: Single place to add batching/buffering later
+    ///
+    /// # Performance
+    /// Uses composite key `(UserId, TableId)` for O(1) lookup instead of O(n) iteration
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// // Before (10 lines per call site):
+    /// let mgr = Arc::clone(manager);
+    /// let user_id_copy = user_id.clone();
+    /// let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+    /// tokio::spawn(async move {
+    ///     if let Err(e) = mgr.notify_table_change(&user_id_copy, &table_id, notification).await {
+    ///         log::warn!("Failed to notify: {}", e);
+    ///     }
+    /// });
+    ///
+    /// // After (1 line):
+    /// manager.notify_table_change_async(user_id, table_id, notification);
+    /// ```
+    pub fn notify_table_change_async(
+        self: &Arc<Self>,
+        user_id: UserId,
+        table_id: TableId,
+        notification: ChangeNotification,
+    ) {
+        let manager = Arc::clone(self);
+        tokio::spawn(async move {
+            if let Err(e) = manager.notify_table_change(&user_id, &table_id, notification).await {
+                log::warn!(
+                    "Failed to notify subscribers for table {}.{}: {}",
+                    table_id.namespace_id().as_str(),
+                    table_id.table_name().as_str(),
+                    e
+                );
+            }
+        });
+    }
+    
     /// Notify live query subscribers of a table change
+    ///
+    /// **INTERNAL METHOD**: Called by notify_table_change_async().
+    /// Direct callers should use notify_table_change_async() instead for fire-and-forget behavior.
     ///
     /// This method is called by change detectors when a row is inserted, updated, or deleted.
     /// It applies filters and only notifies subscribers whose WHERE clause matches the changed row.
     ///
     /// # Arguments
-    /// * `table_name` - Name of the table that changed
+    /// * `user_id` - The user who owns the table (for USER tables) or None (for SHARED/STREAM tables)
+    /// * `table_id` - The TableId of the table that changed
     /// * `change_notification` - Details about the change (type, row data)
     ///
     /// # Returns
     /// Number of subscribers notified (after filtering)
     pub async fn notify_table_change(
         &self,
-        table_name: &str, // TODO: Pass the TableId instead to have a clear filtering and indexing of users
+        user_id: &UserId,
+        table_id: &TableId,
         change_notification: ChangeNotification,
     ) -> Result<usize, KalamDbError> {
+        let table_name = format!("{}.{}", table_id.namespace_id().as_str(), table_id.table_name().as_str());
+        
         log::info!(
-            "📢 notify_table_change called for table: '{}', change_type: {:?}",
+            "📢 notify_table_change called for table: '{}', user: '{}', change_type: {:?}",
             table_name,
+            user_id.as_str(),
             change_notification.change_type
         );
 
         // Get filter cache for matching
         let filter_cache = self.filter_cache.read().await;
 
-        // Collect live_ids that need to be notified
-        // TODO: Optimize by indexing subscriptions by table_id
+        // Direct O(1) lookup by (UserId, TableId) - no iteration!
         let live_ids_to_notify: Vec<LiveId> = {
             let registry = self.registry.read().await;
-            log::info!("📢 Registry has {} users", registry.users.len());
+            let user_subscriptions = registry.get_subscriptions_for_table(user_id, table_id);
+            
+            log::info!(
+                "📢 Found {} subscriptions for user={}, table={}",
+                user_subscriptions.len(),
+                user_id.as_str(),
+                table_name
+            );
+            
             let mut ids = Vec::new();
 
-            // Iterate through all users
-            for (user_id, user_connections) in registry.users.iter() {
+            // Iterate only through subscriptions for this specific (user, table) - O(k) where k = subscriptions per table
+            for handle in user_subscriptions {
                 log::info!(
-                    "📢 User {} has {} connections",
-                    user_id.as_str(),
-                    user_connections.sockets.len()
+                    "📢 Evaluating subscription live_id={}",
+                    handle.live_id
                 );
-                // Iterate through all connections for this user
-                for (conn_id, socket) in user_connections.sockets.iter() {
+                
+                // FLUSH notifications are metadata events (not row-level changes)
+                // Skip filter evaluation for FLUSH - notify all subscribers
+                if matches!(change_notification.change_type, ChangeType::Flush) {
                     log::info!(
-                        "📢 Connection {} has {} live queries",
-                        conn_id,
-                        socket.live_queries.len()
+                        "📢 FLUSH notification - skipping filter evaluation for live_id={}",
+                        handle.live_id
                     );
-                    // Iterate through all live queries on this connection
-                    for (live_id, _live_query) in socket.live_queries.iter() {
-                        log::info!(
-                            "📢 Checking live_id.table_name='{}' against target table='{}'",
-                            live_id.table_name(),
-                            table_name
-                        );
-                        // Check if this subscription is for the changed table
-                        if live_id.table_name() == table_name {
-                            log::info!(
-                                "📢 ✓ Table name MATCHED for live_id={}",
-                                live_id
-                            );
-                            
-                            // FLUSH notifications are metadata events (not row-level changes)
-                            // Skip filter evaluation for FLUSH - notify all subscribers
-                            if matches!(change_notification.change_type, ChangeType::Flush) {
-                                log::info!(
-                                    "📢 FLUSH notification - skipping filter evaluation for live_id={}",
-                                    live_id
-                                );
-                                ids.push(live_id.clone());
-                                continue;
-                            }
-                            
-                            // Check filter if one exists (for INSERT/UPDATE/DELETE only)
-                            if let Some(filter) = filter_cache.get(&live_id.to_string()) {
-                                // Apply filter to row data
-                                match filter.matches(&change_notification.row_data) {
-                                    Ok(true) => {
-                                        // Filter matched, include this subscriber
-                                        ids.push(live_id.clone());
-                                    }
-                                    Ok(false) => {
-                                        // Filter didn't match, skip this subscriber
-                                        log::trace!("Filter didn't match for live_id={}, skipping notification", live_id);
-                                    }
-                                    Err(e) => {
-                                        // Filter evaluation error, log and skip
-                                        log::error!(
-                                            "Filter evaluation error for live_id={}: {}",
-                                            live_id,
-                                            e
-                                        );
-                                    }
-                                }
-                            } else {
-                                // No filter, notify all subscribers
-                                log::info!(
-                                    "📢 No filter - adding subscriber live_id={}",
-                                    live_id
-                                );
-                                ids.push(live_id.clone());
-                            }
-                        } else {
-                            log::info!(
-                                "📢 ✗ Table name MISMATCH: live_id.table='{}' != target='{}'",
-                                live_id.table_name(),
-                                table_name
+                    ids.push(handle.live_id.clone());
+                    continue;
+                }
+                
+                // Check filter if one exists (for INSERT/UPDATE/DELETE only)
+                if let Some(filter) = filter_cache.get(&handle.live_id.to_string()) {
+                    // Apply filter to row data
+                    match filter.matches(&change_notification.row_data) {
+                        Ok(true) => {
+                            // Filter matched, include this subscriber
+                            ids.push(handle.live_id.clone());
+                        }
+                        Ok(false) => {
+                            // Filter didn't match, skip this subscriber
+                            log::trace!("Filter didn't match for live_id={}, skipping notification", handle.live_id);
+                        }
+                        Err(e) => {
+                            // Filter evaluation error, log and skip
+                            log::error!(
+                                "Filter evaluation error for live_id={}: {}",
+                                handle.live_id,
+                                e
                             );
                         }
                     }
+                } else {
+                    // No filter, notify all subscribers
+                    log::info!(
+                        "📢 No filter - adding subscriber live_id={}",
+                        handle.live_id
+                    );
+                    ids.push(handle.live_id.clone());
                 }
             }
 
@@ -714,15 +765,9 @@ impl LiveQueryManager {
         live_id: &LiveId,
     ) -> Option<crate::live_query::connection_registry::NotificationSender> {
         let registry = self.registry.read().await;
-        let user_id = UserId::new(live_id.user_id().to_string());
-
-        if let Some(user_connections) = registry.users.get(&user_id) {
-            if let Some(socket) = user_connections.get_socket(&live_id.connection_id) {
-                return socket.notification_tx.clone();
-            }
-        }
-
-        None
+        registry
+            .get_notification_sender(&live_id.connection_id)
+            .map(|arc| (*arc).clone())
     }
 }
 
@@ -1294,8 +1339,9 @@ mod tests {
             serde_json::json!({"user_id": "user1", "text": "Hello"}),
         );
 
+        let table_id = TableId::from_strings("user1", "messages");
         let notified = manager
-            .notify_table_change("user1.messages", matching_change)
+            .notify_table_change(&user_id, &table_id, matching_change)
             .await
             .unwrap();
         assert_eq!(notified, 1); // Should notify
@@ -1307,7 +1353,7 @@ mod tests {
         );
 
         let notified = manager
-            .notify_table_change("user1.messages", non_matching_change)
+            .notify_table_change(&user_id, &table_id, non_matching_change)
             .await
             .unwrap();
         assert_eq!(notified, 0); // Should NOT notify (filter didn't match)

@@ -239,7 +239,7 @@ impl AppContext {
                 let slow_log_path = format!("{}/slow.log", config.logging.logs_path);
                 let slow_query_logger = crate::slow_query_logger::SlowQueryLogger::new(
                     slow_log_path,
-                    config.logging.slow_query_threshold_secs,
+                    config.logging.slow_query_threshold_ms,
                 );
 
                 Arc::new(AppContext {

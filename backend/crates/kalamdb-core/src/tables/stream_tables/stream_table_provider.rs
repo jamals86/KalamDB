@@ -7,7 +7,7 @@
 //! - Optional ephemeral mode (only store if subscribers exist)
 //! - Real-time event delivery to subscribers
 
-use crate::schema_registry::{NamespaceId, SchemaRegistry, TableName, TableType};
+use crate::schema_registry::{NamespaceId, SchemaRegistry, TableName, TableType, UserId};
 use crate::error::KalamDbError;
 use crate::tables::base_table_provider::{BaseTableProvider, TableProviderCore};
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
@@ -249,31 +249,15 @@ impl StreamTableProvider {
             );
 
             // Deliver notification asynchronously (spawn task to avoid blocking)
-            let manager = Arc::clone(live_query_manager);
-            // Use fully qualified table name (namespace.table)
-            let table_name = format!(
-                "{}.{}",
-                self.namespace_id().as_str(),
-                self.table_name().as_str()
-            );
+            let table_id = TableId::new(self.namespace_id().clone(), self.table_name().clone());
+            // For stream tables, use system user (stream tables are user-isolated but notification uses table-level subscription)
+            let system_user = UserId::new("__system__".to_string());
             log::info!(
-                "📤 StreamTable INSERT: Notifying subscribers for table '{}'",
-                table_name
+                "📤 StreamTable INSERT: Notifying subscribers for table '{}.{}'",
+                table_id.namespace_id().as_str(),
+                table_id.table_name().as_str()
             );
-            tokio::spawn(async move {
-                if let Err(e) = manager.notify_table_change(&table_name, notification).await {
-                    log::error!(
-                        "Failed to notify subscribers for table '{}': {}",
-                        table_name,
-                        e
-                    );
-                } else {
-                    log::info!(
-                        "📤 Successfully notified subscribers for table '{}'",
-                        table_name
-                    );
-                }
-            });
+            live_query_manager.notify_table_change_async(system_user, table_id, notification);
         }
 
         Ok(())

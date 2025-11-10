@@ -114,6 +114,16 @@ pub struct LimitsSettings {
     pub default_query_limit: usize,
 }
 
+impl Default for LimitsSettings {
+    fn default() -> Self {
+        Self {
+            max_message_size: default_max_message_size(),
+            max_query_limit: default_max_query_limit(),
+            default_query_limit: default_query_limit(),
+        }
+    }
+}
+
 /// Logging settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingSettings {
@@ -135,10 +145,10 @@ pub struct LoggingSettings {
     /// parquet = "warn"
     #[serde(default)]
     pub targets: HashMap<String, String>,
-    /// Slow query logging threshold in seconds (default: 1.0)
+    /// Slow query logging threshold in milliseconds (default: 1000ms = 1 second)
     /// Queries taking longer than this threshold will be logged to slow.log
-    #[serde(default = "default_slow_query_threshold")]
-    pub slow_query_threshold_secs: f64,
+    #[serde(default = "default_slow_query_threshold_ms")]
+    pub slow_query_threshold_ms: u64,
 }
 
 /// Performance settings
@@ -562,8 +572,8 @@ fn default_log_format() -> String {
     "compact".to_string()
 }
 
-fn default_slow_query_threshold() -> f64 {
-    1.0 // 1 second
+fn default_slow_query_threshold_ms() -> u64 {
+    1200 // 1.2 seconds
 }
 
 fn default_logs_path() -> String {
@@ -740,6 +750,12 @@ fn default_rocksdb_max_background_jobs() -> i32 {
 impl ServerConfig {
     /// Load configuration from a TOML file
     pub fn from_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
+        let path_ref = path.as_ref();
+        let absolute_path = std::fs::canonicalize(path_ref)
+            .unwrap_or_else(|_| path_ref.to_path_buf());
+        
+        //eprintln!("🔍 [CONFIG] Loading config from: {}", absolute_path.display());
+        
         let content = fs::read_to_string(path.as_ref())
             .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))?;
 
@@ -940,7 +956,7 @@ impl ServerConfig {
                 log_to_console: true,
                 format: "compact".to_string(),
                 targets: HashMap::new(),
-                slow_query_threshold_secs: default_slow_query_threshold(),
+                slow_query_threshold_ms: default_slow_query_threshold_ms(),
             },
             performance: PerformanceSettings {
                 request_timeout: 30,

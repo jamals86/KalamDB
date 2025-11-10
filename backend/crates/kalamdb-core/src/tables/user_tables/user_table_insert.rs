@@ -16,6 +16,7 @@ use crate::tables::user_tables::user_table_store::{UserTableRow, UserTableRowId}
 use crate::tables::UserTableStore;
 use arrow::datatypes::Schema;
 use chrono::Utc;
+use kalamdb_commons::models::TableId;
 use kalamdb_commons::schemas::ColumnDefault;
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
@@ -140,21 +141,8 @@ impl UserTableInsertHandler {
             let notification =
                 ChangeNotification::insert(qualified_table_name.clone(), notification_data);
 
-            let mgr = Arc::clone(manager);
-            tokio::spawn(async move {
-                // ✅ REQUIREMENT 2: Log errors, don't propagate
-                if let Err(e) = mgr
-                    .notify_table_change(&qualified_table_name, notification)
-                    .await
-                {
-                    log::warn!("Failed to notify subscribers for INSERT: {}", e);
-                } else {
-                    log::info!(
-                        "✅ INSERT notification sent successfully for table {}",
-                        qualified_table_name
-                    );
-                }
-            });
+            let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+            manager.notify_table_change_async(user_id.clone(), table_id, notification);
         } else {
             log::warn!(
                 "⚠️  No LiveQueryManager configured - INSERT notification skipped for table {}.{}",
@@ -257,25 +245,8 @@ impl UserTableInsertHandler {
                 let notification =
                     ChangeNotification::insert(qualified_table_name.clone(), notification_data);
 
-                let mgr = Arc::clone(manager);
-                tokio::spawn(async move {
-                    log::info!(
-                        "🔔 Spawned task, calling notify_table_change for {}...",
-                        qualified_table_name
-                    );
-                    // ✅ REQUIREMENT 2: Log errors, don't propagate
-                    if let Err(e) = mgr
-                        .notify_table_change(&qualified_table_name, notification)
-                        .await
-                    {
-                        log::warn!("Failed to notify subscribers for batch INSERT: {}", e);
-                    } else {
-                        log::info!(
-                            "✅ Batch INSERT notification sent successfully for table {}",
-                            qualified_table_name
-                        );
-                    }
-                });
+                let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+                manager.notify_table_change_async(user_id.clone(), table_id, notification);
             } else {
                 log::warn!("⚠️  No LiveQueryManager in batch insert!");
             }

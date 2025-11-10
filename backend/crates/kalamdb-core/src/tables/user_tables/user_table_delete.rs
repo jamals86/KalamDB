@@ -12,6 +12,7 @@ use crate::error::KalamDbError;
 use crate::live_query::manager::{ChangeNotification, LiveQueryManager};
 use crate::tables::system::system_table_store::UserTableStoreExt;
 use crate::tables::UserTableStore;
+use kalamdb_commons::models::TableId;
 use std::sync::Arc;
 
 /// User table DELETE handler
@@ -112,7 +113,7 @@ impl UserTableDeleteHandler {
         );
 
         // ✅ REQUIREMENT 2: Notification AFTER storage success
-        // ✅ REQUIREMENT 1 & 3: Async fire-and-forget pattern
+        // ✅ REQUIREMENT 1 & 3: Async fire-and-forget pattern (handled by notify_table_change_async)
         if let Some(manager) = &self.live_query_manager {
             if let Some(row_data) = row_to_delete {
                 // Convert UserTableRow to JsonValue for notification
@@ -131,16 +132,8 @@ impl UserTableDeleteHandler {
                 let notification =
                     ChangeNotification::delete_soft(qualified_table_name.clone(), data);
 
-                let mgr = Arc::clone(manager);
-                tokio::spawn(async move {
-                    // ✅ REQUIREMENT 2: Log errors, don't propagate
-                    if let Err(e) = mgr
-                        .notify_table_change(&qualified_table_name, notification)
-                        .await
-                    {
-                        log::warn!("Failed to notify subscribers for DELETE: {}", e);
-                    }
-                });
+                let table_id = TableId::new(namespace_id.clone(), table_name.clone());
+                manager.notify_table_change_async(user_id.clone(), table_id, notification);
             }
         }
 
